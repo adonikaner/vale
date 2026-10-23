@@ -200,9 +200,9 @@ fn hand_egui_its_camera(mut settings: ResMut<bevy_egui::EguiGlobalSettings>) {
 /// so a light near the origin drew that line; any other gizmo crossing the
 /// origin — a diagnostic overlay, a gizmo drawn by a host app — would too.
 ///
-/// 31 is above every layer the portraits, the paper doll and a host app's
-/// offscreen stage hand out.
-pub const PRESENT_LAYER: usize = 31;
+/// The layer is [`crate::render::offscreen::layers::PRESENT`], 31, above every
+/// layer the portraits, the paper dolls and a host app's offscreen scenes take.
+pub const PRESENT_LAYER: usize = crate::render::offscreen::layers::PRESENT;
 
 /// The camera the window sees: one quad of [`WorldFrame`], and the UI over it.
 fn present(
@@ -570,8 +570,11 @@ mod tests {
     fn the_present_pass_is_off_the_worlds_layer() {
         let present = RenderLayers::layer(PRESENT_LAYER);
         assert!(!present.intersects(&RenderLayers::layer(0)));
-        // …and it is not one of the layers the portraits, the paper doll and
-        // a host app's offscreen stage use, which start at 1 and count up.
-        assert!(PRESENT_LAYER > 16);
+        // …and it is not one of the layers the portraits, the paper dolls and
+        // a host app's offscreen scenes use.
+        use crate::render::offscreen::layers;
+        for range in [layers::PORTRAITS, layers::DOLLS, layers::HOST] {
+            assert!(!range.contains(&PRESENT_LAYER), "{range:?}");
+        }
     }
 }

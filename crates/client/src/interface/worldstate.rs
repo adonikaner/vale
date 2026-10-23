@@ -30,7 +30,7 @@ use bevy::prelude::*;
 
 use vale_assets::tables::dbc::dbc_path;
 use vale_assets::tables::worldstate::{WorldStateInfo, WorldStateUi, OUTDOOR_CHANNEL_FLAGS};
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 use vale_protocol::play::worldstate::WorldStatesInit;
 
 use crate::interface::events::{PlayerLeavingWorld, UpdateWorldStates};

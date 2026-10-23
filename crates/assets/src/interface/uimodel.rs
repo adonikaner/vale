@@ -240,10 +240,10 @@ pub fn flatten(
 ///   emitter bone has a parent or a rotation is drawn with the translation
 ///   only, which is a stated shortfall of this path rather than of the world's
 ///   particle pass.
-/// * The over-life ramp is the same one `render::particles::over_life` runs:
-///   two linear segments split at `mid_point`. Twinkle, spin, tails, atlases
-///   and geometry models are not drawn; none of the interface's models use
-///   them (this one's twinkle percent is 1, its spin 0.1 rad/s, its atlas
+/// * The over-life ramp is [`crate::world::m2::M2Particle::over_life`], the
+///   one the world runs: two linear segments split at `mid_point`. Twinkle,
+///   spin, tails, atlases and geometry models are not drawn; none of the
+///   interface's models use them (this one's twinkle percent is 1, its spin 0.1 rad/s, its atlas
 ///   1x1).
 pub fn sprites(
     model: &M2,
@@ -399,19 +399,7 @@ fn first_key(track: &Option<crate::world::m2::M2Track>) -> f32 {
 /// Colour and half-size at `u` of a sprite's life — two linear segments split
 /// at `mid_point`, the same ramp the world's particle pass samples.
 fn over_life(emitter: &crate::world::m2::M2Particle, u: f32) -> ([f32; 4], f32) {
-    let u = u.clamp(0.0, 1.0);
-    let mid = emitter.mid_point.clamp(1e-3, 1.0);
-    let (a, b, t) = if u <= mid {
-        (0, 1, u / mid)
-    } else {
-        (1, 2, (u - mid) / (1.0 - mid).max(1e-3))
-    };
-    let mut colour = [0.0f32; 4];
-    for (c, out) in colour.iter_mut().enumerate() {
-        let (ca, cb) = (f32::from(emitter.colors[a][c]), f32::from(emitter.colors[b][c]));
-        *out = (ca + (cb - ca) * t) / 255.0;
-    }
-    let half = emitter.scales[a] + (emitter.scales[b] - emitter.scales[a]) * t;
+    let (colour, half, _) = emitter.over_life(u);
     (colour, half)
 }
 

@@ -76,7 +76,7 @@ pub fn cmd_live(cfg: &Config, character: Option<&str>) -> Result<(), String> {
     // The same `WDB\` the renderer writes, so a session spent here warms the
     // names for one spent there — and `bags` names what it holds on the first
     // read rather than a query interval later.
-    let caches = vale_protocol::play::wdb::for_session(&session);
+    let caches = session.caches();
     println!("[live] wdb: {}", caches.summary());
     let live = LiveSession::spawn(session, chosen, ground, triggers, caches);
     live.wait_until_in_world(Duration::from_secs(20))?;
@@ -217,22 +217,22 @@ pub fn cmd_live(cfg: &Config, character: Option<&str>) -> Result<(), String> {
             "tradegold" => trade_verb(
                 &live,
                 arg.and_then(|a| a.parse::<u32>().ok())
-                    .map(vale_protocol::socket::session::TradeVerb::SetGold),
+                    .map(vale_protocol::play::trade::TradeVerb::SetGold),
                 "usage: tradegold <copper>",
             ),
             "tradeok" => trade_verb(
                 &live,
-                Some(vale_protocol::socket::session::TradeVerb::Accept),
+                Some(vale_protocol::play::trade::TradeVerb::Accept),
                 "",
             ),
             "tradeyes" => trade_verb(
                 &live,
-                Some(vale_protocol::socket::session::TradeVerb::Begin),
+                Some(vale_protocol::play::trade::TradeVerb::Begin),
                 "",
             ),
             "tradecancel" => trade_verb(
                 &live,
-                Some(vale_protocol::socket::session::TradeVerb::Cancel),
+                Some(vale_protocol::play::trade::TradeVerb::Cancel),
                 "",
             ),
             "tradeq" => drain_trade(&live, arg.and_then(|a| a.parse::<u64>().ok()).unwrap_or(5) * 1000),
@@ -841,7 +841,7 @@ thread_local! {
 /// ordinary session and by nothing at all here, so a CLI that did not read it
 /// would print nothing and grow a queue; every loot verb ends in this.
 fn drain_loot(live: &vale_protocol::socket::session::LiveSession, ms: u64) {
-    use vale_protocol::play::spells::PlayerEvent;
+    use vale_protocol::state::events::PlayerEvent;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     let mut quiet = true;
     while std::time::Instant::now() < deadline {
@@ -1014,7 +1014,7 @@ fn print_loot(
 
 /// A one-word label for an event this driver is not about, so the loot output
 /// does not swallow the rest of the queue in silence.
-fn event_name(event: &vale_protocol::play::spells::PlayerEvent) -> String {
+fn event_name(event: &vale_protocol::state::events::PlayerEvent) -> String {
     format!("{event:?}")
         .split(['(', ' ', '{'])
         .next()
@@ -1231,7 +1231,7 @@ fn cast_spell(cfg: &Config, live: &vale_protocol::socket::session::LiveSession, 
     }
     for event in events {
         match event {
-            vale_protocol::play::spells::PlayerEvent::CastFailed { reason, .. } => {
+            vale_protocol::state::events::PlayerEvent::CastFailed { reason, .. } => {
                 let key = vale_protocol::play::spells::cast_failure_key(reason);
                 println!(
                     "  refused by the server: {} ({reason:#04x})",
@@ -1513,7 +1513,7 @@ thread_local! {
 /// `SMSG_SHOW_BANK` — a guid — and the squares are read off the fields that
 /// were there all along.
 fn open_bank(live: &vale_protocol::socket::session::LiveSession) {
-    use vale_protocol::socket::session::NpcVerb;
+    use vale_protocol::play::gossip::NpcVerb;
     const BANKER_FLAG: u32 = 0x100;
 
     let nearest = {
@@ -1543,7 +1543,7 @@ fn open_bank(live: &vale_protocol::socket::session::LiveSession) {
     let mut shown = false;
     for event in live.take_events() {
         match event {
-            vale_protocol::play::spells::PlayerEvent::BankShow(banker) => {
+            vale_protocol::state::events::PlayerEvent::BankShow(banker) => {
                 println!("  SMSG_SHOW_BANK from {banker:#x}");
                 BANKER.with(|cell| cell.set(banker));
                 shown = true;
@@ -1562,7 +1562,7 @@ fn open_bank(live: &vale_protocol::socket::session::LiveSession) {
 /// count is a byte of `PLAYER_BYTES_2` and the money is a field, so this
 /// prints the byte before and after rather than waiting for a reply.
 fn bank_buy(live: &vale_protocol::socket::session::LiveSession) {
-    use vale_protocol::socket::session::NpcVerb;
+    use vale_protocol::play::gossip::NpcVerb;
     let banker = BANKER.with(|cell| cell.get());
     if banker == 0 {
         println!("  no bank open — run `bank` first");
@@ -1573,7 +1573,7 @@ fn bank_buy(live: &vale_protocol::socket::session::LiveSession) {
     std::thread::sleep(std::time::Duration::from_millis(800));
     for event in live.take_events() {
         match event {
-            vale_protocol::play::spells::PlayerEvent::BankSlotResult { code, result } => {
+            vale_protocol::state::events::PlayerEvent::BankSlotResult { code, result } => {
                 println!(
                     "  SMSG_BUY_BANK_SLOT_RESULT {code}: {}",
                     result.and_then(|r| r.key()).unwrap_or("(a code the client never displays)")
@@ -2129,7 +2129,7 @@ enum MailKind {
 /// request sent from across the room is answered with silence rather than with
 /// a refusal.
 fn open_mailbox(live: &vale_protocol::socket::session::LiveSession, n: usize) {
-    use vale_protocol::socket::session::MailVerb;
+    use vale_protocol::play::mail::MailVerb;
     let Some(rows) = nearby_objects(live) else {
         println!("  no game objects in view");
         return;
@@ -2157,7 +2157,7 @@ fn open_mailbox(live: &vale_protocol::socket::session::LiveSession, n: usize) {
 /// One letter's words — `CMSG_ITEM_TEXT_QUERY`, and the mark-as-read the
 /// reference sends beside it from inside `GetInboxText`.
 fn read_letter(live: &vale_protocol::socket::session::LiveSession, row: usize) {
-    use vale_protocol::socket::session::MailVerb;
+    use vale_protocol::play::mail::MailVerb;
     let mailbox = MAILBOX.with(|cell| cell.get());
     if mailbox == 0 {
         println!("  no mailbox open — run `mail` first");
@@ -2193,7 +2193,7 @@ fn mail_verb(
     arg: Option<&str>,
     kind: MailKind,
 ) {
-    use vale_protocol::socket::session::MailVerb;
+    use vale_protocol::play::mail::MailVerb;
     let mailbox = MAILBOX.with(|cell| cell.get());
     if mailbox == 0 {
         println!("  no mailbox open — run `mail` first");
@@ -2233,7 +2233,7 @@ fn mail_verb(
 /// keeping out of this verb's way rather than reproducing here.
 fn send_letter(live: &vale_protocol::socket::session::LiveSession, rest: Option<&str>) {
     use vale_protocol::play::mail::OutgoingMail;
-    use vale_protocol::socket::session::MailVerb;
+    use vale_protocol::play::mail::MailVerb;
     let mailbox = MAILBOX.with(|cell| cell.get());
     if mailbox == 0 {
         println!("  no mailbox open — run `mail` first");
@@ -2270,7 +2270,7 @@ const DEFAULT_STATIONERY: u32 = 41;
 /// `SMSG_TRADE_STATUS_EXTENDED` both ways, which [`drain_trade`] prints slot
 /// by slot — the only place the fifteen-word record can be seen arriving.
 fn trade_with(live: &vale_protocol::socket::session::LiveSession, arg: Option<&str>) {
-    use vale_protocol::socket::session::TradeVerb;
+    use vale_protocol::play::trade::TradeVerb;
     let Some(name) = arg.map(str::trim).filter(|n| !n.is_empty()) else {
         println!("  usage: trade <player name>");
         return;
@@ -2298,7 +2298,7 @@ fn trade_with(live: &vale_protocol::socket::session::LiveSession, arg: Option<&s
 /// into trade slot `n` (1..7, default the first). The server echoes the whole
 /// offer back, which is what `tradeq` then prints.
 fn trade_item(live: &vale_protocol::socket::session::LiveSession, arg: Option<&str>) {
-    use vale_protocol::socket::session::TradeVerb;
+    use vale_protocol::play::trade::TradeVerb;
     let words: Vec<&str> = arg.unwrap_or("").split_whitespace().collect();
     let parsed = (
         words.first().and_then(|w| w.parse::<i32>().ok()),
@@ -2334,7 +2334,7 @@ fn trade_item(live: &vale_protocol::socket::session::LiveSession, arg: Option<&s
 /// One bodiless-or-nearly trade verb, then listen.
 fn trade_verb(
     live: &vale_protocol::socket::session::LiveSession,
-    verb: Option<vale_protocol::socket::session::TradeVerb>,
+    verb: Option<vale_protocol::play::trade::TradeVerb>,
     usage: &str,
 ) {
     let Some(verb) = verb else {
@@ -2350,7 +2350,7 @@ fn trade_verb(
 /// status by name, and an offer slot by slot with the entry resolved where
 /// the template has landed.
 fn drain_trade(live: &vale_protocol::socket::session::LiveSession, ms: u64) {
-    use vale_protocol::play::spells::PlayerEvent;
+    use vale_protocol::state::events::PlayerEvent;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     let mut quiet = true;
     while std::time::Instant::now() < deadline {
@@ -2406,7 +2406,7 @@ fn drain_trade(live: &vale_protocol::socket::session::LiveSession, ms: u64) {
 
 /// Listen for whatever the mail family sends back, and print it.
 fn drain_mail(live: &vale_protocol::socket::session::LiveSession, ms: u64) {
-    use vale_protocol::play::spells::PlayerEvent;
+    use vale_protocol::state::events::PlayerEvent;
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     let mut quiet = true;
     while std::time::Instant::now() < deadline {

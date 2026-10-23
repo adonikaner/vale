@@ -117,58 +117,72 @@ pub(crate) struct Args {
     /// window. See [`crate::lua::audit`]. It is the run-time half of
     /// `vale framexml`, and the only check that can say which missing name
     /// breaks which panel.
+    ///
+    /// The audit is behind the `diagnostics` feature. A build without it still
+    /// reads the flag, so that `--audit` says so and exits instead of opening
+    /// a window; the flags below that only the audit reads are not parsed.
     pub(crate) audit: bool,
     /// `--draw`, with `--audit`: after the load (and after `--script`, when one
     /// is given), dump every visible object with its solved rectangle and its
     /// paint. It answers "what is this quad on the screen" without a window.
+    #[cfg(feature = "diagnostics")]
     pub(crate) draw: bool,
     /// `--spin <frames>`, with `--audit`: run that many simulated frames of the
     /// interface's per-frame work and print the timing shape. It is the
     /// headless check for a frame rate that oscillates; see [`crate::lua::audit`].
+    #[cfg(feature = "diagnostics")]
     pub(crate) spin: usize,
     /// `--party <n>`, with `--audit`: how many people the double is grouped
     /// with, 0..4. The party size is the one dimension of the harness's world
     /// that a report blamed, so it is a subtraction: two runs that differ only
     /// in this flag price the party frames, as `--without` prices a render
     /// pass. Defaults to 2, which every earlier round measured against.
+    #[cfg(feature = "diagnostics")]
     pub(crate) party: Option<usize>,
     /// `--raid <n>`, with `--audit`: how many people are in the double's raid,
     /// the double included, 0..40. Defaults to 0, a party. This number decides
     /// which of its two screens the raid panel draws, and the interface hides
     /// every party frame while it is above zero, so a harness that was always
     /// in a raid would stop checking the party.
+    #[cfg(feature = "diagnostics")]
     pub(crate) raid: Option<usize>,
     /// `--events`, with `--audit`: fire every event this client can raise at
     /// the frames that registered for it, and report what the handlers broke
     /// on. The load exercises only `OnLoad`, one of the game's 36 script kinds;
     /// this exercises `OnEvent`, the one that runs during play.
+    #[cfg(feature = "diagnostics")]
     pub(crate) events: bool,
     /// `--type <line>`, with `--audit`: open the chat line, type that into it
     /// and press Enter, then say what would have gone on the wire. This checks
     /// the path a person drives without a person; see
     /// [`crate::lua::audit::type_a_line`].
+    #[cfg(feature = "diagnostics")]
     pub(crate) typed: Option<String>,
     /// `--panels`, with `--audit`: open every panel `UIPanelWindows` names and
     /// report what its `OnShow` broke on. The fourth script kind an instrument
     /// reaches, and the one in which 1.12 fills a panel; see
     /// [`crate::lua::audit::open_every_panel`].
+    #[cfg(feature = "diagnostics")]
     pub(crate) panels: bool,
     /// `--clicks`, with `--audit`: press every visible button on every one of
     /// those panels, re-collecting after each round so the tabs are followed,
     /// and report what the `OnClick` bodies broke on. The fifth script kind an
     /// instrument reaches, and the one a player uses most; see
     /// [`crate::lua::audit::click_everything`].
+    #[cfg(feature = "diagnostics")]
     pub(crate) clicks: bool,
     /// `--bindings`, with `--audit`: run the `<Binding>` body of every command
     /// the game's own default key table binds, on both edges where the
     /// declaration wants one, and report what they broke on. The sixth script
     /// kind an instrument reaches, and the only one a keystroke runs; see
     /// [`crate::lua::audit::press_every_binding`].
+    #[cfg(feature = "diagnostics")]
     pub(crate) bindings: bool,
     /// `--glue`, with `--audit`: load `Interface\GlueXML\` instead of
     /// `Interface\FrameXML\` — the login screen and character select — and put
     /// the login screen up. Composes with every flag above it: `--glue --clicks`
     /// presses every button on the screen a player sees first.
+    #[cfg(feature = "diagnostics")]
     pub(crate) glue: bool,
     /// `--size <w>x<h>` and `--resize <w>x<h>`: the window to open at, and the
     /// window to become part way through the run.
@@ -245,15 +259,25 @@ impl Args {
             #[cfg(feature = "diagnostics")]
             capture: false,
             audit: false,
+            #[cfg(feature = "diagnostics")]
             draw: false,
+            #[cfg(feature = "diagnostics")]
             spin: 0,
+            #[cfg(feature = "diagnostics")]
             party: None,
+            #[cfg(feature = "diagnostics")]
             raid: None,
+            #[cfg(feature = "diagnostics")]
             events: false,
+            #[cfg(feature = "diagnostics")]
             typed: None,
+            #[cfg(feature = "diagnostics")]
             panels: false,
+            #[cfg(feature = "diagnostics")]
             clicks: false,
+            #[cfg(feature = "diagnostics")]
             bindings: false,
+            #[cfg(feature = "diagnostics")]
             glue: false,
             window: WindowScript::default(),
             hover: None,
@@ -321,15 +345,25 @@ impl Args {
                 #[cfg(feature = "diagnostics")]
                 "--capture" => parsed.capture = true,
                 "--audit" => parsed.audit = true,
+                #[cfg(feature = "diagnostics")]
                 "--draw" => parsed.draw = true,
+                #[cfg(feature = "diagnostics")]
                 "--spin" => parsed.spin = value().and_then(|s| s.parse().ok()).unwrap_or(0),
+                #[cfg(feature = "diagnostics")]
                 "--party" => parsed.party = value().and_then(|s| s.parse().ok()),
+                #[cfg(feature = "diagnostics")]
                 "--raid" => parsed.raid = value().and_then(|s| s.parse().ok()),
+                #[cfg(feature = "diagnostics")]
                 "--events" => parsed.events = true,
+                #[cfg(feature = "diagnostics")]
                 "--panels" => parsed.panels = true,
+                #[cfg(feature = "diagnostics")]
                 "--clicks" => parsed.clicks = true,
+                #[cfg(feature = "diagnostics")]
                 "--bindings" => parsed.bindings = true,
+                #[cfg(feature = "diagnostics")]
                 "--glue" => parsed.glue = true,
+                #[cfg(feature = "diagnostics")]
                 "--type" => parsed.typed = value(),
                 "--size" => parsed.window.open = value().as_deref().and_then(parse_size),
                 "--resize" => parsed.window.then = value().as_deref().and_then(parse_size),

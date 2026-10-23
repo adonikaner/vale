@@ -16,6 +16,7 @@
 //! sheath.rs       whether the weapons are out
 //! weapon_trail.rs the strip a weapon leaves behind it during a melee ability
 //! conform.rs      which models lean with the ground
+//! pose.rs         what to play when a model lacks the animation asked for
 //! scenery.rs      what a thing that is not a unit is doing: which clip a
 //!                 doodad plays, and which of its variations this one took
 //! selection.rs    what colour the ring under a unit is
@@ -48,6 +49,7 @@ pub mod inspect;
 pub mod object;
 pub mod pick;
 pub mod portrait;
+pub mod pose;
 pub mod scenery;
 pub mod selection;
 pub mod sheath;

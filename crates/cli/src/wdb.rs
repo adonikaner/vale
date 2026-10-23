@@ -1,7 +1,7 @@
 //! `vale wdb` — the `WDB\` caches: every file, its records, each body
 //! re-parsed.
 //!
-//! The files are `vale_protocol::play::wdb`'s, written by the renderer and
+//! The files are `vale_protocol::state::wdb`'s, written by the renderer and
 //! by `vale live` as query answers arrive. This is the read-only check: it
 //! finds every realm with a file in the folder, says which of the nine files
 //! each has and how many keys each holds, and runs every body through the
@@ -15,7 +15,7 @@
 //! realm list's answer and not the logon address the configuration holds.
 
 use vale_config::Config;
-use vale_protocol::play::wdb::{self, Caches, Kind};
+use vale_protocol::state::wdb::{self, Caches, Kind};
 
 pub fn cmd_wdb(cfg: &Config) -> Result<(), String> {
     let realms = wdb::realms_on_disk(wdb::CACHE_DIR);

@@ -33,8 +33,8 @@
 //! ## What is deliberately dropped
 //!
 //! **`|T…|t` draws nothing.** It is an inline icon at the text's own line
-//! height, and this client's text path is a single egui galley with no way to
-//! interleave an image into it. Dropping the sequence leaves the surrounding
+//! height, and this client's text path places glyphs from an atlas with no way
+//! to interleave an image among them. Dropping the sequence leaves the surrounding
 //! sentence intact and loses the picture, which is the failure that reads as
 //! "an icon is missing" rather than as "the interface is printing control
 //! codes". Nothing in 5875's own directory emits one outside the raid-target
@@ -51,7 +51,7 @@
 //!
 //! It is a decision about text, taken with no window, and it is unit-testable as
 //! one — the same argument every other module in this directory makes. The
-//! painter takes [`Run`]s and turns them into a galley; it has no opinion about
+//! painter takes [`Run`]s and turns them into glyphs; it has no opinion about
 //! what a `|` means.
 //!
 //! ## …and how wide it is, which is the same argument twice
@@ -229,23 +229,46 @@ pub fn install_faces(lua: &mlua::Lua, faces: vale_assets::interface::font::Faces
     lua.set_app_data(faces);
 }
 
+/// The metrics a state with no faces loaded measures with: every character
+/// [`FALLBACK_RATIO`] of the height wide, with no kerning.
+struct Ratio(f32);
+
+impl vale_assets::interface::font::Metrics for Ratio {
+    fn advance(&self, _: char) -> f32 {
+        self.0
+    }
+
+    fn kern(&self, _: char, _: char) -> f32 {
+        0.0
+    }
+}
+
 /// **How wide `text` draws**, in the game's own units, at `height` in the face
 /// `font` names — with the markup taken out first.
 ///
 /// The one measurement in this client, so that the plate, the caret and the
-/// fold can never disagree about where a word ends.
+/// fold can never disagree about where a word ends. Kerning applies across
+/// the runs a `|c` escape cuts, as it does on the screen.
 pub fn width(lua: &mlua::Lua, font: Option<&str>, height: f64, text: &str) -> f64 {
     // The escapes are not drawn, so they are not measured. `runs` borrows for
-    // the common unmarked line, so this is a sum over one `&str`.
-    let drawn = |measure: &mut dyn FnMut(&str) -> f64| -> f64 {
-        runs(text).iter().map(|run| measure(&run.text)).sum()
+    // the common unmarked line, so this measures one `&str` without
+    // allocating.
+    let cut = runs(text);
+    let joined;
+    let drawn: &str = match cut.as_slice() {
+        [one] => one.text.as_ref(),
+        many => {
+            joined = many.iter().map(|run| run.text.as_ref()).collect::<String>();
+            joined.as_str()
+        }
     };
-    match lua.app_data_ref::<vale_assets::interface::font::Faces>() {
-        Some(faces) => match faces.face(font) {
-            Some(face) => drawn(&mut |s| f64::from(face.width(s, height as f32))),
-            None => drawn(&mut |s| s.chars().count() as f64 * height * FALLBACK_RATIO),
-        },
-        None => drawn(&mut |s| s.chars().count() as f64 * height * FALLBACK_RATIO),
+    match lua
+        .app_data_ref::<vale_assets::interface::font::Faces>()
+        .as_deref()
+        .and_then(|faces| faces.face(font))
+    {
+        Some(face) => f64::from(face.width(drawn, height as f32)),
+        None => drawn.chars().count() as f64 * height * FALLBACK_RATIO,
     }
 }
 
@@ -258,58 +281,28 @@ pub fn width(lua: &mlua::Lua, font: Option<&str>, height: f64, text: &str) -> f6
 /// the side of the spellbook. See [`super::regions::intrinsic`], which is where
 /// the rule lives; this is only the arithmetic.
 ///
-/// **Greedy on spaces, the same rule egui's own layout applies**, so the height
-/// this reserves and the galley the painter produces agree by construction —
-/// the property every measurement in this module exists for. Two stated
-/// approximations, both one-sided towards *fewer* rows and therefore towards a
-/// box a shade too short rather than a panel of empty gaps:
-///
-/// * a single word wider than the fold is charged `ceil(width / max_width)`
-///   rows, where egui breaks it at whatever glyph actually crosses the edge;
-/// * the escapes are cut out first (`|Hplayer:Brannoc|h` is nine characters
-///   wide and thirty-two long), which is what [`width`] does too.
-///
-/// An embedded `\n` is a hard break and each side folds on its own.
+/// The rows are [`vale_assets::interface::font::fold`]'s, the function the
+/// painter places its glyphs with, so the height this reserves is the height
+/// drawn. The escapes are cut out first (`|Hplayer:Brannoc|h` is nine
+/// characters wide and thirty-two long), which is what [`width`] does too. An
+/// embedded `\n` is a hard break, and a `max_width` of zero or less folds only
+/// there.
 pub fn rows(lua: &mlua::Lua, font: Option<&str>, height: f64, text: &str, max_width: f64) -> usize {
-    if max_width <= 0.0 {
-        return 1;
-    }
-    // The drawn text, once — `runs` borrows for the common unmarked line, so
-    // this allocates only for a string that carries markup.
-    let drawn: String = runs(text)
-        .iter()
-        .map(|run| run.text.as_ref())
-        .collect::<Vec<_>>()
-        .concat();
-    let measure = |s: &str| width(lua, font, height, s);
-
-    let mut total = 0usize;
-    for hard in drawn.split('\n') {
-        let mut rows = 1usize;
-        let mut line = String::new();
-        for word in hard.split_whitespace() {
-            if line.is_empty() {
-                line.push_str(word);
-                // A first word that does not fit on its own is broken by the
-                // painter rather than pushed to the next row.
-                let over = measure(&line) / max_width;
-                if over > 1.0 {
-                    rows += over.ceil() as usize - 1;
-                    line.clear();
-                }
-                continue;
-            }
-            let candidate = format!("{line} {word}");
-            if measure(&candidate) > max_width {
-                rows += 1;
-                line = word.to_string();
-            } else {
-                line = candidate;
-            }
+    use vale_assets::interface::font::fold;
+    let drawn: Vec<char> = runs(text).iter().flat_map(|run| run.text.chars()).collect();
+    let fold_at = (max_width > 0.0).then_some(max_width as f32);
+    let rows = match lua
+        .app_data_ref::<vale_assets::interface::font::Faces>()
+        .as_deref()
+        .and_then(|faces| faces.face(font))
+    {
+        Some(face) => fold(&drawn, &face.at(height as f32), fold_at, usize::MAX, 1.0).len(),
+        None => {
+            let ratio = Ratio((height * FALLBACK_RATIO) as f32);
+            fold(&drawn, &ratio, fold_at, usize::MAX, 1.0).len()
         }
-        total += rows;
-    }
-    total.max(1)
+    };
+    rows.max(1)
 }
 
 /// **How far apart two lines of it sit** — the face's own ascent, descent and
@@ -480,8 +473,8 @@ mod tests {
         assert!(width(&lua, None, 12.0, "Rallying Cry of the Dragonslayer") > 103.0);
     }
 
-    /// A word wider than the fold on its own is charged the rows it will take
-    /// rather than one, and a hard break is a break.
+    /// A word wider than the fold on its own is charged the rows it is drawn
+    /// in rather than one, and a hard break is a break.
     #[test]
     fn an_unbreakable_word_and_a_newline_each_charge_their_rows() {
         let lua = mlua::Lua::new();
@@ -492,4 +485,21 @@ mod tests {
         // undeclared width means.
         assert_eq!(rows(&lua, None, 12.0, "Rallying Cry of the Dragonslayer", 0.0), 1);
     }
+
+    /// The measurement and the painter fold at the same places: a string
+    /// within half a unit of its fold is one row in both, and a space at the
+    /// fold ends the row rather than moving the word before it.
+    #[test]
+    fn the_measurement_folds_where_the_painter_does() {
+        let lua = mlua::Lua::new();
+        // Six units a character: "abcdefgh" is 48, inside 47.6 plus the grace.
+        assert_eq!(rows(&lua, None, 12.0, "abcdefgh", 47.6), 1);
+        assert_eq!(rows(&lua, None, 12.0, "abcdefgh", 47.4), 2);
+        // "a bc" is 24 units in a 24-unit fold; the space after it crosses
+        // the fold and ends the row, so "d" alone takes the second.
+        assert_eq!(rows(&lua, None, 12.0, "a bc d", 24.0), 2);
+        // A trailing line break adds no row, as on the screen.
+        assert_eq!(rows(&lua, None, 12.0, "a\n", 103.0), 1);
+    }
+
 }

@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use vale_assets::tables::dbc::dbc_path;
 use vale_assets::tables::servermessage::ServerMessages;
 use vale_protocol::play::chat::ChatType;
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 use super::events::ChatMessageReceived;
 use super::messages::{Announce, UiStrings};

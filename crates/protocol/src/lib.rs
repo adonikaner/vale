@@ -13,8 +13,8 @@
 //!              the framing, the one dispatch, and the live session
 //! state/       what the world *is*: the object manager, the update blocks, the
 //!              field indices, the queries, and where anything is
-//! play/        …and what is *played* on it, one file per subject — nineteen of
-//!              them, from a swing to a flight path
+//! play/        …and what is *played* on it, one file per subject — fifty-one
+//!              of them, from a swing to a flight path
 //! ```
 //!
 //! A packet goes **socket -> frame -> parse -> apply**, and the four stages are

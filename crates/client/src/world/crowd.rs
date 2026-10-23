@@ -43,7 +43,7 @@
 //! * **Their health churns**, on the same quarter second a fighting unit's
 //!   does, so the `Changed<WorldEntity>` paths are exercised rather than being
 //!   permanently quiet. What it does **not** price is
-//!   [`super::session::poll_world`], which only ever sees the server's own
+//!   [`super::entity::poll_world`], which only ever sees the server's own
 //!   entities — that half is priced by the entity count the server supplies.
 //!
 //! Behind the `diagnostics` feature, like every other instrument in this
@@ -55,7 +55,7 @@
 
 use bevy::prelude::*;
 
-use super::session::{LocalPlayer, WorldEntity};
+use super::entity::{LocalPlayer, WorldEntity};
 
 /// How many synthetic entities to hold.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
@@ -303,7 +303,7 @@ pub(super) fn populate(
 
 /// Walk the crowd, and churn what a fighting unit's numbers churn.
 ///
-/// **After [`super::session::place_entities`] and before the entity chain**,
+/// **After [`super::entity::place_entities`] and before the entity chain**,
 /// which is where a real entity's placement is written: a member posed against
 /// last frame's position is the one-frame mismatch that pass's own doc is
 /// about, and a measurement taken through a different ordering is not the

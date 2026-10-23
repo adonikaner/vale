@@ -4,7 +4,7 @@
 //! world at all, which map, where the centre of interest is, and the map's name
 //! for the file paths. They used to take those from
 //! [`crate::world::session::Session`] and
-//! [`crate::world::session::WorldStatus`] directly, which made every one of them
+//! [`crate::world::status::WorldStatus`] directly, which made every one of them
 //! a pass that cannot run without a network socket — against this directory's
 //! own rule, which is that a pass still making sense with the network unplugged
 //! belongs here.

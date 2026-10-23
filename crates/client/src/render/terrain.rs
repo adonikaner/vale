@@ -639,7 +639,7 @@ impl LoadedTiles {
     }
 
     /// Which map the tiles above belong to — the `Map.dbc` directory, the same
-    /// string [`crate::world::session::WorldStatus::map_name`] carries.
+    /// string [`crate::world::status::WorldStatus::map_name`] carries.
     ///
     /// Exists for one race, and it is a real one: [`super::super::world`]'s poll
     /// adopts a far teleport's new map in the same schedule this pass streams

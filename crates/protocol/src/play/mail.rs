@@ -66,6 +66,7 @@
 //! four or eight bytes past the end on every other combination.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// **Who sent it**, which is a tag over a union rather than a label.
 ///
@@ -670,6 +671,109 @@ pub fn send_mail_body(mail: &OutgoingMail) -> Vec<u8> {
 /// `MSG_QUERY_NEXT_MAIL_TIME` — no body at all.
 pub fn next_mail_time_body() -> Vec<u8> {
     Vec::new()
+}
+
+/// The ten requests the mail window sends to the socket.
+///
+/// See [`crate::play::mail`], which owns the bodies. Opening a mailbox sends
+/// no packet, so there is no `Open` verb. The mailbox guid is kept in the
+/// client's window state, and every verb below carries it, because the server
+/// checks that the character is standing at that mailbox before it acts.
+///
+/// Five of the verbs differ only in their opcode, so they share
+/// [`crate::play::mail::mail_id_body`] rather than each having a function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MailVerb {
+    /// `CMSG_GET_MAIL_LIST`: the inbox. The caller rate-limits it, not this
+    /// code; see [`crate::play::mail`]'s note on `CheckInbox`.
+    List(u64),
+    /// `CMSG_MAIL_MARK_AS_READ`: sent when a letter is read rather than by a
+    /// button; `GetInboxText` sends it first.
+    MarkAsRead { mailbox: u64, mail_id: u32 },
+    /// `CMSG_MAIL_TAKE_MONEY`: the letter's coins.
+    TakeMoney { mailbox: u64, mail_id: u32 },
+    /// `CMSG_MAIL_TAKE_ITEM`: the parcel. This packet also pays a COD: the
+    /// server takes the money on it. The interface shows a confirmation box
+    /// before sending it; this code does not.
+    TakeItem { mailbox: u64, mail_id: u32 },
+    /// `CMSG_MAIL_CREATE_TEXT_ITEM`: keep the letter itself, as an item.
+    TakeText {
+        mailbox: u64,
+        mail_id: u32,
+        /// The server reads and discards it; sent because build 5875 sends it
+        /// and the server always reads it.
+        template_id: u32,
+    },
+    /// `CMSG_MAIL_RETURN_TO_SENDER`.
+    Return { mailbox: u64, mail_id: u32 },
+    /// `CMSG_MAIL_DELETE`. Refused for a COD letter, with
+    /// `MAIL_ERR_INTERNAL_ERROR` rather than a readable error.
+    Delete { mailbox: u64, mail_id: u32 },
+    /// `CMSG_ITEM_TEXT_QUERY`: the text of one letter.
+    TextQuery { item_text_id: u32, mail_id: u32 },
+    /// `CMSG_SEND_MAIL`: a whole letter. Boxed for the same reason as
+    /// [`crate::play::social::SocialVerb::Who`]: it carries three strings
+    /// where every other variant carries two words.
+    Send(Box<crate::play::mail::OutgoingMail>),
+    /// `MSG_QUERY_NEXT_MAIL_TIME`: whether any mail is waiting. No body; the
+    /// answer arrives under the same opcode.
+    NextTime,
+}
+
+impl MailVerb {
+    /// The opcode and the body this verb sends: the mail window's ten packets.
+    ///
+    /// Five of the ten are the same twelve-byte body under five different
+    /// opcodes, so in the match below the opcode alone distinguishes them.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use MailVerb as V;
+        let letter = |mailbox: u64, mail_id: u32| crate::play::mail::mail_id_body(mailbox, mail_id);
+        match self {
+            V::List(mailbox) => (
+                Opcode::CMSG_GET_MAIL_LIST,
+                crate::play::mail::get_mail_list_body(*mailbox),
+            ),
+            V::MarkAsRead { mailbox, mail_id } => {
+                (Opcode::CMSG_MAIL_MARK_AS_READ, letter(*mailbox, *mail_id))
+            }
+            V::TakeMoney { mailbox, mail_id } => {
+                (Opcode::CMSG_MAIL_TAKE_MONEY, letter(*mailbox, *mail_id))
+            }
+            V::TakeItem { mailbox, mail_id } => {
+                (Opcode::CMSG_MAIL_TAKE_ITEM, letter(*mailbox, *mail_id))
+            }
+            V::Return { mailbox, mail_id } => (
+                Opcode::CMSG_MAIL_RETURN_TO_SENDER,
+                letter(*mailbox, *mail_id),
+            ),
+            V::Delete { mailbox, mail_id } => {
+                (Opcode::CMSG_MAIL_DELETE, letter(*mailbox, *mail_id))
+            }
+            V::TakeText {
+                mailbox,
+                mail_id,
+                template_id,
+            } => (
+                Opcode::CMSG_MAIL_CREATE_TEXT_ITEM,
+                crate::play::mail::create_text_item_body(*mailbox, *mail_id, *template_id),
+            ),
+            V::TextQuery {
+                item_text_id,
+                mail_id,
+            } => (
+                Opcode::CMSG_ITEM_TEXT_QUERY,
+                crate::play::mail::item_text_query_body(*item_text_id, *mail_id),
+            ),
+            V::Send(mail) => (
+                Opcode::CMSG_SEND_MAIL,
+                crate::play::mail::send_mail_body(mail),
+            ),
+            V::NextTime => (
+                Opcode::MSG_QUERY_NEXT_MAIL_TIME,
+                crate::play::mail::next_mail_time_body(),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

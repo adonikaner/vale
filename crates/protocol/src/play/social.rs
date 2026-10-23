@@ -59,6 +59,7 @@
 //! notice that never appears.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// One row of `SMSG_FRIEND_LIST`.
 ///
@@ -518,6 +519,62 @@ pub fn who_body(request: &WhoRequest) -> Vec<u8> {
         w.cstring(term);
     }
     w.buf
+}
+
+/// The six requests the social panel sends to the socket.
+///
+/// See [`crate::play::social`], which owns the bodies. The enum is not `Copy`
+/// because three verbs carry a string. That follows the wire format: an
+/// addition is by name and a removal is by guid, because the client has no
+/// guid for somebody it has not met and the server has no name for somebody
+/// it already knows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SocialVerb {
+    /// `CMSG_FRIEND_LIST`: ask for the list again. No body. The server sends
+    /// the list unprompted only at login, so this is the only way to read it
+    /// again.
+    List,
+    /// `CMSG_ADD_FRIEND`: `/friend <name>`, and the Who panel's Add Friend
+    /// button.
+    AddFriend(String),
+    /// `CMSG_DEL_FRIEND`, by guid, which the panel has from the list.
+    DelFriend(u64),
+    /// `CMSG_ADD_IGNORE`.
+    AddIgnore(String),
+    /// `CMSG_DEL_IGNORE`.
+    DelIgnore(u64),
+    /// `CMSG_WHO`: the search, already parsed from the typed line. Boxed
+    /// because it is much the largest variant here and every other one is a
+    /// word or a short string.
+    Who(Box<crate::play::social::WhoRequest>),
+}
+
+impl SocialVerb {
+    /// The opcode and the body this verb sends: the social panel's six
+    /// packets, and the only place they are serialised.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use SocialVerb as V;
+        match self {
+            V::List => (Opcode::CMSG_FRIEND_LIST, crate::play::social::friend_list_body()),
+            V::AddFriend(name) => (
+                Opcode::CMSG_ADD_FRIEND,
+                crate::play::social::add_friend_body(name),
+            ),
+            V::DelFriend(guid) => (
+                Opcode::CMSG_DEL_FRIEND,
+                crate::play::social::del_friend_body(*guid),
+            ),
+            V::AddIgnore(name) => (
+                Opcode::CMSG_ADD_IGNORE,
+                crate::play::social::add_ignore_body(name),
+            ),
+            V::DelIgnore(guid) => (
+                Opcode::CMSG_DEL_IGNORE,
+                crate::play::social::del_ignore_body(*guid),
+            ),
+            V::Who(request) => (Opcode::CMSG_WHO, crate::play::social::who_body(request)),
+        }
+    }
 }
 
 #[cfg(test)]

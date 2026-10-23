@@ -59,6 +59,7 @@
 //! round.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// `TaxiMaskSize` — eight `u32`s, 256 bits, one per node, one-based.
 pub const TAXI_MASK_WORDS: usize = 8;
@@ -220,6 +221,61 @@ pub fn activate_taxi_express_body(guid: u64, cost: u32, nodes: &[u32]) -> Vec<u8
         w.u32(*node);
     }
     w.buf
+}
+
+/// The requests a flight master's window sends to the socket.
+///
+/// See [`crate::play::taxi`]. A separate enum rather than `NpcVerb` variants,
+/// for the same reason as [`crate::play::group::PartyVerb`]: a multi-hop
+/// flight carries a list of nodes, and `NpcVerb` is `Copy`.
+///
+/// There is no close verb, as there is none for the gossip menu or the
+/// trainer: `CloseTaxiMap()` clears the window locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaxiVerb {
+    /// `CMSG_TAXIQUERYAVAILABLENODES`: right-click a flight master. The server
+    /// answers with the map, or first with a discovery if this node is new.
+    QueryNodes(u64),
+    /// `CMSG_TAXINODE_STATUS_QUERY`: whether this character knows the
+    /// master's node. It is asked about a unit, not about a window, so it is
+    /// here and not on the taxi board.
+    NodeStatus(u64),
+    /// `CMSG_ACTIVATETAXI`: fly, by two node ids. The source is the map's
+    /// current node, not a node the player chose.
+    Activate { guid: u64, from: u32, to: u32 },
+    /// `CMSG_ACTIVATETAXIEXPRESS`: fly a whole route, source first, when no
+    /// direct path exists.
+    ActivateExpress {
+        guid: u64,
+        cost: u32,
+        nodes: Vec<u32>,
+    },
+}
+
+impl TaxiVerb {
+    /// The opcode and the body this verb sends: the flight master packets.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use TaxiVerb as V;
+        match self {
+            // Both openers are a bare guid, like the other NPC openers.
+            V::QueryNodes(guid) => (
+                Opcode::CMSG_TAXIQUERYAVAILABLENODES,
+                crate::play::gossip::guid_body(*guid),
+            ),
+            V::NodeStatus(guid) => (
+                Opcode::CMSG_TAXINODE_STATUS_QUERY,
+                crate::play::gossip::guid_body(*guid),
+            ),
+            V::Activate { guid, from, to } => (
+                Opcode::CMSG_ACTIVATETAXI,
+                crate::play::taxi::activate_taxi_body(*guid, *from, *to),
+            ),
+            V::ActivateExpress { guid, cost, nodes } => (
+                Opcode::CMSG_ACTIVATETAXIEXPRESS,
+                crate::play::taxi::activate_taxi_express_body(*guid, *cost, nodes),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

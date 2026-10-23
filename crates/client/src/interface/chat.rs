@@ -1,7 +1,7 @@
 //! Chat lines from the session, raised as events for the game's own chat
 //! frame, and lines the interface asks to say, sent to the session.
 //!
-//! [`poll`] drains the session's chat queue and writes one
+//! [`poll`] reads each [`crate::world::incoming::ChatArrived`] and writes one
 //! [`super::events::ChatMessageReceived`] per line, under the `CHAT_MSG_*`
 //! name of the line's type. `ChatFrame.lua` then decides the wording, the
 //! colour, the `[Name]` link and the window the line lands in. A second copy
@@ -18,14 +18,15 @@
 //! name this maps to has to be in that list, or the client raises an event
 //! the list does not declare.
 //!
-//! ## Why the drain is in `interface/` and not `ui/`
+//! ## Who drains the queue
 //!
 //! [`vale_protocol::state::objects::ObjectManager::take_chat`] empties itself
-//! for whoever asks first, so there can be exactly one caller in the process.
-//! When that caller was the egui pane, the game's chat frame could not receive
-//! the lines. The drain is here, and the pane reads the message alongside
-//! every other listener, the one-writer, many-readers pattern
-//! [`super::events`] provides.
+//! for whoever asks first, so there can be exactly one caller in the process:
+//! [`crate::world::incoming::drain_queues`], which writes a
+//! [`crate::world::incoming::ChatArrived`] per line. [`poll`] reads that
+//! message, and anything else that wants the lines reads
+//! [`super::events::ChatMessageReceived`], the one-writer, many-readers
+//! pattern [`super::events`] provides.
 //!
 //! ## Lines that arrive before the interface has loaded
 //!
@@ -61,6 +62,7 @@
 use bevy::prelude::*;
 
 use super::events::ChatMessageReceived;
+use crate::world::incoming::ChatArrived;
 use crate::world::session::Session;
 use vale_protocol::play::chat::ChatType;
 
@@ -68,7 +70,10 @@ pub struct ChatPlugin;
 
 impl Plugin for ChatPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (poll, send).in_set(super::GameSet));
+        app.add_message::<ChatArrived>().add_systems(
+            Update,
+            (poll.after(crate::world::incoming::drain_queues), send).in_set(super::GameSet),
+        );
     }
 }
 
@@ -193,14 +198,15 @@ pub fn system_note(out: &mut MessageWriter<ChatMessageReceived>, text: impl Into
 /// of the session.
 const BACKLOG_LIMIT: usize = 256;
 
-/// Drain what arrived and raise one event per line, or hold the lines while
+/// Raise one event per line that arrived, or hold the lines while
 /// no interface is loaded; the module comment explains why the message of
 /// the day needs the hold.
 fn poll(
     session: Res<Session>,
-    status: Res<crate::world::session::WorldStatus>,
+    status: Res<crate::world::status::WorldStatus>,
     time: Res<Time>,
     host: Option<NonSend<crate::lua::host::LuaHost>>,
+    mut arrived: MessageReader<ChatArrived>,
     mut backlog: Local<Vec<ChatMessageReceived>>,
     // Lines whose speaker is not in view and has no name yet — see
     // [`unnamed`].
@@ -218,7 +224,10 @@ fn poll(
         == Some(crate::lua::host::Directory::Frame);
     let board = host.as_deref().map(crate::lua::panels::channels::held);
     let now = time.elapsed_secs();
-    let taken = active.live.take_chat();
+    let taken: Vec<(String, vale_protocol::play::chat::ChatMessage)> = arrived
+        .read()
+        .map(|line| (line.who.clone(), line.message.clone()))
+        .collect();
     // A speaker out of view has a guid and no name. The reference asks for
     // the name rather than printing the guid, since a channel is heard across
     // the whole zone. The line is held until `CMSG_NAME_QUERY` answers, and

@@ -52,6 +52,7 @@
 //! exactly the vendor that a server misconfiguration produces.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 use crate::play::quest::QuestOffer;
 
 /// The interface's word for each icon byte — see the module note, which is
@@ -513,6 +514,170 @@ fn cstr(r: &mut Reader) -> Option<String> {
     let before = r.remaining();
     let s = r.cstring();
     (r.remaining() + s.len() < before).then_some(s)
+}
+
+/// The requests a gossip, vendor, trainer, stable or bank window sends to the
+/// socket.
+///
+/// See [`crate::play::gossip`], which owns the wire formats, including the
+/// one body in the game whose fields are in reverse order
+/// ([`crate::play::gossip::npc_text_query_body`]), and [`crate::play::trainer`],
+/// which owns the two trainer verbs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NpcVerb {
+    /// `CMSG_GOSSIP_HELLO`: right-click anything with the gossip flag.
+    GossipHello(u64),
+    /// `CMSG_GOSSIP_SELECT_OPTION`, by the server's index.
+    GossipSelect { guid: u64, option: u32 },
+    /// `CMSG_NPC_TEXT_QUERY`: the text behind a menu's text id.
+    TextQuery { text_id: u32, guid: u64 },
+    /// `CMSG_BINDER_ACTIVATE`: confirm binding the hearthstone to this inn.
+    ///
+    /// The answer to `SMSG_BINDER_CONFIRM`, and the packet that performs the
+    /// bind; before it arrives the server has only closed the gossip window.
+    /// The guid must be the innkeeper's; see
+    /// [`crate::play::bindpoint::binder_activate_body`].
+    BinderActivate(u64),
+    /// `CMSG_PAGE_TEXT_QUERY`: the text of page N. The guid is the object
+    /// being read and is optional on the wire; see
+    /// [`crate::play::pagetext::page_text_query_body`].
+    PageTextQuery { page_id: u32, guid: Option<u64> },
+    /// `CMSG_LIST_INVENTORY`: open the shop.
+    ListInventory(u64),
+    /// `CMSG_BUY_ITEM`: `count` items, by item entry.
+    Buy { vendor: u64, entry: u32, count: u8 },
+    /// `CMSG_SELL_ITEM`, by the item object's guid; a count of 0 sells the
+    /// stack.
+    Sell { vendor: u64, item: u64, count: u8 },
+    /// `CMSG_BUYBACK_ITEM`, by the wire's slot number, which starts at 69.
+    Buyback { vendor: u64, wire_slot: u32 },
+    /// `CMSG_REPAIR_ITEM`: the armourer and one item's guid, or 0 for all
+    /// items, which is what `RepairAllItems()` sends. See
+    /// [`crate::play::gossip::repair_item_body`], which also explains why there
+    /// is no reply.
+    Repair { vendor: u64, item: u64 },
+    /// `CMSG_TRAINER_LIST`: open the training window.
+    TrainerList(u64),
+    /// `CMSG_TRAINER_BUY_SPELL`, by the service spell id from the list, which
+    /// is the teaching spell rather than the spell that is learned.
+    TrainerBuy { trainer: u64, spell: u32 },
+    /// `MSG_LIST_STABLED_PETS`: ask for the stable window again. It is sent on
+    /// an `MSG_` opcode, the same opcode the answer arrives under.
+    StableList(u64),
+    /// `CMSG_STABLE_PET`: put the active pet away. The server picks the slot;
+    /// the client names none.
+    StablePet(u64),
+    /// `CMSG_UNSTABLE_PET`: take a pet out, by pet number. Refused while a pet
+    /// is summoned; [`Self::StableSwap`] covers that case.
+    UnstablePet { stable: u64, pet_number: u32 },
+    /// `CMSG_STABLE_SWAP_PET`: exchange the active pet for a stabled one.
+    StableSwap { stable: u64, pet_number: u32 },
+    /// `CMSG_BUY_STABLE_SLOT`: the next slot, at `StableSlotPrices.dbc`'s
+    /// price. The client checks the money first and the server checks it again.
+    BuyStableSlot(u64),
+    /// `CMSG_BANKER_ACTIVATE`: open the bank, at a banker with no gossip bit.
+    /// A banker with the bit opens the same window through its menu. See
+    /// [`crate::play::bank`].
+    BankerActivate(u64),
+    /// `CMSG_BUY_BANK_SLOT`: the next bag slot, at `BankBagSlotPrices.dbc`'s
+    /// price. Success has no reply: the slot count is a byte of
+    /// `PLAYER_BYTES_2` and arrives as an update field.
+    BuyBankSlot(u64),
+}
+
+impl NpcVerb {
+    /// The opcode and the body this verb sends: the gossip, vendor, binder,
+    /// page-text, trainer, stable and bank packets, nineteen opcodes. Built
+    /// like [`crate::play::quest::QuestVerb::packet`], for the same reason.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use NpcVerb as V;
+        match *self {
+            V::GossipHello(guid) => (Opcode::CMSG_GOSSIP_HELLO, crate::play::gossip::guid_body(guid)),
+            V::GossipSelect { guid, option } => (
+                Opcode::CMSG_GOSSIP_SELECT_OPTION,
+                crate::play::gossip::select_option_body(guid, option),
+            ),
+            V::TextQuery { text_id, guid } => (
+                Opcode::CMSG_NPC_TEXT_QUERY,
+                crate::play::gossip::npc_text_query_body(text_id, guid),
+            ),
+            V::BinderActivate(guid) => (
+                Opcode::CMSG_BINDER_ACTIVATE,
+                crate::play::bindpoint::binder_activate_body(guid),
+            ),
+            V::PageTextQuery { page_id, guid } => (
+                Opcode::CMSG_PAGE_TEXT_QUERY,
+                crate::play::pagetext::page_text_query_body(page_id, guid),
+            ),
+            V::ListInventory(guid) => {
+                (Opcode::CMSG_LIST_INVENTORY, crate::play::gossip::guid_body(guid))
+            }
+            V::Buy {
+                vendor,
+                entry,
+                count,
+            } => (
+                Opcode::CMSG_BUY_ITEM,
+                crate::play::gossip::buy_item_body(vendor, entry, count),
+            ),
+            V::Sell {
+                vendor,
+                item,
+                count,
+            } => (
+                Opcode::CMSG_SELL_ITEM,
+                crate::play::gossip::sell_item_body(vendor, item, count),
+            ),
+            V::Buyback { vendor, wire_slot } => (
+                Opcode::CMSG_BUYBACK_ITEM,
+                crate::play::gossip::buyback_body(vendor, wire_slot),
+            ),
+            V::Repair { vendor, item } => (
+                Opcode::CMSG_REPAIR_ITEM,
+                crate::play::gossip::repair_item_body(vendor, item),
+            ),
+            // The trainer's two. The list request is the same bare guid as the
+            // other openers in this method.
+            V::TrainerList(guid) => {
+                (Opcode::CMSG_TRAINER_LIST, crate::play::gossip::guid_body(guid))
+            }
+            V::TrainerBuy { trainer, spell } => (
+                Opcode::CMSG_TRAINER_BUY_SPELL,
+                crate::play::trainer::buy_spell_body(trainer, spell),
+            ),
+            // The stable master's five. Three are the bare guid and two add a
+            // pet number. See [`crate::play::stable`].
+            V::StableList(guid) => (
+                Opcode::MSG_LIST_STABLED_PETS,
+                crate::play::stable::list_stabled_pets_body(guid),
+            ),
+            V::StablePet(guid) => (
+                Opcode::CMSG_STABLE_PET,
+                crate::play::stable::stable_pet_body(guid),
+            ),
+            V::UnstablePet { stable, pet_number } => (
+                Opcode::CMSG_UNSTABLE_PET,
+                crate::play::stable::unstable_pet_body(stable, pet_number),
+            ),
+            V::StableSwap { stable, pet_number } => (
+                Opcode::CMSG_STABLE_SWAP_PET,
+                crate::play::stable::swap_stable_pet_body(stable, pet_number),
+            ),
+            V::BuyStableSlot(guid) => (
+                Opcode::CMSG_BUY_STABLE_SLOT,
+                crate::play::stable::buy_stable_slot_body(guid),
+            ),
+            // The banker's two, both the bare guid. See [`crate::play::bank`].
+            V::BankerActivate(guid) => (
+                Opcode::CMSG_BANKER_ACTIVATE,
+                crate::play::bank::banker_activate_body(guid),
+            ),
+            V::BuyBankSlot(guid) => (
+                Opcode::CMSG_BUY_BANK_SLOT,
+                crate::play::bank::buy_bank_slot_body(guid),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

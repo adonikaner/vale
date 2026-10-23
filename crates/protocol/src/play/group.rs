@@ -92,6 +92,7 @@
 //! so it lives in `vale_client::game::session::raid`.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// **What the result is about** — `PartyOperation`, and vmangos only ever sends
 /// two of them.
@@ -822,6 +823,116 @@ pub fn request_stats_body(guid: u64) -> Vec<u8> {
 /// disbanding one are the same opcode, and which happens is the server's
 /// decision off whether you are the leader.
 pub const EMPTY: &[u8] = &[];
+
+/// The requests the party and raid interface sends to the socket.
+///
+/// See [`crate::play::group`], which owns the bodies. The enum is not `Copy`
+/// because some verbs carry a name. That follows the wire format: an invite
+/// and the by-name kick and subgroup moves are strings, and everything else is
+/// a guid or nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PartyVerb {
+    /// `CMSG_GROUP_INVITE`: `/invite <name>`, and all of `InviteByName`.
+    Invite(String),
+    /// `CMSG_GROUP_ACCEPT`: press Accept on the popup. No body.
+    Accept,
+    /// `CMSG_GROUP_DECLINE`: press Decline on the popup. No body.
+    Decline,
+    /// `CMSG_GROUP_DISBAND`: one opcode for both leaving and disbanding. The
+    /// server decides which from whether this character leads, so `LeaveParty`
+    /// has nothing to decide.
+    Leave,
+    /// `CMSG_GROUP_UNINVITE`: kick by name, which is what `UninviteUnit(name)`
+    /// has and what the wire accepts.
+    Uninvite(String),
+    /// `CMSG_GROUP_UNINVITE_GUID`: the same kick by guid, for a caller that has
+    /// one. Both exist on the wire; neither is a fallback for the other.
+    UninviteGuid(u64),
+    /// `CMSG_GROUP_SET_LEADER`: promote, by guid. The reply names the new
+    /// leader by name.
+    SetLeader(u64),
+    /// `CMSG_REQUEST_PARTY_MEMBER_STATS`: the only poll for party data, for a
+    /// member too far away to be in the object manager.
+    RequestStats(u64),
+    /// `CMSG_GROUP_RAID_CONVERT`: the Raid tab's convert button. No body. The
+    /// client checks two conditions (there is a `party1`, and this character
+    /// leads); the server checks them again and answers a refusal with no
+    /// packet.
+    ConvertToRaid,
+    /// `CMSG_GROUP_CHANGE_SUB_GROUP`: move a member into a subgroup, by name,
+    /// with a zero-based subgroup. See
+    /// [`crate::play::group::change_sub_group_body`].
+    ChangeSubGroup { name: String, subgroup: u8 },
+    /// `CMSG_GROUP_SWAP_SUB_GROUP`: exchange two members, which is what a drop
+    /// onto an occupied slot does.
+    SwapSubGroup { name: String, swap_with: String },
+    /// `CMSG_GROUP_ASSISTANT_LEADER`: promote to assistant, or demote. By guid
+    /// in 1.12, while the two subgroup verbs are by name.
+    SetAssistant { guid: u64, assistant: bool },
+    /// `MSG_RAID_READY_CHECK` with no body: start a ready check. Leader and
+    /// assistants only, which the server enforces.
+    StartReadyCheck,
+    /// `MSG_RAID_READY_CHECK` with one byte: answer a ready check.
+    AnswerReadyCheck(bool),
+}
+
+impl PartyVerb {
+    /// The opcode and the body this verb sends: the party and raid packets.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use PartyVerb as V;
+        match self {
+            V::Invite(name) => (Opcode::CMSG_GROUP_INVITE, crate::play::group::invite_body(name)),
+            V::Accept => (Opcode::CMSG_GROUP_ACCEPT, crate::play::group::EMPTY.to_vec()),
+            V::Decline => (Opcode::CMSG_GROUP_DECLINE, crate::play::group::EMPTY.to_vec()),
+            // Leaving and disbanding use one opcode. See [`V::Leave`].
+            V::Leave => (Opcode::CMSG_GROUP_DISBAND, crate::play::group::EMPTY.to_vec()),
+            V::Uninvite(name) => (
+                Opcode::CMSG_GROUP_UNINVITE,
+                crate::play::group::uninvite_body(name),
+            ),
+            V::UninviteGuid(guid) => (
+                Opcode::CMSG_GROUP_UNINVITE_GUID,
+                crate::play::group::guid_body(*guid),
+            ),
+            V::SetLeader(guid) => (
+                Opcode::CMSG_GROUP_SET_LEADER,
+                crate::play::group::guid_body(*guid),
+            ),
+            V::RequestStats(guid) => (
+                Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS,
+                crate::play::group::request_stats_body(*guid),
+            ),
+            // An empty body, like Accept, Decline and Leave. See
+            // [`V::ConvertToRaid`].
+            V::ConvertToRaid => (
+                Opcode::CMSG_GROUP_RAID_CONVERT,
+                crate::play::group::EMPTY.to_vec(),
+            ),
+            V::ChangeSubGroup { name, subgroup } => (
+                Opcode::CMSG_GROUP_CHANGE_SUB_GROUP,
+                crate::play::group::change_sub_group_body(name, *subgroup),
+            ),
+            V::SwapSubGroup { name, swap_with } => (
+                Opcode::CMSG_GROUP_SWAP_SUB_GROUP,
+                crate::play::group::swap_sub_group_body(name, swap_with),
+            ),
+            V::SetAssistant { guid, assistant } => (
+                Opcode::CMSG_GROUP_ASSISTANT_LEADER,
+                crate::play::group::assistant_leader_body(*guid, *assistant),
+            ),
+            // One opcode for both; the body length tells them apart. See
+            // [`crate::play::group::ReadyCheck`].
+            V::StartReadyCheck => (
+                Opcode::MSG_RAID_READY_CHECK,
+                crate::play::group::EMPTY.to_vec(),
+            ),
+            V::AnswerReadyCheck(ready) => (
+                Opcode::MSG_RAID_READY_CHECK,
+                crate::play::group::ready_check_answer_body(*ready),
+            ),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

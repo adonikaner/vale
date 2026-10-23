@@ -44,7 +44,7 @@
 //! one.
 
 use crate::state::fields;
-use crate::state::objects::{Entity, HeldItem};
+use crate::play::items::HeldItem;
 
 /// The five attributes, in the order `SPELL_STAT0_NAME`..`4` names them:
 /// Strength, Agility, Stamina, Intellect, Spirit.
@@ -194,20 +194,10 @@ pub struct UnitStats {
 }
 
 impl UnitStats {
-    /// Decode, or `None` for a unit whose stat block the server never sent —
-    /// which is every unit but the local player. See the module comment.
-    ///
-    /// `weapons` is [`crate::state::objects::ObjectManager::weapons_of`]'s answer,
-    /// which is where the three skill lines and the off-hand test come from:
-    /// the *fields* say what a skill is worth and the *item* says which skill
-    /// to look up.
-    pub fn read(entity: &Entity, weapons: &[HeldItem; 3]) -> Option<UnitStats> {
-        Self::decode(|index| entity.field(index), weapons)
-    }
-
     /// The same, from bare `(index, value)` pairs.
     ///
-    /// For **tests on the far side of the crate boundary**: an [`Entity`] is
+    /// For **tests on the far side of the crate boundary**: an
+    /// [`Entity`](crate::state::objects::Entity) is
     /// the object manager's to make, and `lua::paperdoll`'s checks want a real
     /// block rather than a hand-written double of one. Same decode, so a test
     /// written against this cannot pass while the client's read fails.
@@ -224,7 +214,7 @@ impl UnitStats {
     }
 
     /// The decode itself, over anything that can answer a field.
-    fn decode(
+    pub(crate) fn decode(
         field: impl Fn(u16) -> Option<u32>,
         weapons: &[HeldItem; 3],
     ) -> Option<UnitStats> {

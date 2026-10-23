@@ -70,7 +70,7 @@ fn run_ambience(
     clock: Res<crate::render::sky::WorldClock>,
     game: Res<crate::assets::GameAssets>,
     // …and the sky, whose loop outranks the place's. See below.
-    status: Res<crate::world::session::WorldStatus>,
+    status: Res<crate::world::status::WorldStatus>,
     // A ghost hears the ghost loop instead of the place's or the weather's.
     dying: Option<Res<crate::interface::death::Dying>>,
 ) {

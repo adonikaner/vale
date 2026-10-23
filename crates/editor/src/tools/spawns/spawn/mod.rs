@@ -285,7 +285,7 @@ pub trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     /// What a preview body is built from.
     fn look(spawn: &Self::Spawn) -> Self::Look;
     /// A preview body for a spawn, given its guid.
-    fn body(guid: u64, spawn: &Self::Spawn) -> vale_client::world::session::WorldEntity;
+    fn body(guid: u64, spawn: &Self::Spawn) -> vale_client::world::entity::WorldEntity;
     /// Where a preview body stands, in Bevy's axes.
     fn transform(spawn: &Self::Spawn) -> Transform;
     /// Whether the chosen template is put on the cursor at all.
@@ -296,7 +296,7 @@ pub trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     /// world's.
     fn ghost_mark(_marks: &mut crate::marks::Marks, _centre: Vec3, _at: Vec3, _facing: f32) {}
     /// The body on the cursor before it is placed.
-    fn ghost_body(guid: u64, known: &Self::Known) -> vale_client::world::session::WorldEntity;
+    fn ghost_body(guid: u64, known: &Self::Known) -> vale_client::world::entity::WorldEntity;
     /// Whether another mode of the tool takes this press.
     fn yields_press(_waypoints: Option<&crate::tools::spawns::waypoints::Waypoints>) -> bool {
         false

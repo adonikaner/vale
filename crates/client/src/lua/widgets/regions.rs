@@ -299,11 +299,10 @@ pub(super) fn text_width(lua: &mlua::Lua, style: &mlua::Table, text: &str) -> f6
 /// How many rows `text` folds into at width `fold`, in this region's own face.
 ///
 /// The row counterpart of [`text_width`], and the single measurement for the
-/// same reason: the height a caller reserves and the galley the painter draws
+/// same reason: the height a caller reserves and the rows the painter draws
 /// must fold at the same places, in the same face, at the same size.
-/// [`super::text::rows`] is the measurement (word by word, with a first word
-/// too long for the row broken rather than moved to the next row), and the
-/// painter folds by it too.
+/// [`super::text::rows`] is the measurement, and it and the painter both fold
+/// through `vale_assets::interface::font::fold`.
 ///
 /// The tooltip previously estimated `ceil(measured / fold)`, which is the row
 /// count only when the words land exactly on the fold. Real text leaves part
@@ -745,8 +744,8 @@ pub struct Paint {
     /// it with a hard black edge.
     pub outline: Outline,
     /// Fold the text at the rectangle's width. [`wrap_width`] is the one place
-    /// that decides, so the height [`intrinsic`] reserves and the galley the
-    /// painter builds cannot disagree about whether there is a fold.
+    /// that decides, so the height [`intrinsic`] reserves and the rows the
+    /// painter lays out cannot disagree about whether there is a fold.
     pub wrap: bool,
     /// How many rows the text may fold into: `<FontString maxLines="3">`, or 0
     /// for "as many as it takes".

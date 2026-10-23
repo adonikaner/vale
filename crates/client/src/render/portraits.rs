@@ -5,7 +5,7 @@
 //!   -> Units       the unit the token names this frame
 //!   -> assets::dress + ModelCache      the model, dressed as it is in the world
 //!   -> one camera, one model, one render layer, one 128x96 image
-//!   -> EguiUserTextures                a texture id ui::framexml can draw
+//!   -> Portraits::image                the image ui::mesh binds
 //! ```
 //!
 //! ## Each portrait has its own render target
@@ -26,7 +26,7 @@
 //! that camera into Bevy's axes and points a camera along it. The one number it
 //! adds is the anamorphic squeeze, which `render::lens::vertical_fov` already
 //! records: `M2Camera::fov` is a diagonal angle, and the portrait is rendered
-//! at a fixed 4:3 into a square. So the image is 4:3, egui draws it into a
+//! at a fixed 4:3 into a square. So the image is 4:3, the painter draws it into a
 //! square region, and the vertical field of view is `fov / sqrt((4/3)² + 1)`,
 //! which is `0.6 · fov`.
 //!
@@ -36,8 +36,8 @@
 //!   call. `SetPortraitTexture` in the 1.12.1 client renders one image and
 //!   keeps it. This module points a camera at a model, renders for
 //!   [`SETTLE_FRAMES`] while the meshes allocate and the skin uploads, and then
-//!   [`shutter`] switches the camera off; the image persists and egui keeps
-//!   sampling it. The camera used to stay active, and that was the largest
+//!   [`shutter`] switches the camera off; the image persists and the painter
+//!   keeps sampling it. The camera used to stay active, and that was the largest
 //!   single per-player cost in the client: about 1.5 ms of `Core3d` CPU encode
 //!   per portrait per frame (Tracy, 2026-08), paid for the player's own frame
 //!   in every session and again for the target and every party member. The
@@ -56,22 +56,11 @@
 //!   is stated because this module could animate the portrait and does not.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
-
-use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
-use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
-use bevy::render::mesh::skinning::SkinnedMesh;
-use bevy::render::render_resource::{
-    Extent3d, TextureDimension, TextureFormat, TextureUsages,
-};
 
-use vale_assets::world::m2::M2Skeleton;
-
-use crate::render::axes;
 use crate::render::models::material::Materials;
+use crate::render::offscreen::{self, layers, Picture};
 use crate::render::models::{Lookup, ModelAssets, ModelCache, SceneLighting};
 use crate::world::entities::{DisplayCache, Joint};
 
@@ -86,18 +75,6 @@ const SIZE: UVec2 = UVec2::new(128, 96);
 /// The aspect ratio the field of view is computed at. [`SIZE`] is 4:3 because
 /// of this value. See the module note.
 const ASPECT: f32 = 4.0 / 3.0;
-
-/// The maximum number of portraits kept at once.
-///
-/// Nine: the player, the target, target-of-target, four party members, the pet
-/// and one spare. Each uses a render layer. The cap exists because the
-/// interface, not this client, chooses the tokens: without it, an addon asking
-/// for a portrait of `"party8"` would create a new camera each time.
-pub(super) const MAX: usize = 9;
-
-/// The first render layer portraits use. Layer 0 is the world's, and every
-/// entity in this client that does not set a layer is on it.
-pub(super) const FIRST_LAYER: usize = 1;
 
 /// [`crate::ui::report::HudReport`] slot 32, immediately under the interface's
 /// line at 31. The interface requests portraits, so the number of cameras they
@@ -143,16 +120,8 @@ struct Portrait {
     /// The values this portrait was built from, used to detect changes. A new
     /// guid, a shapeshift or a helmet causes a rebuild.
     built: Built,
-    /// The image the camera draws into, and the id egui knows it by.
-    image: Handle<Image>,
-    texture: bevy_egui::egui::TextureId,
-    camera: Entity,
-    /// The model root; despawning it takes the batches and joints with it.
-    root: Entity,
-    joints: Vec<Entity>,
-    skeleton: Option<Arc<M2Skeleton>>,
-    /// The render layer this model and camera have to themselves.
-    layer: usize,
+    /// The image, the camera and the model.
+    picture: Picture,
     /// Whether the joints have been written. The pose is a still (see the
     /// module note), so it is written once and never advanced; this flag
     /// records that it has been written.
@@ -167,7 +136,7 @@ struct Portrait {
     /// per-player cost in the client. The camera runs for [`SETTLE_FRAMES`]
     /// after the pose is written (meshes allocate and textures upload over the
     /// first few frames), and then [`shutter`] deactivates it; the rendered
-    /// image persists and egui keeps sampling it. A rebuild spawns a new
+    /// image persists and the painter keeps sampling it. A rebuild spawns a new
     /// camera, so no camera is ever reactivated.
     settle: u8,
 }
@@ -195,26 +164,20 @@ pub struct Portraits {
     ///
     /// The set holds the game's unit tokens and stays small. If it were cleared
     /// each frame, a portrait would disappear on every frame the interface did
-    /// not ask again. Capped at [`WANTED_CAP`]; the camera cap is [`MAX`].
+    /// not ask again. Capped at [`WANTED_CAP`]; the camera cap is the length of
+    /// [`layers::PORTRAITS`], one render layer each.
     wanted: BTreeSet<String>,
     /// The portraits, one per token that names a unit.
     taken: BTreeMap<String, Portrait>,
 }
 
 impl Portraits {
-    /// The texture id for a token, or `None` while there is no portrait: on the
-    /// frame a target is acquired, and on any frame its model is still loading.
-    /// The painter then draws whatever the `<Texture>` already had.
-    pub fn texture(&self, token: &str) -> Option<bevy_egui::egui::TextureId> {
-        Some(self.taken.get(token)?.texture)
-    }
-
-    /// The same portrait as the image the camera draws into, for the mesh
-    /// painter, which binds textures rather than egui ids. This returns `Some`
-    /// exactly when [`Self::texture`] does, because both fields are written
-    /// together when a portrait is built.
+    /// The image the camera draws into for a token, or `None` while there is
+    /// no portrait: on the frame a target is acquired, and on any frame its
+    /// model is still loading. The painter then draws whatever the `<Texture>`
+    /// already had.
     pub fn image(&self, token: &str) -> Option<Handle<Image>> {
-        Some(self.taken.get(token)?.image.clone())
+        Some(self.taken.get(token)?.picture.image.clone())
     }
 
     /// How many portraits are kept, for the HUD line.
@@ -224,8 +187,9 @@ impl Portraits {
 
     /// The lowest render layer nobody is using.
     fn free_layer(&self) -> Option<usize> {
-        (FIRST_LAYER..FIRST_LAYER + MAX)
-            .find(|layer| self.taken.values().all(|p| p.layer != *layer))
+        offscreen::free_layer(layers::PORTRAITS, |layer| {
+            self.taken.values().any(|p| p.picture.layer == layer)
+        })
     }
 }
 
@@ -276,8 +240,8 @@ fn report(portraits: Res<Portraits>, mut hud: ResMut<crate::ui::report::HudRepor
 }
 
 /// How many token names may accumulate. This bounds an addon that invents
-/// tokens; it does not bound cameras. The camera cap is [`MAX`], enforced
-/// where the layer is allocated, in [`follow`].
+/// tokens; it does not bound cameras. The camera cap is the length of
+/// [`layers::PORTRAITS`], enforced where the layer is allocated, in [`follow`].
 ///
 /// The two bounds must stay separate. When one cap served both, the interface
 /// named `pet` and `party1..4` unconditionally at load, and this client could
@@ -313,7 +277,6 @@ fn follow(
     // `models::loader::MergeSource`.
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    mut egui: ResMut<bevy_egui::EguiUserTextures>,
 ) {
     let tokens: Vec<String> = portraits.wanted.iter().cloned().collect();
     for token in tokens {
@@ -336,7 +299,7 @@ fn follow(
         // on each arriving item template blanked the frame once per item until
         // all of them had arrived.
         let Some(built) = wanted else {
-            take_down(&mut commands, &mut portraits, &mut egui, &token);
+            take_down(&mut commands, &mut portraits, &token);
             continue;
         };
         if portraits
@@ -344,11 +307,11 @@ fn follow(
             .get(&token)
             .is_some_and(|p| p.built.guid != built.guid)
         {
-            take_down(&mut commands, &mut portraits, &mut egui, &token);
+            take_down(&mut commands, &mut portraits, &token);
         }
 
         let Some(display) =
-            displays.resolve(&assets, unit_kind(&units, &token), built.display_id)
+            displays.resolve(&assets, offscreen::unit_kind(&units, &token), built.display_id)
         else {
             continue;
         };
@@ -410,14 +373,13 @@ fn follow(
         };
         // The replacement is ready, so remove the old portrait and free its
         // layer for the rebuild below.
-        take_down(&mut commands, &mut portraits, &mut egui, &token);
+        take_down(&mut commands, &mut portraits, &token);
         let Some(layer) = portraits.free_layer() else {
             continue;
         };
         let portrait = build(
             &mut commands,
             &mut images,
-            &mut egui,
             &model,
             built,
             layer,
@@ -468,18 +430,6 @@ fn subject(units: &crate::interface::api::Units, token: &str) -> Option<Built> {
     })
 }
 
-/// The object type of a token's unit, which selects the display table its
-/// display id is resolved through.
-fn unit_kind(
-    units: &crate::interface::api::Units,
-    token: &str,
-) -> vale_protocol::state::update::ObjectType {
-    crate::interface::api::UnitId::parse(token)
-        .and_then(|id| units.get(id))
-        .map(|unit| unit.kind)
-        .unwrap_or(vale_protocol::state::update::ObjectType::Unit)
-}
-
 /// Spawn the image, the camera and the model for one portrait.
 ///
 /// This spawns no particle emitters and no ribbon trails, unlike
@@ -492,129 +442,35 @@ fn unit_kind(
 fn build(
     commands: &mut Commands,
     images: &mut Assets<Image>,
-    egui: &mut bevy_egui::EguiUserTextures,
     model: &ModelAssets,
     built: Built,
     layer: usize,
 ) -> Portrait {
-    let image = images.add(target_image());
-    let texture = egui.add_image(bevy_egui::EguiTextureHandle::Strong(image.clone()));
-    let layers = RenderLayers::layer(layer);
-
-    // --- The model, alone on its render layer at the origin ---
-
-    let root = commands
-        .spawn((Transform::default(), Visibility::default()))
-        .id();
-    let mut joints = Vec::new();
-    if model.skeleton.is_some() {
-        joints.extend((0..model.joint_count).map(|_| {
-            commands
-                .spawn((GlobalTransform::default(), Joint, ChildOf(root)))
-                .id()
-        }));
-    }
-    for draw in &model.draws {
-        let mut part = commands.spawn((
-            Mesh3d(draw.mesh.clone()),
-            MeshMaterial3d(draw.material.clone()),
-            Transform::default(),
-            ChildOf(root),
-            // Set on every drawn entity, because Bevy reads `RenderLayers` per
-            // entity and does not propagate it down a hierarchy. A part without
-            // the layer is drawn by the world camera, as a floating head at the
-            // origin of the map.
-            layers.clone(),
-            // The portrait camera can sit inside the model's bounding box, so
-            // frustum culling against that box is wrong here: a model whose
-            // declared box does not contain the camera can be culled out of its
-            // own portrait.
-            NoFrustumCulling,
-        ));
-        // Bind the batch's own bones, not the model's whole skeleton.
-        // `models::skin_for` is the one place that decides this. When mesh
-        // joint indices became subset-local, three spawners were converted and
-        // are named in that function's doc; this fourth one was missed. It kept
-        // binding the whole skeleton, every vertex was posed by the wrong bone,
-        // and the face was stretched across the frame. No headless check
-        // covers this.
-        if let Some(joints) = crate::render::models::skin_for(draw, &joints) {
-            part.insert(SkinnedMesh {
-                inverse_bindposes: model.inverse_bindposes.clone(),
-                joints,
-            });
-        }
-    }
-
-    // --- The camera, along the model file's portrait camera ---
-
-    let framing = model.portrait;
-    let eye = axes::to_bevy(framing.eye);
-    // A degenerate framing has its aim point moved rather than aimed at the
-    // eye. An eye and an aim at the same place make `looking_at` produce a NaN
-    // basis, and a NaN view matrix breaks culling for the whole frame, for
-    // every mesh in the world. The guards in the framing rule should prevent
-    // this case, and the check costs one comparison. `render::glue::aim_camera`
-    // makes the same check and returns instead; that is not possible here
-    // because the camera must exist.
-    let aim = match axes::to_bevy(framing.aim) {
-        target if eye.distance_squared(target) < 1e-6 => eye - Vec3::Z,
-        target => target,
-    };
-    let camera = commands
-        .spawn((
-            Camera3d::default(),
-            Camera {
-                // Before the world camera, which is order 0. A camera drawing
-                // into an image that is sampled later in the frame must finish
-                // first.
-                order: -1 - layer as isize,
-                // Opaque black. The 1.12.1 client draws a portrait over a
-                // black ground, so the disc behind an NPC's face is black
-                // rather than the unit frame's art. The painter's disc cuts
-                // the square to the frame's round hole.
-                clear_color: ClearColorConfig::Custom(Color::BLACK),
-                ..default()
-            },
-            // The render target is its own component in Bevy 0.19, as in
-            // `world::camera::spawn`, which writes `WorldFrame::target()`.
-            RenderTarget::Image(ImageRenderTarget {
-                handle: image.clone(),
-                scale_factor: 1.0,
-            }),
-            // The world camera sets the same space for the same reason. Every
-            // model shader in this client ends in `atmosphere::to_frame` and
-            // writes the game's own bytes, so a camera in the default space
-            // would encode them a second time and give the interface a
-            // washed-out face. See `crate::render::present`.
-            bevy::camera::CompositingSpace::Srgb,
-            Projection::Perspective(PerspectiveProjection {
-                fov: crate::render::lens::vertical_fov(framing.fov, ASPECT),
-                near: framing.near.max(0.01),
-                far: framing.far.max(framing.near.max(0.01) * 10.0),
-                aspect_ratio: ASPECT,
-                ..default()
-            }),
-            // No multisampling and no tonemapping: this is a 128x96 image of
-            // one model. Both are set explicitly because `Camera3d` defaults to
-            // multisampled and tonemapped.
-            Msaa::Off,
-            bevy::core_pipeline::tonemapping::Tonemapping::None,
-            layers.clone(),
-            Transform::from_translation(eye).looking_at(aim, Vec3::Y),
-            Name::new("portrait"),
-        ))
-        .id();
-
+    let picture = offscreen::spawn(
+        commands,
+        images,
+        model,
+        // The model file's portrait camera.
+        model.portrait,
+        SIZE,
+        layer,
+        (Transform::default(), Visibility::default()),
+        offscreen::Lens {
+            aspect: ASPECT,
+            // Opaque black. The 1.12.1 client draws a portrait over a black
+            // ground, so the disc behind an NPC's face is black rather than
+            // the unit frame's art. The painter's disc cuts the square to the
+            // frame's round hole.
+            clear: Color::BLACK,
+            // No multisampling: this is a 128x96 image of one model.
+            msaa: Msaa::Off,
+            name: "portrait",
+        },
+        Handle::clone,
+    );
     Portrait {
         built,
-        image,
-        texture,
-        camera,
-        root,
-        joints,
-        skeleton: model.skeleton.clone(),
-        layer,
+        picture,
         posed: false,
         settle: SETTLE_FRAMES,
     }
@@ -645,14 +501,14 @@ fn shutter(mut portraits: ResMut<Portraits>, mut cameras: Query<&mut Camera>) {
     for portrait in portraits.taken.values_mut() {
         // The content is not final: the pose system is still waiting for the
         // joint entities to exist. Keep rendering.
-        if !(portrait.posed || portrait.joints.is_empty()) {
+        if !(portrait.posed || portrait.picture.joints.is_empty()) {
             continue;
         }
         if portrait.settle > 0 {
             portrait.settle -= 1;
             continue;
         }
-        if let Ok(mut camera) = cameras.get_mut(portrait.camera) {
+        if let Ok(mut camera) = cameras.get_mut(portrait.picture.camera) {
             if camera.is_active {
                 camera.is_active = false;
             }
@@ -669,10 +525,10 @@ fn shutter(mut portraits: ResMut<Portraits>, mut cameras: Query<&mut Camera>) {
 /// removed after the first pass).
 fn pose(mut portraits: ResMut<Portraits>, mut joints: Query<&mut GlobalTransform, With<Joint>>) {
     for portrait in portraits.taken.values_mut() {
-        if portrait.posed || portrait.joints.is_empty() {
+        if portrait.posed || portrait.picture.joints.is_empty() {
             continue;
         }
-        let Some(skeleton) = &portrait.skeleton else {
+        let Some(skeleton) = &portrait.picture.skeleton else {
             portrait.posed = true;
             continue;
         };
@@ -680,71 +536,17 @@ fn pose(mut portraits: ResMut<Portraits>, mut joints: Query<&mut GlobalTransform
             .best_sequence(&[vale_assets::world::m2::anim::STAND])
             .unwrap_or(0);
         let pose = skeleton.pose(sequence, 0, 0, None, Default::default());
-        for (bone, &joint) in pose.iter().zip(portrait.joints.iter()) {
-            if let Ok(mut transform) = joints.get_mut(joint) {
-                *transform = GlobalTransform::from(Affine3A::from_mat4(axes::pose_to_bevy(bone)));
-            }
-        }
-        // The identity joint at the end, which vertices with no bone weights
-        // use. Without it the skinning shader collapses them to the origin.
-        // `world::entities` and `render::glue` spawn the same extra joint.
-        if let Some(&last) = portrait.joints.last() {
-            if let Ok(mut transform) = joints.get_mut(last) {
-                *transform = GlobalTransform::default();
-            }
-        }
+        offscreen::write_joints(&mut joints, &portrait.picture.joints, &pose, Affine3A::IDENTITY);
         portrait.posed = true;
     }
 }
 
-/// Remove one portrait: the model, the camera, the image and egui's handle to
-/// it.
-fn take_down(
-    commands: &mut Commands,
-    portraits: &mut Portraits,
-    egui: &mut bevy_egui::EguiUserTextures,
-    token: &str,
-) {
-    let Some(portrait) = portraits.taken.remove(token) else {
-        return;
-    };
-    commands.entity(portrait.root).despawn();
-    commands.entity(portrait.camera).despawn();
-    // Remove egui's handle as well. Otherwise the id stays registered against
-    // an image asset nothing else holds, which leaks one 48 KB image per
-    // target change; over a session of fighting many creatures that adds up
-    // to a large, unexplained memory growth.
-    egui.remove_image(&portrait.image);
-}
-
-/// The image a portrait is drawn into.
-///
-/// The format is `Rgba8UnormSrgb`, for the same reason
-/// `render::present::WorldFrame` uses it. The camera's main texture holds raw
-/// bytes (`CompositingSpace::Srgb`), and Bevy's upscaling blit applies
-/// `SRGB_TO_LINEAR` on output because it assumes the destination re-encodes;
-/// this image is that destination. With a linear format the linear value would
-/// be stored as is, and the face would render as dark as dusk in daylight, the
-/// same artefact that note describes for the world frame.
-fn target_image() -> Image {
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: SIZE.x,
-            height: SIZE.y,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        // Transparent black, so a portrait whose camera has not run yet shows
-        // the frame's own art rather than a coloured square.
-        &[0, 0, 0, 0],
-        TextureFormat::Rgba8UnormSrgb,
-        // Render world only: nothing on the CPU reads this image, and egui
-        // samples it on the GPU like any other texture.
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_descriptor.usage =
-        TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST;
-    image
+/// Remove one portrait: the model, the camera and the image. The image asset
+/// is freed when the portrait's handle, the last strong one, is dropped here.
+fn take_down(commands: &mut Commands, portraits: &mut Portraits, token: &str) {
+    if let Some(portrait) = portraits.taken.remove(token) {
+        portrait.picture.take_down(commands);
+    }
 }
 
 #[cfg(test)]
@@ -772,7 +574,7 @@ mod tests {
     fn layers_are_handed_out_one_apiece_and_run_out_rather_than_repeating() {
         let mut portraits = Portraits::default();
         let mut used = Vec::new();
-        for i in 0..MAX {
+        for i in 0..layers::PORTRAITS.len() {
             let layer = portraits.free_layer().expect("a free layer");
             assert!(!used.contains(&layer), "layer {layer} handed out twice");
             used.push(layer);
@@ -785,13 +587,14 @@ mod tests {
                         appearance: None,
                         equipment: Vec::new(),
                     },
-                    image: Handle::default(),
-                    texture: bevy_egui::egui::TextureId::Managed(0),
-                    camera: Entity::from_raw_u32(1).expect("an entity id"),
-                    root: Entity::from_raw_u32(2).expect("an entity id"),
-                    joints: Vec::new(),
-                    skeleton: None,
-                    layer,
+                    picture: Picture {
+                        image: Handle::default(),
+                        camera: Entity::from_raw_u32(1).expect("an entity id"),
+                        root: Entity::from_raw_u32(2).expect("an entity id"),
+                        joints: Vec::new(),
+                        skeleton: None,
+                        layer,
+                    },
                     posed: true,
                     settle: 0,
                 },
@@ -807,9 +610,7 @@ mod tests {
     /// empty square on the first frame.
     #[test]
     fn every_portrait_camera_draws_before_the_world() {
-        let orders: Vec<isize> = (FIRST_LAYER..FIRST_LAYER + MAX)
-            .map(|layer| -1 - layer as isize)
-            .collect();
+        let orders: Vec<isize> = layers::PORTRAITS.map(offscreen::order).collect();
         assert!(orders.iter().all(|o| *o < 0));
         let mut sorted = orders.clone();
         sorted.sort_unstable();
@@ -846,13 +647,14 @@ mod tests {
                 appearance: None,
                 equipment: Vec::new(),
             },
-            image: Handle::default(),
-            texture: bevy_egui::egui::TextureId::Managed(0),
-            camera,
-            root: Entity::from_raw_u32(9).expect("an entity id"),
-            joints,
-            skeleton: None,
-            layer: FIRST_LAYER,
+            picture: Picture {
+                image: Handle::default(),
+                camera,
+                root: Entity::from_raw_u32(9).expect("an entity id"),
+                joints,
+                skeleton: None,
+                layer: layers::PORTRAITS.start,
+            },
             posed,
             settle,
         };

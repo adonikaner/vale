@@ -63,6 +63,7 @@
 //! `Server/Packets/Trade.cpp` (the layouts) and `SharedDefines.h` (the codes).
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// Seven slots on each side: six traded and the one that is not.
 pub const TRADE_SLOT_COUNT: usize = 7;
@@ -316,6 +317,68 @@ pub fn set_trade_gold_body(copper: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(copper);
     w.buf
+}
+
+/// The ten requests the trade window sends to the socket. See
+/// [`crate::play::trade`], which has the layouts. Six have no body;
+/// `Initiate` names the partner, `SetItem` a bag square by the server's
+/// numbering, `ClearItem` a slot, and `SetGold` an amount.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TradeVerb {
+    /// `CMSG_INITIATE_TRADE`: `InitiateTrade(unit)`.
+    Initiate(u64),
+    /// `CMSG_BEGIN_TRADE`: the `TRADE` popup's Yes.
+    Begin,
+    /// `CMSG_BUSY_TRADE`: the refusal a client sends while it already has a
+    /// window open.
+    Busy,
+    /// `CMSG_IGNORE_TRADE`: the refusal the `BlockTrades` CVar sends.
+    Ignore,
+    /// `CMSG_ACCEPT_TRADE`: the Trade button.
+    Accept,
+    /// `CMSG_UNACCEPT_TRADE`: `CancelTradeAccept()`, the Cancel button while
+    /// accepted.
+    Unaccept,
+    /// `CMSG_CANCEL_TRADE`: the popup's No, `CloseTrade()`, and closing the
+    /// window.
+    Cancel,
+    /// `CMSG_SET_TRADE_ITEM`: `ClickTradeButton(i)` with an item held.
+    SetItem { trade_slot: u8, bag: u8, slot: u8 },
+    /// `CMSG_CLEAR_TRADE_ITEM`: `ClickTradeButton(i)` with nothing held, on a
+    /// filled slot.
+    ClearItem { trade_slot: u8 },
+    /// `CMSG_SET_TRADE_GOLD`: `SetTradeMoney(copper)`.
+    SetGold(u32),
+}
+
+impl TradeVerb {
+    /// The opcode and the body this verb sends: ten opcodes, built like
+    /// [`crate::play::mail::MailVerb::packet`].
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use crate::play::trade as t;
+        use TradeVerb as V;
+        match *self {
+            V::Initiate(guid) => (Opcode::CMSG_INITIATE_TRADE, t::initiate_trade_body(guid)),
+            V::Begin => (Opcode::CMSG_BEGIN_TRADE, Vec::new()),
+            V::Busy => (Opcode::CMSG_BUSY_TRADE, Vec::new()),
+            V::Ignore => (Opcode::CMSG_IGNORE_TRADE, Vec::new()),
+            V::Accept => (Opcode::CMSG_ACCEPT_TRADE, t::accept_trade_body()),
+            V::Unaccept => (Opcode::CMSG_UNACCEPT_TRADE, Vec::new()),
+            V::Cancel => (Opcode::CMSG_CANCEL_TRADE, Vec::new()),
+            V::SetItem {
+                trade_slot,
+                bag,
+                slot,
+            } => (
+                Opcode::CMSG_SET_TRADE_ITEM,
+                t::set_trade_item_body(trade_slot, bag, slot),
+            ),
+            V::ClearItem { trade_slot } => {
+                (Opcode::CMSG_CLEAR_TRADE_ITEM, t::clear_trade_item_body(trade_slot))
+            }
+            V::SetGold(copper) => (Opcode::CMSG_SET_TRADE_GOLD, t::set_trade_gold_body(copper)),
+        }
+    }
 }
 
 #[cfg(test)]

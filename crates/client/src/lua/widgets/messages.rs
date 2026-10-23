@@ -312,7 +312,7 @@ pub fn rows(lua: &mlua::Lua, frame: &mlua::Table) -> Option<usize> {
 /// The row count is all this module decides about wrapping. The painter does
 /// the rest through [`super::regions::Paint::wrap`], the same mechanism a
 /// `<FontString>` with a declared width uses, measured by the same
-/// [`super::text::rows`], so the height reserved here and the galley drawn
+/// [`super::text::rows`], so the height reserved here and the rows drawn
 /// there agree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {

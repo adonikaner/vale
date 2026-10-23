@@ -68,7 +68,7 @@
 //! Where that lives: `vale_protocol::state::movement::Ferry` holds the
 //! offset and the two transforms,
 //! `vale_protocol::socket::session::World::platform` is how the session asks
-//! what is underfoot, and `crate::world::session::Standing` answers it out of
+//! what is underfoot, and `crate::world::standing::Standing` answers it out of
 //! the collision world — the same store `solid.rs` builds the hull into, so the
 //! platform reported and the floor being stood on are the same thing by
 //! construction.

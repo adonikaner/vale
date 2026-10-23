@@ -55,7 +55,9 @@ use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use vale_assets::look::blips::{self, Kind, Tracking};
 use vale_assets::tables::minimap::{self as rule, InteriorModel};
 
-use crate::world::session::{Session, WorldEntity, WorldStatus};
+use crate::world::entity::WorldEntity;
+use crate::world::session::Session;
+use crate::world::status::WorldStatus;
 
 /// One dot: which cell, and where it is relative to the character.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -198,9 +200,9 @@ impl InteriorModels {
 pub struct PingAnswer(pub vale_protocol::play::minimap::MinimapPing);
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &vale_protocol::play::spells::PlayerEvent) -> Option<PingAnswer> {
+pub fn answer_of(event: &vale_protocol::state::events::PlayerEvent) -> Option<PingAnswer> {
     match event {
-        vale_protocol::play::spells::PlayerEvent::MinimapPing(ping) => Some(PingAnswer(*ping)),
+        vale_protocol::state::events::PlayerEvent::MinimapPing(ping) => Some(PingAnswer(*ping)),
         _ => None,
     }
 }

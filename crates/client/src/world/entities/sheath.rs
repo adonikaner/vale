@@ -55,7 +55,7 @@ use vale_assets::look::sheath;
 /// A unit's **committed** sheath state: what it is drawn with, right now.
 ///
 /// Not the wire's byte — see the module comment. Inserted with every
-/// `WorldEntity` (`session::poll_world`), so every unit in the world has one
+/// `WorldEntity` (`entity::poll_world`), so every unit in the world has one
 /// from the frame it appears and no reader needs a fallback.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sheath {
@@ -211,5 +211,81 @@ fn volunteer(session: &crate::world::session::Session, world: &WorldEntity, stat
     }
     if let Some(active) = session.active.as_ref() {
         active.live.set_sheathed(state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::world::entities::*;
+    use crate::world::entities::test_support::*;
+
+    /// The sheath byte from the server is an initial value and a change
+    /// notification. It is not the authoritative state.
+    ///
+    /// The client adopts the byte when it changes, not when it disagrees with the
+    /// local state. `CMSG_SETSHEATHED` is the only thing that sets a player's byte,
+    /// so the byte always arrives one round trip after the decision that caused
+    /// it. A client that reconciled against it would undo every draw it made.
+    #[test]
+    fn the_committed_state_adopts_a_change_and_ignores_an_echo() {
+        let mut app = App::new();
+        app.add_message::<SheathRequest>()
+            .init_resource::<crate::world::session::Session>()
+            .add_systems(Update, sheath::commit);
+
+        let entity = app.world_mut().spawn((moving(0.0), Sheath::seeded(0))).id();
+
+        // A request draws without any packet from the server.
+        app.world_mut().write_message(SheathRequest {
+            entity,
+            state: vale_assets::look::sheath::MELEE,
+        });
+        app.update();
+        let drawn = |app: &App| app.world().entity(entity).get::<Sheath>().unwrap().state();
+        assert_eq!(drawn(&app), vale_assets::look::sheath::MELEE);
+
+        // The echo arrives a round trip later and changes nothing: the byte moved
+        // from 0 to 1, which is adopted, and the state is already 1.
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<WorldEntity>()
+            .unwrap()
+            .sheath_state = vale_assets::look::sheath::MELEE;
+        app.update();
+        assert_eq!(drawn(&app), vale_assets::look::sheath::MELEE);
+
+        // Another player stowing their weapon changes the byte, and the change is
+        // adopted. This is the only way a remote unit's sheath state arrives.
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<WorldEntity>()
+            .unwrap()
+            .sheath_state = vale_assets::look::sheath::UNARMED;
+        app.update();
+        assert_eq!(drawn(&app), vale_assets::look::sheath::UNARMED);
+    }
+
+    /// A mounted rider cannot draw. The setter refuses the request rather than
+    /// letting the reconcile undo it a frame later, which would show the weapon for
+    /// one frame each time the key is pressed.
+    #[test]
+    fn a_request_cannot_draw_in_the_saddle() {
+        let mut app = App::new();
+        app.add_message::<SheathRequest>()
+            .init_resource::<crate::world::session::Session>()
+            .add_systems(Update, sheath::commit);
+
+        let mut rider = moving(0.0);
+        rider.mounted = true;
+        let entity = app.world_mut().spawn((rider, Sheath::seeded(0))).id();
+        app.world_mut().write_message(SheathRequest {
+            entity,
+            state: vale_assets::look::sheath::MELEE,
+        });
+        app.update();
+        assert_eq!(
+            app.world().entity(entity).get::<Sheath>().unwrap().state(),
+            vale_assets::look::sheath::UNARMED
+        );
     }
 }

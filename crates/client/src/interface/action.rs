@@ -85,7 +85,8 @@ use super::messages::UiErrors;
 use super::target::Selection;
 use crate::assets::GameAssets;
 use crate::world::entities::{Sheath, SheathRequest};
-use crate::world::session::{ActiveSession, LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::{ActiveSession, Session};
 use vale_assets::tables::faction::Reaction;
 use vale_assets::tables::spellbook::{resolve_aim, CastAim, Candidate, SpellInfo};
 use vale_protocol::play::spells::{action_kind, CastTarget, SPELL_ATTACK};
@@ -194,7 +195,7 @@ pub struct ActionBar {
 /// It lives here rather than in `SessionStatus` because the client records the
 /// start itself: the server acknowledges the cast like any other and says
 /// nothing about the loop. The end does come from the server, as
-/// [`vale_protocol::play::spells::PlayerEvent::AutoRepeatCancelled`]. Every way
+/// [`vale_protocol::state::events::PlayerEvent::AutoRepeatCancelled`]. Every way
 /// the loop can end (the press, the target dying, walking out of range, a wand
 /// user moving) produces that one packet, so [`Self::stop`] is called from the
 /// event drain rather than from the press.

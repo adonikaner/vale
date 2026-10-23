@@ -63,6 +63,7 @@
 //! See [`DialogStatus`].
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// How many quests a 1.12 log holds. `MAX_QUEST_LOG_SIZE`.
 pub const MAX_QUESTS: usize = 20;
@@ -814,6 +815,91 @@ pub fn abandon_body(slot: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(slot);
     w.buf
+}
+
+/// The nine requests a quest conversation sends to the socket.
+///
+/// A separate enum rather than nine `Command` variants, for the same reason
+/// as [`crate::play::loot::LootVerb`]: one subject, and the loop
+/// distinguishes them only by which method to call. See [`crate::play::quest`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuestVerb {
+    /// `CMSG_QUESTGIVER_STATUS_QUERY`: the marker over a giver's head.
+    Status(u64),
+    /// `CMSG_QUESTGIVER_HELLO`: right-click a giver.
+    Hello(u64),
+    /// `CMSG_QUESTGIVER_QUERY_QUEST`: show one quest's details.
+    Details { guid: u64, quest_id: u32 },
+    /// `CMSG_QUESTGIVER_ACCEPT_QUEST`.
+    Accept { guid: u64, quest_id: u32 },
+    /// `CMSG_QUESTGIVER_COMPLETE_QUEST`: hand the quest in.
+    Complete { guid: u64, quest_id: u32 },
+    /// `CMSG_QUESTGIVER_REQUEST_REWARD`: show the reward page again.
+    RequestReward { guid: u64, quest_id: u32 },
+    /// `CMSG_QUESTGIVER_CHOOSE_REWARD`: take one reward, by zero-based index
+    /// into the choices.
+    ChooseReward {
+        guid: u64,
+        quest_id: u32,
+        choice: u32,
+    },
+    /// `CMSG_QUEST_QUERY`: a quest's text and data by id (for example quest
+    /// 47). The only verb with no giver.
+    Query(u32),
+    /// `CMSG_QUESTLOG_REMOVE_QUEST`, by zero-based quest log slot, which is not
+    /// the quest id.
+    Abandon(u8),
+}
+
+impl QuestVerb {
+    /// The opcode and the body this verb sends: nine opcodes.
+    ///
+    /// The opcode is chosen here rather than by the caller, for the reason
+    /// given on `WorldSession::move_item`: the opcode follows from the verb,
+    /// and a caller that chose it would be a second place that has to know
+    /// the mapping.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use QuestVerb as V;
+        match *self {
+            V::Status(guid) => (
+                Opcode::CMSG_QUESTGIVER_STATUS_QUERY,
+                crate::play::quest::guid_body(guid),
+            ),
+            V::Hello(guid) => (Opcode::CMSG_QUESTGIVER_HELLO, crate::play::quest::guid_body(guid)),
+            V::Details { guid, quest_id } => (
+                Opcode::CMSG_QUESTGIVER_QUERY_QUEST,
+                crate::play::quest::quest_body(guid, quest_id),
+            ),
+            V::Accept { guid, quest_id } => (
+                Opcode::CMSG_QUESTGIVER_ACCEPT_QUEST,
+                crate::play::quest::quest_body(guid, quest_id),
+            ),
+            V::Complete { guid, quest_id } => (
+                Opcode::CMSG_QUESTGIVER_COMPLETE_QUEST,
+                crate::play::quest::quest_body(guid, quest_id),
+            ),
+            V::RequestReward { guid, quest_id } => (
+                Opcode::CMSG_QUESTGIVER_REQUEST_REWARD,
+                crate::play::quest::quest_body(guid, quest_id),
+            ),
+            V::ChooseReward {
+                guid,
+                quest_id,
+                choice,
+            } => (
+                Opcode::CMSG_QUESTGIVER_CHOOSE_REWARD,
+                crate::play::quest::choose_reward_body(guid, quest_id, choice),
+            ),
+            V::Query(quest_id) => (
+                Opcode::CMSG_QUEST_QUERY,
+                crate::play::quest::quest_query_body(quest_id),
+            ),
+            V::Abandon(slot) => (
+                Opcode::CMSG_QUESTLOG_REMOVE_QUEST,
+                crate::play::quest::abandon_body(slot),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //! passes watch, and a loop of pushed kits.
 
 use crate::session::EditSession;
-use vale_client::world::session::{AuraSlot, WorldEntity};
+use vale_client::world::entity::{AuraSlot, WorldEntity};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use super::{CASTER_GUID, HOLD_SECS, IMPACT_SECS, PUSHED, STAGE_LAYER, Stage, StageArea, StageUnit, Step, TARGET_GUID, Timeline};

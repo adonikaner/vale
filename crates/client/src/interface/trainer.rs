@@ -43,12 +43,14 @@
 use bevy::prelude::*;
 
 use vale_assets::tables::trainer::{Board, Kind, Service, State, Tables};
-use vale_protocol::socket::session::NpcVerb;
+use vale_protocol::play::gossip::NpcVerb;
 use vale_protocol::play::trainer::{TrainFailure, TrainerList, TrainerState, TrainerType};
 
 use super::events::{TrainerClosed, TrainerShow, TrainerUpdate};
 use crate::assets::GameAssets;
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// One of the three trainer packets, handed on from
 /// [`crate::world::incoming::drain_events`].
@@ -83,8 +85,8 @@ struct Open {
     built_for: (u8, u8),
     board: Board,
     /// Item entries the window may read from the item cache (a created item's
-    /// icon, plate or description) whose templates were not cached when last
-    /// checked. See [`templates_landed`].
+    /// icon, plate or description) that no [`TemplatesArrived`] has named
+    /// since the window opened. See [`templates_landed`].
     waiting: Vec<u32>,
 }
 
@@ -116,8 +118,8 @@ impl TrainerWindow {
     }
 
     /// Take the window down, answering whether one was up — the walk-away
-    /// close's door, called from [`super::gossip::out_of_range`] like the
-    /// vendor's.
+    /// close's door, called from [`super::gossip::close_when_npc_gone`] like
+    /// the vendor's.
     pub(crate) fn close(&mut self) -> bool {
         self.open.take().is_some()
     }
@@ -129,13 +131,41 @@ impl Plugin for TrainerPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<TrainerAnswer>()
             .add_message::<TrainerPress>()
+            .add_message::<TemplatesArrived>()
             .init_resource::<TrainerWindow>()
             .add_systems(
                 Update,
                 (announce, relayout, templates_landed, presses, act)
                     .chain()
+                    .after(crate::world::incoming::drain_queues)
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<TrainerWindow>(app);
+        super::gossip::closes_on_walk_away::<TrainerWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for TrainerWindow {
+    type Closed = super::events::TrainerClosed;
+    const CLOSED: super::events::TrainerClosed = super::events::TrainerClosed;
+
+    fn guid(&self) -> Option<u64> {
+        TrainerWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        TrainerWindow::close(self)
+    }
+}
+
+/// `ClassTrainerFrame_Update` calls `UnitName("npc")` and
+/// `SetPortraitTexture(…, "npc")` on every redraw, so a window that does not
+/// name the token draws an empty plate and no face.
+impl super::gossip::NpcToken for TrainerWindow {
+    const ORDER: u8 = 3;
+
+    fn npc(&self) -> Option<u64> {
+        TrainerWindow::guid(self)
     }
 }
 
@@ -323,35 +353,27 @@ fn created_items(assets: &GameAssets, kind: Kind, services: &[Service]) -> Vec<u
 /// not cached, and raises `TRAINER_UPDATE` when the template arrives.
 /// `ClassTrainerFrame_OnEvent` then calls `ClassTrainer_SetSelection` again,
 /// which reads the icon and description a second time. Reading them queues
-/// the item query (see `Live::session_template`); this system only watches
-/// for the answer.
+/// the item query (see `Live::session_template`); this system reads each
+/// [`TemplatesArrived`] for the answer.
 fn templates_landed(
     mut window: ResMut<TrainerWindow>,
-    session: Res<Session>,
+    mut arrived: MessageReader<TemplatesArrived>,
     mut updated: MessageWriter<TrainerUpdate>,
 ) {
-    let waiting = match window.open.as_ref() {
-        Some(open) if !open.waiting.is_empty() => &open.waiting,
-        _ => return,
-    };
-    let Some(active) = session.active.as_ref() else {
-        return;
-    };
-    let world = active.live.world();
-    let landed: Vec<u32> = {
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
-        waiting
-            .iter()
-            .copied()
-            .filter(|entry| world.items.contains_key(entry))
-            .collect()
-    };
+    let landed: Vec<u32> = arrived
+        .read()
+        .flat_map(|batch| batch.0.items.iter().copied())
+        .collect();
     if landed.is_empty() {
         return;
     }
-    if let Some(open) = window.open.as_mut() {
-        open.waiting.retain(|entry| !landed.contains(entry));
+    let Some(open) = window.open.as_mut() else {
+        return;
+    };
+    if !open.waiting.iter().any(|entry| landed.contains(entry)) {
+        return;
     }
+    open.waiting.retain(|entry| !landed.contains(entry));
     updated.write(TrainerUpdate);
 }
 

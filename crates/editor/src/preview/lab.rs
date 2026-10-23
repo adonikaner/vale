@@ -67,7 +67,7 @@ use vale_assets::world::m2::{attach, M2};
 use vale_client::assets::GameAssets;
 use vale_client::render::axes::{to_bevy, to_wow};
 use vale_client::world::entities::EntityModel;
-use vale_client::world::session::{ObjectType, WorldEntity};
+use vale_client::world::entity::{ObjectType, WorldEntity};
 use vale_edit::m2::Bake;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;

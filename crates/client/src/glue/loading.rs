@@ -3,7 +3,7 @@
 //! Not a frame, not a widget and not a `GlueXML` file — 1.12's loading screen is
 //! the client's own full-screen draw, four vertices and a bar, and nothing in
 //! `Interface\` mentions it. So it is state here and paint in
-//! [`crate::ui::loading`], on the same split every other subject in this
+//! [`crate::ui::mesh::loading`], on the same split every other subject in this
 //! directory keeps. The *rules* — which picture a map gets, where the bar sits —
 //! are one crate down in [`vale_assets::tables::loading`], where they are checked by
 //! `vale loading` with no window open.
@@ -31,7 +31,7 @@
 //! The reference blocks: the client spins its IO queue until the
 //! building under the character is in, and the loading screen is what the player
 //! sees while it does. This client cannot block its own frame — see the note on
-//! [`crate::world::session::Standing`] — so the
+//! [`crate::world::standing::Standing`] — so the
 //! screen instead stays up until the streamer has caught up:
 //!
 //! ```text
@@ -67,7 +67,8 @@ use crate::interface::events::PlayerLeavingWorld;
 use crate::assets::GameAssets;
 use crate::render::terrain::LoadedTiles;
 use crate::render::wmos::WmoCache;
-use crate::world::session::{Screen, Session, WorldStatus};
+use crate::world::session::{Screen, Session};
+use crate::world::status::WorldStatus;
 use vale_assets::tables::loading::LoadingScreens;
 use bevy::prelude::*;
 use std::sync::Arc;

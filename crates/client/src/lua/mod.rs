@@ -11,7 +11,8 @@
 //!              interpreter; `vale-api` is checked against it (tests only)
 //! scoped.rs    the permanent name in front of every per-scope read, so an
 //!              addon may keep a function and call it on a later frame
-//! audit.rs     the six `--audit` probes, run with no window
+//! audit.rs     the six `--audit` probes, run with no window (`diagnostics`
+//!              builds and tests only)
 //!
 //! widgets/     the object model: what a widget is, where it is placed, how it
 //!              is drawn
@@ -85,6 +86,7 @@
 //! * The `io` and `os` libraries are deliberately not opened; see [`host`] for
 //!   the library list.
 
+#[cfg(any(test, feature = "diagnostics"))]
 pub mod audit;
 pub mod dialect;
 pub mod host;

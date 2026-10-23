@@ -1,11 +1,19 @@
 //! The draw list as vertices: every [`Item`] kind turned into batched,
-//! z-ordered geometry, with no egui in it.
+//! z-ordered geometry.
 //!
-//! This is the mesh painter's counterpart of the kind handlers in
-//! [`crate::ui::framexml`]. Each handler here states which egui handler it
-//! mirrors, and the two must draw the same picture until the egui painter is
-//! retired. Where they cannot match, as with the blend modes egui does not
-//! have, this painter follows the 1.12.1 client and the handler says so.
+//! The list comes from [`crate::lua::widgets::draw`], which decides what is
+//! visible, where and in what order without a window; the assertions about
+//! what the interface draws are unit tests there. This file only turns the
+//! list into triangles.
+//!
+//! ## Coordinates
+//!
+//! The game's space is y-up from the bottom left, in the interface's units;
+//! the window's is y-down from the top left, in pixels. [`px`] is the one
+//! place an item's rectangle is converted, through the
+//! [`crate::ui::scale::InterfaceViewport`] the pointer inverts. Positions
+//! come from the viewport and sizes (a border edge, a font height, a
+//! backdrop's insets and tile period) from its scale alone.
 //!
 //! ## Batching and paint order
 //!
@@ -34,7 +42,7 @@ use crate::lua::widgets::layout::Viewport;
 use crate::lua::widgets::regions::Paint;
 
 use super::fonts::{self, UiFonts};
-use super::material::Blend;
+use super::material::{byte_space_alpha, coloured_alpha, Blend};
 use super::text;
 use super::textures::UiTextures;
 
@@ -299,26 +307,31 @@ fn lerp(a: V, b: V, t: f32) -> V {
     }
 }
 
-/// A region's tint: linear rgb, byte-space-compensated alpha — the mesh form
-/// of [`crate::ui::framexml`]'s `colour`.
+/// A region's colour times the alpha it inherited: linear rgb and
+/// byte-space-compensated straight alpha.
+///
+/// The file's numbers are straight alpha. The alpha goes through
+/// [`byte_space_alpha`] and the three colour channels do not: the correction
+/// adjusts how much is mixed, not the colours being mixed. A `<Color a="0.5">`
+/// scrim and a `SetAlpha(0.5)` fade both go through this function.
 fn tint(rgba: [f32; 4], alpha: f32) -> [f32; 4] {
     [
         linear(rgba[0]),
         linear(rgba[1]),
         linear(rgba[2]),
-        crate::ui::framexml::byte_space_alpha((rgba[3] * alpha).clamp(0.0, 1.0)),
+        byte_space_alpha((rgba[3] * alpha).clamp(0.0, 1.0)),
     ]
 }
 
-/// The solid-fill form of [`tint`], with the coloured-alpha fold. See
-/// [`crate::ui::framexml::coloured_alpha`] for the reasoning, which applies
-/// here unchanged.
+/// [`tint`] with [`coloured_alpha`] in place of [`byte_space_alpha`]: the tint
+/// for a solid fill and a status bar, the two places where a saturated colour
+/// carries its own translucency.
 fn solid_tint(rgba: [f32; 4], alpha: f32) -> [f32; 4] {
     [
         linear(rgba[0]),
         linear(rgba[1]),
         linear(rgba[2]),
-        crate::ui::framexml::coloured_alpha(rgba, alpha),
+        coloured_alpha(rgba, alpha),
     ]
 }
 
@@ -329,8 +342,12 @@ fn linear(c: f32) -> f32 {
 }
 
 /// A `layout::Rect` (game units, y-up) as `[left, top, right, bottom]` window
-/// pixels — [`crate::ui::framexml::rect_to_screen`]'s arithmetic without its
-/// egui type.
+/// pixels (y-down).
+///
+/// The only place in this file that turns game units into absolute pixels, an
+/// item's rectangle and its [`Item::clip`] alike. Every other rectangle here
+/// is derived from one of these, so a change to where the space sits in the
+/// window (such as a pillarbox) is a change to [`Viewport::to_pixels`] alone.
 fn px(r: crate::lua::widgets::layout::Rect, view: Viewport) -> [f32; 4] {
     let (left, top) = view.to_pixels(r.left, r.top());
     let (right, bottom) = view.to_pixels(r.right(), r.bottom);
@@ -359,11 +376,14 @@ pub struct Painter<'w> {
     /// texel lands on one screen pixel. See that function for the effect of
     /// rounding in interface pixels instead.
     pub dpi: f32,
-    /// The wall clock in milliseconds, for a `<Model>`'s global sequences —
-    /// the same clock the egui handler reads off its context.
+    /// The wall clock in milliseconds, for a `<Model>`'s global sequences.
     pub now_ms: u32,
-    /// `<Model>` files named on screen and not loaded, reported once each —
-    /// the same once-rule the egui painter keeps in its `Art`.
+    /// `<Model>` files named on screen and not loaded, reported once each.
+    ///
+    /// Per file rather than one flag, because a session has models that draw
+    /// and models that cannot: the glue screens' backdrops are 3D scenes that
+    /// `render::glue` draws and this pass does not, so a single flag would be
+    /// used up on `UI_Orc.mdx` before the first cooldown of the session.
     pub reported_models: &'w mut std::collections::HashSet<String>,
 }
 
@@ -433,22 +453,32 @@ pub fn minimap_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     emit.into_batches()
 }
 
-/// The z of the held item: above every strata, as the egui painter puts it in
-/// the tooltip layer. A held item drawn under a panel would look dropped. The
-/// value is far above the ~4 the deepest item list reaches and far below the
-/// camera.
+/// The z of the held item: above every strata. A held item drawn under a panel
+/// would look dropped. The value is far above the ~4 the deepest item list
+/// reaches and far below the camera.
 const CARRIED_Z: f32 = 900.0;
 
-/// The carried pass: the icon on the pointer, the only thing drawn that is not
-/// in the tree, and the mesh form of `framexml::carried`. It has its own pass
-/// because it follows the mouse at frame rate while the other items do not
-/// change.
+/// The size a held item is drawn at, in the interface's units: the size of a
+/// bag square's icon.
+const CARRIED_ICON: f32 = 32.0;
+
+/// The carried pass: the icon on the pointer.
+///
+/// The one thing this painter draws that is not a widget: 1.12 draws a held
+/// item as the cursor rather than as a frame, so there is nothing in the tree
+/// to walk and nothing in `lua::draw` to sort. It has its own pass because it
+/// follows the mouse at frame rate while the other items do not change.
+///
+/// A [`CARRIED_ICON`] square centred on the pointer, in the interface's space,
+/// so it scales with the rest of the interface rather than with the window.
+/// That is `Interface\Icons\` art at its own size, the size every action
+/// button and bag square draws it at.
 pub fn carried_batch(painter: &mut Painter, path: &str, at: Vec2) -> Vec<Batch> {
     let Some(image) = painter.textures.texture(painter.images, painter.assets, path) else {
         return Vec::new();
     };
     let mut emit = Emitter::new();
-    let half = crate::ui::framexml::CARRIED_ICON * painter.view.scale as f32 / 2.0;
+    let half = CARRIED_ICON * painter.view.scale as f32 / 2.0;
     emit.quad(
         &image,
         Blend::Alpha,
@@ -464,7 +494,8 @@ pub fn carried_batch(painter: &mut Painter, path: &str, at: Vec2) -> Vec<Batch> 
     batches
 }
 
-/// One item — the mesh form of `framexml::one`.
+/// One item: a textured quad, a solid fill, a line of text, or a frame's own
+/// backdrop.
 fn one(emit: &mut Emitter, painter: &mut Painter, item: &Item) {
     let view = painter.view;
     let rect = px(item.rect, view);
@@ -499,12 +530,23 @@ fn one(emit: &mut Emitter, painter: &mut Painter, item: &Item) {
         label(emit, painter, rect, paint, word, colour, scale, clip);
         return;
     }
-    // A `FontString` paints text or nothing — `framexml::one` states why.
+    // A `FontString` paints text or nothing. Its colour belongs to the glyphs;
+    // when it reached the solid-fill fallback below, every empty
+    // `MessageFrame`'s font declaration was drawn as a gold bar. See
+    // [`Paint::is_font`].
     if paint.is_font {
         return;
     }
-    // A portrait before a path, tinted like any texture — same rule, same
-    // reasons as the egui handler.
+    // A portrait is checked before a path, because a region can have both:
+    // `TargetPortrait` is declared with art in the XML and filled by
+    // `SetPortraitTexture` at run time, so the picture takes precedence and
+    // the path stays as the fallback for a unit whose model has not loaded.
+    //
+    // The portrait takes the same tint as every other texture. `TargetFrame.lua`
+    // greys the portrait to `0.35` for a tapped mob, tints it blue for a
+    // friendly one out of range and red for a hostile one, and fades it with
+    // the whole frame when the target dies. Painting a portrait without the
+    // tint would drop all four.
     if let Some(image) = paint
         .portrait
         .as_deref()
@@ -526,6 +568,10 @@ fn one(emit: &mut Emitter, painter: &mut Painter, item: &Item) {
             else {
                 return;
             };
+            // A rotated texture is drawn with the quad that can rotate. The
+            // world map's player arrow is the only one in either shipped
+            // directory; see [`crate::lua::widgets::regions::set_rotation`]. It
+            // ignores `SetTexCoord`, which no rotated region sets.
             if paint.rotation != 0.0 {
                 turned_quad(emit, &image, blend, rect, paint.rotation, colour, clip);
                 return;
@@ -537,7 +583,15 @@ fn one(emit: &mut Emitter, painter: &mut Painter, item: &Item) {
             let uv = paint.coords.map_or([0.0, 0.0, 1.0, 1.0], |[l, r, t, b]| [l, t, r, b]);
             emit.quad(&image, blend, rect, uv, colour, clip);
         }
+        // A colour with no path is a solid fill: every backdrop in the
+        // directory, and `SetTexture(0, 0, 0, 0.5)` is how they are written.
         None => {
+            // Except a portrait still waiting for its picture: a portrait
+            // region's colour is the picture's tint, and painting it alone
+            // drew a white square in every round portrait hole while the
+            // portrait was rendering, or permanently for a unit that gets no
+            // portrait. Nothing is drawn, so the frame's own art shows
+            // through.
             if paint.portrait.is_some() {
                 return;
             }
@@ -554,7 +608,21 @@ fn one(emit: &mut Emitter, painter: &mut Painter, item: &Item) {
     }
 }
 
-/// A backdrop's inset, tiled fill — the mesh form of `framexml::background`.
+/// A backdrop's fill: the frame's rectangle, shrunk by the backdrop's insets,
+/// tiled at its own period.
+///
+/// A `<Backdrop>` has no object: it is a record on the frame, painted at the
+/// frame's rectangle as a tiled fill and eight border pieces. The layout of
+/// the `edgeFile` is in [`vale_assets::interface::backdrop`] and the geometry
+/// in [`crate::lua::widgets::backdrop`].
+///
+/// The insets place the fill's edge at the bright line inside each border
+/// piece. A fill drawn to the frame's edge would show through the border's
+/// semi-transparent outer texels as a halo. The tooltip's edge is 16 and its
+/// insets are 5. A tiled fill repeats at `tileSize` however big the panel is;
+/// an untiled one is stretched over the inset rectangle, which is what
+/// `tile="false"` means. `<TileSize>` on a fill smaller than one tile is not
+/// modelled.
 fn background(
     emit: &mut Emitter,
     painter: &mut Painter,
@@ -594,7 +662,13 @@ fn background(
     emit.quad(&image, Blend::Alpha, inner, uv, colour, clip);
 }
 
-/// The eight border pieces — the mesh form of `framexml::border`.
+/// A backdrop's border: eight pieces, inside the frame and flush with its
+/// edges.
+///
+/// Four `edgeSize` squares at the corners and four runs between them. The
+/// runs tile at the same period rather than stretching. A frame too small for
+/// its two corners gets no runs and the corners overlap, as in the 1.12.1
+/// client.
 fn border(
     emit: &mut Emitter,
     painter: &mut Painter,
@@ -646,7 +720,18 @@ fn border(
     }
 }
 
-/// A status bar's cropped fill — the mesh form of `framexml::fill`.
+/// A status bar's fill, cropped rather than squashed.
+///
+/// [`crate::lua::widgets::draw`] has already cut the rectangle to the
+/// fraction. Here the texture is cropped by the same amount, so a bar at 40%
+/// shows the left 40% of `UI-StatusBar` at its own scale. Squashing the whole
+/// gradient into 40% of the width draws something that looks like a bar but
+/// is wrong at every value. The crop runs the way the rectangle was cut: from
+/// the left, or from the bottom for a vertical bar.
+///
+/// A bar with a colour and no texture is a solid fill, which is what
+/// `SetStatusBarColor` alone leaves: the loot-roll bars and the two colour
+/// pickers.
 fn fill(
     emit: &mut Emitter,
     painter: &mut Painter,
@@ -704,7 +789,7 @@ fn label(
             return;
         };
         struct M<'f>(ab_glyph::PxScaleFont<&'f ab_glyph::FontArc>);
-        impl text::Metrics for M<'_> {
+        impl vale_assets::interface::font::Metrics for M<'_> {
             fn advance(&self, ch: char) -> f32 {
                 use ab_glyph::ScaleFont;
                 self.0.h_advance(self.0.glyph_id(ch))
@@ -713,6 +798,8 @@ fn label(
                 use ab_glyph::ScaleFont;
                 self.0.kern(self.0.glyph_id(a), self.0.glyph_id(b))
             }
+        }
+        impl text::Metrics for M<'_> {
             fn ascent(&self) -> f32 {
                 use ab_glyph::ScaleFont;
                 self.0.ascent()
@@ -733,6 +820,7 @@ fn label(
             paint.wrap,
             paint.max_rows,
             text::Justify { horizontal: paint.justify_h, vertical: paint.justify_v },
+            scale,
         )
     };
     if placed.is_empty() {
@@ -759,8 +847,15 @@ fn label(
             .map(|sprite| sprite.page)
     }));
 
-    // The outline first, then the shadow, then the glyphs — the same ring of
-    // eight offsets the egui painter draws, for the same reason.
+    // The outline first, then the shadow, then the glyphs: the game's order,
+    // and the only one that leaves the outline around the text rather than
+    // over it.
+    //
+    // Eight copies in black at the face's outline radius, with the text's
+    // alpha so an outline fades with its string. At these sizes an outlined
+    // glyph in the 1.12.1 client has the same shape a ring of offsets makes;
+    // four copies would leave the diagonals open. The outline is skipped for a
+    // face that declares none, which is most of the interface.
     let radius = paint.outline.radius() * scale;
     if radius > 0.0 {
         let ring = [
@@ -788,8 +883,11 @@ fn label(
             &placed,
             face,
             raster,
-            // The game's y is up and the screen's is down, hence the negation
-            // — the same one the egui handler makes.
+            // `<Shadow>`: one offset copy in the shadow's colour, under the
+            // text. `MasterFont`'s shadow is `(1, -1)` black and
+            // `GameFontNormal` inherits it, so it applies to nearly every word
+            // the interface draws. The game's y is up and the screen's is
+            // down, hence the negation.
             [offset[0] * scale, -offset[1] * scale],
             Some(tint(shadow_colour, 1.0)),
             clip,
@@ -872,8 +970,14 @@ fn glyphs_with(
     }
 }
 
-/// A `<Model>` frame's triangles — the mesh form of `framexml::model`, with
-/// the additive batches really additive.
+/// A `<Model>` frame's contents: the file's own triangles, placed in the
+/// frame's rectangle, or the unit's paper doll.
+///
+/// This adds two things to `vale_assets::interface::uimodel::flatten`: the
+/// mapping from that function's `0..1` box to the rectangle on the screen, and
+/// the y flip, because the game's models and rectangles are y-up and the
+/// screen is y-down. Blend modes 3 and 4 are the additive pair and are drawn
+/// additively.
 fn model(
     emit: &mut Emitter,
     painter: &mut Painter,
@@ -882,10 +986,15 @@ fn model(
     alpha: f32,
     clip: Option<[f32; 4]>,
 ) {
-    // A frame with a unit is a paper doll and draws no file. The egui handler
-    // makes the same choice; see it for why the two are exclusive. The only
-    // difference between the two painters on this path is that the picture is
-    // bound here as a `Handle<Image>` rather than as an egui id.
+    // A paper doll is checked before a file, and the two are exclusive rather
+    // than layered. A `<Model>` frame holds either a file (the cooldown swirl,
+    // the login backdrop), flattened into triangles here, or a unit, which is
+    // a render target [`crate::render::paperdoll`] drew and this only places.
+    // None of the five `<PlayerModel>` frames is given a file, so the branch
+    // is on which of the two the scene has. The picture may not be ready: on
+    // the frame a panel is opened, and on any frame while the character's
+    // model is loading. Nothing is drawn meanwhile rather than a fill, which
+    // would show as a white square.
     if scene.unit.is_some() {
         if let Some(image) = painter.dolls.image(&scene.frame) {
             // Snapped to whole device pixels, as a glyph is: a quad that
@@ -905,6 +1014,9 @@ fn model(
         }
         return;
     }
+    // Read here, never loaded. The parse belongs to the `<Model>` tick in
+    // [`crate::lua::widgets::model`], the system allowed to read the archives;
+    // a paint pass that loaded on demand would do it in the middle of a frame.
     let Some(m2) = painter.models.get(&scene.file) else {
         if painter.reported_models.insert(scene.file.clone()) {
             info!("interface mesh: a <Model> is on screen and {} is not loaded", scene.file);
@@ -955,7 +1067,13 @@ fn model(
     }
 }
 
-/// A texture turned about its rectangle's centre — `framexml::turned_quad`.
+/// A texture turned about its rectangle's centre, clockwise on the screen.
+///
+/// The screen's y axis points down, so the ordinary positive rotation
+/// (`x cos - y sin`, `x sin + y cos`) is clockwise here with no extra
+/// negation. This is easy to get backwards;
+/// [`crate::lua::panels::worldmap::arrow_angle`] holds the derivation, and
+/// the test `the_arrow_points_where_the_character_looks` checks the chain.
 fn turned_quad(
     emit: &mut Emitter,
     image: &Handle<Image>,
@@ -971,6 +1089,8 @@ fn turned_quad(
 }
 
 /// The same quad given by centre and half-size, for the minimap's arrows.
+/// The corners go top left, top right, bottom right, bottom left: the uv order
+/// of a quad, so the picture's top is at the quad's top before the rotation.
 #[allow(clippy::too_many_arguments)]
 fn turned(
     emit: &mut Emitter,
@@ -999,8 +1119,20 @@ fn turned(
     emit.raw(image, blend, &vertices, &[0, 1, 2, 0, 2, 3], clip);
 }
 
-/// The eight-argument `SetTexCoord`, the mesh form of `framexml::corner_quad`.
-/// See that function for the argument order.
+/// A quad whose four corners each have their own texture coordinate: the
+/// eight-argument `SetTexCoord`.
+///
+/// The rectangle is the region's own; the eight numbers rotate the picture
+/// inside it. `TaxiFrame.lua`'s `DrawRouteLine` is the only caller in either
+/// shipped directory. It anchors the texture to the bounding box of the line
+/// it wants, then solves the eight uvs so that the horizontal line art
+/// crosses that box at the right angle, so ignoring them draws every route as
+/// a rectangle.
+///
+/// The argument order is the game's, and it is not the corner order of a
+/// quad: `(ULx, ULy, LLx, LLy, URx, URy, LRx, LRy)`, that is upper-left,
+/// lower-left, upper-right, lower-right. Taking them in the order they arrive
+/// draws an hourglass.
 #[allow(clippy::too_many_arguments)]
 fn corner_quad(
     emit: &mut Emitter,
@@ -1021,8 +1153,33 @@ fn corner_quad(
     emit.raw(image, blend, &vertices, &[0, 1, 2, 0, 2, 3], clip);
 }
 
-/// A textured disc inscribed in a rectangle, with a half-pixel faded rim. The
-/// mesh form of `framexml::disc`, including its uv closure.
+/// A textured disc inscribed in a rectangle, with a half-pixel faded rim, and
+/// the caller giving the texture coordinate of each point.
+///
+/// A portrait render target is square and every portrait hole in the
+/// interface is round, so the corners have to be removed. The 1.12.1 client
+/// uses an alpha mask for this:
+/// `Interface\CharacterFrame\TempPortraitAlphaMask.blp` (and a `Small`
+/// sibling for the party frames). The mask is a hard disc. Decoded from the
+/// archive it is 128x128 DXT3, and its alpha grouped by radius from the
+/// centre is
+///
+/// ```text
+/// r <= 63   255      (every pixel, no exception)
+/// r == 64   34..255  the one transitional ring
+/// r >= 65   0
+/// ```
+///
+/// That is a circle inscribed in the square, touching the edges at the
+/// midpoints, with a one-texel rim and no feathering, so cutting the quad into
+/// a disc gives the same shape as the mask and needs no second texture. The
+/// half-pixel fade stands in for the mask's rim texel.
+///
+/// The uv is a closure because the two callers map differently: a portrait's
+/// texture covers the rectangle, and a minimap draws one 533-yard tile at a
+/// time through the same outline, so its mapping is the tile's own affine
+/// rather than the widget's. `vale_assets::tables::minimap` measures the
+/// minimap's mask and finds the same shape.
 fn disc(
     emit: &mut Emitter,
     image: &Handle<Image>,
@@ -1056,9 +1213,29 @@ fn disc(
     emit.raw(image, blend, &vertices, &indices, clip);
 }
 
-/// The minimap: the terrain tiles through the disc, or inside a building its
-/// pictures (see [`interior`]), then the dots and the player arrow —
-/// `framexml::minimap` with the per-tile clip done by the triangle clipper.
+/// A `<Minimap>` frame's contents: the ground around the character through the
+/// disc, or inside a building its pictures (see [`interior`]), then the dots
+/// and the arrow that shows which way the character faces.
+///
+/// ```text
+/// radius_yards(zoom, indoors)   how far it sees        one radius per zoom level
+/// tiles_in_view(x, y, radius)   which pictures, where  north up, west left
+/// md5translate.trs              …and what each is called
+/// disc()                        the shape Textures\MinimapMask is
+/// ```
+///
+/// Nothing is composited. Each 256x256 tile is uploaded once into a cache
+/// ([`UiTextures::minimap_texture`]) and drawn through the disc, clipped to
+/// the tile's own window by the triangle clipper. The tile boundaries are
+/// axis-aligned because the map does not rotate, so a rectangular clip per
+/// tile is exact. Each tile is sampled clamped to its own edge, which leaves a
+/// one-texel seam between tiles: at the default zoom a texel is about a yard
+/// and the frame is 140 units across, so the join is a sub-pixel
+/// discontinuity rather than a visible line.
+///
+/// Nothing is drawn before there is a world, rather than a black disc. The two
+/// glue screens and `--audit` are in this state, and in the 1.12.1 client the
+/// frame there shows only its own border art too.
 fn minimap(
     emit: &mut Emitter,
     painter: &mut Painter,
@@ -1085,6 +1262,9 @@ fn minimap(
     };
     for tile in terrain {
         let Some(path) = index.texture(&view.directory, tile.tile.0, tile.tile.1) else {
+            // A tile the index does not list is black, which is what the
+            // 1.12.1 client shows for a tile with no picture. The index is
+            // sparse by construction.
             continue;
         };
         let Some(image) = painter.textures.minimap_texture(painter.images, painter.assets, &path)
@@ -1100,8 +1280,7 @@ fn minimap(
         };
         let min = at(left, top);
         let max = at(right, bottom);
-        // The tile's own window, cut down by the item's if it has one — the
-        // same intersection the egui painter takes.
+        // The tile's own window, cut down by the item's if it has one.
         let mut window = [min.x, min.y, max.x, max.y];
         if let Some([cl, ct, cr, cb]) = clip {
             window = [window[0].max(cl), window[1].max(ct), window[2].min(cr), window[3].min(cb)];
@@ -1125,16 +1304,11 @@ fn minimap(
     blips(emit, painter, rect, radius, colour, clip);
     emit.layer();
 
-    let Some(arrow) = painter.textures.texture(
-        painter.images,
-        painter.assets,
-        crate::ui::framexml::PLAYER_ARROW,
-    ) else {
+    let Some(arrow) = painter.textures.texture(painter.images, painter.assets, PLAYER_ARROW)
+    else {
         return;
     };
-    let half = (rect[2] - rect[0]).min(rect[3] - rect[1])
-        * crate::ui::framexml::PLAYER_ARROW_FRACTION
-        / 2.0;
+    let half = (rect[2] - rect[0]).min(rect[3] - rect[1]) * PLAYER_ARROW_FRACTION / 2.0;
     turned(
         emit,
         &arrow,
@@ -1147,8 +1321,22 @@ fn minimap(
     );
 }
 
+/// The arrow in the middle of the minimap: the widget's
+/// `minimapPlayerModel`, with `.mdx` replaced by the texture the model uses.
+const PLAYER_ARROW: &str = r"Interface\Minimap\MinimapArrow";
+
+/// The size of [`PLAYER_ARROW`], as a fraction of the frame's width.
+///
+/// The art is 32x32 and the frame is 140, which is 0.229. This matches the
+/// 1.12.1 client only if it draws the model at the texture's size, which has
+/// not been checked. It is the one value on this widget chosen by eye.
+const PLAYER_ARROW_FRACTION: f32 = 32.0 / 140.0;
+
 /// How many sides the minimap's disc has: the same count [`disc`] draws, so a
-/// building picture is cut along the edge the terrain is.
+/// building picture is cut along the edge the terrain is. Enough for the rim
+/// to look round at the largest portrait in the interface (the character
+/// sheet's, at about 60 pixels), and few enough that fourteen discs have
+/// negligible cost.
 const DISC_SEGMENTS: usize = 48;
 
 /// The minimap inside a building: a black disc, which is what the 1.12.1
@@ -1220,8 +1408,7 @@ fn interior(
     }
 }
 
-/// The minimap dots and the two kinds of marker: the mesh form of
-/// `framexml::blips`.
+/// The minimap dots and the two kinds of marker.
 ///
 /// A dot is a cell of `ObjectIcons` at its projected place inside the disc; a
 /// marker inside the disc is its `POIIcons` cell there, and beyond the rim it
@@ -1480,8 +1667,131 @@ mod tests {
         assert!(clip_triangle(tri, [20.0, 20.0, 30.0, 30.0]).is_empty());
     }
 
+    /// The conversion between the two coordinate spaces: the game's is y-up
+    /// from the bottom left and the window's is y-down from the top left.
+    /// Getting it backwards flips the whole interface top to bottom, which is
+    /// hard to see for centred elements and obvious for a bar at the bottom of
+    /// the screen.
     #[test]
-    fn the_tints_take_the_same_compensations_the_egui_painter_does() {
+    fn the_game_space_is_flipped_into_the_screens() {
+        let rect = crate::lua::widgets::layout::Rect {
+            left: 10.0,
+            bottom: 55.0,
+            width: 195.0,
+            height: 13.0,
+        };
+        // A window that is exactly the interface's shape: scale 1.0, no bars,
+        // and units are pixels.
+        //
+        // Rounded, because a window is a whole number of pixels and so is the
+        // space; see [`crate::lua::widgets::layout::units_wide`]. 1365⅓ is the
+        // exact 16:9 width and no window is that wide, so using it here would
+        // test a third of a pixel of rounding rather than the flip.
+        let exact = Viewport::of(
+            crate::lua::widgets::layout::VIRTUAL_WIDTH.round(),
+            crate::lua::widgets::layout::VIRTUAL_HEIGHT,
+            1.0,
+        );
+        let [left, top, right, bottom] = px(rect, exact);
+        assert_eq!(left, 10.0);
+        assert_eq!(right, 205.0);
+        // The game's top (68) is 700 from the top of a 768-high screen.
+        assert_eq!(top, 700.0);
+        assert_eq!(bottom, 713.0);
+        // A window twice the size doubles every coordinate: the game's units
+        // are virtual, not pixels (see `VIRTUAL_HEIGHT`).
+        let doubled = px(
+            rect,
+            Viewport::of(
+                crate::lua::widgets::layout::VIRTUAL_WIDTH.round() * 2.0,
+                crate::lua::widgets::layout::VIRTUAL_HEIGHT * 2.0,
+                1.0,
+            ),
+        );
+        assert_eq!(doubled[0], 20.0);
+        assert_eq!(doubled[1], 1400.0);
+        assert_eq!(doubled[3] - doubled[1], 26.0);
+    }
+
+    /// A window wider than 16:9 gives the interface the extra width rather than
+    /// a bar down each side. A fullscreen or maximised client on a wide monitor
+    /// is such a window.
+    ///
+    /// The test also checks the opposite error: when a widget's rectangle was
+    /// multiplied by a scale alone, the interface spread with the window and
+    /// every declared size came out wrong. One uniform scale taken from the
+    /// height prevents that, and the leftover width is part of the interface's
+    /// space.
+    #[test]
+    fn a_wider_window_gives_the_interface_the_width() {
+        let rect = crate::lua::widgets::layout::Rect {
+            left: 0.0,
+            bottom: 0.0,
+            width: crate::lua::widgets::layout::VIRTUAL_WIDTH,
+            height: crate::lua::widgets::layout::VIRTUAL_HEIGHT,
+        };
+        // 2:1 at 768 tall: the space is 1536 units across, the scale is 1 and
+        // there is no bar. The rectangle, which covers the 16:9 space, starts
+        // at the left edge and does not reach the right.
+        let wide = Viewport::of(1536.0, 768.0, 1.0);
+        assert!((wide.scale - 1.0).abs() < 1e-9);
+        assert!(wide.left.abs() < 1e-9, "{wide:?}");
+        let [left, top, right, bottom] = px(rect, wide);
+        assert!(left.abs() < 0.01, "{left}");
+        assert!(
+            (right - crate::lua::widgets::layout::VIRTUAL_WIDTH as f32).abs() < 0.01,
+            "{right}"
+        );
+        // Vertically nothing changes: the space is as tall as the window.
+        assert_eq!(top, 0.0);
+        assert_eq!(bottom, 768.0);
+    }
+
+    /// The player arrow points where the character is looking, on both maps. A
+    /// screenshot does not show this reliably, because a mirrored arrow is
+    /// correct at north and south and wrong everywhere else.
+    ///
+    /// The test covers the whole chain: the world's `o` through
+    /// [`crate::lua::panels::worldmap::arrow_angle`] into [`turned`], with the
+    /// art's tip (measured at row 7 of `MinimapArrow.blp`, so uv `(0.5, 0)`)
+    /// checked at the four compass points.
+    #[test]
+    fn the_arrow_points_where_the_character_looks() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        let centre = Vec2::new(100.0, 100.0);
+        // Where the middle of the quad's top edge lands, which is the tip.
+        let tip = |facing: f32| {
+            let mut emit = Emitter::new();
+            turned(
+                &mut emit,
+                &image(),
+                Blend::Alpha,
+                centre,
+                Vec2::splat(10.0),
+                crate::lua::panels::worldmap::arrow_angle(facing),
+                [1.0; 4],
+                None,
+            );
+            let batches = emit.into_batches();
+            let (a, b) = (batches[0].positions[0], batches[0].positions[1]);
+            Vec2::new((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+        };
+        // The screen is y-down, so "up" is a smaller y.
+        let north = tip(0.0);
+        assert!(north.y < centre.y - 9.0, "facing north draws the tip up: {north:?}");
+        assert!((north.x - centre.x).abs() < 0.01);
+        // `o` grows towards +y, which is west, and west is left.
+        let west = tip(FRAC_PI_2);
+        assert!(west.x < centre.x - 9.0, "facing west draws the tip left: {west:?}");
+        let south = tip(PI);
+        assert!(south.y > centre.y + 9.0, "facing south draws the tip down: {south:?}");
+        let east = tip(-FRAC_PI_2);
+        assert!(east.x > centre.x + 9.0, "facing east draws the tip right: {east:?}");
+    }
+
+    #[test]
+    fn the_tints_take_the_byte_space_compensations() {
+
         // Alpha through byte_space_alpha, rgb linearised: spot the endpoints.
         assert_eq!(tint([1.0, 1.0, 1.0, 1.0], 1.0)[3], 1.0);
         assert_eq!(tint([1.0, 1.0, 1.0, 0.0], 1.0)[3], 0.0);

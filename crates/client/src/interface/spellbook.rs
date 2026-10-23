@@ -41,7 +41,8 @@
 
 use super::events::SpellsChanged;
 use crate::assets::GameAssets;
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::Session;
 use vale_assets::tables::book::Spellbook as Book;
 use bevy::prelude::*;
 

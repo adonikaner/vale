@@ -64,6 +64,7 @@ use super::events::{
 };
 use crate::assets::GameAssets;
 use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 use vale_protocol::play::items::{self, Inventory as Carried, ItemPlace, ItemSlot};
 use vale_protocol::state::query::ItemInfo;
 use std::collections::HashMap;
@@ -259,7 +260,32 @@ impl Plugin for ItemsPlugin {
                     // the same set.
                     .after(super::action::ActionSet)
                     .in_set(super::GameSet),
+            )
+            .add_message::<TemplatesArrived>()
+            .add_systems(
+                Update,
+                templates_landed
+                    .after(crate::world::incoming::drain_queues)
+                    .in_set(super::GameSet),
             );
+    }
+}
+
+/// Raise `BAG_UPDATE` for bags 0 to 4 when templates arrive.
+///
+/// The paper doll, the tooltip and the action bar read the same templates and
+/// none of them announces itself, so this is raised whenever there is a
+/// session. `arg1 = -1` is not a bag: `ContainerFrame_OnEvent` compares `arg1`
+/// against each frame's own id and redraws on a match, so each backpack bag
+/// gets its own event.
+fn templates_landed(
+    mut arrived: MessageReader<TemplatesArrived>,
+    mut bags: MessageWriter<BagUpdate>,
+) {
+    if arrived.read().count() > 0 {
+        for bag in 0..=4 {
+            bags.write(BagUpdate(bag));
+        }
     }
 }
 
@@ -401,7 +427,7 @@ fn use_item(
     mut errors: super::messages::UiErrors,
     // The caster, for the pre-cast checks that `cast_known_spell` makes. See
     // [`super::api::caster_conditions`].
-    player: Query<&crate::world::session::WorldEntity, With<crate::world::session::LocalPlayer>>,
+    player: Query<&crate::world::entity::WorldEntity, With<crate::world::entity::LocalPlayer>>,
     // The time of day, the weather and the reputation list, which those checks
     // need and the caster's own snapshot does not carry. One param because
     // this system is at fifteen and three `Res` would not fit. See
@@ -511,7 +537,7 @@ fn use_item(
         // this way: the 1.12.1 client's gesture is bag-only.
         if carried && merchant.is_open() {
             if let (Some(active), Some(vendor)) = (session.active.as_ref(), merchant.guid()) {
-                active.live.npc(vale_protocol::socket::session::NpcVerb::Sell {
+                active.live.npc(vale_protocol::play::gossip::NpcVerb::Sell {
                     vendor,
                     item: item.guid,
                     count: 0,
@@ -541,7 +567,7 @@ fn use_item(
         // not worn.
         if template.start_quest != 0 {
             if let Some(active) = session.active.as_ref() {
-                active.live.quest(vale_protocol::socket::session::QuestVerb::Details {
+                active.live.quest(vale_protocol::play::quest::QuestVerb::Details {
                     guid: item.guid,
                     quest_id: template.start_quest,
                 });
@@ -592,7 +618,7 @@ fn use_item(
             if template.flags & vale_protocol::state::query::item_flags::CHARTER != 0 {
                 if let Some(active) = session.active.as_ref() {
                     active.live.petition(
-                        vale_protocol::socket::session::PetitionVerb::ShowSignatures(item.guid),
+                        vale_protocol::play::petition::PetitionVerb::ShowSignatures(item.guid),
                     );
                 }
                 continue;

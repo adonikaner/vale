@@ -390,6 +390,7 @@ fn focus_edit_box(lua: &mlua::Lua, frame: &mlua::Table, errors: &mut Vec<String>
 ///
 /// Read by [`super::super::audit`], whose click probe presses only what a person could
 /// have pressed: a button the interface drives itself is not one of them.
+#[cfg(any(test, feature = "diagnostics"))]
 pub(in crate::lua) fn is_enabled(frame: &mlua::Table) -> bool {
     frame
         .raw_get::<Option<bool>>(ENABLED_KEY)
@@ -1043,6 +1044,7 @@ fn call(
 /// is `OnClick`, and this covers the widgets that have no `OnClick`.
 ///
 /// Returns whatever the two handlers raised, in the order they ran.
+#[cfg(any(test, feature = "diagnostics"))]
 pub(in crate::lua) fn press_and_release(
     lua: &mlua::Lua,
     frame: &mlua::Table,
@@ -1376,10 +1378,11 @@ pub(crate) fn poll(
     clock: Option<Res<super::update::InterfaceClock>>,
     mut focus: ResMut<MouseFocus>,
     external: Res<ExternalPointer>,
-    // The scale the interface is drawn at, which the pick has to invert; see
-    // [`crate::ui::scale`]. The painter reads the same value in the same
-    // frame, so the hit test matches what is on screen.
-    ui_scale: Res<crate::ui::scale::InterfaceScale>,
+    // Where the interface is drawn in the window, which the pick has to
+    // invert; see [`crate::ui::scale::InterfaceViewport`]. The painter reads
+    // the same value in the same frame, so the hit test matches what is on
+    // screen.
+    viewport: Res<crate::ui::scale::InterfaceViewport>,
     mut pressed: MessageWriter<BindingPressed>,
     mut last_at: Local<Option<(f64, f64)>>,
     // Whether this system made the claim below, so it can drop the claim on
@@ -1424,12 +1427,8 @@ pub(crate) fn poll(
     // the window. [`Viewport::to_units`] is the exact inverse of the
     // `to_pixels` the painter draws through. Computing the two conversions
     // separately would let the hit test drift from what is on screen, so this
-    // uses the same type rather than deriving a scale of its own.
-    let view = super::super::widgets::layout::Viewport::of(
-        f64::from(window.width()),
-        f64::from(window.height()),
-        ui_scale.get(),
-    );
+    // uses the same resource rather than deriving a viewport of its own.
+    let view = viewport.view;
     let at = window
         .cursor_position()
         .map(|p| view.to_units(f64::from(p.x), f64::from(p.y)));
@@ -2268,7 +2267,7 @@ mod tests {
         app.insert_non_send(host())
             .init_resource::<MouseFocus>()
             .init_resource::<ExternalPointer>()
-            .init_resource::<crate::ui::scale::InterfaceScale>()
+            .init_resource::<crate::ui::scale::InterfaceViewport>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<ButtonInput<KeyCode>>()
             .add_message::<BindingPressed>()
@@ -2297,7 +2296,7 @@ mod tests {
         app.insert_non_send(host())
             .init_resource::<MouseFocus>()
             .init_resource::<ExternalPointer>()
-            .init_resource::<crate::ui::scale::InterfaceScale>()
+            .init_resource::<crate::ui::scale::InterfaceViewport>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<ButtonInput<KeyCode>>()
             .add_message::<BindingPressed>()

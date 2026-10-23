@@ -1,5 +1,5 @@
 //! Floating combat text: the numbers that rise off a unit the player hits,
-//! raised and painted.
+//! raised here and painted by [`crate::ui::mesh::floats`].
 //!
 //! The rules are in [`vale_assets::look::worldtext`]: the six styles, the
 //! eleven words, the two colour overrides and the three curves. They live in
@@ -8,11 +8,11 @@
 //! `Interface\FrameXML\` has no `CombatText.lua`; the 1.12.1 client draws this
 //! text itself.
 //!
-//! This module does the drawing:
+//! This module keeps the state the painter reads:
 //!
 //! ```text
-//! raise   a unit's counter moved -> one entry, at the victim's chest
-//! paint   …and every live entry, risen, faded and scaled
+//! raise        a unit's counter moved -> one entry, at the victim's chest
+//! experience   an experience gain -> one entry, at the player
 //! ```
 //!
 //! ## Reconciled off a counter
@@ -73,12 +73,10 @@
 //!   `SMSG_SPELLNONMELEEDAMAGELOG` with `periodicLog` set.
 
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
 
 use vale_assets::look::worldtext as rules;
 use crate::assets::GameAssets;
-use crate::lua::widgets::layout::{Viewport, VIRTUAL_HEIGHT};
-use crate::world::session::{LocalPlayer, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
 
 /// One piece of floating text, alive until its style says otherwise.
 #[derive(Debug, Clone)]
@@ -117,20 +115,13 @@ pub struct WorldTextPlugin;
 
 impl Plugin for WorldTextPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WorldText>()
-            .add_systems(
-                Update,
-                // After the entity pass, whose reconcile moves the counter this
-                // reads. Running before it would take the blow's position from a
-                // transform that had not been written yet.
-                (raise, experience).after(crate::world::entities::EntitySet),
-            )
-            .add_systems(
-                bevy_egui::EguiPrimaryContextPass,
-                // Under the interface, on `render::labels`' terms: egui
-                // sorts two layers of one `Order` by which was used first.
-                paint.before(super::framexml::paint),
-            );
+        app.init_resource::<WorldText>().add_systems(
+            Update,
+            // After the entity pass, whose reconcile moves the counter this
+            // reads. Running before it would take the blow's position from a
+            // transform that had not been written yet.
+            (raise, experience).after(crate::world::entities::EntitySet),
+        );
     }
 }
 
@@ -356,120 +347,6 @@ fn say(
     Some((line, kind))
 }
 
-/// Paint every live floater.
-fn paint(
-    mut contexts: EguiContexts,
-    time: Res<Time>,
-    text: Res<WorldText>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    camera: Query<(&Camera, &Transform), With<crate::world::camera::WorldCamera>>,
-) -> Result {
-    // The mesh painter draws these instead when it is on; see
-    // [`crate::ui::mesh::floats`], which reads the same state.
-    if crate::ui::mesh::active() {
-        return Ok(());
-    }
-    if text.live.is_empty() {
-        return Ok(());
-    }
-    let Ok(window) = windows.single() else { return Ok(()) };
-    // The camera is found by its marker, not as the first active camera:
-    // `render::portraits` keeps one per unit frame with an image target, and
-    // projecting a number through one of those puts it in a 64-pixel portrait.
-    let Ok((camera, placed)) = camera.single() else {
-        return Ok(());
-    };
-    let eye = GlobalTransform::from(*placed);
-    let ctx = contexts.ctx_mut()?.clone();
-    // At scale 1. Floating combat text is one of the two parts of 1.12's
-    // interface that ship no XML; the client draws it itself. It is therefore
-    // not scaled by `uiScale` the way a widget is, and every size below is a
-    // fraction of the window. See [`crate::ui::scale`]. `view` is read only for
-    // [`Viewport::scale`], which at 1.0 is the window's height over 768.
-    let view = Viewport::of(f64::from(window.width()), f64::from(window.height()), 1.0);
-    let scale = view.scale as f32;
-    let faces = super::framexml::bound_faces(&ctx);
-    let family = super::framexml::family(Some(rules::FONT), faces);
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Background,
-        egui::Id::new("worldtext"),
-    ));
-    let now = time.elapsed_secs();
-    for floater in &text.live {
-        let age_ms = ((now - floater.born) * 1000.0).max(0.0) as u32;
-        let at = floater.from + Vec3::Y * rules::rise(floater.kind, age_ms);
-        // `world_to_viewport` returns physical pixels and egui takes logical
-        // ones, so the result is divided by the window's scale factor; without
-        // the division every number was drawn scaled away from the window's
-        // top-left corner. `render::labels` describes the same conversion.
-        let Ok(pixels) = camera.world_to_viewport(&eye, at) else {
-            continue;
-        };
-        let pixels = pixels / window.scale_factor();
-        let alpha = rules::alpha(floater.kind, age_ms);
-        if alpha <= 0.0 {
-            continue;
-        }
-        // Rounded to a whole pixel to prevent a crash. A critical's height
-        // changes on every frame of its growth ([`rules::punch`]), so an
-        // unrounded size asks the painter for a fresh raster of every glyph on
-        // every frame, and its atlas is 2048 wide and panics when it fills.
-        // Whole pixels put the whole curve in about twenty sizes. `max(1)`
-        // because the curve starts near zero.
-        let size = (rules::height(floater.kind, age_ms) * VIRTUAL_HEIGHT as f32 * scale)
-            .round()
-            .max(1.0);
-        let font = egui::FontId::new(size, family.clone());
-        // The spread, in multiples of the text's own size; see
-        // [`rules::slot_offset`] and [`CELL_WIDTH`]. A cell is one line tall
-        // and about two digits wide, so two four-digit numbers in adjacent
-        // cells still clear each other while a burst stays over the shoulders
-        // of the unit it belongs to.
-        let (cx, cy) = rules::slot_offset(floater.slot);
-        let pos = egui::pos2(
-            pixels.x + cx * size * CELL_WIDTH,
-            // Screen y is down and the rows step up.
-            pixels.y - cy * size * CELL_HEIGHT,
-        );
-        // A translucent fill gets an outline ([`OUTLINE`]); an opaque one gets
-        // the sub-pixel drop shadow ([`SHADOW`]), which on its own puts nothing
-        // visible behind the glyphs. The dark colour follows the fade so it
-        // does not outlive the fill, but not the fill's own alpha: an outline
-        // at a half-transparent fill's alpha would be half as visible, which is
-        // the case the outline exists to fix.
-        let behind = egui::Color32::from_black_alpha(byte(alpha));
-        let shadow = SHADOW * VIRTUAL_HEIGHT as f32 * scale;
-        if translucent(floater.colour) {
-            let ring = (OUTLINE * size).max(shadow);
-            for (dx, dy) in AROUND {
-                painter.text(
-                    egui::pos2(pos.x + dx * ring, pos.y + dy * ring),
-                    egui::Align2::CENTER_CENTER,
-                    &floater.text,
-                    font.clone(),
-                    behind,
-                );
-            }
-        } else {
-            painter.text(
-                egui::pos2(pos.x + shadow, pos.y + shadow),
-                egui::Align2::CENTER_CENTER,
-                &floater.text,
-                font.clone(),
-                behind,
-            );
-        }
-        painter.text(
-            pos,
-            egui::Align2::CENTER_CENTER,
-            &floater.text,
-            font,
-            argb(floater.colour, alpha),
-        );
-    }
-    Ok(())
-}
-
 /// The drop shadow, as a fraction of the interface's height: the same `0.001`
 /// the 1.12.1 client uses for the text it draws over units.
 ///
@@ -521,9 +398,7 @@ pub(super) fn translucent(colour: u32) -> bool {
 ///
 /// Eight rather than four because four leaves the diagonals of a glyph bare,
 /// which on a thin face reads as a broken edge rather than an outline. Nine
-/// draws per string, sharing two cached galleys — egui keys its layout cache on
-/// the text, the font and the colour, so the outline's eight are one galley
-/// laid out once.
+/// draws per string.
 pub(super) const AROUND: [(f32, f32); 8] = [
     (-1.0, -1.0), (0.0, -1.0), (1.0, -1.0),
     (-1.0, 0.0),               (1.0, 0.0),
@@ -543,43 +418,8 @@ pub(super) const AROUND: [(f32, f32); 8] = [
 pub(super) const CELL_WIDTH: f32 = 3.0;
 pub(super) const CELL_HEIGHT: f32 = 1.3;
 
-fn byte(alpha: f32) -> u8 {
-    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-/// An `ARGB` colour as a `u32`, its alpha scaled by the ramp.
-fn argb(colour: u32, alpha: f32) -> egui::Color32 {
-    let own = ((colour >> 24) & 0xff) as f32 / 255.0;
-    egui::Color32::from_rgba_unmultiplied(
-        (colour >> 16) as u8,
-        (colour >> 8) as u8,
-        colour as u8,
-        byte(own * alpha),
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    /// The ring is opaque where the fill is not.
-    ///
-    /// The experience row's fill is half-transparent, the style table's
-    /// `0x8094008b`, so a ring that inherited the fill's alpha would be half as
-    /// visible. The ring takes the fade curve instead, which is full at the
-    /// entry's peak.
-    #[test]
-    fn the_outline_does_not_inherit_a_translucent_fill() {
-        use vale_assets::look::worldtext as rules;
-        let experience = rules::style(rules::Kind::Experience).colour;
-        let fill = super::argb(experience, 1.0);
-        assert_eq!(fill.a(), 128, "the table's own half alpha reaches the fill");
-        // The ring, which `paint` draws behind it.
-        assert_eq!(super::byte(1.0), 255, "the ring is drawn at the fade's alpha");
-
-        // A damage number's fill is opaque, so the two agree there.
-        let damage = rules::style(rules::Kind::Damage).colour;
-        assert_eq!(super::argb(damage, 1.0).a(), 255);
-    }
-
     /// Only a translucent fill gets the ring. Five of the six rows are opaque
     /// and keep the sub-pixel shadow; the experience row is the translucent
     /// one. Asserted from the table rather than from the kind, so a second

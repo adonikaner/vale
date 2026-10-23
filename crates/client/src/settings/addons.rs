@@ -73,7 +73,7 @@ impl Plugin for AddonsPlugin {
 pub fn seed(
     assets: Res<crate::assets::GameAssets>,
     session: Res<crate::world::session::Session>,
-    world: Res<crate::world::session::WorldStatus>,
+    world: Res<crate::world::status::WorldStatus>,
     config: Res<ClientConfig>,
     host: Option<NonSendMut<LuaHost>>,
     mut files: ResMut<AddonFiles>,
@@ -220,7 +220,7 @@ fn save_requested(
 /// Write the active character's file, for both exits.
 fn write_active(
     session: &crate::world::session::Session,
-    world: &crate::world::session::WorldStatus,
+    world: &crate::world::status::WorldStatus,
     config: &Config,
     host: &LuaHost,
 ) {
@@ -238,7 +238,7 @@ fn write_active(
 fn save_on_logout(
     mut leaving: MessageReader<crate::interface::events::PlayerLeavingWorld>,
     session: Res<crate::world::session::Session>,
-    world: Res<crate::world::session::WorldStatus>,
+    world: Res<crate::world::status::WorldStatus>,
     config: Res<ClientConfig>,
     host: Option<NonSend<LuaHost>>,
 ) {
@@ -253,7 +253,7 @@ fn save_on_logout(
 fn save(
     mut exits: MessageReader<AppExit>,
     session: Res<crate::world::session::Session>,
-    world: Res<crate::world::session::WorldStatus>,
+    world: Res<crate::world::status::WorldStatus>,
     config: Res<ClientConfig>,
     host: Option<NonSend<LuaHost>>,
 ) {

@@ -37,7 +37,7 @@ pub trait ActionAnswers {
     fn action_tooltip(&self, _slot: u8) -> Option<api::SpellTip> { None }
     /// The same call for a slot holding an item, which uses a different
     /// plate. `None` for a spell slot, so the two cannot both answer.
-    fn action_item_tooltip(&self, _slot: u8) -> Option<api::ItemTip> { None }
+    fn action_item_tooltip(&self, _slot: u8) -> Option<crate::interface::plate::ItemTip> { None }
     fn action_text(&self, _slot: u8) -> Option<String> { None }
     fn action_texture(&self, _slot: u8) -> Option<String> { None }
     /// `(start, duration, enable)`, in [`Answers::now`]'s base.
@@ -161,7 +161,7 @@ impl ActionAnswers for Live<'_, '_, '_> {
     /// no stack. A bar slot names an entry, not a bag square: the same entry
     /// may sit in three bags, so there is no single stack to take a count or
     /// a durability from.
-    fn action_item_tooltip(&self, slot: u8) -> Option<api::ItemTip> {
+    fn action_item_tooltip(&self, slot: u8) -> Option<crate::interface::plate::ItemTip> {
         self.tip_from(api::action_item(self.bar, slot)?, None)
     }
 

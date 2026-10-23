@@ -67,6 +67,7 @@
 //! [`NoticeTail`] keeps guids and the name is the session's job.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// `ChatNotify` — `Channel.h`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,6 +428,74 @@ pub fn player_body(name: &str, player: &str) -> Vec<u8> {
 /// name alone.
 pub fn toggle_body(name: &str) -> Vec<u8> {
     one(name)
+}
+
+/// The sixteen channel requests the chat frame sends to the socket.
+///
+/// See [`crate::play::channels`], which owns the bodies. Every verb carries
+/// the channel's name, because the wire keys channels by name. The numbers
+/// typed in the interface (`/2 hello`) are client-side slots and are never
+/// sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelVerb {
+    Join { name: String, password: String },
+    Leave(String),
+    /// `/chatlist <name>`, answered by `SMSG_CHANNEL_LIST`.
+    List(String),
+    Password { name: String, password: String },
+    SetOwner { name: String, player: String },
+    /// Who owns it, answered by a `CHANNEL_OWNER` notice.
+    Owner(String),
+    Moderator { name: String, player: String },
+    Unmoderator { name: String, player: String },
+    Mute { name: String, player: String },
+    Unmute { name: String, player: String },
+    Invite { name: String, player: String },
+    Kick { name: String, player: String },
+    Ban { name: String, player: String },
+    Unban { name: String, player: String },
+    Announcements(String),
+    Moderate(String),
+}
+
+impl ChannelVerb {
+    /// The opcode and the body this verb sends: the chat frame's sixteen
+    /// channel packets. Eight of them share one layout: channel name and
+    /// player name.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use crate::play::channels as c;
+        use ChannelVerb as V;
+        match self {
+            V::Join { name, password } => (Opcode::CMSG_JOIN_CHANNEL, c::join_body(name, password)),
+            V::Leave(name) => (Opcode::CMSG_LEAVE_CHANNEL, c::leave_body(name)),
+            V::List(name) => (Opcode::CMSG_CHANNEL_LIST, c::list_body(name)),
+            V::Password { name, password } => {
+                (Opcode::CMSG_CHANNEL_PASSWORD, c::password_body(name, password))
+            }
+            V::SetOwner { name, player } => {
+                (Opcode::CMSG_CHANNEL_SET_OWNER, c::set_owner_body(name, player))
+            }
+            V::Owner(name) => (Opcode::CMSG_CHANNEL_OWNER, c::owner_body(name)),
+            V::Moderator { name, player } => {
+                (Opcode::CMSG_CHANNEL_MODERATOR, c::player_body(name, player))
+            }
+            V::Unmoderator { name, player } => {
+                (Opcode::CMSG_CHANNEL_UNMODERATOR, c::player_body(name, player))
+            }
+            V::Mute { name, player } => (Opcode::CMSG_CHANNEL_MUTE, c::player_body(name, player)),
+            V::Unmute { name, player } => {
+                (Opcode::CMSG_CHANNEL_UNMUTE, c::player_body(name, player))
+            }
+            V::Invite { name, player } => {
+                (Opcode::CMSG_CHANNEL_INVITE, c::player_body(name, player))
+            }
+            V::Kick { name, player } => (Opcode::CMSG_CHANNEL_KICK, c::player_body(name, player)),
+            V::Ban { name, player } => (Opcode::CMSG_CHANNEL_BAN, c::player_body(name, player)),
+            V::Unban { name, player } => (Opcode::CMSG_CHANNEL_UNBAN, c::player_body(name, player)),
+            V::Announcements(name) => (Opcode::CMSG_CHANNEL_ANNOUNCEMENTS, c::toggle_body(name)),
+            V::Moderate(name) => (Opcode::CMSG_CHANNEL_MODERATE, c::toggle_body(name)),
+        }
+    }
 }
 
 #[cfg(test)]

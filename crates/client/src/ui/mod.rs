@@ -1,20 +1,17 @@
 //! Everything drawn over the world, as opposed to in it.
 //!
 //! ```text
-//! framexml.rs  the game's own interface, drawn from the widget tree, and its
-//!              glue screens, which are the same painter over the same tree
-//! mesh/        the same draw list as batched 2d meshes. This is the default
-//!              painter; `VALE_UI_PAINTER=egui` selects the older egui
-//!              painter. It also draws the combat text and the loading
-//!              screen, so with it egui draws diagnostics only
-//! loading.rs   the loading screen, drawn over the interface: three quads and
-//!              no widgets, as in 1.12
-//! worldtext.rs the numbers that float off a unit that is hit, drawn under
-//!              the interface. 1.12 ships no XML for them, so they are not in
-//!              the widget tree. The unit name, the other part of 1.12's
-//!              interface with no XML, is not here: it is `render::labels`,
-//!              because a name is drawn in the world and takes the depth
-//!              buffer
+//! framexml.rs  the draw walk: the game's own interface and its glue screens,
+//!              turned from the widget tree into the list of items to draw
+//! mesh/        the painter: that list as batched 2d meshes, and the combat
+//!              text and the loading screen beside it, so egui draws
+//!              diagnostics only
+//! worldtext.rs the numbers that float off a unit that is hit: raised here and
+//!              drawn by `mesh/` under the interface. 1.12 ships no XML for
+//!              them, so they are not in the widget tree. The unit name, the
+//!              other part of 1.12's interface with no XML, is not here: it is
+//!              `render::labels`, because a name is drawn in the world and
+//!              takes the depth buffer
 //! debug/       the diagnostic surface, behind `F4` and behind the
 //!              `diagnostics` feature: a header and seven tabs. They cover
 //!              what the frame cost, what is in the world, how it is drawn
@@ -34,9 +31,9 @@
 //! `diagnostics` feature, so a shipped build does not pay for an instrument.
 //! See [`debug`] for what the feature removes and how that is checked.
 //!
-//! `framexml` draws what [`crate::lua`] loads: the game's art, the game's
-//! fonts, the game's own anchors, its bars, its borders and its message
-//! lines. The other files are around it.
+//! `framexml` and `mesh` draw what [`crate::lua`] loads: the game's art, the
+//! game's fonts, the game's own anchors, its bars, its borders and its message
+//! lines. The other files are around them.
 //!
 //! ## The three egui stand-ins that were deleted
 //!
@@ -59,10 +56,10 @@
 //!   `Interface\GlueXML\` holds the widget tree: 20 `.toc` entries,
 //!   `AccountLogin.xml` and `CharacterSelect.xml` among them, in the archives
 //!   in the same form as `FrameXML`. The login and character screens are
-//!   therefore the game's own files, drawn by [`framexml`], and no code here
-//!   knows what a login is. The state under the old screen is unchanged: a
-//!   held `Handshake`, and a `Screen` derived from what exists and not stored
-//!   beside it. The client half of the two screens is [`crate::glue::glue`].
+//!   therefore the game's own files, drawn by [`framexml`] and [`mesh`], and
+//!   no code here knows what a login is. The state under the old screen is
+//!   unchanged: a held `Handshake`, and a `Screen` derived from what exists
+//!   and not stored beside it. The client half of the two screens is [`crate::glue::glue`].
 //!
 //! `debug/` stays under any interface. It is the diagnostic surface, which
 //! the game has no equivalent of, and every measurement in this project is
@@ -74,7 +71,6 @@ pub mod cursor;
 #[cfg(feature = "diagnostics")]
 pub mod debug;
 pub mod framexml;
-pub mod loading;
 pub mod mesh;
 pub mod scale;
 pub mod worldtext;
@@ -90,35 +86,24 @@ pub struct UiPlugins;
 
 impl bevy::app::Plugin for UiPlugins {
     fn build(&self, app: &mut bevy::app::App) {
-        // egui itself is not diagnostic and is registered here. The HUD's
-        // plugin once added it, so the game's own interface and the glue
-        // screens, which can paint through it, depended on the debug window
-        // being compiled in. Without the `diagnostics` feature that was a
-        // link error.
+        // egui itself is registered here rather than with the debug window:
+        // `claim_input` below reads `EguiWantsInput` in every build, and a
+        // host that builds this app draws panels of its own through it.
         app.add_plugins((
             bevy_egui::EguiPlugin::default(),
             // Runs in `PreUpdate`, so everything drawn in one frame is drawn
-            // at one scale. The four passes that read it need no ordering
-            // against it. See [`scale`].
+            // at one scale and fitted into one viewport. The passes that read
+            // them need no ordering against it. See [`scale`].
             scale::InterfaceScalePlugin,
-            // First, so that the diagnostics are drawn over the game's own
-            // interface and not under it.
             framexml::FrameXmlPlugin,
-            // The numbers that float off a unit that is hit, in a layer of
-            // their own.
+            // The numbers that float off a unit that is hit.
             worldtext::WorldTextPlugin,
             cursor::CursorPlugin,
-            // The one pass drawn over everything else, diagnostics included;
-            // [`loading`] gives the reason.
-            loading::LoadingScreenPlugin,
+            // The painter: the interface, the combat text and the loading
+            // screen.
+            mesh::UiMeshPlugin,
         ));
-        // The mesh painter, which is the default. Conditional, so a
-        // `VALE_UI_PAINTER=egui` run carries no second painter in its
-        // schedules. The egui emissions' own skips check the same
-        // [`mesh::active`].
-        if mesh::active() {
-            app.add_plugins(mesh::UiMeshPlugin);
-        }
+
         // Before both input polls, so a key or a wheel event that egui took
         // is refused in the frame it happened and not the next one.
         // `bevy_egui` writes `EguiWantsInput` in `PreUpdate`, so `Update`

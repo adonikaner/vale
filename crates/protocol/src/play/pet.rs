@@ -44,6 +44,7 @@
 //! `Server/Packets/Pet.cpp` and `Objects/UnitDefines.h`.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// How many slots a pet's action bar has — `MAX_UNIT_ACTION_BAR_INDEX`.
 ///
@@ -672,6 +673,81 @@ pub fn pet_cancel_aura_body(pet: u64, spell_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet).u32(spell_id);
     w.buf
+}
+
+/// The seven commands a player can give a pet, and two more requests from the
+/// pet panel.
+///
+/// One enum rather than nine `Command` variants, for the same reason as
+/// [`crate::play::gossip::NpcVerb`]: they share one subject, all name the pet's guid, and the
+/// dispatch is a table in [`PetVerb::packet`].
+///
+/// [`PetVerb::Action`] is the only verb without a fixed meaning. Pressing a
+/// slot sends `CMSG_PET_ACTION` with the slot's packed word unchanged, and
+/// every command and reaction button uses the same packet: the bar the server
+/// sent already holds "follow" and "aggressive" as slots. A binding such as
+/// `PetFollow` is this verb with the word the bar carries, not a separate
+/// opcode. See [`crate::play::pet`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PetVerb {
+    /// `CMSG_PET_ACTION`: press a slot, at a target (0 for none).
+    Action { pet: u64, data: u32, target: u64 },
+    /// `CMSG_PET_NAME_QUERY`: the name the player gave the pet, by pet number.
+    NameQuery { pet_number: u32, pet: u64 },
+    /// `CMSG_PET_SET_ACTION`: one move, or a swap of two.
+    SetAction { pet: u64, moves: Vec<(u32, u32)> },
+    /// `CMSG_PET_SPELL_AUTOCAST`: the autocast toggle on a spell button.
+    Autocast { pet: u64, spell_id: u32, on: bool },
+    /// `CMSG_PET_STOP_ATTACK`.
+    StopAttack(u64),
+    /// `CMSG_PET_ABANDON`: release the pet permanently, not dismiss it.
+    Abandon(u64),
+    /// `CMSG_PET_UNLEARN`: reset the pet's skills for money.
+    Unlearn(u64),
+    /// `CMSG_PET_RENAME`.
+    Rename { pet: u64, name: String },
+    /// `CMSG_PET_CANCEL_AURA`: cancel one of the pet's buffs.
+    CancelAura { pet: u64, spell_id: u32 },
+}
+
+impl PetVerb {
+    /// The opcode and the body this verb sends: nine opcodes, built like
+    /// [`crate::play::gossip::NpcVerb::packet`].
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use crate::play::pet;
+        use PetVerb as V;
+        match self {
+            V::Action { pet: guid, data, target } => (
+                Opcode::CMSG_PET_ACTION,
+                pet::pet_action_body(*guid, *data, *target),
+            ),
+            V::NameQuery { pet_number, pet: guid } => (
+                Opcode::CMSG_PET_NAME_QUERY,
+                pet::pet_name_query_body(*pet_number, *guid),
+            ),
+            V::SetAction { pet: guid, moves } => (
+                Opcode::CMSG_PET_SET_ACTION,
+                pet::pet_set_action_body(*guid, moves),
+            ),
+            V::Autocast { pet: guid, spell_id, on } => (
+                Opcode::CMSG_PET_SPELL_AUTOCAST,
+                pet::pet_spell_autocast_body(*guid, *spell_id, *on),
+            ),
+            // Three opcodes with one body layout. See
+            // [`crate::play::pet::pet_guid_body`].
+            V::StopAttack(guid) => (Opcode::CMSG_PET_STOP_ATTACK, pet::pet_guid_body(*guid)),
+            V::Abandon(guid) => (Opcode::CMSG_PET_ABANDON, pet::pet_guid_body(*guid)),
+            V::Unlearn(guid) => (Opcode::CMSG_PET_UNLEARN, pet::pet_guid_body(*guid)),
+            V::Rename { pet: guid, name } => (
+                Opcode::CMSG_PET_RENAME,
+                pet::pet_rename_body(*guid, name),
+            ),
+            V::CancelAura { pet: guid, spell_id } => (
+                Opcode::CMSG_PET_CANCEL_AURA,
+                pet::pet_cancel_aura_body(*guid, *spell_id),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

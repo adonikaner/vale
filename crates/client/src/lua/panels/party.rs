@@ -37,7 +37,7 @@
 //! [`PartyRequest`] and [`crate::interface::party`] applies it. Two of the six carry
 //! a *name* where the wire wants a guid, and resolving that needs the roster —
 //! which is why the queue holds requests rather than
-//! [`vale_protocol::socket::session::PartyVerb`]s.
+//! [`vale_protocol::play::group::PartyVerb`]s.
 //!
 //! ## The raid's own reads are next door
 //!
@@ -87,7 +87,7 @@ pub const WRITES: [&str; 8] = [
 
 /// What the interface asked of the party.
 ///
-/// A request rather than an [`vale_protocol::socket::session::PartyVerb`] because two
+/// A request rather than an [`vale_protocol::play::group::PartyVerb`] because two
 /// of the six name a *player* and the wire wants a guid for one of them — see
 /// the module comment.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -22,7 +22,7 @@
 
 use super::mixer::{Place, Voices};
 use crate::world::entities::{Mount, Playback};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 use bevy::prelude::*;
 
 /// Where in the cycle this entity's last footfall was, so a wrap is an event.

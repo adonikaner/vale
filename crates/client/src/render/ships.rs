@@ -16,7 +16,7 @@
 //! * **The geometry is [`WmoCache`]'s**, path-keyed and shared, exactly as a
 //!   building's is. The loader, the material pool, the staging budget and the
 //!   eviction are all reused; what is new here is only the placement.
-//! * **The placement is [`crate::world::session::place_entities`]'s.** A
+//! * **The placement is [`crate::world::entity::place_entities`]'s.** A
 //!   transport is a `WorldEntity` like any other, so its `Transform` is already
 //!   written from [`crate::world::motion`] every frame — the ship is drawn where
 //!   the interpolator says the entity is, and the route it walks is decided one
@@ -54,7 +54,7 @@ use bevy::prelude::*;
 
 use crate::render::wmos::{Lookup, WmoCache, WmoPart};
 use crate::world::entities::DisplayCache;
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 use vale_assets::tables::shiptransport::MoTransport;
 use vale_protocol::state::update::ObjectType;
 

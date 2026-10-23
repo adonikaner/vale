@@ -60,7 +60,7 @@ use crate::interface::object::HoveredObject;
 use crate::world::camera::WorldCamera;
 use crate::world::entities::fallback::FallbackReason;
 use crate::world::entities::{DisplayCache, EntityModel, Indoors, NoModel, Playback};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 
 use super::{row, BAD, DIM, GOOD, WARN};
 

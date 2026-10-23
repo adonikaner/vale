@@ -42,7 +42,7 @@
 //!
 //! There is deliberately **no `speed_of`**. Differencing two interpolated
 //! positions looks like the natural way to ask "is this moving?", and it cannot
-//! be made steady — see [`crate::session`] and `Playback` for what replaced it.
+//! be made steady — see [`crate::world::entity`] and `Playback` for what replaced it.
 
 use vale_protocol::state::movement::shortest_turn;
 use bevy::platform::collections::{HashMap, HashSet};

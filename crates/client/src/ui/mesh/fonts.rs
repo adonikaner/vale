@@ -84,7 +84,7 @@ pub struct UiFonts {
 impl UiFonts {
     /// Load the four faces out of the archives, once. A face that will not
     /// load falls back to the standard one at [`Self::face_index`], which is
-    /// the same degradation the egui painter and the reference both take.
+    /// what the game does with a font file it cannot open.
     fn load(&mut self, assets: &crate::assets::GameAssets) {
         if self.looked {
             return;
@@ -179,8 +179,8 @@ impl UiFonts {
             // one-alpha-door argument, and it is wrong for glyphs: it turns
             // every antialiased edge texel markedly more opaque, so all text
             // reads a weight heavier and softly haloed — reported from the
-            // screen as "bold and hazy" against the egui painter's, whose
-            // text this pass is judged against. Coverage is a geometric
+            // screen as "bold and hazy" against the egui painter's text, which
+            // this pass replaced. Coverage is a geometric
             // fraction, not art authored for a byte-space ROP.
             let alpha = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
             paper.pixels[texel] = 255;

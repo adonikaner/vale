@@ -679,7 +679,8 @@ mod tests {
                 let b = ((now >> shift) & 0xff) as i32;
                 assert!(
                     (a - b).abs() <= 1,
-                    "hour {n}: {was:06X} became {now:06X}, which is more than                      the rounding to a byte"
+                    "hour {n}: {was:06X} became {now:06X}, which is more than \
+                     the rounding to a byte"
                 );
             }
         }

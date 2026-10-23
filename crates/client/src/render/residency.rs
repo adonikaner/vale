@@ -61,7 +61,9 @@ use crate::render::wmos::{WmoCache, WmoPlacement};
 #[cfg(feature = "diagnostics")]
 use crate::ui::report::{HudReport, Slot};
 use crate::world::motion::Motion;
-use crate::world::session::{EntityIndex, Session, Solids, WorldEntity, WorldStatus};
+use crate::world::entity::{EntityIndex, WorldEntity};
+use crate::world::session::{Session, Solids};
+use crate::world::status::WorldStatus;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 
@@ -545,6 +547,7 @@ mod tests {
     /// meshes would be read as a valid measurement; `MaterialPool`'s counters
     /// were written to avoid the same failure.
     #[test]
+    #[cfg(feature = "diagnostics")]
     fn a_backend_that_cannot_report_memory_does_not_report_none_of_it() {
         let mut app = App::new();
         app.init_resource::<Residency>()

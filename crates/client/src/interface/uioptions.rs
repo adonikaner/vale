@@ -26,7 +26,8 @@
 use bevy::prelude::*;
 
 use crate::input::bindings::{Binding, BindingPressed};
-use crate::world::session::{Session, WorldEntity};
+use crate::world::entity::WorldEntity;
+use crate::world::session::Session;
 use vale_assets::look::dress::{HIDE_CLOAK, HIDE_HELM};
 
 pub struct UiOptionsPlugin;

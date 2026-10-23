@@ -74,7 +74,7 @@ pub const MAX: f32 = 15.0;
 /// **The rate is the client's; the curve this client eases on is not.** The
 /// height is smoothed rather than snapped, which is the point — mounting moves
 /// the anchor the better part of a yard and a rig that jumps there reads as a
-/// glitch. See `world::session::follow_player`.
+/// glitch. See `world::camera::follow_player`.
 pub const SMOOTH_SPEED: f32 = 1.2;
 
 /// `AnimationData.dbc` id 91, the clip a rider holds while it is on something.

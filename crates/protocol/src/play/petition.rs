@@ -63,6 +63,7 @@
 //! [`super::guild`].
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// The most signatures a charter takes. The server refuses a tenth, and the
 /// petition window has nine lines.
@@ -302,6 +303,62 @@ pub fn rename_body(item: u64, name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(item).cstring(name);
     w.buf
+}
+
+/// The nine requests about a guild charter. See [`crate::play::petition`],
+/// which has the layouts. `item` is the charter item's guid in every request
+/// that carries one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PetitionVerb {
+    /// `CMSG_PETITION_SHOWLIST`: ask a guild registrar what it sells.
+    ShowList(u64),
+    /// `CMSG_PETITION_BUY`: buy a charter for a guild of this name.
+    Buy { npc: u64, name: String, index: u32 },
+    /// `CMSG_PETITION_SHOW_SIGNATURES`: open a charter.
+    ShowSignatures(u64),
+    /// `CMSG_PETITION_QUERY`: ask for a petition's guild name and owner.
+    Query { petition: u32, item: u64 },
+    /// `CMSG_PETITION_SIGN`: the charter and the byte after it, which the
+    /// 1.12.1 client sends as 1.
+    Sign { item: u64, byte: u8 },
+    /// `MSG_PETITION_DECLINE`: decline to sign.
+    Decline(u64),
+    /// `CMSG_OFFER_PETITION`: show the charter to another player.
+    Offer { item: u64, player: u64 },
+    /// `CMSG_TURN_IN_PETITION`: found the guild.
+    TurnIn(u64),
+    /// `MSG_PETITION_RENAME`: change the proposed guild name.
+    Rename { item: u64, name: String },
+}
+
+impl PetitionVerb {
+    /// The opcode and the body this verb sends: the guild charter's nine
+    /// packets.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use crate::play::petition as p;
+        use PetitionVerb as V;
+        match self {
+            V::ShowList(npc) => (Opcode::CMSG_PETITION_SHOWLIST, p::guid_body(*npc)),
+            V::Buy { npc, name, index } => {
+                (Opcode::CMSG_PETITION_BUY, p::buy_body(*npc, name, *index))
+            }
+            V::ShowSignatures(item) => {
+                (Opcode::CMSG_PETITION_SHOW_SIGNATURES, p::guid_body(*item))
+            }
+            V::Query { petition, item } => {
+                (Opcode::CMSG_PETITION_QUERY, p::query_body(*petition, *item))
+            }
+            V::Sign { item, byte } => (Opcode::CMSG_PETITION_SIGN, p::sign_body(*item, *byte)),
+            V::Decline(item) => (Opcode::MSG_PETITION_DECLINE, p::guid_body(*item)),
+            V::Offer { item, player } => {
+                (Opcode::CMSG_OFFER_PETITION, p::offer_body(*item, *player))
+            }
+            V::TurnIn(item) => (Opcode::CMSG_TURN_IN_PETITION, p::guid_body(*item)),
+            V::Rename { item, name } => {
+                (Opcode::MSG_PETITION_RENAME, p::rename_body(*item, name))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

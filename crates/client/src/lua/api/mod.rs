@@ -364,7 +364,7 @@ pub struct LuaWorld<'w, 's> {
     pub assets: Res<'w, crate::assets::GameAssets>,
     /// The local player's position, for `GetPlayerMapPosition`, the one map
     /// read that needs a world position rather than an id.
-    pub status: Res<'w, crate::world::session::WorldStatus>,
+    pub status: Res<'w, crate::world::status::WorldStatus>,
     /// The client-side glue state. See [`crate::glue::glue`].
     pub glue: Res<'w, crate::glue::glue::GlueState>,
     /// The hearthstone's bind point. See [`crate::interface::binder`].
@@ -430,7 +430,7 @@ impl LuaWorld<'_, '_> {
             .init_resource::<crate::interface::stable::StableWindow>()
             .init_resource::<crate::interface::bank::BankWindow>()
             .init_resource::<crate::interface::trade::TradeWindow>()
-            .init_resource::<crate::world::session::WorldStatus>()
+            .init_resource::<crate::world::status::WorldStatus>()
             .init_resource::<crate::glue::glue::GlueState>()
             .init_resource::<crate::render::sky::WorldClock>()
             .init_resource::<crate::interface::binder::HomeBind>()
@@ -932,7 +932,7 @@ impl Live<'_, '_, '_> {
         &self,
         entry: u32,
         carried: Option<&vale_protocol::play::items::ItemSlot>,
-    ) -> Option<crate::interface::api::ItemTip> {
+    ) -> Option<crate::interface::plate::ItemTip> {
         // Held across the call so the borrowed and the owned template can share
         // one code path; `session_template` answers by value.
         let queried;
@@ -1009,7 +1009,7 @@ impl Live<'_, '_, '_> {
                 "Alliance" => Some(1),
                 _ => None,
             });
-        let wearer = crate::interface::api::Wearer {
+        let wearer = crate::interface::plate::Wearer {
             equipped,
             skill_rank: &skill_rank,
             knows_spell: &knows_spell,
@@ -1029,7 +1029,7 @@ impl Live<'_, '_, '_> {
             female: player.is_some_and(|id| self.units.sex(id) == 3),
             now: std::time::Instant::now(),
         };
-        Some(crate::interface::api::item_tip(
+        Some(crate::interface::plate::item_tip(
             template,
             carried,
             self.tables.as_deref(),

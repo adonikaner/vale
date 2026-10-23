@@ -48,8 +48,8 @@ use super::events::{
 };
 use crate::world::session::Session;
 use vale_protocol::play::guild::{CommandResult, EventKind, GuildEvent, GuildInfo};
-use vale_protocol::play::spells::PlayerEvent;
-use vale_protocol::socket::session::GuildVerb;
+use vale_protocol::state::events::PlayerEvent;
+use vale_protocol::play::guild::GuildVerb;
 
 /// What the session thread said about the guild, forwarded by
 /// [`crate::world::incoming::drain_events`].

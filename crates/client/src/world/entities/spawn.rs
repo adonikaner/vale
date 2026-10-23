@@ -881,3 +881,458 @@ mod shadow_tests {
         assert_eq!(shadow_radius(flat), 1.2);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::world::entities::*;
+    use crate::world::entities::test_support::*;
+
+    /// A model is rebuilt only when it no longer matches the entity, and the
+    /// `Changed<WorldEntity>` filter keeps that check cheap.
+    ///
+    /// Two parts are needed. `set_if_neq` in `poll_world` makes the flag mean
+    /// "a value changed" rather than "a step ran"; without it every entity in the
+    /// zone is `Changed` forty times a second and the filter skips nothing. The
+    /// filter is correct only because a model can stop matching its entity only
+    /// when the `WorldEntity` changes. If a reason to rebuild is added that does
+    /// not come through the snapshot, this filter will miss it without an error,
+    /// so this test asserts that premise.
+    #[test]
+    fn an_unchanged_entity_does_not_rebuild_its_model() {
+        let mut app = App::new();
+        app.add_systems(Update, rebuild_changed_models);
+        // The re-hang passes it to `vale_assets::look::dress` to find what should
+        // hang off the wearer. It is empty here, so nothing hangs.
+        app.init_resource::<DisplayCache>();
+
+        // A standing creature that has resolved to a model.
+        let standing = || WorldEntity {
+            display_id: Some(1620),
+            ..moving(0.0)
+        };
+        let entity = app.world_mut().spawn((standing(), Sheath::seeded(0))).id();
+        // Built from the entity's current state, so it matches.
+        app.world_mut().entity_mut(entity).insert(EntityModel {
+            display_id: 1620,
+            dbc_scale: 1.0,
+            conform: vale_assets::look::conform::Conform::Level,
+            painted: None,
+            faded: None,
+            joints: Vec::new(),
+            look: None,
+            wanted: Vec::new(),
+            attached: Vec::new(),
+            tinted: Vec::new(),
+            tints: None,
+            cast: EffectSet::default(),
+            impact: EffectSet::default(),
+            state: EffectSet::default(),
+            milestone: EffectSet::default(),
+            loot: EffectSet::default(),
+                pushed: EffectSet::default(),
+                hung: EffectSet::default(),
+                pushed_for: None,
+            state_auras: Vec::new(),
+            effects_for: None,
+            landed_for: None,
+            points: Arc::new(Vec::new()),
+            cues: Arc::new(Default::default()),
+            head: 0.0,
+            name_anchor: 0.0,
+            anchor: 0.0,
+            mounted_anchor: None,
+            mounted_name: None,
+            model_sphere: Default::default(),
+            pick: Arc::new(Default::default()),
+            room: None,
+            sun: crate::render::models::sun_scale::NEUTRAL,
+            lamps: Default::default(),
+            shadow_radius: 0.5,
+            cull_radius: f32::MAX,
+            roots: Vec::new(),
+            hands: ([Weapon::default(); 3], 0),
+        });
+
+        // The same snapshot arrives again, as it does for a standing guard on
+        // each of the forty steps a second.
+        app.update();
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<WorldEntity>()
+            .unwrap()
+            .set_if_neq(standing());
+        app.update();
+        assert!(
+            app.world().entity(entity).contains::<EntityModel>(),
+            "an entity that did not change had its model thrown away"
+        );
+
+        // Drawing a weapon is a re-hang, not a rebuild. It changes only the models
+        // attached to the creature, not its geosets, skin or joints, so the body
+        // stays and only the attached models are rebuilt. See
+        // `EntityModel::matches`, which once treated the two as one and documents
+        // the cost of that.
+        let worn = app.world_mut().spawn((AttachedTo, ChildOf(entity))).id();
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<EntityModel>()
+            .unwrap()
+            .attached
+            .push(AttachedPart::rigid(worn, 1.0));
+        let mut changed = standing();
+        changed.weapons[0] = a_mace();
+        changed.sheath_state = SHEATH_STATE_MELEE;
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<WorldEntity>()
+            .unwrap()
+            .set_if_neq(changed);
+        app.update();
+        let model = app.world().entity(entity).get::<EntityModel>();
+        assert!(
+            model.is_some(),
+            "drawing a weapon threw the whole character away — see `matches`"
+        );
+        let model = model.unwrap();
+        assert_eq!(
+            model.hands.0[0],
+            a_mace(),
+            "…and the bookkeeping followed, or it re-hangs on every frame after"
+        );
+        assert!(
+            model.attached.is_empty() && app.world().get_entity(worn).is_err(),
+            "the old wardrobe has to come off before the new one goes on"
+        );
+    }
+
+    /// Walking through a door does not rebuild the model. It once did, because a
+    /// unit was re-dressed with room lighting inside. The 1.12.1 client lights a
+    /// unit indoors with the same sun at the shadowed scale (see
+    /// `EntityModel::room`), so the dressing is the same on both sides of the door
+    /// and a change of `Indoors` does not trigger a rebuild.
+    #[test]
+    fn crossing_a_threshold_keeps_the_model() {
+        let mut app = App::new();
+        app.add_systems(Update, rebuild_changed_models);
+        // The re-hang passes it to `vale_assets::look::dress` to find what should
+        // hang off the wearer. It is empty here, so nothing hangs.
+        app.init_resource::<DisplayCache>();
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldEntity {
+                    display_id: Some(1620),
+                    ..moving(0.0)
+                },
+                Sheath::seeded(0),
+                Indoors(None),
+                EntityModel {
+                    display_id: 1620,
+                    dbc_scale: 1.0,
+            conform: vale_assets::look::conform::Conform::Level,
+            painted: None,
+            faded: None,
+                    joints: Vec::new(),
+                    look: None,
+                    wanted: Vec::new(),
+                    attached: Vec::new(),
+                    tinted: Vec::new(),
+                    tints: None,
+                    cast: EffectSet::default(),
+                    impact: EffectSet::default(),
+                    state: EffectSet::default(),
+                    milestone: EffectSet::default(),
+                    loot: EffectSet::default(),
+                pushed: EffectSet::default(),
+                hung: EffectSet::default(),
+                pushed_for: None,
+                    state_auras: Vec::new(),
+                    effects_for: None,
+                    landed_for: None,
+                    points: Arc::new(Vec::new()),
+                    cues: Arc::new(Default::default()),
+                    head: 0.0,
+            name_anchor: 0.0,
+                    anchor: 0.0,
+                    mounted_anchor: None,
+                    mounted_name: None,
+                    model_sphere: Default::default(),
+                    pick: Arc::new(Default::default()),
+                    room: None,
+                    sun: crate::render::models::sun_scale::NEUTRAL,
+                    lamps: Default::default(),
+                    shadow_radius: 0.5,
+                    cull_radius: f32::MAX,
+                    roots: Vec::new(),
+                    hands: ([Weapon::default(); 3], 0),
+                },
+            ))
+            .id();
+        app.update();
+        assert!(
+            app.world().entity(entity).contains::<EntityModel>(),
+            "a character standing still outside was rebuilt for nothing"
+        );
+
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(Indoors(Some(RoomLight::new([0.5; 3]))));
+        app.update();
+        assert!(
+            app.world().entity(entity).contains::<EntityModel>(),
+            "a character who walked indoors was re-dressed for a room"
+        );
+    }
+
+    /// A change of sun scale is a retag, not a rebuild. The scale is stored in each
+    /// part's `MeshTag` rather than in a material (see [`SunScale`]), so a unit
+    /// walking into the ground's shadow rewrites one `u32` per batch in place. A
+    /// rebuild here would also be incorrect, not only slow: the dressing is not
+    /// cached per scale, so a rebuild would return the same batch list with the
+    /// old tag.
+    #[test]
+    fn a_change_of_sun_scale_retags_the_parts_without_a_rebuild() {
+        let tavern = RoomLight::new([0.5, 0.4, 0.3]);
+        let cellar = RoomLight::new([0.2, 0.1, 0.1]);
+
+        let mut app = App::new();
+        app.add_systems(Update, rebuild_changed_models);
+        // The re-hang passes it to `vale_assets::look::dress` to find what should
+        // hang off the wearer. It is empty here, so nothing hangs.
+        app.init_resource::<DisplayCache>();
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldEntity {
+                    display_id: Some(1620),
+                    ..moving(0.0)
+                },
+                Sheath::seeded(0),
+                Indoors(Some(tavern)),
+                EntityModel {
+                    display_id: 1620,
+                    dbc_scale: 1.0,
+            conform: vale_assets::look::conform::Conform::Level,
+            painted: None,
+            faded: None,
+                    joints: Vec::new(),
+                    look: None,
+                    wanted: Vec::new(),
+                    attached: Vec::new(),
+                    tinted: Vec::new(),
+                    tints: None,
+                    cast: EffectSet::default(),
+                    impact: EffectSet::default(),
+                    state: EffectSet::default(),
+                    milestone: EffectSet::default(),
+                    loot: EffectSet::default(),
+                pushed: EffectSet::default(),
+                hung: EffectSet::default(),
+                pushed_for: None,
+                    state_auras: Vec::new(),
+                    effects_for: None,
+                    landed_for: None,
+                    points: Arc::new(Vec::new()),
+                    cues: Arc::new(Default::default()),
+                    head: 0.0,
+            name_anchor: 0.0,
+                    anchor: 0.0,
+                    mounted_anchor: None,
+                    mounted_name: None,
+                    model_sphere: Default::default(),
+                    pick: Arc::new(Default::default()),
+                    room: None,
+                    sun: crate::render::models::sun_scale::NEUTRAL,
+                    lamps: Default::default(),
+                    shadow_radius: 0.5,
+                    cull_radius: f32::MAX,
+                    roots: Vec::new(),
+                    hands: ([Weapon::default(); 3], 0),
+                },
+            ))
+            .id();
+        let part = app
+            .world_mut()
+            .spawn((
+                EntityPart,
+                bevy::mesh::MeshTag(tavern.tag()),
+                ChildOf(entity),
+            ))
+            .id();
+
+        let _ = cellar;
+        app.world_mut()
+            .entity_mut(entity)
+            .insert(SunScale::at(crate::render::models::sun_scale::SHADOWED_GROUND));
+        app.update();
+
+        assert!(
+            app.world().entity(entity).contains::<EntityModel>(),
+            "a change of sun scale must not throw the model away"
+        );
+        assert_eq!(
+            app.world()
+                .entity(part)
+                .get::<bevy::mesh::MeshTag>()
+                .unwrap()
+                .0,
+            crate::render::models::instance_tag(None, crate::render::models::sun_scale::SHADOWED_GROUND),
+            "the part now carries the shadowed scale and no room"
+        );
+        let model = app.world().entity(entity).get::<EntityModel>().unwrap();
+        assert_eq!(
+            model.sun,
+            crate::render::models::sun_scale::SHADOWED_GROUND,
+            "and the bookkeeping followed, or the next poll retags again"
+        );
+    }
+
+    /// A re-dressing keeps the spell effects, and a shapeshift removes them.
+    ///
+    /// A cast once triggered a re-dressing: `SpellCastOmni` stows the weapon, and
+    /// the sheath state was part of `EntityModel::matches`. Stowing is now a
+    /// re-hang and rebuilds nothing, and so is walking through a door, because a
+    /// unit is no longer dressed for its room. A model with the same skeleton is
+    /// still re-dressed when its dressing no longer matches: a player's gear
+    /// changes, or, as here, the model was built for a room the unit is no longer
+    /// dressed for.
+    ///
+    /// The effects are kept only for the same skeleton, because an
+    /// `AttachedPart::bone` indexes the wearer's skeleton. A glow carried onto a
+    /// different model would hang off whichever bone has the same index. An
+    /// unchanged display id means the skeleton is the same, and it is the first
+    /// test in `matches`.
+    #[test]
+    fn a_re_dressing_keeps_the_spell_effects_and_a_shapeshift_does_not() {
+        let with_effect = |display_id: u32, becomes: u32| {
+            let mut app = App::new();
+            app.add_systems(Update, rebuild_changed_models);
+            // The re-hang passes it to `vale_assets::look::dress` to find what
+            // should hang off the wearer. It is empty here, so nothing hangs.
+            app.init_resource::<DisplayCache>();
+            let entity = app
+                .world_mut()
+                .spawn((
+                    WorldEntity {
+                        display_id: Some(display_id),
+                        ..moving(0.0)
+                    },
+                    Sheath::seeded(1),
+                    EntityModel {
+                        display_id,
+                        dbc_scale: 1.0,
+            conform: vale_assets::look::conform::Conform::Level,
+            painted: None,
+            faded: None,
+                        joints: Vec::new(),
+                        look: None,
+                        wanted: Vec::new(),
+                        attached: Vec::new(),
+                        tinted: Vec::new(),
+                        tints: None,
+                        cast: EffectSet::default(),
+                        impact: EffectSet::default(),
+                        state: EffectSet::default(),
+                        milestone: EffectSet::default(),
+                        loot: EffectSet::default(),
+                pushed: EffectSet::default(),
+                hung: EffectSet::default(),
+                pushed_for: None,
+                        state_auras: vec![1459],
+                        effects_for: Some(crate::world::entities::effects::CastCounters {
+                            begun: 3,
+                            released: 3,
+                            cancelled: 0,
+                            delayed: 0,
+                            channelled: 0,
+                        }),
+                        landed_for: Some(3),
+                        points: Arc::new(Vec::new()),
+                        cues: Arc::new(Default::default()),
+                        head: 0.0,
+            name_anchor: 0.0,
+                        anchor: 0.0,
+                        mounted_anchor: None,
+                        mounted_name: None,
+                        model_sphere: Default::default(),
+                        pick: Arc::new(Default::default()),
+                        room: None,
+                        sun: crate::render::models::sun_scale::NEUTRAL,
+                        lamps: Default::default(),
+                        shadow_radius: 0.5,
+                        cull_radius: f32::MAX,
+                        roots: Vec::new(),
+                        // Drawn, which the change below contradicts.
+                        hands: ([Weapon::default(); 3], 1),
+                    },
+                ))
+                .id();
+            // The glow's root: an `AttachedTo` child as `hang_model` spawns one,
+            // registered in the cast set.
+            let root = app.world_mut().spawn((AttachedTo, ChildOf(entity))).id();
+            let worn = app.world_mut().spawn((AttachedTo, ChildOf(entity))).id();
+            {
+                let mut model = app.world_mut().entity_mut(entity);
+                let mut model = model.get_mut::<EntityModel>().unwrap();
+                model.cast.parts.push(AttachedPart::rigid(root, 1.0));
+            }
+
+            // A dressing that no longer matches: it was built for a room, and a
+            // unit is now dressed for the sun, so `matches` fails and the model is
+            // removed.
+            {
+                let mut model = app.world_mut().entity_mut(entity);
+                let mut model = model.get_mut::<EntityModel>().unwrap();
+                model.room = Some(RoomLight::new([0.5, 0.4, 0.3]));
+            }
+            if becomes != display_id {
+                app.world_mut().entity_mut(entity).insert(WorldEntity {
+                    display_id: Some(becomes),
+                    ..moving(0.0)
+                });
+            }
+            app.update();
+
+            assert!(
+                !app.world().entity(entity).contains::<EntityModel>(),
+                "the model itself is rebuilt either way",
+            );
+            assert!(
+                app.world().get_entity(worn).is_err(),
+                "an ordinary attachment goes with the dressing",
+            );
+            (app.world().get_entity(root).is_ok(), {
+                let world = app.world();
+                world
+                    .entity(entity)
+                    .get::<CarriedEffects>()
+                    .map(|c| (c.state_auras.clone(), c.effects_for, c.roots().count()))
+            })
+        };
+
+        // Same display id: a stow, a change of gear, or a walk through a door.
+        let (alive, carried) = with_effect(1620, 1620);
+        assert!(alive, "the glow outlives the model it was hung on");
+        assert_eq!(
+            carried,
+            Some((
+                vec![1459],
+                Some(crate::world::entities::effects::CastCounters {
+                    begun: 3,
+                    released: 3,
+                    cancelled: 0,
+                    delayed: 0,
+                    channelled: 0,
+                }),
+                1,
+            )),
+            "and so does the aura list, or every buff glow restarts its clock",
+        );
+
+        // A different display id is a different skeleton, so the glow is removed.
+        let (alive, carried) = with_effect(1620, 892);
+        assert!(!alive, "a shapeshift takes its effects with it");
+        assert!(carried.is_none());
+    }
+}

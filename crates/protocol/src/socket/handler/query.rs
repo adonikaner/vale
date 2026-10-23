@@ -1,14 +1,14 @@
 //! What things are called: the four `*_QUERY_RESPONSE` packets.
 //!
 //! Each answer's body is also handed to `ObjectManager::remember` for the
-//! on-disk cache — see [`crate::play::wdb`].
+//! on-disk cache — see [`crate::state::wdb`].
 //!
 //! One `pub(super) fn` per arm of [`super::apply_packet`]'s match. These are the
 //! answers to the questions `crate::state::query` asks — same subject, one directory
 //! apart: `crate::state::query` builds the outbound bodies, this folds in the replies.
 
 use super::{read, Incoming};
-use crate::play::wdb::Kind;
+use crate::state::wdb::Kind;
 use crate::state::query;
 use crate::socket::world::Packet;
 
@@ -60,7 +60,7 @@ pub(super) fn item(ctx: &mut Incoming, pkt: &Packet) {
             ctx.stats.items_resolved += 1;
             let entry = info.entry;
             // The body is kept as well as the record, for the on-disk cache —
-            // see [`crate::play::wdb`]. `remember` skips a template already
+            // see [`crate::state::wdb`]. `remember` skips a template already
             // known, so a seeded entry the server restates is not written
             // again.
             ctx.world.remember(Kind::Item, u64::from(entry), &pkt.body);

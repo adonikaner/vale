@@ -479,7 +479,7 @@ impl Stub {
     pub fn stats(mut self) -> Stub {
         use vale_protocol::state::fields::{player, unit};
         let slot = |n: u16| player::SKILL_INFO_1_1 + n * 3;
-        let sword = vale_protocol::state::objects::HeldItem {
+        let sword = vale_protocol::play::items::HeldItem {
             display_id: 1,
             class: 2,
             subclass: 7,
@@ -657,19 +657,19 @@ impl crate::lua::panels::container::ContainerAnswers for Stub {
     fn money(&self) -> u32 {
         self.money
     }
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
+    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::plate::ItemTip> {
         let (entry, _) = self.stub_slot(bag, slot)?;
         self.item_tip(entry)
     }
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::api::ItemTip> {
+    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::plate::ItemTip> {
         if token != "player" {
             return None;
         }
         self.item_tip(self.stub_worn(id)?.0)
     }
-    fn item_tip(&self, entry: u32) -> Option<crate::interface::api::ItemTip> {
+    fn item_tip(&self, entry: u32) -> Option<crate::interface::plate::ItemTip> {
         let template = self.template(entry)?;
-        Some(crate::interface::api::ItemTip {
+        Some(crate::interface::plate::ItemTip {
             name: template.name.clone(),
             quality: template.quality,
             inventory_type: template.inventory_type,

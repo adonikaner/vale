@@ -407,7 +407,7 @@ pub fn cmd_anim(cfg: &Config, target: Option<&str>) -> Result<(), String> {
     );
     // The two ends of the jump arc, which are fired only where they exist —
     // they have no fallback chain, because a one-shot substituted onto an idle
-    // holds that idle for its own length. See `entities::fallbacks`.
+    // holds that idle for its own length. See `look::pose::fallbacks`.
     println!(
         "  jump arc: JumpStart {}, Jump {}, JumpEnd {}, JumpLandRun {}, Fall {}",
         count(anim::JUMP_START),

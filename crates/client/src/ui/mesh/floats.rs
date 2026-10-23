@@ -1,22 +1,18 @@
-//! **The floating combat text as meshes** — the mesh painter's form of
-//! [`crate::ui::worldtext`]'s egui paint, over the same [`Floater`] state and
-//! the same rules (`vale_assets::look::worldtext`).
+//! The floating combat text: every live [`crate::ui::worldtext::Floater`],
+//! risen, faded and scaled by the rules in `vale_assets::look::worldtext`.
 //!
 //! Rebuilt every frame while any floater lives, because everything about one
 //! moves every frame — it rises, fades and (a critical) grows. That is a
 //! handful of glyph quads written in place, not a rebuild of anything else:
-//! the group has its own slots and its own z band, **under the interface**
-//! (0.5 against the item list's 1.0+), which is the same order the egui
-//! painter stated by registering its layer first.
+//! the group has its own slots and its own z band, under the interface (0.5
+//! against the item list's 1.0+), on `render::labels`' terms.
 //!
-//! One deliberate match with the egui look rather than the interface tint
-//! path: the fade ramp's alpha rides the vertex uncompensated, because the
-//! egui painter passed it raw and this pass's whole warrant is drawing what
-//! that one drew. The glyph atlas's coverage is raw for the same reason —
-//! see the note in [`super::fonts`], which learned it from a report.
+//! The fade ramp's alpha rides the vertex without the byte-space compensation
+//! the interface's tints take; the glyph atlas's coverage is raw for the same
+//! reason. See the note in [`super::fonts`], which records the report that
+//! settled it.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
 use vale_assets::look::worldtext as rules;
@@ -35,9 +31,8 @@ pub(super) struct FloatState {
     materials: HashMap<(AssetId<Image>, Blend), Handle<InterfaceMaterial>>,
 }
 
-/// Paint every live floater — the mesh twin of `worldtext::paint`, field for
-/// field: the same projection, the same whole-pixel size ramp, the same
-/// outline-or-shadow rule off the fill's own alpha.
+/// Paint every live floater: project it, size it on the whole-pixel ramp, and
+/// draw it with an outline or a shadow by the fill's own alpha.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint(
     mut commands: Commands,
@@ -48,7 +43,10 @@ pub(super) fn paint(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<InterfaceMaterial>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    viewport: Res<crate::ui::scale::InterfaceViewport>,
+    // The camera is found by its marker, not as the first active camera:
+    // `render::portraits` keeps one per unit frame with an image target, and
+    // projecting a number through one of those puts it in a 64-pixel portrait.
     camera: Query<(&Camera, &Transform), With<crate::world::camera::WorldCamera>>,
     mut state: Local<FloatState>,
 ) {
@@ -57,19 +55,21 @@ pub(super) fn paint(
     if text.live.is_empty() && state.slots.is_empty() {
         return;
     }
-    let Ok(window) = windows.single() else { return };
-    let screen = Vec2::new(window.width(), window.height());
+    let Some(screen) = viewport.window else { return };
     let Ok((camera, placed)) = camera.single() else {
         return;
     };
     let eye = GlobalTransform::from(*placed);
-    // At scale 1, deliberately — the engine draws world text and `uiScale`
-    // never touches it. See the egui twin, which states it at length.
+    // At scale 1. Floating combat text is one of the two parts of 1.12's
+    // interface that ship no XML; the client draws it itself. It is therefore
+    // not scaled by `uiScale` the way a widget is, and every size below is a
+    // fraction of the window. See [`crate::ui::scale`]. `view` is read only for
+    // [`Viewport::scale`], which at 1.0 is the window's height over 768.
     let view = Viewport::of(f64::from(screen.x), f64::from(screen.y), 1.0);
     let scale = view.scale as f32;
     // Device pixels per interface pixel — the glyphs are rastered against it
     // and placed on its grid. See `super::fonts::quad`.
-    let dpi = window.scale_factor();
+    let dpi = viewport.dpi;
     let Some(face) = fonts.face_index(&assets, Some(rules::FONT)) else {
         return;
     };
@@ -79,25 +79,41 @@ pub(super) fn paint(
     for floater in &text.live {
         let age_ms = ((now - floater.born) * 1000.0).max(0.0) as u32;
         let at = floater.from + Vec3::Y * rules::rise(floater.kind, age_ms);
+        // `world_to_viewport` returns physical pixels and the batches are in
+        // logical ones, so the result is divided by the window's scale factor;
+        // without the division every number is drawn scaled away from the
+        // window's top-left corner. `render::labels` describes the same
+        // conversion.
         let Ok(pixels) = camera.world_to_viewport(&eye, at) else {
             continue;
         };
-        let pixels = pixels / window.scale_factor();
+        let pixels = pixels / dpi;
         let alpha = rules::alpha(floater.kind, age_ms);
         if alpha <= 0.0 {
             continue;
         }
-        // Whole pixels for the same atlas-economy reason the egui twin
-        // rounds: a critical's ease would otherwise raster every glyph at a
-        // fresh size every frame.
+        // Rounded to a whole pixel. A critical's height changes on every frame
+        // of its growth ([`rules::punch`]), so an unrounded size rasters every
+        // glyph at a fresh size every frame and fills the atlas. Whole pixels
+        // put the whole curve in about twenty sizes. `max(1)` because the
+        // curve starts near zero.
         let size = (rules::height(floater.kind, age_ms) * VIRTUAL_HEIGHT as f32 * scale)
             .round()
             .max(1.0);
+        // The spread, in multiples of the text's own size; see
+        // [`rules::slot_offset`] and [`worldtext::CELL_WIDTH`]. Screen y is
+        // down and the rows step up.
         let (cx, cy) = rules::slot_offset(floater.slot);
         let pos = Vec2::new(
             pixels.x + cx * size * worldtext::CELL_WIDTH,
             pixels.y - cy * size * worldtext::CELL_HEIGHT,
         );
+        // A translucent fill gets an outline ([`worldtext::OUTLINE`]); an
+        // opaque one gets the sub-pixel drop shadow ([`worldtext::SHADOW`]).
+        // The dark colour follows the fade so it does not outlive the fill,
+        // but not the fill's own alpha: an outline at a half-transparent
+        // fill's alpha would be half as visible, which is the case the outline
+        // exists to fix.
         let behind = [0.0, 0.0, 0.0, alpha.clamp(0.0, 1.0)];
         let shadow = worldtext::SHADOW * VIRTUAL_HEIGHT as f32 * scale;
         if worldtext::translucent(floater.colour) {
@@ -156,8 +172,7 @@ pub(super) fn paint(
     fonts.flush(&mut images);
 }
 
-/// One string, centred on `pos` — the mesh form of egui's
-/// `Align2::CENTER_CENTER` text call.
+/// One string, centred on `pos` horizontally and by its line box vertically.
 #[allow(clippy::too_many_arguments)]
 fn one_line(
     emit: &mut super::build::Emitter,
@@ -224,9 +239,11 @@ fn one_line(
     }
 }
 
-/// The client's `ARGB` dword, scaled by the ramp, as a vertex colour — linear
-/// rgb for the shader's contract, alpha raw for the egui twin's look.
+/// The client's `ARGB` dword, scaled by the ramp, as a vertex colour: linear
+/// rgb for the shader's contract, and the alpha uncompensated (see the module
+/// comment).
 fn argb(colour: u32, alpha: f32) -> [f32; 4] {
+
     let own = ((colour >> 24) & 0xff) as f32 / 255.0;
     let channel = |shift: u32| {
         bevy::color::Srgba::gamma_function(((colour >> shift) & 0xff) as f32 / 255.0)
@@ -237,4 +254,27 @@ fn argb(colour: u32, alpha: f32) -> [f32; 4] {
         channel(0),
         (own * alpha).clamp(0.0, 1.0),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use vale_assets::look::worldtext as rules;
+
+    /// The fill carries the style table's own alpha, and the ring behind it
+    /// does not.
+    ///
+    /// The experience row's fill is half-transparent, the style table's
+    /// `0x8094008b`, so a ring that inherited the fill's alpha would be half as
+    /// visible. The ring takes the fade curve instead (`paint`'s `behind`),
+    /// which is full at the entry's peak.
+    #[test]
+    fn the_outline_does_not_inherit_a_translucent_fill() {
+        let experience = rules::style(rules::Kind::Experience).colour;
+        let fill = super::argb(experience, 1.0);
+        assert_eq!((fill[3] * 255.0).round(), 128.0, "the table's own half alpha reaches the fill");
+
+        // A damage number's fill is opaque, so the fill and the ring agree.
+        let damage = rules::style(rules::Kind::Damage).colour;
+        assert_eq!(super::argb(damage, 1.0)[3], 1.0);
+    }
 }

@@ -32,16 +32,18 @@
 //!
 //! The server checks its `INTERACTION_DISTANCE` at every hello and sends
 //! nothing afterwards; no packet announces that the player left.
-//! [`out_of_range`] is the local close the 1.12.1 client makes: past five
-//! yards, or when the NPC despawns, each of the gossip menu, the vendor and the
-//! quest page that is open is closed, with its own event and no other. It is in
-//! this module because this module owns the one guid all three windows share.
+//! [`close_when_npc_gone`] is the local close the 1.12.1 client makes: past
+//! five yards, or when the NPC despawns, the window is closed with its own
+//! event and no other. Each window implements [`NpcWindow`] and registers the
+//! close for itself; each window that names the token implements [`NpcToken`]
+//! and registers its claim. This module owns the token and the two traits.
 
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use vale_protocol::play::gossip::{GossipMenu, MISSING_TEXT};
-use vale_protocol::socket::session::{NpcVerb, QuestVerb};
+use vale_protocol::play::gossip::NpcVerb;
+use vale_protocol::play::quest::QuestVerb;
 
 use super::events::{GossipClosed, GossipShow};
 use crate::world::session::Session;
@@ -114,12 +116,17 @@ impl Plugin for GossipPlugin {
             .add_message::<GossipPress>()
             .init_resource::<GossipWindow>()
             .init_resource::<NpcUnit>()
+            .init_resource::<TokenClaims>()
             .add_systems(
                 Update,
-                (announce, presses, act, point_the_token, out_of_range)
-                    .chain()
+                (
+                    (announce, presses, act).chain().before(NpcSet::Claim),
+                    point_the_token.after(NpcSet::Claim).before(NpcSet::Close),
+                )
                     .in_set(super::GameSet),
             );
+        claims_the_token::<GossipWindow>(app);
+        closes_on_walk_away::<GossipWindow>(app);
     }
 }
 
@@ -261,169 +268,219 @@ fn act(
     }
 }
 
-/// Closes the interaction windows when the player walks out of range.
+/// A window that is a conversation with one NPC or object, closed when the
+/// character walks away from it.
+///
+/// Each window implements this in its own module and registers
+/// [`close_when_npc_gone`] for itself with [`closes_on_walk_away`], so a new
+/// window is no edit to this file.
+pub(crate) trait NpcWindow: Resource<Mutability = bevy::ecs::component::Mutable> {
+    /// The message raised when the walk-away closes an open window.
+    type Closed: Message;
+    const CLOSED: Self::Closed;
+
+    /// The guid the window is talking to, or `None` while it is shut.
+    fn guid(&self) -> Option<u64>;
+
+    /// Shut the window, and answer whether it was open.
+    fn close(&mut self) -> bool;
+
+    /// The distance the walk-away rule compares with `INTERACTION_DISTANCE`,
+    /// or `None` while the character or the guid's object is unplaced. For a
+    /// unit this is the distance minus both combat reaches
+    /// ([`super::api::Units::reach_to_guid`]).
+    fn reach(units: &super::api::Units, guid: u64) -> Option<f32> {
+        units.reach_to_guid(super::api::UnitId::Player, guid)
+    }
+}
+
+/// A window that names the `"npc"` token while it is open.
+///
+/// Each one claims the token with [`claims_the_token`]; [`point_the_token`]
+/// picks the claim with the lowest [`NpcToken::ORDER`].
+pub(crate) trait NpcToken: Resource {
+    /// The window's priority for the token: lower wins. Each window has its
+    /// own number; [`claims_the_token`] refuses a second window with the same
+    /// one.
+    const ORDER: u8;
+
+    /// The guid the window names, or `None` while it is shut.
+    fn npc(&self) -> Option<u64>;
+}
+
+/// The guid each open window claims for the `"npc"` token, by
+/// [`NpcToken::ORDER`].
+#[derive(Resource, Default)]
+pub(crate) struct TokenClaims {
+    claims: std::collections::BTreeMap<u8, u64>,
+    /// The orders registered at build, so two windows cannot share one.
+    orders: HashSet<u8>,
+}
+
+/// The parts of the frame the NPC windows' shared systems run in: every
+/// window's claim on the token, then [`point_the_token`], then every window's
+/// walk-away close.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum NpcSet {
+    Claim,
+    Close,
+}
+
+/// Register `W`'s claim on the `"npc"` token.
+pub(crate) fn claims_the_token<W: NpcToken>(app: &mut App) {
+    let fresh = app
+        .world_mut()
+        .get_resource_or_init::<TokenClaims>()
+        .orders
+        .insert(W::ORDER);
+    assert!(fresh, "two windows claim the npc token at order {}", W::ORDER);
+    app.add_systems(
+        Update,
+        claim_the_token::<W>
+            .in_set(NpcSet::Claim)
+            .in_set(super::GameSet),
+    );
+}
+
+/// Register `W`'s walk-away close.
+pub(crate) fn closes_on_walk_away<W: NpcWindow>(app: &mut App) {
+    app.add_systems(
+        Update,
+        close_when_npc_gone::<W>
+            .in_set(NpcSet::Close)
+            .in_set(super::GameSet),
+    );
+}
+
+/// Record the guid `W` names this frame. Change-gated, because
+/// [`point_the_token`] runs every frame either way.
+fn claim_the_token<W: NpcToken>(window: Res<W>, mut claims: ResMut<TokenClaims>) {
+    let now = window.npc();
+    if claims.claims.get(&W::ORDER).copied() == now {
+        return;
+    }
+    match now {
+        Some(guid) => claims.claims.insert(W::ORDER, guid),
+        None => claims.claims.remove(&W::ORDER),
+    };
+}
+
+/// Closes one window when the character walks out of its range.
 ///
 /// The measurement is the client's own; nothing on the wire announces the
 /// walk-away. The server checks `INTERACTION_DISTANCE` at every hello and sends
 /// nothing afterwards. The 1.12.1 client closes its windows locally when the
-/// range is exceeded, and this system does the same for every window at once,
-/// through the one guid the `"npc"` token derives.
+/// range is exceeded, and this system does the same for each window, against
+/// the guid that window is talking to.
 ///
 /// It has the same form as `death::corpse_range`, the other client-side range
-/// check. No edge latch is needed: closing empties the windows, the token
-/// derives to `None` next frame, and the check stops.
+/// check. No edge latch is needed: closing empties the window, its guid reads
+/// `None` next frame, and the check stops. Only the window that was open raises
+/// its event: raising `QUEST_FINISHED` at a plain vendor would make
+/// `QuestFrame_OnEvent` run its unconditional `HideUIPanel`.
 ///
 /// Three cases are distinguished:
 /// * the reach is measured and over the limit: close;
-/// * the guid resolves but the unit is unplaced this frame: hold, or the window
-///   would close on the frame the entity arrives;
-/// * the guid resolves to no unit at all: close, because the NPC despawned
+/// * the guid resolves but the object is unplaced this frame: hold, or the
+///   window would close on the frame the entity arrives;
+/// * the guid resolves to nothing at all: close, because the NPC despawned
 ///   during the conversation.
 ///
-/// The check covers five windows and not only the first three. The trainer was
-/// the fourth and the flight map is the fifth, both for the same reason:
-/// `CanInteractWithNPC` gates every `CMSG_TRAINER_LIST` and every
+/// The taxi map is one of these windows although it holds its whole content
+/// once opened and `TaxiFrame` is `toplevel` with its own close. The window is
+/// a conversation with an NPC: it is the only thing `UnitName("npc")` names
+/// while it is open, and a press in it sends a packet the server refuses from
+/// out of range. `CanInteractWithNPC` gates every `CMSG_TRAINER_LIST` and every
 /// `CMSG_TAXIQUERYAVAILABLENODES`, and nothing announces the walk-away.
-///
-/// The taxi map is included although it holds its whole content once opened and
-/// `TaxiFrame` is `toplevel` with its own close. The window is a conversation
-/// with an NPC: it is the only thing `UnitName("npc")` names while it is open,
-/// and a press in it sends a packet the server refuses from out of range. While
-/// the map was excluded from this check it stayed open when the player walked
-/// away.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn out_of_range(
+pub(crate) fn close_when_npc_gone<W: NpcWindow>(
     units: super::api::Units,
-    npc: Res<NpcUnit>,
-    mut gossip: ResMut<GossipWindow>,
-    mut merchant: ResMut<super::merchant::MerchantWindow>,
-    mut trainer: ResMut<super::trainer::TrainerWindow>,
-    mut taxi: ResMut<super::taxi::TaxiWindow>,
-    mut stable: ResMut<super::stable::StableWindow>,
-    mut bank: ResMut<super::bank::BankWindow>,
-    mut quests: ResMut<super::quest::Quests>,
-    mut gossip_closed: MessageWriter<GossipClosed>,
-    mut merchant_closed: MessageWriter<super::events::MerchantClosed>,
-    mut trainer_closed: MessageWriter<super::events::TrainerClosed>,
-    mut taxi_closed: MessageWriter<super::events::TaximapClosed>,
-    mut stable_closed: MessageWriter<super::events::PetStableClosed>,
-    mut bank_closed: MessageWriter<super::events::BankframeClosed>,
-    mut quest_finished: MessageWriter<super::events::QuestFinished>,
+    mut window: ResMut<W>,
+    mut closed: MessageWriter<W::Closed>,
 ) {
-    let Some(giver) = npc.0 else {
+    let Some(guid) = window.guid() else {
         return;
     };
     // An item can be a quest giver and has no position, and this check is about
     // distance. `HandleQuestgiverQueryQuestOpcode` accepts an item guid as well
     // as a creature's, so `UseContainerItem` on a "This Item Begins a Quest"
     // item opens a real quest page whose giver is an item in a bag. Without
-    // this test the walk-away rule below reads "the guid resolves to no unit at
-    // all", which is permanently true for an item, and raises `QUEST_FINISHED`
-    // on the next frame. `QuestFrame_OnEvent` answers that with an
-    // unconditional `HideUIPanel`, so the page opened and closed within one
-    // frame. Measured: the page arrives, `QuestFrame` reports visible, and then
-    // two `QUEST_FINISHED`s close it.
-    if !vale_protocol::state::objects::guid_is_in_the_world(giver) {
+    // this test the walk-away rule below reads "the guid resolves to nothing
+    // at all", which is permanently true for an item, and raises
+    // `QUEST_FINISHED` on the next frame. `QuestFrame_OnEvent` answers that
+    // with an unconditional `HideUIPanel`, so the page opened and closed within
+    // one frame.
+    if !vale_protocol::state::objects::guid_is_in_the_world(guid) {
         return;
     }
-    if !npc_gone(&units) {
-        return;
-    }
-    // Only the events for the windows that were open are raised. Raising all of
-    // them unconditionally would raise `QUEST_FINISHED` at a plain vendor, and
-    // `QuestFrame_OnEvent` answers that with an unconditional `HideUIPanel`.
-    if gossip.menu.take().is_some() {
-        gossip_closed.write(GossipClosed);
-    }
-    if merchant.close() {
-        merchant_closed.write(super::events::MerchantClosed);
-    }
-    if trainer.close() {
-        trainer_closed.write(super::events::TrainerClosed);
-    }
-    if taxi.close() {
-        taxi_closed.write(super::events::TaximapClosed);
-    }
-    if stable.close() {
-        stable_closed.write(super::events::PetStableClosed);
-    }
-    if bank.close() {
-        bank_closed.write(super::events::BankframeClosed);
-    }
-    if quests.drop_page() {
-        quest_finished.write(super::events::QuestFinished);
-    }
-}
-
-/// Whether the unit the `"npc"` token names is out of reach: farther than
-/// `INTERACTION_DISTANCE`, or despawned. A unit that resolves but is unplaced
-/// this frame is not gone.
-///
-/// [`out_of_range`] closes its seven windows on it. The guild registrar and
-/// the tabard designer close theirs on it from their own modules, because
-/// their state is theirs; see [`super::petition`] and [`super::tabard`].
-pub(super) fn npc_gone(units: &super::api::Units) -> bool {
-    use super::api::UnitId;
-    match units.reach(UnitId::Player, UnitId::Npc) {
+    let gone = match W::reach(&units, guid) {
         Some(reach) => reach > vale_protocol::play::gossip::INTERACTION_DISTANCE,
-        None => units.resolve(UnitId::Npc).is_none(),
+        None => !units.in_view(guid),
+    };
+    if gone && window.close() {
+        closed.write(W::CLOSED);
     }
 }
 
-/// Points the `"npc"` token at the unit the character is talking to.
+/// The distance between the centres of the character and the object `guid`
+/// names, or `None` while either is unplaced or absent.
 ///
-/// The guid is derived and not written; see the module note. The priority puts
-/// the most recent kind of conversation first: a quest page replaces the gossip
-/// menu that opened it on the same NPC. A vendor window is a conversation too.
-fn point_the_token(
-    gossip: Res<GossipWindow>,
-    merchant: Res<super::merchant::MerchantWindow>,
-    trainer: Res<super::trainer::TrainerWindow>,
-    taxi: Res<super::taxi::TaxiWindow>,
-    stable: Res<super::stable::StableWindow>,
-    bank: Res<super::bank::BankWindow>,
-    quests: Res<super::quest::Quests>,
-    trade: Res<super::trade::TradeWindow>,
-    registrar: Res<super::petition::RegistrarWindow>,
-    tabard: Res<super::tabard::TabardWindow>,
-    mut npc: ResMut<NpcUnit>,
-) {
-    // The trainer is a conversation too: `ClassTrainerFrame_Update` calls
-    // `UnitName("npc")` and `SetPortraitTexture(…, "npc")` on every redraw, so
-    // a window whose guid is not named here draws an empty plate and no face.
-    // The flight master is one for the same reason: `TaxiFrame_OnEvent` opens
-    // with `TaxiMerchant:SetText(UnitName("npc"))` and
-    // `SetPortraitTexture(TaxiPortrait, "npc")`, so a window not named here
-    // draws a blank plate and an empty portrait frame.
-    let pointed = quests
-        .page()
-        .guid()
-        .or_else(|| gossip.guid())
-        .or_else(|| merchant.guid())
-        .or_else(|| trainer.guid())
-        .or_else(|| taxi.guid())
-        // The stable master: the first line of `PetStable_Update` is
-        // `SetPortraitTexture(PetStableFramePortrait, "npc")`, so a window not
-        // named here draws the plate with an empty face.
-        .or_else(|| stable.guid())
-        // The banker: the open branch of `BankFrame_OnEvent` calls
-        // `BankFrameTitleText:SetText(UnitName("npc"))` and
-        // `SetPortraitTexture(BankPortraitTexture, "npc")`.
-        .or_else(|| bank.guid())
-        // The guild registrar: `GuildRegistrar_OnShow` calls
-        // `SetPortraitTexture(GuildRegistrarFramePortrait, "NPC")` and
-        // `UnitName("NPC")`. The tabard designer: `TabardFrame_OnEvent` does
-        // the same with `TabardFramePortrait`.
-        .or_else(|| registrar.guid())
-        .or_else(|| tabard.guid())
-        // The trade partner is not an NPC and takes the token anyway:
-        // `TradeFrame_Update` draws the far side with `UnitName("NPC")` and
-        // `SetPortraitTexture(…, "NPC")`. See [`super::trade`].
-        .or_else(|| trade.partner());
+/// The popups that outlive their gossip window (the innkeeper's bind, the pet
+/// untrainer's question) and the mailbox measure this rather than
+/// [`super::api::Units::reach_to_guid`]: their range is from centre to
+/// centre.
+pub(crate) fn reach_to(units: &super::api::Units, guid: u64) -> Option<f32> {
+    let (_, here) = units.placed(super::api::UnitId::Player)?;
+    let (_, _, there) = units.all.iter().find(|(_, unit, _)| unit.guid == guid)?;
+    Some(here.translation.distance(there?.translation))
+}
+
+/// How far the innkeeper and the pet untrainer may be while their question is
+/// up: `CheckBinderDist()` and `CheckPetUntrainerDist()`.
+///
+/// The server's own interaction distance, not a reading of the client's: every
+/// gossip verb goes through `GetNPCIfCanInteractWith`, which is
+/// `IsWithinDistInMap(pl, INTERACTION_DISTANCE)` at 5.0 yards plus the two
+/// units' bounding radii. The client's own number was not measured, so this
+/// is the distance at which the request would be refused rather than the one
+/// at which the client takes the box away; they are the same rule in
+/// practice, because a popup that stayed up past it would send a packet the
+/// server drops.
+pub(crate) const POPUP_RANGE: f32 = 10.0;
+
+/// Points the `"npc"` token at the unit the character is talking to: the
+/// claim with the lowest [`NpcToken::ORDER`].
+///
+/// The guid is derived and not written; see the module note. The orders put
+/// the most recent kind of conversation first: a quest page replaces the
+/// gossip menu that opened it on the same NPC.
+fn point_the_token(claims: Res<TokenClaims>, mut npc: ResMut<NpcUnit>) {
+    let pointed = claims.claims.values().next().copied();
     // Change-gated: a `ResMut` dereferenced every frame is a resource marked
     // changed every frame, and `Units` reads this.
     if npc.0 != pointed {
         npc.0 = pointed;
+    }
+}
+
+impl NpcWindow for GossipWindow {
+    type Closed = GossipClosed;
+    const CLOSED: GossipClosed = GossipClosed;
+
+    fn guid(&self) -> Option<u64> {
+        GossipWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        self.menu.take().is_some()
+    }
+}
+
+/// Second, after the quest page, which replaces the menu that opened it.
+impl NpcToken for GossipWindow {
+    const ORDER: u8 = 1;
+
+    fn npc(&self) -> Option<u64> {
+        GossipWindow::guid(self)
     }
 }
 

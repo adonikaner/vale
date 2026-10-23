@@ -2,9 +2,15 @@
 //! state the server sends, the entities in it, and the camera looking at it.
 //!
 //! ```text
-//! session.rs      LiveSession -> ECS components keyed by GUID
+//! session.rs      the login lifecycle: logon, character list, entering the
+//!                 world, leaving it
+//! entity.rs       WorldEntity, one per GUID: the snapshot reconciled into ECS
+//!                 components, and each entity placed every frame
+//! standing.rs     ground height for the session thread: terrain and buildings
+//!                 joined into one floor
+//! status.rs       the session's numbers for the HUD and the network read-out
 //! incoming.rs     the one place a packet's event becomes client state: the
-//!                 fan-out from the session's queue to each subject
+//!                 fan-out from the session's queues to each subject
 //! entities/       a model for every entity: skins, joints, animation, fades
 //! motion.rs       the 20 -> 60 Hz interpolator, for every unit the server
 //!                 describes
@@ -19,7 +25,8 @@
 //! object state that is not an entity:
 //! proficiency.rs  which item classes the character may use
 //! spellmods.rs    what the character's talents change in a spell's numbers
-//! templates.rs    an item template arriving, and who was waiting for it
+//! templates.rs    TemplatesArrived: a template arriving, which open panels
+//!                 read to draw again
 //! areatrigger.rs  the client's side of an instance portal: the refusal
 //! desync.rs       what the client measured when the server refused an action
 //!                 for distance
@@ -45,6 +52,7 @@ pub mod camera;
 pub mod crowd;
 pub mod desync;
 pub mod entities;
+pub mod entity;
 pub mod facing;
 pub mod incoming;
 pub mod motion;
@@ -52,6 +60,8 @@ pub mod predict;
 pub mod proficiency;
 pub mod session;
 pub mod spellmods;
+pub mod standing;
+pub mod status;
 pub mod templates;
 
 /// The camera, the session and the entity passes, as one group. See
@@ -79,7 +89,7 @@ impl bevy::app::Plugin for WorldPlugins {
             (crowd::populate, crowd::walk)
                 .chain()
                 .run_if(crowd::is_wanted)
-                .after(session::place_entities)
+                .after(entity::place_entities)
                 .before(entities::EntitySet),
         );
         }
@@ -90,8 +100,8 @@ impl bevy::app::Plugin for WorldPlugins {
 /// [`WorldPlugins`] because these need no GPU, so the schedule test in
 /// `crate::interface` can add them.
 ///
-/// `incoming` has no plugin: `crate::interface::action`'s plugin registers
-/// its system.
+/// `crate::interface::action`'s plugin registers `incoming::drain_events`;
+/// `incoming::IncomingPlugin` registers the drain of the other three queues.
 pub struct StatePlugins;
 
 impl bevy::app::Plugin for StatePlugins {
@@ -99,7 +109,7 @@ impl bevy::app::Plugin for StatePlugins {
         app.add_plugins((
             proficiency::ProficiencyPlugin,
             spellmods::SpellModPlugin,
-            templates::TemplatesPlugin,
+            incoming::IncomingPlugin,
             areatrigger::AreaTriggerPlugin,
             desync::DesyncPlugin,
         ));

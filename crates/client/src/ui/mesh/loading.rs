@@ -1,20 +1,40 @@
-//! **The loading screen as meshes** — the mesh painter's form of
-//! [`crate::ui::loading`], same three quads through the same
-//! [`vale_assets::tables::loading::fit`] door: the black clear over the
-//! whole window, the picture in its centred 4:3 box, and the bar whose fill
-//! is squashed rather than clipped (the module comment over the egui twin
-//! carries the argument for all three).
+//! The loading screen: the one thing this client draws over the game's own
+//! interface rather than under it.
 //!
-//! **One stated divergence from the egui twin's layering.** egui's
-//! `Order::Foreground` put the loading screen over the F4 window; a mesh
-//! draws under egui by construction, so with the mesh painter on, the
-//! diagnostics float over the loading screen. That is the diagnostic surface
-//! doing its job — a load is exactly when the frame tab is worth reading —
-//! and the game's own interface is still fully covered ([`LOADING_Z`] is
-//! above every band the painter uses).
+//! Three quads and no widgets. 1.12's loading screen is not a `FrameXML`
+//! frame, not a `GlueXML` one and not an addon: the client itself draws a
+//! full-viewport picture with two more quads over it, which is why nothing in
+//! `Interface\` mentions it.
+//!
+//! ```text
+//! vale_assets::tables::loading   which picture, and where the bar goes
+//! crate::glue::loading           whether it is up, and how full
+//! this file                      three quads
+//! ```
+//!
+//! ## The picture is a centred 4:3 box, and the bar's fill is squashed
+//!
+//! The client narrows the viewport to a centred 4:3 box before drawing
+//! anything into it ([`vale_assets::tables::loading::fit`]), so a 16:9 window
+//! gets black bars either side and the picture looks the way it looked on
+//! the monitors it was drawn for. The bar goes through the same fit, because
+//! the client sets one viewport and draws both. The bars are the client's own
+//! clear of the full viewport, so the whole window is cleared to black first:
+//! without that the world shows through them, half torn down.
+//!
+//! The texture coordinates are one shared constant, `(0,1) (1,1) (0,0)
+//! (1,0)`, used unchanged by the background draw and the bar draw. So a
+//! half-full bar draws the whole of `Loading-BarFill` into half the width.
+//! Clipping the texture instead, which is what a status bar does, would look
+//! right at full and wrong everywhere else.
+//!
+//! ## Layering
+//!
+//! The batches draw over the whole interface ([`LOADING_Z`] is above every
+//! band the painter uses) and under egui, so the F4 window and the HUD float
+//! over the loading screen. A load is when the frame tab is worth reading.
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
 use vale_assets::tables::loading::{fit, BAR};
@@ -32,9 +52,8 @@ pub(super) struct LoadState {
     materials: HashMap<(AssetId<Image>, Blend), Handle<InterfaceMaterial>>,
 }
 
-/// The picture and the bar, if there is a screen to put up — the mesh twin of
-/// `loading::paint`. Rebuilt every frame while up: the bar moves, and the
-/// whole thing is three quads.
+/// The picture and the bar, if there is a screen to put up. Rebuilt every
+/// frame while up: the bar moves, and the whole thing is three quads.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint(
     mut commands: Commands,
@@ -44,12 +63,11 @@ pub(super) fn paint(
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<InterfaceMaterial>>,
-    windows: Query<&Window, With<PrimaryWindow>>,
+    viewport: Res<crate::ui::scale::InterfaceViewport>,
     mut state: Local<LoadState>,
 ) {
     let state = &mut *state;
-    let Ok(window) = windows.single() else { return };
-    let size = Vec2::new(window.width(), window.height());
+    let Some(size) = viewport.window else { return };
     if size.x <= 0.0 || size.y <= 0.0 {
         return;
     }
@@ -116,9 +134,13 @@ pub(super) fn paint(
 }
 
 /// One `[left, bottom, right, top]` in the game's unit square (y up) as
-/// `[left, top, right, bottom]` window pixels (y down) — the egui twin's
-/// `to_screen`, whose tests pin the flip and the box; this is the same
-/// arithmetic over bare floats.
+/// `[left, top, right, bottom]` window pixels (y down).
+///
+/// Two mappings in one, and both would draw a plausible picture on their own:
+/// `into` is the part of the window the unit square covers ([`fit`]'s answer),
+/// and the flip is that the game measures `y` up while the window measures it
+/// down. Getting the second wrong puts the bar 7.5% from the top of a picture
+/// that is otherwise right, which reads as art rather than as a bug.
 fn to_screen(size: Vec2, into: [f32; 4], [left, bottom, right, top]: [f32; 4]) -> [f32; 4] {
     let (l, b, r, t) = (into[0], into[1], into[2], into[3]);
     let x = |f: f32| size.x * (l + (r - l) * f);
@@ -130,9 +152,9 @@ fn to_screen(size: Vec2, into: [f32; 4], [left, bottom, right, top]: [f32; 4]) -
 mod tests {
     use super::*;
 
-    /// The two assertions the egui twin's tests make, over this port's own
-    /// arithmetic — the same wrong-place failure modes, pinned on both sides
-    /// of the painter switch.
+    /// The bar is near the bottom of the window, not the top, and the
+    /// picture is a centred 4:3 box with the bar inside it. Both mistakes
+    /// draw a complete, plausible picture in the wrong place.
     #[test]
     fn the_bar_is_near_the_bottom_and_inside_the_centred_box() {
         // 4:3, where `fit` is the identity: the flip alone.
@@ -156,4 +178,15 @@ mod tests {
         assert!((br - bl - 720.0).abs() < 0.5);
         assert!(bl >= pl && br <= pr && bt >= pt && bb <= pb, "the bar stays on its art");
     }
+
+    /// A window taller than 4:3 letterboxes instead, on the same rule.
+    #[test]
+    fn a_tall_window_gets_its_bars_on_the_other_two_edges() {
+        let size = Vec2::new(600.0, 1200.0);
+        let [l, t, r, b] = to_screen(size, fit(size.x / size.y), [0.0, 0.0, 1.0, 1.0]);
+        assert!((r - l - 600.0).abs() < 0.5);
+        assert!((b - t - 450.0).abs() < 0.5);
+        assert!(((t + b) / 2.0 - 600.0).abs() < 0.5);
+    }
+
 }

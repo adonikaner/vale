@@ -20,12 +20,13 @@ use bevy::prelude::*;
 
 use vale_protocol::play::chat::ChatType;
 use vale_protocol::play::randomroll::{is_answered, RandomRoll};
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 use super::events::ChatMessageReceived;
 use super::messages::UiStrings;
 use crate::input::bindings::{Binding, BindingPressed};
-use crate::world::session::{Session, WorldStatus};
+use crate::world::session::Session;
+use crate::world::status::WorldStatus;
 
 /// How long a line waits for the roller's name. One round trip.
 const NAME_PATIENCE: f32 = 3.0;

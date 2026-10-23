@@ -48,7 +48,7 @@ use bevy::prelude::*;
 
 use vale_assets::look::object::Kind;
 use vale_protocol::play::pagetext::Page;
-use vale_protocol::socket::session::NpcVerb;
+use vale_protocol::play::gossip::NpcVerb;
 
 use crate::world::session::Session;
 
@@ -232,7 +232,7 @@ impl Plugin for PageTextPlugin {
 /// brazier that has no page at all.
 fn clicked(
     mut used: MessageReader<super::object::ObjectUsed>,
-    objects: Query<&crate::world::session::WorldEntity>,
+    objects: Query<&crate::world::entity::WorldEntity>,
     mut read: MessageWriter<ReadPage>,
 ) {
     for click in used.read() {
@@ -260,7 +260,7 @@ fn announce(
     mut answers: MessageReader<PageTextAnswer>,
     mut wanted: MessageReader<ReadPage>,
     mut book: ResMut<OpenBook>,
-    objects: Query<&crate::world::session::WorldEntity>,
+    objects: Query<&crate::world::entity::WorldEntity>,
     assets: Res<crate::assets::GameAssets>,
     session: Res<Session>,
     mut begun: MessageWriter<crate::interface::events::ItemTextBegin>,
@@ -377,8 +377,8 @@ fn act(
 }
 
 /// Which answer, if any, a session event is.
-pub fn answer_of(event: &vale_protocol::play::spells::PlayerEvent) -> Option<PageTextAnswer> {
-    use vale_protocol::play::spells::PlayerEvent as E;
+pub fn answer_of(event: &vale_protocol::state::events::PlayerEvent) -> Option<PageTextAnswer> {
+    use vale_protocol::state::events::PlayerEvent as E;
     Some(match event {
         E::GameObjectPageText { guid } => PageTextAnswer::Object { guid: *guid },
         E::PageText(page) => PageTextAnswer::Page(page.clone()),

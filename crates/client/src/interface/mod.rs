@@ -11,7 +11,8 @@
 //! events.rs      the game's own event names: one write, many readers
 //! api.rs         how the interface addresses state: unit tokens, slots
 //! messages.rs    what the client tells the player, in the game's own words
-//! plate.rs       an item's tooltip as lines of words and colours
+//! plate.rs       a tooltip as lines of words and colours: an item's (and its
+//!                values), a spell's and a unit's
 //! cursor.rs      what the pointer is carrying: an item, a spell, money
 //! target.rs      what the player is pointing at, and everything that changes it
 //! object.rs      what a click on a game object does: a door, a chest, a vein

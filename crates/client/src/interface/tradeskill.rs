@@ -61,6 +61,7 @@ use super::events::{
 };
 use crate::assets::GameAssets;
 use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// Which of our casts released or failed. Written by
 /// [`crate::world::incoming`] from `SMSG_SPELL_GO` and `SMSG_CAST_RESULT`, and
@@ -98,8 +99,8 @@ pub struct TradeSkillWindow {
     /// The reagent-count signature the list was built with; see [`counts_key`].
     counts_key: u64,
     /// Created items and reagents whose templates were still in flight at
-    /// build: the header gate. Re-checked each frame while non-empty; a
-    /// template arriving causes a rebuild and a `TRADE_SKILL_UPDATE`.
+    /// build: the header gate. A [`TemplatesArrived`] naming one of them
+    /// causes a rebuild and a `TRADE_SKILL_UPDATE`.
     unresolved: Vec<u32>,
     /// The repeat pair: which spell, and how many presses are left.
     repeat: (u32, u32),
@@ -208,12 +209,16 @@ impl Plugin for TradeSkillPlugin {
         app.init_resource::<TradeSkillWindow>()
             .init_resource::<CraftWindow>()
             .add_message::<ProfessionNews>()
+            .add_message::<TemplatesArrived>()
             .add_systems(
                 Update,
                 // The news decides what is open, the rebuild fills it, and the
                 // poll turns panel writes into events, in that order, so a
                 // window opened and filled in one frame is shown once, full.
-                (news, rebuild, poll).chain().in_set(super::GameSet),
+                (news, rebuild, poll)
+                    .chain()
+                    .after(crate::world::incoming::drain_queues)
+                    .in_set(super::GameSet),
             );
     }
 }
@@ -337,11 +342,20 @@ fn rebuild(
     units: Units,
     assets: Res<GameAssets>,
     inventory: Res<super::items::Inventory>,
+    mut arrived: MessageReader<TemplatesArrived>,
     mut ts_show: MessageWriter<TradeSkillShow>,
     mut ts_update: MessageWriter<TradeSkillUpdate>,
     mut craft_show: MessageWriter<CraftShow>,
     mut craft_update: MessageWriter<CraftUpdate>,
 ) {
+    // Whether a template either list is waiting on arrived this frame. Read
+    // before the early returns, so a batch read while no window is open is
+    // not read again when one opens.
+    let (mut trade_landed, mut craft_landed) = (false, false);
+    for batch in arrived.read() {
+        trade_landed |= batch.names_an_item_in(&window.unresolved);
+        craft_landed |= batch.names_an_item_in(&craft.unresolved);
+    }
     if window.open.is_none() && craft.open.is_none() {
         return;
     }
@@ -355,14 +369,13 @@ fn rebuild(
         return;
     };
     // The known set and its version, read from the world (one lock per frame
-    // while a window is open, none otherwise), and, under the same lock,
-    // whether any template a list is waiting on has arrived. The templates
-    // are read from the session cache, not [`super::items::Inventory`]'s
-    // template map: that map holds only the carried subset, so a reagent the
-    // character has none of, or an item a recipe would make, is never in it,
-    // and a lookup through it never resolves.
+    // while a window is open, none otherwise). The templates are read from
+    // the session cache, not [`super::items::Inventory`]'s template map: that
+    // map holds only the carried subset, so a reagent the character has none
+    // of, or an item a recipe would make, is never in it, and a lookup
+    // through it never resolves.
     let world_arc = active.live.world();
-    let (known, version, trade_landed, craft_landed, pet_version, pet_spells, pet_lines) = {
+    let (known, version, pet_version, pet_spells, pet_lines) = {
         let world = world_arc.lock().unwrap_or_else(|e| e.into_inner());
         // The pet's half, for Beast Training: its own book from
         // `SMSG_PET_SPELLS`, and its family's skill lines from the creature
@@ -385,8 +398,6 @@ fn rebuild(
         (
             world.spellbook.known.clone(),
             world.spellbook_version,
-            window.unresolved.iter().any(|e| world.items.contains_key(e)),
-            craft.unresolved.iter().any(|e| world.items.contains_key(e)),
             world.pet_version,
             pet_spells,
             pet_lines,

@@ -2,7 +2,14 @@
 //!
 //! Every module here has the same shape: the packets of one subject, a parse
 //! that holds no state and no socket, and a value the game layer reads. The one
-//! dispatch that calls them is [`super::socket::handler`].
+//! dispatch that calls them is [`super::socket::handler`]. Nothing here imports
+//! the object manager or the socket, or touches a file: the reads off the
+//! object manager are in [`super::state::objects`], and the exchanges that
+//! write to a socket are in [`super::socket`].
+//!
+//! A subject the interface sends requests about also has a verb enum (for
+//! example [`quest::QuestVerb`]) whose `packet` builds the opcode and the body.
+//! The session loop sends what it builds.
 //!
 //! ```text
 //! action.rs      what a unit is visibly doing: the melee swing, the emote, the
@@ -22,10 +29,8 @@
 //! skills.rs      the 128 skill slots, empty slots included
 //! talents.rs     spending a talent point; no packet states which talents
 //!                were chosen
-//! items.rs       what the character carries, read through three layers of
-//!                update fields
-//! wdb.rs         the client's WDB\ caches, which keep query answers across a
-//!                logout, one file per kind of query
+//! items.rs       what the character carries: the slot numberings, the item
+//!                bodies and the refusals; state::objects::items reads it
 //! loot.rs        the loot window of a corpse
 //! lootroll.rs    the group-loot roll that decides who gets an item
 //! object.rs      using a game object (a door, a chest, an ore vein), and the
@@ -88,7 +93,7 @@
 //! bindpoint.rs   the hearthstone's bind point, and the innkeeper who changes
 //!                it; the client must answer a confirmation before the bind
 //!                happens
-//! charcreate.rs  creating and deleting a character
+//! charcreate.rs  creating and deleting a character, and the character list
 //! ```
 
 pub mod accountdata;
@@ -130,7 +135,6 @@ pub mod skills;
 pub mod social;
 pub mod stable;
 pub mod trade;
-pub mod wdb;
 pub mod sound;
 pub mod spells;
 pub mod stats;

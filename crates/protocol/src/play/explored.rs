@@ -37,7 +37,6 @@
 //! what the reference draws for one.
 
 use crate::state::fields::player::EXPLORED_ZONES_1;
-use crate::state::objects::Entity;
 
 /// How many dwords the field is — vmangos's `PLAYER_EXPLORED_ZONES_SIZE`, and
 /// the `size 64` beside the constant in [`crate::state::fields`].
@@ -61,20 +60,8 @@ impl Default for Explored {
 }
 
 impl Explored {
-    /// Read the mask off a unit's fields, or `None` for a unit that carries none
-    /// — which is everyone but us. See the module comment.
-    ///
-    /// **A single set bit is enough to count as carrying one**, and the reason
-    /// is the update protocol rather than taste: a *values* block sends only the
-    /// dwords that changed, so a character who has just discovered one area
-    /// arrives with 1 of the 64 present. Testing for all 64 would answer `None`
-    /// for every session after the create block.
-    pub fn read(entity: &Entity) -> Option<Explored> {
-        Self::decode(|index| entity.field(index))
-    }
-
     /// The same read against a bare field lookup, for the tests and for anything
-    /// holding fields rather than an [`Entity`].
+    /// holding fields rather than an [`Entity`](crate::state::objects::Entity).
     pub fn decode(field: impl Fn(u16) -> Option<u32>) -> Option<Explored> {
         let mut words = [0u32; DWORDS];
         let mut any = false;

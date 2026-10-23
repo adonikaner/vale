@@ -127,13 +127,11 @@
 //! is transparent. An empty pane for such a model is correct behaviour, not a
 //! fault; two runs confirmed this.
 
-use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::MeshAabb;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{ClearColorConfig, ImageRenderTarget, RenderTarget};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy_egui::{egui, EguiTextureHandle, EguiUserTextures};
 
 use vale_assets::look::character::Appearance;
@@ -155,14 +153,14 @@ pub const LARGE_SIDE: u32 = 384;
 /// How many models are drawn at once. Each is a camera and a render layer.
 const SLOTS: usize = 4;
 
-/// The first render layer the slots use; slot `i` is on `FIRST_LAYER + i`.
+/// The first render layer the slots use; slot `i` is on `FIRST_LAYER + i`, and
+/// the large preview on the layer after the last slot.
 ///
-/// Layer 0 is the world's, 1..=9 the client's portraits, 10..=14 its paper
-/// dolls, and 2 is also the stage's. The slots start well above all of these,
-/// so no picture picks up a subject from another layer. The test
-/// `the_slots_are_alone_on_their_layers_and_draw_before_the_world` checks the
-/// slots against those layers.
-const FIRST_LAYER: usize = 24;
+/// The layers come from the client's table of host layers
+/// ([`vale_client::render::offscreen::layers::HOST`]), after the one the stage
+/// takes, so no picture picks up a subject from another layer. The test
+/// `the_slots_are_alone_on_their_layers_and_draw_before_the_world` checks this.
+const FIRST_LAYER: usize = crate::preview::stage::STAGE_LAYER + 1;
 
 /// The camera order the slots draw at, before the stage's `-1`, the client's
 /// portraits and dolls (`-2..=-15`) and the window's `0`. A target sampled
@@ -1220,24 +1218,9 @@ fn eye_direction(yaw: f32, pitch: f32) -> Vec3 {
     )
 }
 
-/// The image a picture is drawn into: `Rgba8UnormSrgb`, transparent until the
-/// camera has run, render-world only. These match the client's portrait
-/// target, for the reasons documented there.
+/// The image a picture is drawn into: the client's portrait target, square.
 fn target_image(side: u32) -> Image {
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: side,
-            height: side,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[0, 0, 0, 0],
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_descriptor.usage =
-        TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST;
-    image
+    vale_client::render::offscreen::target_image(UVec2::splat(side))
 }
 
 /// Draw a path's picture into `rect`, or what stands for one: a sunk square
@@ -1602,7 +1585,9 @@ mod tests {
         let layers: Vec<usize> = (0..SLOTS).map(|i| FIRST_LAYER + i).collect();
         assert!(layers
             .iter()
-            .all(|layer| *layer > 14 && *layer != crate::preview::stage::STAGE_LAYER));
+            .chain(std::iter::once(&(FIRST_LAYER + SLOTS)))
+            .all(|layer| vale_client::render::offscreen::layers::HOST.contains(layer)
+                && *layer != crate::preview::stage::STAGE_LAYER));
         let orders: Vec<isize> = (0..SLOTS).map(|i| FIRST_ORDER - i as isize).collect();
         assert!(orders.iter().all(|order| *order < -15));
         let mut sorted = orders.clone();

@@ -101,6 +101,7 @@ use vale_protocol::play::loot::Loot;
 
 use super::events::{LootClosed, LootOpened, LootSlotCleared};
 use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// One of the five packets, handed on from
 /// [`crate::world::incoming::drain_events`].
@@ -189,12 +190,36 @@ impl Plugin for LootPlugin {
             .add_message::<TakeLoot>()
             .init_resource::<LootWindow>()
             .add_message::<LootNamesLanded>()
+            .add_message::<TemplatesArrived>()
             .add_systems(
                 Update,
                 (announce, hold, presses, take)
                     .chain()
                     .in_set(super::GameSet),
+            )
+            .add_systems(
+                Update,
+                templates_landed
+                    .after(crate::world::incoming::drain_queues)
+                    .in_set(super::GameSet),
             );
+    }
+}
+
+/// Write [`LootNamesLanded`] when templates arrive while a window is open.
+///
+/// The loot window has no refresh event: 5875 has no `LOOT_SLOT_CHANGED`, and
+/// `LootFrame_OnEvent`'s `LOOT_OPENED` arm is `ShowUIPanel(this)`, which
+/// `UIParent.lua` returns from at once for a frame that is already visible.
+/// The window is held shut until its rows can be named ([`hold`]); this
+/// message covers a hold that timed out.
+fn templates_landed(
+    mut arrived: MessageReader<TemplatesArrived>,
+    window: Res<LootWindow>,
+    mut landed: MessageWriter<LootNamesLanded>,
+) {
+    if arrived.read().count() > 0 && window.get().is_some() {
+        landed.write(LootNamesLanded);
     }
 }
 
@@ -319,9 +344,8 @@ const HOLD_LIMIT: f32 = 3.0;
 
 /// An item template arrived while a loot window was open.
 ///
-/// Written by [`crate::world::templates`], the one reader of the arrival
-/// queue, and read in [`crate::lua`] for the case [`hold`] cannot cover: a
-/// template that arrives after [`HOLD_LIMIT`] has let the window open with a
+/// Written by [`templates_landed`] on a [`TemplatesArrived`], and read in
+/// [`crate::lua`] for the case [`hold`] cannot cover: a template that arrives after [`HOLD_LIMIT`] has let the window open with a
 /// blank row. `LootFrame` has no event for that, so the reader calls the
 /// frame's `LootFrame_Update` directly.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]

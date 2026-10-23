@@ -48,7 +48,7 @@ use crate::tools::Tool;
 use bevy::prelude::*;
 use std::collections::HashMap;
 use vale_client::world::camera::WorldCamera;
-use vale_client::world::session::{ObjectType, WorldEntity};
+use vale_client::world::entity::{ObjectType, WorldEntity};
 use vale_mangos::creature::{self, RowValue};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
 use vale_mangos::sql::unquote;
@@ -872,7 +872,7 @@ impl Plugin for CreatureToolPlugin {
 /// Where a preview body stands, in Bevy's axes.
 ///
 /// The scale is written here rather than onto the `WorldEntity`, because that
-/// field is read by `world::session::place_entities`, which skips an entity
+/// field is read by `world::entity::place_entities`, which skips an entity
 /// with no interpolated position. No preview has one, since none came from the
 /// server.
 ///

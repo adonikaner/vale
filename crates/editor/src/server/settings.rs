@@ -97,7 +97,7 @@ pub struct ServerSettings {
     /// The client writes every `SMSG_*_QUERY_RESPONSE` to `WDB\` and reads
     /// them back at the next login, so a creature's name, an item's stats and a
     /// quest's text are answered out of a file rather than asked for again —
-    /// see `vale_protocol::play::wdb`, which is where the reason is. That is
+    /// see `vale_protocol::state::wdb`, which is where the reason is. That is
     /// right for a client and wrong for an editor: a `creature_template` row
     /// edited here is invisible in every later playtest, because the client
     /// never asks the question whose answer changed.

@@ -709,7 +709,7 @@ pub(super) fn level_up(
     mut commands: Commands,
     time: Res<Time>,
     mut levelled: MessageReader<crate::interface::events::PlayerLevelUp>,
-    mut player: Query<&mut EntityModel, With<crate::world::session::LocalPlayer>>,
+    mut player: Query<&mut EntityModel, With<crate::world::entity::LocalPlayer>>,
 ) {
     // Read the messages even with no player to show them on, or the glow
     // appears on the next character to log in.
@@ -787,7 +787,7 @@ const LEVELUP_SECS: f32 = 2.4;
 pub(super) fn loot_art(
     mut commands: Commands,
     displays: Res<crate::assets::GameAssets>,
-    mut units: Query<(&crate::world::session::WorldEntity, &mut EntityModel)>,
+    mut units: Query<(&crate::world::entity::WorldEntity, &mut EntityModel)>,
 ) {
     let Ok(tables) = displays.display_tables() else {
         return;
@@ -1216,3 +1216,312 @@ impl PendingImpacts {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use crate::world::entities::*;
+    use crate::world::entities::test_support::*;
+
+    /// The impact is queued from the server's release, not from the caster's
+    /// locally drawn release. This test covers the reader of `Entity::casts_landed`.
+    ///
+    /// There are two counters because they differ for the local player.
+    /// `casts_released` is incremented on the key press, so the arm does not wait a
+    /// round trip, and at that moment there is no hit list. An implicitly aimed
+    /// spell (a cone or an area, 14,002 of the 22,360 rows of `Spell.dbc`) sends no
+    /// target block, so the prediction can only write 0. Reading the impact from
+    /// that counter decided "nobody was hit" a frame before `SMSG_SPELL_GO` named
+    /// the victims. The server's echo could not correct it, because the counter had
+    /// already been consumed and was not read again. For Cone of Cold, the burst on
+    /// the unit it hit is the only visible effect.
+    ///
+    /// The tables are absent here, so the test exercises the queueing rather than
+    /// the art: no missile is claimed, no spell is a self-cast, and the named
+    /// victim is used as given.
+    #[test]
+    fn the_impact_waits_for_the_wire_and_not_for_the_predicted_release() {
+        let mut app = App::new();
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_asset::<Mesh>()
+            .init_asset::<crate::render::models::M2Material>()
+            .init_resource::<crate::render::models::MaterialPool>()
+            .init_resource::<crate::render::models::UvAnimations>()
+            .init_resource::<ModelCache>()
+            .init_resource::<DisplayCache>()
+            .init_resource::<PendingImpacts>()
+            .init_resource::<Time>()
+            .add_systems(Update, spell_effects);
+
+        const ME: u64 = 7;
+        const CREATURE: u64 = 5;
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldEntity {
+                    guid: ME,
+                    ..moving(0.0)
+                },
+                a_model(1620),
+            ))
+            .id();
+        // The first reading records the counters and acts on nothing.
+        app.update();
+        assert!(app.world().resource::<PendingImpacts>().landed().is_empty());
+
+        // The key press: Arcane Explosion, with no target, drawn at once on the
+        // caster.
+        {
+            let mut world = app.world_mut().entity_mut(entity);
+            let mut world = world.get_mut::<WorldEntity>().unwrap();
+            world.casts_begun = 1;
+            world.casts_released = 1;
+            world.last_spell = 1449;
+        }
+        app.update();
+        assert!(
+            app.world().resource::<PendingImpacts>().landed().is_empty(),
+            "the press has no hit list and must not decide there was none",
+        );
+
+        // Then `SMSG_SPELL_GO`, the only packet that names a victim. The animation
+        // counter does not change, because the release was already drawn.
+        {
+            let mut world = app.world_mut().entity_mut(entity);
+            let mut world = world.get_mut::<WorldEntity>().unwrap();
+            world.casts_landed = 1;
+            world.last_spell_target = CREATURE;
+            world.last_spell_targets = vec![CREATURE];
+        }
+        app.update();
+        assert_eq!(
+            app.world().resource::<PendingImpacts>().landed(),
+            [(CREATURE, 1449)],
+            "the burst never reached the unit the spell hit",
+        );
+    }
+
+    /// The impact reaches every unit the release names, as an area spell requires.
+    ///
+    /// Only the first entry of the `SMSG_SPELL_GO` hit list was once read, so
+    /// Arcane Explosion hitting a pack of five showed a burst on the first and none
+    /// on the other four. The counters, the queue and the art all worked, so no
+    /// check reported the fault. See `Entity::last_spell_targets`.
+    #[test]
+    fn an_area_release_bursts_on_everything_it_named() {
+        let mut app = App::new();
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_asset::<Mesh>()
+            .init_asset::<crate::render::models::M2Material>()
+            .init_resource::<crate::render::models::MaterialPool>()
+            .init_resource::<crate::render::models::UvAnimations>()
+            .init_resource::<ModelCache>()
+            .init_resource::<DisplayCache>()
+            .init_resource::<PendingImpacts>()
+            .init_resource::<Time>()
+            .add_systems(Update, spell_effects);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldEntity {
+                    guid: 7,
+                    ..moving(0.0)
+                },
+                a_model(1620),
+            ))
+            .id();
+        app.update();
+
+        {
+            let mut world = app.world_mut().entity_mut(entity);
+            let mut world = world.get_mut::<WorldEntity>().unwrap();
+            world.casts_landed = 1;
+            world.last_spell = 1449;
+            world.last_spell_target = 5;
+            world.last_spell_targets = vec![5, 11, 13];
+        }
+        app.update();
+        assert_eq!(
+            app.world().resource::<PendingImpacts>().landed(),
+            [(5, 1449), (11, 1449), (13, 1449)],
+            "four of the five got nothing",
+        );
+    }
+
+    /// Under the old rule, the frame rate decided whether the impact played.
+    ///
+    /// `poll_world` refreshes `WorldEntity` on the simulation's step, and this pass
+    /// reads it every frame, so when the incremented release counter is first seen
+    /// depends on the frame rate. The server's answer is one round trip behind the
+    /// key press in either case. On a slow frame, the snapshot that first carried
+    /// the counter also carried the server's victim, and the burst appeared. On a
+    /// fast frame, it carried the counter alone, the pass concluded "nobody", and
+    /// the echo that followed changed nothing. The report was "when the framerate
+    /// is low the effects play, when it's high they disappear".
+    ///
+    /// The two counters remove the race: the impact is never decided before the
+    /// packet that names the victims, at any frame rate.
+    #[test]
+    fn the_predicted_release_alone_never_queues_an_impact() {
+        let mut app = App::new();
+        app.add_plugins(bevy::asset::AssetPlugin::default());
+        app.init_asset::<Mesh>()
+            .init_asset::<crate::render::models::M2Material>()
+            .init_resource::<crate::render::models::MaterialPool>()
+            .init_resource::<crate::render::models::UvAnimations>()
+            .init_resource::<ModelCache>()
+            .init_resource::<DisplayCache>()
+            .init_resource::<PendingImpacts>()
+            .init_resource::<Time>()
+            .add_systems(Update, spell_effects);
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                WorldEntity {
+                    guid: 7,
+                    ..moving(0.0)
+                },
+                a_model(1620),
+            ))
+            .id();
+        app.update();
+
+        // The slow frame: one snapshot carrying the pressed release and a target.
+        // Under the old rule this case played the burst, because the guid was
+        // present when the counter was first seen. That guid is left over from an
+        // earlier landing, and this cast has not been answered yet: `casts_landed`
+        // has not changed, so there is no burst.
+        {
+            let mut world = app.world_mut().entity_mut(entity);
+            let mut world = world.get_mut::<WorldEntity>().unwrap();
+            world.casts_released = 1;
+            world.last_spell = 120;
+            world.last_spell_target = 5;
+        }
+        app.update();
+        assert!(
+            app.world().resource::<PendingImpacts>().landed().is_empty(),
+            "the impact was decided by the drawn release rather than by the wire",
+        );
+    }
+
+    /// A persistent area has no skeleton and so no `Playback`, so it needs its own
+    /// pass. [`animate`]'s query requires a `Playback` and never matches a
+    /// `DynamicObject`, so the ring of the spell Blizzard would stay in bind pose
+    /// with its emitters on an unposed root. The attached models had the same
+    /// failure, with no error, before they were built skinned.
+    ///
+    /// The pass must pass down the object's placement times the art's own scale.
+    /// An unskinned part gets that scale from Bevy's propagation of the attachment
+    /// root, but a skinned part's joints replace the mesh's world matrix. A scale
+    /// left out of this matrix draws a half-size effect at full size, with no
+    /// error.
+    #[test]
+    fn a_persistent_areas_art_rides_its_placement_and_its_scale() {
+        let mut app = App::new();
+        app.add_plugins(bevy::transform::TransformPlugin);
+        app.init_resource::<Time>();
+        app.add_systems(Update, animate_areas);
+
+        // The object the server placed in the world, ten yards out.
+        let placed = Vec3::new(10.0, 0.0, 0.0);
+        let object = app
+            .world_mut()
+            .spawn((Transform::from_translation(placed), Visibility::default()))
+            .id();
+        let root = app
+            .world_mut()
+            .spawn((
+                AttachedTo,
+                Transform::from_scale(Vec3::splat(2.0)),
+                Visibility::default(),
+                ChildOf(object),
+            ))
+            .id();
+        let joint = app
+            .world_mut()
+            .spawn((Joint, GlobalTransform::default(), ChildOf(root)))
+            .id();
+        app.world_mut()
+            .entity_mut(object)
+            .insert(AreaArt(AttachedPart {
+                bone: 0,
+                offset: [0.0; 3],
+                grounded: false,
+                scale: 2.0,
+                root,
+                joints: vec![joint],
+                skeleton: Some(one_still_bone()),
+                sequence: 0,
+                loops: true,
+                since: 0.0,
+                tinted: Vec::new(),
+                tints: None,
+                points: Arc::new(Vec::new()),
+                nested: Vec::new(),
+                pending: Vec::new(),
+            }));
+
+        app.update();
+
+        let posed = *app
+            .world()
+            .entity(joint)
+            .get::<GlobalTransform>()
+            .expect("the art's joint");
+        assert_eq!(
+            posed.translation(),
+            placed,
+            "the art stands where the server put the object",
+        );
+        assert_eq!(
+            posed.compute_transform().scale,
+            Vec3::splat(2.0),
+            "the kit's own scale reached the joints, not just the root",
+        );
+    }
+
+    /// The impacts of the spell Blizzard are denser towards the middle, as in the
+    /// 1.12.1 client.
+    ///
+    /// The 1.12.1 client places each impact at a uniformly random distance between
+    /// 0 and the radius, in a random direction. It does not take the square root
+    /// that would make the spread uniform over the disc's area. So the mean
+    /// distance from the centre is `R/2`, not the `2R/3` of an area-uniform spread.
+    /// Taking the square root would draw a Blizzard as a ring with a hole in it.
+    /// This test asserts the distribution as well as the bound, because the bound
+    /// alone passes for both.
+    #[test]
+    fn the_rain_lands_inside_the_radius_and_thickens_towards_the_middle() {
+        let mut rng = 0x1234_5678u32;
+        let radius = 8.0f32;
+        let mut total = 0.0f64;
+        const N: usize = 4000;
+        for _ in 0..N {
+            let (dx, dy) = crate::world::entities::effects::impact_offset(&mut rng, radius);
+            let r = (dx * dx + dy * dy).sqrt();
+            assert!(r <= radius, "an impact landed outside the area: {r}");
+            total += r as f64;
+        }
+        let mean = total / N as f64;
+        // R/2 = 4.0 against an area-uniform 2R/3 = 5.33. A tolerance of 0.2 over
+        // four thousand samples separates them clearly.
+        assert!(
+            (mean - 4.0).abs() < 0.2,
+            "mean radius {mean} — an area-uniform spread would be 5.33"
+        );
+    }
+
+    /// Impacts land in every direction. Impacts that fell only to the north would
+    /// pass the bound above and be drawn as a line.
+    #[test]
+    fn the_rain_covers_every_direction() {
+        let mut rng = 1;
+        let mut quadrants = [false; 4];
+        for _ in 0..500 {
+            let (dx, dy) = crate::world::entities::effects::impact_offset(&mut rng, 8.0);
+            quadrants[(usize::from(dx < 0.0)) * 2 + usize::from(dy < 0.0)] = true;
+        }
+        assert!(quadrants.iter().all(|q| *q), "{quadrants:?}");
+    }
+}

@@ -148,7 +148,8 @@ fn common(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAssets, at:
         ui,
         "Copy position",
         at.is_some(),
-        "Copy the clicked point's x, y and z to the clipboard: the ground's, or the clicked          spawn's own position.",
+        "Copy the clicked point's x, y and z to the clipboard: the ground's, or the clicked \
+         spawn's own position.",
         "The click was not on open ground.",
     ) {
         if let Some(at) = at {
@@ -160,7 +161,8 @@ fn common(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAssets, at:
         ui,
         "Copy .go command",
         at.is_some(),
-        "Copy a GM command that teleports a character to the clicked point, or to the clicked          spawn, on this map.",
+        "Copy a GM command that teleports a character to the clicked point, or to the clicked \
+         spawn, on this map.",
         "The click was not on open ground.",
     ) {
         if let Some(at) = at {

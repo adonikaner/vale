@@ -52,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use vale_assets::tables::reputation::{Factions, Reputation};
-use vale_protocol::socket::session::ReputationVerb;
+use vale_protocol::play::reputation::ReputationVerb;
 use crate::lua::host::LuaHost;
 
 /// The **unscoped reads and writes** this file registers, sorted — the same list
@@ -401,7 +401,7 @@ pub fn held(host: &LuaHost) -> Held {
 }
 
 /// Take and clear the reputation panel's three verbs that send a packet.
-pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::ReputationVerb> {
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::play::reputation::ReputationVerb> {
     super::taken(host)
 }
 

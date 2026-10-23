@@ -64,7 +64,7 @@
 //! middle of its scan.
 //!
 //! The rule covers the movement controls too. `A` is `TURNLEFT` in the shipped
-//! defaults. While `world::session::send_input` read `KeyCode::KeyA`, binding
+//! defaults. While `input::controls::send_input` read `KeyCode::KeyA`, binding
 //! `A` to `ACTIONBUTTON3` cast a spell and also turned the character.
 //! [`crate::input::controls`] applies the rule to the controls, through the nine
 //! pairs of [`Control`]. The only device still read directly is the mouse,
@@ -511,7 +511,7 @@ pub enum Binding {
     // --- The character's controls ---
     //
     // These are bindings and not `keys.pressed(KeyCode::KeyW)` reads in
-    // `world::session::send_input`. A direct read moves the character on a
+    // `input::controls::send_input`. A direct read moves the character on a
     // key that is bound to something else: binding `A` to `ACTIONBUTTON3`
     // cast a spell and turned left. See [`Control`].
     /// One of the eight held controls, and which edge: `MOVEFORWARD`'s
@@ -608,7 +608,7 @@ pub enum Control {
     /// to the mouse buttons.
     ///
     /// The verbs are registered and the state is kept. The steering in
-    /// `world::session::send_input` reads it in addition to the right mouse
+    /// `input::controls::send_input` reads it in addition to the right mouse
     /// button, not instead of it, because `BUTTON1`/`BUTTON2` are key names
     /// this client's `key_name` cannot produce. See the module comment.
     Steer,

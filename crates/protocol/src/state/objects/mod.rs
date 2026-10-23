@@ -1,7 +1,13 @@
 //! A minimal object manager: the client's view of the world, keyed by GUID.
 //!
 //! ```text
-//! tests.rs   the update-block fold, pets, unit fields, splines and auras
+//! items.rs       what the character carries, read through three layers of
+//!                update fields into play::items::Inventory
+//! stats.rs       UnitStats::read, the character sheet off the player's fields
+//! skills.rs      Skills::read, the skill block off the player's fields
+//! explored.rs    Explored::read, the exploration mask off the player's fields
+//! reputation.rs  watched_faction, the reputation bar's faction
+//! tests.rs       the update-block fold, pets, unit fields, splines and auras
 //! ```
 //!
 //! The server does not send the whole world state. It sends deltas
@@ -9,7 +15,14 @@
 //! out of range. The client holds the accumulated state, and this module is
 //! where it is held.
 
-use crate::play::wdb::{Caches, Kind, Learned};
+pub mod explored;
+pub mod items;
+pub mod reputation;
+pub mod skills;
+pub mod stats;
+
+use crate::state::wdb::{Caches, Kind, Learned};
+use crate::play::items::HeldItem;
 use crate::state::fields;
 use crate::state::movement::{
     bearing, distance, fall_elevation, move_flags, wrap_angle, Footing, MonsterMove, MovementInfo,
@@ -81,39 +94,6 @@ pub const UNIT_VIS_FLAGS_UNTRACKABLE: u8 = 0x04;
 /// before, because the enchantment array grew. A value copied from the wrong
 /// version reads the neighbouring slot's data without any error.
 pub const VISIBLE_ITEM_STRIDE: u16 = 12;
-
-/// One item in a unit's hand, as the server describes it.
-///
-/// Two sources carry the same five numbers, and this type holds them in one
-/// form. A creature's arrive in its update fields, already resolved:
-/// `Creature::SetVirtualItem` writes the display id into
-/// `UNIT_VIRTUAL_ITEM_SLOT_DISPLAY` and packs the rest into
-/// `UNIT_VIRTUAL_ITEM_INFO` beside it. A player's arrive as an item entry in
-/// `PLAYER_VISIBLE_ITEM_n_0`, and the same five come back from
-/// `SMSG_ITEM_QUERY_SINGLE_RESPONSE` a round trip later.
-/// [`ObjectManager::weapons_of`] joins the two.
-///
-/// Nothing here is interpreted. What the numbers mean (which attachment point
-/// a sheathed weapon hangs from, which swing its wielder plays) is a game rule
-/// in `vale_assets::tables::item`, so this type holds five plain numbers and
-/// not an enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct HeldItem {
-    /// `ItemDisplayInfo` row. Zero means an empty hand, and is the only test
-    /// for one.
-    pub display_id: u32,
-    /// `ItemPrototype::Class`: 2 weapon, 4 armour.
-    pub class: u8,
-    pub subclass: u8,
-    /// `ItemPrototype::Material`: what the weapon is made of. It is used only
-    /// for sound, not for the model: `WeaponImpactSounds` has a metal and a
-    /// non-metal row per subclass. See
-    /// `vale_assets::tables::item::Weapon::material`.
-    pub material: u8,
-    pub inventory_type: u8,
-    /// `ItemPrototype::Sheath`: where the item hangs when it is put away.
-    pub sheath: u8,
-}
 
 /// One entity the client currently knows about.
 #[derive(Debug, Clone)]
@@ -2328,7 +2308,7 @@ pub struct ObjectManager {
     pub wanted_gameobjects: HashSet<u32>,
     /// Query answers learned this session that are not on disk yet, as the
     /// response bodies they arrived as. The session loop drains them into
-    /// [`crate::play::wdb`].
+    /// [`crate::state::wdb`].
     ///
     /// Bodies rather than parsed records, because the cache replays them
     /// through the same parser. See that module, which also explains why a
@@ -2510,7 +2490,7 @@ pub struct ObjectManager {
     pub attacking: Option<u64>,
     /// The server's responses to the local player's actions, oldest first.
     /// Drained by the interface, in the same way as [`Self::take_chat`].
-    events: Vec<crate::play::spells::PlayerEvent>,
+    events: Vec<crate::state::events::PlayerEvent>,
     /// Combat events, oldest first: the combat log's queue, drained by the
     /// code that composes its lines. See [`Self::note_combat`] for why this is
     /// separate from the field above.
@@ -3660,7 +3640,7 @@ impl ObjectManager {
 
     /// Queue the server's response to one of the local player's actions, on
     /// the same terms as [`Self::note_chat`]: bounded, oldest dropped.
-    pub fn note_event(&mut self, event: crate::play::spells::PlayerEvent) {
+    pub fn note_event(&mut self, event: crate::state::events::PlayerEvent) {
         if self.events.len() >= EVENT_BACKLOG {
             self.events.remove(0);
         }
@@ -3669,7 +3649,7 @@ impl ObjectManager {
 
     /// Take everything that has happened since the last call, emptying the
     /// queue. Same contract as [`Self::take_chat`], and the same single reader.
-    pub fn take_events(&mut self) -> Vec<crate::play::spells::PlayerEvent> {
+    pub fn take_events(&mut self) -> Vec<crate::state::events::PlayerEvent> {
         std::mem::take(&mut self.events)
     }
 
@@ -3734,7 +3714,7 @@ impl ObjectManager {
     /// leave the unlearned ranks on the bar permanently.
     pub fn apply_spellbook(&mut self, book: crate::play::spells::Spellbook) {
         for cooldown in &book.cooldowns {
-            self.note_event(crate::play::spells::PlayerEvent::CooldownStarted {
+            self.note_event(crate::state::events::PlayerEvent::CooldownStarted {
                 spell_id: cooldown.spell_id,
                 ms: cooldown.spell_ms.max(cooldown.category_duration_ms()),
             });
@@ -3979,9 +3959,9 @@ impl ObjectManager {
         }
         self.spellbook_version = self.spellbook_version.wrapping_add(1);
         self.note_event(if learned {
-            crate::play::spells::PlayerEvent::SpellLearned(spell_id)
+            crate::state::events::PlayerEvent::SpellLearned(spell_id)
         } else {
-            crate::play::spells::PlayerEvent::SpellRemoved(spell_id)
+            crate::state::events::PlayerEvent::SpellRemoved(spell_id)
         });
     }
 
@@ -3999,7 +3979,7 @@ impl ObjectManager {
     /// both the book and the bar filter against.
     ///
     /// The slots that changed are reported in
-    /// [`crate::play::spells::PlayerEvent::SpellSuperceded`], and the caller
+    /// [`crate::state::events::PlayerEvent::SpellSuperceded`], and the caller
     /// must send them to the server.
     pub fn apply_superceded_spell(&mut self, old: u32, new: u32) {
         use crate::play::spells::action_kind;
@@ -4022,7 +4002,7 @@ impl ObjectManager {
         // the spellbook changed, and readers rebuild from the spellbook when
         // the version changes.
         self.spellbook_version = self.spellbook_version.wrapping_add(1);
-        self.note_event(crate::play::spells::PlayerEvent::SpellSuperceded { old, new, slots });
+        self.note_event(crate::state::events::PlayerEvent::SpellSuperceded { old, new, slots });
     }
 
     /// `SMSG_ACTION_BUTTONS`: the whole bar, likewise replacing.

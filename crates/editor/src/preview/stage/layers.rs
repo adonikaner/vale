@@ -8,9 +8,9 @@ use super::{CASTER_GUID, STAGE_LAYER, StageArea, StageUnit, TARGET_GUID};
 /// Light the stage with the world's own sun.
 ///
 /// The client's `DirectionalLight`s carry no `RenderLayers`, which means layer
-/// 0, which means they do not reach the stage's view. Adding layer 2 to them
-/// changes nothing about the world — the mask still holds layer 0 — and makes
-/// the preview lit by exactly what the game is lit by.
+/// 0, which means they do not reach the stage's view. Adding [`STAGE_LAYER`]
+/// to them changes nothing about the world — the mask still holds layer 0 —
+/// and makes the preview lit by exactly what the game is lit by.
 ///
 /// The alternative, lights of the stage's own, draws the actors as a teal
 /// patchwork.

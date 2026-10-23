@@ -140,3 +140,73 @@ pub(super) fn fallback_shapes(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    /// Only the object kinds the 1.12 client draws get a debug box.
+    ///
+    /// The kinds that must not get one each produced a visible artefact. A corpse
+    /// and a dropped item each drew a flat `#66FF99` slab in the road. A
+    /// `DynamicObject`, such as the persistent area of the spell Blizzard, drew one
+    /// scaled by the spell's radius: a grey box several yards across where the
+    /// frost effect should be. None of these came from the spell-effect code.
+    #[test]
+    fn a_fallback_box_is_only_for_things_that_should_have_drawn() {
+        use vale_protocol::state::update::ObjectType;
+        for kind in [ObjectType::Unit, ObjectType::Player] {
+            assert!(
+                crate::world::entities::fallback::deserves_a_box(kind, None),
+                "{kind:?} is something the client draws; a missing model is a bug and must show"
+            );
+            assert!(
+                crate::world::entities::fallback::deserves_a_box(kind, Some(57)),
+                "{kind:?} whose model would not load is the same bug"
+            );
+        }
+        for kind in [
+            ObjectType::Item,
+            ObjectType::Container,
+            ObjectType::Corpse,
+            ObjectType::DynamicObject,
+            ObjectType::Object,
+        ] {
+            assert!(
+                !crate::world::entities::fallback::deserves_a_box(kind, None),
+                "{kind:?} is drawn as no geometry at all by the real client"
+            );
+            assert!(
+                !crate::world::entities::fallback::deserves_a_box(kind, Some(1)),
+                "{kind:?} draws nothing whatever it carries"
+            );
+        }
+    }
+
+    /// A game object with no display id is meant to be invisible, and drawing a box
+    /// for one caused the campfire bug.
+    ///
+    /// Entry 2061 is `Campfire Damage`: `gameobject_template` type 6 (a trap) with
+    /// `displayId` 0, spawned inside every fire. vmangos does not send a field
+    /// whose value is zero, so it reaches this client as a game object with no
+    /// display id. The rule above once gave it a grey cube, so the Goldshire inn
+    /// hearths, the Ironforge braziers and every campfire showed a cube inside a
+    /// correctly drawn fire.
+    ///
+    /// Many templates are like this. The same table holds spell circles, spawners,
+    /// waterfalls, moonwells and cave mouths: 75 templates with `displayId` 0, most
+    /// of them type 6 (trap) or type 8 (spell focus).
+    ///
+    /// That count comes from the world database, so this test checks the rule: a
+    /// game object with no display id draws nothing, and a game object that named a
+    /// model and did not get one still gets a box.
+    #[test]
+    fn an_invisible_game_object_is_not_a_failure() {
+        use vale_protocol::state::update::ObjectType;
+        assert!(
+            !crate::world::entities::fallback::deserves_a_box(ObjectType::GameObject, None),
+            "displayId 0 means draw nothing, which is what a trap and a spell focus are"
+        );
+        assert!(
+            crate::world::entities::fallback::deserves_a_box(ObjectType::GameObject, Some(31338)),
+            "a game object that named a model and did not get one is still a bug"
+        );
+    }
+}

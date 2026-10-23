@@ -15,6 +15,7 @@ use crate::socket::handler::{apply_packet, Incoming, PumpStats, Replies};
 use crate::state::movement::MovementInfo;
 use crate::state::objects::ObjectManager;
 use crate::opcodes::Opcode;
+use crate::play::charcreate::{parse_char_enum, CharListEntry};
 use crate::state::query;
 use crate::version::{self, ClientVersion};
 use sha1::{Digest, Sha1};
@@ -506,6 +507,12 @@ impl WorldSession {
         self.write_all(&out)
     }
 
+    /// Send an `(opcode, body)` pair as built by a verb's `packet`, such as
+    /// [`crate::play::quest::QuestVerb::packet`].
+    pub fn send_packet(&mut self, (opcode, body): (Opcode, Vec<u8>)) -> io::Result<()> {
+        self.send(opcode, &body)
+    }
+
     /// `write_all`, but tolerant of a non-blocking socket.
     ///
     /// Client packets are tens of bytes and the socket buffer is tens of
@@ -750,7 +757,7 @@ impl WorldSession {
     /// that run on the task pool, but not the one that runs on the render
     /// thread: `CMSG_CHAR_CREATE` is answered after a database write, and the
     /// window does not update until the answer arrives. See
-    /// `crate::play::charcreate::create_character` for why that exchange is not
+    /// `create_character` for why that exchange is not
     /// a task.
     ///
     /// The timeout covers the whole wait rather than each packet, so a server
@@ -773,7 +780,7 @@ impl WorldSession {
     /// find, a guid belonging to another account). A delete with no reply is
     /// the server declining, not the connection closing, and treating it as a
     /// closed connection would discard a working character screen. See
-    /// [`crate::play::charcreate::delete_character`].
+    /// [`delete_character`].
     pub fn try_recv_until_within(
         &mut self,
         want: Opcode,
@@ -851,6 +858,21 @@ impl WorldSession {
     /// the socket cannot report it, which does not happen on a live connection.
     pub fn peer_address(&self) -> Option<String> {
         self.stream.peer_addr().ok().map(|a| a.to_string())
+    }
+
+    /// The WDB caches for this world server, at this client's build.
+    ///
+    /// The one call both the renderer and the CLI make, so that a `WDB\` written
+    /// by `vale live` is the same set of files the game reads.
+    pub fn caches(&self) -> crate::state::wdb::Caches {
+        // The socket's own peer, not the configured address: a realmlist line and
+        // a realm-list entry can name the same machine two ways, and two names for
+        // one server would be two caches with the same templates in them. An
+        // unaskable socket falls back to a shared key rather than to no cache.
+        match self.peer_address() {
+            Some(address) => crate::state::wdb::for_server(&address),
+            None => crate::state::wdb::for_server("unknown"),
+        }
     }
 
     /// What the handshake saw, for a caller that wants to print it.
@@ -1180,55 +1202,6 @@ impl WorldSession {
         )
     }
 
-    /// The quest-giver and quest-log packets: one method for nine opcodes.
-    ///
-    /// The opcode is chosen here rather than by the caller, for the reason
-    /// given on `move_item`: the opcode follows from the verb, and a caller
-    /// that chose it would be a second place that has to know the mapping.
-    pub fn quest(&mut self, verb: crate::socket::session::QuestVerb) -> io::Result<()> {
-        use crate::socket::session::QuestVerb as V;
-        let (opcode, body) = match verb {
-            V::Status(guid) => (
-                Opcode::CMSG_QUESTGIVER_STATUS_QUERY,
-                crate::play::quest::guid_body(guid),
-            ),
-            V::Hello(guid) => (Opcode::CMSG_QUESTGIVER_HELLO, crate::play::quest::guid_body(guid)),
-            V::Details { guid, quest_id } => (
-                Opcode::CMSG_QUESTGIVER_QUERY_QUEST,
-                crate::play::quest::quest_body(guid, quest_id),
-            ),
-            V::Accept { guid, quest_id } => (
-                Opcode::CMSG_QUESTGIVER_ACCEPT_QUEST,
-                crate::play::quest::quest_body(guid, quest_id),
-            ),
-            V::Complete { guid, quest_id } => (
-                Opcode::CMSG_QUESTGIVER_COMPLETE_QUEST,
-                crate::play::quest::quest_body(guid, quest_id),
-            ),
-            V::RequestReward { guid, quest_id } => (
-                Opcode::CMSG_QUESTGIVER_REQUEST_REWARD,
-                crate::play::quest::quest_body(guid, quest_id),
-            ),
-            V::ChooseReward {
-                guid,
-                quest_id,
-                choice,
-            } => (
-                Opcode::CMSG_QUESTGIVER_CHOOSE_REWARD,
-                crate::play::quest::choose_reward_body(guid, quest_id, choice),
-            ),
-            V::Query(quest_id) => (
-                Opcode::CMSG_QUEST_QUERY,
-                crate::play::quest::quest_query_body(quest_id),
-            ),
-            V::Abandon(slot) => (
-                Opcode::CMSG_QUESTLOG_REMOVE_QUEST,
-                crate::play::quest::abandon_body(slot),
-            ),
-        };
-        self.send(opcode, &body)
-    }
-
     /// Use a game object: `CMSG_GAMEOBJ_USE`, one guid, no reply.
     ///
     /// See [`crate::play::object`] for the results, none of which is a reply to
@@ -1237,484 +1210,6 @@ impl WorldSession {
     /// through the message table.
     pub fn use_object(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_GAMEOBJ_USE, &crate::play::object::use_body(guid))
-    }
-
-    /// The gossip, vendor, binder, page-text, trainer, stable and bank packets:
-    /// one method for nineteen opcodes, structured like [`WorldSession::quest`]
-    /// for the same reason.
-    pub fn npc(&mut self, verb: crate::socket::session::NpcVerb) -> io::Result<()> {
-        use crate::socket::session::NpcVerb as V;
-        let (opcode, body) = match verb {
-            V::GossipHello(guid) => (Opcode::CMSG_GOSSIP_HELLO, crate::play::gossip::guid_body(guid)),
-            V::GossipSelect { guid, option } => (
-                Opcode::CMSG_GOSSIP_SELECT_OPTION,
-                crate::play::gossip::select_option_body(guid, option),
-            ),
-            V::TextQuery { text_id, guid } => (
-                Opcode::CMSG_NPC_TEXT_QUERY,
-                crate::play::gossip::npc_text_query_body(text_id, guid),
-            ),
-            V::BinderActivate(guid) => (
-                Opcode::CMSG_BINDER_ACTIVATE,
-                crate::play::bindpoint::binder_activate_body(guid),
-            ),
-            V::PageTextQuery { page_id, guid } => (
-                Opcode::CMSG_PAGE_TEXT_QUERY,
-                crate::play::pagetext::page_text_query_body(page_id, guid),
-            ),
-            V::ListInventory(guid) => {
-                (Opcode::CMSG_LIST_INVENTORY, crate::play::gossip::guid_body(guid))
-            }
-            V::Buy {
-                vendor,
-                entry,
-                count,
-            } => (
-                Opcode::CMSG_BUY_ITEM,
-                crate::play::gossip::buy_item_body(vendor, entry, count),
-            ),
-            V::Sell {
-                vendor,
-                item,
-                count,
-            } => (
-                Opcode::CMSG_SELL_ITEM,
-                crate::play::gossip::sell_item_body(vendor, item, count),
-            ),
-            V::Buyback { vendor, wire_slot } => (
-                Opcode::CMSG_BUYBACK_ITEM,
-                crate::play::gossip::buyback_body(vendor, wire_slot),
-            ),
-            V::Repair { vendor, item } => (
-                Opcode::CMSG_REPAIR_ITEM,
-                crate::play::gossip::repair_item_body(vendor, item),
-            ),
-            // The trainer's two. The list request is the same bare guid as the
-            // other openers in this method.
-            V::TrainerList(guid) => {
-                (Opcode::CMSG_TRAINER_LIST, crate::play::gossip::guid_body(guid))
-            }
-            V::TrainerBuy { trainer, spell } => (
-                Opcode::CMSG_TRAINER_BUY_SPELL,
-                crate::play::trainer::buy_spell_body(trainer, spell),
-            ),
-            // The stable master's five. Three are the bare guid and two add a
-            // pet number. See [`crate::play::stable`].
-            V::StableList(guid) => (
-                Opcode::MSG_LIST_STABLED_PETS,
-                crate::play::stable::list_stabled_pets_body(guid),
-            ),
-            V::StablePet(guid) => (
-                Opcode::CMSG_STABLE_PET,
-                crate::play::stable::stable_pet_body(guid),
-            ),
-            V::UnstablePet { stable, pet_number } => (
-                Opcode::CMSG_UNSTABLE_PET,
-                crate::play::stable::unstable_pet_body(stable, pet_number),
-            ),
-            V::StableSwap { stable, pet_number } => (
-                Opcode::CMSG_STABLE_SWAP_PET,
-                crate::play::stable::swap_stable_pet_body(stable, pet_number),
-            ),
-            V::BuyStableSlot(guid) => (
-                Opcode::CMSG_BUY_STABLE_SLOT,
-                crate::play::stable::buy_stable_slot_body(guid),
-            ),
-            // The banker's two, both the bare guid. See [`crate::play::bank`].
-            V::BankerActivate(guid) => (
-                Opcode::CMSG_BANKER_ACTIVATE,
-                crate::play::bank::banker_activate_body(guid),
-            ),
-            V::BuyBankSlot(guid) => (
-                Opcode::CMSG_BUY_BANK_SLOT,
-                crate::play::bank::buy_bank_slot_body(guid),
-            ),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The pet command packets: one method for nine opcodes, structured like
-    /// [`WorldSession::npc`].
-    ///
-    /// By reference rather than by value because two of the nine carry a heap
-    /// allocation: a rename carries a name and a set-action carries a list.
-    pub fn pet(&mut self, verb: &crate::socket::session::PetVerb) -> io::Result<()> {
-        use crate::play::pet;
-        use crate::socket::session::PetVerb as V;
-        let (opcode, body) = match verb {
-            V::Action { pet: guid, data, target } => (
-                Opcode::CMSG_PET_ACTION,
-                pet::pet_action_body(*guid, *data, *target),
-            ),
-            V::NameQuery { pet_number, pet: guid } => (
-                Opcode::CMSG_PET_NAME_QUERY,
-                pet::pet_name_query_body(*pet_number, *guid),
-            ),
-            V::SetAction { pet: guid, moves } => (
-                Opcode::CMSG_PET_SET_ACTION,
-                pet::pet_set_action_body(*guid, moves),
-            ),
-            V::Autocast { pet: guid, spell_id, on } => (
-                Opcode::CMSG_PET_SPELL_AUTOCAST,
-                pet::pet_spell_autocast_body(*guid, *spell_id, *on),
-            ),
-            // Three opcodes with one body layout. See
-            // [`crate::play::pet::pet_guid_body`].
-            V::StopAttack(guid) => (Opcode::CMSG_PET_STOP_ATTACK, pet::pet_guid_body(*guid)),
-            V::Abandon(guid) => (Opcode::CMSG_PET_ABANDON, pet::pet_guid_body(*guid)),
-            V::Unlearn(guid) => (Opcode::CMSG_PET_UNLEARN, pet::pet_guid_body(*guid)),
-            V::Rename { pet: guid, name } => (
-                Opcode::CMSG_PET_RENAME,
-                pet::pet_rename_body(*guid, name),
-            ),
-            V::CancelAura { pet: guid, spell_id } => (
-                Opcode::CMSG_PET_CANCEL_AURA,
-                pet::pet_cancel_aura_body(*guid, *spell_id),
-            ),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The flight master packets. See [`crate::socket::session::TaxiVerb`] and
-    /// [`crate::play::taxi`], which builds the bodies.
-    ///
-    /// Takes the verb by reference, as [`WorldSession::party`] does, because
-    /// the express flight carries a route.
-    pub fn taxi(&mut self, verb: &crate::socket::session::TaxiVerb) -> io::Result<()> {
-        use crate::socket::session::TaxiVerb as V;
-        let (opcode, body) = match verb {
-            // Both openers are a bare guid, like the other NPC openers.
-            V::QueryNodes(guid) => (
-                Opcode::CMSG_TAXIQUERYAVAILABLENODES,
-                crate::play::gossip::guid_body(*guid),
-            ),
-            V::NodeStatus(guid) => (
-                Opcode::CMSG_TAXINODE_STATUS_QUERY,
-                crate::play::gossip::guid_body(*guid),
-            ),
-            V::Activate { guid, from, to } => (
-                Opcode::CMSG_ACTIVATETAXI,
-                crate::play::taxi::activate_taxi_body(*guid, *from, *to),
-            ),
-            V::ActivateExpress { guid, cost, nodes } => (
-                Opcode::CMSG_ACTIVATETAXIEXPRESS,
-                crate::play::taxi::activate_taxi_express_body(*guid, *cost, nodes),
-            ),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The party and raid packets. See [`crate::socket::session::PartyVerb`]
-    /// and [`crate::play::group`], which builds the bodies.
-    ///
-    /// Takes the verb by reference rather than by value because four of the
-    /// verbs carry a name.
-    pub fn party(&mut self, verb: &crate::socket::session::PartyVerb) -> io::Result<()> {
-        use crate::socket::session::PartyVerb as V;
-        let (opcode, body) = match verb {
-            V::Invite(name) => (Opcode::CMSG_GROUP_INVITE, crate::play::group::invite_body(name)),
-            V::Accept => (Opcode::CMSG_GROUP_ACCEPT, crate::play::group::EMPTY.to_vec()),
-            V::Decline => (Opcode::CMSG_GROUP_DECLINE, crate::play::group::EMPTY.to_vec()),
-            // Leaving and disbanding use one opcode. See [`V::Leave`].
-            V::Leave => (Opcode::CMSG_GROUP_DISBAND, crate::play::group::EMPTY.to_vec()),
-            V::Uninvite(name) => (
-                Opcode::CMSG_GROUP_UNINVITE,
-                crate::play::group::uninvite_body(name),
-            ),
-            V::UninviteGuid(guid) => (
-                Opcode::CMSG_GROUP_UNINVITE_GUID,
-                crate::play::group::guid_body(*guid),
-            ),
-            V::SetLeader(guid) => (
-                Opcode::CMSG_GROUP_SET_LEADER,
-                crate::play::group::guid_body(*guid),
-            ),
-            V::RequestStats(guid) => (
-                Opcode::CMSG_REQUEST_PARTY_MEMBER_STATS,
-                crate::play::group::request_stats_body(*guid),
-            ),
-            // An empty body, like Accept, Decline and Leave. See
-            // [`V::ConvertToRaid`].
-            V::ConvertToRaid => (
-                Opcode::CMSG_GROUP_RAID_CONVERT,
-                crate::play::group::EMPTY.to_vec(),
-            ),
-            V::ChangeSubGroup { name, subgroup } => (
-                Opcode::CMSG_GROUP_CHANGE_SUB_GROUP,
-                crate::play::group::change_sub_group_body(name, *subgroup),
-            ),
-            V::SwapSubGroup { name, swap_with } => (
-                Opcode::CMSG_GROUP_SWAP_SUB_GROUP,
-                crate::play::group::swap_sub_group_body(name, swap_with),
-            ),
-            V::SetAssistant { guid, assistant } => (
-                Opcode::CMSG_GROUP_ASSISTANT_LEADER,
-                crate::play::group::assistant_leader_body(*guid, *assistant),
-            ),
-            // One opcode for both; the body length tells them apart. See
-            // [`crate::play::group::ReadyCheck`].
-            V::StartReadyCheck => (
-                Opcode::MSG_RAID_READY_CHECK,
-                crate::play::group::EMPTY.to_vec(),
-            ),
-            V::AnswerReadyCheck(ready) => (
-                Opcode::MSG_RAID_READY_CHECK,
-                crate::play::group::ready_check_answer_body(*ready),
-            ),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The reputation panel's three packets. See
-    /// [`crate::socket::session::ReputationVerb`] and
-    /// [`crate::play::reputation`], which builds the bodies.
-    pub fn reputation(
-        &mut self,
-        verb: crate::socket::session::ReputationVerb,
-    ) -> io::Result<()> {
-        use crate::socket::session::ReputationVerb as V;
-        let (opcode, body) = match verb {
-            V::AtWar { reputation_list_id, at_war } => (
-                Opcode::CMSG_SET_FACTION_ATWAR,
-                crate::play::reputation::set_faction_at_war_body(reputation_list_id, at_war),
-            ),
-            V::Inactive { reputation_list_id, inactive } => (
-                Opcode::CMSG_SET_FACTION_INACTIVE,
-                crate::play::reputation::set_faction_inactive_body(reputation_list_id, inactive),
-            ),
-            V::Watched { reputation_list_id } => (
-                Opcode::CMSG_SET_WATCHED_FACTION,
-                crate::play::reputation::set_watched_faction_body(reputation_list_id),
-            ),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The social panel's six packets. See
-    /// [`crate::socket::session::SocialVerb`].
-    ///
-    /// Takes the verb by reference rather than by value because three of the
-    /// six carry a string and one carries a whole search, and this is the only
-    /// place they are serialised.
-    pub fn social(&mut self, verb: &crate::socket::session::SocialVerb) -> io::Result<()> {
-        use crate::socket::session::SocialVerb as V;
-        let (opcode, body) = match verb {
-            V::List => (Opcode::CMSG_FRIEND_LIST, crate::play::social::friend_list_body()),
-            V::AddFriend(name) => (
-                Opcode::CMSG_ADD_FRIEND,
-                crate::play::social::add_friend_body(name),
-            ),
-            V::DelFriend(guid) => (
-                Opcode::CMSG_DEL_FRIEND,
-                crate::play::social::del_friend_body(*guid),
-            ),
-            V::AddIgnore(name) => (
-                Opcode::CMSG_ADD_IGNORE,
-                crate::play::social::add_ignore_body(name),
-            ),
-            V::DelIgnore(guid) => (
-                Opcode::CMSG_DEL_IGNORE,
-                crate::play::social::del_ignore_body(*guid),
-            ),
-            V::Who(request) => (Opcode::CMSG_WHO, crate::play::social::who_body(request)),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The guild's twenty-one packets. See
-    /// [`crate::socket::session::GuildVerb`] and [`crate::play::guild`], which
-    /// builds the bodies.
-    pub fn guild(&mut self, verb: &crate::socket::session::GuildVerb) -> io::Result<()> {
-        use crate::play::guild as g;
-        use crate::socket::session::GuildVerb as V;
-        let (opcode, body) = match verb {
-            V::Query(id) => (Opcode::CMSG_GUILD_QUERY, g::query_body(*id)),
-            V::Roster => (Opcode::CMSG_GUILD_ROSTER, Vec::new()),
-            V::Info => (Opcode::CMSG_GUILD_INFO, Vec::new()),
-            V::Invite(name) => (Opcode::CMSG_GUILD_INVITE, g::text_body(name)),
-            V::Accept => (Opcode::CMSG_GUILD_ACCEPT, Vec::new()),
-            V::Decline => (Opcode::CMSG_GUILD_DECLINE, Vec::new()),
-            V::Remove(name) => (Opcode::CMSG_GUILD_REMOVE, g::text_body(name)),
-            V::Promote(name) => (Opcode::CMSG_GUILD_PROMOTE, g::text_body(name)),
-            V::Demote(name) => (Opcode::CMSG_GUILD_DEMOTE, g::text_body(name)),
-            V::Leader(name) => (Opcode::CMSG_GUILD_LEADER, g::text_body(name)),
-            V::Leave => (Opcode::CMSG_GUILD_LEAVE, Vec::new()),
-            V::Disband => (Opcode::CMSG_GUILD_DISBAND, Vec::new()),
-            V::Motd(text) => (Opcode::CMSG_GUILD_MOTD, g::text_body(text)),
-            V::InfoText(text) => (Opcode::CMSG_GUILD_INFO_TEXT, g::text_body(text)),
-            V::PublicNote { player, note } => {
-                (Opcode::CMSG_GUILD_SET_PUBLIC_NOTE, g::note_body(player, note))
-            }
-            V::OfficerNote { player, note } => {
-                (Opcode::CMSG_GUILD_SET_OFFICER_NOTE, g::note_body(player, note))
-            }
-            V::Rank { rank, rights, name } => {
-                (Opcode::CMSG_GUILD_RANK, g::rank_body(*rank, *rights, name))
-            }
-            V::AddRank(name) => (Opcode::CMSG_GUILD_ADD_RANK, g::text_body(name)),
-            V::DelRank => (Opcode::CMSG_GUILD_DEL_RANK, Vec::new()),
-            V::TabardVendor(npc) => (Opcode::MSG_TABARDVENDOR_ACTIVATE, g::tabard_vendor_body(*npc)),
-            V::SaveEmblem { npc, emblem } => {
-                (Opcode::MSG_SAVE_GUILD_EMBLEM, g::emblem_body(*npc, *emblem))
-            }
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The guild charter's nine packets. See
-    /// [`crate::socket::session::PetitionVerb`] and [`crate::play::petition`],
-    /// which builds the bodies.
-    pub fn petition(&mut self, verb: &crate::socket::session::PetitionVerb) -> io::Result<()> {
-        use crate::play::petition as p;
-        use crate::socket::session::PetitionVerb as V;
-        let (opcode, body) = match verb {
-            V::ShowList(npc) => (Opcode::CMSG_PETITION_SHOWLIST, p::guid_body(*npc)),
-            V::Buy { npc, name, index } => {
-                (Opcode::CMSG_PETITION_BUY, p::buy_body(*npc, name, *index))
-            }
-            V::ShowSignatures(item) => {
-                (Opcode::CMSG_PETITION_SHOW_SIGNATURES, p::guid_body(*item))
-            }
-            V::Query { petition, item } => {
-                (Opcode::CMSG_PETITION_QUERY, p::query_body(*petition, *item))
-            }
-            V::Sign { item, byte } => (Opcode::CMSG_PETITION_SIGN, p::sign_body(*item, *byte)),
-            V::Decline(item) => (Opcode::MSG_PETITION_DECLINE, p::guid_body(*item)),
-            V::Offer { item, player } => {
-                (Opcode::CMSG_OFFER_PETITION, p::offer_body(*item, *player))
-            }
-            V::TurnIn(item) => (Opcode::CMSG_TURN_IN_PETITION, p::guid_body(*item)),
-            V::Rename { item, name } => {
-                (Opcode::MSG_PETITION_RENAME, p::rename_body(*item, name))
-            }
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The chat frame's sixteen channel packets. See
-    /// [`crate::socket::session::ChannelVerb`] and [`crate::play::channels`],
-    /// which builds the bodies. Eight of them share one layout: channel name
-    /// and player name.
-    pub fn channel(&mut self, verb: &crate::socket::session::ChannelVerb) -> io::Result<()> {
-        use crate::play::channels as c;
-        use crate::socket::session::ChannelVerb as V;
-        let (opcode, body) = match verb {
-            V::Join { name, password } => (Opcode::CMSG_JOIN_CHANNEL, c::join_body(name, password)),
-            V::Leave(name) => (Opcode::CMSG_LEAVE_CHANNEL, c::leave_body(name)),
-            V::List(name) => (Opcode::CMSG_CHANNEL_LIST, c::list_body(name)),
-            V::Password { name, password } => {
-                (Opcode::CMSG_CHANNEL_PASSWORD, c::password_body(name, password))
-            }
-            V::SetOwner { name, player } => {
-                (Opcode::CMSG_CHANNEL_SET_OWNER, c::set_owner_body(name, player))
-            }
-            V::Owner(name) => (Opcode::CMSG_CHANNEL_OWNER, c::owner_body(name)),
-            V::Moderator { name, player } => {
-                (Opcode::CMSG_CHANNEL_MODERATOR, c::player_body(name, player))
-            }
-            V::Unmoderator { name, player } => {
-                (Opcode::CMSG_CHANNEL_UNMODERATOR, c::player_body(name, player))
-            }
-            V::Mute { name, player } => (Opcode::CMSG_CHANNEL_MUTE, c::player_body(name, player)),
-            V::Unmute { name, player } => {
-                (Opcode::CMSG_CHANNEL_UNMUTE, c::player_body(name, player))
-            }
-            V::Invite { name, player } => {
-                (Opcode::CMSG_CHANNEL_INVITE, c::player_body(name, player))
-            }
-            V::Kick { name, player } => (Opcode::CMSG_CHANNEL_KICK, c::player_body(name, player)),
-            V::Ban { name, player } => (Opcode::CMSG_CHANNEL_BAN, c::player_body(name, player)),
-            V::Unban { name, player } => (Opcode::CMSG_CHANNEL_UNBAN, c::player_body(name, player)),
-            V::Announcements(name) => (Opcode::CMSG_CHANNEL_ANNOUNCEMENTS, c::toggle_body(name)),
-            V::Moderate(name) => (Opcode::CMSG_CHANNEL_MODERATE, c::toggle_body(name)),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The trade window's packets: one method for ten opcodes, structured like
-    /// [`WorldSession::mail`]. See [`crate::play::trade`].
-    pub fn trade(&mut self, verb: crate::socket::session::TradeVerb) -> io::Result<()> {
-        use crate::play::trade as t;
-        use crate::socket::session::TradeVerb as V;
-        let (opcode, body) = match verb {
-            V::Initiate(guid) => (Opcode::CMSG_INITIATE_TRADE, t::initiate_trade_body(guid)),
-            V::Begin => (Opcode::CMSG_BEGIN_TRADE, Vec::new()),
-            V::Busy => (Opcode::CMSG_BUSY_TRADE, Vec::new()),
-            V::Ignore => (Opcode::CMSG_IGNORE_TRADE, Vec::new()),
-            V::Accept => (Opcode::CMSG_ACCEPT_TRADE, t::accept_trade_body()),
-            V::Unaccept => (Opcode::CMSG_UNACCEPT_TRADE, Vec::new()),
-            V::Cancel => (Opcode::CMSG_CANCEL_TRADE, Vec::new()),
-            V::SetItem {
-                trade_slot,
-                bag,
-                slot,
-            } => (
-                Opcode::CMSG_SET_TRADE_ITEM,
-                t::set_trade_item_body(trade_slot, bag, slot),
-            ),
-            V::ClearItem { trade_slot } => {
-                (Opcode::CMSG_CLEAR_TRADE_ITEM, t::clear_trade_item_body(trade_slot))
-            }
-            V::SetGold(copper) => (Opcode::CMSG_SET_TRADE_GOLD, t::set_trade_gold_body(copper)),
-        };
-        self.send(opcode, &body)
-    }
-
-    /// The mail window's ten packets. See [`crate::socket::session::MailVerb`]
-    /// and [`crate::play::mail`], which builds the bodies.
-    ///
-    /// Takes the verb by reference because a send carries three strings. Five
-    /// of the ten are the same twelve-byte body under five different opcodes,
-    /// so in the match below the opcode alone distinguishes them.
-    pub fn mail(&mut self, verb: &crate::socket::session::MailVerb) -> io::Result<()> {
-        use crate::socket::session::MailVerb as V;
-        let letter = |mailbox: u64, mail_id: u32| crate::play::mail::mail_id_body(mailbox, mail_id);
-        let (opcode, body) = match verb {
-            V::List(mailbox) => (
-                Opcode::CMSG_GET_MAIL_LIST,
-                crate::play::mail::get_mail_list_body(*mailbox),
-            ),
-            V::MarkAsRead { mailbox, mail_id } => {
-                (Opcode::CMSG_MAIL_MARK_AS_READ, letter(*mailbox, *mail_id))
-            }
-            V::TakeMoney { mailbox, mail_id } => {
-                (Opcode::CMSG_MAIL_TAKE_MONEY, letter(*mailbox, *mail_id))
-            }
-            V::TakeItem { mailbox, mail_id } => {
-                (Opcode::CMSG_MAIL_TAKE_ITEM, letter(*mailbox, *mail_id))
-            }
-            V::Return { mailbox, mail_id } => (
-                Opcode::CMSG_MAIL_RETURN_TO_SENDER,
-                letter(*mailbox, *mail_id),
-            ),
-            V::Delete { mailbox, mail_id } => {
-                (Opcode::CMSG_MAIL_DELETE, letter(*mailbox, *mail_id))
-            }
-            V::TakeText {
-                mailbox,
-                mail_id,
-                template_id,
-            } => (
-                Opcode::CMSG_MAIL_CREATE_TEXT_ITEM,
-                crate::play::mail::create_text_item_body(*mailbox, *mail_id, *template_id),
-            ),
-            V::TextQuery {
-                item_text_id,
-                mail_id,
-            } => (
-                Opcode::CMSG_ITEM_TEXT_QUERY,
-                crate::play::mail::item_text_query_body(*item_text_id, *mail_id),
-            ),
-            V::Send(mail) => (
-                Opcode::CMSG_SEND_MAIL,
-                crate::play::mail::send_mail_body(mail),
-            ),
-            V::NextTime => (
-                Opcode::MSG_QUERY_NEXT_MAIL_TIME,
-                crate::play::mail::next_mail_time_body(),
-            ),
-        };
-        self.send(opcode, &body)
     }
 
     /// Spend a talent point: `CMSG_LEARN_TALENT`.
@@ -1728,56 +1223,6 @@ impl WorldSession {
         self.send(
             Opcode::CMSG_LEARN_TALENT,
             &crate::play::talents::learn_talent_body(talent_id, rank),
-        )
-    }
-
-    /// Open the loot window on a corpse or object: `CMSG_LOOT`.
-    ///
-    /// The reply is `SMSG_LOOT_RESPONSE`, which also carries a refusal; see
-    /// [`crate::play::loot`].
-    pub fn loot(&mut self, guid: u64) -> io::Result<()> {
-        self.send(Opcode::CMSG_LOOT, &crate::play::loot::loot_body(guid))
-    }
-
-    /// Close the loot window: `CMSG_LOOT_RELEASE`.
-    ///
-    /// The server ignores the guid: vmangos `HandleLootReleaseOpcode` reads it
-    /// and uses its own record of the open loot instead. The window closes when
-    /// `SMSG_LOOT_RELEASE_RESPONSE` arrives, not when this is sent.
-    pub fn loot_release(&mut self, guid: u64) -> io::Result<()> {
-        self.send(
-            Opcode::CMSG_LOOT_RELEASE,
-            &crate::play::loot::loot_release_body(guid),
-        )
-    }
-
-    /// Take one loot row: `CMSG_AUTOSTORE_LOOT_ITEM`, by the server's index.
-    pub fn loot_item(&mut self, index: u8) -> io::Result<()> {
-        self.send(
-            Opcode::CMSG_AUTOSTORE_LOOT_ITEM,
-            &crate::play::loot::autostore_loot_item_body(index),
-        )
-    }
-
-    /// Take the loot's money: `CMSG_LOOT_MONEY`, which has no body.
-    pub fn loot_money(&mut self) -> io::Result<()> {
-        self.send(Opcode::CMSG_LOOT_MONEY, &[])
-    }
-
-    /// Vote in a group loot roll: `CMSG_LOOT_ROLL`.
-    ///
-    /// The roll is identified by the looted object's guid and the item slot,
-    /// never by the interface's `rollID`, which is a counter this client keeps
-    /// and the server does not know. See [`crate::play::lootroll`].
-    pub fn loot_roll(
-        &mut self,
-        guid: u64,
-        item_slot: u32,
-        vote: crate::play::lootroll::RollVote,
-    ) -> io::Result<()> {
-        self.send(
-            Opcode::CMSG_LOOT_ROLL,
-            &crate::play::lootroll::loot_roll_body(guid, item_slot, vote),
         )
     }
 
@@ -2182,167 +1627,6 @@ fn session_digest(
     digest
 }
 
-#[derive(Debug, Clone)]
-pub struct CharListEntry {
-    pub guid: u64,
-    pub name: String,
-    pub race: u8,
-    pub class: u8,
-    pub gender: u8,
-    pub level: u8,
-    /// `skin, face, hairStyle, hairColour, facialHair`: the five bytes that
-    /// `PLAYER_BYTES` and `PLAYER_BYTES_2` carry once the character is in the
-    /// world.
-    ///
-    /// Read rather than skipped, because character select draws the character.
-    /// The model comes from the race and the clothing from `equipment`, but the
-    /// face and hairstyle come only from these bytes; without them every
-    /// character on the list is drawn with skin 0, face 0 and no hair. Kept as
-    /// the five raw bytes rather than as
-    /// `vale_assets::look::character::Appearance` because this crate does not
-    /// depend on `vale_assets`; the client builds the `Appearance` in one line.
-    pub appearance: [u8; 5],
-    pub zone: u32,
-    pub map: u32,
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    /// `characters.character_flags`, unchanged. See [`CharListEntry::GHOST`].
-    pub flags: u32,
-    /// The character's equipment, as `(ItemDisplayInfo id, InventoryType)` per
-    /// slot, with zeroes where the slot is empty.
-    ///
-    /// This is the only place in the protocol where equipment arrives with its
-    /// display ids already resolved: vmangos `Player::BuildEnumData` writes
-    /// `proto->DisplayInfoID` and `proto->InventoryType` directly, while
-    /// `PLAYER_VISIBLE_ITEM_n_0` in the world carries an item entry that needs
-    /// a `CMSG_ITEM_QUERY_SINGLE` round trip. Character select can therefore
-    /// dress the character on the frame the list arrives.
-    ///
-    /// It does not carry the item's class, subclass or sheath type, the three
-    /// fields that decide where a put-away weapon hangs. Those are in the item
-    /// template, `Item.dbc` is not in the 1.12 archives, and no packet on this
-    /// screen can fetch them.
-    ///
-    /// Character select does not need them, and their absence is not why a
-    /// character-select model would have empty hands. The 1.12.1 client draws
-    /// no weapon on character select as put away: both weapons are attached at
-    /// hand points, and the only item property it uses is
-    /// `inventoryType == 14` (shield), which this list carries. It skips the
-    /// ranged slot (index 17). See
-    /// `vale_assets::tables::item::Weapon::from_char_enum`.
-    ///
-    /// The index is the equipment slot, and the code depends on it: 15 is the
-    /// main hand and 16 the off hand, and no inventory type distinguishes them
-    /// (a one-hand sword is `INVTYPE_WEAPON` in either). So this stays a
-    /// positional list including its empty slots rather than being compacted.
-    pub equipment: Vec<(u32, u8)>,
-    /// The id of the character's guild, 0 for none.
-    pub guild: u32,
-    /// That guild's emblem, which a guild tabard on the character-select
-    /// model is painted with. The list carries the id only;
-    /// [`WorldSession::char_enum`] asks for the emblem with
-    /// `CMSG_GUILD_QUERY`, which the server answers before a character is in
-    /// the world. `None` for a character in no guild and for a guild the
-    /// server did not answer for.
-    pub emblem: Option<crate::play::guild::Emblem>,
-}
-
-impl CharListEntry {
-    /// `CHARACTER_FLAG_GHOST`: the character is dead, and the row reads
-    /// `<name> (Ghost)`. `GetCharacterInfo`'s eighth return value.
-    pub const GHOST: u32 = 0x0000_2000;
-    /// `CHARACTER_FLAG_HIDE_HELM` / `_HIDE_CLOAK`: the interface options that
-    /// hide the helm and the cloak. The server stores them, and they decide
-    /// what the character-select model wears.
-    pub const HIDE_HELM: u32 = 0x0000_0400;
-    pub const HIDE_CLOAK: u32 = 0x0000_0800;
-
-    pub fn is_ghost(&self) -> bool {
-        self.flags & Self::GHOST != 0
-    }
-    pub fn hides_helm(&self) -> bool {
-        self.flags & Self::HIDE_HELM != 0
-    }
-    pub fn hides_cloak(&self) -> bool {
-        self.flags & Self::HIDE_CLOAK != 0
-    }
-}
-
-/// Number of equipment slots serialised per character in `SMSG_CHAR_ENUM`.
-///
-/// vmangos `Player::BuildEnumData` loops `slot < INVENTORY_SLOT_BAG_START + 1`,
-/// i.e. 19 equipment slots plus the first bag.
-///
-/// Each slot is five bytes, `u32 displayId` then `u8 inventoryType`. 1.12 has
-/// no per-slot enchantment field; 2.4 adds one. Reading one overruns the packet
-/// by 80 bytes per character and misaligns every entry after the first, which
-/// `a_second_character_parses_after_the_first` tests.
-const CHAR_ENUM_EQUIPMENT_SLOTS: usize = 20;
-
-/// Parse `SMSG_CHAR_ENUM`. Only the pet block is skipped, and it must still be
-/// consumed exactly or the next character is misread.
-///
-/// The appearance and the equipment are read, not skipped: the five appearance
-/// bytes and the twenty `(display id, inventory type)` pairs are the only data
-/// about how a character on this screen looks. An earlier version skipped them,
-/// and character select showed an empty model. Reading them costs nothing
-/// extra, because the parser has to step over them anyway.
-fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
-    let mut r = Reader::new(body);
-    let count = r.u8();
-    let mut out = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        let guid = {
-            let lo = r.u32() as u64;
-            let hi = r.u32() as u64;
-            (hi << 32) | lo
-        };
-        let name = r.cstring();
-        let race = r.u8();
-        let class = r.u8();
-        let gender = r.u8();
-        // Skin, face, hair style, hair colour, facial hair: the order in which
-        // vmangos `Player::BuildEnumData` writes them.
-        let appearance = [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()];
-        let level = r.u8();
-        let zone = r.u32();
-        let map = r.u32();
-        let x = r.f32();
-        let y = r.f32();
-        let z = r.f32();
-        let guild = r.u32();
-        let flags = r.u32();
-        let _first_login = r.u8();
-        let _pet_display_id = r.u32();
-        let _pet_level = r.u32();
-        let _pet_family = r.u32();
-        let equipment = (0..CHAR_ENUM_EQUIPMENT_SLOTS)
-            .map(|_| (r.u32(), r.u8()))
-            .collect();
-
-        out.push(CharListEntry {
-            guid,
-            name,
-            race,
-            class,
-            gender,
-            appearance,
-            level,
-            zone,
-            map,
-            x,
-            y,
-            z,
-            flags,
-            equipment,
-            guild,
-            emblem: None,
-        });
-    }
-    out
-}
-
 fn err(msg: String) -> io::Error {
     io::Error::new(io::ErrorKind::Other, msg)
 }
@@ -2356,6 +1640,70 @@ pub fn enter(
 ) -> io::Result<Vec<CharListEntry>> {
     let mut session = WorldSession::connect(world_addr, account, session_key)?;
     session.char_enum()
+}
+
+/// Send it and wait up to `wait` for the one byte back.
+///
+/// `Ok(())` for `CHAR_CREATE_SUCCESS` and an `Err` naming the
+/// `GlueStrings.lua` key for anything else — including a code the client's own
+/// array does not reach, which reports the number so a strange server is visible
+/// rather than silent.
+///
+/// **Bounded where [`WorldSession::char_enum`] is not**, and the difference is
+/// which thread is waiting: the character list is fetched on the task pool and
+/// this runs on the frame, because the socket has to stay where the character
+/// screen can see it. See `crate::socket::world::session::Session::create_character` in
+/// the client, where that argument is.
+///
+/// **The appearance is the five bytes in `PLAYER_BYTES` order**: skin, face,
+/// hair style, hair colour, facial hair. The same order
+/// [`CharListEntry::appearance`] comes back in, which is what lets
+/// a character be created and then recognised on the plinth without a second
+/// convention.
+pub fn create_character(
+    session: &mut WorldSession,
+    name: &str,
+    race: u8,
+    class: u8,
+    gender: u8,
+    appearance: [u8; 5],
+    wait: Duration,
+) -> io::Result<Result<(), crate::play::charcreate::CreateRefusal>> {
+    let body = crate::play::charcreate::char_create_body(name, race, class, gender, appearance);
+    session.send(Opcode::CMSG_CHAR_CREATE, &body)?;
+    let reply = session.recv_until_within(Opcode::SMSG_CHAR_CREATE, wait)?;
+    Ok(crate::play::charcreate::read_create_result(&reply.body))
+}
+
+/// Send it and wait up to `wait` for the one byte back.
+///
+/// `Ok(Ok(()))` for `CHAR_DELETE_SUCCESS`, `Ok(Err(..))` for a refusal, and an
+/// `Err` only for the socket.
+///
+/// ## Silence is a refusal here, and that is the whole difference from
+/// [`create_character`]
+///
+/// `HandleCharCreateOpcode` answers on every path. `HandleCharDeleteOpcode`
+/// answers on **two of five**: `CHAR_DELETE_SUCCESS`, and `CHAR_DELETE_FAILED`
+/// for a guild leader. The other three — a character still loaded (the ALT-F4
+/// case), a guid the player cache does not know, and a guid belonging to another
+/// account — are bare `return`s with no packet at all.
+///
+/// So this waits through [`WorldSession::try_recv_until_within`], where the
+/// deadline is `Ok(None)` rather than an `io::Error`, and reports the deadline
+/// as an ordinary refusal. Reporting it as a broken socket would take a working
+/// character screen down every time the server declined quietly — which is a
+/// far worse answer than "that did not work", and is not what has happened.
+pub fn delete_character(
+    session: &mut WorldSession,
+    guid: u64,
+    wait: Duration,
+) -> io::Result<Result<(), crate::play::charcreate::CreateRefusal>> {
+    session.send(Opcode::CMSG_CHAR_DELETE, &crate::play::charcreate::char_delete_body(guid))?;
+    match session.try_recv_until_within(Opcode::SMSG_CHAR_DELETE, wait)? {
+        Some(reply) => Ok(crate::play::charcreate::read_delete_result(&reply.body)),
+        None => Ok(Err(crate::play::charcreate::SILENTLY_REFUSED)),
+    }
 }
 
 #[cfg(test)]
@@ -2504,84 +1852,6 @@ mod tests {
             "it gave up in {:?}, which is not giving up",
             started.elapsed()
         );
-    }
-
-    /// One character, byte for byte as vmangos `Player::BuildEnumData` writes
-    /// one.
-    fn character_bytes(w: &mut Writer, guid: u32, name: &str, flags: u32) {
-        w.u32(guid).u32(0); // guid
-        w.buf.extend_from_slice(name.as_bytes());
-        w.u8(0);
-        w.u8(1).u8(8).u8(1); // human, warlock, female
-        w.u8(3).u8(5).u8(9).u8(2).u8(4); // skin, face, hair, colour, facial hair
-        w.u8(60);
-        w.u32(12).u32(0); // zone, map
-        w.f32(-8900.0).f32(-130.0).f32(80.0);
-        w.u32(0); // guild
-        w.u32(flags);
-        w.u8(0); // first login
-        w.u32(0).u32(0).u32(0); // pet
-        for slot in 0..CHAR_ENUM_EQUIPMENT_SLOTS {
-            // Slot 0 is the head, slot 4 the chest; the rest are empty. Mostly
-            // empty slots are the common case, and the parser must handle them.
-            match slot {
-                0 => w.u32(21_549).u8(1),
-                4 => w.u32(31_051).u8(5),
-                _ => w.u32(0).u8(0),
-            };
-        }
-    }
-
-    /// The three blocks this parser once skipped: the five appearance bytes,
-    /// the flag word and the twenty equipment slots.
-    ///
-    /// Character select draws all three, so a misread shows as the wrong face,
-    /// no equipment, or a missing `(Ghost)`. The body is built in the test
-    /// rather than captured, because a capture would fix one account's
-    /// characters, and the test is about the layout.
-    #[test]
-    fn a_character_row_carries_its_appearance_its_flags_and_its_wardrobe() {
-        let mut w = Writer::new();
-        w.u8(1); // one character
-        character_bytes(
-            &mut w,
-            7,
-            "Alden",
-            CharListEntry::GHOST | CharListEntry::HIDE_HELM,
-        );
-
-        let rows = parse_char_enum(&w.buf);
-        assert_eq!(rows.len(), 1);
-        let row = &rows[0];
-        assert_eq!(row.name, "Alden");
-        assert_eq!(row.appearance, [3, 5, 9, 2, 4], "skin, face, hair, colour, beard");
-        assert!(row.is_ghost() && row.hides_helm() && !row.hides_cloak());
-        assert_eq!(row.equipment.len(), CHAR_ENUM_EQUIPMENT_SLOTS);
-        assert_eq!(row.equipment[0], (21_549, 1));
-        assert_eq!(row.equipment[4], (31_051, 5));
-        assert_eq!(row.equipment[19], (0, 0), "the last slot is the first bag");
-    }
-
-    /// A block-size error shows in the second character of the list.
-    ///
-    /// A per-character body read one byte long or short misaligns every entry
-    /// after the first. The usual case is the 2.4 enchantment field, 80 bytes
-    /// per character, which makes the rest of the list unreadable. An account
-    /// with one character does not show the error.
-    #[test]
-    fn a_second_character_parses_after_the_first() {
-        let mut w = Writer::new();
-        w.u8(2);
-        character_bytes(&mut w, 7, "Alden", CharListEntry::GHOST);
-        character_bytes(&mut w, 9, "Bram", 0);
-
-        let rows = parse_char_enum(&w.buf);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[1].name, "Bram");
-        assert_eq!(rows[1].guid, 9);
-        assert!(!rows[1].is_ghost(), "the first row's flags did not bleed");
-        assert_eq!(rows[1].appearance, [3, 5, 9, 2, 4]);
-        assert_eq!(rows[1].equipment[4], (31_051, 5));
     }
 
     /// `CMSG_SETSHEATHED` is a `u32`, not the byte the update field holds.

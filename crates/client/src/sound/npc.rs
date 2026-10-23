@@ -33,7 +33,7 @@ use bevy::prelude::*;
 use super::mixer::{Place, Voices};
 use crate::interface::target::UnitClicked;
 use crate::interface::gossip::NpcUnit;
-use crate::world::session::{EntityIndex, WorldEntity};
+use crate::world::entity::{EntityIndex, WorldEntity};
 
 pub struct NpcSoundPlugin;
 

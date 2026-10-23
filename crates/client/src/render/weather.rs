@@ -837,7 +837,7 @@ impl Plugin for WeatherPlugin {
 /// **Take each packet as the reference's `Set` takes it**: the kind at once, the
 /// grade as a ramp from wherever the last ramp had reached.
 pub(crate) fn follow_the_server(
-    status: Res<crate::world::session::WorldStatus>,
+    status: Res<crate::world::status::WorldStatus>,
     forced: Option<Res<ForcedWeather>>,
     time: Res<Time>,
     rig: Res<crate::world::camera::CameraRig>,

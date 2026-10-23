@@ -63,10 +63,8 @@ pub mod world;
 // `render/mod.rs`, `world/mod.rs` or `ui/mod.rs` and never the crate root. See
 // [`render::RenderPlugins`].
 //
-// `axes` and `session` are imported here because other modules use them as
-// `crate::axes` and `crate::session`.
+// `axes` is imported here because other modules use it as `crate::axes`.
 use render::axes;
-use world::session;
 use bevy::prelude::*;
 
 use args::Args;
@@ -117,6 +115,7 @@ pub fn run() {
 
     // Handled before the `App` is built, because the audit opens no window and
     // needs no server. See [`lua::audit`].
+    #[cfg(feature = "diagnostics")]
     if args.audit {
         lua::audit::run(
             &gamedata_dir,
@@ -135,6 +134,13 @@ pub fn run() {
                 raid: args.raid,
             },
         );
+        return;
+    }
+    // The audit is behind the `diagnostics` feature; a build without it says
+    // so rather than opening a window the caller did not ask for.
+    #[cfg(not(feature = "diagnostics"))]
+    if args.audit {
+        eprintln!("--audit needs a build with the `diagnostics` feature; this build has none");
         return;
     }
 

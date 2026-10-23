@@ -1,7 +1,8 @@
 //! The combat log: combat events written as `GlobalStrings.lua` sentences into
 //! the combat chat windows.
 //!
-//! One system. It drains
+//! One system. It reads each [`crate::world::incoming::CombatArrived`], which
+//! [`crate::world::incoming::drain_queues`] writes from
 //! [`ObjectManager::take_combat`][vale_protocol::state::objects::ObjectManager::take_combat],
 //! turns each entry into a sentence through
 //! [`vale_assets::interface::combatlog`], and writes one
@@ -55,6 +56,7 @@ use super::events::ChatMessageReceived;
 use super::messages::UiStrings;
 use super::party::Party;
 use crate::assets::GameAssets;
+use crate::world::incoming::CombatArrived;
 use crate::world::session::Session;
 
 /// Experience was gained.
@@ -78,7 +80,12 @@ pub struct CombatLogPlugin;
 impl Plugin for CombatLogPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ExperienceGained>()
-            .add_systems(Update, poll.in_set(super::GameSet));
+            .add_message::<CombatArrived>()
+            .add_systems(
+                Update,
+                poll.after(crate::world::incoming::drain_queues)
+                    .in_set(super::GameSet),
+            );
     }
 }
 
@@ -218,33 +225,45 @@ impl Scene<'_> {
     }
 }
 
-/// Drain the queue and say what happened.
+/// How many entries are held while the strings file has not loaded. The
+/// load takes about a second, and the cap keeps the hold bounded if it never
+/// finishes.
+const HOLD_LIMIT: usize = 1024;
+
+/// Say what happened, for each entry that arrived.
 fn poll(
     session: Res<Session>,
     assets: Res<GameAssets>,
     strings: Res<UiStrings>,
     party: Res<Party>,
+    mut arrived: MessageReader<CombatArrived>,
+    mut held: Local<Vec<CombatEvent>>,
     mut chat: MessageWriter<ChatMessageReceived>,
     mut experience: MessageWriter<ExperienceGained>,
 ) {
+    held.extend(arrived.read().map(|entry| entry.0));
     let Some(active) = session.active.as_ref() else {
+        held.clear();
         return;
     };
     let Some(strings) = strings.get() else {
         // The strings file is what every line is made of; before it is loaded
-        // there is nothing to compose with, and the queue is left alone so the
-        // first fight is not lost to the load.
+        // there is nothing to compose with, and the entries are held so the
+        // first fight is not lost to the load. The oldest go first past the
+        // cap.
+        let over = held.len().saturating_sub(HOLD_LIMIT);
+        held.drain(..over);
         return;
     };
-    let mut world = active
+    if held.is_empty() {
+        return;
+    }
+    let events = std::mem::take(&mut *held);
+    let world = active
         .live
         .world()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    let events = world.take_combat();
-    if events.is_empty() {
-        return;
-    }
     let Some(player) = world.player_guid else {
         return;
     };

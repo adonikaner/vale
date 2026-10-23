@@ -30,7 +30,7 @@
 use bevy::prelude::*;
 
 use vale_protocol::play::raidtarget::{RaidTargetUpdate, ICON_COUNT};
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 use crate::input::bindings::{Binding, BindingPressed};
 use crate::interface::api::{UnitId, Units};

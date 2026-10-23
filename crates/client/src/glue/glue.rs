@@ -394,7 +394,7 @@ fn stand_on_plinth(
 /// cannot be built in one.
 ///
 /// [`Handshake`]: crate::world::session::Handshake
-fn plinth_for(row: &vale_protocol::socket::world::CharListEntry) -> Plinth {
+fn plinth_for(row: &vale_protocol::play::charcreate::CharListEntry) -> Plinth {
     /// `EQUIPMENT_SLOT_MAINHAND` / `_OFFHAND` / `_RANGED`. These are indices
     /// into the packet's twenty slots, not inventory types. The ranged slot is
     /// named only to be excluded: the 1.12.1 client draws nothing from it on
@@ -890,8 +890,8 @@ mod tests {
         assert!(!told.needs(Screen::Characters, None));
     }
 
-    fn row(flags: u32) -> vale_protocol::socket::world::CharListEntry {
-        vale_protocol::socket::world::CharListEntry {
+    fn row(flags: u32) -> vale_protocol::play::charcreate::CharListEntry {
+        vale_protocol::play::charcreate::CharListEntry {
             guid: 1,
             name: "Alden".into(),
             race: 4,
@@ -959,7 +959,7 @@ mod tests {
     /// Each flag removes its own slot and nothing else.
     #[test]
     fn a_hidden_helm_and_a_hidden_cloak_are_left_off_the_plinth() {
-        use vale_protocol::socket::world::CharListEntry;
+        use vale_protocol::play::charcreate::CharListEntry;
         let hidden_helm = plinth_for(&row(CharListEntry::HIDE_HELM));
         assert_eq!(hidden_helm.equipment, vec![(14_444, 16), (31_051, 5)]);
 
@@ -973,7 +973,7 @@ mod tests {
     /// A full twenty-slot wardrobe: a helm, a cloak and a chest where [`row`]
     /// puts them, plus a sword, a shield and a bow in the three slots that
     /// matter here.
-    fn armed_row() -> vale_protocol::socket::world::CharListEntry {
+    fn armed_row() -> vale_protocol::play::charcreate::CharListEntry {
         let mut row = row(0);
         row.equipment.resize(20, (0, 0));
         row.equipment[15] = (5_224, 13); // INVTYPE_WEAPON, main hand

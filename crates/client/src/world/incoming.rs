@@ -29,6 +29,15 @@
 //! checked. That ordering belongs to the action chain. Registering the system
 //! here would split one ordering across two modules, and the chain is written
 //! as one call to prevent that.
+//!
+//! ## Chat, combat and template arrivals
+//!
+//! The session keeps three more queues beside the event queue: chat lines,
+//! combat log entries and item, creature and game-object template arrivals.
+//! [`drain_queues`] drains them and writes [`ChatArrived`], [`CombatArrived`]
+//! and [`super::templates::TemplatesArrived`]. Panels read those messages and
+//! never drain a session queue themselves. [`IncomingPlugin`] registers this
+//! system, because it has no place in the action chain.
 
 use crate::interface::action::{
     disarm_auto_repeat, disarm_next_swing, ActionEvents, AutoRepeat, Casting, Cooldowns,
@@ -41,7 +50,8 @@ use crate::interface::events::{
 use crate::interface::messages::UiErrors;
 use crate::assets::GameAssets;
 use crate::world::session::Session;
-use vale_protocol::play::spells::{self, action_kind, PlayerEvent};
+use vale_protocol::play::spells::{self, action_kind};
+use vale_protocol::state::events::PlayerEvent;
 use bevy::prelude::*;
 use std::time::Duration;
 
@@ -383,7 +393,7 @@ pub(crate) fn drain_events(
             }
             // The release of one of the player's spells. It ends the cast bar, starts
             // the spell's own cooldown, and is the only thing that empties a queued
-            // swing. See [`vale_protocol::play::spells::PlayerEvent::CastReleased`].
+            // swing. See [`vale_protocol::state::events::PlayerEvent::CastReleased`].
             //
             // It also clears the pending record, which an instant cast's press waits
             // on: an instant gets a `SPELL_START` of zero length and then this packet,
@@ -1128,5 +1138,65 @@ pub(crate) fn drain_events(
                 }
             }
         }
+    }
+}
+
+/// Registers [`drain_queues`] and the three messages it writes.
+///
+/// [`drain_events`] is not registered here; the module note gives the reason.
+pub struct IncomingPlugin;
+
+impl Plugin for IncomingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<ChatArrived>()
+            .add_message::<CombatArrived>()
+            .add_message::<super::templates::TemplatesArrived>()
+            .add_systems(Update, drain_queues.in_set(crate::interface::GameSet));
+    }
+}
+
+/// One chat line from the session, with the sender's name as the session
+/// resolved it. Read by [`crate::interface::chat`].
+#[derive(Message, Debug, Clone)]
+pub struct ChatArrived {
+    pub who: String,
+    pub message: vale_protocol::play::chat::ChatMessage,
+}
+
+/// One combat log entry from the session. Read by [`crate::interface::log`].
+#[derive(Message, Debug, Clone, Copy)]
+pub struct CombatArrived(pub vale_protocol::play::combatlog::CombatEvent);
+
+/// Drains the session's three queues that are not [`PlayerEvent`]s (chat
+/// lines, combat log entries and template arrivals) and writes each as a
+/// message, in arrival order.
+///
+/// Each queue empties itself for whoever reads it first, so this system is
+/// its only reader. A panel that reads one of these messages runs
+/// `.after(drain_queues)`, so a line is handled in the frame it is drained.
+pub(crate) fn drain_queues(
+    session: Res<Session>,
+    mut chat: MessageWriter<ChatArrived>,
+    mut combat: MessageWriter<CombatArrived>,
+    mut templates: MessageWriter<super::templates::TemplatesArrived>,
+) {
+    let Some(active) = session.active.as_ref() else {
+        return;
+    };
+    // `take_chat` takes the world lock itself, to resolve sender names, so it
+    // is called before the lock below is taken.
+    for (who, message) in active.live.take_chat() {
+        chat.write(ChatArrived { who, message });
+    }
+    let (entries, arrived) = {
+        let world = active.live.world();
+        let mut world = world.lock().unwrap_or_else(|e| e.into_inner());
+        (world.take_combat(), world.take_arrivals())
+    };
+    for entry in entries {
+        combat.write(CombatArrived(entry));
+    }
+    if !arrived.is_empty() {
+        templates.write(super::templates::TemplatesArrived(arrived));
     }
 }

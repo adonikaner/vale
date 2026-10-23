@@ -36,7 +36,7 @@ pub fn or_unknown(name: &'static str) -> &'static str {
 pub fn open_world(
     cfg: &Config,
     character: Option<&str>,
-) -> Result<(world::WorldSession, world::CharListEntry), String> {
+) -> Result<(world::WorldSession, vale_protocol::play::charcreate::CharListEntry), String> {
     check_credentials(cfg)?;
     let outcome = auth::login(&cfg.host, &cfg.account, &cfg.password)
         .map_err(|e| format!("[auth] {e}"))?;
@@ -156,7 +156,7 @@ pub fn describe_blp(buf: &[u8]) -> String {
 /// second copy of the mapping could give a different answer for which hand an
 /// item is in.
 pub fn held(
-    item: vale_protocol::state::objects::HeldItem,
+    item: vale_protocol::play::items::HeldItem,
     enchantments: [u32; 7],
 ) -> vale_assets::tables::item::Weapon {
     vale_assets::tables::item::Weapon {

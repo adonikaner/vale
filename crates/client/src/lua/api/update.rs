@@ -322,7 +322,7 @@ pub(crate) const TICK_INTERVAL: f64 = 1.0 / TICK_HZ;
 ///
 /// One accumulator, read by the three passes that make up a frame of interface:
 /// this module's [`tick`], [`super::super::widgets::model::tick_models`] and the
-/// draw walk in [`crate::ui::framexml::paint`]. They share it rather than each
+/// draw walk in [`crate::ui::framexml::walk`]. They share it rather than each
 /// keeping their own, because a tick whose result nothing re-reads has no
 /// effect, and because two accumulators could give two different answers to
 /// "is this frame a tick".

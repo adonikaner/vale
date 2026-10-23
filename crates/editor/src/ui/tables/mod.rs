@@ -438,7 +438,8 @@ pub(in crate::ui) fn spell_icon_path(
 
 /// Append `.blp` to a table's texture path unless it already has it. The
 /// tables store paths without an extension and the client appends it. See
-/// `ui::framexml::decode_rgba`, which applies the same rule in another crate.
+/// `ui::mesh::textures::decode_rgba`, which applies the same rule in another
+/// crate.
 fn with_blp(path: &str) -> String {
     match path.to_ascii_lowercase().ends_with(".blp") {
         true => path.to_string(),

@@ -4,7 +4,8 @@
 //! auth.rs     realmd :3724 — the SRP6 logon, and the realm list it answers with
 //! srp.rs      …and the maths itself
 //! crypt.rs    …and the header cipher the *other* socket turns on afterwards
-//! world.rs    mangosd :8085 — framing, the cipher, sending, and one Packet
+//! world.rs    mangosd :8085 — framing, the cipher, sending, and one Packet;
+//!             and the character screen's create and delete exchanges
 //! handler/    …and EVERY packet this client understands, in one match: the
 //!             arms delegate and the bodies live beside it
 //! session.rs  …and the live session: a thread that keeps one running

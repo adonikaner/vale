@@ -53,7 +53,8 @@ use bevy::prelude::*;
 
 use super::events::UpdateShapeshiftForms;
 use crate::assets::GameAssets;
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::Session;
 
 /// One button on the stance bar.
 #[derive(Debug, Clone, PartialEq)]

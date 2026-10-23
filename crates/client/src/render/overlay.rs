@@ -97,7 +97,8 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 
 use crate::render::axes;
-use crate::world::session::{Solids, WorldEntity};
+use crate::world::entity::WorldEntity;
+use crate::world::session::Solids;
 
 /// What is drawn over the world. Every field defaults to off, so an
 /// untouched client draws the game and nothing else.

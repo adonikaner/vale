@@ -41,7 +41,7 @@ use std::sync::Arc;
 
 use vale_assets::tables::area::Areas;
 use vale_assets::tables::channels::{flags, joined_bit, ChatChannels, ZoneChannel};
-use vale_protocol::socket::session::ChannelVerb;
+use vale_protocol::play::channels::ChannelVerb;
 use crate::lua::host::LuaHost;
 
 /// The globals this panel answers — the chat frame's own list, from
@@ -595,7 +595,7 @@ pub fn held(host: &LuaHost) -> Held {
 }
 
 /// Take and clear the channel verbs the chat frame queued.
-pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::ChannelVerb> {
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::play::channels::ChannelVerb> {
     super::taken(host)
 }
 

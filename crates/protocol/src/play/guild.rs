@@ -68,6 +68,7 @@
 //! [`rights::VIEW_OFFICER_NOTE`] the server writes an empty officer note.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// How many rank names `SMSG_GUILD_QUERY_RESPONSE` carries. The server always
 /// writes ten and leaves the unused ones empty.
@@ -670,6 +671,101 @@ pub fn note_body(player: &str, note: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(player).cstring(note);
     w.buf
+}
+
+/// The twenty-one requests the guild tab, the guild slash commands, the
+/// guild popups and the tabard designer send to the socket. See
+/// [`crate::play::guild`], which has the layouts.
+///
+/// A member is named by name in every request that is about one, because the
+/// server looks the member up by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuildVerb {
+    /// `CMSG_GUILD_QUERY`: ask for a guild's name, rank names and emblem.
+    Query(u32),
+    /// `CMSG_GUILD_ROSTER`: ask for the member list.
+    Roster,
+    /// `CMSG_GUILD_INFO`: `/ginfo`.
+    Info,
+    /// `CMSG_GUILD_INVITE`.
+    Invite(String),
+    /// `CMSG_GUILD_ACCEPT`: accept the pending invitation.
+    Accept,
+    /// `CMSG_GUILD_DECLINE`: decline it.
+    Decline,
+    /// `CMSG_GUILD_REMOVE`.
+    Remove(String),
+    /// `CMSG_GUILD_PROMOTE`.
+    Promote(String),
+    /// `CMSG_GUILD_DEMOTE`.
+    Demote(String),
+    /// `CMSG_GUILD_LEADER`: hand the guild to the named member.
+    Leader(String),
+    /// `CMSG_GUILD_LEAVE`.
+    Leave,
+    /// `CMSG_GUILD_DISBAND`.
+    Disband,
+    /// `CMSG_GUILD_MOTD`: set the message of the day.
+    Motd(String),
+    /// `CMSG_GUILD_INFO_TEXT`: set the guild information text.
+    InfoText(String),
+    /// `CMSG_GUILD_SET_PUBLIC_NOTE`.
+    PublicNote { player: String, note: String },
+    /// `CMSG_GUILD_SET_OFFICER_NOTE`.
+    OfficerNote { player: String, note: String },
+    /// `CMSG_GUILD_RANK`: replace one rank's name and rights.
+    Rank { rank: u32, rights: u32, name: String },
+    /// `CMSG_GUILD_ADD_RANK`: add a rank below the lowest.
+    AddRank(String),
+    /// `CMSG_GUILD_DEL_RANK`: delete the lowest rank.
+    DelRank,
+    /// `MSG_TABARDVENDOR_ACTIVATE`: ask a tabard designer to open its window.
+    TabardVendor(u64),
+    /// `MSG_SAVE_GUILD_EMBLEM`: save the guild's emblem at a tabard designer.
+    SaveEmblem {
+        npc: u64,
+        emblem: crate::play::guild::Emblem,
+    },
+}
+
+impl GuildVerb {
+    /// The opcode and the body this verb sends: the guild's twenty-one
+    /// packets.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use crate::play::guild as g;
+        use GuildVerb as V;
+        match self {
+            V::Query(id) => (Opcode::CMSG_GUILD_QUERY, g::query_body(*id)),
+            V::Roster => (Opcode::CMSG_GUILD_ROSTER, Vec::new()),
+            V::Info => (Opcode::CMSG_GUILD_INFO, Vec::new()),
+            V::Invite(name) => (Opcode::CMSG_GUILD_INVITE, g::text_body(name)),
+            V::Accept => (Opcode::CMSG_GUILD_ACCEPT, Vec::new()),
+            V::Decline => (Opcode::CMSG_GUILD_DECLINE, Vec::new()),
+            V::Remove(name) => (Opcode::CMSG_GUILD_REMOVE, g::text_body(name)),
+            V::Promote(name) => (Opcode::CMSG_GUILD_PROMOTE, g::text_body(name)),
+            V::Demote(name) => (Opcode::CMSG_GUILD_DEMOTE, g::text_body(name)),
+            V::Leader(name) => (Opcode::CMSG_GUILD_LEADER, g::text_body(name)),
+            V::Leave => (Opcode::CMSG_GUILD_LEAVE, Vec::new()),
+            V::Disband => (Opcode::CMSG_GUILD_DISBAND, Vec::new()),
+            V::Motd(text) => (Opcode::CMSG_GUILD_MOTD, g::text_body(text)),
+            V::InfoText(text) => (Opcode::CMSG_GUILD_INFO_TEXT, g::text_body(text)),
+            V::PublicNote { player, note } => {
+                (Opcode::CMSG_GUILD_SET_PUBLIC_NOTE, g::note_body(player, note))
+            }
+            V::OfficerNote { player, note } => {
+                (Opcode::CMSG_GUILD_SET_OFFICER_NOTE, g::note_body(player, note))
+            }
+            V::Rank { rank, rights, name } => {
+                (Opcode::CMSG_GUILD_RANK, g::rank_body(*rank, *rights, name))
+            }
+            V::AddRank(name) => (Opcode::CMSG_GUILD_ADD_RANK, g::text_body(name)),
+            V::DelRank => (Opcode::CMSG_GUILD_DEL_RANK, Vec::new()),
+            V::TabardVendor(npc) => (Opcode::MSG_TABARDVENDOR_ACTIVATE, g::tabard_vendor_body(*npc)),
+            V::SaveEmblem { npc, emblem } => {
+                (Opcode::MSG_SAVE_GUILD_EMBLEM, g::emblem_body(*npc, *emblem))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

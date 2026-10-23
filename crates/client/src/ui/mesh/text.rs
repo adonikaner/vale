@@ -1,38 +1,33 @@
-//! **Where each glyph of a font string goes** — the layout half of the mesh
+//! Where each glyph of a font string goes: the layout half of the
 //! painter's text, kept pure so it can be asserted without a typeface.
 //!
-//! The semantics are the egui painter's ([`crate::ui::framexml`]'s `label`),
-//! which are the reference's: fold at the rectangle's width when
-//! [`crate::lua::widgets::regions::Paint::wrap`] says so, cap the rows at
-//! `maxLines`, justify each row by `justifyH`, hang the block in the rectangle
-//! by `justifyH`/`justifyV`, and let a `|c` run recolour its own glyphs.
+//! Fold at the rectangle's width when
+//! [`crate::lua::widgets::regions::Paint::wrap`] says so, cap the rows at what
+//! the box holds ([`rows_fitting`]), justify each row by `justifyH`, hang the
+//! block in the rectangle by `justifyH`/`justifyV`, and let a `|c` run recolour
+//! its own glyphs.
 //!
-//! ## Text that does not fit is cut with `...`
+//! Where the string breaks and where an overlong last row is cut with `...`
+//! is [`vale_assets::interface::font::fold`], the same function the
+//! measurement calls ([`crate::lua::widgets::text::rows`]), so the rows a
+//! string reserves are the rows drawn here.
 //!
-//! And the rule is the reference's own font-string layout. It measures the string against the rectangle, and if it does not
-//! fit it walks back one whole character at a time, appending three ASCII full
-//! stops (not U+2026) and re-measuring, until the prefix *and the dots*
-//! fit. So the ellipsis is counted in the width rather than hung past it.
-//!
-//! The box it measures against is the font string's own rectangle, with one
-//! substitution: when `maxLines` is set the height is replaced by
-//! `maxLines * lineHeight`. That is the whole of the cap here — [`rows_fitting`]
-//! — and it is why `TargetName`, declared `100x10` in a face whose line box is
-//! taller than ten, gets one row and an ellipsis rather than folding a long
-//! name over the target frame.
+//! The box the cut is measured against is the font string's own rectangle,
+//! with one substitution: when `maxLines` is set the height is replaced by
+//! `maxLines * lineHeight`. That is why `TargetName`, declared `100x10` in a
+//! face whose line box is taller than ten, gets one row and an ellipsis rather
+//! than folding a long name over the target frame.
 //!
 //! Everything here is in pixels; the caller scales before calling. The
 //! metrics come through [`Metrics`] rather than an `ab_glyph` face so the
 //! tests can state exact advances — the trait's one real implementation is in
 //! [`super::build`].
 
-/// What the layout needs to know about the face at the size in force.
-pub trait Metrics {
-    /// One character's advance, in pixels.
-    fn advance(&self, ch: char) -> f32;
-    /// The kerning between two characters, in pixels — almost always negative
-    /// or zero.
-    fn kern(&self, a: char, b: char) -> f32;
+use vale_assets::interface::font::{self, fold};
+
+/// What the layout needs to know about the face at the size in force: the
+/// fold's advances and kerning, and the line box.
+pub trait Metrics: font::Metrics {
     /// Baseline from the top of the line box.
     fn ascent(&self) -> f32;
     /// Below the baseline, negative.
@@ -89,59 +84,16 @@ pub fn rows_fitting(max_rows: usize, height: f32, line_height: f32) -> usize {
     if height <= 0.0 || line_height <= 0.0 {
         return usize::MAX;
     }
-    // Half a line box of grace, for the same reason the fold has half a pixel:
+    // Half a line box of grace, for the same reason the fold has half a unit:
     // a string whose rectangle was *derived* from this same arithmetic must not
     // lose its last row to a rounding difference.
     (((height + line_height * 0.5) / line_height).floor() as usize).max(1)
 }
 
-/// How wide a folded row is, including the last character's own advance.
-fn row_width(line: &[(char, Option<[f32; 4]>, f32)], metrics: &impl Metrics) -> f32 {
-    line.last().map_or(0.0, |&(ch, _, x)| x + metrics.advance(ch))
-}
-
-/// **Cut a row down until it and three full stops fit in `limit`.**
+/// Lay the runs into `rect = (left, top, right, bottom)`, y-down pixels.
 ///
-/// One whole character at a time from the end, re-measuring each time — the
-/// reference's loop, whose back-off steps over UTF-8
-/// continuation bytes so a multi-byte character is never split. This works in
-/// `char`s, which cannot split one at all.
-///
-/// The dots take the colour of the character they follow, so a truncated
-/// coloured run does not end in three glyphs of another colour. The reference
-/// has no notion of runs here and cuts the raw bytes; this is the nearest thing
-/// that does not produce a visibly different picture.
-///
-/// A row that cannot fit even the dots keeps them: the loop stops at an empty
-/// row rather than looping for ever, which is what the reference does.
-fn ellipsise(
-    line: &mut Vec<(char, Option<[f32; 4]>, f32)>,
-    metrics: &impl Metrics,
-    limit: f32,
-) {
-    const DOT: char = '.';
-    const DOTS: usize = 3;
-    let dots_width =
-        metrics.advance(DOT) * DOTS as f32 + metrics.kern(DOT, DOT) * (DOTS - 1) as f32;
-    loop {
-        let colour = line.last().map_or(None, |&(_, colour, _)| colour);
-        let end = match line.last() {
-            Some(&(ch, _, x)) => x + metrics.advance(ch) + metrics.kern(ch, DOT),
-            None => 0.0,
-        };
-        if line.is_empty() || end + dots_width <= limit + 0.5 {
-            let mut pen = end;
-            for _ in 0..DOTS {
-                line.push((DOT, colour, pen));
-                pen += metrics.advance(DOT) + metrics.kern(DOT, DOT);
-            }
-            return;
-        }
-        line.pop();
-    }
-}
-
-/// Lay the runs into `rect = (left, top, right, bottom)`, y-down pixels./// Lay the runs into `rect = (left, top, right, bottom)`, y-down pixels.
+/// `unit` is the length of one of the game's units in pixels, which the fold
+/// scales its grace by; see [`fold`].
 pub fn layout(
     runs: &[Run],
     metrics: &impl Metrics,
@@ -149,119 +101,26 @@ pub fn layout(
     wrap: bool,
     max_rows: usize,
     justify: Justify,
+    unit: f32,
 ) -> Vec<Placed> {
     let [left, top, right, bottom] = rect;
     let width = (right - left).max(0.0);
-    let fold = if wrap && width > 0.0 { width } else { f32::INFINITY };
     let line_height = metrics.ascent() - metrics.descent() + metrics.line_gap();
     let cap = rows_fitting(max_rows, (bottom - top).max(0.0), line_height);
 
-    // One flat stream, with the explicit newlines kept as breaks.
-    let stream: Vec<(char, Option<[f32; 4]>)> = runs
+    // One flat stream, with the explicit newlines kept as breaks, and the
+    // colour of each character beside it.
+    let (chars, colours): (Vec<char>, Vec<Option<[f32; 4]>>) = runs
         .iter()
         .flat_map(|run| run.text.chars().map(move |ch| (ch, run.colour)))
-        .collect();
-
-    // Fold into lines of (char, colour, x). The break rule is the ordinary
-    // greedy one: break at the last space on the line, or before the current
-    // character when a single word overruns the fold on its own.
-    let mut lines: Vec<Vec<(char, Option<[f32; 4]>, f32)>> = vec![Vec::new()];
-    let mut pen = 0.0f32;
-    let mut previous: Option<char> = None;
-    let mut last_space: Option<usize> = None;
-    for &(ch, colour) in &stream {
-        if lines.len() > cap {
-            break;
-        }
-        if ch == '\n' {
-            lines.push(Vec::new());
-            pen = 0.0;
-            previous = None;
-            last_space = None;
-            continue;
-        }
-        if let Some(last) = previous {
-            pen += metrics.kern(last, ch);
-        }
-        let advance = metrics.advance(ch);
-        // Half a pixel of grace at the fold: a label authored to exactly fit
-        // its box must not wrap over a rounding difference between this
-        // measurement and the rasteriser's.
-        if pen + advance > fold + 0.5 && !lines.last().is_some_and(Vec::is_empty) {
-            let line = lines.last_mut().expect("lines starts non-empty");
-            // Take the tail of the broken line with it onto the next row.
-            let carried: Vec<(char, Option<[f32; 4]>, f32)> = match last_space {
-                Some(space) => {
-                    let tail = line.split_off(space);
-                    // The space itself dies at the fold, as it does in every
-                    // wrap the game draws.
-                    tail.into_iter().skip(1).collect()
-                }
-                None => Vec::new(),
-            };
-            // The pen restarts at the carried word's own origin — or at zero
-            // when the break landed just after a space and nothing carries.
-            // The first draft subtracted an unconditional `start` of 0.0 in
-            // that case, leaving the pen at the old line's full width; every
-            // later character then re-broke immediately and marched one per
-            // row off the rectangle's right edge, which on screen was a quest
-            // description that simply was not there.
-            let start = carried.first().map(|&(_, _, x)| x);
-            lines.push(
-                carried
-                    .into_iter()
-                    .map(|(ch, colour, x)| (ch, colour, x - start.unwrap_or(0.0)))
-                    .collect(),
-            );
-            // No kern bookkeeping across the break: the kern into the current
-            // character was folded into the pen that is being discarded, and
-            // `previous` is rewritten to the current character below either
-            // way.
-            pen = match start {
-                Some(start) => pen - start,
-                None => 0.0,
-            };
-            last_space = None;
-            if lines.len() > cap {
-                break;
-            }
-        }
-        if ch == ' ' {
-            last_space = Some(lines.last().map_or(0, Vec::len));
-        }
-        lines.last_mut().expect("lines starts non-empty").push((ch, colour, pen));
-        pen += advance;
-        previous = Some(ch);
-    }
-    // **More rows than the box holds** — keep what fits and cut the last one
-    // with the dots, which is the whole of the reference's rule.
-    let overflowed = lines.len() > cap;
-    lines.truncate(cap);
-    while lines.len() > 1 && lines.last().is_some_and(Vec::is_empty) {
-        lines.pop();
-    }
-    if width > 0.0 && wrap {
-        // **Only a string that was given a width to fold at is cut**, and the
-        // cut is measured against the rectangle rather than the fold — a row
-        // capped by the box's height has no fold left to overrun and still has
-        // to stop at the box's edge. `TargetName` reaches it that way.
-        //
-        // A string with no declared width has no box to be measured against:
-        // the solve gives it the extent of its own text, so measuring it
-        // against that would cut every label in the directory by whatever the
-        // painter and the measurement disagree about.
-        let last_over = lines
-            .last()
-            .is_some_and(|line| row_width(line, metrics) > width + 0.5);
-        if overflowed || last_over {
-            if let Some(line) = lines.last_mut() {
-                ellipsise(line, metrics, width);
-            }
-        }
-    }
+        .unzip();
+    // Only a string given a width to fold at is cut, and the cut is measured
+    // against the rectangle. A string with no declared width has no box to be
+    // measured against: the solve gives it the extent of its own text.
+    let rows = fold(&chars, metrics, (wrap && width > 0.0).then_some(width), cap, unit);
 
     // The block in the rectangle.
-    let total = line_height * lines.len() as f32;
+    let total = line_height * rows.len() as f32;
     let block_top = match justify.vertical {
         "TOP" => top,
         "BOTTOM" => bottom - total,
@@ -269,22 +128,20 @@ pub fn layout(
     };
 
     let mut out = Vec::new();
-    for (row, line) in lines.iter().enumerate() {
-        let line_width = line
-            .last()
-            .map_or(0.0, |&(ch, _, x)| x + metrics.advance(ch));
+    for (row, line) in rows.iter().enumerate() {
+        let line_width = font::row_width(line, metrics);
         let x0 = match justify.horizontal {
             "LEFT" => left,
             "RIGHT" => right - line_width,
             _ => (left + right - line_width) / 2.0,
         };
         let baseline = block_top + metrics.ascent() + line_height * row as f32;
-        for &(ch, colour, x) in line {
+        for glyph in line {
             out.push(Placed {
-                ch,
-                x: x0 + x,
+                ch: glyph.ch,
+                x: x0 + glyph.x,
                 baseline,
-                colour,
+                colour: glyph.source.and_then(|at| colours[at]),
             });
         }
     }
@@ -298,13 +155,15 @@ mod tests {
     /// Every character one pixel wide, ten up and two down — round numbers the
     /// assertions can be exact over.
     struct Fixed;
-    impl Metrics for Fixed {
+    impl font::Metrics for Fixed {
         fn advance(&self, _: char) -> f32 {
             1.0
         }
         fn kern(&self, _: char, _: char) -> f32 {
             0.0
         }
+    }
+    impl Metrics for Fixed {
         fn ascent(&self) -> f32 {
             10.0
         }
@@ -329,6 +188,7 @@ mod tests {
             false,
             0,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         assert_eq!(placed.len(), 2);
         assert_eq!(placed[0].x, 0.0);
@@ -345,6 +205,7 @@ mod tests {
             false,
             0,
             Justify { horizontal: "CENTER", vertical: "TOP" },
+            1.0,
         );
         assert_eq!(centre[0].x, 4.0);
         let right = layout(
@@ -354,6 +215,7 @@ mod tests {
             false,
             0,
             Justify { horizontal: "RIGHT", vertical: "TOP" },
+            1.0,
         );
         assert_eq!(right[0].x, 8.0);
     }
@@ -367,6 +229,7 @@ mod tests {
             true,
             0,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         // Two rows: "ab" and "cd", no space glyph carried.
         assert_eq!(placed.len(), 4);
@@ -384,6 +247,7 @@ mod tests {
             true,
             0,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         assert_eq!(placed.len(), 4);
         assert_eq!(placed[2].ch, 'c');
@@ -405,6 +269,7 @@ mod tests {
             true,
             0,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         // Every glyph is inside the fold, and every row starts at zero.
         for glyph in &placed {
@@ -435,6 +300,7 @@ mod tests {
             true,
             2,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         let rows: std::collections::BTreeSet<i32> =
             placed.iter().map(|p| p.baseline as i32).collect();
@@ -456,6 +322,7 @@ mod tests {
             true,
             0,
             Justify { horizontal: "LEFT", vertical: "MIDDLE" },
+            1.0,
         );
         let rows: std::collections::BTreeSet<i32> =
             placed.iter().map(|p| p.baseline as i32).collect();
@@ -487,6 +354,7 @@ mod tests {
             true,
             0,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         let drawn: String = placed.iter().map(|p| p.ch).collect();
         assert_eq!(drawn, "Bram");
@@ -524,6 +392,7 @@ mod tests {
             false,
             0,
             Justify { horizontal: "LEFT", vertical: "MIDDLE" },
+            1.0,
         );
         // Two 12-tall rows in a 48-tall box: the block starts at 12.
         assert_eq!(middle[0].baseline, 22.0);
@@ -534,6 +403,7 @@ mod tests {
             false,
             0,
             Justify { horizontal: "LEFT", vertical: "BOTTOM" },
+            1.0,
         );
         assert_eq!(bottom[0].baseline, 34.0);
     }
@@ -551,6 +421,7 @@ mod tests {
             false,
             0,
             Justify { horizontal: "LEFT", vertical: "TOP" },
+            1.0,
         );
         assert_eq!(placed[0].colour, None);
         assert_eq!(placed[1].colour, red);

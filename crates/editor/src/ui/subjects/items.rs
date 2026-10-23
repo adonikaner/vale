@@ -990,9 +990,9 @@ fn plate(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         },
         home: None,
     };
-    let wearer = vale_client::interface::api::Wearer::none();
+    let wearer = vale_client::interface::plate::Wearer::none();
     let mut tip =
-        vale_client::interface::api::item_tip(&info, None, tables.as_deref(), &context, &wearer);
+        vale_client::interface::plate::item_tip(&info, None, tables.as_deref(), &context, &wearer);
     // No character is looking at the preview, so every requirement is drawn
     // as met rather than in red.
     tip.level_met = true;

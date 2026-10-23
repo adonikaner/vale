@@ -33,17 +33,10 @@
 
 use bevy::prelude::*;
 
-use vale_protocol::socket::session::PetVerb;
+use vale_protocol::play::pet::PetVerb;
 
 use crate::interface::events::ConfirmPetUnlearn;
 use crate::world::session::Session;
-
-/// **How far the trainer may be and still be untrained at** — the server's own
-/// interaction distance, the same number and for the same reason as
-/// [`super::binder::binder_in_range`]'s: a popup that stayed up past it would
-/// send a packet `HandlePetUnlearnConfirmOpcode`'s `GetNPCIfCanInteractWith`
-/// gate drops.
-const UNTRAINER_RANGE: f32 = 10.0;
 
 /// **The pet trainer's pending question**, and the trainer to measure it
 /// against.
@@ -168,14 +161,8 @@ pub fn untrainer_in_range(untrainer: &Untrainer, units: &crate::interface::api::
     let Some(guid) = untrainer.trainer else {
         return true;
     };
-    let Some((_, _, Some(here))) = units.all.iter().find(|(_, unit, _)| unit.is_self) else {
-        return true;
-    };
-    let Some((_, _, Some(there))) = units.all.iter().find(|(_, unit, _)| unit.guid == guid) else {
-        // A trainer who is not in the world is not out of range — the same
-        // reading the innkeeper gets, and for the same reason: the gossip
-        // window has closed by the time the question arrives.
-        return true;
-    };
-    here.translation.distance(there.translation) <= UNTRAINER_RANGE
+    // A trainer who is not in the world is not out of range: the same reading
+    // the innkeeper gets, and for the same reason. The gossip window has
+    // closed by the time the question arrives.
+    super::gossip::reach_to(units, guid).is_none_or(|yards| yards <= super::gossip::POPUP_RANGE)
 }

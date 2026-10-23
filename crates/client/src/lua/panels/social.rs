@@ -82,7 +82,7 @@ use vale_assets::interface::whoquery;
 use vale_assets::tables::area::Areas;
 use vale_assets::tables::charcreate::CharCreate;
 use vale_protocol::play::social::{Friend, WhoRow};
-use vale_protocol::socket::session::SocialVerb;
+use vale_protocol::play::social::SocialVerb;
 use crate::lua::host::LuaHost;
 
 /// The **unscoped reads and writes** this file registers, sorted — the same list
@@ -711,7 +711,7 @@ pub fn held(host: &LuaHost) -> Held {
 }
 
 /// Take and clear the social panel's six verbs that send a packet.
-pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::SocialVerb> {
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::play::social::SocialVerb> {
     super::taken(host)
 }
 

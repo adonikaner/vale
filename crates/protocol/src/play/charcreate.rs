@@ -12,8 +12,10 @@
 //!
 //! The two live in one file because they are one shape: the same socket, the
 //! same 84-entry key array, and the same reason for not being a handler (below).
-//! Where they differ is what silence means, and [`delete_character`] is the one
-//! that has to have an opinion about it.
+//! Where they differ is what silence means, and
+//! [`crate::socket::world::delete_character`] is the one that has to have an
+//! opinion about it. The character list itself, `SMSG_CHAR_ENUM`, is parsed
+//! here too, by [`parse_char_enum`] into [`CharListEntry`].
 //!
 //! Ten bytes and a name, and **every one of them is a decision the client made
 //! with no help from the server**: which races there are, which classes each may
@@ -21,10 +23,13 @@
 //! [`vale_assets::tables::charcreate`](../../vale_assets/charcreate/index.html);
 //! this is only the sentence that carries it.
 //!
-//! ## The exchange belongs here rather than in a handler
+//! ## The exchange is not a handler
 //!
-//! Every other packet in this crate goes socket → frame → parse → apply, through
-//! the one dispatch in [`crate::socket::handler`]. This one does not, for the same
+//! The bodies and the reply readers are here; the exchange itself,
+//! [`crate::socket::world::create_character`] and
+//! [`crate::socket::world::delete_character`], is beside the session it writes
+//! to. Every other packet in this crate goes socket → frame → parse → apply,
+//! through the one dispatch in [`crate::socket::handler`]. This one does not, for the same
 //! reason [`crate::socket::world::WorldSession::char_enum`] does not: it happens
 //! **before there is a world**, on the authenticated socket the character screen
 //! is holding, and the client has nothing to do between the send and the reply.
@@ -45,19 +50,14 @@
 //! `Interface\GlueXML\GlueStrings.lua` and both are looked up the same way; see
 //! [`crate::codes::response_key`], which is the client's own flat array.
 
-use std::io;
-use std::time::Duration;
-
-use crate::bytes::Writer;
+use crate::bytes::{Reader, Writer};
 use crate::codes::{response_key, CHAR_CREATE_SUCCESS, CHAR_DELETE_SUCCESS};
-use crate::opcodes::Opcode;
-use crate::socket::world::WorldSession;
 
 /// `CMSG_CHAR_CREATE`'s body.
 ///
 /// **The appearance travels as one `[u8; 5]` rather than as five arguments**,
 /// in `PLAYER_BYTES` order — skin, face, hair style, hair colour, facial hair —
-/// which is the same order [`crate::socket::world::CharListEntry::appearance`] comes
+/// which is the same order [`CharListEntry::appearance`] comes
 /// back in. Five small integers in a row is the shape that transposes silently,
 /// and a transposed skin and face is a character who looks like somebody else
 /// rather than a packet the server refuses; keeping the array whole means the
@@ -83,39 +83,6 @@ pub fn char_create_body(
     // `outfitId`, read and ignored by the server — see the module comment.
     w.u8(0);
     w.buf
-}
-
-/// Send it and wait up to `wait` for the one byte back.
-///
-/// `Ok(())` for `CHAR_CREATE_SUCCESS` and an `Err` naming the
-/// `GlueStrings.lua` key for anything else — including a code the client's own
-/// array does not reach, which reports the number so a strange server is visible
-/// rather than silent.
-///
-/// **Bounded where [`WorldSession::char_enum`] is not**, and the difference is
-/// which thread is waiting: the character list is fetched on the task pool and
-/// this runs on the frame, because the socket has to stay where the character
-/// screen can see it. See `crate::socket::world::session::Session::create_character` in
-/// the client, where that argument is.
-///
-/// **The appearance is the five bytes in `PLAYER_BYTES` order**: skin, face,
-/// hair style, hair colour, facial hair. The same order
-/// [`crate::socket::world::CharListEntry::appearance`] comes back in, which is what lets
-/// a character be created and then recognised on the plinth without a second
-/// convention.
-pub fn create_character(
-    session: &mut WorldSession,
-    name: &str,
-    race: u8,
-    class: u8,
-    gender: u8,
-    appearance: [u8; 5],
-    wait: Duration,
-) -> io::Result<Result<(), CreateRefusal>> {
-    let body = char_create_body(name, race, class, gender, appearance);
-    session.send(Opcode::CMSG_CHAR_CREATE, &body)?;
-    let reply = session.recv_until_within(Opcode::SMSG_CHAR_CREATE, wait)?;
-    Ok(read_create_result(&reply.body))
 }
 
 /// Why the server would not make the character — or delete it, since both
@@ -166,38 +133,8 @@ pub fn char_delete_body(guid: u64) -> Vec<u8> {
     w.buf
 }
 
-/// Send it and wait up to `wait` for the one byte back.
-///
-/// `Ok(Ok(()))` for `CHAR_DELETE_SUCCESS`, `Ok(Err(..))` for a refusal, and an
-/// `Err` only for the socket.
-///
-/// ## Silence is a refusal here, and that is the whole difference from
-/// [`create_character`]
-///
-/// `HandleCharCreateOpcode` answers on every path. `HandleCharDeleteOpcode`
-/// answers on **two of five**: `CHAR_DELETE_SUCCESS`, and `CHAR_DELETE_FAILED`
-/// for a guild leader. The other three — a character still loaded (the ALT-F4
-/// case), a guid the player cache does not know, and a guid belonging to another
-/// account — are bare `return`s with no packet at all.
-///
-/// So this waits through [`WorldSession::try_recv_until_within`], where the
-/// deadline is `Ok(None)` rather than an `io::Error`, and reports the deadline
-/// as an ordinary refusal. Reporting it as a broken socket would take a working
-/// character screen down every time the server declined quietly — which is a
-/// far worse answer than "that did not work", and is not what has happened.
-pub fn delete_character(
-    session: &mut WorldSession,
-    guid: u64,
-    wait: Duration,
-) -> io::Result<Result<(), CreateRefusal>> {
-    session.send(Opcode::CMSG_CHAR_DELETE, &char_delete_body(guid))?;
-    match session.try_recv_until_within(Opcode::SMSG_CHAR_DELETE, wait)? {
-        Some(reply) => Ok(read_delete_result(&reply.body)),
-        None => Ok(Err(SILENTLY_REFUSED)),
-    }
-}
-
-/// What a delete the server never answered reports — see [`delete_character`].
+/// What a delete the server never answered reports — see
+/// [`crate::socket::world::delete_character`].
 ///
 /// `code: 0` is not a `ResponseCodes` value and is not pretending to be one:
 /// nothing came back, so there is no byte. The key is the one the *answered*
@@ -227,9 +164,248 @@ pub fn read_delete_result(body: &[u8]) -> Result<(), CreateRefusal> {
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct CharListEntry {
+    pub guid: u64,
+    pub name: String,
+    pub race: u8,
+    pub class: u8,
+    pub gender: u8,
+    pub level: u8,
+    /// `skin, face, hairStyle, hairColour, facialHair`: the five bytes that
+    /// `PLAYER_BYTES` and `PLAYER_BYTES_2` carry once the character is in the
+    /// world.
+    ///
+    /// Read rather than skipped, because character select draws the character.
+    /// The model comes from the race and the clothing from `equipment`, but the
+    /// face and hairstyle come only from these bytes; without them every
+    /// character on the list is drawn with skin 0, face 0 and no hair. Kept as
+    /// the five raw bytes rather than as
+    /// `vale_assets::look::character::Appearance` because this crate does not
+    /// depend on `vale_assets`; the client builds the `Appearance` in one line.
+    pub appearance: [u8; 5],
+    pub zone: u32,
+    pub map: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    /// `characters.character_flags`, unchanged. See [`CharListEntry::GHOST`].
+    pub flags: u32,
+    /// The character's equipment, as `(ItemDisplayInfo id, InventoryType)` per
+    /// slot, with zeroes where the slot is empty.
+    ///
+    /// This is the only place in the protocol where equipment arrives with its
+    /// display ids already resolved: vmangos `Player::BuildEnumData` writes
+    /// `proto->DisplayInfoID` and `proto->InventoryType` directly, while
+    /// `PLAYER_VISIBLE_ITEM_n_0` in the world carries an item entry that needs
+    /// a `CMSG_ITEM_QUERY_SINGLE` round trip. Character select can therefore
+    /// dress the character on the frame the list arrives.
+    ///
+    /// It does not carry the item's class, subclass or sheath type, the three
+    /// fields that decide where a put-away weapon hangs. Those are in the item
+    /// template, `Item.dbc` is not in the 1.12 archives, and no packet on this
+    /// screen can fetch them.
+    ///
+    /// Character select does not need them, and their absence is not why a
+    /// character-select model would have empty hands. The 1.12.1 client draws
+    /// no weapon on character select as put away: both weapons are attached at
+    /// hand points, and the only item property it uses is
+    /// `inventoryType == 14` (shield), which this list carries. It skips the
+    /// ranged slot (index 17). See
+    /// `vale_assets::tables::item::Weapon::from_char_enum`.
+    ///
+    /// The index is the equipment slot, and the code depends on it: 15 is the
+    /// main hand and 16 the off hand, and no inventory type distinguishes them
+    /// (a one-hand sword is `INVTYPE_WEAPON` in either). So this stays a
+    /// positional list including its empty slots rather than being compacted.
+    pub equipment: Vec<(u32, u8)>,
+    /// The id of the character's guild, 0 for none.
+    pub guild: u32,
+    /// That guild's emblem, which a guild tabard on the character-select
+    /// model is painted with. The list carries the id only;
+    /// [`crate::socket::world::WorldSession::char_enum`] asks for the emblem with
+    /// `CMSG_GUILD_QUERY`, which the server answers before a character is in
+    /// the world. `None` for a character in no guild and for a guild the
+    /// server did not answer for.
+    pub emblem: Option<crate::play::guild::Emblem>,
+}
+
+impl CharListEntry {
+    /// `CHARACTER_FLAG_GHOST`: the character is dead, and the row reads
+    /// `<name> (Ghost)`. `GetCharacterInfo`'s eighth return value.
+    pub const GHOST: u32 = 0x0000_2000;
+    /// `CHARACTER_FLAG_HIDE_HELM` / `_HIDE_CLOAK`: the interface options that
+    /// hide the helm and the cloak. The server stores them, and they decide
+    /// what the character-select model wears.
+    pub const HIDE_HELM: u32 = 0x0000_0400;
+    pub const HIDE_CLOAK: u32 = 0x0000_0800;
+
+    pub fn is_ghost(&self) -> bool {
+        self.flags & Self::GHOST != 0
+    }
+    pub fn hides_helm(&self) -> bool {
+        self.flags & Self::HIDE_HELM != 0
+    }
+    pub fn hides_cloak(&self) -> bool {
+        self.flags & Self::HIDE_CLOAK != 0
+    }
+}
+
+/// Number of equipment slots serialised per character in `SMSG_CHAR_ENUM`.
+///
+/// vmangos `Player::BuildEnumData` loops `slot < INVENTORY_SLOT_BAG_START + 1`,
+/// i.e. 19 equipment slots plus the first bag.
+///
+/// Each slot is five bytes, `u32 displayId` then `u8 inventoryType`. 1.12 has
+/// no per-slot enchantment field; 2.4 adds one. Reading one overruns the packet
+/// by 80 bytes per character and misaligns every entry after the first, which
+/// `a_second_character_parses_after_the_first` tests.
+const CHAR_ENUM_EQUIPMENT_SLOTS: usize = 20;
+
+/// Parse `SMSG_CHAR_ENUM`. Only the pet block is skipped, and it must still be
+/// consumed exactly or the next character is misread.
+///
+/// The appearance and the equipment are read, not skipped: the five appearance
+/// bytes and the twenty `(display id, inventory type)` pairs are the only data
+/// about how a character on this screen looks. An earlier version skipped them,
+/// and character select showed an empty model. Reading them costs nothing
+/// extra, because the parser has to step over them anyway.
+pub(crate) fn parse_char_enum(body: &[u8]) -> Vec<CharListEntry> {
+    let mut r = Reader::new(body);
+    let count = r.u8();
+    let mut out = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let guid = {
+            let lo = r.u32() as u64;
+            let hi = r.u32() as u64;
+            (hi << 32) | lo
+        };
+        let name = r.cstring();
+        let race = r.u8();
+        let class = r.u8();
+        let gender = r.u8();
+        // Skin, face, hair style, hair colour, facial hair: the order in which
+        // vmangos `Player::BuildEnumData` writes them.
+        let appearance = [r.u8(), r.u8(), r.u8(), r.u8(), r.u8()];
+        let level = r.u8();
+        let zone = r.u32();
+        let map = r.u32();
+        let x = r.f32();
+        let y = r.f32();
+        let z = r.f32();
+        let guild = r.u32();
+        let flags = r.u32();
+        let _first_login = r.u8();
+        let _pet_display_id = r.u32();
+        let _pet_level = r.u32();
+        let _pet_family = r.u32();
+        let equipment = (0..CHAR_ENUM_EQUIPMENT_SLOTS)
+            .map(|_| (r.u32(), r.u8()))
+            .collect();
+
+        out.push(CharListEntry {
+            guid,
+            name,
+            race,
+            class,
+            gender,
+            appearance,
+            level,
+            zone,
+            map,
+            x,
+            y,
+            z,
+            flags,
+            equipment,
+            guild,
+            emblem: None,
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One character, byte for byte as vmangos `Player::BuildEnumData` writes
+    /// one.
+    fn character_bytes(w: &mut Writer, guid: u32, name: &str, flags: u32) {
+        w.u32(guid).u32(0); // guid
+        w.buf.extend_from_slice(name.as_bytes());
+        w.u8(0);
+        w.u8(1).u8(8).u8(1); // human, warlock, female
+        w.u8(3).u8(5).u8(9).u8(2).u8(4); // skin, face, hair, colour, facial hair
+        w.u8(60);
+        w.u32(12).u32(0); // zone, map
+        w.f32(-8900.0).f32(-130.0).f32(80.0);
+        w.u32(0); // guild
+        w.u32(flags);
+        w.u8(0); // first login
+        w.u32(0).u32(0).u32(0); // pet
+        for slot in 0..CHAR_ENUM_EQUIPMENT_SLOTS {
+            // Slot 0 is the head, slot 4 the chest; the rest are empty. Mostly
+            // empty slots are the common case, and the parser must handle them.
+            match slot {
+                0 => w.u32(21_549).u8(1),
+                4 => w.u32(31_051).u8(5),
+                _ => w.u32(0).u8(0),
+            };
+        }
+    }
+
+    /// The three blocks this parser once skipped: the five appearance bytes,
+    /// the flag word and the twenty equipment slots.
+    ///
+    /// Character select draws all three, so a misread shows as the wrong face,
+    /// no equipment, or a missing `(Ghost)`. The body is built in the test
+    /// rather than captured, because a capture would fix one account's
+    /// characters, and the test is about the layout.
+    #[test]
+    fn a_character_row_carries_its_appearance_its_flags_and_its_wardrobe() {
+        let mut w = Writer::new();
+        w.u8(1); // one character
+        character_bytes(
+            &mut w,
+            7,
+            "Alden",
+            CharListEntry::GHOST | CharListEntry::HIDE_HELM,
+        );
+
+        let rows = parse_char_enum(&w.buf);
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.name, "Alden");
+        assert_eq!(row.appearance, [3, 5, 9, 2, 4], "skin, face, hair, colour, beard");
+        assert!(row.is_ghost() && row.hides_helm() && !row.hides_cloak());
+        assert_eq!(row.equipment.len(), CHAR_ENUM_EQUIPMENT_SLOTS);
+        assert_eq!(row.equipment[0], (21_549, 1));
+        assert_eq!(row.equipment[4], (31_051, 5));
+        assert_eq!(row.equipment[19], (0, 0), "the last slot is the first bag");
+    }
+
+    /// A block-size error shows in the second character of the list.
+    ///
+    /// A per-character body read one byte long or short misaligns every entry
+    /// after the first. The usual case is the 2.4 enchantment field, 80 bytes
+    /// per character, which makes the rest of the list unreadable. An account
+    /// with one character does not show the error.
+    #[test]
+    fn a_second_character_parses_after_the_first() {
+        let mut w = Writer::new();
+        w.u8(2);
+        character_bytes(&mut w, 7, "Alden", CharListEntry::GHOST);
+        character_bytes(&mut w, 9, "Bram", 0);
+
+        let rows = parse_char_enum(&w.buf);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].name, "Bram");
+        assert_eq!(rows[1].guid, 9);
+        assert!(!rows[1].is_ghost(), "the first row's flags did not bleed");
+        assert_eq!(rows[1].appearance, [3, 5, 9, 2, 4]);
+        assert_eq!(rows[1].equipment[4], (31_051, 5));
+    }
 
     /// **The body is a name and ten bytes, in vmangos' own read order** —
     /// `name >> race >> class >> gender >> skin >> face >> hairStyle >>

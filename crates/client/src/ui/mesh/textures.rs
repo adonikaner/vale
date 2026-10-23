@@ -1,16 +1,14 @@
-//! **The interface's art as Bevy images** — the mesh painter's counterpart to
-//! [`crate::ui::framexml::Art`]'s egui texture cache.
+//! The interface's art as Bevy images.
 //!
-//! Same shape, same rules, different destination: a path is decoded once
-//! through the one BLP door ([`crate::ui::framexml::decode_rgba`]), its alpha
-//! goes through the same byte-space compensation every egui upload takes, and
-//! the answer is memoised — a miss is cached as a miss, because the directory
-//! names art the archives do not always carry.
+//! A path is decoded once through [`decode_rgba`], its alpha goes through the
+//! byte-space compensation ([`super::material::byte_space_alpha`]), and the
+//! answer is kept. A miss is kept as a miss, so a path the archives do not
+//! have is tried once and skipped for the rest of the session rather than
+//! read again on every rebuild. For a partly working interface a missing path
+//! is common.
 //!
-//! What this cache does **not** have is the egui path's additive
-//! preprocessing: an `ADD` region here really is drawn additively
-//! ([`super::material::Blend::Additive`]), so the texture is uploaded as
-//! painted.
+//! An `ADD` region is drawn additively ([`super::material::Blend::Additive`]),
+//! so its texture is uploaded as painted.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -28,20 +26,35 @@ pub struct UiTextures {
     plain: HashMap<String, Option<Handle<Image>>>,
     /// Repeating, for a backdrop's tiled fill.
     tiled: HashMap<String, Option<Handle<Image>>>,
-    /// The eight pieces of an edge strip — runs repeat, corners clamp, exactly
-    /// as [`crate::ui::framexml::Art::edge_pieces`] cuts them and for the same
-    /// seam reasons.
+    /// A backdrop's `edgeFile`, already cut into its eight upright pieces; see
+    /// [`vale_assets::interface::backdrop`]. One decode per file rather than
+    /// one per rebuild per piece.
+    ///
+    /// The four runs wrap and the four corners clamp. A run tiles along its own
+    /// side at the cell's period, so it has to repeat. A corner maps `[0, 1]`
+    /// exactly once; sampled with wrapping, linear filtering bleeds the
+    /// opposite edge in and leaves a one-texel seam at every corner of every
+    /// panel.
     edges: HashMap<String, Option<Vec<Handle<Image>>>>,
-    /// One minimap tile picture per path, with the tick it was last drawn on —
-    /// the same bounded cache `Art::minimap` keeps, for the same reason: four
-    /// are visible and a continent has 687.
+    /// The world's minimap pictures, with the tick each was last drawn on, in
+    /// a bounded cache apart from [`Self::plain`].
+    ///
+    /// Every other texture here is an `Interface\` file: there are a few
+    /// hundred, each is small, and a session touches most of them in its first
+    /// minute, so they are never evicted. Minimap tiles differ. Each is
+    /// 256x256 RGBA (256 KB resident), and there is one per map tile: a
+    /// character who crosses Azeroth would load all 687 of its tiles, which in
+    /// an unbounded map is 176 MB of texture. Four tiles are visible at the
+    /// widest zoom, so the rest of [`MINIMAP_CACHE`] is hysteresis: a character
+    /// walking back and forth across a tile seam reuses tiles rather than
+    /// decoding them again.
     minimap: HashMap<String, (Handle<Image>, u64)>,
     pub(super) minimap_tick: u64,
     white: Option<Handle<Image>>,
 }
 
-/// How many minimap tiles stay resident — [`crate::ui::framexml`] keeps the
-/// same sixteen.
+/// How many minimap tile pictures to keep. Sixteen is 4 MB resident. See
+/// [`UiTextures::minimap`].
 const MINIMAP_CACHE: usize = 16;
 
 impl UiTextures {
@@ -81,7 +94,7 @@ impl UiTextures {
         path: &str,
     ) -> Option<&Vec<Handle<Image>>> {
         if !self.edges.contains_key(path) {
-            let cut = crate::ui::framexml::decode_rgba(assets, path).and_then(
+            let cut = decode_rgba(assets, path).and_then(
                 |(width, height, rgba)| {
                     let cells = vale_assets::interface::backdrop::split_edges(
                         width as usize,
@@ -110,9 +123,12 @@ impl UiTextures {
         self.edges.get(path)?.as_ref()
     }
 
-    /// One minimap tile, held in the bounded cache. A path the index named and
-    /// the archive lacks is **not** cached as an absence — see
-    /// `Art::minimap_texture`, whose rule this is.
+    /// One minimap tile, held in the bounded cache.
+    ///
+    /// A path the index named and the archive does not have is not cached as
+    /// an absence: the index resolves 2,356 of 2,356 in the shipped chain, so a
+    /// miss here means a broken install, not the common case the plain cache's
+    /// kept misses are for.
     pub fn minimap_texture(
         &mut self,
         images: &mut Assets<Image>,
@@ -167,6 +183,19 @@ impl UiTextures {
         }
     }
 
+    /// How many uploads the cache holds: every decoded picture, each edge
+    /// strip's eight pieces and the minimap tiles. The HUD line reports it.
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn held(&self) -> usize {
+        let present = |map: &HashMap<String, Option<Handle<Image>>>| {
+            map.values().filter(|handle| handle.is_some()).count()
+        };
+        present(&self.plain)
+            + present(&self.tiled)
+            + self.edges.values().flatten().map(Vec::len).sum::<usize>()
+            + self.minimap.len()
+    }
+
     /// The 1x1 white square a solid fill tints.
     pub fn white(&mut self, images: &mut Assets<Image>) -> Handle<Image> {
         if let Some(white) = &self.white {
@@ -179,25 +208,75 @@ impl UiTextures {
     }
 }
 
-/// Decode one BLP and upload it.
+/// One `Interface\` path, decoded to RGBA8: the archive read every texture in
+/// the interface starts with, the loading screen's included.
+///
+/// A path such as `Interface\Buttons\UI-Quickslot2` has no extension, because
+/// the files do not write one; the client appends `.blp`. A path that already
+/// has one, as `SetTexture` from a script sometimes passes, is left alone.
+pub(crate) fn decode_rgba(assets: &GameAssets, path: &str) -> Option<(u32, u32, Vec<u8>)> {
+    // A mask: the file after the prefix, with every texel made white and its
+    // alpha kept. The tabard designer draws an emblem's shape this way; see
+    // [`crate::lua::panels::tabard::ALPHA_MASK_PREFIX`].
+    if let Some(file) = path.strip_prefix(crate::lua::panels::tabard::ALPHA_MASK_PREFIX) {
+        let (width, height, mut pixels) = decode_rgba(assets, file)?;
+        for texel in pixels.chunks_exact_mut(4) {
+            texel[..3].fill(255);
+        }
+        return Some((width, height, pixels));
+    }
+    // `.blp` first, then `.tga`: the order the 1.12.1 client tries for a path
+    // without an extension. Every texture in the archives is BLP; an addon's
+    // art is almost always TGA (45 of pfUI's 46). A path that names its own
+    // extension is read as written.
+    let lower = path.to_ascii_lowercase();
+    let candidates: Vec<String> = if lower.ends_with(".blp") || lower.ends_with(".tga") {
+        vec![path.to_string()]
+    } else {
+        vec![format!("{path}.blp"), format!("{path}.tga")]
+    };
+    for file in candidates {
+        let decoded = assets
+            .with_archive(|archive| {
+                let raw = archive.read(&file).map_err(|e| e.to_string())?;
+                if file.to_ascii_lowercase().ends_with(".tga") {
+                    let tga = vale_assets::world::tga::decode(&raw).map_err(|e| e.to_string())?;
+                    Ok((tga.width, tga.height, tga.rgba))
+                } else {
+                    let blp = vale_assets::world::blp::decode(&raw).map_err(|e| e.to_string())?;
+                    Ok((blp.width, blp.height, blp.rgba))
+                }
+            })
+            .ok();
+        if decoded.is_some() {
+            return decoded;
+        }
+    }
+    None
+}
+
+/// Decode one picture and upload it.
 fn upload(
     images: &mut Assets<Image>,
     assets: &GameAssets,
     path: &str,
     mode: ImageAddressMode,
 ) -> Option<Handle<Image>> {
-    let (width, height, mut rgba) = crate::ui::framexml::decode_rgba(assets, path)?;
+    let (width, height, mut rgba) = decode_rgba(assets, path)?;
     Some(images.add(image([width, height], &mut rgba, mode)))
 }
 
-/// The one door every upload goes through — the same byte-space alpha
-/// compensation [`crate::ui::framexml::image`] applies, so a panel drawn by
-/// either painter is exactly as solid as the other's.
+/// The one door every upload goes through. It applies
+/// [`super::material::byte_space_alpha`] to every texel, so a panel's fill,
+/// its border pieces and its icons are compensated alike. Applied to some
+/// uploads and not others, a fill and its border would differ in opacity,
+/// which looks like a property of the art rather than a bug.
 fn image(size: [u32; 2], pixels: &mut [u8], mode: ImageAddressMode) -> Image {
     for texel in pixels.chunks_exact_mut(4) {
         let alpha = f32::from(texel[3]) / 255.0;
-        texel[3] = (crate::ui::framexml::byte_space_alpha(alpha) * 255.0).round() as u8;
+        texel[3] = (super::material::byte_space_alpha(alpha) * 255.0).round() as u8;
     }
+
     let mut image = Image::new(
         Extent3d {
             width: size[0],

@@ -76,6 +76,7 @@
 //! reopen, because the server still thinks you have it.
 
 use crate::bytes::{Reader, Writer};
+use crate::opcodes::Opcode;
 
 /// Why the loot window is open, out of vmangos' `LootType`.
 ///
@@ -489,6 +490,59 @@ pub fn autostore_loot_item_body(index: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(index);
     w.buf
+}
+
+/// The five requests a loot window can send to the socket.
+///
+/// A separate enum rather than five `Command` variants; the reason is given at
+/// [`crate::socket::session::Command::Loot`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LootVerb {
+    /// `CMSG_LOOT` on a body. The reply is `SMSG_LOOT_RESPONSE`, which also
+    /// carries a refusal.
+    Open(u64),
+    /// `CMSG_AUTOSTORE_LOOT_ITEM`, by the server's index, never the row.
+    Take(u8),
+    /// `CMSG_LOOT_MONEY`, which has no body.
+    TakeMoney,
+    /// `CMSG_LOOT_RELEASE`. The server discards the guid: vmangos
+    /// `HandleLootReleaseOpcode` reads it and uses its own record of the open
+    /// loot instead. The window closes when `SMSG_LOOT_RELEASE_RESPONSE`
+    /// arrives, not when this is sent.
+    Release(u64),
+    /// `CMSG_LOOT_ROLL`: need, greed or pass on one row of a group roll.
+    ///
+    /// Carries the body and the slot, not the interface's `rollID`, which is
+    /// a counter this client keeps and the server does not know; see
+    /// [`crate::play::lootroll`].
+    Roll {
+        guid: u64,
+        item_slot: u32,
+        vote: crate::play::lootroll::RollVote,
+    },
+}
+
+impl LootVerb {
+    /// The opcode and the body this verb sends.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        match *self {
+            LootVerb::Open(guid) => (Opcode::CMSG_LOOT, loot_body(guid)),
+            LootVerb::Take(index) => (
+                Opcode::CMSG_AUTOSTORE_LOOT_ITEM,
+                autostore_loot_item_body(index),
+            ),
+            LootVerb::TakeMoney => (Opcode::CMSG_LOOT_MONEY, Vec::new()),
+            LootVerb::Release(guid) => (Opcode::CMSG_LOOT_RELEASE, loot_release_body(guid)),
+            LootVerb::Roll {
+                guid,
+                item_slot,
+                vote,
+            } => (
+                Opcode::CMSG_LOOT_ROLL,
+                crate::play::lootroll::loot_roll_body(guid, item_slot, vote),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

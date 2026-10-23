@@ -48,7 +48,7 @@
 use bevy::prelude::*;
 
 use vale_protocol::play::group::{GroupList, LootMethod, PartyMemberStats};
-use vale_protocol::socket::session::PartyVerb;
+use vale_protocol::play::group::PartyVerb;
 
 use super::events::{
     PartyInviteRequest, PartyLeaderChanged, PartyLootMethodChanged, PartyMembersChanged,
@@ -560,7 +560,7 @@ fn request_missing_stats(
     // `Res<Party>` — and this system writes it, which is Bevy's B0002. That is
     // checked when the schedule is built rather than by the compiler, so it is
     // a panic at startup; both of the systems added this round tripped it.
-    units: Query<&crate::world::session::WorldEntity>,
+    units: Query<&crate::world::entity::WorldEntity>,
 ) {
     let Some(active) = session.active.as_ref() else {
         return;

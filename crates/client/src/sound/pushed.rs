@@ -26,7 +26,7 @@
 
 use super::mixer::{Place, Voices};
 use crate::interface::events::SoundPushed;
-use crate::world::session::{EntityIndex, WorldEntity};
+use crate::world::entity::{EntityIndex, WorldEntity};
 use vale_protocol::play::sound::Cue;
 use bevy::prelude::*;
 

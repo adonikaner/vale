@@ -63,7 +63,8 @@
 
 use crate::session::EditSession;
 use vale_client::interface::events::ChatMessageReceived;
-use vale_client::world::session::{Session, WorldStatus};
+use vale_client::world::session::Session;
+use vale_client::world::status::WorldStatus;
 use vale_protocol::play::chat::ChatType;
 use bevy::prelude::*;
 use std::collections::VecDeque;

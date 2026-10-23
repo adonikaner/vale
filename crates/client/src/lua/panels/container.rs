@@ -74,11 +74,9 @@
 //! implemented when it is not.
 
 use super::super::api::{one_or_nil, Answers, IDLE_COOLDOWN};
-// The unit-token types the answers below use to read the world: the same
-// `crate::interface::api` every other `Live` impl in this directory uses,
-// imported here because the container's answers are defined beside its
-// registration.
-use crate::interface::api;
+// The item plate the answers below return, imported here because the
+// container's answers are defined beside its registration.
+use crate::interface::plate;
 use crate::input::bindings::Binding;
 
 /// The scoped functions this module registers, counted against the calls in
@@ -948,7 +946,7 @@ pub trait ContainerAnswers {
     /// `CursorHasSpell()`: whether the cursor is carrying a spell.
     fn cursor_has_spell(&self) -> bool { false }
     /// The tooltip contents for `GameTooltip:SetBagItem(bag, slot)`.
-    fn bag_item_tip(&self, _bag: i32, _slot: usize) -> Option<api::ItemTip> { None }
+    fn bag_item_tip(&self, _bag: i32, _slot: usize) -> Option<plate::ItemTip> { None }
     /// The sell price an item tooltip shows while a merchant window is open,
     /// in copper: `Some(0)` for an item with no sell price ("No sell price"),
     /// `None` when no line is shown. See [`SoldItem`].
@@ -957,16 +955,16 @@ pub trait ContainerAnswers {
         None
     }
     /// The tooltip contents for `GameTooltip:SetInventoryItem(unit, id)`.
-    fn inventory_item_tip(&self, _token: &str, _id: u32) -> Option<api::ItemTip> { None }
+    fn inventory_item_tip(&self, _token: &str, _id: u32) -> Option<plate::ItemTip> { None }
     /// The tooltip contents for `GameTooltip:SetHyperlink("item:…")`: the same
     /// as for a carried item but with no item instance, so no durability and
     /// never soulbound.
-    fn item_tip(&self, _entry: u32) -> Option<api::ItemTip> { None }
+    fn item_tip(&self, _entry: u32) -> Option<plate::ItemTip> { None }
     /// The same plate for a link that names a permanent enchantment and a
     /// random property (`item:<entry>:<enchant>:<random>:<seed>`): the suffix
     /// joins the name and the enchantments print as they would on the copy.
     /// A harness without tables answers the plain plate.
-    fn item_link_tip(&self, entry: u32, _enchant: i32, _random: i32) -> Option<api::ItemTip> {
+    fn item_link_tip(&self, entry: u32, _enchant: i32, _random: i32) -> Option<plate::ItemTip> {
         self.item_tip(entry)
     }
 }
@@ -1123,7 +1121,7 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
         self.cursor.has_spell()
     }
 
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<api::ItemTip> {
+    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<plate::ItemTip> {
         let item = self.inventory.carried.container_item(bag, slot)?;
         self.tip_from(item.entry, Some(item))
     }
@@ -1176,7 +1174,7 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
         Some(vale_assets::tables::repair::sell_price(template.sell_price, charges, repair, copy.count))
     }
 
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<api::ItemTip> {
+    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<plate::ItemTip> {
         if !Self::is_player(token) {
             // The item as its template states it, with no copy behind it.
             let entry = self.worn_by_other(token, id)?;
@@ -1190,14 +1188,14 @@ impl ContainerAnswers for super::super::api::Live<'_, '_, '_> {
         self.tip_from(item.entry, Some(item))
     }
 
-    fn item_tip(&self, entry: u32) -> Option<api::ItemTip> {
+    fn item_tip(&self, entry: u32) -> Option<plate::ItemTip> {
         self.tip_from(entry, None)
     }
 
-    fn item_link_tip(&self, entry: u32, enchant: i32, random: i32) -> Option<api::ItemTip> {
+    fn item_link_tip(&self, entry: u32, enchant: i32, random: i32) -> Option<plate::ItemTip> {
         let mut tip = self.tip_from(entry, None)?;
         if let Some(tables) = self.tables.as_deref() {
-            api::apply_link(&mut tip, enchant, random, tables);
+            plate::apply_link(&mut tip, enchant, random, tables);
         }
         Some(tip)
     }

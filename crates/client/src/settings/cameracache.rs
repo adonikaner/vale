@@ -25,7 +25,8 @@ use std::path::PathBuf;
 use vale_assets::interface::wtf;
 
 use crate::world::camera::{CameraRig, CLOSEST, PITCH_LIMIT};
-use crate::world::session::{ClientConfig, Session, WorldStatus};
+use crate::world::session::{ClientConfig, Session};
+use crate::world::status::WorldStatus;
 
 /// The path of this character's file, and which character it was read for.
 #[derive(Resource, Default)]

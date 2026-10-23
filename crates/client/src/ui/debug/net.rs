@@ -38,7 +38,7 @@
 
 use bevy_egui::egui;
 
-use crate::world::session::COUNTERS;
+use crate::world::status::COUNTERS;
 
 use super::{row, Readout, BAD, DIM, GOOD, WARN};
 
@@ -161,7 +161,7 @@ struct Rates {
 
 impl NetSample {
     /// Take a reading. Called on [`super::SAMPLE_INTERVAL`] by the window.
-    pub fn take(&mut self, now: f32, status: &crate::world::session::WorldStatus) {
+    pub fn take(&mut self, now: f32, status: &crate::world::status::WorldStatus) {
         let wire = status.traffic.wire;
         let totals = Totals {
             bytes_in: wire.bytes_in,
@@ -424,7 +424,7 @@ struct OpcodeRow<'a> {
 /// The opcode table: what the stream is made of, filtered and searchable.
 fn opcodes(
     ui: &mut egui::Ui,
-    status: &crate::world::session::WorldStatus,
+    status: &crate::world::status::WorldStatus,
     net: &mut NetSample,
 ) {
     let traffic = &status.traffic;
@@ -627,7 +627,7 @@ const CAPTURE_ROWS: usize = 300;
 /// plausible value rather than an error.
 fn capture(
     ui: &mut egui::Ui,
-    status: &crate::world::session::WorldStatus,
+    status: &crate::world::status::WorldStatus,
     session: &crate::world::session::Session,
     net: &mut NetSample,
 ) {
@@ -799,7 +799,7 @@ fn capture(
 /// capture stores none and this joins the two. That keeps the capture out of
 /// the dispatch, which is where it would otherwise have to be to know.
 fn handled_by(
-    status: &crate::world::session::WorldStatus,
+    status: &crate::world::status::WorldStatus,
     packet: &vale_protocol::socket::world::CapturedPacket,
 ) -> bool {
     status
@@ -924,7 +924,7 @@ pub fn bytes(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::session::WorldStatus;
+    use crate::world::status::WorldStatus;
 
     /// The first reading produces no rate. The interval before it is the whole
     /// life of the session, so dividing by it opens the panel on a plausible

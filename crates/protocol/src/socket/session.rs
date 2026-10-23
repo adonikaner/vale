@@ -44,14 +44,28 @@
 
 use crate::play::chat::{ChatType, Language};
 use crate::socket::handler::{apply_packet, Incoming, LocalState, PumpStats, Replies};
-use crate::play::wdb::{Caches, Kind};
+use crate::state::wdb::{Caches, Kind};
 use crate::play::areatrigger::{TriggerTable, TriggerWatch};
 use crate::state::movement::{Controls, Footing, Input, MovementInfo, Mover, Speeds};
 use crate::state::objects::ObjectManager;
 use crate::opcodes::Opcode;
 use crate::state::query;
 use crate::state::update::Position;
-use crate::socket::world::{CharListEntry, Packet, Traffic, WorldSession};
+use crate::play::channels::ChannelVerb;
+use crate::play::charcreate::CharListEntry;
+use crate::play::gossip::NpcVerb;
+use crate::play::group::PartyVerb;
+use crate::play::guild::GuildVerb;
+use crate::play::loot::LootVerb;
+use crate::play::mail::MailVerb;
+use crate::play::pet::PetVerb;
+use crate::play::petition::PetitionVerb;
+use crate::play::quest::QuestVerb;
+use crate::play::reputation::ReputationVerb;
+use crate::play::social::SocialVerb;
+use crate::play::taxi::TaxiVerb;
+use crate::play::trade::TradeVerb;
+use crate::socket::world::{Packet, Traffic, WorldSession};
 use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -343,487 +357,6 @@ const QUERY_INTERVAL: Duration = Duration::from_secs(2);
 
 /// How long to wait for the login burst to produce a player object.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The five requests a loot window can send to the socket.
-///
-/// A separate enum rather than five `Command` variants; the reason is given at
-/// [`Command::Loot`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LootVerb {
-    /// `CMSG_LOOT` on a body.
-    Open(u64),
-    /// `CMSG_AUTOSTORE_LOOT_ITEM`, by the server's index, never the row.
-    Take(u8),
-    /// `CMSG_LOOT_MONEY`, which has no body.
-    TakeMoney,
-    /// `CMSG_LOOT_RELEASE`. The server discards the guid.
-    Release(u64),
-    /// `CMSG_LOOT_ROLL`: need, greed or pass on one row of a group roll.
-    ///
-    /// Carries the body and the slot, not the interface's `rollID`; see
-    /// [`crate::play::lootroll`], which shows the id is a local counter.
-    Roll {
-        guid: u64,
-        item_slot: u32,
-        vote: crate::play::lootroll::RollVote,
-    },
-}
-
-/// The nine requests a quest conversation sends to the socket.
-///
-/// A separate enum rather than nine `Command` variants, for the same reason
-/// as [`LootVerb`]: one subject, and the loop distinguishes them only by which
-/// method to call. See [`crate::play::quest`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuestVerb {
-    /// `CMSG_QUESTGIVER_STATUS_QUERY`: the marker over a giver's head.
-    Status(u64),
-    /// `CMSG_QUESTGIVER_HELLO`: right-click a giver.
-    Hello(u64),
-    /// `CMSG_QUESTGIVER_QUERY_QUEST`: show one quest's details.
-    Details { guid: u64, quest_id: u32 },
-    /// `CMSG_QUESTGIVER_ACCEPT_QUEST`.
-    Accept { guid: u64, quest_id: u32 },
-    /// `CMSG_QUESTGIVER_COMPLETE_QUEST`: hand the quest in.
-    Complete { guid: u64, quest_id: u32 },
-    /// `CMSG_QUESTGIVER_REQUEST_REWARD`: show the reward page again.
-    RequestReward { guid: u64, quest_id: u32 },
-    /// `CMSG_QUESTGIVER_CHOOSE_REWARD`: take one reward, by zero-based index
-    /// into the choices.
-    ChooseReward {
-        guid: u64,
-        quest_id: u32,
-        choice: u32,
-    },
-    /// `CMSG_QUEST_QUERY`: a quest's text and data by id (for example quest
-    /// 47). The only verb with no giver.
-    Query(u32),
-    /// `CMSG_QUESTLOG_REMOVE_QUEST`, by zero-based quest log slot, which is not
-    /// the quest id.
-    Abandon(u8),
-}
-
-/// The requests a gossip, vendor, trainer, stable or bank window sends to the
-/// socket.
-///
-/// See [`crate::play::gossip`], which owns the wire formats, including the
-/// one body in the game whose fields are in reverse order
-/// ([`crate::play::gossip::npc_text_query_body`]), and [`crate::play::trainer`],
-/// which owns the two trainer verbs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NpcVerb {
-    /// `CMSG_GOSSIP_HELLO`: right-click anything with the gossip flag.
-    GossipHello(u64),
-    /// `CMSG_GOSSIP_SELECT_OPTION`, by the server's index.
-    GossipSelect { guid: u64, option: u32 },
-    /// `CMSG_NPC_TEXT_QUERY`: the text behind a menu's text id.
-    TextQuery { text_id: u32, guid: u64 },
-    /// `CMSG_BINDER_ACTIVATE`: confirm binding the hearthstone to this inn.
-    ///
-    /// The answer to `SMSG_BINDER_CONFIRM`, and the packet that performs the
-    /// bind; before it arrives the server has only closed the gossip window.
-    /// The guid must be the innkeeper's; see
-    /// [`crate::play::bindpoint::binder_activate_body`].
-    BinderActivate(u64),
-    /// `CMSG_PAGE_TEXT_QUERY`: the text of page N. The guid is the object
-    /// being read and is optional on the wire; see
-    /// [`crate::play::pagetext::page_text_query_body`].
-    PageTextQuery { page_id: u32, guid: Option<u64> },
-    /// `CMSG_LIST_INVENTORY`: open the shop.
-    ListInventory(u64),
-    /// `CMSG_BUY_ITEM`: `count` items, by item entry.
-    Buy { vendor: u64, entry: u32, count: u8 },
-    /// `CMSG_SELL_ITEM`, by the item object's guid; a count of 0 sells the
-    /// stack.
-    Sell { vendor: u64, item: u64, count: u8 },
-    /// `CMSG_BUYBACK_ITEM`, by the wire's slot number, which starts at 69.
-    Buyback { vendor: u64, wire_slot: u32 },
-    /// `CMSG_REPAIR_ITEM`: the armourer and one item's guid, or 0 for all
-    /// items, which is what `RepairAllItems()` sends. See
-    /// [`crate::play::gossip::repair_item_body`], which also explains why there
-    /// is no reply.
-    Repair { vendor: u64, item: u64 },
-    /// `CMSG_TRAINER_LIST`: open the training window.
-    TrainerList(u64),
-    /// `CMSG_TRAINER_BUY_SPELL`, by the service spell id from the list, which
-    /// is the teaching spell rather than the spell that is learned.
-    TrainerBuy { trainer: u64, spell: u32 },
-    /// `MSG_LIST_STABLED_PETS`: ask for the stable window again. It is sent on
-    /// an `MSG_` opcode, the same opcode the answer arrives under.
-    StableList(u64),
-    /// `CMSG_STABLE_PET`: put the active pet away. The server picks the slot;
-    /// the client names none.
-    StablePet(u64),
-    /// `CMSG_UNSTABLE_PET`: take a pet out, by pet number. Refused while a pet
-    /// is summoned; [`Self::StableSwap`] covers that case.
-    UnstablePet { stable: u64, pet_number: u32 },
-    /// `CMSG_STABLE_SWAP_PET`: exchange the active pet for a stabled one.
-    StableSwap { stable: u64, pet_number: u32 },
-    /// `CMSG_BUY_STABLE_SLOT`: the next slot, at `StableSlotPrices.dbc`'s
-    /// price. The client checks the money first and the server checks it again.
-    BuyStableSlot(u64),
-    /// `CMSG_BANKER_ACTIVATE`: open the bank, at a banker with no gossip bit.
-    /// A banker with the bit opens the same window through its menu. See
-    /// [`crate::play::bank`].
-    BankerActivate(u64),
-    /// `CMSG_BUY_BANK_SLOT`: the next bag slot, at `BankBagSlotPrices.dbc`'s
-    /// price. Success has no reply: the slot count is a byte of
-    /// `PLAYER_BYTES_2` and arrives as an update field.
-    BuyBankSlot(u64),
-}
-
-/// The seven commands a player can give a pet, and two more requests from the
-/// pet panel.
-///
-/// One enum rather than nine `Command` variants, for the same reason as
-/// [`NpcVerb`]: they share one subject, all name the pet's guid, and the
-/// dispatch is a table in [`crate::socket::world::WorldSession::pet`].
-///
-/// [`PetVerb::Action`] is the only verb without a fixed meaning. Pressing a
-/// slot sends `CMSG_PET_ACTION` with the slot's packed word unchanged, and
-/// every command and reaction button uses the same packet: the bar the server
-/// sent already holds "follow" and "aggressive" as slots. A binding such as
-/// `PetFollow` is this verb with the word the bar carries, not a separate
-/// opcode. See [`crate::play::pet`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PetVerb {
-    /// `CMSG_PET_ACTION`: press a slot, at a target (0 for none).
-    Action { pet: u64, data: u32, target: u64 },
-    /// `CMSG_PET_NAME_QUERY`: the name the player gave the pet, by pet number.
-    NameQuery { pet_number: u32, pet: u64 },
-    /// `CMSG_PET_SET_ACTION`: one move, or a swap of two.
-    SetAction { pet: u64, moves: Vec<(u32, u32)> },
-    /// `CMSG_PET_SPELL_AUTOCAST`: the autocast toggle on a spell button.
-    Autocast { pet: u64, spell_id: u32, on: bool },
-    /// `CMSG_PET_STOP_ATTACK`.
-    StopAttack(u64),
-    /// `CMSG_PET_ABANDON`: release the pet permanently, not dismiss it.
-    Abandon(u64),
-    /// `CMSG_PET_UNLEARN`: reset the pet's skills for money.
-    Unlearn(u64),
-    /// `CMSG_PET_RENAME`.
-    Rename { pet: u64, name: String },
-    /// `CMSG_PET_CANCEL_AURA`: cancel one of the pet's buffs.
-    CancelAura { pet: u64, spell_id: u32 },
-}
-
-/// The three requests the reputation panel sends to the server.
-///
-/// All three name a reputation-list id rather than a faction id, because the
-/// 64-slot table on both sides is keyed by it; see
-/// [`crate::play::reputation`]. None is acknowledged: at-war comes back as
-/// `SMSG_SET_FACTION_ATWAR`, inactive gets no reply, and the watched faction
-/// comes back as an update field. The panel draws from its own copy, and these
-/// requests only make the server store the change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReputationVerb {
-    /// `CMSG_SET_FACTION_ATWAR`.
-    AtWar { reputation_list_id: u32, at_war: bool },
-    /// `CMSG_SET_FACTION_INACTIVE`: which heading the row is filed under. This
-    /// is the only one of the three that is purely cosmetic: the server stores
-    /// it in `characters.data` and does nothing else with it.
-    Inactive { reputation_list_id: u32, inactive: bool },
-    /// `CMSG_SET_WATCHED_FACTION`. `-1` clears it, which is what the
-    /// interface's "Show as experience bar" checkbox sends when unchecked.
-    Watched { reputation_list_id: i32 },
-}
-
-/// The sixteen channel requests the chat frame sends to the socket.
-///
-/// See [`crate::play::channels`], which owns the bodies. Every verb carries
-/// the channel's name, because the wire keys channels by name. The numbers
-/// typed in the interface (`/2 hello`) are client-side slots and are never
-/// sent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChannelVerb {
-    Join { name: String, password: String },
-    Leave(String),
-    /// `/chatlist <name>`, answered by `SMSG_CHANNEL_LIST`.
-    List(String),
-    Password { name: String, password: String },
-    SetOwner { name: String, player: String },
-    /// Who owns it, answered by a `CHANNEL_OWNER` notice.
-    Owner(String),
-    Moderator { name: String, player: String },
-    Unmoderator { name: String, player: String },
-    Mute { name: String, player: String },
-    Unmute { name: String, player: String },
-    Invite { name: String, player: String },
-    Kick { name: String, player: String },
-    Ban { name: String, player: String },
-    Unban { name: String, player: String },
-    Announcements(String),
-    Moderate(String),
-}
-
-/// The six requests the social panel sends to the socket.
-///
-/// See [`crate::play::social`], which owns the bodies. The enum is not `Copy`
-/// because three verbs carry a string. That follows the wire format: an
-/// addition is by name and a removal is by guid, because the client has no
-/// guid for somebody it has not met and the server has no name for somebody
-/// it already knows.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SocialVerb {
-    /// `CMSG_FRIEND_LIST`: ask for the list again. No body. The server sends
-    /// the list unprompted only at login, so this is the only way to read it
-    /// again.
-    List,
-    /// `CMSG_ADD_FRIEND`: `/friend <name>`, and the Who panel's Add Friend
-    /// button.
-    AddFriend(String),
-    /// `CMSG_DEL_FRIEND`, by guid, which the panel has from the list.
-    DelFriend(u64),
-    /// `CMSG_ADD_IGNORE`.
-    AddIgnore(String),
-    /// `CMSG_DEL_IGNORE`.
-    DelIgnore(u64),
-    /// `CMSG_WHO`: the search, already parsed from the typed line. Boxed
-    /// because it is much the largest variant here and every other one is a
-    /// word or a short string.
-    Who(Box<crate::play::social::WhoRequest>),
-}
-
-/// The twenty-one requests the guild tab, the guild slash commands, the
-/// guild popups and the tabard designer send to the socket. See
-/// [`crate::play::guild`], which has the layouts.
-///
-/// A member is named by name in every request that is about one, because the
-/// server looks the member up by name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GuildVerb {
-    /// `CMSG_GUILD_QUERY`: ask for a guild's name, rank names and emblem.
-    Query(u32),
-    /// `CMSG_GUILD_ROSTER`: ask for the member list.
-    Roster,
-    /// `CMSG_GUILD_INFO`: `/ginfo`.
-    Info,
-    /// `CMSG_GUILD_INVITE`.
-    Invite(String),
-    /// `CMSG_GUILD_ACCEPT`: accept the pending invitation.
-    Accept,
-    /// `CMSG_GUILD_DECLINE`: decline it.
-    Decline,
-    /// `CMSG_GUILD_REMOVE`.
-    Remove(String),
-    /// `CMSG_GUILD_PROMOTE`.
-    Promote(String),
-    /// `CMSG_GUILD_DEMOTE`.
-    Demote(String),
-    /// `CMSG_GUILD_LEADER`: hand the guild to the named member.
-    Leader(String),
-    /// `CMSG_GUILD_LEAVE`.
-    Leave,
-    /// `CMSG_GUILD_DISBAND`.
-    Disband,
-    /// `CMSG_GUILD_MOTD`: set the message of the day.
-    Motd(String),
-    /// `CMSG_GUILD_INFO_TEXT`: set the guild information text.
-    InfoText(String),
-    /// `CMSG_GUILD_SET_PUBLIC_NOTE`.
-    PublicNote { player: String, note: String },
-    /// `CMSG_GUILD_SET_OFFICER_NOTE`.
-    OfficerNote { player: String, note: String },
-    /// `CMSG_GUILD_RANK`: replace one rank's name and rights.
-    Rank { rank: u32, rights: u32, name: String },
-    /// `CMSG_GUILD_ADD_RANK`: add a rank below the lowest.
-    AddRank(String),
-    /// `CMSG_GUILD_DEL_RANK`: delete the lowest rank.
-    DelRank,
-    /// `MSG_TABARDVENDOR_ACTIVATE`: ask a tabard designer to open its window.
-    TabardVendor(u64),
-    /// `MSG_SAVE_GUILD_EMBLEM`: save the guild's emblem at a tabard designer.
-    SaveEmblem {
-        npc: u64,
-        emblem: crate::play::guild::Emblem,
-    },
-}
-
-/// The nine requests about a guild charter. See [`crate::play::petition`],
-/// which has the layouts. `item` is the charter item's guid in every request
-/// that carries one.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PetitionVerb {
-    /// `CMSG_PETITION_SHOWLIST`: ask a guild registrar what it sells.
-    ShowList(u64),
-    /// `CMSG_PETITION_BUY`: buy a charter for a guild of this name.
-    Buy { npc: u64, name: String, index: u32 },
-    /// `CMSG_PETITION_SHOW_SIGNATURES`: open a charter.
-    ShowSignatures(u64),
-    /// `CMSG_PETITION_QUERY`: ask for a petition's guild name and owner.
-    Query { petition: u32, item: u64 },
-    /// `CMSG_PETITION_SIGN`: the charter and the byte after it, which the
-    /// 1.12.1 client sends as 1.
-    Sign { item: u64, byte: u8 },
-    /// `MSG_PETITION_DECLINE`: decline to sign.
-    Decline(u64),
-    /// `CMSG_OFFER_PETITION`: show the charter to another player.
-    Offer { item: u64, player: u64 },
-    /// `CMSG_TURN_IN_PETITION`: found the guild.
-    TurnIn(u64),
-    /// `MSG_PETITION_RENAME`: change the proposed guild name.
-    Rename { item: u64, name: String },
-}
-
-/// The ten requests the trade window sends to the socket. See
-/// [`crate::play::trade`], which has the layouts. Six have no body;
-/// `Initiate` names the partner, `SetItem` a bag square by the server's
-/// numbering, `ClearItem` a slot, and `SetGold` an amount.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TradeVerb {
-    /// `CMSG_INITIATE_TRADE`: `InitiateTrade(unit)`.
-    Initiate(u64),
-    /// `CMSG_BEGIN_TRADE`: the `TRADE` popup's Yes.
-    Begin,
-    /// `CMSG_BUSY_TRADE`: the refusal a client sends while it already has a
-    /// window open.
-    Busy,
-    /// `CMSG_IGNORE_TRADE`: the refusal the `BlockTrades` CVar sends.
-    Ignore,
-    /// `CMSG_ACCEPT_TRADE`: the Trade button.
-    Accept,
-    /// `CMSG_UNACCEPT_TRADE`: `CancelTradeAccept()`, the Cancel button while
-    /// accepted.
-    Unaccept,
-    /// `CMSG_CANCEL_TRADE`: the popup's No, `CloseTrade()`, and closing the
-    /// window.
-    Cancel,
-    /// `CMSG_SET_TRADE_ITEM`: `ClickTradeButton(i)` with an item held.
-    SetItem { trade_slot: u8, bag: u8, slot: u8 },
-    /// `CMSG_CLEAR_TRADE_ITEM`: `ClickTradeButton(i)` with nothing held, on a
-    /// filled slot.
-    ClearItem { trade_slot: u8 },
-    /// `CMSG_SET_TRADE_GOLD`: `SetTradeMoney(copper)`.
-    SetGold(u32),
-}
-
-/// The ten requests the mail window sends to the socket.
-///
-/// See [`crate::play::mail`], which owns the bodies. Opening a mailbox sends
-/// no packet, so there is no `Open` verb. The mailbox guid is kept in the
-/// client's window state, and every verb below carries it, because the server
-/// checks that the character is standing at that mailbox before it acts.
-///
-/// Five of the verbs differ only in their opcode, so they share
-/// [`crate::play::mail::mail_id_body`] rather than each having a function.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MailVerb {
-    /// `CMSG_GET_MAIL_LIST`: the inbox. The caller rate-limits it, not this
-    /// code; see [`crate::play::mail`]'s note on `CheckInbox`.
-    List(u64),
-    /// `CMSG_MAIL_MARK_AS_READ`: sent when a letter is read rather than by a
-    /// button; `GetInboxText` sends it first.
-    MarkAsRead { mailbox: u64, mail_id: u32 },
-    /// `CMSG_MAIL_TAKE_MONEY`: the letter's coins.
-    TakeMoney { mailbox: u64, mail_id: u32 },
-    /// `CMSG_MAIL_TAKE_ITEM`: the parcel. This packet also pays a COD: the
-    /// server takes the money on it. The interface shows a confirmation box
-    /// before sending it; this code does not.
-    TakeItem { mailbox: u64, mail_id: u32 },
-    /// `CMSG_MAIL_CREATE_TEXT_ITEM`: keep the letter itself, as an item.
-    TakeText {
-        mailbox: u64,
-        mail_id: u32,
-        /// The server reads and discards it; sent because build 5875 sends it
-        /// and the server always reads it.
-        template_id: u32,
-    },
-    /// `CMSG_MAIL_RETURN_TO_SENDER`.
-    Return { mailbox: u64, mail_id: u32 },
-    /// `CMSG_MAIL_DELETE`. Refused for a COD letter, with
-    /// `MAIL_ERR_INTERNAL_ERROR` rather than a readable error.
-    Delete { mailbox: u64, mail_id: u32 },
-    /// `CMSG_ITEM_TEXT_QUERY`: the text of one letter.
-    TextQuery { item_text_id: u32, mail_id: u32 },
-    /// `CMSG_SEND_MAIL`: a whole letter. Boxed for the same reason as
-    /// [`SocialVerb::Who`]: it carries three strings where every other variant
-    /// carries two words.
-    Send(Box<crate::play::mail::OutgoingMail>),
-    /// `MSG_QUERY_NEXT_MAIL_TIME`: whether any mail is waiting. No body; the
-    /// answer arrives under the same opcode.
-    NextTime,
-}
-
-/// The requests the party and raid interface sends to the socket.
-///
-/// See [`crate::play::group`], which owns the bodies. The enum is not `Copy`
-/// because some verbs carry a name. That follows the wire format: an invite
-/// and the by-name kick and subgroup moves are strings, and everything else is
-/// a guid or nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PartyVerb {
-    /// `CMSG_GROUP_INVITE`: `/invite <name>`, and all of `InviteByName`.
-    Invite(String),
-    /// `CMSG_GROUP_ACCEPT`: press Accept on the popup. No body.
-    Accept,
-    /// `CMSG_GROUP_DECLINE`: press Decline on the popup. No body.
-    Decline,
-    /// `CMSG_GROUP_DISBAND`: one opcode for both leaving and disbanding. The
-    /// server decides which from whether this character leads, so `LeaveParty`
-    /// has nothing to decide.
-    Leave,
-    /// `CMSG_GROUP_UNINVITE`: kick by name, which is what `UninviteUnit(name)`
-    /// has and what the wire accepts.
-    Uninvite(String),
-    /// `CMSG_GROUP_UNINVITE_GUID`: the same kick by guid, for a caller that has
-    /// one. Both exist on the wire; neither is a fallback for the other.
-    UninviteGuid(u64),
-    /// `CMSG_GROUP_SET_LEADER`: promote, by guid. The reply names the new
-    /// leader by name.
-    SetLeader(u64),
-    /// `CMSG_REQUEST_PARTY_MEMBER_STATS`: the only poll for party data, for a
-    /// member too far away to be in the object manager.
-    RequestStats(u64),
-    /// `CMSG_GROUP_RAID_CONVERT`: the Raid tab's convert button. No body. The
-    /// client checks two conditions (there is a `party1`, and this character
-    /// leads); the server checks them again and answers a refusal with no
-    /// packet.
-    ConvertToRaid,
-    /// `CMSG_GROUP_CHANGE_SUB_GROUP`: move a member into a subgroup, by name,
-    /// with a zero-based subgroup. See
-    /// [`crate::play::group::change_sub_group_body`].
-    ChangeSubGroup { name: String, subgroup: u8 },
-    /// `CMSG_GROUP_SWAP_SUB_GROUP`: exchange two members, which is what a drop
-    /// onto an occupied slot does.
-    SwapSubGroup { name: String, swap_with: String },
-    /// `CMSG_GROUP_ASSISTANT_LEADER`: promote to assistant, or demote. By guid
-    /// in 1.12, while the two subgroup verbs are by name.
-    SetAssistant { guid: u64, assistant: bool },
-    /// `MSG_RAID_READY_CHECK` with no body: start a ready check. Leader and
-    /// assistants only, which the server enforces.
-    StartReadyCheck,
-    /// `MSG_RAID_READY_CHECK` with one byte: answer a ready check.
-    AnswerReadyCheck(bool),
-}
-
-/// The requests a flight master's window sends to the socket.
-///
-/// See [`crate::play::taxi`]. A separate enum rather than `NpcVerb` variants,
-/// for the same reason as [`PartyVerb`]: a multi-hop flight carries a list of
-/// nodes, and `NpcVerb` is `Copy`.
-///
-/// There is no close verb, as there is none for the gossip menu or the
-/// trainer: `CloseTaxiMap()` clears the window locally.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TaxiVerb {
-    /// `CMSG_TAXIQUERYAVAILABLENODES`: right-click a flight master. The server
-    /// answers with the map, or first with a discovery if this node is new.
-    QueryNodes(u64),
-    /// `CMSG_TAXINODE_STATUS_QUERY`: whether this character knows the
-    /// master's node. It is asked about a unit, not about a window, so it is
-    /// here and not on the taxi board.
-    NodeStatus(u64),
-    /// `CMSG_ACTIVATETAXI`: fly, by two node ids. The source is the map's
-    /// current node, not a node the player chose.
-    Activate { guid: u64, from: u32, to: u32 },
-    /// `CMSG_ACTIVATETAXIEXPRESS`: fly a whole route, source first, when no
-    /// direct path exists.
-    ActivateExpress {
-        guid: u64,
-        cost: u32,
-        nodes: Vec<u32>,
-    },
-}
 
 /// What a UI sends the session thread.
 #[derive(Debug, Clone)]
@@ -1233,7 +766,7 @@ pub struct SessionStatus {
     /// [`Self::position`], [`Self::controls`], [`Self::movement`],
     /// [`Self::moving`] and the rest describe the mover, not the character, so
     /// a reader that continues the simulation has to know which entity to
-    /// continue. `crate::world::session::place_entities` draws the mover ahead
+    /// continue. `crate::world::entity::place_entities` draws the mover ahead
     /// of the simulation and leaves the character to ordinary interpolation.
     /// That makes a possessed body drivable while the possessing character
     /// stands still.
@@ -1472,7 +1005,7 @@ impl LiveSession {
     ///
     /// Returns immediately. Use [`LiveSession::wait_until_in_world`] when the
     /// caller needs to report login failures synchronously.
-    /// `caches` holds the on-disk query answers; see [`crate::play::wdb`].
+    /// `caches` holds the on-disk query answers; see [`crate::state::wdb`].
     /// Pass [`Caches::none`] when the caller has nowhere to store them. The
     /// session behaves the same either way, except that a window naming
     /// something not yet queried is blank the first time it opens.
@@ -2005,7 +1538,7 @@ impl LiveSession {
     }
 
     /// Ask where the corpse is. The reply raises
-    /// [`crate::play::spells::PlayerEvent::CorpseLocated`].
+    /// [`crate::state::events::PlayerEvent::CorpseLocated`].
     pub fn corpse_query(&self) {
         self.send(Command::CorpseQuery);
     }
@@ -2130,7 +1663,7 @@ impl LiveSession {
     /// Drained rather than cloned, for the same reason as [`Self::take_chat`]:
     /// each event must be handled exactly once. See
     /// [`ObjectManager::take_events`].
-    pub fn take_events(&self) -> Vec<crate::play::spells::PlayerEvent> {
+    pub fn take_events(&self) -> Vec<crate::state::events::PlayerEvent> {
         lock(&self.world).take_events()
     }
 
@@ -2335,7 +1868,7 @@ struct SessionLoop {
     left_world: bool,
     /// The on-disk query answers. Seeded into the world before this thread
     /// started, and appended to on the query interval; see
-    /// [`crate::play::wdb`].
+    /// [`crate::state::wdb`].
     caches: Caches,
     stats: PumpStats,
     /// When [`SessionStatus::traffic`] was last rebuilt. `None` until the first
@@ -2583,451 +2116,248 @@ impl SessionLoop {
     fn drain_commands(&mut self) -> Flow {
         loop {
             match self.commands.try_recv() {
-                Ok(Command::Controls(controls, at)) => {
-                    // Queued rather than applied, so the change takes effect at
-                    // the moment it was read; see [`Self::tick_movement`]. The
-                    // renderer sends the keys every frame, so only a change is
-                    // queued.
-                    let held = self
-                        .inputs
-                        .iter()
-                        .rev()
-                        .find_map(|(_, input)| match input {
-                            Input::Controls(c) => Some(*c),
-                            Input::Jump => None,
-                        })
-                        .unwrap_or_else(|| self.local.mover.controls());
-                    if controls != held {
-                        self.inputs.push((at, Input::Controls(controls)));
-                    }
-                }
-                Ok(Command::Face(orientation)) => {
-                    // Through the mover rather than writing its field:
-                    // mouse-look is a turn and follows the same rule as the
-                    // turn keys, so a stunned or dead character does not turn
-                    // with the mouse.
-                    self.local.mover.face(orientation);
-                }
-                Ok(Command::Pitch(pitch)) => {
-                    // No packet: the pitch is a field of the movement block, not
-                    // a transition, and is carried only under
-                    // `MOVEFLAG_SWIMMING`, so it goes out with the next
-                    // heartbeat or facing update. `MSG_MOVE_SET_PITCH` exists
-                    // (219) and this client does not send it: the value is
-                    // already in every block, and the server reads nothing from
-                    // the opcode that the block does not carry. The ascent
-                    // controlled by keys is separate and has its own packets;
-                    // see [`Mover::pitch_flags`].
-                    self.local.mover.set_pitch(pitch);
-                }
-                Ok(Command::Jump(at)) => {
-                    // Queued with the keys, in the order given, so a key
-                    // pressed in the same frame as the jump is held when the
-                    // jump takes its speed and heading. The packet is sent in
-                    // the same tick rather than with the next heartbeat: the
-                    // server anchors the whole parabola at the first packet
-                    // carrying `MOVEFLAG_JUMPING` (`MovementInfo::Read`), so a
-                    // jump reported a tick late is placed a tick further along.
-                    self.inputs.push((at, Input::Jump));
-                }
-                Ok(Command::Attack(guid)) => {
-                    let sent = match guid {
-                        Some(guid) => self.session.attack_swing(guid),
-                        None => self.session.attack_stop(),
-                    };
-                    if sent.is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Target(guid)) => {
-                    // Zero means "nothing selected" on the wire; there is no
-                    // separate clear opcode.
-                    if self.session.set_selection(guid.unwrap_or(0)).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Cast { spell_id, target }) => {
-                    if self.session.cast_spell(spell_id, target).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::CancelCast(spell_id)) => {
-                    if self.session.cancel_cast(spell_id).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::CancelAura(spell_id)) => {
-                    if self.session.cancel_aura(spell_id).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Quest(verb)) => {
-                    let cached = match verb {
-                        QuestVerb::Query(id) => Some((Kind::Quest, u64::from(id))),
-                        _ => None,
-                    };
-                    match self.answer_from_cache(cached) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            if self.session.quest(verb).is_err() {
-                                return Flow::Stop;
-                            }
-                        }
-                        Err(_) => return Flow::Stop,
-                    }
-                }
-                Ok(Command::UseObject(guid)) => {
-                    if self.session.use_object(guid).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Npc(verb)) => {
-                    let cached = match verb {
-                        NpcVerb::TextQuery { text_id, .. } => {
-                            Some((Kind::NpcText, u64::from(text_id)))
-                        }
-                        NpcVerb::PageTextQuery { page_id, .. } => {
-                            Some((Kind::PageText, u64::from(page_id)))
-                        }
-                        _ => None,
-                    };
-                    match self.answer_from_cache(cached) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            if self.session.npc(verb).is_err() {
-                                return Flow::Stop;
-                            }
-                        }
-                        Err(_) => return Flow::Stop,
-                    }
-                }
-                Ok(Command::Pet(verb)) => {
-                    // The autocast toggle gets no reply (vmangos records it and
-                    // sends no packet), so the bar's copy is flipped here.
-                    // Otherwise the autocast marker never changes and the next
-                    // press sends the same state again. See
-                    // [`crate::state::objects::ObjectManager::apply_pet_autocast`].
-                    // A reaction or command press works the same way; see
-                    // [`crate::state::objects::ObjectManager::apply_pet_press`].
-                    match &verb {
-                        PetVerb::Autocast { spell_id, on, .. } => {
-                            lock(&self.world).apply_pet_autocast(*spell_id, *on);
-                        }
-                        PetVerb::Action { data, target, .. } => {
-                            lock(&self.world).apply_pet_press(*data, *target != 0);
-                        }
-                        PetVerb::StopAttack(_) => lock(&self.world).apply_pet_stop_attack(),
-                        // A drag-and-drop also gets no reply
-                        // (`HandlePetSetAction` ends at `SetActionBar`), so the
-                        // moved slots are written to the copy here; otherwise
-                        // the next rebuild reverts the drop on screen.
-                        PetVerb::SetAction { moves, .. } => {
-                            lock(&self.world).apply_pet_set_action(moves);
-                        }
-                        _ => {}
-                    }
-                    if self.session.pet(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                // No packet: the capture is a reader on this side of the
-                // socket. Published on the traffic interval like the counters.
-                Ok(Command::CaptureTraffic(on)) => self.session.capture().arm(on),
-                Ok(Command::Party(verb)) => {
-                    if self.session.party(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Taxi(verb)) => {
-                    if self.session.taxi(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Reputation(verb)) => {
-                    if self.session.reputation(verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Social(verb)) => {
-                    if self.session.social(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Guild(verb)) => {
-                    if self.session.guild(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Petition(verb)) => {
-                    if self.session.petition(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Channel(verb)) => {
-                    if self.session.channel(&verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Mail(verb)) => {
-                    let cached = match &verb {
-                        MailVerb::TextQuery { item_text_id, .. } => {
-                            Some((Kind::ItemText, u64::from(*item_text_id)))
-                        }
-                        _ => None,
-                    };
-                    match self.answer_from_cache(cached) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            if self.session.mail(&verb).is_err() {
-                                return Flow::Stop;
-                            }
-                        }
-                        Err(_) => return Flow::Stop,
-                    }
-                }
-                Ok(Command::Trade(verb)) => {
-                    if self.session.trade(verb).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Loot(verb)) => {
-                    let sent = match verb {
-                        LootVerb::Open(guid) => self.session.loot(guid),
-                        LootVerb::Take(index) => self.session.loot_item(index),
-                        LootVerb::TakeMoney => self.session.loot_money(),
-                        LootVerb::Release(guid) => self.session.loot_release(guid),
-                        LootVerb::Roll {
-                            guid,
-                            item_slot,
-                            vote,
-                        } => self.session.loot_roll(guid, item_slot, vote),
-                    };
-                    if sent.is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::UseItem {
-                    bag,
-                    slot,
-                    spell_index,
-                    target,
-                }) => {
-                    let sent = match spell_index {
-                        Some(index) => self.session.use_item(bag, slot, index, target),
-                        None => self.session.auto_equip_item(bag, slot),
-                    };
-                    if sent.is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::OpenItem { bag, slot }) => {
-                    if self.session.open_item(bag, slot).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::MoveItem {
-                    src_bag,
-                    src_slot,
-                    dst,
-                    count,
-                }) => {
-                    if self.session.move_item(src_bag, src_slot, dst, count).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::EquipItem { bag, slot }) => {
-                    if self.session.auto_equip_item(bag, slot).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::BankItem { bag, slot }) => {
-                    if self.session.bank_item(bag, slot).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::SetActionButton { slot, packed }) => {
-                    if self.session.set_action_button(slot, packed).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::SetActionBarToggles(mask)) => {
-                    if self.session.set_actionbar_toggles(mask).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::CancelAutoRepeat) => {
-                    if self.session.cancel_auto_repeat().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::SetSheathed(state)) => {
-                    if self.session.set_sheathed(u32::from(state)).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::TextEmote { text_emote, emote_num, target }) => {
-                    if self.session.text_emote(text_emote, emote_num, target).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::LearnTalent { talent_id, rank }) => {
-                    if self.session.learn_talent(talent_id, rank).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                // The loop keeps running after a logout request. The character
-                // is seated and rooted until `SMSG_LOGOUT_COMPLETE` or a
-                // cancel, and both arrive on this socket, so stopping the
-                // thread here would leave nothing to receive the answer.
-                Ok(Command::Logout { leaving }) => {
-                    let sent = if leaving {
-                        self.session.logout_request()
-                    } else {
-                        self.session.logout_cancel()
-                    };
-                    if sent.is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Chat { kind, target, text }) => {
-                    // The language the character speaks, which is the only one
-                    // the server accepts from them.
-                    let language = Language::for_race(self.character.race);
-                    if self
-                        .session
-                        .say(kind, language, target.as_deref(), &text)
-                        .is_err()
-                    {
-                        return Flow::Stop;
-                    }
-                }
-                // Death and resurrection commands. None is predicted: each is
-                // answered by a values block rather than a reply packet
-                // (`PLAYER_FLAGS_GHOST` set, health restored), so there is no
-                // local state to change and nothing to roll back if the server
-                // refuses. See `crate::play::death`.
-                Ok(Command::Repop) => {
-                    if self.session.repop_request().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::ResetInstances) => {
-                    if self.session.reset_instances().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::CorpseQuery) => {
-                    if self.session.corpse_query().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::ReclaimCorpse) => {
-                    let guid = self.character.guid;
-                    if self.session.reclaim_corpse(guid).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::ResurrectResponse { caster, accept }) => {
-                    if self.session.resurrect_response(caster, accept).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::DuelAnswer { arbiter, accept }) => {
-                    if self.session.duel_answer(arbiter, accept).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::SummonResponse { summoner }) => {
-                    if self.session.summon_response(summoner).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::RequestPlayedTime) => {
-                    if self.session.request_played_time().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::RandomRoll { min, max }) => {
-                    if self.session.random_roll(min, max).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::MinimapPing { x, y }) => {
-                    if self.session.minimap_ping(x, y).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::RaidTargetSet { icon, guid }) => {
-                    if self.session.raid_target_set(icon, guid).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::RaidTargetList) => {
-                    if self.session.raid_target_list().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::PushQuest { quest_id }) => {
-                    if self.session.push_quest(quest_id).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::QuestConfirmAccept { quest_id }) => {
-                    if self.session.quest_confirm_accept(quest_id).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::QuestPushResult { sharer, result }) => {
-                    if self.session.quest_push_result(sharer, result).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::TutorialFlag { id }) => {
-                    if self.session.tutorial_flag(id).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::TutorialClear) => {
-                    if self.session.tutorial_clear().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::TutorialReset) => {
-                    if self.session.tutorial_reset().is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::ToggleWorn { helm }) => {
-                    if self.session.toggle_worn(helm).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::Inspect { guid }) => {
-                    if self.session.inspect(guid).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::InspectHonor { guid }) => {
-                    if self.session.inspect_honor(guid).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::SpiritHealerActivate { healer }) => {
-                    if self.session.spirit_healer_activate(healer).is_err() {
-                        return Flow::Stop;
-                    }
-                }
-                Ok(Command::SetAmmo { entry }) => {
-                    if self.session.set_ammo(entry).is_err() {
-                        return Flow::Stop;
-                    }
-                }
                 Ok(Command::Shutdown) => return Flow::Stop,
+                Ok(command) => {
+                    if self.run_command(command).is_err() {
+                        return Flow::Stop;
+                    }
+                }
                 Err(TryRecvError::Empty) => return Flow::Continue,
                 // The handle was dropped without a shutdown; same outcome.
                 Err(TryRecvError::Disconnected) => return Flow::Stop,
             }
         }
+    }
+
+    /// Carry out one command: a change to the local simulation, or a packet.
+    /// An error is the socket's, and stops the loop.
+    fn run_command(&mut self, command: Command) -> io::Result<()> {
+        match command {
+            Command::Controls(controls, at) => {
+                // Queued rather than applied, so the change takes effect at
+                // the moment it was read; see [`Self::tick_movement`]. The
+                // renderer sends the keys every frame, so only a change is
+                // queued.
+                let held = self
+                    .inputs
+                    .iter()
+                    .rev()
+                    .find_map(|(_, input)| match input {
+                        Input::Controls(c) => Some(*c),
+                        Input::Jump => None,
+                    })
+                    .unwrap_or_else(|| self.local.mover.controls());
+                if controls != held {
+                    self.inputs.push((at, Input::Controls(controls)));
+                }
+                Ok(())
+            }
+            Command::Face(orientation) => {
+                // Through the mover rather than writing its field:
+                // mouse-look is a turn and follows the same rule as the
+                // turn keys, so a stunned or dead character does not turn
+                // with the mouse.
+                self.local.mover.face(orientation);
+                Ok(())
+            }
+            Command::Pitch(pitch) => {
+                // No packet: the pitch is a field of the movement block, not
+                // a transition, and is carried only under
+                // `MOVEFLAG_SWIMMING`, so it goes out with the next
+                // heartbeat or facing update. `MSG_MOVE_SET_PITCH` exists
+                // (219) and this client does not send it: the value is
+                // already in every block, and the server reads nothing from
+                // the opcode that the block does not carry. The ascent
+                // controlled by keys is separate and has its own packets;
+                // see [`Mover::pitch_flags`].
+                self.local.mover.set_pitch(pitch);
+                Ok(())
+            }
+            Command::Jump(at) => {
+                // Queued with the keys, in the order given, so a key
+                // pressed in the same frame as the jump is held when the
+                // jump takes its speed and heading. The packet is sent in
+                // the same tick rather than with the next heartbeat: the
+                // server anchors the whole parabola at the first packet
+                // carrying `MOVEFLAG_JUMPING` (`MovementInfo::Read`), so a
+                // jump reported a tick late is placed a tick further along.
+                self.inputs.push((at, Input::Jump));
+                Ok(())
+            }
+            Command::Attack(Some(guid)) => self.session.attack_swing(guid),
+            Command::Attack(None) => self.session.attack_stop(),
+            // Zero means "nothing selected" on the wire; there is no
+            // separate clear opcode.
+            Command::Target(guid) => self.session.set_selection(guid.unwrap_or(0)),
+            Command::Cast { spell_id, target } => self.session.cast_spell(spell_id, target),
+            Command::CancelCast(spell_id) => self.session.cancel_cast(spell_id),
+            Command::CancelAura(spell_id) => self.session.cancel_aura(spell_id),
+            Command::Quest(verb) => {
+                let cached = match verb {
+                    QuestVerb::Query(id) => Some((Kind::Quest, u64::from(id))),
+                    _ => None,
+                };
+                self.send_unless_cached(cached, verb.packet())
+            }
+            Command::UseObject(guid) => self.session.use_object(guid),
+            Command::Npc(verb) => {
+                let cached = match verb {
+                    NpcVerb::TextQuery { text_id, .. } => Some((Kind::NpcText, u64::from(text_id))),
+                    NpcVerb::PageTextQuery { page_id, .. } => {
+                        Some((Kind::PageText, u64::from(page_id)))
+                    }
+                    _ => None,
+                };
+                self.send_unless_cached(cached, verb.packet())
+            }
+            Command::Pet(verb) => {
+                // The autocast toggle gets no reply (vmangos records it and
+                // sends no packet), so the bar's copy is flipped here.
+                // Otherwise the autocast marker never changes and the next
+                // press sends the same state again. See
+                // [`crate::state::objects::ObjectManager::apply_pet_autocast`].
+                // A reaction or command press works the same way; see
+                // [`crate::state::objects::ObjectManager::apply_pet_press`].
+                match &verb {
+                    PetVerb::Autocast { spell_id, on, .. } => {
+                        lock(&self.world).apply_pet_autocast(*spell_id, *on);
+                    }
+                    PetVerb::Action { data, target, .. } => {
+                        lock(&self.world).apply_pet_press(*data, *target != 0);
+                    }
+                    PetVerb::StopAttack(_) => lock(&self.world).apply_pet_stop_attack(),
+                    // A drag-and-drop also gets no reply
+                    // (`HandlePetSetAction` ends at `SetActionBar`), so the
+                    // moved slots are written to the copy here; otherwise
+                    // the next rebuild reverts the drop on screen.
+                    PetVerb::SetAction { moves, .. } => {
+                        lock(&self.world).apply_pet_set_action(moves);
+                    }
+                    _ => {}
+                }
+                self.session.send_packet(verb.packet())
+            }
+            // No packet: the capture is a reader on this side of the
+            // socket. Published on the traffic interval like the counters.
+            Command::CaptureTraffic(on) => {
+                self.session.capture().arm(on);
+                Ok(())
+            }
+            Command::Party(verb) => self.session.send_packet(verb.packet()),
+            Command::Taxi(verb) => self.session.send_packet(verb.packet()),
+            Command::Reputation(verb) => self.session.send_packet(verb.packet()),
+            Command::Social(verb) => self.session.send_packet(verb.packet()),
+            Command::Guild(verb) => self.session.send_packet(verb.packet()),
+            Command::Petition(verb) => self.session.send_packet(verb.packet()),
+            Command::Channel(verb) => self.session.send_packet(verb.packet()),
+            Command::Mail(verb) => {
+                let cached = match &verb {
+                    MailVerb::TextQuery { item_text_id, .. } => {
+                        Some((Kind::ItemText, u64::from(*item_text_id)))
+                    }
+                    _ => None,
+                };
+                self.send_unless_cached(cached, verb.packet())
+            }
+            Command::Trade(verb) => self.session.send_packet(verb.packet()),
+            Command::Loot(verb) => self.session.send_packet(verb.packet()),
+            Command::UseItem {
+                bag,
+                slot,
+                spell_index: Some(index),
+                target,
+            } => self.session.use_item(bag, slot, index, target),
+            Command::UseItem {
+                bag,
+                slot,
+                spell_index: None,
+                ..
+            } => self.session.auto_equip_item(bag, slot),
+            Command::OpenItem { bag, slot } => self.session.open_item(bag, slot),
+            Command::MoveItem {
+                src_bag,
+                src_slot,
+                dst,
+                count,
+            } => self.session.move_item(src_bag, src_slot, dst, count),
+            Command::EquipItem { bag, slot } => self.session.auto_equip_item(bag, slot),
+            Command::BankItem { bag, slot } => self.session.bank_item(bag, slot),
+            Command::SetActionButton { slot, packed } => {
+                self.session.set_action_button(slot, packed)
+            }
+            Command::SetActionBarToggles(mask) => self.session.set_actionbar_toggles(mask),
+            Command::CancelAutoRepeat => self.session.cancel_auto_repeat(),
+            Command::SetSheathed(state) => self.session.set_sheathed(u32::from(state)),
+            Command::TextEmote {
+                text_emote,
+                emote_num,
+                target,
+            } => self.session.text_emote(text_emote, emote_num, target),
+            Command::LearnTalent { talent_id, rank } => self.session.learn_talent(talent_id, rank),
+            // The loop keeps running after a logout request. The character
+            // is seated and rooted until `SMSG_LOGOUT_COMPLETE` or a
+            // cancel, and both arrive on this socket, so stopping the
+            // thread here would leave nothing to receive the answer.
+            Command::Logout { leaving: true } => self.session.logout_request(),
+            Command::Logout { leaving: false } => self.session.logout_cancel(),
+            Command::Chat { kind, target, text } => {
+                // The language the character speaks, which is the only one
+                // the server accepts from them.
+                let language = Language::for_race(self.character.race);
+                self.session.say(kind, language, target.as_deref(), &text)
+            }
+            // Death and resurrection commands. None is predicted: each is
+            // answered by a values block rather than a reply packet
+            // (`PLAYER_FLAGS_GHOST` set, health restored), so there is no
+            // local state to change and nothing to roll back if the server
+            // refuses. See `crate::play::death`.
+            Command::Repop => self.session.repop_request(),
+            Command::ResetInstances => self.session.reset_instances(),
+            Command::CorpseQuery => self.session.corpse_query(),
+            Command::ReclaimCorpse => self.session.reclaim_corpse(self.character.guid),
+            Command::ResurrectResponse { caster, accept } => {
+                self.session.resurrect_response(caster, accept)
+            }
+            Command::DuelAnswer { arbiter, accept } => self.session.duel_answer(arbiter, accept),
+            Command::SummonResponse { summoner } => self.session.summon_response(summoner),
+            Command::RequestPlayedTime => self.session.request_played_time(),
+            Command::RandomRoll { min, max } => self.session.random_roll(min, max),
+            Command::MinimapPing { x, y } => self.session.minimap_ping(x, y),
+            Command::RaidTargetSet { icon, guid } => self.session.raid_target_set(icon, guid),
+            Command::RaidTargetList => self.session.raid_target_list(),
+            Command::PushQuest { quest_id } => self.session.push_quest(quest_id),
+            Command::QuestConfirmAccept { quest_id } => {
+                self.session.quest_confirm_accept(quest_id)
+            }
+            Command::QuestPushResult { sharer, result } => {
+                self.session.quest_push_result(sharer, result)
+            }
+            Command::TutorialFlag { id } => self.session.tutorial_flag(id),
+            Command::TutorialClear => self.session.tutorial_clear(),
+            Command::TutorialReset => self.session.tutorial_reset(),
+            Command::ToggleWorn { helm } => self.session.toggle_worn(helm),
+            Command::Inspect { guid } => self.session.inspect(guid),
+            Command::InspectHonor { guid } => self.session.inspect_honor(guid),
+            Command::SpiritHealerActivate { healer } => {
+                self.session.spirit_healer_activate(healer)
+            }
+            Command::SetAmmo { entry } => self.session.set_ammo(entry),
+            // Answered by `drain_commands` before a command reaches here.
+            Command::Shutdown => Ok(()),
+        }
+    }
+
+    /// Send a query's packet unless the WDB cache can answer it; see
+    /// [`Self::answer_from_cache`].
+    fn send_unless_cached(
+        &mut self,
+        cached: Option<(Kind, u64)>,
+        packet: (Opcode, Vec<u8>),
+    ) -> io::Result<()> {
+        if self.answer_from_cache(cached)? {
+            return Ok(());
+        }
+        self.session.send_packet(packet)
     }
 
     /// Drain whatever the socket has, up to [`READ_SLICE`].
@@ -3780,10 +3110,11 @@ impl SessionLoop {
         // a retry loop would query forever for a number the server has already
         // refused.
         for (pet_number, guid) in pets {
-            self.session.pet(&PetVerb::NameQuery {
+            let verb = PetVerb::NameQuery {
                 pet_number,
                 pet: guid,
-            })?;
+            };
+            self.session.send_packet(verb.packet())?;
         }
         Ok(())
     }

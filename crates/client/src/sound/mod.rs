@@ -119,7 +119,7 @@ impl Plugin for SoundPlugins {
         app.configure_sets(
             Update,
             SoundSet
-                .after(crate::world::session::place_entities)
+                .after(crate::world::entity::place_entities)
                 .after(crate::interface::GameSet),
         );
     }

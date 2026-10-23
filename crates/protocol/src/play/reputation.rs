@@ -36,11 +36,13 @@
 //! sends fewer leaves the tail at zero, which is the same thing as not having
 //! met them.
 
-use crate::state::objects::Entity;
 
 /// How many reputation-list slots there are. The same 64 as
 /// [`vale_assets::tables::reputation::SLOTS`]; restated here because this
 /// crate does not depend on that one.
+
+use crate::opcodes::Opcode;
+
 pub const SLOTS: usize = 64;
 
 /// `SMSG_INITIALIZE_FACTIONS`, as the panel wants it: one `(flags, standing)`
@@ -169,16 +171,47 @@ pub fn set_watched_faction_body(reputation_list_id: i32) -> Vec<u8> {
     reputation_list_id.to_le_bytes().to_vec()
 }
 
-/// `PLAYER_FIELD_WATCHED_FACTION_INDEX` off a unit's fields, or `None` for
-/// anybody but the local player — the field is `PRIVATE`, like the stat block.
+/// The three requests the reputation panel sends to the server.
 ///
-/// The client reads it at `[playerFields + 0x10c4]`, which is index
-/// 188 + 1073 = 1261 with `PLAYER_FIELD_DUEL_ARBITER` as the block's base — the
-/// same conversion [`crate::play::stats`] documents.
-pub fn watched_faction(entity: &Entity) -> Option<i32> {
-    entity
-        .field(crate::state::fields::player::WATCHED_FACTION_INDEX)
-        .map(|raw| raw as i32)
+/// All three name a reputation-list id rather than a faction id, because the
+/// 64-slot table on both sides is keyed by it; see
+/// [`crate::play::reputation`]. None is acknowledged: at-war comes back as
+/// `SMSG_SET_FACTION_ATWAR`, inactive gets no reply, and the watched faction
+/// comes back as an update field. The panel draws from its own copy, and these
+/// requests only make the server store the change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReputationVerb {
+    /// `CMSG_SET_FACTION_ATWAR`.
+    AtWar { reputation_list_id: u32, at_war: bool },
+    /// `CMSG_SET_FACTION_INACTIVE`: which heading the row is filed under. This
+    /// is the only one of the three that is purely cosmetic: the server stores
+    /// it in `characters.data` and does nothing else with it.
+    Inactive { reputation_list_id: u32, inactive: bool },
+    /// `CMSG_SET_WATCHED_FACTION`. `-1` clears it, which is what the
+    /// interface's "Show as experience bar" checkbox sends when unchecked.
+    Watched { reputation_list_id: i32 },
+}
+
+impl ReputationVerb {
+    /// The opcode and the body this verb sends: the reputation panel's three
+    /// packets.
+    pub fn packet(&self) -> (Opcode, Vec<u8>) {
+        use ReputationVerb as V;
+        match *self {
+            V::AtWar { reputation_list_id, at_war } => (
+                Opcode::CMSG_SET_FACTION_ATWAR,
+                crate::play::reputation::set_faction_at_war_body(reputation_list_id, at_war),
+            ),
+            V::Inactive { reputation_list_id, inactive } => (
+                Opcode::CMSG_SET_FACTION_INACTIVE,
+                crate::play::reputation::set_faction_inactive_body(reputation_list_id, inactive),
+            ),
+            V::Watched { reputation_list_id } => (
+                Opcode::CMSG_SET_WATCHED_FACTION,
+                crate::play::reputation::set_watched_faction_body(reputation_list_id),
+            ),
+        }
+    }
 }
 
 #[cfg(test)]

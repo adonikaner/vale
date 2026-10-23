@@ -51,12 +51,12 @@
 //! There is no bank-close opcode and the server never says the conversation
 //! ended, exactly as [`super::gossip`] states for its windows.
 //! `CloseBankFrame()` is a local clear and a `BANKFRAME_CLOSED`, and
-//! [`super::gossip::out_of_range`] takes this window down with the others.
+//! [`super::gossip::close_when_npc_gone`] takes this window down on a walk-away.
 
 use bevy::prelude::*;
 
 use vale_protocol::play::bank::BankSlotResult;
-use vale_protocol::socket::session::NpcVerb;
+use vale_protocol::play::gossip::NpcVerb;
 
 use super::events::{BankframeClosed, BankframeOpened};
 use crate::world::session::Session;
@@ -97,7 +97,7 @@ impl BankWindow {
     }
 
     /// Take the window down, answering whether one was up — the door
-    /// [`super::gossip::out_of_range`] calls, like the stable's.
+    /// [`super::gossip::close_when_npc_gone`] calls, like the stable's.
     pub(crate) fn close(&mut self) -> bool {
         self.banker.take().is_some()
     }
@@ -114,6 +114,32 @@ impl Plugin for BankPlugin {
                 Update,
                 (announce, presses, act).chain().in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<BankWindow>(app);
+        super::gossip::closes_on_walk_away::<BankWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for BankWindow {
+    type Closed = super::events::BankframeClosed;
+    const CLOSED: super::events::BankframeClosed = super::events::BankframeClosed;
+
+    fn guid(&self) -> Option<u64> {
+        BankWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        BankWindow::close(self)
+    }
+}
+
+/// The open branch of `BankFrame_OnEvent` calls
+/// `BankFrameTitleText:SetText(UnitName("npc"))` and
+/// `SetPortraitTexture(BankPortraitTexture, "npc")`.
+impl super::gossip::NpcToken for BankWindow {
+    const ORDER: u8 = 6;
+
+    fn npc(&self) -> Option<u64> {
+        BankWindow::guid(self)
     }
 }
 
@@ -200,8 +226,20 @@ mod tests {
         app.add_message::<BankframeOpened>()
             .add_message::<BankframeClosed>()
             .init_resource::<Session>()
+            // The five resources `Units` reads, for the walk-away close.
+            .init_resource::<crate::interface::target::Selection>()
+            .init_resource::<crate::interface::target::Hovered>()
+            .init_resource::<crate::interface::gossip::NpcUnit>()
+            .init_resource::<crate::interface::reputation::PlayerStanding>()
+            .init_resource::<crate::interface::party::Party>()
             .add_plugins(BankPlugin);
         crate::interface::messages::Announce::register(&mut app);
+        // The banker the tests open, in view and unplaced, so the walk-away
+        // close holds rather than reading a despawned NPC.
+        app.world_mut().spawn(crate::world::entity::WorldEntity {
+            guid: 0x77,
+            ..Default::default()
+        });
         app
     }
 

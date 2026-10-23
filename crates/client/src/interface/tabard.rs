@@ -8,7 +8,6 @@
 //! ```text
 //! track          the guild's saved emblem, the character's rank and money
 //! apply_answers  MSG_TABARDVENDOR_ACTIVATE and the answer to a save
-//! walk_away      the window, when the designer is out of reach
 //! act            what the interface pressed
 //! preview        the design, for the model in the window
 //! ```
@@ -51,8 +50,8 @@ use super::events::{CloseTabardFrame, OpenTabardFrame, TabardCansaveChanged, Tab
 use crate::lua::panels::tabard::Press;
 use crate::world::session::Session;
 use vale_protocol::play::guild::{emblem_result, Emblem};
-use vale_protocol::play::spells::PlayerEvent;
-use vale_protocol::socket::session::GuildVerb;
+use vale_protocol::state::events::PlayerEvent;
+use vale_protocol::play::guild::GuildVerb;
 
 /// One of the designer's two packets, forwarded by
 /// [`crate::world::incoming::drain_events`].
@@ -94,10 +93,40 @@ impl Plugin for TabardPlugin {
             .init_resource::<TabardPreview>()
             .add_systems(
                 Update,
-                (track, apply_answers, walk_away, act, preview)
+                (
+                    track,
+                    apply_answers.before(super::gossip::NpcSet::Close),
+                    act.after(super::gossip::NpcSet::Close),
+                    preview,
+                )
                     .chain()
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<TabardWindow>(app);
+        super::gossip::closes_on_walk_away::<TabardWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for TabardWindow {
+    type Closed = super::events::CloseTabardFrame;
+    const CLOSED: super::events::CloseTabardFrame = super::events::CloseTabardFrame;
+
+    fn guid(&self) -> Option<u64> {
+        TabardWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        TabardWindow::close(self)
+    }
+}
+
+/// `TabardFrame_OnEvent` calls `SetPortraitTexture(TabardFramePortrait,
+/// "NPC")` and `UnitName("NPC")`.
+impl super::gossip::NpcToken for TabardWindow {
+    const ORDER: u8 = 8;
+
+    fn npc(&self) -> Option<u64> {
+        TabardWindow::guid(self)
     }
 }
 
@@ -174,21 +203,6 @@ fn apply_answers(
     }
 }
 
-/// Close the window when the designer is out of reach or gone. The test is
-/// the one every NPC window uses, and it applies only while the `"npc"` token
-/// names this designer.
-fn walk_away(
-    units: super::api::Units,
-    npc: Res<super::gossip::NpcUnit>,
-    mut window: ResMut<TabardWindow>,
-    mut closed: MessageWriter<CloseTabardFrame>,
-) {
-    let Some(guid) = window.guid() else { return };
-    if npc.0 == Some(guid) && super::gossip::npc_gone(&units) && window.close() {
-        closed.write(CloseTabardFrame);
-    }
-}
-
 /// Act on what the interface pressed.
 fn act(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
@@ -199,7 +213,8 @@ fn act(
     mut pending: MessageWriter<TabardSavePending>,
 ) {
     let Some(host) = host else { return };
-    // The window was closed by `walk_away`.
+    // The window was closed by the walk-away close,
+    // `gossip::close_when_npc_gone`.
     if window.guid().is_none() && crate::lua::panels::tabard::held(&host).borrow().vendor.is_some() {
         crate::lua::panels::tabard::held(&host).borrow_mut().vendor = None;
     }

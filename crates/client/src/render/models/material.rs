@@ -770,7 +770,7 @@ struct UvAnimated {
     index: u16,
     /// The model's sequence-0 window, which is the clock a non-global track
     /// runs on — the same clip the emitters and the trails use.
-    clip: Option<crate::render::particles::ParticleClip>,
+    clip: Option<vale_assets::world::m2::ParticleClip>,
     /// The row of [`UV_TABLE`] this material reads, or `None` when the table
     /// was full at registration and the matrix is written into the material.
     row: Option<u32>,
@@ -1128,7 +1128,7 @@ impl Materials<'_> {
         mut material: M2Material,
         anims: Arc<vale_assets::world::m2::M2TextureAnims>,
         index: u16,
-        clip: Option<crate::render::particles::ParticleClip>,
+        clip: Option<vale_assets::world::m2::ParticleClip>,
     ) -> Handle<M2Material> {
         let row = self.uv.take_row();
         if let Some(row) = row {

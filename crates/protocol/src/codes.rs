@@ -373,7 +373,7 @@ pub const CHAR_CREATE_SUCCESS: u8 = 46;
 /// `SMSG_CHAR_DELETE`. The `CHAR_DELETE_*` window is 56..=59 and only this one
 /// value means the character is gone; vmangos sends `CHAR_DELETE_FAILED` for a
 /// guild leader and **nothing at all** for its other three refusals, which is
-/// [`crate::play::charcreate::delete_character`]'s problem rather than this table's.
+/// [`crate::socket::world::delete_character`]'s problem rather than this table's.
 pub const CHAR_DELETE_SUCCESS: u8 = 57;
 
 /// The `GlueStrings.lua` key for any `ResponseCodes` byte, or `None` for one the

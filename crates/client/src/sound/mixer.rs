@@ -409,7 +409,7 @@ fn attach_listener(
     // `WorldCamera` alone: the marker only ever sits on the one `Camera3d`, so
     // the third filter the first draft carried said nothing.
     camera: Query<Entity, With<crate::world::camera::WorldCamera>>,
-    player: Query<Entity, With<crate::world::session::LocalPlayer>>,
+    player: Query<Entity, With<crate::world::entity::LocalPlayer>>,
     listening: Query<Entity, With<SpatialListener>>,
 ) {
     // **`SoundListenerAtCharacter` is a real setting and its default is on**,

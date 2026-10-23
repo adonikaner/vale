@@ -81,7 +81,8 @@ pub(super) fn reference(
         && ui
             .small_button("copy")
             .on_hover_text(
-                "copy this LightParams row with its 18 colour bands and 6 float bands, and                  set this field to the copy's id; other lights that use the original keep it",
+                "copy this LightParams row with its 18 colour bands and 6 float bands, and \
+                 set this field to the copy's id; other lights that use the original keep it",
             )
             .clicked()
     {
@@ -116,7 +117,9 @@ pub(super) fn reference(
             && ui
                 .small_button("+ new")
                 .on_hover_text(
-                    "create a LightParams row with its 18 colour bands and 6 float bands,                      copied from this light's clear LightParams (or from the Eastern Kingdoms                      default light's), and set this field to its id",
+                    "create a LightParams row with its 18 colour bands and 6 float bands, \
+                     copied from this light's clear LightParams (or from the Eastern Kingdoms \
+                     default light's), and set this field to its id",
                 )
                 .clicked()
         {

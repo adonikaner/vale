@@ -227,7 +227,7 @@ fn read_earlier_file(account: &str, config: &Config) -> Option<Vec<(String, Save
 fn apply(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     session: Res<crate::world::session::Session>,
-    world: Res<crate::world::session::WorldStatus>,
+    world: Res<crate::world::status::WorldStatus>,
     mut saved: ResMut<SavedVariables>,
 ) {
     let Some(mut host) = host else { return };
@@ -552,7 +552,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(SavedVariables::default())
             .init_resource::<crate::world::session::Session>()
-            .init_resource::<crate::world::session::WorldStatus>()
+            .init_resource::<crate::world::status::WorldStatus>()
             .insert_non_send(crate::lua::host::LuaHost::new().expect("the interpreter starts"))
             .add_systems(Update, apply);
         app.update();

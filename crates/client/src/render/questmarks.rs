@@ -42,7 +42,7 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 
 use crate::render::models::{Lookup, ModelCache};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 
 /// Marks the root of one mark, so the whole thing goes with one despawn.
 #[derive(Component)]

@@ -30,7 +30,7 @@ use crate::render::draws::DrawCalls;
 use crate::render::models::{MaterialPool, ModelCache};
 use crate::render::wmos::{WmoCache, WmoPart, WmoPlacement};
 use crate::world::entities::{AttachedTo, EntityModel, EntityPart, NoModel, Playback};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 
 use super::{row, Readout, DIM};
 

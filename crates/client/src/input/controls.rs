@@ -2,7 +2,7 @@
 //! than from keys.
 //!
 //! This is the module that closes a hole the key-bindings panel opened. Until
-//! it existed, `world::session::send_input` read the keyboard directly —
+//! it existed, `send_input` read the keyboard directly —
 //!
 //! ```rust,ignore
 //! forward: keys.pressed(KeyCode::KeyW) || autorun,
@@ -40,7 +40,7 @@
 //!   of `SHIFT-TAB` and a hundred others, so holding it to walk slowed the
 //!   character down on every shifted binding in the game.
 //! * **Edged** — `Jump` and `SitOrStand`, which are packets rather than states.
-//!   They stay where they were (`world::session`), and what changed is only that
+//!   They stay where they were ([`send_input`]), and what changed is only that
 //!   the edge arrives as a binding instead of as `just_pressed(Space)`.
 //!
 //! ## Autorun is cancelled by moving, and that is the reference's rule
@@ -69,6 +69,7 @@ use bevy::prelude::*;
 use vale_protocol::state::movement::Controls;
 
 use crate::input::bindings::{Binding, BindingPressed, Control};
+use crate::world::session::Session;
 
 /// **The eight held controls and the two latches**, as the interface last left
 /// them.
@@ -152,7 +153,7 @@ impl ControlState {
     /// must still be walking afterwards.
     /// …and the wire's own shape, with the mouse's two facts folded in.
     ///
-    /// `steering` and `mouse_autorun` are `world::session::send_input`'s, off
+    /// `steering` and `mouse_autorun` are `send_input`'s, off
     /// the buttons — see the module comment on why they are not bindings.
     ///
     /// **While steering, a turn is a strafe.** The character's heading is the
@@ -208,7 +209,7 @@ impl Plugin for ControlsPlugin {
 
 /// Drain this frame's bindings into the state.
 ///
-/// **Public so that `world::session::send_input` can order itself after it**,
+/// **Public so that `send_input` can order itself after it**,
 /// which is the edge that decides whether a movement key is felt this frame or
 /// the next. Not inherited from a set: `send_input` cannot run after the whole
 /// of [`crate::interface::GameSet`] (a targeting system in it is already ordered
@@ -249,6 +250,175 @@ pub fn apply(
     }
     for BindingPressed(binding) in pressed.read() {
         state.apply(binding);
+    }
+}
+
+/// Which movement keys are held, mouse-look, and the jump.
+///
+/// This follows the 1.12.1 client's control scheme. A report that movement felt
+/// "rigid, wonky" came from three of its rules being missing:
+///
+/// * A held right button turns the character with the camera, and while it is
+///   held `A`/`D` strafe instead of turning. Every player of this game steers
+///   this way. Without it the only way to turn was a 180°/s keyboard turn, with
+///   the camera left pointing wherever it started.
+/// * Both buttons together run forward, into the screen. This mouse autorun is
+///   what makes right-drag steering usable, and it goes where the camera
+///   points, because the right button has already turned the character to
+///   match it. It used to follow whatever heading the last keyboard turn left
+///   the character with, which after any left-drag is not where the player is
+///   looking.
+/// * The camera does not turn the character unless asked. A left-drag looks
+///   around a character who keeps facing the same way.
+pub fn send_input(
+    time: Res<Time>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    controls: Res<crate::input::controls::ControlState>,
+    mut pressed: MessageReader<crate::input::bindings::BindingPressed>,
+    session: Res<Session>,
+    rig: Res<crate::world::camera::CameraRig>,
+    // The last heading handed to the session, so a held button that is not
+    // being dragged does not put sixty identical commands a second on the
+    // channel.
+    mut sent: Local<Option<f32>>,
+    // The same record for the pitch, which changes on a different gesture.
+    mut sent_pitch: Local<Option<f32>>,
+    mut predicted: ResMut<crate::world::predict::Predicted>,
+) {
+    let Some(active) = session.active.as_ref() else {
+        return;
+    };
+
+    // A key typed into the chat line is not a movement key, and
+    // [`crate::input::bindings`] refuses it, not this function: it returns
+    // before the dispatch while a text field has focus or a frame declaring
+    // `enableKeyboard` is shown, so no key edge reaches `ControlState` and
+    // typing "we ran away" cannot hold W, E, A and D.
+    //
+    // This function must not zero the controls. It used to, on the same flag,
+    // before reading the mouse buttons, so opening the world map stopped a
+    // walking character and cancelled a both-buttons autorun already running.
+    // `ControlState` is frozen while something else has the keyboard: what was
+    // held stays held, the character keeps moving, and the mouse keeps
+    // steering. See [`crate::input::controls::apply`], where the 1.12.1
+    // client's rule is documented against `WorldMapFrame.xml`.
+    let steering = buttons.pressed(MouseButton::Right);
+    let autorun = steering && buttons.pressed(MouseButton::Left);
+    // The eight controls come from the binding table, not from the keyboard.
+    // Before the key-bindings panel existed, this function read `KeyCode::KeyW`
+    // and its seven neighbours, so a rebound key did two things at once: `A` is
+    // `TURNLEFT` in the shipped defaults, so binding it to `ACTIONBUTTON3` cast
+    // a spell and also turned the character. See [`crate::input::controls`],
+    // which now holds the eight and reaches them through the game's own
+    // `<Binding>` bodies.
+    //
+    // The two values still read from the mouse cannot collide with a keyboard
+    // binding (`BUTTON1`/`BUTTON2` are key names no `KeyCode` can produce), and
+    // they are passed in rather than read there so that the controls are
+    // assembled in one place.
+    // The keys go to the mover, whichever unit that is. While a possession
+    // lasts, the session's simulation is the possessed body (see
+    // [`vale_protocol::socket::session::SessionStatus::mover`]), so nothing
+    // here needs to know which: the controls, the heading and the pitch all
+    // reach whatever `CMSG_SET_ACTIVE_MOVER` last named, and the character
+    // stands still because nothing is sent about it.
+    let controls = controls.to_controls(steering, autorun);
+    active.live.set_controls(controls);
+    // The same keys go to the prediction in the same frame. The session thread
+    // receives them on its next tick, but the character has to move in this
+    // frame. See `crate::world::predict`. Both halves apply a change from the
+    // moment it was read: the session from the instant the command carries,
+    // the prediction from this frame's render clock.
+    predicted.set_controls(controls, time.elapsed_secs());
+
+    // Mouse-look: the character faces wherever the camera looks, from the
+    // moment the button goes down. The rig's yaw is the angle to the eye, so
+    // the direction the character looks (away from the camera) is half a turn
+    // from it.
+    //
+    // Writing the heading as an absolute value rather than as a delta fixes
+    // two bugs:
+    //
+    // * Holding both buttons runs where the camera points. Autorun used to
+    //   follow whatever heading the character had, which after a left-drag is
+    //   not where the player is looking: a player who orbited the view to the
+    //   front and held both buttons ran backwards out of shot.
+    // * A turn cannot be lost. The old accumulator was
+    //   `WorldStatus::orientation`, which `poll_world` overwrites from the
+    //   session every time the simulation advances, so a drag's increment was
+    //   dropped whenever the round trip had not finished, and the character
+    //   turned unevenly and slower than the drag.
+    //
+    // The 1.12.1 client also snaps on press: orbit the camera with the left
+    // button, press the right, and the character turns to match rather than
+    // the camera swinging back behind them.
+    //
+    // A character the server has stopped does not turn with the mouse. The
+    // mover refuses the heading anyway (`Mover::face`), but the record of what
+    // was sent must be cleared too. `sent` is what stops sixty identical
+    // commands a second, and a heading recorded as sent while the mover was
+    // refusing it would never be sent again, so the character would keep its
+    // old facing until the player dragged to a new one. The camera keeps
+    // turning either way, which is 1.12's behaviour: while stunned the player
+    // controls the view but not the body.
+    // The camera's pitch is also the body's, under the same condition.
+    // `CameraRig::pitch` is measured to the eye, so a positive pitch is a
+    // camera above looking down, and the character is looking down too. It is
+    // negated for the same reason the heading is turned by π.
+    //
+    // Only while steering. A left-drag looks around a character who keeps
+    // facing the same way, and a swimmer's pitch is the same rule on another
+    // axis. When the pitch was sent unconditionally, a left-drag moved a
+    // swimming character up and down while the yaw correctly did nothing, so
+    // free look was free on one axis and not the other.
+    if steering && predicted.can_turn() {
+        let heading = crate::world::camera::mouse_look_heading(&rig);
+        if *sent != Some(heading) {
+            active.live.face(heading);
+            *sent = Some(heading);
+        }
+        // The same heading goes to the prediction in the same frame, as the
+        // keys do above. Without it the camera rig turned every frame and the
+        // character it frames turned in 25 ms steps. It is set on every frame
+        // of the gesture, not only when the check above lets a command
+        // through: that check limits the channel, and the prediction needs to
+        // know when the heading was last requested. See
+        // `crate::world::predict::Predicted::facing`.
+        predicted.set_facing(heading, time.elapsed_secs());
+        let pitch = -rig.pitch;
+        if sent_pitch.is_none_or(|last: f32| (last - pitch).abs() > 0.001) {
+            active.live.pitch(pitch);
+            *sent_pitch = Some(pitch);
+        }
+    } else {
+        *sent = None;
+        // Cleared with the heading for the same reason: `sent_pitch` stops
+        // sixty identical commands a second, and a value kept across gestures
+        // would block that pitch from being sent again until the player dragged
+        // to a different angle.
+        *sent_pitch = None;
+    }
+
+    // `JUMP` jumps once per press. It is a binding rather than
+    // `just_pressed(Space)`, for the same reason the eight controls are.
+    //
+    // One jump per press is required: the server allows exactly one
+    // `MSG_MOVE_JUMP` between landings (`CHEAT_TYPE_MULTI_JUMP`, rejected
+    // outright on the reference server), so a held key must not become sixty
+    // commands a second. `JUMP` declares no `runOnUp`, so the interface sends
+    // the press and nothing else; the binding declaration, not this function,
+    // provides the edge. The mover refuses a second jump anyway; this keeps
+    // extra jumps off the channel.
+    //
+    // In the water the same key is still `PITCHUP`: the defaults bind `SPACE`
+    // to `JUMP` only, and a swimmer's ascent comes from whatever is bound to
+    // `PITCHUP`, which is a held control and arrives through `ControlState`
+    // above. `MOVEFLAG_SWIMMING` decides between them in both directions; see
+    // `Mover::pitch_flags`.
+    for crate::input::bindings::BindingPressed(binding) in pressed.read() {
+        if matches!(binding, crate::input::bindings::Binding::Jump) {
+            active.live.jump();
+        }
     }
 }
 
@@ -375,7 +545,7 @@ mod tests {
     fn a_binding_that_is_not_a_control_is_not_taken() {
         let mut state = ControlState::default();
         assert!(!state.apply(&Binding::ActionButton(1)));
-        assert!(!state.apply(&Binding::Jump), "an edge, and world::session's");
+        assert!(!state.apply(&Binding::Jump), "an edge, and send_input's");
         assert_eq!(state, ControlState::default());
     }
 

@@ -15,7 +15,7 @@ use crate::state::movement;
 use crate::opcodes::Opcode;
 use crate::play::combatlog::{self, CombatEvent};
 use crate::play::sound;
-use crate::play::spells::PlayerEvent;
+use crate::state::events::PlayerEvent;
 use crate::state::update;
 use crate::socket::world::Packet;
 use flate2::read::ZlibDecoder;
@@ -552,7 +552,7 @@ pub(super) fn play_spell_visual(ctx: &mut Incoming, pkt: &Packet, impact: bool) 
 /// because the interface's cast bar is driven by these packets. This client
 /// once drew its own wind-up, release and cast bar at the key press and removed
 /// them when the server refused; build 5875 does neither. See
-/// [`crate::play::spells::PlayerEvent::CastStarted`], which quotes vmangos'
+/// [`crate::state::events::PlayerEvent::CastStarted`], which quotes vmangos'
 /// comment and states the 1.12.1 client's behaviour.
 pub(super) fn cast(ctx: &mut Incoming, pkt: &Packet, start: bool) {
     let Some(cast) = read(ctx.stats, pkt, action::parse_spell_cast(&pkt.body, start)) else {

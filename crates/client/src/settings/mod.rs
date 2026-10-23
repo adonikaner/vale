@@ -11,6 +11,8 @@
 //!                 character
 //! addons.rs       AddOns.txt: which addons each character has enabled, and
 //!                 the addon list read from `Interface\AddOns\`
+//! channels.rs     chat-cache.txt: the chat channels a character keeps, per
+//!                 character
 //! ```
 //!
 //! The formats are in `vale_assets::interface` and the install folder's paths
@@ -19,6 +21,7 @@
 
 pub mod addons;
 pub mod cameracache;
+pub mod channels;
 pub mod cvars;
 pub mod keybindings;
 pub mod savedvars;
@@ -39,6 +42,7 @@ impl Plugin for SettingsPlugins {
             keybindings::KeybindingsPlugin,
             cameracache::CameraCachePlugin,
             addons::AddonsPlugin,
+            channels::ChatCachePlugin,
         ));
     }
 }

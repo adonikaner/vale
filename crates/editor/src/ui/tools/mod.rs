@@ -125,7 +125,10 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 let pop = ui
                     .add_enabled(editing.popout.editing, egui::Button::new("Pop Out").small())
                     .on_hover_text(
-                        "Open this workspace in a window of its own, and return this window                          to the world. Dock or close that window to bring it back. Each                          workspace can have a window, except that the table workspaces share                          one.",
+                        "Open this workspace in a window of its own, and return this window \
+                         to the world. Dock or close that window to bring it back. Each \
+                         workspace can have a window, except that the table workspaces share \
+                         one.",
                     )
                     .on_disabled_hover_text("Not during a playtest.");
                 if pop.clicked() {
@@ -147,6 +150,8 @@ pub(crate) fn pointer(ui: &mut egui::Ui, _: Subject<'_>, _: &mut Editing<'_>) {
     theme::heading(ui, "Pointer");
     theme::note(
         ui,
-        "Select reports the position under the pointer and changes          nothing. Choose a tool on the rail to edit, or Measure to inspect          a point and the distance between two points.",
+        "Select reports the position under the pointer and changes \
+         nothing. Choose a tool on the rail to edit, or Measure to inspect \
+         a point and the distance between two points.",
     );
 }

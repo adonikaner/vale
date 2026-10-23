@@ -30,23 +30,10 @@
 use bevy::prelude::*;
 
 use vale_protocol::play::bindpoint::BindPoint;
-use vale_protocol::socket::session::NpcVerb;
+use vale_protocol::play::gossip::NpcVerb;
 
 use crate::interface::events::ConfirmBinder;
 use crate::world::session::Session;
-
-/// **How far an innkeeper may be and still be bound to** — `CheckBinderDist()`,
-/// which the popup's `OnUpdate` hides the dialog on.
-///
-/// The server's own interaction distance, not a reading of the client's: every
-/// gossip verb goes through `GetNPCIfCanInteractWith`, which is
-/// `IsWithinDistInMap(pl, INTERACTION_DISTANCE)` at 5.0 yards plus the two
-/// units' bounding radii. **The client's own number was not measured**, so this
-/// is the distance at which the *request* would be refused rather than the one
-/// at which the reference takes the box away; they are the same rule in
-/// practice, because a popup that stayed up past it would send a packet the
-/// server drops.
-const BINDER_RANGE: f32 = 10.0;
 
 /// **What the server said about the home**, and the innkeeper waiting on an
 /// answer.
@@ -264,20 +251,10 @@ pub fn binder_in_range(home: &HomeBind, units: &crate::interface::api::Units) ->
     let Some(guid) = home.pending() else {
         return true;
     };
-    let Some((_, _, Some(here))) = units
-        .all
-        .iter()
-        .find(|(_, unit, _)| unit.is_self)
-    else {
-        return true;
-    };
-    let Some((_, _, Some(there))) = units.all.iter().find(|(_, unit, _)| unit.guid == guid) else {
-        // **An innkeeper who is not in the world is not out of range.** The
-        // guid is scanned rather than reached through a token because the
-        // gossip window has already closed by the time the question arrives, so
-        // `"npc"` names nobody — and an entity streamed out from under the
-        // popup would otherwise read as "walked away" on the frame it left.
-        return true;
-    };
-    here.translation.distance(there.translation) <= BINDER_RANGE
+    // An innkeeper who is not in the world is not out of range. The guid is
+    // measured rather than reached through a token because the gossip window
+    // has already closed by the time the question arrives, so `"npc"` names
+    // nobody, and an entity streamed out from under the popup would otherwise
+    // read as "walked away" on the frame it left.
+    super::gossip::reach_to(units, guid).is_none_or(|yards| yards <= super::gossip::POPUP_RANGE)
 }

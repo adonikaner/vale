@@ -39,13 +39,16 @@
 use crate::axes;
 use crate::render::models::{M2Material, M2Params, Materials, SceneLighting, M2_ALPHA_KEY};
 use crate::render::nothing;
-use crate::render::particles::{Anchor, ParticleClip};
+use crate::render::particles::Anchor;
+use crate::render::strip;
+use vale_assets::world::m2::track::clip_time;
+use vale_assets::world::m2::ParticleClip;
 use vale_assets::world::m2::{M2Ribbon, M2Track};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::ViewVisibility;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::PrimitiveTopology;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -498,36 +501,9 @@ fn simulate_ribbons(
                 ((now - e.born) / def.edge_lifetime).clamp(0.0, 1.0),
             );
         }
-        let mut indices = Vec::with_capacity((spans - 1) * 6);
-        for k in 0..(spans - 1) as u32 {
-            let b = k * 2;
-            indices.extend_from_slice(&[b, b + 1, b + 2, b + 1, b + 3, b + 2]);
-        }
         if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
-            let count = positions.len();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; count]);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![rgba; count]);
-            mesh.insert_indices(Indices::U32(indices));
+            strip::write(&mut mesh, positions, Some(uvs), strip::Colour::All(rgba), strip::indices(spans));
         }
-    }
-}
-
-/// Converts seconds of trail age to the clip's millisecond clock, using the
-/// emitters' rule because it is the same clock.
-fn clip_time(clip: &Option<ParticleClip>, age: f32) -> u32 {
-    let ms = (age * 1000.0) as u32;
-    match clip {
-        Some(c) => {
-            let span = c.end.saturating_sub(c.start).max(1);
-            if c.loops {
-                ms % span
-            } else {
-                ms.min(span)
-            }
-        }
-        None => ms,
     }
 }
 
@@ -556,25 +532,6 @@ impl Plugin for RibbonPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn clip(start: u32, end: u32, loops: bool) -> Option<ParticleClip> {
-        Some(ParticleClip {
-            start,
-            end,
-            loops,
-            global_sequences: Arc::from(&[][..]),
-        })
-    }
-
-    /// A one-shot clip clamps rather than wraps, so a slash finishes: a trail
-    /// whose height returns to zero at 267 ms must stay at zero, not restart
-    /// every 1.1 seconds.
-    #[test]
-    fn a_one_shot_clip_clamps_and_a_looping_one_wraps() {
-        assert_eq!(clip_time(&clip(3300, 4433, false), 2.0), 1133);
-        assert_eq!(clip_time(&clip(3300, 4433, false), 0.5), 500);
-        assert_eq!(clip_time(&clip(0, 1000, true), 2.5), 500);
-    }
 
     /// A trail never gives Bevy a zero-vertex mesh. For trails this case
     /// always occurs: a ribbon is spawned with no edges, so `simulate_ribbons`

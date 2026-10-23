@@ -75,10 +75,12 @@
 //! key, but the item names come from the server's templates, and the
 //! description's `$s1`/`$d` variables are substituted in
 //! [`vale_assets::tables::spelltext`]; both happen behind
-//! [`crate::interface::api::spell_tip`]. This module only composes the lines,
-//! in the game's order: name, cost/range, cast/cooldown, reagents, then the
-//! description in green, the one colour on the plate that is not gold or
-//! white.
+//! [`crate::interface::api::spell_tip`]. The lines are composed in
+//! [`crate::interface::plate::spell_plate`], in the game's order: name,
+//! cost/range, cast/cooldown, reagents, then the description in green, the one
+//! colour on the plate that is not gold or white. The unit's lines are
+//! [`crate::interface::plate::unit_plate`]'s. This module writes them into the
+//! widget.
 //!
 //! The population methods with no state behind them (`SetMerchantCompareItem`,
 //! `SetShapeshift`, `SetTrackingSpell`) are in [`super::super::api::stubs`]
@@ -148,11 +150,11 @@ fn show_world_tooltip(
     object: Res<crate::interface::object::HoveredObject>,
     // The window, read only to detect pointer movement; see [`Latch`]. A
     // floating plate's position comes from `GetCursorPosition()` inside the
-    // chunk. This is the same conversion through the same `Viewport` type that
+    // chunk. This is the same conversion through the same viewport that
     // `lua::api::mouse` uses, not a separate derivation.
     windows: Query<&bevy::window::Window, With<bevy::window::PrimaryWindow>>,
-    // The scale that conversion uses; see [`crate::ui::scale`].
-    ui_scale: Res<crate::ui::scale::InterfaceScale>,
+    // That viewport; see [`crate::ui::scale::InterfaceViewport`].
+    viewport: Res<crate::ui::scale::InterfaceViewport>,
     mut last: Local<Option<Latch>>,
 ) {
     let Some(host) = host else { return };
@@ -189,13 +191,8 @@ fn show_world_tooltip(
         at: (plate == Plate::Floating)
             .then(|| {
                 let window = windows.single().ok()?;
-                let view = super::layout::Viewport::of(
-                    f64::from(window.width()),
-                    f64::from(window.height()),
-                    ui_scale.get(),
-                );
                 let at = window.cursor_position()?;
-                let (x, y) = view.to_units(f64::from(at.x), f64::from(at.y));
+                let (x, y) = viewport.view.to_units(f64::from(at.x), f64::from(at.y));
                 Some((x.round() as i32, y.round() as i32))
             })
             .flatten(),
@@ -476,10 +473,8 @@ const DEFAULT_LINE_HEIGHT: f64 = 12.0;
 /// The client's default text colour, gold, `0xffffd200`. See the module
 /// comment for the old `AddLine` form that makes it visible.
 const GOLD: [f64; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
-/// The spell tooltip's two other colours: white for the name and gray for the
-/// rank column.
+/// White, for the lines this module writes without a plate.
 const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
-const GRAY: [f64; 4] = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
 /// The red used for a requirement the character does not meet, defined here
 /// only for the test that checks it: the plate draws
 /// [`crate::interface::plate::Ink::Red`]. It is written out independently so
@@ -1806,235 +1801,48 @@ pub(in crate::lua) fn install_scoped<'scope, 'env: 'scope>(
     Ok(())
 }
 
-/// The unit tooltip's lines, as the 1.12.1 client's `GameTooltip:SetUnit`
-/// composes them.
-///
-/// The order matches the client:
-///
-/// ```text
-/// 1  the name                              gold, the engine default; a
-///                                          player's honor rank in front
-/// 2  subname                               a creature template's tag
-/// 3  Dolgrin's Pet                         the unit's owner
-/// 4  Level <level> <class> (<type>)        the four TOOLTIP_UNIT_LEVEL* keys
-/// 5  PvP                                   on UNIT_FIELD_FLAGS bit 12
-/// ```
-///
-/// The first line is [`vale_assets::look::unitname::titled_name`] with the
-/// title always on: the `UnitNamePlayerPVPTitle` switch applies to the
-/// floating name only. A player with a city title has it as a second line of
-/// the same cell. The subname and the owner line are the floating name's
-/// second and third lines without their angle brackets. The tooltip has no
-/// guild line: the 1.12.1 client shows a player's guild under the floating
-/// name only.
-///
-/// The third line needs the most work. Two cells are computed first, and the
-/// format is chosen by which of them is non-empty:
-///
-/// * class: for a player-controlled unit, `"%s %s"` of race then class, which
-///   makes the line read "Level 5 Human Warrior"; for anything else, the
-///   localised `CreatureType.dbc` name.
-/// * type: the `PLAYER` key for a player-controlled unit; otherwise the
-///   classification word, one of five keys, which is empty for a normal and
-///   for a rare creature.
-///
-/// The four keys are therefore `TOOLTIP_UNIT_LEVEL_CLASS_TYPE`, `…_CLASS`,
-/// `…_TYPE` and `TOOLTIP_UNIT_LEVEL`, in that precedence. A level of zero or
-/// less prints `"??"` instead of the number; that is how a unit far above the
-/// player is shown.
-///
-/// Not drawn, because the state behind them does not exist in this client:
-/// `RESURRECTABLE`, `PLAYER_OFFLINE`, the faction name, and the `Civilian`
-/// prefix and line of a non-combatant NPC. Each depends on a missing
-/// subsystem, so the line is omitted rather than filled with a guess; [`super::super::api::stubs`]' first paragraph
-/// gives the same reasoning.
-fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::interface::api::UnitTip) -> mlua::Result<()> {
-    // The name takes the plate's default colour rather than a specific one:
-    // `GameTooltip.xml`'s `UPDATE_MOUSEOVER_UNIT` handler replaces it with
-    // `GameTooltip_UnitColor("mouseover")` immediately afterwards.
-    let word = |key: &str| lua.globals().get::<Option<String>>(key).ok().flatten();
-    let parts = vale_assets::look::unitname::NameParts {
-        name: &tip.name,
-        player: tip.title.player,
-        pvp_rank: tip.title.pvp_rank,
-        pvp_medal: tip.title.pvp_medal,
-        team: tip.title.team,
-        female: tip.title.female,
-        owner: tip
-            .title
-            .owner
-            .as_ref()
-            .map(|(title, name)| (*title, name.as_str())),
-        ..Default::default()
-    };
-    let name = vale_assets::look::unitname::titled_name(&parts, true, &word);
-    append(lua, this, (text(lua, &name)?, GOLD), None, false)?;
-    if !tip.sub_name.is_empty() {
-        append(lua, this, (text(lua, &tip.sub_name)?, WHITE), None, false)?;
-    }
-    if let Some(owner) = vale_assets::look::unitname::owner_line(&parts, &word) {
-        append(lua, this, (text(lua, &owner)?, WHITE), None, false)?;
-    }
-
-    // `%d` of the level, or "??" as the client shows. `GlobalStrings.lua` has
-    // no key for "??", so it is a literal here.
-    let level = if tip.level > 0 { tip.level.to_string() } else { "??".to_string() };
-    let class = match (tip.race, tip.class) {
-        (Some(race), Some(class)) => format!("{race} {class}"),
-        // A player whose race or class never arrived falls through to the
-        // creature branch, which for a player gives an empty string.
-        _ => tip.creature_type.unwrap_or("").to_string(),
-    };
-    let kind = if tip.player_controlled {
-        lua.globals().get::<Option<String>>("PLAYER")?.unwrap_or_default()
-    } else if tip.classification.is_empty() {
-        String::new()
-    } else {
-        lua.globals()
-            .get::<Option<String>>(tip.classification)?
-            .unwrap_or_default()
-    };
-    let line = match (class.is_empty(), kind.is_empty()) {
-        (false, false) => global_format_all(lua, "TOOLTIP_UNIT_LEVEL_CLASS_TYPE", &[&level, &class, &kind]),
-        (false, true) => global_format_all(lua, "TOOLTIP_UNIT_LEVEL_CLASS", &[&level, &class]),
-        (true, false) => global_format_all(lua, "TOOLTIP_UNIT_LEVEL_TYPE", &[&level, &kind]),
-        (true, true) => global_format_all(lua, "TOOLTIP_UNIT_LEVEL", &[&level]),
-    };
-    if let Some(line) = line {
-        append(lua, this, (text(lua, &line)?, WHITE), None, false)?;
-    }
-
-    // The zone name, without a label, under the level line: shown for a party
-    // member in another zone and for nobody else. The decision is made in
-    // [`crate::interface::api::UnitTip::zone`].
-    //
-    // The line's position is a reconstruction: the reference screenshot shows
-    // it as the third line, directly under the level/class line, and the
-    // client's order for it is not otherwise known. It is a bare name rather
-    // than `ZONE_COLON`; the file has both keys and the plate uses neither as
-    // a label.
-    if !tip.zone.is_empty() {
-        append(lua, this, (text(lua, &tip.zone)?, WHITE), None, false)?;
-    }
-
-    if tip.pvp {
-        if let Some(pvp) = lua.globals().get::<Option<String>>("PVP_ENABLED")? {
-            append(lua, this, (text(lua, &pvp)?, WHITE), None, false)?;
-        }
+/// Append a composed plate to the tooltip: every line goes through
+/// [`append`], with the live globals table as the plate's lookup.
+fn plate_lines(
+    lua: &mlua::Lua,
+    this: &mlua::Table,
+    lines: Vec<crate::interface::plate::PlateLine>,
+) -> mlua::Result<()> {
+    for line in lines {
+        let [r, g, b] = line.ink.rgb();
+        let right = match line.right {
+            Some(right) => {
+                let [rr, rg, rb] = line.right_ink.rgb();
+                Some((text(lua, &right)?, [rr, rg, rb, 1.0]))
+            }
+            None => None,
+        };
+        append(
+            lua,
+            this,
+            (text(lua, &line.left)?, [r, g, b, 1.0]),
+            right,
+            line.wrap,
+        )?;
     }
     Ok(())
 }
 
-/// The spell tooltip's lines: name | rank, cost | range, cast time | cooldown,
-/// each cell omitted when it has no value and each format a game global; then
-/// the reagents and the description, both already resolved (see the module
-/// comment).
+/// The live globals table as a plate's word lookup.
+fn globals_word(lua: &mlua::Lua) -> impl Fn(&str) -> Option<String> + '_ {
+    move |key: &str| lua.globals().get::<Option<String>>(key).ok().flatten()
+}
+
+/// The unit's plate, drawn from [`crate::interface::plate::unit_plate`].
+fn unit_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &crate::interface::api::UnitTip) -> mlua::Result<()> {
+    let word = globals_word(lua);
+    plate_lines(lua, this, crate::interface::plate::unit_plate(tip, &word))
+}
+
+/// The spell's plate, drawn from [`crate::interface::plate::spell_plate`].
 fn spell_lines(lua: &mlua::Lua, this: &mlua::Table, tip: &SpellTip) -> mlua::Result<()> {
-    // A talent's rank is its own line, not a cell; see
-    // [`SpellTip::talent_rank`], which describes how the client composes it
-    // and why the two are exclusive.
-    let rank = tip
-        .talent_rank
-        .is_none()
-        .then(|| (!tip.rank.is_empty()).then(|| tip.rank.clone()))
-        .flatten();
-    let rank = match rank {
-        Some(rank) => Some((text(lua, &rank)?, GRAY)),
-        None => None,
-    };
-    append(lua, this, (text(lua, &tip.name)?, WHITE), rank, false)?;
-    if let Some((held, max)) = tip.talent_rank {
-        let line = lua
-            .globals()
-            .get::<Option<String>>("TOOLTIP_TALENT_RANK")?
-            .map(|format| {
-                vale_assets::interface::strings::substitute_all(
-                    &format,
-                    &[&held.to_string(), &max.to_string()],
-                )
-            });
-        if let Some(line) = line {
-            append(lua, this, (text(lua, &line)?, WHITE), None, false)?;
-        }
-    }
-
-    // `MANA_COST` is "%d Mana"; rage and energy have their own keys and focus
-    // has none in build 5875's file, so a focus cost displays as nothing,
-    // which is the client's rule for an absent key.
-    let cost = (tip.power_cost > 0)
-        .then(|| match tip.power_type {
-            0 => Some("MANA_COST"),
-            1 => Some("RAGE_COST"),
-            3 => Some("ENERGY_COST"),
-            _ => None,
-        })
-        .flatten()
-        .and_then(|key| global_format(lua, key, &tip.power_cost.to_string()));
-    let range = (tip.range_yards > 0.0)
-        .then(|| global_format(lua, "SPELL_RANGE", &trim_number(f64::from(tip.range_yards))))
-        .flatten();
-    two_cells(lua, this, cost, range)?;
-
-    // An instant spell with no cost is "Instant" and one with a cost is
-    // "Instant cast", as the key names show (`…_INSTANT_NO_MANA`).
-    let cast = if tip.cast_time_ms == 0 {
-        let key = if tip.power_cost == 0 {
-            "SPELL_CAST_TIME_INSTANT_NO_MANA"
-        } else {
-            "SPELL_CAST_TIME_INSTANT"
-        };
-        lua.globals().get::<Option<String>>(key)?
-    } else {
-        seconds_text(lua, tip.cast_time_ms, "SPELL_CAST_TIME_SEC", "SPELL_CAST_TIME_MIN")
-    };
-    let cooldown = (tip.cooldown_ms > 0)
-        .then(|| seconds_text(lua, tip.cooldown_ms, "SPELL_RECAST_TIME_SEC", "SPELL_RECAST_TIME_MIN"))
-        .flatten();
-    two_cells(lua, this, cast, cooldown)?;
-
-    // Reagents, white and wrapped, below the numbers and above the
-    // description. `SPELL_REAGENTS` is "Reagents: ", a key with no format
-    // slot, so the names are appended rather than substituted; a count above
-    // one is added in brackets. A reagent whose item template has not arrived
-    // is omitted (see [`SpellTip::reagents`]); an empty list, as for every
-    // spell that consumes nothing, draws no line.
-    if !tip.reagents.is_empty() {
-        let named: Vec<String> = tip
-            .reagents
-            .iter()
-            .map(|(name, count)| {
-                if *count > 1 {
-                    format!("{name} ({count})")
-                } else {
-                    name.clone()
-                }
-            })
-            .collect();
-        let label = lua
-            .globals()
-            .get::<Option<String>>("SPELL_REAGENTS")?
-            .unwrap_or_default();
-        append(
-            lua,
-            this,
-            (text(lua, &format!("{label}{}", named.join(", ")))?, WHITE),
-            None,
-            true,
-        )?;
-    }
-
-    // The description, gold and wrapped. Gold rather than the white of the
-    // numbers above: `0xffffd200`, the colour the client uses on the spell
-    // plate and the same default an uncoloured `AddLine` takes here, so it is
-    // [`GOLD`] rather than a second constant.
-    //
-    // Wrapped because otherwise the plate is as wide as the sentence: "Causes
-    // an explosion of arcane magic around the caster, causing 256 to 278
-    // Arcane damage to all targets within 10 yards" is 800 units on one line.
-    if !tip.description.is_empty() {
-        append(lua, this, (text(lua, &tip.description)?, GOLD), None, true)?;
-    }
-    Ok(())
+    let word = globals_word(lua);
+    plate_lines(lua, this, crate::interface::plate::spell_plate(tip, &word))
 }
 
 /// The sell price under an item's plate while a merchant window is open.
@@ -2071,53 +1879,10 @@ fn sell_price_line(lua: &mlua::Lua, this: &mlua::Table, price: Option<u32>) -> m
 fn item_lines(
     lua: &mlua::Lua,
     this: &mlua::Table,
-    tip: &crate::interface::api::ItemTip,
+    tip: &crate::interface::plate::ItemTip,
 ) -> mlua::Result<()> {
-    let word = |key: &str| {
-        lua.globals()
-            .get::<Option<String>>(key)
-            .ok()
-            .flatten()
-    };
-    for line in crate::interface::plate::item_plate(tip, &word) {
-        let [r, g, b] = line.ink.rgb();
-        let right = match line.right {
-            Some(right) => {
-                let [rr, rg, rb] = line.right_ink.rgb();
-                Some((text(lua, &right)?, [rr, rg, rb, 1.0]))
-            }
-            None => None,
-        };
-        append(
-            lua,
-            this,
-            (text(lua, &line.left)?, [r, g, b, 1.0]),
-            right,
-            line.wrap,
-        )?;
-    }
-    Ok(())
-}
-
-/// One line of up to two optional cells: both, one alone, or no line at all.
-fn two_cells(
-    lua: &mlua::Lua,
-    this: &mlua::Table,
-    left: Option<String>,
-    right: Option<String>,
-) -> mlua::Result<()> {
-    match (left, right) {
-        (Some(l), Some(r)) => append(
-            lua,
-            this,
-            (text(lua, &l)?, WHITE),
-            Some((text(lua, &r)?, WHITE)),
-            false,
-        ),
-        (Some(l), None) => append(lua, this, (text(lua, &l)?, WHITE), None, false),
-        (None, Some(r)) => append(lua, this, (text(lua, &r)?, WHITE), None, false),
-        (None, None) => Ok(()),
-    }
+    let word = globals_word(lua);
+    plate_lines(lua, this, crate::interface::plate::item_plate(tip, &word))
 }
 
 /// A `&str` as a Lua value, for [`append`]'s text arguments.
@@ -2125,76 +1890,11 @@ fn text(lua: &mlua::Lua, s: &str) -> mlua::Result<mlua::Value> {
     Ok(mlua::Value::String(lua.create_string(s)?))
 }
 
-/// A duration in the game's words: under a minute through the `_SEC` key,
-/// otherwise the `_MIN` one, the number printed the way `%.3g` prints it.
-fn seconds_text(lua: &mlua::Lua, ms: u32, sec_key: &str, min_key: &str) -> Option<String> {
-    let seconds = f64::from(ms) / 1000.0;
-    if seconds < 60.0 {
-        global_format(lua, sec_key, &g3(seconds))
-    } else {
-        global_format(lua, min_key, &g3(seconds / 60.0))
-    }
-}
-
-/// Format through a `GlobalStrings.lua` global: `"%d Mana"` with `"35"` is
-/// `"35 Mana"`. `None` when the key is not in the environment, which displays
-/// as nothing; that is the client's rule, not an error.
-fn global_format(lua: &mlua::Lua, key: &str, value: &str) -> Option<String> {
-    let format: String = lua.globals().get::<Option<String>>(key).ok().flatten()?;
-    Some(substitute(&format, value))
-}
-
-/// [`global_format`] for a key with more than one slot. The four
-/// `TOOLTIP_UNIT_LEVEL*` formats are its only users here.
-fn global_format_all(lua: &mlua::Lua, key: &str, values: &[&str]) -> Option<String> {
-    let format: String = lua.globals().get::<Option<String>>(key).ok().flatten()?;
-    Some(vale_assets::interface::strings::substitute_all(&format, values))
-}
-
-/// Replace the first `%`-directive (`%d`, `%s`, `%.3g`…) with an already-
-/// printed value. A one-slot substitution, because every key this module
-/// reads has exactly one slot.
-///
-/// This calls [`vale_assets::interface::strings::substitute`] rather than
-/// copying it: the same substitution is made against the live globals table
-/// here and against the shipped table in `interface::messages`, and when there
-/// were two copies one handled `%d` and the other did not.
-fn substitute(format: &str, value: &str) -> String {
-    vale_assets::interface::strings::substitute(format, value)
-}
-
-/// `%.3g`: three significant digits, trailing zeros trimmed. `1.5` is "1.5",
-/// `2` is "2", `12.5` is "12.5".
-fn g3(x: f64) -> String {
-    if x == 0.0 {
-        return "0".to_string();
-    }
-    let magnitude = x.abs().log10().floor() as i32;
-    let decimals = (2 - magnitude).max(0) as usize;
-    let printed = format!("{x:.decimals$}");
-    // Trailing zeros are trimmed only after a decimal point; "150" printed
-    // with no point must keep all three digits.
-    if printed.contains('.') {
-        printed.trim_end_matches('0').trim_end_matches('.').to_string()
-    } else {
-        printed
-    }
-}
-
-/// A number printed for the range key: whole yards without a decimal point,
-/// anything else with its fraction.
-fn trim_number(x: f64) -> String {
-    if x.fract() == 0.0 {
-        format!("{}", x as i64)
-    } else {
-        format!("{x}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::lua::api::stub::Stub;
+    use vale_assets::interface::strings::substitute;
 
     fn state() -> mlua::Lua {
         let lua = mlua::Lua::new();
@@ -3278,20 +2978,13 @@ mod tests {
         }
     }
 
-    /// The `%.3g` and substitution helpers print as C's `printf` does. The
-    /// formats are the game's, and "3.500 sec cast" would be wrong.
+    /// The substitution helper prints as C's `printf` does. The formats are
+    /// the game's, and "3.500 sec cast" would be wrong.
     #[test]
     fn the_format_helpers_print_like_the_game() {
-        assert_eq!(g3(3.5), "3.5");
-        assert_eq!(g3(2.0), "2");
-        assert_eq!(g3(0.5), "0.5");
-        assert_eq!(g3(12.5), "12.5");
-        assert_eq!(g3(150.0), "150");
         assert_eq!(substitute("%d Mana", "35"), "35 Mana");
         assert_eq!(substitute("%s yd range", "30"), "30 yd range");
         assert_eq!(substitute("%.3g sec cast", "3.5"), "3.5 sec cast");
         assert_eq!(substitute("Level %s", "60"), "Level 60");
-        assert_eq!(trim_number(30.0), "30");
-        assert_eq!(trim_number(27.5), "27.5");
     }
 }

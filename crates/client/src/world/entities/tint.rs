@@ -49,7 +49,7 @@
 use bevy::prelude::*;
 
 use crate::render::models::{M2Material, Materials};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 
 use super::procedural::Procedurals;
 use super::{DisplayCache, EntityModel};
@@ -187,7 +187,7 @@ pub(super) fn fade_models(
         &WorldEntity,
         &mut EntityModel,
         &mut Procedurals,
-        Has<crate::world::session::LocalPlayer>,
+        Has<crate::world::entity::LocalPlayer>,
     )>,
     // The zoom, for the local player's fade: the distance the eye is from the
     // point it orbits this frame, and the near plane.

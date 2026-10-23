@@ -57,10 +57,11 @@
 use bevy::prelude::*;
 
 use vale_protocol::play::gossip::{BuyFailure, SellFailure, VendorList};
-use vale_protocol::socket::session::NpcVerb;
+use vale_protocol::play::gossip::NpcVerb;
 
 use super::events::{MerchantClosed, MerchantShow, MerchantUpdate};
 use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// One of the four vendor packets, handed on from
 /// [`crate::world::incoming::drain_events`].
@@ -133,8 +134,8 @@ impl MerchantWindow {
     }
 
     /// Close the vendor window and return whether one was open. Called when
-    /// the character walks away, by [`super::gossip::out_of_range`], the one
-    /// caller outside this module.
+    /// the character walks away, by [`super::gossip::close_when_npc_gone`],
+    /// through [`super::gossip::NpcWindow`].
     pub(crate) fn close(&mut self) -> bool {
         self.vendor.take().is_some()
     }
@@ -146,6 +147,7 @@ impl Plugin for MerchantPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<MerchantAnswer>()
             .add_message::<MerchantPress>()
+            .add_message::<TemplatesArrived>()
             .init_resource::<MerchantWindow>()
             .add_systems(
                 Update,
@@ -154,8 +156,34 @@ impl Plugin for MerchantPlugin {
                 // player sees.
                 (announce, templates_landed, presses, act, price_repairs)
                     .chain()
+                    .after(crate::world::incoming::drain_queues)
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<MerchantWindow>(app);
+        super::gossip::closes_on_walk_away::<MerchantWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for MerchantWindow {
+    type Closed = super::events::MerchantClosed;
+    const CLOSED: super::events::MerchantClosed = super::events::MerchantClosed;
+
+    fn guid(&self) -> Option<u64> {
+        MerchantWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        MerchantWindow::close(self)
+    }
+}
+
+/// A vendor window is a conversation too: `MerchantFrame` calls
+/// `UnitName("npc")` and `SetPortraitTexture(…, "npc")`.
+impl super::gossip::NpcToken for MerchantWindow {
+    const ORDER: u8 = 2;
+
+    fn npc(&self) -> Option<u64> {
+        MerchantWindow::guid(self)
     }
 }
 
@@ -258,16 +286,18 @@ fn sell_key(reason: Option<SellFailure>) -> Option<&'static str> {
     })
 }
 
-/// Redraw as the names arrive. The item cache belongs to [`super::items`],
-/// which signals template arrivals through [`Res::is_changed`] on the
-/// inventory. The signal is coarse: `MERCHANT_UPDATE` re-reads at most ten
-/// rows, and a finer signal would be a second path for the same information.
+/// Redraw as the names arrive: on a [`TemplatesArrived`], and when
+/// [`super::items::Inventory`] changes, which covers the templates the bag
+/// walk copies in. `MERCHANT_UPDATE` re-reads at most ten rows, so one event
+/// for any arrival is enough.
 fn templates_landed(
     window: Res<MerchantWindow>,
     inventory: Res<super::items::Inventory>,
+    mut arrived: MessageReader<TemplatesArrived>,
     mut updated: MessageWriter<MerchantUpdate>,
 ) {
-    if window.is_open() && inventory.is_changed() {
+    let landed = arrived.read().count() > 0;
+    if window.is_open() && (landed || inventory.is_changed()) {
         updated.write(MerchantUpdate);
     }
 }
@@ -402,7 +432,7 @@ fn price_repairs(
     mut window: ResMut<MerchantWindow>,
     inventory: Res<super::items::Inventory>,
     assets: Res<crate::assets::GameAssets>,
-    units: Query<&crate::world::session::WorldEntity>,
+    units: Query<&crate::world::entity::WorldEntity>,
 ) {
     let Some(guid) = window.guid() else {
         return;

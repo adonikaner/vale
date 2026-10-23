@@ -13,7 +13,7 @@
 //! stated in `sound/mod.rs`'s terms rather than guessed at.
 
 use super::mixer::{Place, Voices};
-use crate::world::session::{EntityIndex, WorldEntity};
+use crate::world::entity::{EntityIndex, WorldEntity};
 use bevy::prelude::*;
 
 #[derive(Component)]

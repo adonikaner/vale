@@ -42,13 +42,14 @@ use vale_protocol::play::quest::{
     QuestComplete, QuestDetails, QuestGreeting, QuestKill, QuestOffer, QuestProgress, QuestReward,
     QuestSlot, QuestTemplate,
 };
-use vale_protocol::socket::session::QuestVerb;
+use vale_protocol::play::quest::QuestVerb;
 
 use super::events::{
     QuestCompleteEvent, QuestDetail, QuestFinished, QuestGreetingEvent, QuestItemUpdate,
     QuestLogUpdate, QuestProgressEvent, QuestWatchUpdate,
 };
 use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// One of the eleven packets, handed on from
 /// [`crate::world::incoming::drain_events`].
@@ -648,7 +649,8 @@ impl Quests {
 
     /// Drop whatever page is shown, and return whether there was one. Used to
     /// close the page when the player walks away; see
-    /// [`super::gossip::out_of_range`], the one caller outside this module.
+    /// [`super::gossip::close_when_npc_gone`], through
+    /// [`super::gossip::NpcWindow`].
     pub(crate) fn drop_page(&mut self) -> bool {
         !matches!(std::mem::replace(&mut self.page, Page::None), Page::None)
     }
@@ -675,7 +677,67 @@ impl Plugin for QuestPlugin {
                 )
                     .chain()
                     .in_set(super::GameSet),
+            )
+            .add_message::<TemplatesArrived>()
+            .add_systems(
+                Update,
+                templates_landed
+                    .after(crate::world::incoming::drain_queues)
+                    .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<Quests>(app);
+        super::gossip::closes_on_walk_away::<Quests>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for Quests {
+    type Closed = super::events::QuestFinished;
+    const CLOSED: super::events::QuestFinished = super::events::QuestFinished;
+
+    fn guid(&self) -> Option<u64> {
+        self.page().guid()
+    }
+
+    fn close(&mut self) -> bool {
+        self.drop_page()
+    }
+}
+
+/// First: a quest page replaces the gossip menu that opened it on the same
+/// NPC.
+impl super::gossip::NpcToken for Quests {
+    const ORDER: u8 = 0;
+
+    fn npc(&self) -> Option<u64> {
+        self.page().guid()
+    }
+}
+
+/// Raise `QUEST_LOG_UPDATE` and `QUEST_ITEM_UPDATE` when templates arrive.
+///
+/// The log's objective rows join a counter the log carries with a name only
+/// the creature, game-object or item table has, so a template arriving is
+/// what turns "  : 3/8" into "Kobold Vermin slain: 3/8". `QuestLog_Update`
+/// runs off `QUEST_LOG_UPDATE` and re-reads every row. `QUEST_ITEM_UPDATE` is
+/// raised only while a quest page is shown; `QuestFrame_OnEvent` re-runs
+/// `QuestFrameItems_Update` for the page that is visible.
+fn templates_landed(
+    mut arrived: MessageReader<TemplatesArrived>,
+    quests: Res<Quests>,
+    mut log_update: MessageWriter<QuestLogUpdate>,
+    mut item_update: MessageWriter<QuestItemUpdate>,
+) {
+    let mut objective = false;
+    let mut any = false;
+    for batch in arrived.read() {
+        any = true;
+        objective |= batch.0.names_a_quest_objective();
+    }
+    if objective {
+        log_update.write(QuestLogUpdate);
+    }
+    if any && !matches!(quests.page(), Page::None) {
+        item_update.write(QuestItemUpdate);
     }
 }
 
@@ -833,7 +895,7 @@ fn newly_added(previous: &[QuestSlot], fresh: &[QuestSlot]) -> Vec<u32> {
 /// giver the quest was just taken from, and no mark over the NPC who takes it
 /// back. The cost is a few packets on each accept, hand-in and objective
 /// update, bounded by the quest givers in view.
-fn ask_status(session: Res<Session>, units: Query<&crate::world::session::WorldEntity>) {
+fn ask_status(session: Res<Session>, units: Query<&crate::world::entity::WorldEntity>) {
     const QUESTGIVER: u32 = 0x0002;
     let Some(active) = session.active.as_ref() else {
         return;

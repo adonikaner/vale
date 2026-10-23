@@ -19,7 +19,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::ViewVisibility;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::PrimitiveTopology;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::VecDeque;
 use vale_assets::look::weapon_trail::{TrailClock, TrailPoints, RING_PAIRS};
@@ -248,18 +248,14 @@ fn simulate_strips(
             colours.push([r, g, b, alpha]);
             colours.push([r, g, b, alpha]);
         }
-        let mut indices = Vec::with_capacity((drawn - 1) * 6);
-        for k in 0..(drawn - 1) as u32 {
-            let b = k * 2;
-            indices.extend_from_slice(&[b, b + 1, b + 2, b + 1, b + 3, b + 2]);
-        }
         if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
-            let count = positions.len();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; count]);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0]; count]);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colours);
-            mesh.insert_indices(Indices::U32(indices));
+            crate::render::strip::write(
+                &mut mesh,
+                positions,
+                None,
+                crate::render::strip::Colour::Each(colours),
+                crate::render::strip::indices(drawn),
+            );
         }
     }
 }

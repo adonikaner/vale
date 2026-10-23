@@ -3,7 +3,7 @@
 
 use crate::session::EditSession;
 use vale_assets::look::character::Appearance;
-use vale_client::world::session::{ObjectType, WorldEntity};
+use vale_client::world::entity::{ObjectType, WorldEntity};
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::ClearColorConfig;
 use bevy::prelude::*;
@@ -23,7 +23,7 @@ use super::{APART, CASTER_GUID, PUSHED, STAGE_LAYER, Stage, StageArea, StageCame
 /// places client entities away from the loaded world will meet the same
 /// limit. It costs nothing here: the stage sits at the editor camera's own
 /// focus, and the picture is isolated by the layer rather than by distance.
-/// The world's camera cannot see layer 2, whatever is standing in it.
+/// The world's camera cannot see [`STAGE_LAYER`], whatever is standing in it.
 pub(crate) fn stage_at(camera: &crate::camera::EditorCamera) -> Vec3 {
     vale_client::render::axes::to_bevy([camera.target.x, camera.target.y, camera.target.z])
 }
@@ -135,7 +135,7 @@ pub fn arrange(
     }
 
     // Both layers, and the world's layer is required. The stage camera
-    // draws the picture from layer 2; the client's own per-frame work —
+    // draws the picture from `STAGE_LAYER`; the client's own per-frame work —
     // the particle simulation, the LOD, the UV scroll — keys on what the world
     // camera can see, so the effects of an actor it cannot see never advance.
     // See the module comment.
@@ -196,7 +196,7 @@ pub fn arrange(
 /// on by [`follow_the_pane`](super::view::follow_the_pane) while the pane is
 /// open.
 fn spawn_fixtures(commands: &mut Commands) {
-    // The camera sees layer 2 and nothing else, which is what keeps the
+    // The camera sees `STAGE_LAYER` and nothing else, which is what keeps the
     // world out of the picture. The actors are on both layers and the camera
     // must not copy them: a camera sharing the actors' `RenderLayers` also
     // sees layer 0 and draws the surrounding world in the preview.

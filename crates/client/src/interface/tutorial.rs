@@ -43,7 +43,7 @@
 
 use bevy::prelude::*;
 
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 use vale_protocol::play::tutorial::{TutorialFlags, LAST_TUTORIAL};
 
 use crate::input::bindings::{Binding, BindingPressed};

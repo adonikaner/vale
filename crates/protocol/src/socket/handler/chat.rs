@@ -9,7 +9,7 @@ use super::{read, Incoming};
 use crate::play::channels;
 use crate::play::chat;
 use crate::play::notices;
-use crate::play::spells::PlayerEvent;
+use crate::state::events::PlayerEvent;
 use crate::socket::world::Packet;
 
 /// `SMSG_CHANNEL_NOTIFY`: something happened on a channel — you joined,

@@ -38,11 +38,13 @@ use bevy::prelude::*;
 
 use super::events::ChatMessageReceived;
 use crate::sound::mixer::{Place, Voices};
-use crate::world::session::{Session, WorldEntity, WorldStatus};
+use crate::world::entity::WorldEntity;
+use crate::world::session::Session;
+use crate::world::status::WorldStatus;
 use vale_assets::tables::emotetext::{Speaker, Target};
 use vale_protocol::play::chat::ChatType;
 use vale_protocol::play::emotetext::TextEmote;
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 /// `SMSG_TEXT_EMOTE`, as a message for [`apply_answers`].
 #[derive(Message, Debug, Clone)]

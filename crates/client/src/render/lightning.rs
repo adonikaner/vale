@@ -121,13 +121,13 @@ use bevy::camera::primitives::Aabb;
 #[cfg(feature = "diagnostics")]
 use bevy::camera::visibility::ViewVisibility;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::PrimitiveTopology;
 
 use crate::render::models::{Materials, ModelCache};
 use crate::render::nothing;
 use crate::render::tuning::WorldTuning;
 use crate::world::entities::EntityModel;
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 use vale_assets::tables::spell::ChainEffect;
 
 /// The ceiling on a **held** bolt with nothing to end it.
@@ -225,7 +225,7 @@ impl Plugin for LightningPlugin {
                 // Both ends are read off this frame's placements, exactly as the
                 // missile's launch is — a bolt built from last frame's is a
                 // beam that lags the units it joins by a whole step.
-                .after(crate::world::session::place_entities),
+                .after(crate::world::entity::place_entities),
         );
         // The HUD line, written from here rather than from `hud.rs` — see
         // [`crate::ui::report`], which is why every pass owns its own.
@@ -532,12 +532,13 @@ fn draw_bolts(
             *aabb = grown;
         }
         if let Some(mut mesh) = meshes.get_mut(&mesh3d.0) {
-            let count = positions.len();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; count]);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0f32; 4]; count]);
-            mesh.insert_indices(Indices::U32(indices));
+            crate::render::strip::write(
+                &mut mesh,
+                positions,
+                Some(uvs),
+                crate::render::strip::Colour::All([1.0; 4]),
+                indices,
+            );
         }
     }
 }

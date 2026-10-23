@@ -327,7 +327,7 @@ fn verbs(
 ) {
     use crate::input::bindings::{Binding, BindingPressed};
     use vale_protocol::play::pet::{active_state, command_state};
-    use vale_protocol::socket::session::PetVerb;
+    use vale_protocol::play::pet::PetVerb;
 
     for BindingPressed(binding) in pressed.read() {
         let Some(active) = session.active.as_ref() else {
@@ -425,7 +425,7 @@ pub fn pick_up_or_place(
     slot: u8,
 ) {
     use vale_protocol::play::pet::{pet_slot_emptied, place_on_pet_bar, PetAction};
-    use vale_protocol::socket::session::PetVerb;
+    use vale_protocol::play::pet::PetVerb;
 
     if bar.pet == 0 {
         return;
@@ -531,7 +531,7 @@ fn rename(
         return;
     }
     for name in names {
-        active.live.pet(vale_protocol::socket::session::PetVerb::Rename {
+        active.live.pet(vale_protocol::play::pet::PetVerb::Rename {
             pet: bar.pet,
             name,
         });

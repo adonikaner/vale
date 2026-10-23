@@ -66,7 +66,8 @@
 
 use bevy::prelude::*;
 
-use crate::world::session::{ActiveSession, Session, WorldEntity};
+use crate::world::entity::WorldEntity;
+use crate::world::session::{ActiveSession, Session};
 use vale_assets::look::object::{self as object, Kind};
 
 /// **The game object under the pointer this frame**, or nothing.

@@ -1872,7 +1872,7 @@ const GROUND_REFINE_MAX: u32 = 12;
 ///
 /// `floor_at(x, y, z)` is the caller's own join of the terrain and the buildings
 /// on it, asked at the height the ray has reached — the same three arguments and
-/// the same meaning as `world::session::Standing::floor`, passed in rather than
+/// the same meaning as `world::standing::Standing::floor`, passed in rather than
 /// rebuilt here so that a placement and a footstep cannot disagree about what
 /// the floor is. Everything is in WoW's axes, `+Z up`.
 ///

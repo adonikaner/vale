@@ -1,17 +1,16 @@
-//! Chat channels, the session's side: the file the channel list is filled
-//! from, the packets that update it, the zone channels joined on a zone
-//! change, and the lines sent to the chat frame.
+//! Chat channels, the session's side: the packets that update the channel
+//! list, the zone channels joined on a zone change, and the lines sent to the
+//! chat frame. The file the list is filled from is
+//! [`crate::settings::channels`].
 //!
 //! The board — the ten slots and the mask — is
 //! [`crate::lua::panels::channels`], held by the Lua host so the twenty-five
-//! globals can answer during a call. This module is everything else, in the
-//! same split `social` uses: [`load_cache`] reads `chat-cache.txt`,
-//! [`supply_tables`] hands the board the table, [`auto_join`] keeps the zone
-//! channels current and rejoins the custom ones, [`apply_answers`] turns a
-//! notice into a `CHAT_MSG_CHANNEL_*` event, [`list_locally`] answers
-//! `/chatlist` with no name, [`send_verbs`] drains what the interface
-//! queued, and [`save_on_logout`] and [`save_on_exit`] write the two lines
-//! the file keeps about channels.
+//! globals can answer during a call. This module is everything else except
+//! the file, in the same split `social` uses: [`supply_tables`] hands the
+//! board the table, [`auto_join`] keeps the zone channels current and rejoins
+//! the custom ones, [`apply_answers`] turns a notice into a
+//! `CHAT_MSG_CHANNEL_*` event, [`list_locally`] answers `/chatlist` with no
+//! name, and [`send_verbs`] drains what the interface queued.
 //!
 //! ## The zone channels are the client's to join
 //!
@@ -57,30 +56,17 @@
 //! waiting on a name is held for [`NAME_PATIENCE`] seconds and then raised
 //! with the name blank rather than dropped.
 //!
-//! ## What the file keeps, and what is written back
-//!
-//! `chat-cache.txt` (`assets::interface::chatcache`) is read at login for
-//! the joined mask, the custom channels to rejoin, the recruitment option
-//! and window 1's lists. On the way out the top-level `CHANNELS` block and
-//! `ZONECHANNELS` line are rewritten in place — the custom channels held
-//! and the mask — and nothing else in the file is touched, because the
-//! colours and the window blocks are the reference's own and unread here.
-//! A character with no file gets none; the file is the reference's to
-//! create.
 
-use std::path::PathBuf;
-
-use bevy::app::AppExit;
 use bevy::prelude::*;
 
-use super::events::{ChatMessageReceived, PlayerLeavingWorld};
+use super::events::ChatMessageReceived;
 use crate::lua::panels::channels::Channels;
-use crate::world::session::{ClientConfig, Session, WorldStatus};
-use vale_assets::interface::chatcache;
+use crate::world::session::Session;
+use crate::world::status::WorldStatus;
 use vale_protocol::play::channels::{mode_change_word, ChannelList, ChannelNotify, Notice, NoticeTail};
 use vale_protocol::play::chat::ChatType;
-use vale_protocol::play::spells::PlayerEvent;
-use vale_protocol::socket::session::ChannelVerb;
+use vale_protocol::state::events::PlayerEvent;
+use vale_protocol::play::channels::ChannelVerb;
 
 /// The two packets, as messages for [`apply_answers`].
 #[derive(Message, Debug, Clone)]
@@ -93,98 +79,25 @@ pub enum ChannelAnswer {
 /// the name blank. A name query is one round trip.
 const NAME_PATIENCE: f32 = 3.0;
 
-/// The character's `chat-cache.txt`, located at login; see the module doc.
-/// `text` is the file as read, which the write-back edits in place.
-#[derive(Resource, Default)]
-pub struct ChatCacheFile {
-    pub path: Option<PathBuf>,
-    text: Option<String>,
-    loaded: bool,
-}
-
 pub struct ChannelsPlugin;
 
 impl Plugin for ChannelsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<ChannelAnswer>()
-            .init_resource::<ChatCacheFile>()
-            .add_systems(
-                Update,
-                (
-                    load_cache,
-                    supply_tables,
-                    auto_join,
-                    apply_answers,
-                    list_locally,
-                    send_verbs,
-                    save_on_logout,
-                    save_on_exit,
-                )
-                    .chain()
-                    .in_set(super::GameSet),
-            );
+        app.add_message::<ChannelAnswer>().add_systems(
+            Update,
+            (
+                supply_tables,
+                auto_join,
+                apply_answers,
+                list_locally,
+                send_verbs,
+            )
+                .chain()
+                .after(crate::settings::channels::load)
+                .before(crate::settings::channels::save_on_logout)
+                .in_set(super::GameSet),
+        );
     }
-}
-
-/// Read the character's file once per login and fill the channel list from
-/// it. The path needs the account, the realm and the character, which the
-/// session has once it is in the world. The interpreter is rebuilt at logout,
-/// so the list starts empty each time and the file is read again.
-fn load_cache(
-    session: Res<Session>,
-    world: Res<WorldStatus>,
-    config: Res<ClientConfig>,
-    host: Option<NonSendMut<crate::lua::host::LuaHost>>,
-    mut leaving: MessageReader<PlayerLeavingWorld>,
-    mut files: ResMut<ChatCacheFile>,
-) {
-    if leaving.read().next().is_some() {
-        files.loaded = false;
-        files.text = None;
-        files.path = None;
-    }
-    if files.loaded || !world.in_world {
-        return;
-    }
-    let Some(host) = host else { return };
-    let Some(active) = session.active.as_ref() else {
-        return;
-    };
-    let account = config.0.account_for([Some(active.account.as_str())]);
-    files.path = chatcache::path(&account, &active.realm, &world.character).map(|path| config.0.path(path));
-    files.text = files.path.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
-    let channels = crate::lua::panels::channels::held(&host);
-    let mut board = channels.borrow_mut();
-    match &files.text {
-        Some(text) => {
-            let cache = chatcache::parse(text);
-            seed(&mut board, &cache);
-            info!(
-                "chat channels: {} -> mask {}, {} custom, recruitment {}",
-                files.path.as_ref().map_or(String::new(), |p| p.display().to_string()),
-                cache.zone_channels,
-                cache.channels.len(),
-                cache.guild_recruitment
-            );
-        }
-        None => info!(
-            "chat channels: no chat-cache.txt for {} — the table's defaults",
-            world.character
-        ),
-    }
-    files.loaded = true;
-}
-
-/// What the file says, onto the board. A zero mask is unset — see the
-/// reader's note — and leaves the table's default in place.
-fn seed(board: &mut Channels, cache: &chatcache::ChatCache) {
-    if cache.zone_channels != 0 {
-        board.joined_mask = Some(cache.zone_channels);
-    }
-    board.window_mask = cache.window(1).map(|window| window.zone_channels);
-    board.rejoin = cache.channels.clone();
-    board.rejoined = false;
-    board.recruit_automatically = cache.recruits_automatically();
 }
 
 /// The two tables the board composes names from, once.
@@ -211,7 +124,7 @@ fn auto_join(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     session: Res<Session>,
     status: Res<WorldStatus>,
-    files: Res<ChatCacheFile>,
+    files: Res<crate::settings::channels::ChatCacheFile>,
     place: Option<Res<super::worldmap::WorldMapState>>,
     mut last_area: Local<Option<u32>>,
 ) {
@@ -226,7 +139,7 @@ fn auto_join(
     let Some(place) = place else { return };
     // The file first, so a character who left General is not rejoined to it
     // in the frame before the file is read.
-    if !status.in_world || !files.loaded || place.area == 0 {
+    if !status.in_world || !files.loaded() || place.area == 0 {
         return;
     }
     let channels = crate::lua::panels::channels::held(&host);
@@ -569,55 +482,6 @@ fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<
     }
 }
 
-/// Write the file's two channel lines back when leaving the world; see the
-/// module doc.
-fn save_on_logout(
-    mut leaving: MessageReader<PlayerLeavingWorld>,
-    files: Res<ChatCacheFile>,
-    host: Option<NonSend<crate::lua::host::LuaHost>>,
-) {
-    if leaving.read().next().is_none() || !files.loaded {
-        return;
-    }
-    let Some(host) = host else { return };
-    write_back(&files, &host);
-}
-
-fn save_on_exit(
-    mut exits: MessageReader<AppExit>,
-    files: Res<ChatCacheFile>,
-    host: Option<NonSend<crate::lua::host::LuaHost>>,
-) {
-    if exits.read().next().is_none() || !files.loaded {
-        return;
-    }
-    let Some(host) = host else { return };
-    write_back(&files, &host);
-}
-
-fn write_back(files: &ChatCacheFile, host: &crate::lua::host::LuaHost) {
-    let (Some(path), Some(text)) = (files.path.as_ref(), files.text.as_ref()) else {
-        return;
-    };
-    let channels = crate::lua::panels::channels::held(&host);
-    let mut board = channels.borrow_mut();
-    let mask = board.mask();
-    let customs = board.custom_channels();
-    drop(board);
-    let rewritten = chatcache::rewrite_channels(text, &customs, mask);
-    if rewritten == *text {
-        return;
-    }
-    match vale_config::write_file(path, rewritten) {
-        Ok(()) => info!(
-            "chat channels: {} rewritten — mask {mask}, {} custom",
-            path.display(),
-            customs.len()
-        ),
-        Err(e) => warn!("chat channels: could not write {}: {e}", path.display()),
-    }
-}
-
 /// The two packets this module answers, for `incoming::drain_events`.
 pub fn answer_of(event: &PlayerEvent) -> Option<ChannelAnswer> {
     Some(match event {
@@ -760,24 +624,6 @@ mod tests {
         let lines = notice_lines(&mut board, &invite, &mut names, true).expect("decided");
         assert_eq!(lines[0].text, "INVITE");
         assert_eq!(lines[0].channel, "Secret");
-    }
-
-    #[test]
-    fn the_file_seeds_the_mask_the_rejoins_and_the_option_and_zero_is_unset() {
-        let mut board = board();
-        let cache = chatcache::parse(
-            "OPTION_GUILD_RECRUITMENT_CHANNEL AUTO\nCHANNELS\nWorld\nEND\nZONECHANNELS 18874371\nWINDOW 1\nCHANNELS\nEND\nZONECHANNELS 2\n",
-        );
-        seed(&mut board, &cache);
-        assert_eq!(board.joined_mask, Some(18_874_371));
-        assert_eq!(board.window_mask, Some(2));
-        assert_eq!(board.rejoin, vec!["World"]);
-        assert!(board.recruit_automatically);
-        let mut fresh = self::tests::board();
-        seed(&mut fresh, &chatcache::parse("ZONECHANNELS 0\n"));
-        assert_eq!(fresh.joined_mask, None, "zero is unset");
-        let default = fresh.table.as_ref().unwrap().default_joined();
-        assert_eq!(fresh.mask(), default);
     }
 
     #[test]

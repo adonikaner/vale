@@ -624,3 +624,230 @@ pub(super) fn gait(world: &WorldEntity) -> u16 {
     }
     anim::STAND
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::world::entities::*;
+    use crate::world::entities::test_support::*;
+
+    /// The mount's gait follows the rider's motion, and it has fewer states than a
+    /// unit's. A mount does not sit, emote or hold a stance, so the states the
+    /// server reports about the rider do not reach it.
+    #[test]
+    fn a_mount_walks_runs_swims_and_falls_on_the_riders_motion() {
+        use crate::world::entities::mount::gait;
+
+        assert_eq!(gait(&moving(0.0)), anim::STAND);
+        assert_eq!(gait(&moving(2.0)), anim::WALK);
+        assert_eq!(gait(&moving(7.0)), anim::RUN);
+
+        // Reversing is one sequence at any speed, as it is for a unit.
+        let mut back = moving(2.0);
+        back.move_flags = vale_protocol::state::movement::move_flags::BACKWARD;
+        assert_eq!(gait(&back), anim::WALK_BACKWARDS);
+
+        let mut swimming = moving(4.0);
+        swimming.swimming = true;
+        assert_eq!(gait(&swimming), anim::SWIM);
+        swimming.moving = false;
+        swimming.speed = 0.0;
+        assert_eq!(gait(&swimming), anim::SWIM_IDLE);
+
+        // The air outranks the water, as it does for a unit.
+        let mut falling = moving(7.0);
+        falling.swimming = true;
+        falling.airborne = true;
+        assert_eq!(gait(&falling), anim::FALL);
+        falling.jumping = true;
+        assert_eq!(gait(&falling), anim::JUMP);
+
+        // The rider's own states do not reach the mount. A mount whose rider is
+        // sitting, emoting or dead keeps standing; those poses belong to the rider.
+        let mut ridden_by_a_corpse = moving(0.0);
+        ridden_by_a_corpse.dead = true;
+        ridden_by_a_corpse.stand_state = STAND_STATE_SIT;
+        ridden_by_a_corpse.emote_state = 10;
+        assert_eq!(gait(&ridden_by_a_corpse), anim::STAND);
+    }
+
+    /// The seat uses the mount's scale, never the rider's.
+    ///
+    /// The seat position is a ratio because it is returned in the rider's local
+    /// frame, which the rider's own `Transform` then scales. The test asserts the
+    /// product, and checks that it does not depend on the rider: a gnome and a
+    /// tauren sit at the same height on the same horse.
+    ///
+    /// Returning the saddle point and letting the placement scale it would seat a
+    /// tauren too high, and the result would look nearly correct.
+    #[test]
+    fn the_seat_is_the_mounts_own_scale_whoever_is_riding() {
+        // The measured point 0 of `Creature\Horse\Horse.m2`: on the spine, on the
+        // midline, 1.87 model yards up. WoW model space is Z-up.
+        const SADDLE: [f32; 3] = [0.21, 0.0, 1.87];
+        const MOUNT_SCALE: f32 = 1.1;
+
+        let mount = Mount::seated(MOUNT_SCALE, Some((0, SADDLE)));
+        // One bone, identity: the bind pose, in which the measurement above was
+        // taken.
+        let pose = [[
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0f32,
+        ]];
+
+        // The world offset is the rider's scale times the local seat, because
+        // `placement.compute_affine()` applies the rider's scale.
+        let world_of = |rider_scale: f32| {
+            rider_scale * crate::world::entities::mount::seat_offset(&mount, &pose, rider_scale)
+        };
+
+        let gnome = world_of(0.75);
+        let human = world_of(1.0);
+        let tauren = world_of(1.35);
+        assert!((gnome - human).length() < 1e-5, "{gnome} vs {human}");
+        assert!((tauren - human).length() < 1e-5, "{tauren} vs {human}");
+        // The result is the saddle at the horse's own scale: 1.87 * 1.1 up.
+        assert!((human.y - SADDLE[2] * MOUNT_SCALE).abs() < 1e-5, "{human}");
+    }
+
+    /// The camera orbits a mounted rider at its neck, not above its head. The
+    /// assertion is against the drawn body rather than against a sum.
+    ///
+    /// Every number here is measured. `vale model 'Character\Human\Male\
+    /// HumanMale.m2'` reports a camera anchor of 1.90 model yards standing and 0.91
+    /// in the `Mount` clip. `vale anim` reports that the same clip puts the body's
+    /// posed extent at `-0.85..1.06`, where every other clip on the model reads
+    /// `0.00..~2.0`. `Creature\Horse\Horse.m2` carries its point 0 at 1.87. So a
+    /// human on a horse is drawn spanning 1.02..2.93, and the focus must be inside
+    /// that interval.
+    ///
+    /// The test checks the interval because the old result looked nearly correct.
+    /// The old sum, the standing anchor plus the saddle, is 3.77. It produced no
+    /// error, no warning and no change in any count; the camera pointed at the air
+    /// above the rider's head.
+    #[test]
+    fn a_rider_is_orbited_inside_its_own_body_and_not_above_it() {
+        const SADDLE: [f32; 3] = [0.21, 0.0, 1.87];
+        // The rider's two heights, from `vale model`.
+        const STANDING: f32 = 1.90;
+        const SEATED: f32 = 0.91;
+        // Where the clip puts the body, from `vale anim`.
+        const FEET: f32 = -0.85;
+        const CROWN: f32 = 1.06;
+
+        let mount = Mount::seated(1.0, Some((0, SADDLE)));
+        let mut rider = a_model(0);
+        rider.anchor = STANDING;
+        rider.mounted_anchor = Some(SEATED);
+
+        let focus = mount.camera_anchor(&rider, 1.0);
+        let (lo, hi) = (SADDLE[2] + FEET, SADDLE[2] + CROWN);
+        assert!(focus > lo && focus < hi, "{focus} is outside {lo}..{hi}");
+        // The old sum is outside the interval, which was the reported bug.
+        assert!(SADDLE[2] + STANDING > hi);
+
+        // A rider with no `Mount` clip keeps its standing anchor, its only other
+        // height. The result is visibly too high rather than nearly correct.
+        rider.mounted_anchor = None;
+        assert!((mount.camera_anchor(&rider, 1.0) - (SADDLE[2] + STANDING)).abs() < 1e-5);
+    }
+
+    /// The rider's part of the camera focus uses the rider's scale, and the mount's
+    /// part uses the mount's scale, so a tauren and a gnome are framed differently.
+    ///
+    /// This is the opposite of [`the_seat_is_the_mounts_own_scale_whoever_is_riding`]:
+    /// where the rider sits does not depend on the rider, but where the camera
+    /// looks does. A tauren's neck is further above the saddle than a gnome's,
+    /// because it is a bigger body on the same horse.
+    #[test]
+    fn the_riders_half_of_the_focus_takes_the_riders_scale() {
+        let mount = Mount::seated(1.0, Some((0, [0.0, 0.0, 1.87])));
+        let mut rider = a_model(0);
+        rider.anchor = 1.90;
+        rider.mounted_anchor = Some(0.91);
+
+        let gnome = mount.camera_anchor(&rider, 0.75);
+        let tauren = mount.camera_anchor(&rider, 1.35);
+        assert!(tauren > gnome, "{tauren} vs {gnome}");
+        // Both sit on the same saddle, so the difference comes from the bodies only.
+        assert!((tauren - gnome - 0.91 * (1.35 - 0.75)).abs() < 1e-5);
+    }
+
+    /// A mount whose model carries no point 0 seats the rider at its own origin.
+    ///
+    /// This checks the data rather than the arithmetic. `Creature\Tiger` carries no
+    /// attachment 0, which supports reading point 0 as the saddle on the models
+    /// that do carry it. If the server mounts a rider on such a creature anyway,
+    /// the rider stands between its feet. That is visibly wrong, which is preferred
+    /// to a guessed offset that looks nearly correct.
+    #[test]
+    fn a_model_with_no_saddle_seats_the_rider_at_the_origin() {
+        let mount = Mount::seated(1.0, None);
+        assert_eq!(
+            crate::world::entities::mount::seat_offset(&mount, &[], 1.0),
+            Vec3::ZERO
+        );
+    }
+
+    /// A rider on a leaning horse sits on the saddle, not above the hooves. The lean
+    /// is applied after the seat translation, and the two orders differ by most of
+    /// a yard on a steep slope.
+    ///
+    /// `seat_offset` is a point in the animal's own frame, which `ride` has already
+    /// tilted. Applying the lean before the translation would rotate the rider about
+    /// its own feet at the ground and leave it hanging off the back of a horse going
+    /// uphill. In the 1.12.1 client the rider is attached to the mount's point 0, so
+    /// only one order is possible there. Here the product can be written either
+    /// way, and the wrong order looks nearly correct.
+    #[test]
+    fn the_lean_carries_the_rider_with_the_saddle() {
+        use vale_assets::look::conform::Conform;
+        // Point 0 of Horse.m2 and the horse's scale, as measured above.
+        const SADDLE: [f32; 3] = [0.21, 0.0, 1.87];
+        let mount = Mount::seated(1.0, Some((0, SADDLE)));
+        let pose = [[
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0f32,
+        ]];
+        let seat = crate::world::entities::mount::seat_offset(&mount, &pose, 1.0);
+
+        // Ground rising steeply in the direction the horse faces, at facing 0.
+        // `Horse.m2` sets `GlobalModelFlags = 1`, so this is the mode it uses.
+        let uphill = [-0.5, 0.0, 0.866];
+        let lean = crate::world::entities::conform::rotation(
+            Conform::of(1),
+            uphill,
+            crate::render::axes::facing(0.0),
+        );
+        let carried = lean.transform_point3(seat);
+
+        // The rider has moved backwards along the horse, which in Bevy's axes at
+        // facing 0 (north, −Z) is +Z, and down, because the saddle has rotated
+        // with the animal's back.
+        assert!(carried.z > 0.5, "the rider did not follow the spine: {carried}");
+        assert!(carried.y < seat.y, "the rider did not drop with it: {carried}");
+        // The seat is rigid: its distance from the horse's origin does not change
+        // with the lean.
+        assert!(
+            (carried.length() - seat.length()).abs() < 1e-5,
+            "{carried} is not {} from the origin",
+            seat.length()
+        );
+        // The other order, tilting the rider about the ground instead of about the
+        // saddle, gives a position far from this one. That shows the test checks
+        // the order of composition and not only the rotation.
+        let wrong = Affine3A::from_translation(seat) * lean;
+        assert!(
+            (wrong.translation - Vec3A::from(carried)).length() > 0.5,
+            "the two orders agree, so this pins nothing"
+        );
+        // A level horse gives the unmodified seat, so nothing moves on flat ground.
+        let flat = crate::world::entities::conform::rotation(
+            Conform::of(1),
+            [0.0, 0.0, 1.0],
+            crate::render::axes::facing(0.0),
+        );
+        assert!((flat.transform_point3(seat) - seat).length() < 1e-5);
+    }
+}

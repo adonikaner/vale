@@ -34,6 +34,8 @@
 //! paperdoll.rs  a whole unit drawn into a <PlayerModel> frame's rectangle, the
 //!               rendering side of SetUnit: the character sheet, the pet panel,
 //!               the dress-up frame, the tabard designer
+//! offscreen.rs  what the portraits and the paper dolls share: one model drawn
+//!               into an image by its own camera, and the render-layer table
 //! present.rs    what a framebuffer value means, and the quad that presents it
 //! glow.rs       the one post-process 1.12 applies to the frame: the full-screen
 //!               glow, three passes in the order the 1.12.1 client applies them
@@ -65,6 +67,7 @@
 //! draws.rs      draw calls per phase, counted in the render world;
 //!               `diagnostics` only
 //! nothing.rs    the mesh a per-frame pass holds on a frame with no geometry
+//! strip.rs      the write of a per-frame strip: the trails and the bolts
 //! axes.rs       the one place WoW's coordinate frame becomes Bevy's
 //! lens.rs       the one place its field of view does: the 1.12.1 client uses
 //!               one perspective projection, and its field of view is measured
@@ -110,6 +113,7 @@ pub mod missiles;
 pub mod models;
 pub mod night;
 pub mod nothing;
+pub mod offscreen;
 #[cfg(feature = "diagnostics")]
 pub mod overlay;
 pub mod paperdoll;
@@ -123,6 +127,7 @@ pub mod reticle;
 pub mod ribbons;
 pub mod weapon_trail;
 pub mod selection;
+pub(crate) mod strip;
 pub mod shadows;
 pub mod ships;
 pub mod sky;

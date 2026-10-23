@@ -574,22 +574,10 @@ pub fn realms_on_disk(dir: impl AsRef<Path>) -> Vec<u32> {
 /// that one.
 pub const CACHE_DIR: &str = "WDB";
 
-/// The caches for one world server, at this client's build.
+/// The caches for one world server, by its address, at this client's build.
 ///
-/// The one call both the renderer and the CLI make, so that a `WDB\` written
-/// by `vale live` is the same set of files the game reads.
-pub fn for_session(session: &crate::socket::world::WorldSession) -> Caches {
-    // The socket's own peer, not the configured address: a realmlist line and
-    // a realm-list entry can name the same machine two ways, and two names for
-    // one server would be two caches with the same templates in them. An
-    // unaskable socket falls back to a shared key rather than to no cache.
-    match session.peer_address() {
-        Some(address) => for_server(&address),
-        None => for_server("unknown"),
-    }
-}
-
-/// …and by address, for a caller with no socket in hand.
+/// [`crate::socket::world::WorldSession::caches`] calls this with the socket's
+/// own peer address.
 pub fn for_server(address: &str) -> Caches {
     let realm = realm_key(address);
     Caches::open(CACHE_DIR, u32::from(crate::version::BUILD), realm)

@@ -56,7 +56,8 @@
 use crate::input::bindings::{Binding, BindingPressed, BindingSet};
 use super::events::PlayerTargetChanged;
 use crate::world::entities::EntityModel;
-use crate::world::session::{ActiveSession, LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::{ActiveSession, Session};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -347,7 +348,7 @@ impl Plugin for TargetPlugin {
                     announce_mouseover_change,
                 )
                     .chain()
-                    .after(crate::world::session::place_entities)
+                    .after(crate::world::entity::place_entities)
                     // After the mouse gesture has been judged.
                     // `select_on_click` reads `MouseLook` to tell a click from
                     // a camera look and from a drag that began on the
@@ -1638,28 +1639,28 @@ fn attack_on_right_click(
         if let Some(ActiveSession { live, .. }) = session.active.as_ref() {
             match interact {
                 Interact::Gossip => {
-                    live.npc(vale_protocol::socket::session::NpcVerb::GossipHello(guid));
+                    live.npc(vale_protocol::play::gossip::NpcVerb::GossipHello(guid));
                 }
                 Interact::Questgiver => {
-                    live.quest(vale_protocol::socket::session::QuestVerb::Hello(guid));
+                    live.quest(vale_protocol::play::quest::QuestVerb::Hello(guid));
                 }
                 Interact::Vendor => {
-                    live.npc(vale_protocol::socket::session::NpcVerb::ListInventory(guid));
+                    live.npc(vale_protocol::play::gossip::NpcVerb::ListInventory(guid));
                 }
                 Interact::Taxi => {
-                    live.taxi(vale_protocol::socket::session::TaxiVerb::QueryNodes(guid));
+                    live.taxi(vale_protocol::play::taxi::TaxiVerb::QueryNodes(guid));
                 }
                 Interact::Trainer => {
-                    live.npc(vale_protocol::socket::session::NpcVerb::TrainerList(guid));
+                    live.npc(vale_protocol::play::gossip::NpcVerb::TrainerList(guid));
                 }
                 Interact::Banker => {
-                    live.npc(vale_protocol::socket::session::NpcVerb::BankerActivate(guid));
+                    live.npc(vale_protocol::play::gossip::NpcVerb::BankerActivate(guid));
                 }
                 Interact::Petitioner => {
-                    live.petition(vale_protocol::socket::session::PetitionVerb::ShowList(guid));
+                    live.petition(vale_protocol::play::petition::PetitionVerb::ShowList(guid));
                 }
                 Interact::TabardDesigner => {
-                    live.guild(vale_protocol::socket::session::GuildVerb::TabardVendor(guid));
+                    live.guild(vale_protocol::play::guild::GuildVerb::TabardVendor(guid));
                 }
             }
         }

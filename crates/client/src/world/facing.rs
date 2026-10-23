@@ -471,7 +471,7 @@ pub(super) fn drive_bodies(
     look: Res<super::camera::MouseLook>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut facing: ResMut<BodyFacing>,
-    mut entities: Query<&mut super::session::WorldEntity>,
+    mut entities: Query<&mut super::entity::WorldEntity>,
     // The unit the `"npc"` token named last frame — see below.
     mut talk: Local<Option<u64>>,
     // …and the one whose window just closed, turning back.

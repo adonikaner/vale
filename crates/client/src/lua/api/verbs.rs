@@ -355,7 +355,7 @@ pub(in crate::lua) fn register(
     // --- movement controls ---
     //
     // Twenty-three names. They are verbs and not `KeyCode` reads in
-    // `world::session::send_input`, so a rebound key does only what it is
+    // `input::controls::send_input`, so a rebound key does only what it is
     // bound to. `A` is `TURNLEFT` in the shipped defaults. While
     // `send_input` read the key directly, binding `A` to `ACTIONBUTTON3` cast
     // a spell and also turned the character.

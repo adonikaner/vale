@@ -60,19 +60,20 @@
 //! There is no stable-close opcode, and the server does not say when the
 //! conversation ended, as [`super::gossip`] states for its three windows.
 //! `ClosePetStables()` is a local clear and a `PET_STABLE_CLOSED`, and
-//! [`super::gossip::out_of_range`] closes this window with the others when the
+//! [`super::gossip::close_when_npc_gone`] closes this window when the
 //! character walks away.
 
 use bevy::prelude::*;
 use std::collections::HashSet;
 
 use vale_protocol::play::stable::{StableList, StableResult, StabledPet};
-use vale_protocol::socket::session::NpcVerb;
+use vale_protocol::play::gossip::NpcVerb;
 
 use super::events::{
     PetStableClosed, PetStableShow, PetStableUpdate, PetStableUpdatePaperdoll,
 };
 use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// One of the two stable packets, handed on from [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
@@ -149,7 +150,8 @@ impl StableWindow {
     }
 
     /// Close the window and return whether one was open. Called by
-    /// [`super::gossip::out_of_range`], as the trainer's and the vendor's are.
+    /// [`super::gossip::close_when_npc_gone`], as the trainer's and the vendor's
+    /// are.
     pub(crate) fn close(&mut self) -> bool {
         self.open.take().is_some()
     }
@@ -161,13 +163,41 @@ impl Plugin for StablePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<StableAnswer>()
             .add_message::<StablePress>()
+            .add_message::<TemplatesArrived>()
             .init_resource::<StableWindow>()
             .add_systems(
                 Update,
                 (announce, resolve, presses, act)
                     .chain()
+                    .after(crate::world::incoming::drain_queues)
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<StableWindow>(app);
+        super::gossip::closes_on_walk_away::<StableWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for StableWindow {
+    type Closed = super::events::PetStableClosed;
+    const CLOSED: super::events::PetStableClosed = super::events::PetStableClosed;
+
+    fn guid(&self) -> Option<u64> {
+        StableWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        StableWindow::close(self)
+    }
+}
+
+/// The first line of `PetStable_Update` is
+/// `SetPortraitTexture(PetStableFramePortrait, "npc")`, so a window that does
+/// not name the token draws the plate with an empty face.
+impl super::gossip::NpcToken for StableWindow {
+    const ORDER: u8 = 5;
+
+    fn npc(&self) -> Option<u64> {
+        StableWindow::guid(self)
     }
 }
 
@@ -195,7 +225,7 @@ fn announce(
                     selected: -1,
                     unresolved,
                 });
-                ask_for_templates(&session, &window);
+                ask_for_templates(&session, &mut window);
                 if first {
                     shown.write(PetStableShow);
                 }
@@ -222,13 +252,19 @@ fn announce(
     }
 }
 
-/// Queue a creature template query for every entry the list named, so the
-/// stalls can be labelled with a species. `LiveSession::want_creature` takes
-/// the world lock and skips an entry the session already knows.
-fn ask_for_templates(session: &Session, window: &StableWindow) {
-    let (Some(open), Some(active)) = (window.open.as_ref(), session.active.as_ref()) else {
+/// Queue a creature template query for every entry the list named that the
+/// session does not know yet, so the stalls can be labelled with a species.
+/// The known entries leave `unresolved` here, because no arrival will name
+/// them; the rest leave it in [`resolve`].
+fn ask_for_templates(session: &Session, window: &mut StableWindow) {
+    let (Some(open), Some(active)) = (window.open.as_mut(), session.active.as_ref()) else {
         return;
     };
+    {
+        let world = active.live.world();
+        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        open.unresolved.retain(|entry| !world.creatures.contains_key(entry));
+    }
     for entry in &open.unresolved {
         active.live.want_creature(*entry);
     }
@@ -238,30 +274,26 @@ fn ask_for_templates(session: &Session, window: &StableWindow) {
 ///
 /// `PetStable_Update` runs once per event and caches nothing, so a family that
 /// arrives after the panel drew would not be shown otherwise (see the module
-/// note). The system takes one lock and walks a small set per frame only while
-/// a query is outstanding; once the answers empty the set, it returns on its
-/// first line.
+/// note). Each [`TemplatesArrived`] naming an outstanding entry removes it
+/// from the set and raises the event once.
 fn resolve(
     mut window: ResMut<StableWindow>,
-    session: Res<Session>,
+    mut arrived: MessageReader<TemplatesArrived>,
     mut updated: MessageWriter<PetStableUpdate>,
 ) {
-    let Some(open) = window.open.as_mut() else {
-        return;
-    };
-    if open.unresolved.is_empty() {
-        return;
-    }
-    let Some(active) = session.active.as_ref() else {
-        return;
-    };
-    let Ok(world) = active.live.world().lock() else {
-        return;
-    };
-    let before = open.unresolved.len();
-    open.unresolved.retain(|entry| !world.creatures.contains_key(entry));
-    if open.unresolved.len() != before {
-        updated.write(PetStableUpdate);
+    for batch in arrived.read() {
+        let Some(open) = window.open.as_mut() else {
+            continue;
+        };
+        if open.unresolved.is_empty() {
+            continue;
+        }
+        let before = open.unresolved.len();
+        open.unresolved
+            .retain(|entry| !batch.0.creatures.contains(entry));
+        if open.unresolved.len() != before {
+            updated.write(PetStableUpdate);
+        }
     }
 }
 

@@ -44,13 +44,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
-use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::render::mesh::skinning::SkinnedMesh;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 
 use vale_assets::tables::item::{AttachedModel, Weapon};
 use vale_assets::tables::itemvisual::ItemEffect;
@@ -60,26 +57,8 @@ use crate::lua::widgets::model::UnitFrame;
 use crate::render::axes;
 use crate::render::models::material::Materials;
 use crate::render::models::{Lookup, ModelAssets, ModelCache};
+use crate::render::offscreen::{self, layers, Picture};
 use crate::world::entities::{DisplayCache, Joint};
-
-/// The maximum number of paper dolls kept at once. It is the number of frames
-/// that can hold one, not a performance budget.
-///
-/// `Interface\FrameXML\` declares five `<PlayerModel>`-family frames, and four
-/// of them are pointed at a unit by `SetUnit`: `CharacterModelFrame`,
-/// `PetModelFrame`, `DressUpModel` and `TabardModel`. The fifth,
-/// `PetStableModel`, is pointed by `SetPetStablePaperdoll(frame)`, which this
-/// client does not answer yet, so it is counted here and never requested. A
-/// sixth would come from an addon.
-const MAX: usize = 5;
-
-/// The first render layer these use.
-///
-/// Above the nine layers of [`super::portraits`], which start at 1. Layer 0 is
-/// the world's, 1..=9 are the portraits, and 10..=14 are the dolls. Two models
-/// on one layer would be drawn into each other's image, so this range is
-/// defined from the portraits' range rather than chosen separately.
-const FIRST_LAYER: usize = super::portraits::FIRST_LAYER + super::portraits::MAX;
 
 /// [`crate::ui::report::HudReport`] slot 35, under the portraits' 32 and the
 /// interface's 31. The interface requests a paper doll the same way it
@@ -176,19 +155,8 @@ struct Doll {
     /// handled differently: a change here re-aims and re-renders, and a change
     /// to `built` removes the model and loads another.
     shown: Shown,
-    image: Handle<Image>,
-    /// The id egui knows [`Self::image`] by.
-    ///
-    /// Both painters are in use, so both handles are kept. The mesh painter
-    /// binds the `Handle<Image>`. The egui painter, still the default until the
-    /// parity soak is done, binds a `TextureId` that must be registered first.
-    /// See [`Dolls::texture`].
-    texture: bevy_egui::egui::TextureId,
-    camera: Entity,
-    root: Entity,
-    joints: Vec<Entity>,
-    skeleton: Option<Arc<M2Skeleton>>,
-    layer: usize,
+    /// The image, the camera and the body.
+    picture: Picture,
     /// When the doll was built, in `Time::elapsed_secs`: the clock its idle
     /// animation runs on.
     since: f32,
@@ -235,14 +203,7 @@ impl Dolls {
     /// painter then draws nothing rather than a coloured rectangle, the same
     /// rule [`super::portraits`] applies to avoid a white square.
     pub fn image(&self, frame: &str) -> Option<Handle<Image>> {
-        Some(self.taken.get(frame)?.image.clone())
-    }
-
-    /// The same image as the id egui knows it by, for the egui painter. This
-    /// returns `Some` exactly when [`Self::image`] does, because both fields are
-    /// written together when a doll is built.
-    pub fn texture(&self, frame: &str) -> Option<bevy_egui::egui::TextureId> {
-        Some(self.taken.get(frame)?.texture)
+        Some(self.taken.get(frame)?.picture.image.clone())
     }
 
     /// How many dolls are kept, for the HUD line.
@@ -252,8 +213,9 @@ impl Dolls {
 
     /// The lowest render layer nobody is using.
     fn free_layer(&self) -> Option<usize> {
-        (FIRST_LAYER..FIRST_LAYER + MAX)
-            .find(|layer| self.taken.values().all(|d| d.layer != *layer))
+        offscreen::free_layer(layers::DOLLS, |layer| {
+            self.taken.values().any(|d| d.picture.layer == layer)
+        })
     }
 }
 
@@ -313,9 +275,9 @@ fn follow(
     mut materials: Materials,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    ui_scale: Res<crate::ui::scale::InterfaceScale>,
-    mut egui: ResMut<bevy_egui::EguiUserTextures>,
+    // Where the interface is drawn, which sizes each render target; see
+    // [`crate::ui::scale::InterfaceViewport`].
+    viewport: Res<crate::ui::scale::InterfaceViewport>,
     time: Res<Time>,
     tabard: Res<crate::interface::tabard::TabardPreview>,
 ) {
@@ -336,24 +298,22 @@ fn follow(
         .cloned()
         .collect();
     for name in stale {
-        take_down(&mut commands, &mut dolls, &mut egui, &name);
+        take_down(&mut commands, &mut dolls, &name);
     }
     if wanted.is_empty() {
         return;
     }
 
-    let viewport = viewport(&windows, ui_scale.get());
-    let dpi = windows.iter().next().map_or(1.0, |w| w.scale_factor());
     for want in wanted {
         let shown = Shown {
-            size: target_size(&want, viewport, dpi),
+            size: target_size(&want, viewport.view, viewport.dpi),
             rotation: want.rotation,
         };
         let Some(mut built) = subject(&units, &want.unit) else {
             // A frame pointed at no unit, such as an open pet panel with no
             // pet, which is the normal state of that panel for every class but
             // two.
-            take_down(&mut commands, &mut dolls, &mut egui, &want.frame);
+            take_down(&mut commands, &mut dolls, &want.frame);
             continue;
         };
         // The tabard designer's model wears the design in the window and not
@@ -379,7 +339,7 @@ fn follow(
             // rather than rebuild. A held rotate button takes this branch sixty
             // times a second, and it must not load anything.
             if doll.built == built && doll.shown.size == shown.size {
-                let root = doll.root;
+                let root = doll.picture.root;
                 // Written through `Commands`, not a `Query<&mut Transform>`;
                 // see [`DollRoot`], which marks the spawn and is not used as a
                 // query filter. The root's transform is always a pure
@@ -453,12 +413,12 @@ fn follow(
             // `CMSG_ITEM_QUERY_SINGLE`.
             continue;
         };
-        take_down(&mut commands, &mut dolls, &mut egui, &want.frame);
+        take_down(&mut commands, &mut dolls, &want.frame);
         let Some(layer) = dolls.free_layer() else {
             continue;
         };
         let mut doll =
-            build(&mut commands, &mut images, &mut egui, &mut materials, &model, built, shown, layer);
+            build(&mut commands, &mut images, &mut materials, &model, built, shown, layer);
         doll.since = time.elapsed_secs();
         // The worn models load behind the body, filtered to the points the
         // body carries, as in the world; see [`hang`].
@@ -486,22 +446,6 @@ fn follow(
 fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("VALE_NO_PAPERDOLL").is_none())
-}
-
-/// The interface's viewport, built the same way [`crate::ui::framexml`] builds
-/// it. One place decides the conversion from interface units to pixels, and
-/// this function uses it rather than computing its own.
-fn viewport(windows: &Query<&Window, With<bevy::window::PrimaryWindow>>, ui_scale: f64) -> crate::lua::widgets::layout::Viewport {
-    match windows.iter().next() {
-        Some(window) => crate::lua::widgets::layout::Viewport::of(
-            window.width() as f64,
-            window.height() as f64,
-            ui_scale,
-        ),
-        // The headless probes have no window. `layout` gives a caller with no
-        // window this fixed 1600x900 space.
-        None => crate::lua::widgets::layout::Viewport::of(1600.0, 900.0, ui_scale),
-    }
 }
 
 /// How big a render target the frame wants, in pixels.
@@ -595,10 +539,7 @@ fn unit_kind(
     if token.starts_with(DISPLAY_ID_PREFIX) {
         return vale_protocol::state::update::ObjectType::Unit;
     }
-    crate::interface::api::UnitId::parse(token)
-        .and_then(|id| units.get(id))
-        .map(|unit| unit.kind)
-        .unwrap_or(vale_protocol::state::update::ObjectType::Unit)
+    offscreen::unit_kind(units, token)
 }
 
 /// Spawn the image, the camera and the model for one doll.
@@ -606,134 +547,47 @@ fn unit_kind(
 fn build(
     commands: &mut Commands,
     images: &mut Assets<Image>,
-    egui: &mut bevy_egui::EguiUserTextures,
     materials: &mut Materials,
     model: &ModelAssets,
     built: Built,
     shown: Shown,
     layer: usize,
 ) -> Doll {
-    let image = images.add(target_image(shown.size));
-    let texture = egui.add_image(bevy_egui::EguiTextureHandle::Strong(image.clone()));
-    let layers = RenderLayers::layer(layer);
-
-    // --- The model, alone on its render layer at the origin, turned by SetRotation ---
-
-    let root = commands
-        .spawn((
+    let picture = offscreen::spawn(
+        commands,
+        images,
+        model,
+        // The model's character-info camera.
+        model.body,
+        shown.size,
+        layer,
+        // Turned by `SetRotation`.
+        (
             Transform::from_rotation(turn(shown.rotation)),
             Visibility::default(),
             DollRoot,
-        ))
-        .id();
-    let mut joints = Vec::new();
-    if model.skeleton.is_some() {
-        joints.extend((0..model.joint_count).map(|_| {
-            commands
-                .spawn((GlobalTransform::default(), Joint, ChildOf(root)))
-                .id()
-        }));
-    }
-    for draw in &model.draws {
-        let mut part = commands.spawn((
-            Mesh3d(draw.mesh.clone()),
-            MeshMaterial3d(lifted(materials, &draw.material)),
-            Transform::default(),
-            ChildOf(root),
-            // Set on every drawn entity: Bevy reads `RenderLayers` per entity
-            // and does not propagate it down a hierarchy, and a part without
-            // the layer is drawn by the world camera at the map's origin.
-            layers.clone(),
-            // The declared box is the widest extent the model reaches over all
-            // its animations, wider than any one pose the doll draws. A doll
-            // culled out of its own panel is an empty rectangle that
-            // looks the same as a model that failed to load. Five entities are
-            // not worth culling.
-            NoFrustumCulling,
-        ));
-        // Bind the batch's own bones, not the model's whole skeleton; see
-        // `models::skin_for`. Binding the whole skeleton poses every vertex
-        // by the wrong bone and stretches the body across the panel.
-        if let Some(joints) = crate::render::models::skin_for(draw, &joints) {
-            part.insert(SkinnedMesh {
-                inverse_bindposes: model.inverse_bindposes.clone(),
-                joints,
-            });
-        }
-    }
-
-    // --- The camera, along the model's character-info camera ---
-
-    let framing = model.body;
-    let eye = axes::to_bevy(framing.eye);
-    // A degenerate framing has its aim point moved rather than aimed at the
-    // eye: `looking_at` on a zero-length direction produces a NaN basis, and a
-    // NaN view matrix breaks culling for the whole frame.
-    // `render::portraits::build` makes the same check for the same reason.
-    let aim = match axes::to_bevy(framing.aim) {
-        target if eye.distance_squared(target) < 1e-6 => eye - Vec3::Z,
-        target => target,
-    };
-    let aspect = shown.size.x as f32 / shown.size.y.max(1) as f32;
-    let camera = commands
-        .spawn((
-            Camera3d::default(),
-            Camera {
-                // Before the world camera, which is order 0. A camera drawing
-                // into an image that is sampled later in the frame must finish
-                // first.
-                order: -1 - layer as isize,
-                // Transparent: the panel's own art is drawn under this
-                // rectangle and shows through wherever the character is not.
-                clear_color: ClearColorConfig::Custom(Color::NONE),
-                ..default()
-            },
-            RenderTarget::Image(ImageRenderTarget {
-                handle: image.clone(),
-                scale_factor: 1.0,
-            }),
-            // Every model shader in this client ends in `atmosphere::to_frame`
-            // and writes the game's own bytes, so a camera in the default space
-            // would encode them a second time and give the panel a washed-out
-            // character. See `crate::render::present`.
-            bevy::camera::CompositingSpace::Srgb,
-            Projection::Perspective(PerspectiveProjection {
-                // `M2Camera::fov` is a diagonal angle
-                // (`render::lens::vertical_fov` records the evidence), and the
-                // aspect used here is the frame's, not the portrait path's
-                // fixed 4:3. Read as a vertical angle instead, a character
-                // sheet is framed far too wide and the character's head fills
-                // the panel. Not clamped, because this target is not the
-                // window: see `render::lens::framed_vertical_fov`.
-                fov: crate::render::lens::vertical_fov(framing.fov, aspect),
-                near: framing.near.max(0.01),
-                far: framing.far.max(framing.near.max(0.01) * 10.0),
-                aspect_ratio: aspect,
-                ..default()
-            }),
-            // Both settings are set explicitly because `Camera3d` defaults to
-            // multisampled and tonemapped. Multisampling uses four samples, the
-            // world camera's default, so the doll's edges match the models
-            // behind the panel. Tonemapping is off.
-            Msaa::Sample4,
-            bevy::core_pipeline::tonemapping::Tonemapping::None,
-            layers.clone(),
-            Transform::from_translation(eye).looking_at(aim, Vec3::Y),
-            DollCamera,
-            Name::new("paperdoll"),
-        ))
-        .id();
+        ),
+        offscreen::Lens {
+            // The frame's own aspect, not the portraits' fixed 4:3. Read at
+            // the wrong aspect, a character sheet is framed far too wide and
+            // the character's head fills the panel.
+            aspect: shown.size.x as f32 / shown.size.y.max(1) as f32,
+            // Transparent: the panel's own art is drawn under this rectangle
+            // and shows through wherever the character is not.
+            clear: Color::NONE,
+            // Four samples, the world camera's default, so the doll's edges
+            // match the models behind the panel.
+            msaa: Msaa::Sample4,
+            name: "paperdoll",
+        },
+        |material| lifted(materials, material),
+    );
+    commands.entity(picture.camera).insert(DollCamera);
 
     Doll {
         built,
         shown,
-        image,
-        texture,
-        camera,
-        root,
-        joints,
-        skeleton: model.skeleton.clone(),
-        layer,
+        picture,
         since: 0.0,
         points: model.attachments.clone(),
         hung: Vec::new(),
@@ -760,7 +614,7 @@ fn hang(
         if doll.wanted.is_empty() && !nested_wanted {
             continue;
         }
-        let layers = RenderLayers::layer(doll.layer);
+        let layers = RenderLayers::layer(doll.picture.layer);
         let mut still_wanted = Vec::new();
         for worn in std::mem::take(&mut doll.wanted) {
             match cache.attached(
@@ -931,11 +785,12 @@ fn pose(
         let raw = ((now - doll.since).max(0.0) * 1000.0) as u32;
         let world = Affine3A::from_quat(turn(doll.shown.rotation));
         let body_pose = doll
+            .picture
             .skeleton
             .as_ref()
             .map(|skeleton| idle_pose(skeleton, raw, now_ms));
         if let Some(pose) = &body_pose {
-            write_joints(&mut joints, &doll.joints, pose, world);
+            offscreen::write_joints(&mut joints, &doll.picture.joints, pose, world);
         }
         for hung in &doll.hung {
             pose_hung(&mut joints, &mut roots, hung, world, body_pose.as_deref(), raw, now_ms);
@@ -951,27 +806,6 @@ fn idle_pose(skeleton: &M2Skeleton, raw: u32, now_ms: u32) -> Vec<[f32; 12]> {
         .unwrap_or(0);
     let elapsed = skeleton.phase(sequence, raw);
     skeleton.pose(sequence, elapsed, now_ms, None, Default::default())
-}
-
-/// One skeleton's joints at `world`, with the identity joint last, which
-/// weightless vertices ride; without it the skinning shader collapses them to
-/// the origin.
-fn write_joints(
-    joints: &mut Query<&mut GlobalTransform, With<Joint>>,
-    entities: &[Entity],
-    pose: &[[f32; 12]],
-    world: Affine3A,
-) {
-    for (bone, &joint) in pose.iter().zip(entities.iter()) {
-        if let Ok(mut transform) = joints.get_mut(joint) {
-            *transform = GlobalTransform::from(world * axes::pose_to_bevy_affine(bone));
-        }
-    }
-    if let Some(&last) = entities.last() {
-        if let Ok(mut transform) = joints.get_mut(last) {
-            *transform = GlobalTransform::from(world);
-        }
-    }
 }
 
 /// Place one hung model on the carrying model's pose, then its own nested
@@ -1004,30 +838,24 @@ fn pose_hung(
         .as_ref()
         .map(|skeleton| idle_pose(skeleton, raw, now_ms));
     if let Some(pose) = &own_pose {
-        write_joints(joints, &hung.joints, pose, world);
+        offscreen::write_joints(joints, &hung.joints, pose, world);
     }
     for nested in &hung.nested {
         pose_hung(joints, roots, nested, world, own_pose.as_deref(), raw, now_ms);
     }
 }
 
-/// Remove one doll: the model, the camera and the image.
-///
-/// Egui's handle is removed too, for the reason [`super::portraits`] gives.
-/// Leaving it registered against an image asset nothing else holds leaks one
-/// render target per panel opening; for a character sheet opened and closed
-/// all session, that adds up to a large, unexplained memory growth.
+/// Remove one doll: the model, the camera and the image. The image asset is
+/// freed when the doll's handle, the last strong one, is dropped here.
 fn take_down(
     commands: &mut Commands,
     dolls: &mut Dolls,
-    egui: &mut bevy_egui::EguiUserTextures,
     frame: &str,
 ) {
     let Some(doll) = dolls.taken.remove(frame) else {
         return;
     };
-    commands.entity(doll.root).despawn();
-    commands.entity(doll.camera).despawn();
+    doll.picture.take_down(commands);
     let mut roots = Vec::new();
     for hung in &doll.hung {
         hung.roots(&mut roots);
@@ -1035,32 +863,6 @@ fn take_down(
     for root in roots {
         commands.entity(root).despawn();
     }
-    egui.remove_image(&doll.image);
-}
-
-/// The image a doll is drawn into.
-///
-/// `Rgba8UnormSrgb`, for the reason `render::portraits::target_image` gives:
-/// the camera's main texture holds raw bytes (`CompositingSpace::Srgb`), and
-/// Bevy's upscaling blit applies `SRGB_TO_LINEAR` on output because it assumes
-/// the destination re-encodes; this image is that destination.
-fn target_image(size: UVec2) -> Image {
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: size.x.max(1),
-            height: size.y.max(1),
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        // Transparent black, so a frame whose camera has not run yet shows the
-        // panel's own art rather than a coloured rectangle.
-        &[0, 0, 0, 0],
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    image.texture_descriptor.usage =
-        TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST;
-    image
 }
 
 #[cfg(test)]
@@ -1080,33 +882,19 @@ mod tests {
                 size: UVec2::new(233, 224),
                 rotation: 0.61,
             },
-            image: Handle::default(),
-            texture: bevy_egui::egui::TextureId::Managed(0),
-            camera,
-            root: Entity::from_raw_u32(9).expect("an entity id"),
-            joints,
-            skeleton: None,
-            layer,
+            picture: Picture {
+                image: Handle::default(),
+                camera,
+                root: Entity::from_raw_u32(9).expect("an entity id"),
+                joints,
+                skeleton: None,
+                layer,
+            },
             since: 0.0,
             points: Arc::new(Vec::new()),
             hung: Vec::new(),
             wanted: Vec::new(),
         }
-    }
-
-    /// The dolls' render layers never overlap the portraits'. The layer range
-    /// is the one resource the two passes share. An overlap would draw a face
-    /// and a body into each other's image, and both would still be well-formed
-    /// images, so nothing else would report it.
-    #[test]
-    fn the_layers_start_where_the_portraits_end_and_never_overlap() {
-        let faces: Vec<usize> =
-            (super::super::portraits::FIRST_LAYER..super::super::portraits::FIRST_LAYER + super::super::portraits::MAX)
-                .collect();
-        let bodies: Vec<usize> = (FIRST_LAYER..FIRST_LAYER + MAX).collect();
-        assert!(!faces.iter().any(|f| bodies.contains(f)), "{faces:?} {bodies:?}");
-        assert!(!bodies.contains(&0), "layer 0 is the world's");
-        assert_eq!(bodies.first(), Some(&10));
     }
 
     /// Doll layers are handed out one per doll and run out rather than
@@ -1115,7 +903,7 @@ mod tests {
     fn layers_are_handed_out_one_apiece_and_run_out() {
         let mut dolls = Dolls::default();
         let mut used = Vec::new();
-        for i in 0..MAX {
+        for i in 0..layers::DOLLS.len() {
             let layer = dolls.free_layer().expect("a free layer");
             assert!(!used.contains(&layer), "layer {layer} handed out twice");
             used.push(layer);
@@ -1133,9 +921,7 @@ mod tests {
     /// first frame.
     #[test]
     fn every_doll_camera_draws_before_the_world_and_none_share_an_order() {
-        let orders: Vec<isize> = (FIRST_LAYER..FIRST_LAYER + MAX)
-            .map(|layer| -1 - layer as isize)
-            .collect();
+        let orders: Vec<isize> = layers::DOLLS.map(offscreen::order).collect();
         assert!(orders.iter().all(|o| *o < 0));
         let mut sorted = orders.clone();
         sorted.sort_unstable();

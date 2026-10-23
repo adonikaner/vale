@@ -115,7 +115,7 @@ pub(super) struct RawModel {
     /// The model's own lights: the same kind of block as the cameras, read for
     /// the same screens.
     lights: Vec<vale_assets::world::m2::M2Light>,
-    clip: Option<crate::render::particles::ParticleClip>,
+    clip: Option<vale_assets::world::m2::ParticleClip>,
     /// The colour and transparency tracks, `None` on the unskinned build for
     /// the same reason [`Self::skeleton`] is.
     tints: Option<vale_assets::world::m2::M2Tints>,
@@ -733,7 +733,7 @@ fn read_model(archive: &mut Archive, path: &str, skinned: bool) -> Option<RawMod
     // nonzero key is on".
     let clip = model.skeleton.as_ref().and_then(|s| {
         let seq = s.sequences.first()?;
-        Some(crate::render::particles::ParticleClip {
+        Some(vale_assets::world::m2::ParticleClip {
             start: seq.start,
             end: seq.end,
             // A sequence loops when bit 0 of its flags is clear.

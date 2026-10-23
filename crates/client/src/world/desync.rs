@@ -255,11 +255,12 @@ fn report(log: Res<RangeDisagreement>, mut hud: ResMut<crate::ui::report::HudRep
     hud.set_pinned(SLOT, "combat::desync", text);
 }
 
-#[cfg(test)]
+// The tests drive the HUD line, which is behind the `diagnostics` feature.
+#[cfg(all(test, feature = "diagnostics"))]
 mod tests {
     use super::*;
 
-    use crate::world::session::WorldEntity;
+    use crate::world::entity::WorldEntity;
 
     /// The whole path in one app: the plugin as registered, a player, a target
     /// `across` yards away and `up` yards above, and the panel open.

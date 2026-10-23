@@ -301,14 +301,14 @@ impl super::panels::container::ContainerAnswers for Login {
         // code.
         12_345
     }
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
+    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::plate::ItemTip> {
         self.item_tip(Self::stack(bag, slot)?.0)
     }
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::api::ItemTip> {
+    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::plate::ItemTip> {
         self.item_tip(Self::equipped(token, id)?.0)
     }
-    fn item_tip(&self, entry: u32) -> Option<crate::interface::api::ItemTip> {
-        Some(crate::interface::api::ItemTip {
+    fn item_tip(&self, entry: u32) -> Option<crate::interface::plate::ItemTip> {
+        Some(crate::interface::plate::ItemTip {
             name: Self::item_name(entry)?.to_string(),
             quality: Self::quality(entry).max(0) as u32,
             bonding: 1,
@@ -1855,7 +1855,7 @@ impl super::api::UnitAnswers for Login {
             return None;
         }
         let slot = |n: u16| player::SKILL_INFO_1_1 + n * 3;
-        let sword = vale_protocol::state::objects::HeldItem {
+        let sword = vale_protocol::play::items::HeldItem {
             display_id: 1,
             class: 2,
             subclass: 7,
@@ -3990,13 +3990,13 @@ impl super::panels::container::ContainerAnswers for Ticking {
     fn money(&self) -> u32 {
         Login.money()
     }
-    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::api::ItemTip> {
+    fn bag_item_tip(&self, bag: i32, slot: usize) -> Option<crate::interface::plate::ItemTip> {
         Login.bag_item_tip(bag, slot)
     }
-    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::api::ItemTip> {
+    fn inventory_item_tip(&self, token: &str, id: u32) -> Option<crate::interface::plate::ItemTip> {
         Login.inventory_item_tip(token, id)
     }
-    fn item_tip(&self, entry: u32) -> Option<crate::interface::api::ItemTip> {
+    fn item_tip(&self, entry: u32) -> Option<crate::interface::plate::ItemTip> {
         Login.item_tip(entry)
     }
 
@@ -4706,7 +4706,7 @@ impl super::api::ActionAnswers for Ticking {
     fn action_tooltip(&self, slot: u8) -> Option<crate::interface::api::SpellTip> {
         Login.action_tooltip(slot)
     }
-    fn action_item_tooltip(&self, slot: u8) -> Option<crate::interface::api::ItemTip> {
+    fn action_item_tooltip(&self, slot: u8) -> Option<crate::interface::plate::ItemTip> {
         Login.action_item_tooltip(slot)
     }
     fn action_text(&self, slot: u8) -> Option<String> {
@@ -4963,7 +4963,7 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
     // itself.
     let mut painter = std::path::Path::new(gamedata_dir)
         .is_dir()
-        .then(|| crate::ui::framexml::PaintProbe::new(gamedata_dir));
+        .then(|| crate::ui::mesh::PaintProbe::new(gamedata_dir));
     let mut painted: ((usize, usize), Vec<f64>) = ((0, 0), Vec::with_capacity(frames));
     // The interface's clock, and the item list reused by the frames between
     // its ticks, both as in the live client; see
@@ -5066,7 +5066,7 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
         charge(4, host, &mut allocated);
         heaps.push(host.state().used_memory());
         // The paint, which is not interpreter work; see
-        // [`crate::ui::framexml::PaintProbe`]. It is kept out of the phases
+        // [`crate::ui::mesh::PaintProbe`]. It is kept out of the phases
         // and their total so those stay comparable with earlier measurements.
         // It is still part of the same frame's work, and a real frame costs
         // the median above plus this.
@@ -5126,16 +5126,17 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
     if !painted.1.is_empty() {
         let mut sorted = painted.1.clone();
         sorted.sort_by(f64::total_cmp);
-        let ((shapes, primitives), _) = &painted;
+        let ((drawn, batches), _) = &painted;
         println!(
-            "    {:<10} median {:.2} ms, p99 {:.2} — {shapes} shapes -> {primitives} primitives",
+            "    {:<10} median {:.2} ms, p99 {:.2} — {drawn} items -> {batches} batches",
             "paint",
             sorted[sorted.len() / 2],
             sorted[(sorted.len() - 1) * 99 / 100],
         );
         println!(
-            "      …and {primitives} is the draw calls: epaint merges neighbouring quads only when they share a texture"
+            "      …and {batches} is the draw calls: neighbouring quads merge only when they share a texture and a blend"
         );
+
     }
     println!(
         "  heap: {} KB after the first frame, {} KB at the end",

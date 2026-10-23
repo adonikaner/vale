@@ -16,6 +16,8 @@
 //! procedural.rs what a kit leaves on it for later: a timed colour and a
 //!               weapon trail waiting for the next swing
 //! fallback.rs   what to draw when the tables resolve to no model
+//! test_support.rs  fixtures the tests of several files here share:
+//!               skeletons, weapons, units in common states
 //! ```
 //!
 //! A `WorldEntity` carries a `DISPLAYID`. The display tables turn that into a
@@ -77,7 +79,7 @@
 use crate::assets::GameAssets;
 use crate::axes;
 use crate::render::models::{Lookup, Materials, ModelAssets, ModelCache, RoomLight, SceneLighting};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 use vale_assets::tables::dbc::DisplayModel;
 use vale_assets::look::dress::CharacterLook;
 use vale_assets::tables::item::{AttachedModel, Weapon, WeaponAnim};
@@ -979,7 +981,7 @@ const INDOOR_PROBE: f32 = 1.0;
 
 /// Decide which entities are standing in a room, and in whose.
 ///
-/// Runs after [`crate::world::session::place_entities`] with the rest of this
+/// Runs after [`crate::world::entity::place_entities`] with the rest of this
 /// pass, so the point tested is this frame's. The `Interior` components are the
 /// placed buildings of the loaded 3x3 tiles, a few dozen. Each rejects on its
 /// own box before testing its rooms, so a city's three hundred rooms are only
@@ -1541,7 +1543,7 @@ impl Plugin for EntityPlugin {
                     // After the session has placed the entities: a joint is
                     // written as a world transform, so it must be composed
                     // against this frame's placement, not last frame's.
-                    .after(crate::world::session::place_entities)
+                    .after(crate::world::entity::place_entities)
                     // After the player's input this frame: `AttackTarget()` and
                     // `ToggleSheath()` write a `SheathRequest`, and
                     // `sheath::commit` executes it. Without this ordering a drawn
@@ -1596,7 +1598,7 @@ mod mount;
 /// batch list differs, not just its materials.
 ///
 /// Filtered on `Changed<WorldEntity>`, which works only because
-/// [`crate::world::session::poll_world`] writes the component only when it
+/// [`crate::world::entity::poll_world`] writes the component only when it
 /// changes. Only a change to the entity can make a model stop matching it, so
 /// an unchanged entity never needs a rebuild. Without the filter, every
 /// modelled entity is compared every frame at 100+ fps against a snapshot
@@ -1629,4 +1631,130 @@ use spawn::*;
 pub(crate) use worn::hang_nested;
 use worn::*;
 #[cfg(test)]
-mod tests;
+mod test_support;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::entities::test_support::*;
+    use vale_assets::world::m2::M2Skeleton;
+
+    /// One room and three characters: one inside it, one outside the wall, and one
+    /// standing on its roof.
+    ///
+    /// [`INDOOR_PROBE`] exists for the roof case. A group's box is its own
+    /// geometry, so the top face of a room is the outer surface of the ceiling. A
+    /// character standing on the roof stands exactly on that face, which counts as
+    /// inside. Testing a yard up puts the probe clear of it and does not affect any
+    /// real interior.
+    #[test]
+    fn a_room_lights_who_is_in_it_and_not_who_is_on_top_of_it() {
+        use crate::render::wmos::Interior;
+
+        let mut app = App::new();
+        app.add_systems(Update, light_entities);
+
+        let room = [[-5.0, -5.0, 0.0], [5.0, 5.0, 5.0]];
+        let light = RoomLight::new([0.5, 0.4, 0.3]);
+        app.world_mut().spawn(Interior {
+            inverse: Mat4::IDENTITY,
+            bounds: room,
+            rooms: vec![room],
+            light,
+            areas: Vec::new(),
+            wmo_id: 0,
+            name_set: 0,
+        });
+
+        // Positions are in WoW's frame, as the world stores them. The entity's
+        // `Transform` is in Bevy's frame, which the system reads.
+        let at = |wow: [f32; 3]| {
+            (
+                moving(0.0),
+                Transform::from_translation(crate::render::axes::to_bevy(wow)),
+            )
+        };
+        let inside = app.world_mut().spawn(at([0.0, 0.0, 0.0])).id();
+        let outside = app.world_mut().spawn(at([20.0, 0.0, 0.0])).id();
+        // Feet exactly on the ceiling's outer face.
+        let on_the_roof = app.world_mut().spawn(at([0.0, 0.0, 5.0])).id();
+        app.update();
+
+        let indoors = |e| app.world().get::<Indoors>(e).copied();
+        assert_eq!(indoors(inside), Some(Indoors(Some(light))));
+        assert_eq!(indoors(outside), Some(Indoors(None)));
+        assert_eq!(indoors(on_the_roof), Some(Indoors(None)), "on the roof");
+    }
+
+    /// A part playing one clip of a skeleton whose sequences run
+    /// `i*1000..i*1000+500`, so each sequence is 500 ms long, with the loop flag
+    /// under test.
+    fn part_playing(sequence: usize, loops: bool, count: usize) -> AttachedPart {
+        let mut part = AttachedPart::rigid(Entity::PLACEHOLDER, 1.0);
+        part.skeleton = Some(skeleton(&vec![0u16; count]));
+        part.sequence = sequence;
+        part.loops = loops;
+        part
+    }
+
+    /// A one-shot effect is removed when its own clip has finished, not after a
+    /// fixed time. This fixes the report "it appears and then abruptly disappears".
+    ///
+    /// The clip of `Spells\IceArmor_Low_Head.m2` runs 3,000 ms and that of
+    /// `Spells\ArcaneIntellect_Impact_Base.m2` 1,900 ms, where every set once used
+    /// a fixed 1,500 ms. Both were cut part-way through the transparency track that
+    /// fades the effect out. The deadline only moves later, so a short clip keeps
+    /// the minimum; see `EffectSet::stated`.
+    #[test]
+    fn an_effects_deadline_is_the_longest_clip_it_is_wearing() {
+        let mut set = EffectSet::default();
+        set.want_until_played(Vec::new(), 10.0 + 1.5, &[]);
+        assert_eq!(set.until, 11.5, "the floor, until a model says otherwise");
+
+        // A 500 ms clip is shorter than the minimum and does not shorten it.
+        set.stated(&part_playing(0, false, 1), 10.0);
+        assert_eq!(set.until, 11.5, "a short clip keeps the fallback");
+
+        // A three-second clip moves the deadline later to cover itself. Sequence
+        // 5 of this skeleton starts at 5,000 ms; only its length matters.
+        let mut long = part_playing(5, false, 6);
+        if let Some(skeleton) = &mut long.skeleton {
+            let mut sequences = skeleton.sequences.clone();
+            sequences[5].end = sequences[5].start + 3_000;
+            long.skeleton = Some(Arc::new(M2Skeleton::new(
+                Vec::new(),
+                sequences,
+                Vec::new(),
+            )));
+        }
+        assert_eq!(long.clip_secs(), Some(3.0));
+        set.stated(&long, 10.0);
+        assert_eq!(set.until, 13.0, "the longest of the models it is wearing");
+    }
+
+    /// A looping clip sets no deadline. The clip of `Spells\ChargeTrail.m2` is
+    /// 334 ms and loops for as long as the charge lasts, so reading a loop as a
+    /// lifetime would end the trail after one loop.
+    #[test]
+    fn a_looping_clip_is_not_a_deadline() {
+        assert_eq!(part_playing(0, true, 1).clip_secs(), None);
+        let mut set = EffectSet::default();
+        set.want_until_played(Vec::new(), 5.0, &[]);
+        set.stated(&part_playing(0, true, 1), 0.0);
+        assert_eq!(set.until, 5.0, "the fallback stands");
+    }
+
+    /// A wind-up effect ends when the cast ends, whatever length its art was
+    /// authored for. The hold is set with `want` rather than `want_until_played`,
+    /// so an interrupted Fireball does not keep its hands lit for the length of a
+    /// clip that is no longer playing.
+    #[test]
+    fn a_wind_up_is_not_extended_by_its_own_art() {
+        let mut set = EffectSet::default();
+        set.want(Vec::new(), 2.0, &[]);
+        let mut long = part_playing(0, false, 1);
+        long.sequence = 0;
+        set.stated(&long, 0.0);
+        assert_eq!(set.until, 2.0, "the cast bar's own length, unmoved");
+    }
+}

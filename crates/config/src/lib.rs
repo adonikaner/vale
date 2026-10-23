@@ -13,7 +13,7 @@
 //! | third-party addons | `Interface\AddOns\`, in the install folder, [`Config::root`]; the archive chain reads loose files under it |
 //!
 //! The query caches this client keeps between sessions go to `WDB\`. The
-//! directory name is a constant in `vale_protocol::play::wdb`, the crate that
+//! directory name is a constant in `vale_protocol::state::wdb`, the crate that
 //! writes those files.
 //!
 //! A build placed in a 1.12 install folder therefore reads the `realmlist.wtf`

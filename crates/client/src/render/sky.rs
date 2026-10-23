@@ -262,7 +262,7 @@ impl Plugin for SkyPlugin {
                     // `follow_player` is the last system of the session chain
                     // and is the same anchor `camera::place` uses, for the same
                     // reason.
-                    .after(crate::world::session::follow_player),
+                    .after(crate::world::camera::follow_player),
             )
             // The dome is centred on the camera, so it has to be moved after the
             // camera has been placed; one frame late, the whole sky slides

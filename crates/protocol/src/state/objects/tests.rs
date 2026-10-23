@@ -2217,7 +2217,8 @@ fn a_slot_the_client_set_survives_in_the_world() {
 /// because the kind byte separates spells, items and macros.
 #[test]
 fn a_superceded_rank_moves_in_every_slot_that_held_it() {
-    use crate::play::spells::{action_kind, ActionButton, PlayerEvent};
+    use crate::play::spells::{action_kind, ActionButton};
+    use crate::state::events::PlayerEvent;
 
     let mut om = ObjectManager::default();
     om.apply_spellbook(crate::play::spells::Spellbook {
@@ -2268,7 +2269,7 @@ fn a_superceded_rank_moves_in_every_slot_that_held_it() {
 /// ranks were never placed on a bar.
 #[test]
 fn a_superceded_rank_that_is_on_no_button_still_moves_the_book() {
-    use crate::play::spells::PlayerEvent;
+    use crate::state::events::PlayerEvent;
 
     let mut om = ObjectManager::default();
     om.apply_spellbook(crate::play::spells::Spellbook {
@@ -2844,11 +2845,11 @@ fn walk_mode_reaches_the_speed_a_unit_is_reckoned_at() {
 }
 
 /// The on-disk caches seed the tables, write only what is new, and hold the
-/// on-demand kinds as raw bodies. See `crate::play::wdb`.
+/// on-demand kinds as raw bodies. See `crate::state::wdb`.
 #[test]
 fn the_caches_seed_the_tables_and_record_only_what_is_new() {
     use crate::bytes::Writer;
-    use crate::play::wdb::{Caches, Kind, Learned};
+    use crate::state::wdb::{Caches, Kind, Learned};
     let mut dir = std::env::temp_dir();
     dir.push("vale-objects-wdb-tests");
     let _ = std::fs::remove_dir_all(&dir);

@@ -338,7 +338,7 @@ fn project(
         }
     }
     // **The same two questions the mover asks, asked once for the whole grid.**
-    // See `world::session::Standing::floor`, which is where the join is written
+    // See `world::standing::Standing::floor`, which is where the join is written
     // for the character. It is repeated rather than shared because the *rule* is
     // not the same one: a mover wants what it can stand on and asks with a
     // ceiling a step above its feet, and a decal wants the visible surface under

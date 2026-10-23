@@ -29,7 +29,7 @@
 use bevy::prelude::*;
 
 use vale_protocol::play::questshare::{ConfirmAccept, PushOutcome, PushResult};
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 use crate::input::bindings::{Binding, BindingPressed};
 use crate::interface::events::QuestAcceptConfirm;

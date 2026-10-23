@@ -68,7 +68,7 @@ use bevy::prelude::*;
 use vale_protocol::play::trade::{
     TradeItem, TradeOffer, TradeStatus, TradeStatusPacket, TRADE_SLOT_COUNT,
 };
-use vale_protocol::socket::session::TradeVerb;
+use vale_protocol::play::trade::TradeVerb;
 
 use super::events::{
     PlayerTradeMoney, TradeAcceptUpdate, TradeClosed, TradeMoneyChanged,
@@ -206,6 +206,20 @@ impl Plugin for TradePlugin {
                     .chain()
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<TradeWindow>(app);
+    }
+}
+
+/// The trade partner is not an NPC and takes the token anyway:
+/// `TradeFrame_Update` draws the far side with `UnitName("NPC")` and
+/// `SetPortraitTexture(…, "NPC")`. Last, so any NPC conversation wins. The
+/// server ends a trade that goes out of range, so this window has no
+/// walk-away close.
+impl super::gossip::NpcToken for TradeWindow {
+    const ORDER: u8 = 9;
+
+    fn npc(&self) -> Option<u64> {
+        TradeWindow::partner(self)
     }
 }
 

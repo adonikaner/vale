@@ -2,6 +2,8 @@
 //! lamps, creatures, spell effects.
 //!
 //! ```text
+//! track.rs   emitter tracks on an emitter's clock: the clip window, sampling,
+//!            the emission gate and a particle's over-life ramp
 //! tests.rs   batches, collision, particles, bones and billboards, on built
 //!            models
 //! ```
@@ -670,6 +672,26 @@ pub struct GroundQuad {
     pub corners: [[f32; 3]; 4],
     /// The authored UV at each corner, parallel to [`Self::corners`].
     pub uvs: [[f32; 2]; 4],
+}
+
+impl GroundQuad {
+    /// A square `2 * half` on a side, centred on the model's origin at
+    /// `z = 0`, with the whole image on it. It is the quad of a decal no file
+    /// authors, such as the ring under a selected unit or the circle under a
+    /// spell being aimed at the ground. `bone` is 0, which nothing indexes when
+    /// the decal has no joint.
+    pub fn square(half: f32) -> Self {
+        GroundQuad {
+            bone: 0,
+            corners: [
+                [-half, -half, 0.0],
+                [half, -half, 0.0],
+                [-half, half, 0.0],
+                [half, half, 0.0],
+            ],
+            uvs: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        }
+    }
 }
 
 /// Why a batch is **not** a [`GroundQuad`] — the shape test's own answer, so
@@ -2194,7 +2216,7 @@ pub mod anim {
     /// none, so a character who lands still standing and one who lands still
     /// running want different sequences. `AnimationData.dbc` falls it back to
     /// [`RUN`]; this client drops it instead when the model has none, for the
-    /// reason in `entities::fallbacks` — a one-shot substituted onto a gait
+    /// reason in `look::pose::fallbacks` — a one-shot substituted onto a gait
     /// holds that gait for the gait's own length.
     pub const JUMP_LAND_RUN: u16 = 187;
     /// The channelled halves of the cast pair — a channel holds for its whole
@@ -4761,6 +4783,9 @@ impl M2 {
         Some((sum / self.positions.len() as f64).sqrt() as f32)
     }
 }
+
+pub mod track;
+pub use track::ParticleClip;
 
 #[cfg(test)]
 mod tests;

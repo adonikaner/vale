@@ -31,7 +31,7 @@ use bevy::prelude::*;
 
 use super::mixer::{Place, Voices};
 use crate::world::entities::{EntityModel, Playback};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 
 pub struct CuesPlugin;
 

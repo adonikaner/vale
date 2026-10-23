@@ -67,7 +67,7 @@
 //! stated one rather than the one the tag names.
 
 use super::mixer::{Place, Voices};
-use crate::world::session::{EntityIndex, WorldEntity};
+use crate::world::entity::{EntityIndex, WorldEntity};
 use vale_assets::tables::item::{Weapon, MATERIAL_METAL};
 use vale_assets::tables::sound::{self, impact_slot, SoundBank, UNARMED_SUBCLASS};
 use vale_protocol::play::action::{ai_reaction, hit_info, victim_state};

@@ -392,8 +392,8 @@ pub struct Readout<'w, 's> {
     pub diagnostics: Res<'w, bevy::diagnostic::DiagnosticsStore>,
     pub archives: Res<'w, ArchiveStatus>,
     pub rig: Res<'w, crate::world::camera::CameraRig>,
-    pub world: Res<'w, crate::world::session::WorldStatus>,
-    pub entities: Query<'w, 's, &'static crate::world::session::WorldEntity>,
+    pub world: Res<'w, crate::world::status::WorldStatus>,
+    pub entities: Query<'w, 's, &'static crate::world::entity::WorldEntity>,
     pub session: ResMut<'w, crate::world::session::Session>,
     /// What every other pass reports about itself; see [`crate::ui::report`].
     /// It replaced a resource, a query and a `ui.label` per subsystem, so a

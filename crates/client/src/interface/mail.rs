@@ -78,7 +78,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use vale_protocol::play::mail::{
     MailAction, MailFlags, MailHeader, MailResponse, MailResult, OutgoingMail, POSTAGE,
 };
-use vale_protocol::socket::session::MailVerb;
+use vale_protocol::play::mail::MailVerb;
 use vale_protocol::state::query::ItemInfo;
 
 use super::cursor::{Cursor, Held, Place};
@@ -86,7 +86,8 @@ use super::events::{
     CloseInboxItem, MailClosed, MailFailed, MailInboxUpdate, MailSendInfoUpdate, MailSendSuccess,
     MailShow, SendMailCodChanged, SendMailMoneyChanged, UpdatePendingMail,
 };
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::session::Session;
+use crate::world::templates::TemplatesArrived;
 
 /// One of the five mail packets, handed on from [`crate::world::incoming`].
 ///
@@ -105,9 +106,9 @@ pub enum MailAnswer {
 /// The arm [`crate::world::incoming`] calls, kept here so the five packet kinds
 /// and the five window writes are one file apart rather than two.
 pub fn answer_of(
-    event: &vale_protocol::play::spells::PlayerEvent,
+    event: &vale_protocol::state::events::PlayerEvent,
 ) -> Option<MailAnswer> {
-    use vale_protocol::play::spells::PlayerEvent as E;
+    use vale_protocol::state::events::PlayerEvent as E;
     Some(match event {
         E::MailList(list) => MailAnswer::List(list.clone()),
         E::MailResult(response) => MailAnswer::Result(*response),
@@ -187,6 +188,9 @@ pub struct Mailbox {
     /// this happens inside a scoped Lua call, where taking the world lock per
     /// `GetInboxItem` would put network latency on a hover.
     templates: HashMap<u32, ItemInfo>,
+    /// Item entries already looked up in the session's cache. An entry here
+    /// is looked up again only when a [`TemplatesArrived`] names it.
+    looked_up: HashSet<u32>,
     /// When the inbox may next be asked for, on the app clock. `None` is "now".
     next_check: Option<f64>,
     /// Seconds until the next letter, counted down every frame and clamped
@@ -354,6 +358,7 @@ impl Default for Mailbox {
             wanted_body: AtomicU32::new(0),
             names: HashMap::new(),
             templates: HashMap::new(),
+            looked_up: HashSet::new(),
             next_check: None,
             // Not zero; see the type's own note.
             pending: NOTHING_WAITING,
@@ -409,6 +414,7 @@ impl Plugin for MailPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<MailAnswer>()
             .add_message::<MailPress>()
+            .add_message::<TemplatesArrived>()
             .init_resource::<Mailbox>()
             .add_systems(
                 Update,
@@ -420,11 +426,13 @@ impl Plugin for MailPlugin {
                     act,
                     ask,
                     learn,
-                    out_of_range,
                 )
                     .chain()
+                    .after(crate::world::incoming::drain_queues)
+                    .before(super::gossip::NpcSet::Close)
                     .in_set(super::GameSet),
             );
+        super::gossip::closes_on_walk_away::<Mailbox>(app);
     }
 }
 
@@ -824,6 +832,10 @@ fn ask(
 /// is the picture on every letter in the list. They are wanted while a
 /// mailbox is open, which is the only time anything reads them.
 ///
+/// An item entry is looked up once, and again when a [`TemplatesArrived`]
+/// names it. A sender name has no arrival message, so a missing name is
+/// looked up every frame until the name cache answers.
+///
 /// The names and templates are read under the world lock. The misses are
 /// collected and queued through `LiveSession::want_social_guid` and
 /// `LiveSession::want_item` after the lock is released, because those take
@@ -832,8 +844,13 @@ fn learn(
     mut mailbox: ResMut<Mailbox>,
     session: Res<Session>,
     assets: Res<crate::assets::GameAssets>,
+    mut arrived: MessageReader<TemplatesArrived>,
     mut inbox_updated: MessageWriter<MailInboxUpdate>,
 ) {
+    let landed: Vec<u32> = arrived
+        .read()
+        .flat_map(|batch| batch.0.items.iter().copied())
+        .collect();
     if !mailbox.is_open() {
         return;
     }
@@ -856,6 +873,7 @@ fn learn(
         .chain(mailbox.draft.item.as_ref().map(|item| item.entry))
         .chain(stationery)
         .filter(|entry| *entry != 0 && !mailbox.templates.contains_key(entry))
+        .filter(|entry| !mailbox.looked_up.contains(entry) || landed.contains(entry))
         .collect();
     // The lock is taken only when something is missing, which after the
     // first second of an open window is never.
@@ -882,6 +900,7 @@ fn learn(
             }
         }
         for entry in entries {
+            mailbox.looked_up.insert(entry);
             match world.items.get(&entry) {
                 Some(info) => {
                     mailbox.templates.insert(entry, info.clone());
@@ -905,44 +924,32 @@ fn learn(
     }
 }
 
-/// Close the window when the character walks away from the mailbox: the game
-/// object counterpart of `gossip::out_of_range`, for the same reason. The
-/// server checks the range on every one of the nine packets
-/// (`WorldSession::CheckMailBox` → `GetGameObjectIfCanInteractWith`), and no
-/// packet announces the walk-away.
+/// The walk-away close for the mailbox, the game-object counterpart of the
+/// NPC windows' and for the same reason: the server checks the range on every
+/// one of the nine packets (`WorldSession::CheckMailBox` →
+/// `GetGameObjectIfCanInteractWith`), and no packet announces the walk-away.
 ///
-/// The reference closes the window by guid rather than by distance, when the
-/// object the guid names leaves the client's world. This function checks
-/// both, because a mailbox in a city does not despawn and a player walking
-/// out of the inn is the ordinary case.
-fn out_of_range(
-    mut mailbox: ResMut<Mailbox>,
-    player: Query<&Transform, With<LocalPlayer>>,
-    objects: Query<(&WorldEntity, &Transform)>,
-    mut closed: MessageWriter<MailClosed>,
-) {
-    let Some(guid) = mailbox.guid else {
-        return;
-    };
-    let Ok(me) = player.single() else {
-        return;
-    };
-    let here = objects
-        .iter()
-        .find(|(entity, _)| entity.guid == guid)
-        .map(|(_, transform)| transform.translation);
-    // An object not yet placed keeps the window open; one out of range closes
-    // it. The NPC windows make the same three-way decision, for the same
-    // reason: an object streams in a frame after its guid does.
-    let gone = match here {
-        Some(there) => {
-            me.translation.distance(there)
-                > vale_protocol::play::gossip::INTERACTION_DISTANCE
-        }
-        None => false,
-    };
-    if gone && mailbox.close() {
-        closed.write(MailClosed);
+/// The client closes the window by guid when the object the guid names leaves
+/// its world, so a mailbox that is not in view closes the window, the answer
+/// [`super::gossip::close_when_npc_gone`] gives every NPC window. A mailbox
+/// in a city does not despawn, and a player walking out of the inn is the
+/// ordinary case, so the distance is checked as well. It is measured from
+/// centre to centre ([`super::gossip::reach_to`]): a game object has no
+/// combat reach.
+impl super::gossip::NpcWindow for Mailbox {
+    type Closed = MailClosed;
+    const CLOSED: MailClosed = MailClosed;
+
+    fn guid(&self) -> Option<u64> {
+        self.guid
+    }
+
+    fn close(&mut self) -> bool {
+        Mailbox::close(self)
+    }
+
+    fn reach(units: &super::api::Units, guid: u64) -> Option<f32> {
+        super::gossip::reach_to(units, guid)
     }
 }
 

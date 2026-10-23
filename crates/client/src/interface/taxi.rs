@@ -28,7 +28,7 @@
 //! ## Four things close it, and this file used to think two of them did not
 //!
 //! The map comes down on its own close button, on Escape, on **walking away**
-//! ([`super::gossip::out_of_range`], where it is the fifth window) and on
+//! ([`super::gossip::close_when_npc_gone`]) and on
 //! **taking a flight** (`SMSG_ACTIVATETAXIREPLY` code 0, the one edge that says
 //! a departure is happening). Every one of them ends at the same place: the
 //! `TAXIMAP_CLOSED` this module raises, which `TaxiFrame.lua` answers with
@@ -45,12 +45,13 @@
 use bevy::prelude::*;
 
 use vale_assets::tables::taxi::{Board, Take, TaxiMask, Team};
-use vale_protocol::socket::session::TaxiVerb;
+use vale_protocol::play::taxi::TaxiVerb;
 use vale_protocol::play::taxi::{TaxiMenu, TaxiReply};
 
 use super::events::{TaximapClosed, TaximapOpened};
 use crate::assets::GameAssets;
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::Session;
 
 /// One of the four taxi packets, handed on from
 /// [`crate::world::incoming::drain_events`].
@@ -116,8 +117,9 @@ impl TaxiWindow {
     /// Take the window down, answering whether one was up.
     ///
     /// `pub(super)` because walking away closes it too, from
-    /// [`super::gossip::out_of_range`] — see that function, which is where the
-    /// argument for the taxi map being one of the windows it reaches is.
+    /// [`super::gossip::close_when_npc_gone`] — see that function, which is
+    /// where the argument for the taxi map being one of the windows it closes
+    /// is.
     pub(super) fn close(&mut self) -> bool {
         self.examining = 0;
         self.open.take().is_some()
@@ -150,6 +152,32 @@ impl Plugin for TaxiPlugin {
                     .chain()
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<TaxiWindow>(app);
+        super::gossip::closes_on_walk_away::<TaxiWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for TaxiWindow {
+    type Closed = super::events::TaximapClosed;
+    const CLOSED: super::events::TaximapClosed = super::events::TaximapClosed;
+
+    fn guid(&self) -> Option<u64> {
+        TaxiWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        TaxiWindow::close(self)
+    }
+}
+
+/// `TaxiFrame_OnEvent` opens with `TaxiMerchant:SetText(UnitName("npc"))` and
+/// `SetPortraitTexture(TaxiPortrait, "npc")`, so a window that does not name
+/// the token draws a blank plate and an empty portrait frame.
+impl super::gossip::NpcToken for TaxiWindow {
+    const ORDER: u8 = 4;
+
+    fn npc(&self) -> Option<u64> {
+        TaxiWindow::guid(self)
     }
 }
 

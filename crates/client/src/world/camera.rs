@@ -6,6 +6,9 @@
 //! other.
 
 use crate::axes;
+use crate::world::entity::{EntityIndex, LocalPlayer, WorldEntity};
+use crate::world::motion::Motion;
+use crate::world::status::WorldStatus;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
@@ -38,7 +41,7 @@ pub struct CameraRig {
     ///
     /// Absolute, and carried along by the character's own turning. The rig is
     /// not parented to the player: `--view` sets this by hand and the eye maths
-    /// reads it directly. `session::follow_player` adds every change in the
+    /// reads it directly. `camera::follow_player` adds every change in the
     /// character's facing to it, so turning with A/D swings the camera with the
     /// character while a left-drag still looks freely around them. Without
     /// that, the camera stays pointed north while the character turns, and
@@ -279,7 +282,7 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, (tuning_keys, apply_tuning).chain())
             // Before the character is told where to face. A right-drag turns
             // the camera directly and the character follows the camera
-            // (`session::send_input`), so a frame that read the yaw before
+            // (`input::controls::send_input`), so a frame that read the yaw before
             // `orbit` wrote it would send the character last frame's heading.
             // This is the same one-frame skew the `place`-after-`follow_player`
             // ordering below removes, on the other half of the rig.
@@ -299,7 +302,7 @@ impl Plugin for CameraPlugin {
                     // that started on a panel which had just opened under a
                     // stationary pointer.
                     .after(crate::lua::api::mouse::poll)
-                    .before(crate::world::session::send_input),
+                    .before(crate::input::controls::send_input),
             )
             // Before [`place`], which puts it before the login screen's own
             // framing: `glue::aim_camera` is `.after(place)` and sets the scene
@@ -319,7 +322,7 @@ impl Plugin for CameraPlugin {
                     // yards at a run and varying with the frame time, and
                     // because everything else in the shot is stationary it
                     // shows as the character jittering.
-                    .after(crate::world::session::follow_player),
+                    .after(crate::world::camera::follow_player),
             );
     }
 }
@@ -658,7 +661,7 @@ fn apply_tuning(
 /// not completed and the turn was slower than its own rate.
 ///
 /// The rig is therefore the accumulator, nothing else writes it while the
-/// button is held, and `session::send_input` aims the character at `yaw + π`.
+/// button is held, and `input::controls::send_input` aims the character at `yaw + π`.
 pub fn orbit(
     look: Res<MouseLook>,
     interface: Res<crate::lua::api::mouse::MouseFocus>,
@@ -901,12 +904,12 @@ const REFERENCE_VIEWPORT: Vec2 = Vec2::new(800.0, 600.0);
 ///
 /// [`CameraRig::yaw`] is the bearing from the character to the eye (the orbit
 /// angle), so the direction the camera looks, away from the eye and into the
-/// screen, is half a turn from it. `session::send_input` aims the character
+/// screen, is half a turn from it. `input::controls::send_input` aims the character
 /// here for as long as the right button is held, so both-buttons autorun goes
 /// where the player is looking rather than along the character's previous
 /// heading.
 ///
-/// Here rather than in `session.rs` because the `+ π` is a fact about this rig
+/// Here rather than in `input/controls.rs` because the `+ π` is a fact about this rig
 /// and nothing else, and because this half of the rule can be pinned by a test
 /// without a server: see `a_mouse_looking_character_walks_the_way_the_camera_looks`.
 pub fn mouse_look_heading(rig: &CameraRig) -> f32 {
@@ -1127,6 +1130,282 @@ fn frame_the_view(mut camera: Query<&mut Projection, With<WorldCamera>>) {
         perspective.fov = want;
     }
 }
+
+/// How long after a right-drag ends the camera keeps ignoring the character's
+/// own turning, in seconds.
+///
+/// Sized to cover the round trip it absorbs, with a margin. A heading
+/// commanded here reaches the drawn model through a channel, the session
+/// thread's next step (~25 ms) and `Motion`'s 1.5-step play-out delay
+/// (~37 ms), about 60 to 80 ms in total. A quarter of a second is several times
+/// that and still short enough that the only keyboard turn it can absorb is one
+/// begun at the same moment the mouse is released.
+///
+/// Too long is the cheaper error. Too short leaks part of the catch-up into
+/// the camera as an overshoot on every release; too long costs at most a
+/// fraction of a second in which A/D does not swing the view.
+const STEER_SETTLE: f32 = 0.25;
+
+/// Keep the camera on the player.
+///
+/// Public so the camera pass can order itself after it; see `camera::place`.
+// The query is a five-tuple because the rig needs to know what the character
+// is sitting on. That is one element past clippy's limit and too small to
+// justify a type alias.
+#[allow(clippy::type_complexity)]
+pub fn follow_player(
+    motion: Res<Motion>,
+    predicted: Res<crate::world::predict::Predicted>,
+    time: Res<Time>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut facing: Local<Option<f32>>,
+    // When the right button last held the heading; see `STEER_SETTLE`.
+    mut steered_at: Local<Option<f32>>,
+    // Which way the deck under the character was pointing last frame, for the
+    // one turn no mouse controls. See below.
+    mut deck_facing: Local<Option<f32>>,
+    player: Query<
+        (
+            &WorldEntity,
+            &Transform,
+            Option<&crate::world::entities::EntityModel>,
+            // What the character is sitting on, which raises its head by the
+            // height of a saddle. See below.
+            Option<&crate::world::entities::Mount>,
+        ),
+        With<LocalPlayer>,
+    >,
+    mut rig: ResMut<crate::world::camera::CameraRig>,
+    // The object the character is looking through, when there is one; see
+    // [`WorldEntity::farsight`] and [`through`].
+    index: Res<EntityIndex>,
+    seen: Query<(Option<&crate::world::entities::EntityModel>, Option<&Transform>)>,
+    // Whether that object is driven by the keys, which decides whether the
+    // view turns with it. See [`WorldStatus::mover`].
+    status: Res<WorldStatus>,
+) {
+    // The camera always follows. A `CameraRig::follow` flag that a shift-pan
+    // cleared used to be here; the pan has been removed (see `camera::orbit`),
+    // so the rig can no longer stop following the character.
+    let Ok((player, transform, model, mount)) = player.single() else {
+        return;
+    };
+
+    // The exception is when the server has moved the view point elsewhere.
+    // `PLAYER_FARSIGHT` names a far-sight `DynamicObject` (Eagle Eye, Far
+    // Sight, Bird's Eye) or a possessed unit (Eye of Kilrogg, Mind Control,
+    // Eyes of the Beast), and the camera stays on it for as long as the field
+    // names it.
+    //
+    // This is handled first, because what follows is about the character and
+    // this is not.
+    if let Some(guid) = player.farsight {
+        // A possessed body is framed the way the character is, because it is
+        // driven the same way. The position comes from the prediction rather
+        // than from the interpolation, because the view has to move in the
+        // frame the key goes down, not a play-out delay later. The yaw follows
+        // its heading, so turning it turns the view. A far-sight
+        // `DynamicObject` is neither: it stands where the server put it and the
+        // view can orbit it freely.
+        //
+        // See [`WorldStatus::mover`], which makes the same distinction one
+        // layer down and is what lets the two cases be told apart here.
+        let driven = status.mover == guid;
+        let now = time.elapsed_secs();
+        let at = driven
+            .then(|| predicted.of().map(|p| Vec3::new(p.x, p.y, p.z)))
+            .flatten()
+            .or_else(|| motion.position_of(guid, now));
+        if let Some(target) = at {
+            rig.target = target;
+            rig.target_height = through(&index, &seen, guid);
+            // The three stored values belong to the character and must be
+            // reset on the switch. Each accumulates a delta between frames, so
+            // keeping one would add every degree the body turned while the
+            // camera was elsewhere to the first frame after control returns.
+            *deck_facing = None;
+            let heading = driven
+                .then(|| predicted.of().map(|p| p.orientation))
+                .flatten()
+                .or_else(|| motion.facing_of(guid, now));
+            match heading.filter(|_| driven) {
+                Some(heading) => {
+                    if let Some(previous) = *facing {
+                        if !buttons.pressed(MouseButton::Right)
+                            && steered_at.is_none_or(|at| now - at >= STEER_SETTLE)
+                        {
+                            rig.yaw +=
+                                vale_protocol::state::movement::shortest_turn(previous, heading);
+                        }
+                    }
+                    *facing = Some(heading);
+                }
+                None => *facing = None,
+            }
+            return;
+        }
+        // The guid is stated a packet or two before the object it names
+        // arrives. For those frames the camera stays on the character, which
+        // is what the 1.12.1 client does: it does not switch to a far-sight
+        // guid it cannot resolve to an object.
+    }
+
+    // The camera turns with the character. The change in facing is applied,
+    // rather than parenting the rig, so a left-drag's offset is kept: look over
+    // the character's shoulder, walk round a corner, and the view is still over
+    // that shoulder. It reads the same interpolated facing the model is drawn
+    // at, so the two turn together to the frame. The session status's stepped
+    // orientation would swing the camera in 25 ms jerks around a smoothly
+    // turning character.
+    //
+    // While the mouse controls the heading, the dependency is reversed. Under
+    // a right-drag the rig's yaw is what the mouse wrote and the character was
+    // aimed from it (`send_input`), so adding the character's turn back here
+    // would apply every pixel twice, once immediately and again as the facing
+    // caught up, and the camera would swing past the character it follows.
+    //
+    // The suppression must also last beyond the button release; without that,
+    // the camera overshoots on release. The facing read here is interpolated
+    // and lags the commanded heading by the command's trip through the session
+    // thread plus `Motion`'s play-out delay. When the button comes up the
+    // character is still short of where it was last told to point, and every
+    // degree of that catch-up would reach the rig as an unrequested turn.
+    // [`STEER_SETTLE`] is the window that absorbs it. The tracking runs
+    // throughout, so when the window closes the baseline is current and there
+    // is no jump.
+    let now = time.elapsed_secs();
+    if buttons.pressed(MouseButton::Right) {
+        *steered_at = Some(now);
+    }
+    let mouse_owns_the_heading = steered_at.is_some_and(|at| now - at < STEER_SETTLE);
+
+    // A turning deck turns the camera; it is the one turn the mouse does not
+    // control. The rig's yaw is a world bearing. A passenger's heading is the
+    // deck's plus their own, and the carry rotates it every step
+    // (`Ferry::carry`). Outside a right-drag the branch below already follows
+    // that, because it reads the character's facing and the deck's turn is in
+    // it. During a right-drag that branch is suppressed on purpose, and the
+    // deck's rotation was then missing from the camera entirely.
+    //
+    // That caused the second report. The rig stayed fixed in world space, so
+    // `mouse_look_heading` did too, and `send_input` re-aimed the character at
+    // that fixed world bearing on the next pixel of drag. The character was
+    // carried by the boat but steered in world space ("we are moving in world
+    // coordinate space rather than local ship space"), and only while
+    // steering, which is why the report was only partly right.
+    //
+    // Added as the deck's delta rather than by parenting, for the same reason
+    // as the character's: a drag's offset must be kept.
+    let deck = predicted.deck().and_then(|guid| motion.facing_of(guid, now));
+    if let (Some(deck), Some(previous)) = (deck, *deck_facing) {
+        if mouse_owns_the_heading {
+            rig.yaw += vale_protocol::state::movement::shortest_turn(previous, deck);
+        }
+    }
+    *deck_facing = deck;
+    // The camera follows what was drawn, not what was interpolated. The local
+    // player is drawn ahead of the simulation, so those are two different
+    // values. Reading the interpolated pair here would leave the view a
+    // play-out delay behind the character it frames: the same fault as the
+    // frame of camera lag `place` was ordered to fix, three times as large.
+    // `predict::Predicted` is the value `place_entities` put on the transform
+    // one system earlier.
+    let drawn = predicted
+        .of()
+        .map(|p| (Vec3::new(p.x, p.y, p.z), p.orientation));
+    let (position, orientation) = match drawn {
+        Some(pair) => (Some(pair.0), Some(pair.1)),
+        None => (
+            motion.position_of(player.guid, now),
+            motion.facing_of(player.guid, now),
+        ),
+    };
+    if let Some(orientation) = orientation {
+        if let Some(previous) = *facing {
+            if !mouse_owns_the_heading {
+                rig.yaw += vale_protocol::state::movement::shortest_turn(previous, orientation);
+            }
+        }
+        *facing = Some(orientation);
+    }
+    // The camera target is interpolated like everything else; a stepping
+    // camera makes the whole world jitter even when everything in it moves
+    // smoothly.
+    if let Some(position) = position {
+        rig.target = position;
+    }
+    // A unit's position is its feet, so the rig is lifted to the anchor the
+    // 1.12.1 client's camera orbits. Otherwise zooming in aims at the ground
+    // the character stands on and puts the character above the screen. The
+    // model states the height (`vale_assets::look::anchor`), and the entity's
+    // scale converts model yards into world yards (`OBJECT_FIELD_SCALE_X` is
+    // already `modelScale * displayScale`, and `place_entities` has put it on
+    // the transform), so a gnome, a tauren and a wisp each get their own.
+    //
+    // A mounted character's anchor is composed, not added to. The obvious sum,
+    // the standing anchor plus the saddle, puts the focus most of a yard above
+    // the rider's head, because the `Mount` clip folds the body down:
+    // `HumanMale`'s posed extent goes from `0.00..2.0` standing to
+    // `-0.85..1.06` on a horse. So the two parts are the saddle height of the
+    // standing animal (`Mount::seat`, already in world yards) and the anchor
+    // within that clip. Both are constants: nothing here is read from the pose
+    // being drawn, which stops the view bobbing with the gallop.
+    //
+    // This does not reproduce the 1.12.1 client's calculation for a mounted
+    // camera; see `vale_assets::look::anchor`, which says which parts of that
+    // are known and which are not. It is measured against what this client
+    // draws.
+    if let Some(model) = model {
+        let wanted = match mount {
+            Some(mount) => mount.camera_anchor(model, transform.scale.y),
+            None => model.anchor * transform.scale.y,
+        };
+        let wanted = vale_assets::look::anchor::clamp(wanted);
+        // Eased, not snapped, at the shipped `cameraHeightSmoothSpeed`.
+        // Mounting and dismounting move the anchor most of a yard, and a rig
+        // that jumps there looks like a glitch rather than a change of seat.
+        // The rate is the 1.12.1 client's; the exponential curve is this
+        // client's. The first frame of a session takes the value directly, so
+        // a login does not start with the camera climbing off the floor.
+        let rate = vale_assets::look::anchor::SMOOTH_SPEED;
+        rig.target_height = if rig.target_height <= 0.0 {
+            wanted
+        } else {
+            let step = 1.0 - (-rate * time.delta_secs()).exp();
+            rig.target_height + (wanted - rig.target_height) * step
+        };
+    }
+}
+
+/// How far above a view point's own position the camera orbits.
+///
+/// [`follow_player`]'s anchor block answers the same question for the
+/// character, and the two kinds of view point answer it differently. A
+/// possessed unit has a model and therefore an anchor of its own (a possessed
+/// kodo is not framed like a possessed wisp), and that is the value the
+/// character's branch uses. A far-sight `DynamicObject` has no model, so there
+/// is nothing to measure and the fallback is a standing eye height: the object
+/// is placed on the ground at the map's visibility distance in front of the
+/// caster, and a camera orbiting its base would aim at the ground.
+fn through(
+    index: &EntityIndex,
+    seen: &Query<(Option<&crate::world::entities::EntityModel>, Option<&Transform>)>,
+    guid: u64,
+) -> f32 {
+    let anchor = index.0.get(&guid).and_then(|entity| {
+        let (model, transform) = seen.get(*entity).ok()?;
+        // Model yards times the entity's own scale, which `place_entities`
+        // put on the transform: the same conversion the character's branch
+        // makes.
+        Some(model?.anchor * transform.map_or(1.0, |t| t.scale.y))
+    });
+    vale_assets::look::anchor::clamp(anchor.unwrap_or(EYE_HEIGHT))
+}
+
+/// The fallback for [`through`], used for a `DynamicObject`. It is the one
+/// value here that is chosen rather than measured: the anchor of an average
+/// character model, which is what the view stands in for.
+const EYE_HEIGHT: f32 = 1.7;
 
 #[cfg(test)]
 mod tests {
@@ -1532,7 +1811,7 @@ mod tests {
         assert_eq!(rig.target, Vec3::ZERO, "and must not pan");
     }
 
-    /// The direction of autorun. `session::send_input` aims the character at
+    /// The direction of autorun. `input::controls::send_input` aims the character at
     /// [`mouse_look_heading`] while the right button is held, and both buttons
     /// together run forward, so this asserts that the run goes into the screen
     /// rather than along the heading the character had when the player

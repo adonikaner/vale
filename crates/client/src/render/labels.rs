@@ -24,10 +24,11 @@
 //!
 //! Drawing names as quads has three further effects:
 //!
-//! * The glyph atlas is not refilled every frame. The egui painter rasterises
-//!   per font size, and a size derived from a projection changes every frame
-//!   for every unit. That caused an overflow warning and then a panic ("Tried
-//!   to allocate a 2720 wide glyph in a 2048 wide texture atlas"). A name is
+//! * The glyph atlas is not refilled every frame. egui's atlas rasterises per
+//!   font size, and a size derived from a projection changes every frame for
+//!   every unit. Drawn through egui, that caused an overflow warning and then
+//!   a panic ("Tried to allocate a 2720 wide glyph in a 2048 wide texture
+//!   atlas"). A name is
 //!   rasterised once, at [`RASTER_PX`], and distance changes only the quad's
 //!   scale.
 //! * The size needs no clamp. A unit against the near plane has a large quad.
@@ -107,7 +108,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use vale_assets::look::unitname as rules;
 use crate::render::models::{DrawParams, M2Material, Materials, ModelCache};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 
 /// Marks the merged mesh entity of one tint, so every name of that colour is
 /// removed with one despawn. See [`reconcile`].
@@ -230,7 +231,7 @@ fn reconcile(
     assets: Res<crate::assets::GameAssets>,
     cvars: Res<crate::settings::cvars::CVars>,
     rig: Res<crate::world::camera::CameraRig>,
-    player: Query<&WorldEntity, With<crate::session::LocalPlayer>>,
+    player: Query<&WorldEntity, With<crate::world::entity::LocalPlayer>>,
     selection: Res<crate::interface::target::Selection>,
     // The party and the reputation standing are the two inputs to friend-or-foe
     // that are in no file; see [`crate::interface::api::Friendship`]. A name is

@@ -13,7 +13,7 @@ use crate::{glue, input};
 use crate::render::{draws, models, particles};
 #[cfg(feature = "diagnostics")]
 use crate::{ui, world};
-use crate::world::{camera, session};
+use crate::world::{camera, session, status};
 
 /// Saving the frame to a PNG, on a key or on a timer.
 ///
@@ -182,7 +182,7 @@ pub(crate) fn screenshots(
     // What `--capture` caught, so the packet capture is readable from a log
     // and not only from a tab a scripted run cannot scroll. See
     // [`ui::debug::net`].
-    #[cfg(feature = "diagnostics")] status: Res<world::session::WorldStatus>,
+    #[cfg(feature = "diagnostics")] status: Res<world::status::WorldStatus>,
 ) {
     use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
@@ -435,7 +435,7 @@ pub(crate) fn relogin_probe(
     mut probe: ResMut<Relogin>,
     mut auto: ResMut<glue::autologin::AutoLogin>,
     session: Res<session::Session>,
-    status: Res<session::WorldStatus>,
+    status: Res<status::WorldStatus>,
     mut pressed: MessageWriter<input::bindings::BindingPressed>,
     mut in_world_since: Local<Option<f32>>,
 ) {

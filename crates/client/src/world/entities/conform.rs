@@ -23,7 +23,8 @@
 //! flag and the rider rides the answer, which is one line in [`leaning`] and the
 //! whole of why the screenshot this fixes has an upright horse in it.
 
-use crate::world::session::{Solids, WorldEntity};
+use crate::world::entity::WorldEntity;
+use crate::world::session::Solids;
 use vale_assets::look::conform::Conform;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
@@ -57,7 +58,7 @@ pub(super) fn leaning(own: Conform, mount: Option<Conform>) -> Conform {
 /// this one crosses a cell boundary in one step where the average would roll
 /// across it.
 pub(super) fn under(
-    standing: &crate::world::session::Standing,
+    standing: &crate::world::standing::Standing,
     map_id: u32,
     world: &WorldEntity,
     position: Vec3,
@@ -106,7 +107,7 @@ pub(super) fn rotation(mode: Conform, up: [f32; 3], facing: Quat) -> Affine3A {
 pub(super) fn settle(
     stance: &mut Stance,
     mode: Conform,
-    standing: &crate::world::session::Standing,
+    standing: &crate::world::standing::Standing,
     map_id: u32,
     world: &WorldEntity,
     placement: &Transform,
@@ -136,7 +137,7 @@ pub(crate) struct Ground<'w> {
 impl Ground<'_> {
     /// The join to ask, and the map to ask it about — `None` before there is a
     /// world, which is every frame of the login screen.
-    pub(crate) fn of(&self) -> Option<(crate::world::session::Standing, u32)> {
+    pub(crate) fn of(&self) -> Option<(crate::world::standing::Standing, u32)> {
         let active = self.session.as_ref()?.active.as_ref()?;
         Some((active.standing(self.solids.as_ref()?), active.map_id))
     }

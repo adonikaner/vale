@@ -1812,7 +1812,7 @@ impl Emotes {
 /// 16 is `AttackUnarmed` and reads 16, 42 is `Swim` and reads 4.
 ///
 /// Column 6 is the game's own fallback for a missing clip. It is read because
-/// keeping it costs nothing, but nothing uses it yet. `entities::fallbacks` is
+/// keeping it costs nothing, but nothing uses it yet. `look::pose::fallbacks` is
 /// a hand-written table that agrees with it in most cases. Adopting this
 /// column is separate work: the file contains a cycle
 /// (`Open -> Close -> Open`), and this client is deliberately more generous in

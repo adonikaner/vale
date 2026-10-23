@@ -412,7 +412,7 @@ struct Geometry {
     uv_anims: Option<Arc<vale_assets::world::m2::M2TextureAnims>>,
     /// Sequence 0's window: the clock the emitters, the trails and a
     /// non-global texture matrix all run on.
-    clip: Option<crate::render::particles::ParticleClip>,
+    clip: Option<vale_assets::world::m2::ParticleClip>,
     /// The colour and transparency tracks, or `None` when no batch names one.
     tints: Option<Arc<vale_assets::world::m2::M2Tints>>,
 }

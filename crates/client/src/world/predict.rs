@@ -107,7 +107,7 @@
 //! The stride, the arc and the deck are quantities the reading carries and this
 //! pass walks forward by `dt`. A right-drag's heading is not one of those. It is
 //! a command: `camera::orbit` writes [`crate::world::camera::CameraRig`] every
-//! frame from the mouse, `session::send_input` aims the character half a turn
+//! frame from the mouse, `input::controls::send_input` aims the character half a turn
 //! from it and puts that on the channel, the session thread drains it at the top
 //! of its next tick, and the answer comes back in a reading. Between readings
 //! there is no turn key for [`turned`] to integrate, so the continuation
@@ -309,7 +309,7 @@ pub struct Predicted {
     /// commanded at.
     ///
     /// A right-drag writes [`crate::world::camera::CameraRig::yaw`] every frame
-    /// and `session::send_input` aims the character half a turn from it, but the
+    /// and `input::controls::send_input` aims the character half a turn from it, but the
     /// aim reached the drawn model only by way of the channel and the next
     /// reading. The character therefore turned in 25 ms steps while the camera
     /// framing it turned every frame: at 100 to 250 fps, three to ten frames
@@ -371,7 +371,7 @@ impl Predicted {
     /// **The platform under the character's feet**, or `None` for the
     /// overwhelming majority of a session.
     ///
-    /// Published for one reader: `session::follow_player`, which has to turn the
+    /// Published for one reader: `camera::follow_player`, which has to turn the
     /// camera with a turning deck. Everything else about a passenger is settled
     /// inside this module.
     pub fn deck(&self) -> Option<u64> {
@@ -443,7 +443,7 @@ impl Predicted {
     /// the base this pass is running from.
     ///
     /// Public because the *input* needs the same answer the step does: see
-    /// `session::send_input`, where a heading offered to a mover that will
+    /// `input::controls::send_input`, where a heading offered to a mover that will
     /// refuse it is a heading that never gets offered again. `true` with no
     /// base, which is "nothing says otherwise".
     pub fn can_turn(&self) -> bool {
@@ -795,7 +795,7 @@ fn arc(
 /// vectors, is taken only when there is something new in it.
 ///
 /// **The gate and the stamp are read from the same status**, rather than from
-/// [`crate::world::session::WorldClock`], which `poll_world` fills a system
+/// [`crate::world::entity::WorldClock`], which `poll_world` fills a system
 /// earlier: a base whose `world_ms` came from one read and whose `taken` came
 /// from another is a base whose age is a guess.
 pub(super) fn rebase(time: Res<Time>, session: Res<Session>, mut predicted: ResMut<Predicted>) {
@@ -834,7 +834,7 @@ pub(super) fn rebase(time: Res<Time>, session: Res<Session>, mut predicted: ResM
 
 /// Continue the base by however long ago it was taken.
 ///
-/// Runs after [`crate::world::session::send_input`], so the controls it
+/// Runs after [`crate::input::controls::send_input`], so the controls it
 /// integrates are this frame's rather than last frame's — which is the whole of
 /// what removes the session thread's tick from the input latency.
 pub(super) fn advance(
@@ -907,7 +907,7 @@ pub(super) fn advance(
 /// height to the floor the [`Contact`] says it is meeting.
 ///
 /// Split from [`advance`] so a test can hold it against a world of its own;
-/// the system passes the same [`crate::world::session::Standing`] the session
+/// the system passes the same [`crate::world::standing::Standing`] the session
 /// thread walks on.
 fn resolve(
     world: &dyn World,

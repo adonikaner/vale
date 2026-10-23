@@ -58,7 +58,8 @@ use bevy::prelude::*;
 
 use super::events::{MinimapZoneChanged, WorldMapUpdate, ZoneChanged, ZoneChangedNewArea};
 use crate::lua::panels::worldmap::MapRequest;
-use crate::world::session::{Session, WorldStatus};
+use crate::world::session::Session;
+use crate::world::status::WorldStatus;
 
 /// The client's own two pieces of map state — see the module comment.
 #[derive(Resource)]
@@ -226,7 +227,7 @@ pub struct MapLandmarks {
 /// the same event a view change raises, for the same reason.
 fn take_poi(
     mut answers: MessageReader<PoiAnswer>,
-    status: Res<crate::world::session::WorldStatus>,
+    status: Res<crate::world::status::WorldStatus>,
     mut landmarks: ResMut<MapLandmarks>,
     mut map_update: MessageWriter<WorldMapUpdate>,
 ) {

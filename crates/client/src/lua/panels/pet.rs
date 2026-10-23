@@ -359,7 +359,7 @@ impl super::super::api::Live<'_, '_, '_> {
     /// **The pet, if it is one we summoned** — the shared first half of the two
     /// predicates above. `None` for a charmed unit, which the `pet` token names
     /// but which neither flag applies to.
-    fn own_pet(&self) -> Option<&crate::world::session::WorldEntity> {
+    fn own_pet(&self) -> Option<&crate::world::entity::WorldEntity> {
         let me = self.units.guid(crate::interface::api::UnitId::Player)?;
         let pet = self.units.get(crate::interface::api::UnitId::Pet)?;
         (pet.summoned_by == Some(me)).then_some(pet)

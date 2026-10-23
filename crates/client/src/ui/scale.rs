@@ -23,6 +23,14 @@
 //! `Viewport` a type with both directions on it rather than a bare scale — so
 //! they read one value rather than each deriving one from the CVars.
 //!
+//! ## The viewport beside it
+//!
+//! [`InterfaceViewport`] is the other half of the same answer: where the
+//! space sits in the window this frame. The draw walk, the hit test, the
+//! world tooltip, the paper doll and the mesh painter all read it, so a window
+//! size or scale factor is taken from one place and the pointer and the
+//! picture cannot be fitted differently.
+//!
 //! ## …and why it is `PreUpdate`
 //!
 //! So that every reader in `Update` sees the same number and none of them needs
@@ -34,6 +42,7 @@ use bevy::prelude::*;
 
 use crate::settings::cvars::CVars;
 use crate::lua::widgets::layout;
+use crate::lua::widgets::layout::Viewport;
 
 /// **The `uiScale` in force**, as [`layout::scale_in_force`] answers it.
 ///
@@ -57,16 +66,67 @@ impl InterfaceScale {
     }
 }
 
+/// Where the interface's space sits in the window this frame, computed with
+/// [`InterfaceScale`] from the same window.
+///
+/// Every system that converts between interface units and window pixels
+/// reads this resource rather than building a [`Viewport`] from the window
+/// itself: the draw walk, the hit test, the world tooltip, the paper doll and
+/// the mesh painter.
+#[derive(Resource, Debug, Clone, Copy, PartialEq)]
+pub struct InterfaceViewport {
+    /// The primary window's size in logical pixels, or `None` in a run with no
+    /// window.
+    pub window: Option<Vec2>,
+    /// Physical pixels per logical pixel: the window's scale factor, or 1.0
+    /// with no window.
+    pub dpi: f32,
+    /// Interface units to logical pixels and back, at the `uiScale` in force.
+    /// With no window it fits the space into [`layout::UI_SIZE`].
+    pub view: Viewport,
+    /// The interface's space in its own units, `(wide, tall)`:
+    /// [`layout::units_wide`] by [`layout::ui_height`]. The draw walk solves
+    /// against it and walks again when it changes.
+    pub space: (f32, f32),
+}
+
+impl InterfaceViewport {
+    /// The viewport for a window of `size` logical pixels (or none) at `dpi`
+    /// and `ui_scale`.
+    pub fn of(size: Option<Vec2>, dpi: f32, ui_scale: f64) -> InterfaceViewport {
+        let (width, height) = size.map_or(layout::UI_SIZE, |size| {
+            (f64::from(size.x), f64::from(size.y))
+        });
+        InterfaceViewport {
+            window: size,
+            dpi,
+            view: Viewport::of(width, height, ui_scale),
+            space: (
+                layout::units_wide(width, height, ui_scale) as f32,
+                layout::ui_height(ui_scale) as f32,
+            ),
+        }
+    }
+}
+
+impl Default for InterfaceViewport {
+    fn default() -> InterfaceViewport {
+        InterfaceViewport::of(None, 1.0, InterfaceScale::default().get())
+    }
+}
+
 pub struct InterfaceScalePlugin;
 
 impl Plugin for InterfaceScalePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InterfaceScale>()
+            .init_resource::<InterfaceViewport>()
             .add_systems(PreUpdate, follow);
     }
 }
 
-/// Recompute from the window and the two CVars.
+/// Recompute the scale from the window and the two CVars, and the viewport
+/// from the window and that scale.
 ///
 /// **The window's height in logical pixels**, which is what the reference's own
 /// rule takes: it is applied on a resolution change with the back buffer's own
@@ -93,10 +153,10 @@ fn follow(
     loaded: Res<crate::lua::load::LoadWanted>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut scale: ResMut<InterfaceScale>,
+    mut viewport: ResMut<InterfaceViewport>,
 ) {
-    let height = windows
-        .single()
-        .map_or(layout::UI_SIZE.1, |window| f64::from(window.height()));
+    let window = windows.single().ok();
+    let height = window.map_or(layout::UI_SIZE.1, |window| f64::from(window.height()));
     let now = if loaded.world_interface_loaded() {
         InterfaceScale(layout::scale_in_force(
             cvars.flag("useUiScale"),
@@ -112,6 +172,14 @@ fn follow(
     // trap for the next thing that reads it with `Res::is_changed`.
     if *scale != now {
         *scale = now;
+    }
+    let fitted = InterfaceViewport::of(
+        window.map(|window| Vec2::new(window.width(), window.height())),
+        window.map_or(1.0, Window::scale_factor),
+        now.get(),
+    );
+    if *viewport != fitted {
+        *viewport = fitted;
     }
 }
 

@@ -16,8 +16,8 @@ use super::EditSession;
 /// GameAssets             the DBC banks, the strings, the bindings, the sounds
 /// DisplayCache           an Arc of the parsed display tables, and what it
 ///                        resolved from them
-/// UiTextures, Art        the two interface painters' minimap pictures, by
-///                        the path the index names
+/// UiTextures             the interface painter's minimap pictures, by the
+///                        path the index names
 /// ```
 ///
 /// Each needs to be told. The third is easy to miss behind the second:
@@ -38,7 +38,6 @@ pub fn forget_what_changed(
     displays: Option<ResMut<vale_client::world::entities::DisplayCache>>,
     mut stage: ResMut<crate::preview::stage::Stage>,
     mut ui_textures: Option<ResMut<vale_client::ui::mesh::textures::UiTextures>>,
-    mut art: Option<ResMut<vale_client::ui::framexml::Art>>,
 ) {
     let Some(mut session) = session else { return };
 
@@ -48,16 +47,10 @@ pub fn forget_what_changed(
         if let Some(textures) = ui_textures.as_mut() {
             textures.forget_all_minimaps();
         }
-        if let Some(art) = art.as_mut() {
-            art.forget_all_minimaps();
-        }
     } else {
         for path in &session.republished {
             if let Some(textures) = ui_textures.as_mut() {
                 textures.forget_minimap(path);
-            }
-            if let Some(art) = art.as_mut() {
-                art.forget_minimap(path);
             }
         }
     }

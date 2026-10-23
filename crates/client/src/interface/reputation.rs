@@ -41,7 +41,7 @@ use bevy::prelude::*;
 use super::api::{UnitId, Units};
 use super::events::UpdateFaction;
 use crate::world::session::Session;
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 /// What the session thread said about the standing table, forwarded by
 /// [`crate::world::incoming::drain_events`] on the same terms as every other
@@ -287,7 +287,7 @@ fn announce(
 }
 
 /// Send the three the panel owes. None is acknowledged; see
-/// [`vale_protocol::socket::session::ReputationVerb`].
+/// [`vale_protocol::play::reputation::ReputationVerb`].
 fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<Session>) {
     let Some(host) = host else { return };
     let verbs = crate::lua::panels::reputation::take(&host);

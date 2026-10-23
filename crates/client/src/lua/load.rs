@@ -1065,6 +1065,7 @@ mod tests {
     /// There is no session, so nothing loads; the test only checks that the
     /// system can be built and run.
     #[test]
+    #[cfg(feature = "diagnostics")]
     fn the_loader_can_be_scheduled_with_the_world_it_now_borrows() {
         let mut app = App::new();
         api::LuaWorld::init(&mut app);

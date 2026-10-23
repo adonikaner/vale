@@ -18,8 +18,8 @@
 //! beside it, so the twelve slots are ordinary update fields on the character
 //! and any vendor in the game shows the same twelve. The reading — the price as
 //! the occupancy test, the compaction, the sort by timestamp — is
-//! [`vale_protocol::play::items::read_buyback`]'s, following the client's own
-//! builder; what is here is the six answers and the index.
+//! `read_buyback`'s, in [`vale_protocol::state::objects::items`], following
+//! the client's own builder; what is here is the six answers and the index.
 //!
 //! The split every panel keeps: the frame is the game's own 400 lines of Lua,
 //! the window state is [`crate::interface::merchant`], and this file is registration

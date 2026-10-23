@@ -52,7 +52,8 @@ use bevy::prelude::*;
 use super::api::{UnitId, Units};
 use super::events::{CharacterPointsChanged, PlayerLeavingWorld};
 use crate::assets::GameAssets;
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::Session;
 use vale_assets::tables::talent::TalentTree;
 
 /// The character's trees, as [`vale_assets::tables::talent`] lays them out.

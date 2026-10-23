@@ -89,7 +89,8 @@ pub struct HullWork {
 use super::DisplayCache;
 use crate::render::models::{Lookup, ModelCache};
 use crate::world::motion::Motion;
-use crate::world::session::{Session, Solids, WorldEntity};
+use crate::world::entity::WorldEntity;
+use crate::world::session::{Session, Solids};
 use vale_assets::world::collision::{game_object_is_solid, object_matrix, Collider, ObjectPlacement};
 use vale_protocol::state::update::ObjectType;
 

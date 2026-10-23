@@ -46,7 +46,7 @@ use crate::subjects::listing::Listed;
 use crate::tools::Tool;
 use bevy::prelude::*;
 use std::collections::HashMap;
-use vale_client::world::session::{ObjectType, WorldEntity};
+use vale_client::world::entity::{ObjectType, WorldEntity};
 use vale_mangos::gameobject::{self, RowValue};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
 

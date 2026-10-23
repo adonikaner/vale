@@ -689,7 +689,7 @@ pub struct PumpStats {
     /// game archives do not describe.
     pub items_resolved: u32,
     /// Queries answered from the on-disk cache instead of being sent; see
-    /// [`crate::play::wdb`]. Each one saves a round trip. The answer still goes
+    /// [`crate::state::wdb`]. Each one saves a round trip. The answer still goes
     /// through this dispatch, so the `*_resolved` counters include them.
     pub cache_answered: u32,
     pub monster_moves: u32,
@@ -1603,7 +1603,7 @@ mod tests {
         assert!(stats.warnings.is_empty(), "an empty body is the packet");
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::AttackRefused(
+            vec![crate::state::events::PlayerEvent::AttackRefused(
                 crate::play::spells::AttackRefusal::NotInRange
             )]
         );
@@ -1636,7 +1636,7 @@ mod tests {
         );
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::AutoRepeatCancelled]
+            vec![crate::state::events::PlayerEvent::AutoRepeatCancelled]
         );
     }
 
@@ -1647,7 +1647,7 @@ mod tests {
     /// `SPELLCAST_START` in the 1.12 client, and this client does not draw a
     /// cast bar when the key is pressed. `SMSG_SPELL_GO` is the only packet that
     /// empties the next-swing queue. See
-    /// [`crate::play::spells::PlayerEvent::CastStarted`].
+    /// [`crate::state::events::PlayerEvent::CastStarted`].
     ///
     /// The test checks three things, each of which a one-line mistake would
     /// break: the caster is the second packed guid in the body (the first is
@@ -1678,7 +1678,7 @@ mod tests {
         apply(&mut world, None, &packet(Opcode::SMSG_SPELL_START, start(7, 2500)));
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::CastStarted {
+            vec![crate::state::events::PlayerEvent::CastStarted {
                 spell_id: 78,
                 cast_time_ms: 2500
             }]
@@ -1687,7 +1687,7 @@ mod tests {
         apply(&mut world, None, &packet(Opcode::SMSG_SPELL_GO, go(7)));
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::CastReleased { spell_id: 78 }]
+            vec![crate::state::events::PlayerEvent::CastReleased { spell_id: 78 }]
         );
     }
 
@@ -1721,8 +1721,8 @@ mod tests {
         assert_eq!(
             world.take_events(),
             vec![
-                crate::play::spells::PlayerEvent::CastReleased { spell_id: 78 },
-                crate::play::spells::PlayerEvent::CastReleased { spell_id: 21084 },
+                crate::state::events::PlayerEvent::CastReleased { spell_id: 78 },
+                crate::state::events::PlayerEvent::CastReleased { spell_id: 21084 },
             ],
             "both releases, each naming its own spell"
         );
@@ -1890,7 +1890,7 @@ mod tests {
         assert!(replies.is_empty(), "a noise is not answered");
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::PlaySound(Cue::Direct(11803))]
+            vec![crate::state::events::PlayerEvent::PlaySound(Cue::Direct(11803))]
         );
 
         apply(
@@ -1900,7 +1900,7 @@ mod tests {
         );
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::PlaySound(Cue::Music(53))],
+            vec![crate::state::events::PlayerEvent::PlaySound(Cue::Music(53))],
             "music is a different channel, not a different volume"
         );
 
@@ -1915,7 +1915,7 @@ mod tests {
         );
         assert_eq!(
             world.take_events(),
-            vec![crate::play::spells::PlayerEvent::PlaySound(Cue::Object {
+            vec![crate::state::events::PlayerEvent::PlaySound(Cue::Object {
                 sound_id: 1129,
                 guid: 0xF130_0000_0000_002A,
             })]

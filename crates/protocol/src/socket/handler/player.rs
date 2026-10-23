@@ -23,9 +23,10 @@
 
 use super::{read, Incoming};
 use crate::opcodes::Opcode;
-use crate::play::spells::{self, PlayerEvent};
+use crate::play::spells;
+use crate::state::events::PlayerEvent;
 use crate::play::timers;
-use crate::play::wdb::Kind;
+use crate::state::wdb::Kind;
 use crate::socket::world::Packet;
 
 /// `SMSG_INITIAL_SPELLS`: every spell this character knows.
@@ -152,7 +153,7 @@ pub(super) fn pet_name(ctx: &mut Incoming, pkt: &Packet) {
     };
     // A rename is answered under the same pet number, so this cached answer
     // replaces an existing entry instead of being skipped. See
-    // [`crate::play::wdb`].
+    // [`crate::state::wdb`].
     ctx.world
         .remember_again(Kind::PetName, u64::from(name.pet_number), &pkt.body);
     ctx.world.apply_pet_name(name);
@@ -512,7 +513,7 @@ quest_arm!(
 );
 /// `SMSG_QUEST_QUERY_RESPONSE`: one quest's template. The body is stored in the
 /// on-disk cache, keyed by the quest id it begins with. See
-/// [`crate::play::wdb`].
+/// [`crate::state::wdb`].
 pub(super) fn quest_template(ctx: &mut Incoming, pkt: &Packet) {
     let Some(template) = read(
         ctx.stats,
@@ -1208,7 +1209,7 @@ pub(super) fn channel_start(ctx: &mut Incoming, pkt: &Packet) {
     // held pose; this event drives the cast bar, and no other packet starts a
     // channel's bar. See [`PlayerEvent::ChannelStart`].
     ctx.world
-        .note_event(spells::PlayerEvent::ChannelStart {
+        .note_event(PlayerEvent::ChannelStart {
             spell_id,
             duration_ms,
         });
@@ -1221,7 +1222,7 @@ pub(super) fn channel_update(ctx: &mut Incoming, pkt: &Packet) {
     };
     ctx.world.apply_channel_update(remaining_ms);
     ctx.world
-        .note_event(spells::PlayerEvent::ChannelUpdate { remaining_ms });
+        .note_event(PlayerEvent::ChannelUpdate { remaining_ms });
 }
 
 /// `SMSG_UPDATE_AURA_DURATION`: how long the buff in this slot has left.

@@ -11,7 +11,6 @@
 //! resolve        names from the name cache, and PETITION_SHOW when the open
 //!                charter is whole
 //! act            what the interface pressed
-//! walk_away      the registrar window, when the registrar is out of reach
 //! ```
 //!
 //! ## Two windows
@@ -53,10 +52,12 @@ use bevy::prelude::*;
 
 use super::events::{GuildRegistrarClosed, GuildRegistrarShow, PetitionClosed, PetitionShow};
 use crate::lua::panels::petition::{Open, Press};
-use crate::world::session::{Session, WorldEntity};
+use crate::world::entity::WorldEntity;
+use crate::world::session::Session;
 use vale_protocol::play::petition::{result, PetitionQuery, ShowList, SignResult, Signatures};
-use vale_protocol::play::spells::PlayerEvent;
-use vale_protocol::socket::session::{GuildVerb, PetitionVerb};
+use vale_protocol::state::events::PlayerEvent;
+use vale_protocol::play::guild::GuildVerb;
+use vale_protocol::play::petition::PetitionVerb;
 
 /// `UNIT_NPC_FLAG_PETITIONER` and `UNIT_NPC_FLAG_TABARDDESIGNER`. The 1.12.1
 /// client opens the registrar window only for an NPC that carries both.
@@ -115,10 +116,42 @@ impl Plugin for PetitionPlugin {
             .init_resource::<Shown>()
             .add_systems(
                 Update,
-                (track, apply_answers, resolve, act, walk_away, mirror)
+                (
+                    track,
+                    apply_answers,
+                    resolve,
+                    act.before(super::gossip::NpcSet::Close),
+                    mirror.after(super::gossip::NpcSet::Close),
+                )
                     .chain()
                     .in_set(super::GameSet),
             );
+        super::gossip::claims_the_token::<RegistrarWindow>(app);
+        super::gossip::closes_on_walk_away::<RegistrarWindow>(app);
+    }
+}
+
+impl super::gossip::NpcWindow for RegistrarWindow {
+    type Closed = super::events::GuildRegistrarClosed;
+    const CLOSED: super::events::GuildRegistrarClosed = super::events::GuildRegistrarClosed;
+
+    fn guid(&self) -> Option<u64> {
+        RegistrarWindow::guid(self)
+    }
+
+    fn close(&mut self) -> bool {
+        RegistrarWindow::close(self)
+    }
+}
+
+/// `GuildRegistrar_OnShow` calls
+/// `SetPortraitTexture(GuildRegistrarFramePortrait, "NPC")` and
+/// `UnitName("NPC")`.
+impl super::gossip::NpcToken for RegistrarWindow {
+    const ORDER: u8 = 7;
+
+    fn npc(&self) -> Option<u64> {
+        RegistrarWindow::guid(self)
     }
 }
 
@@ -126,7 +159,7 @@ impl Plugin for PetitionPlugin {
 /// board already holds the membership; see [`super::guild`].
 fn track(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
-    player: Query<&WorldEntity, With<crate::world::session::LocalPlayer>>,
+    player: Query<&WorldEntity, With<crate::world::entity::LocalPlayer>>,
 ) {
     let Some(host) = host else { return };
     let in_guild = crate::lua::panels::guild::held(&host).borrow().guild_id() != 0;
@@ -452,23 +485,8 @@ fn act(
     }
 }
 
-/// Close the registrar window when the registrar is out of reach or gone.
-/// The test is the one every NPC window uses, and it applies only while the
-/// `"npc"` token names this registrar.
-fn walk_away(
-    units: super::api::Units,
-    npc: Res<super::gossip::NpcUnit>,
-    mut registrar: ResMut<RegistrarWindow>,
-    mut closed: MessageWriter<GuildRegistrarClosed>,
-) {
-    let Some(guid) = registrar.guid() else { return };
-    if npc.0 == Some(guid) && super::gossip::npc_gone(&units) && registrar.close() {
-        closed.write(GuildRegistrarClosed);
-    }
-}
-
-/// Keep the board's registrar in step with [`RegistrarWindow`], which
-/// [`walk_away`] clears.
+/// Keep the board's registrar in step with [`RegistrarWindow`], which the
+/// walk-away close ([`super::gossip::close_when_npc_gone`]) clears.
 fn mirror(host: Option<NonSendMut<crate::lua::host::LuaHost>>, registrar: Res<RegistrarWindow>) {
     let Some(host) = host else { return };
     if registrar.guid().is_none() && crate::lua::panels::petition::held(&host).borrow().registrar.is_some() {

@@ -53,7 +53,7 @@ use super::events::{
 };
 use crate::world::session::Session;
 use vale_protocol::play::social::FriendsResult;
-use vale_protocol::play::spells::PlayerEvent;
+use vale_protocol::state::events::PlayerEvent;
 
 /// What the session thread said about the two lists and the search, forwarded by
 /// [`crate::world::incoming::drain_events`] on the same terms as every other

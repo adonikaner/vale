@@ -65,7 +65,8 @@ use super::events::{
     ConfirmXpLoss, CorpseInRange, CorpseOutOfRange, PlayerAlive, PlayerDead, PlayerUnghost,
     ResurrectRequest,
 };
-use crate::world::session::{LocalPlayer, Session, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
+use crate::world::session::Session;
 
 /// **What the server said about dying**, forwarded off the one drain of
 /// `LiveSession::take_events` — the same shape, and the same reason, as

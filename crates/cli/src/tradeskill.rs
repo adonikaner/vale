@@ -245,16 +245,16 @@ pub fn cmd_tradeskill(cfg: &Config, target: Option<&str>) -> Result<(), String> 
     // The WDB cache, for the header gate — optional, and said so. Every realm
     // with a file is read: a session's file is keyed by the world socket's
     // peer address, which this command has no socket to ask for.
-    let realms = vale_protocol::play::wdb::realms_on_disk(vale_protocol::play::wdb::CACHE_DIR);
+    let realms = vale_protocol::state::wdb::realms_on_disk(vale_protocol::state::wdb::CACHE_DIR);
     let cached: std::collections::HashSet<u32> = realms
         .iter()
         .flat_map(|&realm| {
-            vale_protocol::play::wdb::Caches::open(
-                vale_protocol::play::wdb::CACHE_DIR,
+            vale_protocol::state::wdb::Caches::open(
+                vale_protocol::state::wdb::CACHE_DIR,
                 u32::from(vale_protocol::version::BUILD),
                 realm,
             )
-            .seed(vale_protocol::play::wdb::Kind::Item)
+            .seed(vale_protocol::state::wdb::Kind::Item)
             .iter()
             .filter_map(|(_, raw)| vale_protocol::state::query::parse_item_response(raw))
             .map(|item| item.entry)

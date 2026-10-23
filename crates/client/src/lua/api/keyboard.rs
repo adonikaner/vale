@@ -58,7 +58,7 @@ use crate::input::bindings::BindingPressed;
 
 /// **Is the keyboard the interface's this frame?** Read by
 /// [`crate::input::bindings`], [`crate::interface::target`], [`crate::interface::action`]
-/// and [`crate::world::session::send_input`], each of which must do nothing at
+/// and [`crate::input::controls::send_input`], each of which must do nothing at
 /// all while someone is typing.
 ///
 /// A resource written here and read one directory down, which is the shape

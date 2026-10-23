@@ -52,7 +52,7 @@
 
 use crate::world::entities::{AttachedPart, EntityModel, EntityPart, Joint};
 use crate::render::models::{Lookup, Materials, ModelCache, SceneLighting};
-use crate::world::session::WorldEntity;
+use crate::world::entity::WorldEntity;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
@@ -154,7 +154,7 @@ impl Plugin for MissilePlugin {
                 // writes a world transform, so both want this frame's
                 // positions rather than last frame's — the same ordering
                 // `entities::animate` is given, and for the same reason.
-                .after(crate::world::session::place_entities),
+                .after(crate::world::entity::place_entities),
         );
     }
 }

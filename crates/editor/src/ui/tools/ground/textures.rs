@@ -153,7 +153,9 @@ pub(in crate::ui::tools) fn paint(
                 .fixed_decimals(2),
         )
         .on_hover_text(
-            "The share of the radius painted at full strength, drawn as the inner              ring. Outside it the paint fades along the falloff to nothing at the              outer ring, and a held stroke goes no further than that fade.",
+            "The share of the radius painted at full strength, drawn as the inner \
+             ring. Outside it the paint fades along the falloff to nothing at the \
+             outer ring, and a held stroke goes no further than that fade.",
         );
     });
 

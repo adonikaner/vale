@@ -185,8 +185,10 @@ use playback::play;
 /// Layer 0 is the world. A camera with no `RenderLayers` sees only layer 0, so
 /// putting the stage anywhere else is the whole of the isolation: the client's
 /// own camera is untouched and cannot see the stage, and the stage's camera is
-/// told to see only this.
-pub(crate) const STAGE_LAYER: usize = 2;
+/// told to see only this. It is the first of the client's host layers
+/// ([`vale_client::render::offscreen::layers::HOST`]), which no client pass
+/// draws on.
+pub(crate) const STAGE_LAYER: usize = vale_client::render::offscreen::layers::HOST.start;
 
 /// How far apart the caster and the target stand, in yards — the reference
 /// tool's five, for the reason in the module comment.

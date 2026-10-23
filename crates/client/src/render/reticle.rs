@@ -202,7 +202,7 @@ fn follow_pointer(
         anchor,
         // No joint: the anchor has no skeleton and the circle rides its frame.
         None,
-        &quad(half),
+        &vale_assets::world::m2::GroundQuad::square(half),
         material,
     );
     commands
@@ -244,22 +244,6 @@ fn circle_half(acceptable: bool, stated: Option<f32>) -> f32 {
     match stated.filter(|r| acceptable && *r > 0.0) {
         Some(radius) => radius,
         None => GROUND_CIRCLE_MIN_YARDS,
-    }
-}
-
-/// The circle's quad, in the model space [`vale_assets::world::m2::GroundQuad`] is
-/// stated in — WoW axes, `z = 0`, bilinear rectangle order.
-fn quad(half: f32) -> vale_assets::world::m2::GroundQuad {
-    vale_assets::world::m2::GroundQuad {
-        // Unused: the decal takes `None` for its joint, so nothing indexes this.
-        bone: 0,
-        corners: [
-            [-half, -half, 0.0],
-            [half, -half, 0.0],
-            [-half, half, 0.0],
-            [half, half, 0.0],
-        ],
-        uvs: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
     }
 }
 

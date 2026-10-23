@@ -69,7 +69,7 @@ use std::sync::Arc;
 use vale_assets::tables::area::Areas;
 use vale_assets::tables::charcreate::CharCreate;
 use vale_protocol::play::guild::{presence, rights, GuildQuery, Member, Roster};
-use vale_protocol::socket::session::GuildVerb;
+use vale_protocol::play::guild::GuildVerb;
 
 use super::super::api::Answers;
 use crate::lua::host::LuaHost;
@@ -828,7 +828,7 @@ pub fn held(host: &LuaHost) -> Held {
 }
 
 /// Take and clear the guild requests that send a packet.
-pub fn take(host: &LuaHost) -> Vec<vale_protocol::socket::session::GuildVerb> {
+pub fn take(host: &LuaHost) -> Vec<vale_protocol::play::guild::GuildVerb> {
     super::taken(host)
 }
 

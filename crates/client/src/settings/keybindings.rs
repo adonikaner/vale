@@ -101,7 +101,7 @@ impl Plugin for KeybindingsPlugin {
 fn load(
     assets: Res<crate::assets::GameAssets>,
     session: Res<crate::world::session::Session>,
-    world: Res<crate::world::session::WorldStatus>,
+    world: Res<crate::world::status::WorldStatus>,
     config: Res<ClientConfig>,
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     mut files: ResMut<BindingFiles>,

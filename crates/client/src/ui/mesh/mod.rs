@@ -1,25 +1,26 @@
-//! The game's interface drawn as meshes: the draw list the egui painter reads,
-//! built into batched 2d geometry on the present camera instead of being
-//! re-emitted through egui every frame.
+//! The game's interface drawn as meshes: the draw list
+//! [`crate::ui::framexml`]'s walk produces, built into batched 2d geometry on
+//! the present camera, with the floating combat text and the loading screen
+//! beside it.
 //!
 //! ```text
 //! material.rs  one Material2d: a texture, vertex colours, and the game's own
-//!              blend modes, which egui does not have
-//! textures.rs  the art as bevy Images, through the same decode and the same
-//!              byte-space alpha compensation the egui painter uses
+//!              blend modes, with the byte-space alpha compensation
+//! textures.rs  the art as bevy Images: the one decode of an Interface\ path
+//!              and the caches of its uploads
 //! fonts.rs     the four typefaces rasterised glyph by glyph into atlas pages
-//! text.rs      where each glyph goes (wrap, rows, justify); pure and tested
-//! build.rs     every Item kind as vertices: the kind handlers, the batcher,
-//!              the clipper
-//! floats.rs    the floating combat text, from the floater state the egui
-//!              painter reads, in its own z band under the interface
+//! text.rs      where each glyph goes (fold, rows, justify); pure and tested
+//! build.rs     every Item type as vertices: the handlers, the batcher, the
+//!              clipper
+//! floats.rs    the floating combat text, from `ui::worldtext`'s floaters, in
+//!              its own z band under the interface
 //! loading.rs   the loading screen's three quads, over everything the game
 //!              draws
 //! ```
 //!
 //! ## Why the interface is not drawn through egui
 //!
-//! On 2026-09-02 the egui paint pipeline measured ~1.2 ms a frame of serial
+//! On 2026-09-02 an egui paint pipeline measured ~1.2 ms a frame of serial
 //! main-thread work, because the walk's shapes were re-emitted and
 //! re-tessellated every frame for a picture that changes at 30 Hz. This module
 //! rebuilds meshes only when the walk ran, plus the minimap when the player
@@ -29,17 +30,8 @@
 //!
 //! On the present camera's 2d phase. Every batch is a `Mesh2d` in
 //! `Transparent2d`, keyed by z in draw-list order, over the present quad (an
-//! opaque draw at z 0) and under egui's own pass, so the F4 window, the HUD
-//! and the floating combat text paint over the interface.
-//!
-//! ## Choosing the painter
-//!
-//! This painter is the default. It was checked against the egui painter's
-//! picture on the world, the panels, the glue screens, combat text and a live
-//! fight. `VALE_UI_PAINTER=egui` selects the egui painter, kept for one round
-//! for side-by-side comparison. Deleting it, and moving bevy_egui behind the
-//! `diagnostics` feature, is the next step. The walk, the widgets, the events
-//! and the mouse are the same under either painter.
+//! opaque draw at z 0) and under egui's own pass, so the F4 window and the
+//! HUD paint over the interface.
 
 pub mod build;
 pub mod floats;
@@ -57,17 +49,6 @@ use bevy::window::PrimaryWindow;
 use std::collections::{HashMap, HashSet};
 
 use material::{Blend, InterfaceMaterial};
-
-/// Whether the mesh painter is on. Read once and cached; this plugin and the
-/// egui painters' emission checks both call it, so they cannot disagree.
-///
-/// On unless `VALE_UI_PAINTER=egui`.
-pub fn active() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        !std::env::var("VALE_UI_PAINTER").is_ok_and(|v| v.eq_ignore_ascii_case("egui"))
-    })
-}
 
 /// One batch's entity, kept across rebuilds.
 ///
@@ -134,8 +115,7 @@ struct MeshState {
     /// inside a building depend on both.
     last_place: Option<PlaceKey>,
     reported_models: HashSet<String>,
-    /// Whether the first-build log line was written; the mesh counterpart of
-    /// the egui painter's "first frame drawn" line.
+    /// Whether the first-build log line was written.
     reported: bool,
 }
 
@@ -147,11 +127,15 @@ impl Plugin for UiMeshPlugin {
         app.add_plugins(Material2dPlugin::<InterfaceMaterial>::default())
             .init_resource::<textures::UiTextures>()
             .init_resource::<fonts::UiFonts>()
-            // After the walk, so a tick's items are drawn in the frame they are
-            // produced, with the same latency the egui emission has. The walk
-            // runs inside bevy_egui's context pass (`framexml::paint` is
-            // registered in `EguiPrimaryContextPass`), whose loop system is in
-            // `EguiPostUpdateSet::EndPass`, so the edge is against that set.
+            // `rebuild` after the walk (`framexml::walk`), so a tick's items
+            // are drawn in the frame they are produced: the rebuild reads
+            // `Drawn`, which the walk writes, and without the edge bevy may run
+            // the rebuild first and draw the previous walk's list for a frame.
+            // Under `VALE_NO_INTERFACE` the walk is not registered and the
+            // edge orders against nothing.
+            //
+            // The combat text and the loading screen read no walk output, so
+            // they have no edge to it.
             //
             // Before the frame's transform, visibility and specialization
             // sweeps. These systems spawn entities and swap material and
@@ -178,8 +162,11 @@ impl Plugin for UiMeshPlugin {
             // vertices and its new texture and z.
             .add_systems(
                 PostUpdate,
-                (rebuild, floats::paint, loading::paint)
-                    .after(bevy_egui::EguiPostUpdateSet::EndPass)
+                (
+                    rebuild.after(crate::ui::framexml::walk),
+                    floats::paint,
+                    loading::paint,
+                )
                     .before(bevy::asset::AssetEventSystems)
                     .before(bevy::transform::TransformSystems::Propagate)
                     .before(bevy::camera::visibility::VisibilitySystems::CalculateBounds)
@@ -204,7 +191,7 @@ struct Reads<'w> {
     dolls: Res<'w, crate::render::paperdoll::Dolls>,
     place: Res<'w, crate::interface::minimap::MinimapView>,
     cursor: Res<'w, crate::interface::cursor::Cursor>,
-    ui_scale: Res<'w, crate::ui::scale::InterfaceScale>,
+    viewport: Res<'w, crate::ui::scale::InterfaceViewport>,
     time: Res<'w, Time>,
 }
 
@@ -226,11 +213,13 @@ fn rebuild(
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Interface);
     // One deref, so the fields below borrow disjointly.
     let state = &mut *state;
-    let Reads { drawn, tuning, models, portraits, dolls, place, cursor, ui_scale, time } = reads;
+    let Reads { drawn, tuning, models, portraits, dolls, place, cursor, viewport, time } = reads;
     let Ok(window) = window.single() else {
         return;
     };
-    let screen = Vec2::new(window.width(), window.height());
+    let Some(screen) = viewport.window else {
+        return;
+    };
     if screen.x <= 0.0 || screen.y <= 0.0 {
         return;
     }
@@ -269,8 +258,7 @@ fn rebuild(
         place.directory.clone(),
     );
     // The icon on the pointer, the one input here that moves at frame rate:
-    // the pointer position, in the logical pixels the egui painter read from
-    // its context.
+    // the pointer position, in logical pixels.
     let holding: Option<(String, Vec2)> = cursor
         .held
         .as_ref()
@@ -278,7 +266,7 @@ fn rebuild(
         .zip(window.cursor_position())
         .map(|(path, at)| (path.to_string(), at));
 
-    let dpi = window.scale_factor();
+    let dpi = viewport.dpi;
     let fixed_stale = screen != state.last_screen
         || dpi != state.last_dpi
         || faces != state.portraits
@@ -301,11 +289,7 @@ fn rebuild(
     state.last_dpi = dpi;
     state.last_place = Some(here);
 
-    let view = crate::lua::widgets::layout::Viewport::of(
-        f64::from(screen.x),
-        f64::from(screen.y),
-        ui_scale.get(),
-    );
+    let view = viewport.view;
     let mut painter = build::Painter {
         assets: &assets,
         images: &mut images,
@@ -387,7 +371,94 @@ fn rebuild(
     }
 }
 
+/// Measures what the painter costs, with no window, for `--audit --spin`.
+///
+/// The spin measures the interpreter (the mouse pass, `OnUpdate` and the draw
+/// walk) and stops at the `lua`/`ui` boundary, so on its own it attributes the
+/// whole per-frame cost of the interface to Lua. Everything after
+/// `LuaHost::drawn` happens in this module, and this probe runs the same
+/// build [`rebuild`] runs, over the real archives.
+///
+/// It reports two numbers:
+///
+/// * the time to turn N items into batches: the decodes, the glyph rasters
+///   and the vertices;
+/// * the batch count, which is the number of draw calls the GPU is given. A
+///   batch merges adjacent emissions that share a texture and a blend, so a
+///   panel of art on one sheet is one batch and eighty distinct item icons
+///   are eighty.
+///
+/// It builds nothing Bevy schedules: an `Assets<Image>` is a plain container
+/// and [`crate::assets::GameAssets`] opens the archives on first use, so this
+/// needs no window, no GPU and no login.
+#[cfg(any(test, feature = "diagnostics"))]
+pub(crate) struct PaintProbe {
+    assets: crate::assets::GameAssets,
+    images: Assets<Image>,
+    textures: textures::UiTextures,
+    fonts: fonts::UiFonts,
+    models: crate::lua::widgets::model::UiModels,
+    reported_models: HashSet<String>,
+}
+
+#[cfg(any(test, feature = "diagnostics"))]
+impl PaintProbe {
+    pub(crate) fn new(gamedata_dir: &str) -> PaintProbe {
+        PaintProbe {
+            assets: crate::assets::GameAssets::new(gamedata_dir.to_string()),
+            images: Assets::default(),
+            textures: textures::UiTextures::default(),
+            fonts: fonts::UiFonts::default(),
+            models: crate::lua::widgets::model::UiModels::default(),
+            reported_models: HashSet::new(),
+        }
+    }
+
+    /// One build of every group from `items`, answering `(items, batches)`.
+    pub(crate) fn frame(
+        &mut self,
+        items: &[crate::lua::widgets::draw::Item],
+        screen: (f32, f32),
+    ) -> (usize, usize) {
+        // No portraits and no paper dolls: a picture of a unit needs a camera,
+        // a model and a GPU, and this probe has none of them. Every portrait
+        // falls through to its region's own path, as one whose model is still
+        // loading does. No world either, so the minimap draws nothing, as it
+        // does at a glue screen.
+        let portraits = crate::render::portraits::Portraits::default();
+        let dolls = crate::render::paperdoll::Dolls::default();
+        let place = crate::interface::minimap::MinimapView::default();
+        // Scale 1.0: the probe gives its screen in units, so the space is
+        // exactly that size. See [`crate::ui::scale`].
+        let view = crate::lua::widgets::layout::Viewport::of(
+            f64::from(screen.0),
+            f64::from(screen.1),
+            1.0,
+        );
+        let mut painter = build::Painter {
+            assets: &self.assets,
+            images: &mut self.images,
+            textures: &mut self.textures,
+            fonts: &mut self.fonts,
+            models: &self.models,
+            portraits: &portraits,
+            dolls: &dolls,
+            place: &place,
+            view,
+            dpi: 1.0,
+            now_ms: 0,
+            reported_models: &mut self.reported_models,
+        };
+        let batches = build::item_batches(items, &mut painter).len()
+            + build::minimap_batches(items, &mut painter).len()
+            + build::model_batches(items, &mut painter).len();
+        self.fonts.flush(&mut self.images);
+        (items.len(), batches)
+    }
+}
+
 /// Whether two item lists produce the same fixed meshes.
+
 ///
 /// A `<Model>` item is drawn by `build::model_batches` and contributes only
 /// its index to the fixed batches, so a change inside it is not a reason to

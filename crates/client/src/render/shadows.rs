@@ -455,7 +455,7 @@ struct Drape {
 /// Sample the ground under every blob and write the conforming mesh.
 ///
 /// **The join is the mover's**: the higher of the terrain and whatever building
-/// floor is over the same point, which is what `world::session::Standing` does
+/// floor is over the same point, which is what `world::standing::Standing` does
 /// for the character's own feet. It is repeated rather than shared for the
 /// reason `render::decals` gives — a mover asks what it can stand on and this
 /// asks what is visible under a thing already standing.

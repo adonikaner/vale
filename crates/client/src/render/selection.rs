@@ -87,7 +87,7 @@ use crate::interface::target::Selection;
 use crate::render::decals::spawn_ground_decal;
 use crate::render::models::{DrawParams, ModelCache, Materials};
 use crate::world::entities::EntityModel;
-use crate::world::session::{LocalPlayer, WorldEntity};
+use crate::world::entity::{LocalPlayer, WorldEntity};
 use vale_assets::look::selection::{ring_rgba, Selected};
 
 /// Where the texture's bright rim sits, as a fraction of the image's
@@ -293,7 +293,7 @@ fn follow_selection(
         // client's circle follows the unit. The transform also carries the
         // unit's facing, which does not change a circle.
         None,
-        &quad(half),
+        &vale_assets::world::m2::GroundQuad::square(half),
         material,
     );
     commands.entity(ring).insert(SelectionRing { unit, half });
@@ -313,23 +313,6 @@ fn quad_half(bounding_radius: f32, scale: f32) -> f32 {
     // a ring of infinite radius, and one NaN in a mesh breaks the whole frame.
     let scale = if scale > 1e-3 { scale } else { 1.0 };
     (bounding_radius * RING_SCALE / scale / RIM).max(MIN_RADIUS)
-}
-
-/// The ring's quad, in the model space [`vale_assets::world::m2::GroundQuad`] is
-/// stated in — WoW axes, `z = 0`, bilinear rectangle order — with the whole
-/// image on it.
-fn quad(half: f32) -> vale_assets::world::m2::GroundQuad {
-    vale_assets::world::m2::GroundQuad {
-        // Unused: the decal takes `None` for its joint, so nothing indexes this.
-        bone: 0,
-        corners: [
-            [-half, -half, 0.0],
-            [half, -half, 0.0],
-            [-half, half, 0.0],
-            [half, half, 0.0],
-        ],
-        uvs: [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
-    }
 }
 
 /// The one material every ring in the world shares.
@@ -450,7 +433,7 @@ mod tests {
     fn the_quad_puts_the_rim_where_the_scale_asks() {
         let footprint = 1.4_f32;
         let half = quad_half(footprint, 1.0);
-        let quad = quad(half);
+        let quad = vale_assets::world::m2::GroundQuad::square(half);
         // The rim of the texture, in yards from the centre.
         let rim = half * RIM;
         let wanted = footprint * RING_SCALE;

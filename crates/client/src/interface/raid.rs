@@ -52,7 +52,7 @@
 use bevy::prelude::*;
 
 use vale_protocol::play::group::{MAX_RAID_SUBGROUPS, raid_rank, rank_of};
-use vale_protocol::socket::session::PartyVerb;
+use vale_protocol::play::group::PartyVerb;
 
 use super::party::Party;
 use crate::world::session::Session;
@@ -231,7 +231,7 @@ fn send_verbs(
     host: Option<NonSendMut<crate::lua::host::LuaHost>>,
     session: Res<Session>,
     mut party: ResMut<Party>,
-    units: Query<&crate::world::session::WorldEntity>,
+    units: Query<&crate::world::entity::WorldEntity>,
 ) {
     let Some(host) = host else { return };
     let requests = crate::lua::panels::raid::take(&host);
