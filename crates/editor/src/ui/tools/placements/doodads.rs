@@ -291,3 +291,19 @@ enum Lean {
     Ground,
     Upright,
 }
+
+/// The doodad tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, now, .. } = subject;
+    doodad(
+        ui,
+        session,
+        &mut editing.selection,
+        &mut editing.doodad_held,
+        &mut editing.gizmo,
+        &mut editing.placing,
+        &mut editing.portraits,
+        &mut editing.favourites,
+        now,
+    );
+}

@@ -54,6 +54,9 @@
 //!                apply or put back one, every applied subject after it is put
 //!                back first and applied again after, so each revert file runs
 //!                against the database it was read from
+//! store.rs       the project's server row store: row edits, waypoint paths
+//!                and scripts, the undo entry each write goes on, and their
+//!                files in the project
 //! follow.rs      changing a row's id in the project's store: the row's claim
 //!                re-keyed, and the project's other claims that name the id
 //!                rewritten to name the new one
@@ -164,6 +167,7 @@ pub mod services;
 pub mod rows;
 pub mod settings;
 pub mod stack;
+pub mod store;
 pub mod subject;
 pub mod sync;
 

@@ -26,8 +26,12 @@
 //! servicemarks.rs the icons over a creature's head that say what it offers,
 //!               drawn in the viewport under the creature tool
 //! icons.rs      the toolbar icons compiled into the editor (none yet)
+//! asks.rs       what a panel asks the shell to do after the frame is drawn:
+//!               open a row in another workspace, switch tools, import a
+//!               texture, make an area
 //! ```
 
+pub mod asks;
 pub mod context;
 pub mod hovercard;
 pub mod icons;

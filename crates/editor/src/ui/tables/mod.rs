@@ -187,9 +187,6 @@ use crate::ui::widgets::thumbnails::Thumbnails;
 use vale_assets::tables::schema;
 use vale_client::assets::GameAssets;
 
-/// The gap between the row list and the form beside it, in points.
-const FORM_GAP: f32 = 12.0;
-
 /// The height of one row of the list and the size of its icon. These are the
 /// editor's shared list sizes, so this list and the item list look the same.
 /// The cache decodes at [`crate::ui::widgets::thumbnails::SIDE`]; an icon is a 64x64 BLP whose
@@ -250,6 +247,76 @@ pub struct Workspace<'a> {
     /// a band's strip can mark the viewport's current time on it.
     /// `vale_assets::tables::light::NOON` when the caller has no clock.
     pub hour: u32,
+    /// What the workspace asks of the shell: a part to switch to, an area to
+    /// paint, a texture to import. See [`crate::ui::shell::asks`].
+    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+    /// Where a light's Fly to button sends its request. See
+    /// [`crate::camera::FlyTo`].
+    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+}
+
+/// What the workspace's middle draws besides the form, which the
+/// inspector's view of a table does not: the spell storyboard, the stage its
+/// preview renders on, and the attachment lab.
+pub struct Story<'a> {
+    pub board: &'a mut storyboard::Storyboard,
+    pub stage: &'a mut crate::preview::stage::Stage,
+    pub lab: &'a mut crate::preview::lab::Lab,
+}
+
+impl<'a> Workspace<'a> {
+    /// The workspace of `tool` out of the shell's state, at the hour the
+    /// world shows. `lights` is whether it has the map's lights and `quests`
+    /// whether it has the item names and the reference picker, which need a
+    /// world database. The view bar's two switches are left `None`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::ui) fn new(
+        tool: crate::tools::Tool,
+        session: &'a mut EditSession,
+        editing: &'a mut crate::ui::Editing<'_>,
+        assets: &'a GameAssets,
+        now: f64,
+        lights: bool,
+        quests: bool,
+    ) -> Workspace<'a> {
+        Workspace::with_story(tool, session, editing, assets, now, lights, quests).0
+    }
+
+    /// [`Workspace::new`] with the [`Story`] the middle draws beside it.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::ui) fn with_story(
+        tool: crate::tools::Tool,
+        session: &'a mut EditSession,
+        editing: &'a mut crate::ui::Editing<'_>,
+        assets: &'a GameAssets,
+        now: f64,
+        lights: bool,
+        quests: bool,
+    ) -> (Workspace<'a>, Story<'a>) {
+        let story = Story {
+            board: &mut editing.storyboard,
+            stage: &mut editing.stage,
+            lab: &mut editing.lab,
+        };
+        let work = Workspace {
+            tool,
+            session,
+            browser: &mut editing.browser,
+            assets,
+            thumbnails: &mut editing.thumbnails,
+            portraits: &mut editing.portraits,
+            favourites: &mut editing.favourites,
+            now,
+            wireframe: None,
+            particles: None,
+            lights: lights.then_some(&mut *editing.lights),
+            quests: quests.then_some(&mut *editing.quests),
+            hour: editing.clock.half_minutes,
+            asks: &mut editing.asks,
+            fly: &mut editing.fly,
+        };
+        (work, story)
+    }
 }
 
 impl Workspace<'_> {
@@ -393,13 +460,8 @@ pub enum View {
 }
 
 /// Draw the whole workspace into the region the panels left.
-pub fn draw(
-    ui: &mut egui::Ui,
-    mut work: Workspace<'_>,
-    board: &mut storyboard::Storyboard,
-    stage: &mut crate::preview::stage::Stage,
-    lab: &mut crate::preview::lab::Lab,
-) {
+pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, story: Story<'_>) {
+    let Story { board, stage, lab } = story;
     let table_name = work.browser.table.clone();
     // The Tables workspace with no table chosen: the list is the tables.
     if table_name.is_empty() {
@@ -444,12 +506,12 @@ pub fn draw(
     browser_panel(ui, |ui| list(ui, &mut work));
     // Leave a gap between the list and the form. The panel's margin ends at its
     // edge, so without a gap `< back` and the section heads touch the list's
-    // border. The gap is a child `Ui` inset by [`FORM_GAP`] rather than a
+    // border. The gap is a child `Ui` inset by [`theme::FORM_GAP`] rather than a
     // frame, because the storyboard and the lab dock their own panels into the
     // `Ui` they are given, and a frame's content rectangle is not settled until
     // its contents are laid out.
     let rect = ui.available_rect_before_wrap();
-    let inset = egui::Rect::from_min_max(rect.min + egui::vec2(FORM_GAP, 0.0), rect.max);
+    let inset = egui::Rect::from_min_max(rect.min + egui::vec2(theme::FORM_GAP, 0.0), rect.max);
     let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(inset).layout(*ui.layout()));
     form(&mut inner, &mut work, board, stage, lab);
 }
@@ -500,4 +562,38 @@ pub(in crate::ui) fn table(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     ui.add_space(4.0);
 
     reference::references(ui, &mut work);
+}
+
+/// A table workspace's inspector panel: what the open row points at. The form
+/// itself is in the middle, where the viewport would be ([`workspace`]),
+/// following the shell's rule that the inspector shows the selection.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { tool, session, assets, now, .. } = subject;
+    table(ui, Workspace::new(tool, session, editing, assets, now, false, false));
+}
+
+/// A table workspace in the middle of a window: the table browser on the
+/// tool's tables.
+pub(crate) fn workspace(ui: &mut egui::Ui, tool: crate::tools::Tool, bench: crate::ui::workspace::Bench<'_, '_, '_>) {
+    let crate::ui::workspace::Bench { session, editing, playing, assets, now, wireframe, particles, .. } = bench;
+    // The item names and the item picker need the database; without one an
+    // item column is its number.
+    let named = playing.server.resolve().is_some();
+    let (mut work, story) = Workspace::with_story(tool, session, editing, assets, now, true, named);
+    // The model view's foot toggles the same two the view bar does, on the
+    // same edited copies, where the window has a view bar.
+    work.wireframe = wireframe;
+    work.particles = particles;
+    draw(ui, work, story);
+    // The reference picker, which an item column of a client table opens:
+    // the quest form's dialog, writing into the table's field.
+    crate::ui::subjects::quests::picker(
+        ui.ctx(),
+        session,
+        &mut editing.quests,
+        assets,
+        &mut editing.thumbnails,
+        None,
+        now,
+    );
 }

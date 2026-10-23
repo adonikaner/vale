@@ -29,7 +29,7 @@
 //! [`crate::subjects::loot`]'s terms: a created row carries every column, a
 //! removed one is a [`Life::Delete`] claim, and a column edit is a value under
 //! the row's key. A script has no key of its own and is the session's second
-//! store (`EditSession::server_scripts`): the whole script is set on every
+//! store (`ServerRows::scripts`): the whole script is set on every
 //! edit, and the undo stack folds the edits made close together into one
 //! entry. `vale_mangos::scripts`' module comment gives the reason for this
 //! design.
@@ -56,7 +56,7 @@ use vale_mangos::row::{Edits, Key, Life, RowEdit};
 use vale_mangos::schema::RowValue;
 use vale_mangos::scripts::{self, Script, ScriptRow};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
+use crate::server::fresh::FreshTask;
 use std::collections::{HashMap, HashSet};
 
 /// How many rows a search answers at most.
@@ -76,6 +76,30 @@ pub struct About {
     pub template_key: Key,
     pub spell_list_id: u32,
     pub ai_name: String,
+}
+
+impl About {
+    /// The windows' subject for the creature in focus, read from `template`,
+    /// its template row as read, with this project's edits over it: so
+    /// `ai_name` or `spell_list_id` typed into the template form changes the
+    /// windows on the next frame.
+    pub fn from_focus(
+        focus: &crate::subjects::windows::Focus,
+        template: Option<&vale_mangos::schema::Row>,
+        edits: &Edits,
+    ) -> About {
+        let table = vale_mangos::creature::TEMPLATE;
+        let key = &focus.template_key;
+        About {
+            entry: focus.entry,
+            label: focus.label.clone(),
+            template_key: key.clone(),
+            spell_list_id: edits
+                .shown_integer(table, key, "spell_list_id", template)
+                .map_or(0, |value| value.max(0) as u32),
+            ai_name: edits.shown_text(table, key, "ai_name", template).unwrap_or_default(),
+        }
+    }
 }
 
 /// One event as a window draws it: the database's row with the project's
@@ -210,16 +234,19 @@ pub enum CopyScripts {
     Share,
 }
 
-/// What is being read.
-enum Reading {
-    Events(u32, Task<Result<Vec<Event>, String>>),
-    List(u32, Task<Result<Option<List>, String>>),
-    Script(&'static str, u32, Task<Result<Vec<ScriptRow>, String>>),
-    MaxId(&'static str, Task<Result<u32, String>>),
-    Scripts(&'static str, Vec<u32>, Task<Result<Vec<(u32, ScriptRow)>, String>>),
-    Texts(Vec<u32>, Task<Result<Vec<Text>, String>>),
-    Users(u32, Task<Result<Vec<(u32, String)>, String>>),
-    Search(String, Task<Result<Found, String>>),
+/// What one read answered, with what it was asked for.
+enum Answer {
+    Events(u32, Vec<Event>),
+    List(u32, Option<List>),
+    Script(&'static str, u32, Vec<ScriptRow>),
+    MaxId(&'static str, u32),
+    Scripts(&'static str, Vec<u32>, Vec<(u32, ScriptRow)>),
+    Texts(Vec<u32>, Vec<Text>),
+    Users(u32, Vec<(u32, String)>),
+    /// A chooser's search, with what it found or why it failed. A failure is
+    /// shown in the chooser rather than in every window, so it is an answer
+    /// and not the read's failure.
+    Search(String, Result<Found, String>),
 }
 
 /// What a chooser's search found.
@@ -262,12 +289,9 @@ pub struct Behaviour {
     users: HashMap<u32, Vec<(u32, String)>>,
     /// The highest id each table holds, read once.
     max_ids: HashMap<&'static str, u32>,
-    reading: Option<Reading>,
-    /// The `EditSession::database_writes` value the caches above were read
-    /// at.
-    loaded_for: Option<u64>,
-    /// Why the last read answered nothing, when it answered nothing.
-    pub trouble: Option<String>,
+    /// The read in flight, and why the last one failed. The caches above are
+    /// emptied when `EditSession::database_writes` moves.
+    reads: FreshTask<Answer>,
     /// Whether the scripted flags have been acted on; see
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
@@ -327,7 +351,7 @@ impl Behaviour {
     /// next free id. See `vale_mangos::eventai::Event::of_type` for what each
     /// type starts as. Answers the id.
     pub fn add_event_of(&mut self, session: &mut EditSession, creature: u32, event_type: u32, now: f64) -> u32 {
-        let id = self.next_event_id(creature, &session.server_edits);
+        let id = self.next_event_id(creature, &session.rows.edits);
         let event = Event::of_type(id, creature, event_type);
         create_event(session, &event, "Add event", now);
         self.unfolded_events.insert(id);
@@ -347,7 +371,7 @@ impl Behaviour {
         scripts: CopyScripts,
         now: f64,
     ) -> Result<u32, String> {
-        let id = self.next_event_id(creature, &session.server_edits);
+        let id = self.next_event_id(creature, &session.rows.edits);
         let mut copy = from.copied_for(id, creature, label);
         if scripts == CopyScripts::Copy {
             let mut copied: Vec<Script> = Vec::new();
@@ -360,7 +384,7 @@ impl Behaviour {
                 };
                 let preferred = (slot == 0).then_some(id);
                 let new_id = self
-                    .new_script_id(scripts::CREATURE_AI, preferred, &session.server_scripts, &copied)
+                    .new_script_id(scripts::CREATURE_AI, preferred, &session.rows.scripts, &copied)
                     .ok_or_else(|| "reading creature_ai_scripts' highest id\u{2026}".to_string())?;
                 let mut rows = rows.sorted();
                 for row in rows.iter_mut() {
@@ -460,7 +484,7 @@ impl Behaviour {
             creaturespells::TABLE,
             &key,
             Some(&row),
-            Some(crate::session::rows::Gesture { label, subject: &subject, now }),
+            Some(crate::server::store::Gesture { label, subject: &subject, now }),
         );
     }
 
@@ -486,7 +510,7 @@ impl Behaviour {
     pub fn next_list_entry(&self, session: &EditSession) -> Option<u32> {
         let database = *self.max_ids.get(creaturespells::TABLE)?;
         let created = session
-            .server_edits
+            .rows.edits
             .rows()
             .filter(|(table, _, row)| *table == creaturespells::TABLE && row.life == Life::Insert)
             .filter_map(|(_, key, _)| key.first())
@@ -515,7 +539,7 @@ impl Behaviour {
     /// database's. `None` while the database's is not in hand and the project
     /// says nothing.
     pub fn script_of(&self, table: &'static str, id: u32, session: &EditSession) -> Option<Script> {
-        if let Some(script) = session.server_scripts.get(table, id) {
+        if let Some(script) = session.rows.scripts.get(table, id) {
             return Some(script);
         }
         let rows = self.scripts.get(&(table, id))?;
@@ -531,7 +555,7 @@ impl Behaviour {
     /// database's takes the claim off.
     pub fn set_script(&mut self, session: &mut EditSession, script: &Script, now: f64) {
         let subject = format!("{} {}", script.table, script.id);
-        let gesture = crate::session::rows::Gesture { label: "Edit script", subject: &subject, now };
+        let gesture = crate::server::store::Gesture { label: "Edit script", subject: &subject, now };
         let same = self
             .scripts
             .get(&(script.table, script.id))
@@ -546,7 +570,7 @@ impl Behaviour {
     /// the table holds and the highest this project claims, once the table's
     /// has been read.
     pub fn next_script_id(&self, table: &'static str, session: &EditSession) -> Option<u32> {
-        self.new_script_id(table, None, &session.server_scripts, &[])
+        self.new_script_id(table, None, &session.rows.scripts, &[])
     }
 
     /// The id a new script takes: `preferred` when it is above every id the
@@ -626,7 +650,7 @@ impl Behaviour {
             broadcast::TABLE,
             &key,
             Some(&row),
-            Some(crate::session::rows::Gesture { label: "Create text", subject: &subject, now }),
+            Some(crate::server::store::Gesture { label: "Create text", subject: &subject, now }),
         );
         Some(entry)
     }
@@ -654,7 +678,7 @@ impl Behaviour {
     pub fn next_text_entry(&self, session: &EditSession) -> Option<u32> {
         let database = *self.max_ids.get(broadcast::TABLE)?;
         let created = session
-            .server_edits
+            .rows.edits
             .rows()
             .filter(|(table, _, row)| *table == broadcast::TABLE && row.life == Life::Insert)
             .filter_map(|(_, key, _)| key.first())
@@ -676,7 +700,11 @@ impl Behaviour {
         self.users.clear();
         self.texts.clear();
         self.max_ids.clear();
-        self.trouble = None;
+    }
+
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.reads.trouble()
     }
 
     /// The scripts the open windows and chooser draw and the cache does not
@@ -684,7 +712,7 @@ impl Behaviour {
     fn scripts_wanted(&self, session: &EditSession) -> Option<(&'static str, Vec<u32>)> {
         let mut wanted: Vec<(&'static str, u32)> = Vec::new();
         if let (true, Some(about)) = (self.events_open, self.about.as_ref()) {
-            for shown in self.events_of(about.entry, &session.server_edits) {
+            for shown in self.events_of(about.entry, &session.rows.edits) {
                 wanted.extend(shown.event.scripts.iter().map(|id| (scripts::CREATURE_AI, *id)));
             }
         }
@@ -694,7 +722,7 @@ impl Behaviour {
             }
         }
         if let (true, Some(about)) = (self.spells_open, self.about.as_ref()) {
-            if let Some(shown) = self.list_of(about.spell_list_id, &session.server_edits) {
+            if let Some(shown) = self.list_of(about.spell_list_id, &session.rows.edits) {
                 wanted.extend(shown.list.slots.iter().map(|slot| (scripts::CREATURE_SPELLS, slot.script)));
             }
         }
@@ -720,7 +748,7 @@ impl Behaviour {
             .scripts
             .values()
             .flatten()
-            .chain(session.server_scripts.iter().flat_map(|script| script.rows).collect::<Vec<_>>().iter())
+            .chain(session.rows.scripts.iter().flat_map(|script| script.rows).collect::<Vec<_>>().iter())
             .flat_map(scripts::texts_of)
             .chain(self.other_texts.iter().copied())
             .filter(|id| *id != 0 && !self.texts.contains_key(id))
@@ -763,7 +791,7 @@ fn create_event(session: &mut EditSession, event: &Event, label: &'static str, n
         eventai::TABLE,
         &key,
         Some(&row),
-        Some(crate::session::rows::Gesture { label, subject: &subject, now }),
+        Some(crate::server::store::Gesture { label, subject: &subject, now }),
     );
 }
 
@@ -771,7 +799,7 @@ fn create_event(session: &mut EditSession, event: &Event, label: &'static str, n
 /// this project added.
 fn remove_row(session: &mut EditSession, table: &'static str, key: &Key, in_database: bool, label: &'static str, now: f64) {
     let subject = format!("{table} {}", key.text());
-    let gesture = crate::session::rows::Gesture { label, subject: &subject, now };
+    let gesture = crate::server::store::Gesture { label, subject: &subject, now };
     match in_database {
         true => {
             let row = RowEdit { life: Life::Delete, ..RowEdit::default() };
@@ -784,7 +812,7 @@ fn remove_row(session: &mut EditSession, table: &'static str, key: &Key, in_data
 /// The removal mark taken off, and with it any column edit made before it.
 fn keep_row(session: &mut EditSession, table: &'static str, key: &Key, label: &'static str, now: f64) {
     let subject = format!("{table} {}", key.text());
-    session.set_server_row(table, key, None, Some(crate::session::rows::Gesture { label, subject: &subject, now }));
+    session.set_server_row(table, key, None, Some(crate::server::store::Gesture { label, subject: &subject, now }));
 }
 
 /// Set one column on a keyed row: the edit is cleared when the value is what
@@ -801,7 +829,7 @@ fn set_column(
     now: f64,
 ) {
     let subject = format!("{table} {} {column}", key.text());
-    let gesture = crate::session::rows::Gesture { label, subject: &subject, now };
+    let gesture = crate::server::store::Gesture { label, subject: &subject, now };
     match in_database {
         Some(held) => {
             let value = match held == value {
@@ -811,7 +839,7 @@ fn set_column(
             session.set_server_edit(table, key, column, value, Some(gesture));
         }
         None => {
-            let Some(mut row) = session.server_edits.row(table, key).cloned() else {
+            let Some(mut row) = session.rows.edits.row(table, key).cloned() else {
                 return;
             };
             row.columns.insert(column.to_string(), value);
@@ -872,85 +900,43 @@ fn cache_scripts(behaviour: &mut Behaviour, table: &'static str, asked: &[u32], 
     }
 }
 
-/// Take what the running read answered, if it has. `true` while it is still
-/// running.
-fn land(behaviour: &mut Behaviour) -> bool {
-    let Some(mut reading) = behaviour.reading.take() else {
-        return false;
-    };
-    // `None`: the read is still running. `Some(Ok(()))`: the answer was
-    // stored. A search's failure also gives `Some(Ok(()))`, because
-    // `land_search` shows it in the chooser rather than in every window.
-    // `Some(Err(_))`: the read failed.
-    let done: Option<Result<(), String>> = match &mut reading {
-        Reading::Events(creature, task) => block_on(future::poll_once(task)).map(|done| {
-            done.map(|rows| {
-                info!("behaviour: creature {creature}: {} event(s)", rows.len());
-                behaviour.events.insert(*creature, rows);
-            })
-        }),
-        Reading::List(entry, task) => block_on(future::poll_once(task)).map(|done| {
-            done.map(|list| {
-                behaviour.lists.insert(*entry, list);
-            })
-        }),
-        Reading::Script(table, id, task) => block_on(future::poll_once(task)).map(|done| {
-            done.map(|rows| {
-                behaviour.scripts.insert((*table, *id), rows);
-            })
-        }),
-        Reading::MaxId(table, task) => block_on(future::poll_once(task)).map(|done| {
-            done.map(|max| {
-                behaviour.max_ids.insert(*table, max);
-            })
-        }),
-        Reading::Scripts(table, ids, task) => {
-            let (table, ids) = (*table, ids.clone());
-            block_on(future::poll_once(task)).map(|done| done.map(|rows| cache_scripts(behaviour, table, &ids, rows)))
-        }
-        Reading::Texts(ids, task) => {
-            let ids = ids.clone();
-            block_on(future::poll_once(task)).map(|done| {
-                done.map(|texts| {
-                    for entry in ids {
-                        behaviour.texts.insert(entry, None);
-                    }
-                    for text in texts {
-                        behaviour.texts.insert(text.entry, Some(text));
-                    }
-                })
-            })
-        }
-        Reading::Users(entry, task) => block_on(future::poll_once(task)).map(|done| {
-            done.map(|users| {
-                behaviour.users.insert(*entry, users);
-            })
-        }),
-        Reading::Search(text, task) => {
-            let text = text.clone();
-            match block_on(future::poll_once(task)) {
-                None => None,
-                Some(answer) => {
-                    land_search(behaviour, text, answer);
-                    Some(Ok(()))
-                }
-            }
-        }
-    };
-    match done {
-        None => {
-            behaviour.reading = Some(reading);
-            true
-        }
-        Some(Ok(())) => {
-            behaviour.trouble = None;
-            false
-        }
+/// Store what the running read answered, if it has.
+fn land(behaviour: &mut Behaviour) {
+    let answer = match behaviour.reads.poll() {
+        None => return,
         Some(Err(e)) => {
             warn!("behaviour: {e}");
-            behaviour.trouble = Some(e);
-            false
+            return;
         }
+        Some(Ok(answer)) => answer,
+    };
+    match answer {
+        Answer::Events(creature, rows) => {
+            info!("behaviour: creature {creature}: {} event(s)", rows.len());
+            behaviour.events.insert(creature, rows);
+        }
+        Answer::List(entry, list) => {
+            behaviour.lists.insert(entry, list);
+        }
+        Answer::Script(table, id, rows) => {
+            behaviour.scripts.insert((table, id), rows);
+        }
+        Answer::MaxId(table, max) => {
+            behaviour.max_ids.insert(table, max);
+        }
+        Answer::Scripts(table, ids, rows) => cache_scripts(behaviour, table, &ids, rows),
+        Answer::Texts(ids, texts) => {
+            for entry in ids {
+                behaviour.texts.insert(entry, None);
+            }
+            for text in texts {
+                behaviour.texts.insert(text.entry, Some(text));
+            }
+        }
+        Answer::Users(entry, users) => {
+            behaviour.users.insert(entry, users);
+        }
+        Answer::Search(text, found) => land_search(behaviour, text, found),
     }
 }
 
@@ -1053,15 +1039,13 @@ fn read_the_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    if land(&mut behaviour) {
-        return;
-    }
     let Some(session) = session else { return };
-    if behaviour.loaded_for != Some(session.database_writes) {
-        behaviour.loaded_for = Some(session.database_writes);
+    let writes = session.database_writes;
+    if behaviour.reads.renew(writes) {
         behaviour.forget();
     }
-    if behaviour.trouble.is_some() {
+    land(&mut behaviour);
+    if behaviour.reads.is_busy() || behaviour.reads.trouble().is_some() {
         return;
     }
     let about = behaviour.about.clone();
@@ -1106,37 +1090,28 @@ fn read_the_rows(
         return;
     }
     let Some((at, _source)) = settings.resolve() else {
-        behaviour.trouble = Some(vale_mangos::conn::Where::absent());
+        behaviour.reads.start(writes, || Err(vale_mangos::conn::Where::absent()));
         return;
     };
     let open = move || vale_mangos::conn::Db::open(&at);
-    let reading = if let Some(creature) = want_events {
+    let task = if let Some(creature) = want_events {
         let open = open.clone();
-        Reading::Events(
-            creature,
-            crate::server::queue::read(async move {
-                let rows = open()?.rows(&eventai::events_query(creature))?;
-                Ok(rows.iter().filter_map(Event::from_row).collect())
-            }),
-        )
+        crate::server::queue::read(async move {
+            let rows = open()?.rows(&eventai::events_query(creature))?;
+            Ok(Answer::Events(creature, rows.iter().filter_map(Event::from_row).collect()))
+        })
     } else if let Some(entry) = want_list {
         let open = open.clone();
-        Reading::List(
-            entry,
-            crate::server::queue::read(async move {
-                Ok(open()?.row(&vale_mangos::row::row_query(creaturespells::TABLE, &creaturespells::key(entry)))?.as_ref().and_then(List::from_row))
-            }),
-        )
+        crate::server::queue::read(async move {
+            let row = open()?.row(&vale_mangos::row::row_query(creaturespells::TABLE, &creaturespells::key(entry)))?;
+            Ok(Answer::List(entry, row.as_ref().and_then(List::from_row)))
+        })
     } else if let Some((table, id)) = want_script {
         let open = open.clone();
-        Reading::Script(
-            table,
-            id,
-            crate::server::queue::read(async move {
-                let rows = open()?.rows(&scripts::rows_query(table, id))?;
-                Ok(rows.iter().filter_map(ScriptRow::from_row).collect())
-            }),
-        )
+        crate::server::queue::read(async move {
+            let rows = open()?.rows(&scripts::rows_query(table, id))?;
+            Ok(Answer::Script(table, id, rows.iter().filter_map(ScriptRow::from_row).collect()))
+        })
     } else if let Some(table) = want_max {
         let (sql, column) = match table {
             creaturespells::TABLE => (creaturespells::max_entry_query(), "entry"),
@@ -1144,57 +1119,47 @@ fn read_the_rows(
             _ => (scripts::max_id_query(table), "id"),
         };
         let open = open.clone();
-        Reading::MaxId(
-            table,
-            crate::server::queue::read(async move {
-                Ok(open()?.row(&sql)?.and_then(|row| row.integer(column)).unwrap_or(0).max(0) as u32)
-            }),
-        )
+        crate::server::queue::read(async move {
+            let max = open()?.row(&sql)?.and_then(|row| row.integer(column)).unwrap_or(0).max(0) as u32;
+            Ok(Answer::MaxId(table, max))
+        })
     } else if let Some(entry) = want_users {
         let open = open.clone();
-        Reading::Users(
-            entry,
-            crate::server::queue::read(async move {
-                let sql = creaturespells::users_query(entry);
-                Ok(open()?
-                    .rows(&sql)?
-                    .iter()
-                    .filter_map(|row| Some((row.integer("entry")?.max(0) as u32, String::new())))
-                    .collect())
-            }),
-        )
+        crate::server::queue::read(async move {
+            let sql = creaturespells::users_query(entry);
+            let users = open()?
+                .rows(&sql)?
+                .iter()
+                .filter_map(|row| Some((row.integer("entry")?.max(0) as u32, String::new())))
+                .collect();
+            Ok(Answer::Users(entry, users))
+        })
     } else if let Some((sql, text, table)) = search_wanted(&mut behaviour) {
         let open = open.clone();
-        Reading::Search(
-            text,
-            crate::server::queue::read(async move {
-                let rows = open()?.rows(&sql)?;
-                Ok(match table {
-                    None => Found::Events(rows.iter().filter_map(Event::from_row).collect()),
-                    Some(creaturespells::TABLE) => Found::Lists(rows.iter().filter_map(List::from_row).collect()),
-                    Some(broadcast::TABLE) => Found::Texts(rows.iter().filter_map(Text::from_row).collect()),
-                    Some(table) => Found::Scripts(table, rows_with_ids(&rows)),
-                })
-            }),
-        )
+        crate::server::queue::read(async move {
+            let found = open().and_then(|mut db| db.rows(&sql)).map(|rows| match table {
+                None => Found::Events(rows.iter().filter_map(Event::from_row).collect()),
+                Some(creaturespells::TABLE) => Found::Lists(rows.iter().filter_map(List::from_row).collect()),
+                Some(broadcast::TABLE) => Found::Texts(rows.iter().filter_map(Text::from_row).collect()),
+                Some(table) => Found::Scripts(table, rows_with_ids(&rows)),
+            });
+            Ok(Answer::Search(text, found))
+        })
     } else if let Some((table, ids)) = want_scripts {
         let Some(sql) = scripts::rows_of_query(table, &ids) else { return };
         let open = open.clone();
-        Reading::Scripts(
-            table,
-            ids,
-            crate::server::queue::read(async move { Ok(rows_with_ids(&open()?.rows(&sql)?)) }),
-        )
+        crate::server::queue::read(async move {
+            let rows = rows_with_ids(&open()?.rows(&sql)?);
+            Ok(Answer::Scripts(table, ids, rows))
+        })
     } else {
         let Some(sql) = broadcast::rows_query(&want_texts) else { return };
-        Reading::Texts(
-            want_texts,
-            crate::server::queue::read(async move {
-                Ok(open()?.rows(&sql)?.iter().filter_map(Text::from_row).collect())
-            }),
-        )
+        crate::server::queue::read(async move {
+            let texts = open()?.rows(&sql)?.iter().filter_map(Text::from_row).collect();
+            Ok(Answer::Texts(want_texts, texts))
+        })
     };
-    behaviour.reading = Some(reading);
+    behaviour.reads.start(writes, move || Ok(task));
 }
 
 /// `--events`, `--event-add`, `--spells`, `--script` and `--find-event` open
@@ -1210,12 +1175,12 @@ fn on_the_command_line(
 ) {
     if !*opened {
         *opened = true;
-        behaviour.events_open = args.events_window || args.event_add;
-        behaviour.spells_open = args.spells_window;
-        if let Some(text) = &args.find_event {
+        behaviour.events_open = args.subjects.events_window || args.subjects.event_add;
+        behaviour.spells_open = args.subjects.spells_window;
+        if let Some(text) = &args.subjects.find_event {
             behaviour.chooser = Some(Chooser::Events(Search::of(text)));
         }
-        if let Some((table, id)) = args.script_window {
+        if let Some((table, id)) = args.subjects.script_window {
             behaviour.open_script(table, id);
             behaviour.unfolded_steps.extend(0..16);
         }
@@ -1223,13 +1188,13 @@ fn on_the_command_line(
     if behaviour.scripted_done {
         return;
     }
-    if !args.event_add {
+    if !args.subjects.event_add {
         behaviour.scripted_done = true;
         return;
     }
     let Some(about) = behaviour.about.clone() else { return };
     if !behaviour.events_read(about.entry) {
-        if behaviour.trouble.is_some() {
+        if behaviour.trouble().is_some() {
             behaviour.scripted_done = true;
         }
         return;
@@ -1239,7 +1204,7 @@ fn on_the_command_line(
     info!(
         "--event-add: event {id} added to creature {} — {} event(s) shown",
         about.entry,
-        behaviour.events_of(about.entry, &session.server_edits).len()
+        behaviour.events_of(about.entry, &session.rows.edits).len()
     );
     behaviour.scripted_done = true;
 }

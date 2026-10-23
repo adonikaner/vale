@@ -142,7 +142,28 @@ impl Plugin for ShadingToolPlugin {
                     // cursor.
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, draw_brush);
+            .add_systems(Update, (modes, draw_brush));
+    }
+}
+
+/// The number row on the shading brush.
+///
+/// Five modes and five falloffs, laid out exactly as the height brush's are
+/// and for the same reason: the two are the same three controls over the
+/// same vertices, so a key learnt on one is the key on the other. See
+/// [`crate::tools::modes`].
+fn modes(row: crate::tools::modes::NumberRow, mut shading: ResMut<Shading>) {
+    use super::terrain::{FALLOFFS, SHAPES};
+    let Some(press) = row.read(&[Tool::Shading]) else { return };
+    let Some(at) = press.digit else { return };
+    if press.shift {
+        if let Some(&(_, shape)) = SHAPES.get(at) {
+            shading.brush.shape = shape;
+        }
+    } else if let Some(&(_, mode)) = MODES.get(at) {
+        shading.brush.mode = mode;
+    } else if let Some(&(_, falloff)) = FALLOFFS.get(at - MODES.len()) {
+        shading.brush.falloff = falloff;
     }
 }
 

@@ -390,7 +390,7 @@ pub struct PlaceToolPlugin;
 
 impl Plugin for PlaceToolPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Placing>().add_systems(Update, scripted);
+        app.init_resource::<Placing>().add_systems(Update, (scripted, modes));
         app.add_systems(
             Update,
             (read_catalogue, aim, ground_lean, follow, commit)
@@ -405,12 +405,42 @@ impl Plugin for PlaceToolPlugin {
     }
 }
 
+/// The number row on the doodad and WMO tools: `1` Select, `2` Place.
+///
+/// Two choices and no second row, so a shifted digit means nothing here
+/// rather than meaning the unshifted one. `Tab` also works, as a toggle
+/// rather than a third key, because Select and Place is a pair people toggle
+/// between rather than choose from. See [`crate::tools::modes`].
+fn modes(row: crate::tools::modes::NumberRow, mut placing: ResMut<Placing>) {
+    let Some(press) = row.read(&[Tool::Doodads, Tool::Wmos]) else { return };
+    if press.shift {
+        return;
+    }
+    let wanted = match press.digit {
+        Some(at) => MODES.get(at).map(|&(_, mode)| mode),
+        None if press.tab => Some(match placing.mode {
+            Mode::Select => Mode::Place,
+            Mode::Place => Mode::Select,
+        }),
+        None => None,
+    };
+    if let Some(mode) = wanted {
+        placing.mode = mode;
+        // Switching to Select puts down whatever was on the cursor, which is
+        // what the panel's own switch does — see [`aim`], which would do it a
+        // frame later anyway.
+        if mode == Mode::Select {
+            placing.disarm();
+        }
+    }
+}
+
 /// `--place` — open on the picker, and arm what it named.
 ///
 /// Runs once, on the first frame the active tool is a placing tool. It is the
 /// only way a scripted run reaches this half of the panel: the mode is set by
 /// a click on a segmented control and the model by a click on a row, and
-/// `--shot` can do neither. See [`crate::args::Args::place`], where the argument is.
+/// `--shot` can do neither. See [`crate::args::tools::Tools::place`], where the argument is.
 fn scripted(
     mut placing: ResMut<Placing>,
     args: Res<crate::args::Args>,
@@ -420,7 +450,7 @@ fn scripted(
     if *done {
         return;
     }
-    let Some(asked) = args.place.clone() else {
+    let Some(asked) = args.tools.place.clone() else {
         *done = true;
         return;
     };

@@ -83,7 +83,7 @@ pub(super) fn rows(
                 lights.selected = Some(id);
                 if let Some(mark) = lights.marks.iter().copied().find(|m| m.id == id) {
                     if !mark.everywhere {
-                        lights.fly_to(&mark);
+                        work.fly.write(crate::tools::places::lights::Lights::fly_to(&mark));
                     }
                 }
             }

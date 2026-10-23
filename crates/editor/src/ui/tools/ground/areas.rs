@@ -73,6 +73,7 @@ pub(in crate::ui::tools) fn zones(
     session: &mut EditSession,
     tables: Option<&vale_assets::tables::dbc::DisplayTables>,
     cursor: &Cursor,
+    asks: &mut crate::ui::shell::asks::ShellAsks,
 ) {
     impassability(ui, session, cursor);
     // The session's own copy of the table while it has one open, so an area
@@ -144,7 +145,7 @@ pub(in crate::ui::tools) fn zones(
                 .on_disabled_hover_text("AreaTable has no row for the area on the brush.")
                 .clicked()
             {
-                areas.ask = Some(Ask::Edit(areas.brush.area));
+                asks.push(crate::ui::shell::asks::ShellAsk::Area(Ask::Edit(areas.brush.area)));
             }
             if ui
                 .add_enabled(on_brush.is_some(), egui::Button::new("+ Sub-area").small())
@@ -158,7 +159,7 @@ pub(in crate::ui::tools) fn zones(
                 .on_disabled_hover_text("Put a zone or one of its areas on the brush first.")
                 .clicked()
             {
-                areas.ask = Some(Ask::NewSubArea(areas.brush.area));
+                asks.push(crate::ui::shell::asks::ShellAsk::Area(Ask::NewSubArea(areas.brush.area)));
             }
             if ui
                 .small_button("+ Zone")
@@ -167,7 +168,7 @@ pub(in crate::ui::tools) fn zones(
                 )
                 .clicked()
             {
-                areas.ask = Some(Ask::NewZone);
+                asks.push(crate::ui::shell::asks::ShellAsk::Area(Ask::NewZone));
             }
         });
     }
@@ -426,4 +427,10 @@ fn text_rows(
         false => draw(ui, 0..paths.len()),
     }
     picked
+}
+
+/// The area tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, tables, cursor, .. } = subject;
+    zones(ui, &mut editing.areas, session, tables, cursor, &mut editing.asks);
 }

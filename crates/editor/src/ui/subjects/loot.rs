@@ -40,7 +40,8 @@ use crate::subjects::loot::{Loot, Set, Shown};
 use crate::subjects::quests::{PickFor, Picker, Quests, Target};
 use vale_client::assets::GameAssets;
 use vale_mangos::loot;
-use vale_mangos::row::{Key, Life};
+use crate::subjects::loot::Fix;
+use vale_mangos::row::Life;
 use bevy_egui::egui;
 
 /// How big an item's icon is drawn beside its name.
@@ -84,20 +85,8 @@ pub struct Subject<'a> {
     /// item's `LOOTABLE` flag set. `None` where nothing is offered.
     pub fixes: Vec<Option<Fix>>,
     pub now: f64,
-}
-
-/// One column edit offered from the window, on the holder's own row.
-#[derive(Debug, Clone)]
-pub struct Fix {
-    pub table: &'static str,
-    pub key: Key,
-    pub column: &'static str,
-    pub value: String,
-    /// The button's text, and what it says on hover.
-    pub label: String,
-    pub about: String,
-    /// What it goes on the undo stack as.
-    pub gesture: &'static str,
+    /// Where an item's name asks the shell to open the item workspace.
+    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 /// Draws the window, or nothing when it is shut or the selection names nothing.
@@ -120,24 +109,13 @@ pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rec
             .add_item(subject.session, Set::new(table, entry), item, now);
     }
     let mut keep_open = true;
-    let shown = egui::Window::new(format!("{} \u{2014} loot", window.title))
-        // One id whatever the title says, so the window keeps its place when
-        // another creature is clicked — see `super::quests::holder_window`.
-        .id(egui::Id::new("loot-window"))
+    let shown = theme::window(format!("{} \u{2014} loot", window.title), "loot-window")
         .open(&mut keep_open)
         // Wide enough for every cell of a row at the widths above, and tall
         // enough for the head, the tabs and about eight rows of 33 points.
         // A longer set scrolls; dragging the corner shows more of it.
         .default_size([900.0, 460.0])
         .default_pos([300.0, 120.0])
-        .resizable(true)
-        .frame(
-            egui::Frame::default()
-                .fill(theme::SHELL)
-                .stroke(egui::Stroke::new(1.0, theme::LINE))
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::same(8)),
-        )
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(&window.about)
@@ -273,7 +251,7 @@ fn offer(ui: &mut egui::Ui, subject: &mut Subject<'_>, fix: Option<Fix>) {
             &fix.key,
             fix.column,
             Some(fix.value.clone()),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: fix.gesture,
                 subject: &subject_line,
                 now: subject.now,
@@ -284,7 +262,7 @@ fn offer(ui: &mut egui::Ui, subject: &mut Subject<'_>, fix: Option<Fix>) {
 
 /// The rows, by group, and the two ways to add one.
 fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set) {
-    if let Some(trouble) = subject.loot.trouble.clone() {
+    if let Some(trouble) = subject.loot.trouble().cloned() {
         ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
         return;
     }
@@ -292,7 +270,7 @@ fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set) {
         theme::waiting(ui, format!("reading {} {}\u{2026}", set.table, set.entry));
         return;
     }
-    let rows = subject.loot.rows_of(set, &subject.session.server_edits);
+    let rows = subject.loot.rows_of(set, &subject.session.rows.edits);
     // The two ways to add a row stay under the list, outside the scroll, so a
     // set of a hundred rows does not have to be scrolled to the end to be
     // added to.
@@ -430,7 +408,8 @@ fn row(
                         subject.items,
                         subject.assets,
                         subject.thumbnails,
-                        &subject.session.server_edits,
+                        subject.asks,
+                        &subject.session.rows.edits,
                         shown.entry.item,
                     ),
                 }
@@ -629,13 +608,10 @@ fn row(
                 .set_column(subject.session, set, shown, "condition_id", condition.to_string(), now);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (label, about) = match shown.life {
-                Life::Delete => ("keep", "Take the removal mark off this row."),
-                _ => ("\u{d7}", "Remove this row. The item itself is not touched."),
-            };
-            if ui.small_button(label).on_hover_text(about).clicked() {
-                match shown.life {
-                    Life::Delete => subject.loot.keep(subject.session, set, shown, now),
+            let about = "Removes this row. The item itself is not changed.";
+            if let Some(act) = crate::ui::widgets::rowform::remove_keep(ui, shown.life, about) {
+                match act {
+                    crate::ui::widgets::rowform::RowAct::Keep => subject.loot.keep(subject.session, set, shown, now),
                     _ => subject.loot.remove(subject.session, set, shown, now),
                 }
             }
@@ -672,12 +648,14 @@ pub(super) fn state_dot(ui: &mut egui::Ui, life: Life, faults: &[String]) {
 
 /// An item's icon and name, coloured by quality, opening the item workspace.
 /// The loot, vendor and trainer windows draw an item this way.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn item_name(
     ui: &mut egui::Ui,
     quests: &mut Quests,
     items: &mut Items,
     assets: &GameAssets,
     thumbnails: &mut Thumbnails,
+    asks: &mut crate::ui::shell::asks::ShellAsks,
     edits: &vale_mangos::row::Edits,
     entry: u32,
 ) {
@@ -718,7 +696,7 @@ pub(super) fn item_name(
         .on_hover_text(format!("{} ({entry}). Open it in the item workspace.", found.name))
         .clicked()
     {
-        quests.show_item = Some(entry);
+        asks.push(crate::ui::shell::asks::ShellAsk::ShowItem(entry));
     }
 }
 

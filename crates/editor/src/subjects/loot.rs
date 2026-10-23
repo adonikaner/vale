@@ -34,8 +34,7 @@ use crate::session::EditSession;
 use vale_mangos::loot::{self, Entry, Heading};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
-use std::collections::HashMap;
+use crate::server::fresh::FreshReads;
 
 /// One loot set: a loot table and one entry in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,6 +70,174 @@ pub struct Window {
     /// The sets, in the order the tabs are drawn. An entry of 0 is a tab that
     /// says the column names nothing.
     pub sets: Vec<Set>,
+}
+
+/// One column edit offered from the window, on the holder's own row.
+#[derive(Debug, Clone)]
+pub struct Fix {
+    pub table: &'static str,
+    pub key: Key,
+    pub column: &'static str,
+    pub value: String,
+    /// The button's text, and what it says on hover.
+    pub label: String,
+    pub about: String,
+    /// What it goes on the undo stack as.
+    pub gesture: &'static str,
+}
+
+/// `ITEM_FLAG_LOOTABLE`, the bit of `item_template.flags` that
+/// `LoadLootTemplates_Item` reads.
+const LOOTABLE: u32 = 0x4;
+
+impl Window {
+    /// The loot window of a creature, with the edit each tab offers when its
+    /// column names no set.
+    ///
+    /// The three loot columns are read from `template`, the template row as
+    /// read, with this project's edits over it, so a `loot_id` typed into the
+    /// template form changes the tab on the next frame. `None` while the row
+    /// is being read, which draws no tabs. A column that names nothing is
+    /// offered the convention the shipped rows follow: the creature's own
+    /// entry.
+    pub fn for_creature(
+        focus: &crate::subjects::windows::Focus,
+        template: Option<&vale_mangos::schema::Row>,
+        edits: &Edits,
+    ) -> (Window, Vec<Option<Fix>>) {
+        let mut fixes = Vec::new();
+        let mut sets = Vec::new();
+        if template.is_some() {
+            for (table, name) in [
+                (loot::CREATURE, "loot_id"),
+                (loot::PICKPOCKETING, "pickpocket_loot_id"),
+                (loot::SKINNING, "skinning_loot_id"),
+            ] {
+                let entry = edits
+                    .shown_integer(vale_mangos::creature::TEMPLATE, &focus.template_key, name, template)
+                    .map_or(0, |value| value.max(0) as u32);
+                sets.push(Set::new(table, entry));
+                fixes.push((entry == 0).then(|| Fix {
+                    table: vale_mangos::creature::TEMPLATE,
+                    key: focus.template_key.clone(),
+                    column: name,
+                    value: focus.entry.to_string(),
+                    label: format!("Set {name} to {}", focus.entry),
+                    about: format!(
+                        "Write creature_template.{name} = {}, the convention the shipped rows \
+                         follow. This is a creature edit: apply it from the Creatures block of \
+                         the Server panel, then restart the server.",
+                        focus.entry
+                    ),
+                    gesture: "Edit creature",
+                }));
+            }
+        }
+        let window = Window {
+            title: focus.label.clone(),
+            about: match template {
+                Some(_) => format!(
+                    "creature_template entry {}: every spawn of this creature drops this loot.",
+                    focus.entry
+                ),
+                None => "reading the creature_template row\u{2026}".to_string(),
+            },
+            sets,
+        };
+        (window, fixes)
+    }
+
+    /// The loot window of a game object: one tab, for a type the server
+    /// takes loot from, offered the object's own entry when `lootId` names
+    /// nothing.
+    pub fn for_object(focus: &crate::subjects::windows::Focus) -> (Window, Vec<Option<Fix>>) {
+        let known = focus.object.as_ref();
+        let looted = known.is_some_and(|known| known.is_looted());
+        let entry = known.and_then(|known| known.loot()).unwrap_or(0);
+        let mut fixes = Vec::new();
+        if looted {
+            fixes.push((entry == 0).then(|| Fix {
+                table: vale_mangos::gameobject::TEMPLATE,
+                key: focus.template_key.clone(),
+                column: "data1",
+                value: focus.entry.to_string(),
+                label: format!("Set lootId to {}", focus.entry),
+                about: format!(
+                    "Write gameobject_template.data1 = {}, the convention the shipped rows \
+                     follow. This is a game object edit: apply it from the Objects block of the \
+                     Server panel, then restart the server.",
+                    focus.entry
+                ),
+                gesture: "Edit game object",
+            }));
+        }
+        let window = Window {
+            title: focus.label.clone(),
+            about: match (known, looted) {
+                (None, _) => "No gameobject_template row at this content patch.".to_string(),
+                (Some(known), false) => format!(
+                    "type is {}, which has no loot: the server reads lootId only for chests and \
+                     fishing holes.",
+                    known.type_word()
+                ),
+                (Some(_), true) => format!(
+                    "gameobject_template entry {}: every spawn of this object contains this loot.",
+                    focus.entry
+                ),
+            },
+            sets: match looted {
+                true => vec![Set::new(loot::GAMEOBJECT, entry)],
+                false => Vec::new(),
+            },
+        };
+        (window, fixes)
+    }
+
+    /// The loot window of an item: what opening it gives, offered the
+    /// `LOOTABLE` flag the server needs to read it, and what disenchanting it
+    /// gives once its row is read. `row` is the item's row as read.
+    pub fn for_item(
+        known: &crate::subjects::items::Known,
+        row: Option<&vale_mangos::schema::Row>,
+        edits: &Edits,
+    ) -> (Window, Vec<Option<Fix>>) {
+        let key = known.key();
+        let disenchant = edits
+            .shown_integer(vale_mangos::item::TEMPLATE, &key, "disenchant_id", row)
+            .map(|value| value.max(0) as u32);
+        let lootable = known.flags & LOOTABLE != 0;
+        let mut fixes = vec![(!lootable).then(|| Fix {
+            table: vale_mangos::item::TEMPLATE,
+            key: key.clone(),
+            column: "flags",
+            value: (known.flags | LOOTABLE).to_string(),
+            label: "Set LOOTABLE".to_string(),
+            about: "Add LOOTABLE (0x4) to item_template.flags. With this flag the client offers \
+                    to open the item and the server reads this loot set. This is an item edit: \
+                    apply it from the Items block of the Server panel; it is live after .reload \
+                    item_template."
+                .to_string(),
+            gesture: "Edit item",
+        })];
+        let mut sets = vec![Set::new(loot::ITEM, known.entry)];
+        if let Some(disenchant) = disenchant {
+            sets.push(Set::new(loot::DISENCHANT, disenchant));
+            fixes.push(None);
+        }
+        let window = Window {
+            title: known.label(),
+            about: match lootable {
+                false => format!(
+                    "item_template entry {}: flags has no LOOTABLE bit, so the server reads no \
+                     item_loot_template for it and the client will not open it.",
+                    known.entry
+                ),
+                true => format!("item_template entry {}: opening the item gives this loot.", known.entry),
+            },
+            sets,
+        };
+        (window, fixes)
+    }
 }
 
 /// One row as the window draws it: the database's reading with the project's
@@ -150,13 +317,9 @@ pub struct Loot {
     /// set until **Back** is pressed. The rows of a boss's set are mostly
     /// references, and the items are in the referenced sets.
     pub reference: Option<u32>,
-    /// Every set read so far, as the database has it.
-    rows: HashMap<Set, Vec<Entry>>,
-    /// What those were read at: `EditSession::database_writes`.
-    loaded_for: Option<u64>,
-    reading: Option<(Set, Task<Result<Vec<Entry>, String>>)>,
-    /// Why the last read answered nothing, when it answered nothing.
-    pub trouble: Option<String>,
+    /// Every set read so far, as the database has it, kept until an apply
+    /// moves `EditSession::database_writes`.
+    rows: FreshReads<Set, Vec<Entry>>,
     /// What is typed into the reference box beside **+ reference**.
     pub reference_box: String,
     /// Whether the scripted flags have been acted on — see
@@ -176,12 +339,17 @@ impl Loot {
 
     /// Whether a set's rows are in hand.
     pub fn is_read(&self, set: Set) -> bool {
-        self.rows.contains_key(&set)
+        self.rows.is_read(&set)
     }
 
     /// Whether a set is being read now.
     pub fn is_reading(&self, set: Set) -> bool {
-        self.reading.as_ref().is_some_and(|(wanted, _)| *wanted == set)
+        self.rows.is_reading(&set)
+    }
+
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.rows.trouble()
     }
 
     /// Every row of one set: the database's rows with the project's edits over
@@ -236,7 +404,7 @@ impl Loot {
     fn add(&mut self, session: &mut EditSession, set: Set, entry: Entry, label: &'static str, now: f64) {
         let key = entry.key();
         let subject = format!("{} {}", set.table, key.text());
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label,
             subject: &subject,
             now,
@@ -245,7 +413,7 @@ impl Loot {
             .rows
             .get(&set)
             .is_some_and(|rows| rows.iter().any(|had| had.key() == key));
-        match (in_database, session.server_edits.life(set.table, &key)) {
+        match (in_database, session.rows.edits.life(set.table, &key)) {
             (true, Life::Delete) => session.set_server_row(set.table, &key, None, Some(gesture)),
             (true, _) => {}
             (false, _) => {
@@ -266,7 +434,7 @@ impl Loot {
     pub fn remove(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
         let key = shown.entry.key();
         let subject = format!("{} {}", set.table, key.text());
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Remove loot row",
             subject: &subject,
             now,
@@ -292,7 +460,7 @@ impl Loot {
             set.table,
             &key,
             None,
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Keep loot row",
                 subject: &subject,
                 now,
@@ -315,7 +483,7 @@ impl Loot {
     ) {
         let key = shown.entry.key();
         let subject = format!("{} {} {column}", set.table, key.text());
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Edit loot row",
             subject: &subject,
             now,
@@ -334,7 +502,7 @@ impl Loot {
                 session.set_server_edit(set.table, &key, column, value, Some(gesture));
             }
             None => {
-                let Some(mut row) = session.server_edits.row(set.table, &key).cloned() else {
+                let Some(mut row) = session.rows.edits.row(set.table, &key).cloned() else {
                     return;
                 };
                 row.columns.insert(column.to_string(), value);
@@ -356,11 +524,11 @@ impl Loot {
             ..shown.entry.clone()
         };
         let (from, to) = (shown.entry.key(), moved.key());
-        if session.server_edits.touches(set.table, &to) {
+        if session.rows.edits.touches(set.table, &to) {
             return;
         }
         let subject = format!("{} {} group", set.table, from.text());
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Move loot row",
             subject: &subject,
             now,
@@ -438,51 +606,30 @@ fn read_the_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    if let Some((set, task)) = loot.reading.as_mut() {
-        let set = *set;
-        if let Some(done) = block_on(future::poll_once(task)) {
-            loot.reading = None;
-            match done {
-                Ok(rows) => {
-                    info!("loot: {} {}: {} row(s)", set.table, set.entry, rows.len());
-                    loot.rows.insert(set, rows);
-                    loot.trouble = None;
-                }
-                Err(e) => {
-                    warn!("loot: {e}");
-                    loot.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
     let Some(session) = session else { return };
-    if loot.loaded_for != Some(session.database_writes) {
-        loot.loaded_for = Some(session.database_writes);
-        loot.rows.clear();
-        // A read that failed against the database as it was is tried again.
-        loot.trouble = None;
+    let writes = session.database_writes;
+    loot.rows.renew(writes);
+    match loot.rows.poll() {
+        Some(Ok(set)) => {
+            let count = loot.rows.get(&set).map_or(0, Vec::len);
+            info!("loot: {} {}: {count} row(s)", set.table, set.entry);
+        }
+        Some(Err(e)) => warn!("loot: {e}"),
+        None => {}
     }
     if !loot.open {
         return;
     }
-    let Some(set) = loot.showing() else { return };
-    if set.entry == 0 || loot.is_read(set) || loot.trouble.is_some() {
-        return;
-    }
-    let Some((at, _source)) = settings.resolve() else {
-        loot.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
+    let Some(set) = loot.showing().filter(|set| set.entry != 0) else { return };
     let patch = crate::server::settings::server_patch(&settings);
-    loot.reading = Some((
-        set,
-        crate::server::queue::read(async move {
+    loot.rows.want(writes, set, || {
+        let (at, _source) = settings.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
+        Ok(crate::server::queue::read(async move {
             let mut db = vale_mangos::conn::Db::open(&at)?;
             let rows = db.rows(&loot::rows_query(set.table, set.entry, patch))?;
             Ok(rows.iter().filter_map(Entry::from_row).collect())
-        }),
-    ));
+        }))
+    });
 }
 
 /// Handles `--loot` and `--loot-add <item>`. `--loot` opens the window, and
@@ -500,12 +647,12 @@ fn on_the_command_line(
 ) {
     if !*opened {
         *opened = true;
-        loot.open = args.loot_window;
+        loot.open = args.subjects.loot_window;
     }
     if loot.scripted_done {
         return;
     }
-    let Some(item) = args.loot_add else {
+    let Some(item) = args.subjects.loot_add else {
         loot.scripted_done = true;
         return;
     };
@@ -516,7 +663,7 @@ fn on_the_command_line(
         return;
     }
     if !loot.is_read(set) {
-        if loot.trouble.is_some() {
+        if loot.trouble().is_some() {
             loot.scripted_done = true;
         }
         return;
@@ -527,7 +674,7 @@ fn on_the_command_line(
         "--loot-add {item}: added to {} {} — {} row(s) shown",
         set.table,
         set.entry,
-        loot.rows_of(set, &session.server_edits).len()
+        loot.rows_of(set, &session.rows.edits).len()
     );
     loot.scripted_done = true;
 }

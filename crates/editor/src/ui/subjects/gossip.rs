@@ -35,7 +35,7 @@
 
 use bevy_egui::egui;
 
-use crate::ui::widgets::rowform::{choice_cell, flags_cell, meaning, page_row, page_spacing};
+use crate::ui::widgets::rowform::{choice_cell, flags_cell, meaning, page_row, page_spacing, remove_keep, RowAct};
 use crate::ui::widgets::theme;
 use crate::session::EditSession;
 use crate::subjects::behaviour::{Behaviour, Chooser, ScriptAnswer, Search};
@@ -67,14 +67,6 @@ fn row<R>(ui: &mut egui::Ui, name: &str, contents: impl FnOnce(&mut egui::Ui) ->
     page_row(ui, name, "", false, contents)
 }
 
-fn frame() -> egui::Frame {
-    egui::Frame::default()
-        .fill(theme::SHELL)
-        .stroke(egui::Stroke::new(1.0, theme::LINE))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::same(8))
-}
-
 fn card(life: Life) -> egui::Frame {
     let stroke = match life {
         Life::Insert => theme::WARN,
@@ -97,13 +89,10 @@ pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rec
         Some(menu) => format!("Gossip \u{2014} menu {menu}"),
         None => "Gossip".to_string(),
     };
-    let shown = egui::Window::new(title)
-        .id(egui::Id::new("gossip-window"))
+    let shown = theme::window(title, "gossip-window")
         .open(&mut keep_open)
         .default_size([620.0, 640.0])
         .default_pos([360.0, 120.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             page_spacing(ui);
             contents(ui, &mut subject);
@@ -191,7 +180,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         });
     }
     ui.separator();
-    if let Some(trouble) = &subject.gossip.trouble {
+    if let Some(trouble) = subject.gossip.trouble() {
         theme::note(ui, format!("The gossip tables could not be read: {trouble}"));
         return;
     }
@@ -205,7 +194,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         theme::heading(ui, "Texts");
-        let texts = subject.gossip.texts_of(&subject.session.server_edits, menu);
+        let texts = subject.gossip.texts_of(&subject.session.rows.edits, menu);
         if texts.is_empty() {
             theme::note(ui, "No text: the server shows the default greeting.");
         }
@@ -217,7 +206,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             ui.add_space(4.0);
         }
         let ready = subject.behaviour.next_text_entry(subject.session).is_some()
-            && subject.gossip.next_npc_text(&subject.session.server_edits).is_some();
+            && subject.gossip.next_npc_text(&subject.session.rows.edits).is_some();
         if ui
             .add_enabled(ready, egui::Button::new("Add text"))
             .on_hover_text("Create an npc_text with one new line and add it to this menu.")
@@ -243,7 +232,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         });
         ui.add_space(8.0);
         theme::heading(ui, "Options");
-        let options = subject.gossip.options_of(&subject.session.server_edits, menu);
+        let options = subject.gossip.options_of(&subject.session.rows.edits, menu);
         if options.is_empty() {
             theme::note(ui, "No options.");
         }
@@ -272,7 +261,7 @@ pub fn make_pending(session: &mut EditSession, gossip: &mut Gossip, behaviour: &
     let Some(asked) = gossip.pending.clone() else {
         return;
     };
-    if let Some(trouble) = gossip.trouble.clone().or_else(|| behaviour.trouble.clone()) {
+    if let Some(trouble) = gossip.trouble().cloned().or_else(|| behaviour.trouble().cloned()) {
         gossip.pending = None;
         session.status = format!("no gossip menu made: {trouble}");
         return;
@@ -303,7 +292,7 @@ pub fn make_pending(session: &mut EditSession, gossip: &mut Gossip, behaviour: &
 
 /// Whether the next menu and text ids are known, which making a menu needs.
 fn can_make(session: &EditSession, gossip: &Gossip, behaviour: &Behaviour) -> bool {
-    gossip.next_menu(&session.server_edits).is_some() && behaviour.next_text_entry(session).is_some()
+    gossip.next_menu(&session.rows.edits).is_some() && behaviour.next_text_entry(session).is_some()
 }
 
 /// Make a menu of one new text. Answers its entry.
@@ -317,7 +306,7 @@ fn new_menu(session: &mut EditSession, gossip: &mut Gossip, behaviour: &mut Beha
 fn name_menu(session: &mut EditSession, template_key: &vale_mangos::row::Key, npc_flags: u32, menu: u32, now: f64) {
     let table = vale_mangos::creature::TEMPLATE;
     let label = format!("{table} {} gossip", template_key.text());
-    let gesture = || crate::session::rows::Gesture { label: "Assign gossip menu", subject: &label, now };
+    let gesture = || crate::server::store::Gesture { label: "Assign gossip menu", subject: &label, now };
     session.set_server_edit(table, template_key, "gossip_menu_id", Some(menu.to_string()), Some(gesture()));
     if npc_flags & 0x1 == 0 {
         let flags = npc_flags | 0x1;
@@ -362,18 +351,14 @@ fn text_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, text: &Shown<MenuText
     let id = text.row.text_id;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("text {id}")).strong().color(theme::INK));
-        let label = match text.life {
-            Life::Delete => "Keep",
-            _ => "Remove",
-        };
-        if ui.small_button(label).clicked() {
-            match text.life {
-                Life::Delete => keep(subject.session, gossip::MENU, &text.row.key(), now),
+        if let Some(act) = remove_keep(ui, text.life, "Removes this text from the menu. The npc_text row is not changed.") {
+            match act {
+                RowAct::Keep => keep(subject.session, gossip::MENU, &text.row.key(), now),
                 _ => subject.gossip.remove_text(subject.session, text, now),
             }
         }
     });
-    match subject.gossip.npc_text_of(&subject.session.server_edits, id) {
+    match subject.gossip.npc_text_of(&subject.session.rows.edits, id) {
         Some(npc_text) => lines(ui, subject, &npc_text),
         None => theme::note(ui, format!("npc_text {id} is not in the table, so the server skips this text.")),
     }
@@ -463,7 +448,7 @@ fn lines(ui: &mut egui::Ui, subject: &mut Subject<'_>, npc_text: &Shown<NpcText>
 /// A broadcast text, editable in place once read.
 fn broadcast_line(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32, salt: &str) {
     let now = subject.now;
-    match subject.behaviour.text_of(entry, &subject.session.server_edits) {
+    match subject.behaviour.text_of(entry, &subject.session.rows.edits) {
         Some(shown) => {
             let mut said = shown.text.said().to_string();
             let edit = egui::TextEdit::singleline(&mut said).id_salt(salt).desired_width(f32::INFINITY);
@@ -479,11 +464,7 @@ fn broadcast_line(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32, salt
 /// The button that opens the behaviour tool's `broadcast_text` chooser for
 /// one column.
 fn text_chooser_button(ui: &mut egui::Ui, behaviour: &mut Behaviour, answer: ScriptAnswer) {
-    if ui
-        .small_button("choose\u{2026}")
-        .on_hover_text("Search broadcast_text by text or entry and use an existing row.")
-        .clicked()
-    {
+    if crate::ui::widgets::reference::choose_button(ui, "Search broadcast_text by text or entry and use an existing row.") {
         behaviour.chooser = Some(Chooser::Text { answer, search: Search::default() });
     }
 }
@@ -571,11 +552,11 @@ fn point_row(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: &S
             .on_hover_text("A points_of_interest entry marked on the player's map when the option is clicked, or 0.")
             .changed();
         let mut out = typed.then_some(poi);
-        if ui.small_button("choose\u{2026}").on_hover_text("Search the points of interest by name or entry.").clicked() {
+        if crate::ui::widgets::reference::choose_button(ui, "Search the points of interest by name or entry.") {
             subject.gossip.point_chooser = Some((menu, o.id, String::new()));
         }
         let at = subject.gossip.about.as_ref().and_then(|about| about.at);
-        let ready = subject.gossip.next_point(&subject.session.server_edits).is_some();
+        let ready = subject.gossip.next_point(&subject.session.rows.edits).is_some();
         if o.action_poi == 0
             && ui
                 .add_enabled(ready, egui::Button::new("+ new").small())
@@ -604,7 +585,7 @@ fn point_row(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: &S
     if o.action_poi == 0 {
         return;
     }
-    match subject.gossip.point(&subject.session.server_edits, o.action_poi) {
+    match subject.gossip.point(&subject.session.rows.edits, o.action_poi) {
         Some(point) => point_form(ui, subject, &point),
         None if subject.gossip.points_read() => {
             ui.label(
@@ -688,19 +669,16 @@ fn point_chooser(ctx: &egui::Context, subject: &mut Subject<'_>) {
     };
     let mut keep_open = true;
     let mut chosen: Option<u32> = None;
-    egui::Window::new("Choose a point of interest")
-        .id(egui::Id::new("gossip-point-chooser"))
+    theme::window("Choose a point of interest", "gossip-point-chooser")
         .open(&mut keep_open)
         .default_size([420.0, 420.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             ui.add(egui::TextEdit::singleline(&mut search).hint_text("name or entry").desired_width(f32::INFINITY));
             if !subject.gossip.points_read() {
                 theme::note(ui, "reading points_of_interest\u{2026}");
                 return;
             }
-            let found = subject.gossip.points_matching(&subject.session.server_edits, &search);
+            let found = subject.gossip.points_matching(&subject.session.rows.edits, &search);
             meaning(ui, format!("{} point(s)", found.len()));
             let height = ui.spacing().interact_size.y;
             egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, height, found.len(), |ui, range| {
@@ -720,7 +698,7 @@ fn point_chooser(ctx: &egui::Context, subject: &mut Subject<'_>) {
     if let Some(entry) = chosen {
         let option = subject
             .gossip
-            .options_of(&subject.session.server_edits, menu)
+            .options_of(&subject.session.rows.edits, menu)
             .into_iter()
             .find(|shown| shown.row.id == id);
         if let Some(option) = option {
@@ -750,13 +728,9 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
         if let Some(icon) = choice_cell(ui, &o.icon.to_string(), &gossip::ICONS, egui::Id::new(("gossip-icon", menu, o.id))) {
             set(subject, "option_icon", icon);
         }
-        let label = match option.life {
-            Life::Delete => "Keep",
-            _ => "Remove",
-        };
-        if ui.small_button(label).clicked() {
-            match option.life {
-                Life::Delete => keep(subject.session, gossip::OPTION, &key, now),
+        if let Some(act) = remove_keep(ui, option.life, "Removes this option from the menu.") {
+            match act {
+                RowAct::Keep => keep(subject.session, gossip::OPTION, &key, now),
                 _ => subject.gossip.remove_option(subject.session, option, now),
             }
         }
@@ -817,11 +791,10 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
             _ => {}
         }
         if let Some(kind) = super::quests::target_of(gossip::MENU) {
-            if ui
-                .small_button("choose\u{2026}")
-                .on_hover_text("Search gossip menus by text or by the creatures and objects that use them.")
-                .clicked()
-            {
+            if crate::ui::widgets::reference::choose_button(
+                ui,
+                "Search gossip menus by text or by the creatures and objects that use them.",
+            ) {
                 let column = target(
                     gossip::OPTION,
                     key.clone(),
@@ -892,5 +865,5 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
 /// Cancel the removal of a row by dropping the project's edit of it.
 fn keep(session: &mut EditSession, table: &str, key: &vale_mangos::row::Key, now: f64) {
     let label = format!("{table} {}", key.text());
-    session.set_server_row(table, key, None, Some(crate::session::rows::Gesture { label: "Keep gossip row", subject: &label, now }));
+    session.set_server_row(table, key, None, Some(crate::server::store::Gesture { label: "Keep gossip row", subject: &label, now }));
 }

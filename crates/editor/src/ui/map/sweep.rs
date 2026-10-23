@@ -134,3 +134,9 @@ pub(in crate::ui) fn sweep(
          and every record that indexes it.",
     );
 }
+
+/// The sweep's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, .. } = subject;
+    sweep(ui, &mut editing.sweep, session, assets);
+}

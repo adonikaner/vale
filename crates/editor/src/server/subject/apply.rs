@@ -98,7 +98,7 @@ pub fn prepare_apply(
         plan,
         project: session.project.clone(),
         at,
-        own: session.server_edits.clone(),
+        own: session.rows.edits.clone(),
         reloads,
     }))
 }

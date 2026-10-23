@@ -399,7 +399,7 @@ pub(in crate::ui) fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, re
                 .on_hover_text("Move the camera to this light's position, at the row's stored height.")
                 .clicked()
             {
-                lights.fly_to(&mark);
+                work.fly.write(crate::tools::places::lights::Lights::fly_to(&mark));
             }
             ui.label(
                 theme::number(format!(
@@ -462,4 +462,13 @@ pub(in crate::ui) fn light_params_to_copy(work: &Workspace<'_>, table_name: &str
         .filter(|&id| id != 0);
     own.or_else(|| lights.row_of(1).and_then(|row| lights.u32_at(row, light_field::PARAMS_CLEAR)))
         .unwrap_or(0)
+}
+
+/// The light tool's inspector panel: a light's whole form, because a light is
+/// picked in the viewport and the inspector is where the shell shows the
+/// selection, as it does a doodad's position and turn. The list of all 374
+/// lights is a dialog behind a button, for finding one that is not in view.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { tool, session, assets, now, .. } = subject;
+    light_inspector(ui, Workspace::new(tool, session, editing, assets, now, true, false));
 }

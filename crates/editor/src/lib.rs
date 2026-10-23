@@ -155,7 +155,7 @@ pub const OPEN_BLOCK: f32 = (2.0 * REACH as f32 + 1.0) * vale_assets::world::adt
 
 /// What the streamer is told, which is `--reach` or [`REACH`].
 pub(crate) fn reach(args: &Args) -> vale_client::render::terrain::TerrainReach {
-    vale_client::render::terrain::TerrainReach(args.reach.unwrap_or(REACH))
+    vale_client::render::terrain::TerrainReach(args.view.reach.unwrap_or(REACH))
 }
 
 /// Build and run the editor.
@@ -167,7 +167,7 @@ pub fn run() {
     let mut app = App::new();
     app.add_plugins(vale_client::app::plugins(&vale_client::app::Host {
         title: "Vale IDE".into(),
-        size: args.size,
+        size: args.view.size,
     }));
     #[cfg(feature = "heap-census")]
     instruments::heap::watch_from_env();
@@ -178,15 +178,15 @@ pub fn run() {
     // still means the buildings. `--tiles` implies no tool: the map window is
     // not a pointer tool and takes no row on the rail, so it opens over
     // whatever subject was already chosen.
-    match (args.tool, args.place.is_some()) {
+    match (args.view.tool, args.tools.place.is_some()) {
         (Some(tool), _) => app.insert_resource(tool),
         (None, true) => app.insert_resource(tools::Tool::Doodads),
         (None, false) => &mut app,
     };
-    if args.show_map {
+    if args.view.show_map {
         app.insert_resource(ui::map::mapview::MapView::opened());
     }
-    if args.new_map {
+    if args.view.new_map {
         app.insert_resource(crate::map::tiles::Tiles {
             new_map: Some(crate::map::maps::Form {
                 choosing_screen: true,
@@ -195,10 +195,10 @@ pub fn run() {
             ..crate::map::tiles::Tiles::default()
         });
     }
-    if args.navmesh {
+    if args.view.navmesh {
         app.insert_resource(navmesh::Navmesh::shown());
     }
-    if args.map_view {
+    if args.view.map_view {
         app.insert_resource(camera::TopDown::shown());
     }
     // Inserted before `EditorPlugins` and before the client's own
@@ -206,24 +206,24 @@ pub fn run() {
     // [`REACH`].
     app.insert_resource(reach(&args));
     // The layers a run asked to leave out, through the client's own flag and
-    // the client's own parser. See [`Args::without`].
-    if let Some(list) = args.without.as_deref() {
+    // the client's own parser. See [`crate::args::view::View::without`].
+    if let Some(list) = args.view.without.as_deref() {
         app.insert_resource(vale_client::render::tuning::WorldTuning::without(list));
     }
     // The overlays a run asked to draw, on the same terms, over the editor's
-    // own collision radius and cap. See [`Args::overlay`] and
+    // own collision radius and cap. See [`crate::args::view::View::overlay`] and
     // `ui::shell::viewbar::editor_overlay`. Inserted whether or not the flag was
     // given, so the radius is the editor's from the first frame.
     #[cfg(feature = "diagnostics")]
-    app.insert_resource(ui::shell::viewbar::editor_overlay(args.overlay.as_deref()));
-    // The ground guides a run asked for. See [`Args::guides`].
-    app.insert_resource(match args.guides.as_deref() {
+    app.insert_resource(ui::shell::viewbar::editor_overlay(args.view.overlay.as_deref()));
+    // The ground guides a run asked for. See [`crate::args::view::View::guides`].
+    app.insert_resource(match args.view.guides.as_deref() {
         Some(list) => tools::guides::Guides::with(list),
         None => tools::guides::Guides::default(),
     });
-    app.insert_resource(instruments::shot::Shot::new(args.shot.clone(), args.after));
-    if let Some(stops) = args.tour.clone() {
-        app.insert_resource(instruments::tour::Tour::new(stops, args.dwell));
+    app.insert_resource(instruments::shot::Shot::new(args.instruments.shot.clone(), args.instruments.after));
+    if let Some(stops) = args.instruments.tour.clone() {
+        app.insert_resource(instruments::tour::Tour::new(stops, args.instruments.dwell));
     }
     app.insert_resource(args);
     app.add_plugins(EditorPlugins);

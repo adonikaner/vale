@@ -2,12 +2,11 @@
 //! button that chooses one by name, and the name the number resolves to,
 //! as a link to where that row is edited.
 //!
-//! The creature and game object forms draw every `Kind::Ref` column through
-//! [`cell`]. The quest and item forms keep their own arrangement of the same
-//! parts (`crate::ui::subjects::quests::resolved`, `crate::ui::subjects::items::reference_field`),
-//! because each resolves some tables from a list it already holds in memory.
-//! What is shared is the picker, [`crate::ui::subjects::quests::picker`], and the tables
-//! it can search, [`crate::ui::subjects::quests::target_of`].
+//! Every server-row form draws a `Kind::Ref` column through [`cell`], by way
+//! of `crate::ui::widgets::rowform::server_field`. The quest form's signed
+//! references, whose sign picks the table, draw their name through [`name`].
+//! The picker is [`crate::ui::subjects::quests::picker`], and the tables it can
+//! search are [`crate::ui::subjects::quests::target_of`].
 //!
 //! ## What a name resolves through
 //!
@@ -29,16 +28,16 @@
 //!
 //! ## What a click opens
 //!
-//! A DBC row opens the table browser and a quest opens the quest workspace,
-//! through the two mailboxes on `crate::subjects::quests::Quests` that the shell
-//! answers after everything is drawn. An item opens the item workspace
-//! through `Quests::show_item`. A creature or a game object is named and not
-//! linked: the tool that edits one is the tool this form is already in, and
-//! its selection is a spawn, not a template. A display id opens its display
+//! A DBC row opens the table browser, a quest the quest workspace and an item
+//! the item workspace, each through a [`ShellAsk`] the shell carries out after
+//! everything is drawn. A creature or a game object is named and not linked:
+//! the tool that edits one is the tool this form is already in, and its
+//! selection is a spawn, not a template. A display id opens its display
 //! workspace through [`display_link`].
 
 use bevy_egui::egui;
 
+use crate::ui::shell::asks::{ShellAsk, ShellAsks};
 use crate::ui::subjects::quests::{name_in, open_for_names, target_of};
 use super::rowform::{meaning, FORM_ROW};
 use super::theme;
@@ -51,6 +50,27 @@ pub struct Resolver<'a> {
     pub session: &'a mut EditSession,
     pub assets: &'a GameAssets,
     pub quests: &'a mut Quests,
+    /// Where a clicked name asks the shell to open its row.
+    pub asks: &'a mut ShellAsks,
+}
+
+/// The `choose…` button that opens a dialog of rows to choose one from by
+/// looking at them or searching them. `about` says what the dialog lists.
+/// `true` when it was pressed.
+pub fn choose_button(ui: &mut egui::Ui, about: &str) -> bool {
+    ui.small_button("choose\u{2026}").on_hover_text(about).clicked()
+}
+
+/// The `…` button after a reference's number, which opens the reference
+/// picker to choose the row by name. `about` is its hover text. `true` when
+/// it was pressed.
+pub fn by_name_button(ui: &mut egui::Ui, about: &str) -> bool {
+    ui.add(
+        egui::Button::new(egui::RichText::new("\u{2026}").size(13.0))
+            .min_size(egui::vec2(24.0, FORM_ROW)),
+    )
+    .on_hover_text(about)
+    .clicked()
 }
 
 /// The picker button and the resolved name, after a value cell the caller
@@ -68,14 +88,7 @@ pub fn cell(
     target: Option<ColumnTarget>,
 ) -> Option<u32> {
     if let (Some(kind), Some(target)) = (target_of(table), target) {
-        if ui
-            .add(
-                egui::Button::new(egui::RichText::new("\u{2026}").size(13.0))
-                    .min_size(egui::vec2(24.0, FORM_ROW)),
-            )
-            .on_hover_text(format!("choose {} by name", target.column))
-            .clicked()
-        {
+        if by_name_button(ui, &format!("Choose {} by name.", target.column)) {
             resolver.quests.picker = Some(Picker::new(kind, PickFor::ServerColumn(target)));
         }
     }
@@ -111,7 +124,7 @@ pub fn name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
 /// What one id of a server list holds, as the picker lists it: the title,
 /// with the count and who uses it on the hover. See `vale_mangos::lists`.
 fn list_line(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str, id: u32) {
-    match resolver.quests.listed(table, id, &resolver.session.server_edits) {
+    match resolver.quests.listed(table, id, &resolver.session.rows.edits) {
         Some(found) => {
             ui.add(
                 egui::Label::new(egui::RichText::new(&found.title).color(theme::INK)).truncate(),
@@ -135,8 +148,8 @@ fn list_line(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str
 /// An item's name in its quality's colour, as a link that opens the item
 /// workspace on it.
 fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
-    let Some(found) = resolver.quests.item(entry, &resolver.session.server_edits) else {
-        match resolver.quests.item_known(entry, &resolver.session.server_edits) {
+    let Some(found) = resolver.quests.item(entry, &resolver.session.rows.edits) else {
+        match resolver.quests.item_known(entry, &resolver.session.rows.edits) {
             true => {
                 ui.label(
                     egui::RichText::new("no such item")
@@ -150,17 +163,17 @@ fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
     };
     let colour = crate::ui::subjects::items::quality_colour(found.quality);
     if link(ui, &found.name, colour, &format!("Open item {entry} in the item workspace.")) {
-        resolver.quests.show_item = Some(entry);
+        resolver.asks.push(ShellAsk::ShowItem(entry));
     }
 }
 
 /// A creature's or a game object's name, out of the quest tool's cache.
 fn holder_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, holder: Holder, id: u32) {
-    match resolver.quests.holder(holder, id, &resolver.session.server_edits) {
+    match resolver.quests.holder(holder, id, &resolver.session.rows.edits) {
         Some(name) => {
             ui.label(egui::RichText::new(name).color(theme::INK));
         }
-        None => match resolver.quests.holder_known(holder, id, &resolver.session.server_edits) {
+        None => match resolver.quests.holder_known(holder, id, &resolver.session.rows.edits) {
             true => {
                 ui.label(
                     egui::RichText::new(format!("no such {}", holder.word()))
@@ -177,12 +190,12 @@ fn holder_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, holder: Holder, i
 fn quest_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
     match resolver
         .quests
-        .title_of(entry, &resolver.session.server_edits)
+        .title_of(entry, &resolver.session.rows.edits)
     {
         Some(title) => {
             let hover = format!("Open quest {entry} in the quest workspace.");
             if link(ui, &title, theme::ACCENT, &hover) {
-                resolver.quests.show_quest = Some(entry);
+                resolver.asks.push(ShellAsk::ShowQuest(entry));
             }
         }
         None if resolver.quests.all.is_empty() => meaning(ui, "\u{2026}"),
@@ -214,7 +227,7 @@ fn dbc_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
     };
     let hover = format!("Open {table} {id} in the table browser.");
     if link(ui, &name, theme::ACCENT, &hover) {
-        resolver.quests.show_row = Some((table, id));
+        resolver.asks.push(ShellAsk::ShowRow(table, id));
     }
     // A spell's rank, which is what tells nine Fireballs apart: field 129,
     // the one the picker lists under the name.
@@ -231,19 +244,19 @@ fn dbc_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
 }
 
 /// A display row, named by its id or by what it draws, as a link that opens
-/// the row in its display workspace through `show_row`, the mailbox the
-/// shell answers. A display row has no name of its own, so the caller chooses
-/// the text. `Tool::for_table` decides the workspace.
+/// the row in its display workspace through a [`ShellAsk::ShowRow`]. A
+/// display row has no name of its own, so the caller chooses the text.
+/// `Tool::for_table` decides the workspace.
 pub fn display_link(
     ui: &mut egui::Ui,
     text: egui::RichText,
-    show_row: &mut Option<(&'static str, u32)>,
+    asks: &mut ShellAsks,
     table: &'static str,
     id: u32,
 ) {
     let workspace = crate::tools::Tool::for_table(table).name();
     if link_text(ui, text, theme::ACCENT, &format!("Open {table} {id} in {workspace}.")) {
-        *show_row = Some((table, id));
+        asks.push(ShellAsk::ShowRow(table, id));
     }
 }
 

@@ -12,14 +12,11 @@ use crate::ui::widgets::theme;
 
 use vale_assets::tables::schema;
 
-/// How wide the row list is.
-const BROWSER_WIDTH: f32 = 320.0;
-
 /// The docked panel the list is drawn in, for the rows of a table and for
 /// the Tables workspace's list of tables.
 pub(super) fn browser_panel(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Panel::left("data-browser")
-        .default_size(BROWSER_WIDTH)
+        .default_size(theme::LIST_WIDTH)
         .min_size(220.0)
         .max_size(520.0)
         .resizable(true)
@@ -152,7 +149,7 @@ pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     // The parts of a workspace of several tools, which for this panel is
     // Items and Sets. The shell switches after the frame is drawn.
     if let Some(part) = crate::ui::shell::rail::parts(ui, work.tool) {
-        work.browser.switch_to = Some(part);
+        work.asks.push(crate::ui::shell::asks::ShellAsk::Part(part));
     }
     // The Tables workspace reaches every table from its list, so its way
     // to another table is back to that list.

@@ -603,9 +603,9 @@ pub(super) fn textures(ui: &mut egui::Ui, work: &mut Workspace<'_>, table: &str,
                     })
                     .clicked()
                 {
-                    work.browser.import_texture = Some((
-                        folder.clone(),
-                        crate::import::assets::FieldTarget {
+                    work.asks.push(crate::ui::shell::asks::ShellAsk::ImportTexture {
+                        folder: folder.clone(),
+                        target: crate::import::assets::FieldTarget {
                             table: table.to_string(),
                             record,
                             field,
@@ -614,7 +614,7 @@ pub(super) fn textures(ui: &mut egui::Ui, work: &mut Workspace<'_>, table: &str,
                                 _ => "",
                             },
                         },
-                    ));
+                    });
                     close = true;
                 }
                 if ui.button("Cancel").clicked() {

@@ -23,6 +23,9 @@ pub struct Subject<'a> {
     pub now: f64,
     /// The top bar's Server… popover, which holds Apply and Put back.
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where the Fly to buttons send their requests. See
+    /// [`crate::camera::FlyTo`].
+    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
 pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
@@ -32,6 +35,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         assets,
         now,
         server_panel,
+        fly,
     } = subject;
     for table in taxi::TABLES {
         if !session.open_table(assets, table) {
@@ -54,12 +58,12 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
             // the panel off the screen.
             if let Some(id) = flights.node {
                 section(ui, &format!("Node {id}"), "node", |ui| {
-                    node_block(ui, session, flights, id, now);
+                    node_block(ui, session, flights, fly, id, now);
                 });
             }
             if let Some(id) = flights.path {
                 section(ui, &format!("Path {id}"), "path", |ui| {
-                    path_block(ui, session, flights, id, now);
+                    path_block(ui, session, flights, fly, id, now);
                 });
             }
             if let Some(id) = flights.point {
@@ -68,7 +72,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
                     .map(|(route, point)| format!("Point {} of {}", point.index, route.points.len()))
                     .unwrap_or_else(|| format!("Point {id}"));
                 section(ui, &title, "point", |ui| {
-                    point_block(ui, session, flights, id, now);
+                    point_block(ui, session, flights, fly, id, now);
                 });
             }
             if flights.node.is_none() && flights.path.is_none() {
@@ -357,6 +361,7 @@ fn node_block(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     flights: &mut Flightpaths,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
     id: u32,
     now: f64,
 ) {
@@ -423,7 +428,7 @@ fn node_block(
     theme::note(ui, sides(&node));
     ui.horizontal(|ui| {
         if ui.button("Fly to").clicked() {
-            flights.fly_to(node.at);
+            fly.write(crate::camera::FlyTo::at(node.at.into()));
         }
         if ui
             .button("Snap to ground")
@@ -541,6 +546,7 @@ fn path_block(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     flights: &mut Flightpaths,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
     id: u32,
     now: f64,
 ) {
@@ -554,7 +560,7 @@ fn path_block(
                 flights.select_node(end);
                 if let Some(node) = flights.node(end) {
                     let at = node.at;
-                    flights.fly_to(at);
+                    fly.write(crate::camera::FlyTo::at(at.into()));
                 }
             }
         }
@@ -594,7 +600,9 @@ fn path_block(
             )
             .clicked()
         {
-            flights.fly_to_path(id);
+            if let Some(flight) = flights.path_flight(id) {
+                fly.write(flight);
+            }
         }
         let has_back = flights
             .routes
@@ -713,6 +721,7 @@ fn point_block(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     flights: &mut Flightpaths,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
     id: u32,
     now: f64,
 ) {
@@ -768,7 +777,7 @@ fn point_block(
     }
     ui.horizontal(|ui| {
         if ui.button("Fly to").clicked() {
-            flights.fly_to(point.at);
+            fly.write(crate::camera::FlyTo::at(point.at.into()));
         }
         if ui
             .add_enabled(route.points.len() > 2, egui::Button::new("Remove point"))
@@ -780,6 +789,24 @@ fn point_block(
             session.status = line;
         }
     });
+}
+
+/// The flight path tool's inspector panel. The flight paths are client tables
+/// whose rows are places, picked in the viewport like a light, so their form
+/// is drawn in the inspector too.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, now, server_panel, .. } = subject;
+    draw(
+        ui,
+        Subject {
+            session,
+            flights: &mut editing.flightpaths,
+            assets,
+            now,
+            server_panel,
+            fly: &mut editing.fly,
+        },
+    );
 }
 
 #[cfg(test)]

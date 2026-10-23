@@ -403,3 +403,9 @@ pub(super) fn objects_follow(ui: &mut egui::Ui, on: &mut bool) {
          are rows in the world database and are not moved.",
     );
 }
+
+/// The height brush's inspector panel, with the tablet's settings under it.
+pub(crate) fn inspect(ui: &mut egui::Ui, _: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    brush(ui, &mut editing.terrain);
+    crate::ui::tools::tablet::tablet(ui, &mut editing.tablet, &editing.pen);
+}

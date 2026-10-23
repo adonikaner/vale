@@ -103,8 +103,6 @@ pub struct Lights {
     /// marked now whatever this says; this is only the two spheres of the one
     /// being edited, which is worth turning off while dragging it somewhere.
     pub show_falloff: bool,
-    /// Whether a fly-to was asked for, and where. Consumed by [`fly`].
-    pub fly_to: Option<Vec3>,
     /// What the left button is moving, if anything — see [`Drag`].
     pub drag: Option<Drag>,
     /// Whether a click on the ground makes a light there. See [`new_light`].
@@ -212,13 +210,13 @@ impl Lights {
         self.marks.iter().find(|mark| mark.id == id)
     }
 
-    /// Ask the camera to go and look at a light.
+    /// The camera request that looks at a light, at the row's stored height.
     ///
     /// A request rather than a write, because the camera is driven by
     /// [`crate::camera`] and a second writer would fight it on the frames a
     /// drag is also moving it.
-    pub fn fly_to(&mut self, mark: &Mark) {
-        self.fly_to = Some(mark.at);
+    pub fn fly_to(mark: &Mark) -> crate::camera::FlyTo {
+        crate::camera::FlyTo::at(mark.at)
     }
 }
 
@@ -238,7 +236,7 @@ impl Plugin for LightToolPlugin {
         )
         // …and the drawing after the picking, so the ring that lights up under
         // the pointer does so on the frame the pointer reached it.
-        .add_systems(Update, (draw, fly).after(drag));
+        .add_systems(Update, draw.after(drag));
     }
 }
 
@@ -806,21 +804,6 @@ fn drag(
     lights.built = None;
 }
 
-/// **Take the camera to a light that was asked for.**
-///
-/// The height is set as well as the two horizontal coordinates, and
-/// `wants_the_ground` is cleared with it: a light's centre runs from 234 yards
-/// under the ground to 763 above it, and dropping the focus to the terrain
-/// would put the camera somewhere the row does not name. That is the one case
-/// in this editor where the ground is not what the camera wants.
-fn fly(mut lights: ResMut<Lights>, mut camera: ResMut<crate::camera::EditorCamera>) {
-    let Some(at) = lights.fly_to.take() else {
-        return;
-    };
-    camera.target = at;
-    camera.wants_the_ground = false;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -864,20 +847,6 @@ mod tests {
         // answering with whatever is at that position now.
         lights.marks.retain(|mark| mark.id != 2);
         assert_eq!(lights.chosen(), None);
-    }
-
-    /// A fly-to is a request that is consumed once.
-    ///
-    /// Two writers on the camera is the fault this avoids: `camera::drive` runs
-    /// every frame, so a standing "look here" would fight every drag.
-    #[test]
-    fn a_fly_to_is_asked_for_once() {
-        let mut lights = Lights::default();
-        assert_eq!(lights.fly_to, None);
-        lights.fly_to(&mark(1, 700.0));
-        assert!(lights.fly_to.is_some());
-        assert!(lights.fly_to.take().is_some());
-        assert_eq!(lights.fly_to, None);
     }
 
     /// **The grab offset is what keeps a light from snapping under the

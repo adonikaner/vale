@@ -15,8 +15,7 @@
 //! Doodads, WMOs   the placement under the pointer, locked or not
 //!                 (`tools::placements::doodads::select`, `tools::placements::wmos::select`)
 //! Creatures,      the spawn under the pointer, as the tool's hover found it
-//! Objects         (`tools::spawns::creatures::menu_target`,
-//!                 `tools::spawns::gameobjects::menu_target`)
+//! Objects         (`tools::spawns::spawn::menu_target`, once for each)
 //! every tool      the ground under the pointer: its position, tile and chunk
 //!                 (`crate::pick::Cursor`)
 //! ```
@@ -134,8 +133,8 @@ impl Plugin for ContextMenuPlugin {
                 // after the pointer's pick.
                 .after(crate::tools::placements::doodads::select)
                 .after(crate::tools::placements::wmos::select)
-                .after(crate::tools::spawns::creatures::menu_target)
-                .after(crate::tools::spawns::gameobjects::menu_target)
+                .after(crate::tools::spawns::spawn::menu_target::<crate::tools::spawns::creatures::CreatureSubject>)
+                .after(crate::tools::spawns::spawn::menu_target::<crate::tools::spawns::gameobjects::GameObjectSubject>)
                 .after(crate::pick::aim),
         );
     }

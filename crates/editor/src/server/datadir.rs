@@ -804,7 +804,7 @@ pub fn on_the_command_line(
     step: Res<Step>,
     mut done: Local<bool>,
 ) {
-    if *done || !args.regenerate {
+    if *done || !args.server.regenerate {
         return;
     }
     let Some(mut session) = session else { return };

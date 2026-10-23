@@ -11,13 +11,13 @@
 //!               columns, the quest as the log would show it, who gives and
 //!               takes it, and the window the creature tool opens on one
 //!               creature's quests
-//! creature_data.rs the Creatures workspace: every creature_template row as
-//!               a list, the open row in the template window's form, and its
-//!               model and other tables in the inspector
-//! gameobject_data.rs the Game Objects workspace: the same for
-//!               gameobject_template
-//! listing.rs    the parts of those two workspaces that are the same: the
-//!               docked list, its search box, and the form's head
+//! templates.rs  the Creatures and Game Objects workspaces: every
+//!               creature_template or gameobject_template row as a list, the
+//!               open row in the template window's form, and its model and
+//!               other tables in the inspector, written once over the spawn
+//!               subject's view
+//! listing.rs    the parts of the workspaces that are the same: the docked
+//!               list, its search box, and the form's head
 //! behaviour.rs  the three windows a creature's behaviour is edited in: its
 //!               events, the spell list its template names, and one script,
 //!               with every parameter named by the event's type, the row's
@@ -43,13 +43,12 @@
 
 pub mod behaviour;
 pub mod conditions;
-pub mod creature_data;
 pub mod displays;
-pub mod gameobject_data;
 pub mod gossip;
 pub mod items;
 pub mod listing;
 pub mod loot;
 pub mod quests;
 pub mod services;
+pub mod templates;
 pub mod windows;

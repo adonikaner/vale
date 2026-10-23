@@ -135,3 +135,9 @@ pub(in crate::ui::tools) fn grading(
         theme::note(ui, grading.said.clone());
     }
 }
+
+/// The grade tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, .. } = subject;
+    grading(ui, &mut editing.grading, session);
+}

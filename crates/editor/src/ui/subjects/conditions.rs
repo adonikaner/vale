@@ -81,11 +81,7 @@ pub fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width:
     if opened {
         conditions::ask(ui.ctx(), Request { entry, list: false, asker: asker.clone() });
     }
-    if ui
-        .small_button("choose\u{2026}")
-        .on_hover_text("Open the condition window\'s list and choose a condition for this column.")
-        .clicked()
-    {
+    if reference::choose_button(ui, "Open the condition window's list and choose a condition for this column.") {
         conditions::ask(ui.ctx(), Request { entry, list: true, asker: asker.clone() });
     }
     if entry == 0
@@ -143,15 +139,8 @@ pub struct Subject<'a> {
     pub assets: &'a GameAssets,
     pub thumbnails: &'a mut Thumbnails,
     pub now: f64,
-}
-
-/// The frame the window is drawn in, the same as the other server windows'.
-fn frame() -> egui::Frame {
-    egui::Frame::default()
-        .fill(theme::SHELL)
-        .stroke(egui::Stroke::new(1.0, theme::LINE))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::same(8))
+    /// Where a value's name asks the shell to open its row.
+    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 /// Take a form's request, tell the forms what the conditions they show test,
@@ -170,13 +159,10 @@ pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rec
         (false, Some(entry)) => format!("Condition {entry}"),
         (false, None) => "New condition".to_string(),
     };
-    let shown = egui::Window::new(title)
-        .id(egui::Id::new("condition-window"))
+    let shown = theme::window(title, "condition-window")
         .open(&mut keep_open)
         .default_size([640.0, 600.0])
         .default_pos([380.0, 140.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             page_spacing(ui);
             contents(ui, &mut subject);
@@ -194,18 +180,18 @@ fn tell(ctx: &egui::Context, subject: &mut Subject<'_>) {
     let asked = conditions::take_asked(ctx);
     subject.conditions.wanted = !asked.is_empty();
     let mut board = Board {
-        trouble: subject.conditions.trouble.clone(),
+        trouble: subject.conditions.trouble().cloned(),
         read: subject.conditions.read(),
         told: Default::default(),
     };
     if board.read {
         for entry in asked {
-            let told = match subject.conditions.shown(&subject.session.server_edits, entry) {
+            let told = match subject.conditions.shown(&subject.session.rows.edits, entry) {
                 None => Told::Missing,
                 Some(shown) if shown.life == Life::Delete => Told::Removed,
                 Some(shown) => Told::Tests {
                     line: capital(&describe_entry(subject, entry)),
-                    faults: subject.conditions.row_faults(&subject.session.server_edits, &shown.condition),
+                    faults: subject.conditions.row_faults(&subject.session.rows.edits, &shown.condition),
                 },
             };
             board.told.insert(entry, told);
@@ -236,7 +222,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     });
     asker_line(ui, subject);
     ui.separator();
-    if let Some(trouble) = &subject.conditions.trouble {
+    if let Some(trouble) = subject.conditions.trouble() {
         theme::note(ui, format!("The conditions could not be read: {trouble}"));
         return;
     }
@@ -265,7 +251,7 @@ fn contents(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         return;
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        match subject.conditions.shown(&subject.session.server_edits, entry) {
+        match subject.conditions.shown(&subject.session.rows.edits, entry) {
             Some(shown) => condition_page(ui, subject, shown),
             None => theme::note(ui, format!("No condition {entry} in the table or the project.")),
         }
@@ -336,7 +322,7 @@ fn list_page(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         });
     });
     let found = subject.conditions.matching(
-        &subject.session.server_edits,
+        &subject.session.rows.edits,
         &subject.conditions.search,
         subject.conditions.search_type,
     );
@@ -417,10 +403,10 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
     let said = capital(&describe_entry(subject, condition.entry));
     ui.label(egui::RichText::new(said).color(theme::INK));
 
-    for fault in subject.conditions.faults(&subject.session.server_edits, &condition) {
+    for fault in subject.conditions.faults(&subject.session.rows.edits, &condition) {
         ui.label(egui::RichText::new(fault).size(theme::SMALL).color(theme::WARN));
     }
-    let users = subject.conditions.users(&subject.session.server_edits, condition.entry);
+    let users = subject.conditions.users(&subject.session.rows.edits, condition.entry);
     if !users.is_empty() {
         ui.add_space(4.0);
         theme::heading(ui, "Combined into");
@@ -457,24 +443,18 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
         if ui.button("Combine with OR\u{2026}").on_hover_text("As Combine with AND, with an OR condition.").clicked() {
             combine(ui.ctx(), subject, condition.entry, -2);
         }
-        let label = match shown.life {
-            Life::Delete => "Keep",
-            _ => "Remove",
-        };
-        if ui
-            .button(label)
-            .on_hover_text("Rows in other tables that refer to this condition keep its entry; check them first.")
-            .clicked()
-        {
-            match shown.life {
-                Life::Delete => {
+        let about = "Marks this condition for removal. Rows in other tables that refer to it keep \
+                     its entry; check them first.";
+        if let Some(act) = crate::ui::widgets::rowform::remove_keep(ui, shown.life, about) {
+            match act {
+                crate::ui::widgets::rowform::RowAct::Keep => {
                     let key = condition.key();
                     let subject_line = format!("{} {}", rows::TABLE, key.text());
                     subject.session.set_server_row(
                         rows::TABLE,
                         &key,
                         None,
-                        Some(crate::session::rows::Gesture { label: "Keep condition", subject: &subject_line, now }),
+                        Some(crate::server::store::Gesture { label: "Keep condition", subject: &subject_line, now }),
                     );
                 }
                 _ => subject.conditions.remove(subject.session, &shown, now),
@@ -521,7 +501,7 @@ fn value_cell(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &Shown, n: us
                 let child = value as u32;
                 let named = subject
                     .conditions
-                    .shown(&subject.session.server_edits, child)
+                    .shown(&subject.session.rows.edits, child)
                     .and_then(|child| rows::type_of(child.condition.kind).map(|kind| kind.name))
                     .unwrap_or("missing");
                 if ui.link(format!("{child}: {named}")).clicked() {
@@ -540,12 +520,17 @@ fn value_cell(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &Shown, n: us
                     subject: format!("{} {} {column}", rows::TABLE, shown.condition.key().text()),
                 };
                 if let Some(kind) = super::quests::target_of(table) {
-                    if ui.small_button("\u{2026}").on_hover_text("choose by name").clicked() {
+                    if reference::by_name_button(ui, "Choose by name.") {
                         subject.quests.picker = Some(Picker::new(kind, PickFor::ServerColumn(target)));
                     }
                 }
                 if value > 0 {
-                    let mut resolver = Resolver { session: subject.session, assets: subject.assets, quests: subject.quests };
+                    let mut resolver = Resolver {
+                        session: subject.session,
+                        assets: subject.assets,
+                        quests: subject.quests,
+                        asks: subject.asks,
+                    };
                     reference::name(ui, &mut resolver, table, value as u32);
                 }
             }
@@ -574,7 +559,7 @@ fn table_of(means: Means) -> Option<&'static str> {
 /// being read, or when the value names nothing.
 fn name_of(subject: &mut Subject<'_>, means: Means, value: i32) -> Option<String> {
     let id = u32::try_from(value).ok().filter(|id| *id != 0)?;
-    let edits = &subject.session.server_edits;
+    let edits = &subject.session.rows.edits;
     match means {
         Means::Quest => subject.quests.title_of(id, edits),
         Means::Item => subject.quests.item(id, edits).map(|item| item.name),
@@ -609,7 +594,7 @@ enum Change {
 /// The condition as a tree: the Save bar, then the root group with every
 /// test and group under it. `from` is the entry shown, or 0 for a new one.
 fn tree_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, from: u32) {
-    subject.conditions.draft_for(&subject.session.server_edits, from);
+    subject.conditions.draft_for(&subject.session.rows.edits, from);
     // A value chosen through the picker on the last frame; see
     // `PickFor::ConditionValue`.
     if let Some((path, slot, id)) = subject.quests.condition_pick.take() {
@@ -663,7 +648,7 @@ fn tree_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, from: u32) {
 /// Save and Revert, and a line saying what Save would write.
 fn save_bar(ui: &mut egui::Ui, subject: &mut Subject<'_>, draft: &Draft) {
     let changed = draft.changed();
-    let plan = changed.then(|| subject.conditions.plan(&subject.session.server_edits));
+    let plan = changed.then(|| subject.conditions.plan(&subject.session.rows.edits));
     let mut save = false;
     let mut revert = false;
     ui.horizontal(|ui| {
@@ -962,13 +947,18 @@ fn draft_value(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &[usize], n: 
         means => {
             if let Some(table) = table_of(means) {
                 if let Some(kind) = super::quests::target_of(table) {
-                    if ui.small_button("\u{2026}").on_hover_text("choose by name").clicked() {
+                    if reference::by_name_button(ui, "Choose by name.") {
                         let purpose = PickFor::ConditionValue { path: path.to_vec(), slot: n, label: slot.label };
                         subject.quests.picker = Some(Picker::new(kind, purpose));
                     }
                 }
                 if value > 0 {
-                    let mut resolver = Resolver { session: subject.session, assets: subject.assets, quests: subject.quests };
+                    let mut resolver = Resolver {
+                        session: subject.session,
+                        assets: subject.assets,
+                        quests: subject.quests,
+                        asks: subject.asks,
+                    };
                     reference::name(ui, &mut resolver, table, value as u32);
                 }
             }
@@ -1014,7 +1004,7 @@ fn value_input(ui: &mut egui::Ui, means: Means, value: i32, salt: egui::Id) -> O
 fn describe_entry(subject: &mut Subject<'_>, entry: u32) -> String {
     let tree = {
         let conditions = &*subject.conditions;
-        let edits = &subject.session.server_edits;
+        let edits = &subject.session.rows.edits;
         rows::tree(entry, |entry| conditions.row(edits, entry))
     };
     describe(subject, &tree)

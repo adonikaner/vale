@@ -180,7 +180,7 @@ fn standing(
         tool,
         creatures,
         objects,
-        session.map(|session| &session.server_edits),
+        session.map(|session| &session.rows.edits),
     )
 }
 
@@ -324,7 +324,7 @@ impl Members {
                     tool,
                     creatures,
                     objects,
-                    session.map(|session| &session.server_edits),
+                    session.map(|session| &session.rows.edits),
                 );
                 match members.is_empty() {
                     true => Members::None,
@@ -470,8 +470,8 @@ impl Plugin for GizmoToolPlugin {
                 .after(crate::pick::aim)
                 .before(crate::tools::placements::doodads::select)
                 .before(crate::tools::placements::wmos::select)
-                .before(crate::tools::spawns::creatures::press)
-                .before(crate::tools::spawns::gameobjects::press),
+                .before(crate::tools::spawns::spawn::press::<crate::tools::spawns::creatures::CreatureSubject>)
+                .before(crate::tools::spawns::spawn::press::<crate::tools::spawns::gameobjects::GameObjectSubject>),
         );
         app.add_systems(Update, draw);
         // After the drag, so a held handle takes precedence: a grab and a held

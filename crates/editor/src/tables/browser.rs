@@ -98,10 +98,6 @@ pub struct Browser {
     pub texture_preview: Option<String>,
     pub texture_query: String,
     pub texture_page: usize,
-    /// An import the texture browser asks for, taken by the shell, which
-    /// opens the Import Texture dialog on it: the folder, and the field to set
-    /// to the imported texture's name. See `crate::import::assets`.
-    pub import_texture: Option<(String, crate::import::assets::FieldTarget)>,
     /// What rows of the display tables the client reads look like, by table
     /// and id, and the `GameAssets::tables_generation` they were resolved at.
     /// A picker draws a page of them every frame. See `ui::tables::appearance`.
@@ -149,15 +145,6 @@ pub struct Browser {
     /// The name column guessed for each table with no schema, kept because
     /// the guess reads up to 64 rows and a label is asked for per row.
     guessed: HashMap<String, Option<usize>>,
-    /// A tool a panel asks the shell to switch to, taken by the shell after
-    /// everything is drawn: the strip at the head of the Sets list asking
-    /// for Items. The panel cannot switch itself, because the tool is
-    /// borrowed while it draws.
-    pub switch_to: Option<crate::tools::Tool>,
-    /// An area the form asks the shell to paint with: the shell gives its id
-    /// to the Areas tool's brush and switches to that tool. See
-    /// [`Command::PaintArea`](super::commands::Command::PaintArea).
-    pub paint_area: Option<u32>,
 }
 
 impl Browser {

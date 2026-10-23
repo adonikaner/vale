@@ -398,6 +398,7 @@ fn item_cell(
             session: work.session,
             assets: work.assets,
             quests,
+            asks: work.asks,
         },
         vale_mangos::item::TEMPLATE,
         raw,
@@ -409,7 +410,7 @@ fn item_cell(
     let Some(set) = set else {
         return;
     };
-    let Some(found) = quests.item(raw, &work.session.server_edits) else {
+    let Some(found) = quests.item(raw, &work.session.rows.edits) else {
         return;
     };
     let pending = quests.set_follows.iter().any(|follow| follow.joined == raw);

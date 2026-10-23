@@ -213,3 +213,19 @@ pub(in crate::ui::tools) fn wmo(
     }
     session.history.end();
 }
+
+/// The WMO tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, now, .. } = subject;
+    wmo(
+        ui,
+        session,
+        &mut editing.wmos,
+        &mut editing.wmo_held,
+        &mut editing.gizmo,
+        &mut editing.placing,
+        &mut editing.portraits,
+        &mut editing.favourites,
+        now,
+    );
+}

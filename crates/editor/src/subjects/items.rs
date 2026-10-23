@@ -373,7 +373,7 @@ pub struct Items {
     /// The items this project creates, which are in no database and are
     /// rebuilt from the store whenever it moves.
     pub created: Vec<Known>,
-    /// Which `EditSession::server_edit_revision` [`Self::created`] was built
+    /// Which `ServerRows::revision` [`Self::created`] was built
     /// for.
     created_for: Option<u64>,
     /// The highest entry the table holds, read with the list. It is one of the
@@ -459,18 +459,6 @@ pub struct Items {
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub scripted_done: bool,
     seeded: bool,
-    /// A client table's row that a reference on the form was clicked through
-    /// to, as the table and the id: a spell, a skill, a faction. The shell
-    /// handles it after everything is drawn and opens the table browser on it,
-    /// because the shell holds the tool while the form is drawn. See
-    /// `crate::ui::draw`.
-    pub show_row: Option<(&'static str, u32)>,
-    /// A quest that a reference on the form was clicked through to, which
-    /// opens the quest workspace.
-    pub show_quest: Option<u32>,
-    /// A part of the Items workspace the strip at the head of the list asks
-    /// the shell to switch to, on [`Self::show_row`]'s terms.
-    pub switch_to: Option<crate::tools::Tool>,
 }
 
 impl Default for Items {
@@ -512,9 +500,6 @@ impl Default for Items {
             display_focus: false,
             scripted_done: false,
             seeded: false,
-            show_row: None,
-            show_quest: None,
-            switch_to: None,
         }
     }
 }
@@ -654,7 +639,7 @@ impl Items {
     /// same entry. A new entry has no such row today, but would as soon as
     /// somebody imports one.
     pub fn create(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
-        let entry = self.next_entry(&session.server_edits);
+        let entry = self.next_entry(&session.rows.edits);
         let key = item::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,
@@ -668,7 +653,7 @@ impl Items {
             item::TEMPLATE,
             &key,
             Some(&row),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "New item",
                 subject: &subject,
                 now,
@@ -696,7 +681,7 @@ impl Items {
             .as_ref()
             .filter(|held| Some(held.entry) == self.open)?;
         let source = item::template_key(from.entry, from.patch);
-        let entry = self.next_entry(&session.server_edits);
+        let entry = self.next_entry(&session.rows.edits);
         let key = item::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,
@@ -707,7 +692,7 @@ impl Items {
             .filter(|column| column.editable())
         {
             let value = session
-                .server_edits
+                .rows.edits
                 .get(item::TEMPLATE, &source, column.name)
                 .map(str::to_string)
                 .or_else(|| column.literal(&from.row));
@@ -732,7 +717,7 @@ impl Items {
             item::TEMPLATE,
             &key,
             Some(&row),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Copy item",
                 subject: &subject,
                 now,
@@ -793,9 +778,9 @@ impl Items {
         // One subject for every write, so a move is one press of Ctrl+Z:
         // it is two store writes and one per row that follows, and the undo
         // stack folds them by the subject they name. See
-        // `crate::session::rows::Gesture`.
+        // `crate::server::store::Gesture`.
         let subject = format!("item {} entry", known.entry);
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Move item entry",
             subject: &subject,
             now,
@@ -854,7 +839,7 @@ impl Items {
             item::TEMPLATE,
             &known.key(),
             Some(&row),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Remove item",
                 subject: &subject,
                 now,
@@ -876,7 +861,7 @@ impl Items {
             item::TEMPLATE,
             &known.key(),
             None,
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Keep item",
                 subject: &subject,
                 now,
@@ -899,7 +884,7 @@ impl Items {
             item::TEMPLATE,
             &known.key(),
             None,
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Discard new item",
                 subject: &subject,
                 now,
@@ -1495,7 +1480,7 @@ fn read_the_table(
                             .all
                             .iter()
                             .filter(|known| {
-                                session.server_edits.life(item::TEMPLATE, &known.key())
+                                session.rows.edits.life(item::TEMPLATE, &known.key())
                                     == Life::Delete
                                     && !all.iter().any(|read| read.entry == known.entry)
                             })
@@ -1681,13 +1666,13 @@ pub fn fold_the_store_in(all: &mut [Known], edits: &vale_mangos::row::Edits) {
 /// creature tool is arranged the same way for the same reason.
 fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) {
     let Some(session) = session else { return };
-    if items.created_for == Some(session.server_edit_revision) {
+    if items.created_for == Some(session.rows.revision) {
         return;
     }
-    items.created_for = Some(session.server_edit_revision);
-    fold_the_store_in(&mut items.all, &session.server_edits);
+    items.created_for = Some(session.rows.revision);
+    fold_the_store_in(&mut items.all, &session.rows.edits);
     items.created.clear();
-    for (table, key, row) in session.server_edits.rows() {
+    for (table, key, row) in session.rows.edits.rows() {
         if table != item::TEMPLATE || row.life != Life::Insert {
             continue;
         }
@@ -1732,7 +1717,7 @@ fn rebuild_created(mut items: ResMut<Items>, session: Option<Res<EditSession>>) 
     // A removal no read has seen: applied in an earlier session, so the
     // item is in neither list. A stand-in carrying the entry and the patch is
     // enough to list it, open it and keep it; its name is not known any more.
-    for (table, key, row) in session.server_edits.rows() {
+    for (table, key, row) in session.rows.edits.rows() {
         if table != item::TEMPLATE || row.life != Life::Delete {
             continue;
         }
@@ -1775,11 +1760,11 @@ fn on_the_command_line(
     if items.seeded {
         return;
     }
-    let wanted = args.item.is_some()
-        || args.item_picker
-        || args.item_new
-        || args.item_entry.is_some()
-        || args.item_remove;
+    let wanted = args.subjects.item.is_some()
+        || args.subjects.item_picker
+        || args.subjects.item_new
+        || args.subjects.item_entry.is_some()
+        || args.subjects.item_remove;
     if !wanted {
         items.seeded = true;
         items.scripted_done = true;
@@ -1795,12 +1780,12 @@ fn on_the_command_line(
     let Some(session) = session.as_mut() else {
         return;
     };
-    if args.item_new {
+    if args.subjects.item_new {
         let patch = crate::server::settings::server_patch(&settings);
         let entry = items.create(session, "New Item", patch, time.elapsed_secs_f64());
         info!("--item-new: item {entry} created at patch {patch}");
     }
-    if let Some(which) = args.item.clone() {
+    if let Some(which) = args.subjects.item.clone() {
         match which.parse::<u32>() {
             Ok(entry) => items.open = Some(entry),
             Err(_) => {
@@ -1821,7 +1806,7 @@ fn on_the_command_line(
             }
         }
     }
-    if args.item_picker {
+    if args.subjects.item_picker {
         let showing = items
             .open
             .and_then(|entry| items.by_entry(entry))
@@ -1832,7 +1817,7 @@ fn on_the_command_line(
     // Not finished if there is a move still to make. `--apply-items` waits
     // on this flag, and a move that landed after the apply would be applied by
     // nothing. See [`scripted_entry`], which sets it instead.
-    items.scripted_done = args.item_entry.is_none() && !args.item_remove;
+    items.scripted_done = args.subjects.item_entry.is_none() && !args.subjects.item_remove;
 }
 
 /// `--item-entry <n>` renumbers the open item and `--item-remove` removes it,
@@ -1852,7 +1837,7 @@ fn scripted_entry(
     time: Res<Time>,
     mut done: Local<bool>,
 ) {
-    if (args.item_entry.is_none() && !args.item_remove) || *done || !items.seeded {
+    if (args.subjects.item_entry.is_none() && !args.subjects.item_remove) || *done || !items.seeded {
         return;
     }
     let Some(session) = session.as_mut() else {
@@ -1863,16 +1848,16 @@ fn scripted_entry(
     };
     *done = true;
     let now = time.elapsed_secs_f64();
-    if let Some(entry) = args.item_entry {
+    if let Some(entry) = args.subjects.item_entry {
         match items.rekey(session, &known, entry, now) {
             Ok(()) => info!("--item-entry {entry}: item {} moved", known.entry),
             Err(why) => warn!("--item-entry {entry}: {why}"),
         }
-        if args.item_remove {
+        if args.subjects.item_remove {
             warn!("--item-remove: not with --item-entry; a moved item is not removed");
         }
     } else {
-        let known = known.with_edits(&session.server_edits).unwrap_or(known);
+        let known = known.with_edits(&session.rows.edits).unwrap_or(known);
         match items.remove(session, &known, now) {
             Ok(()) => info!("--item-remove: item {} removed", known.entry),
             Err(why) => warn!("--item-remove: {why}"),
@@ -1895,7 +1880,7 @@ fn scripted_display(
     time: Res<Time>,
     mut done: Local<bool>,
 ) {
-    let Some(display_id) = args.item_display else {
+    let Some(display_id) = args.subjects.item_display else {
         return;
     };
     if *done || !items.seeded {
@@ -1915,7 +1900,7 @@ fn scripted_display(
         &known.key(),
         "display_id",
         Some(display_id.to_string()),
-        Some(crate::session::rows::Gesture {
+        Some(crate::server::store::Gesture {
             label: "Edit item",
             subject: &subject,
             now: time.elapsed_secs_f64(),

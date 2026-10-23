@@ -81,3 +81,9 @@ pub(in crate::ui::tools) fn holes(ui: &mut egui::Ui, holes: &crate::tools::groun
         "16 squares per chunk; the file has no finer unit",
     );
 }
+
+/// The hole tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, .. } = subject;
+    holes(ui, &editing.holes, session);
+}

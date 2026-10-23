@@ -1393,7 +1393,7 @@ fn images_on_the_command_line(
     mut view: ResMut<crate::ui::map::mapview::MapView>,
     mut done: Local<bool>,
 ) {
-    if *done || (args.export_heights.is_none() && args.import_image.is_none()) {
+    if *done || (args.import.export_heights.is_none() && args.import.import_image.is_none()) {
         return;
     }
     let Some(mut session) = session else { return };
@@ -1402,7 +1402,7 @@ fn images_on_the_command_line(
         return;
     }
     *done = true;
-    if let Some(path) = &args.export_heights {
+    if let Some(path) = &args.import.export_heights {
         let said = match crate::import::images::export(&session, &assets, &[at], crate::import::images::Kind::Heights, path) {
             Ok(said) | Err(said) => said,
         };
@@ -1410,11 +1410,11 @@ fn images_on_the_command_line(
         session.status = said;
     }
     // The import's dialog, open on the camera's tile, for a picture of it.
-    if let Some(path) = &args.import_image {
+    if let Some(path) = &args.import.import_image {
         view.open = true;
         view.selection = [at].into_iter().collect();
         choose_import(&session, &mut tiles, &[at], path);
-        if args.import_confirm {
+        if args.import.import_confirm {
             tiles.asked = Some(crate::ui::map::mapview::Asked::Import);
         }
     }
@@ -1431,7 +1431,7 @@ fn minimaps_on_the_command_line(
     mut drawing: ResMut<crate::jobs::Running<Drawn>>,
     mut done: Local<bool>,
 ) {
-    if *done || !args.minimaps {
+    if *done || !args.tools.minimaps {
         return;
     }
     let Some(session) = session else { return };

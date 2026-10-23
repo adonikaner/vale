@@ -286,7 +286,7 @@ pub struct Editing<'w> {
     pub(crate) mapview: ResMut<'w, map::mapview::MapView>,
     pub(crate) browser: ResMut<'w, crate::tables::browser::Browser>,
     /// The world half of the lights subject: which light is chosen, where they
-    /// all are, and a pending fly-to. See [`crate::tools::places::lights`].
+    /// all are. See [`crate::tools::places::lights`].
     pub(crate) lights: ResMut<'w, crate::tools::places::lights::Lights>,
     /// The flight path subject: the nodes and paths on the map and what is
     /// selected. See [`crate::tools::places::flightpaths`].
@@ -359,6 +359,12 @@ pub struct Editing<'w> {
     /// three painting brushes show. See [`crate::tablet`].
     pub(crate) tablet: ResMut<'w, crate::tablet::Tablet>,
     pub(crate) pen: Res<'w, crate::tablet::Pen>,
+    /// What the panels asked of the shell this frame, carried out after the
+    /// egui pass. See [`shell::asks`].
+    pub(crate) asks: ResMut<'w, shell::asks::ShellAsks>,
+    /// The camera requests a panel's Fly to button sends. See
+    /// [`crate::camera::FlyTo`].
+    pub(crate) fly: ResMut<'w, Messages<crate::camera::FlyTo>>,
 }
 
 /// What the view bar reads and writes, as one parameter.
@@ -407,7 +413,13 @@ impl Plugin for PanelPlugin {
             .init_resource::<crate::server::sync::Standings>()
             .init_resource::<Viewport>()
             .init_resource::<shell::rail::Rail>()
+            .init_resource::<shell::asks::ShellAsks>()
             .add_plugins((widgets::thumbnails::ThumbnailPlugin, shell::icons::IconPlugin))
+            // The keys that work whichever tool is chosen. After the pick,
+            // as every tool's input is; a tool whose order against them
+            // matters states it in its own plugin (the height brush, the
+            // doodad and WMO picks, the group clipboard).
+            .add_systems(Update, crate::tools::shortcuts::shortcuts.after(crate::pick::aim))
             .add_systems(EguiPrimaryContextPass, draw)
             // One pass per pop-out window slot; see `crate::popout`.
             .add_systems(crate::popout::PopoutPass(0), shell::popout::draw::<0>)
@@ -495,11 +507,11 @@ fn draw(
     // `--projects`, once. The popover is opened here rather than at startup
     // because its anchor is the button's rectangle, which does not exist until
     // the bar has been drawn once. See `shell::popover::Popover::show`.
-    if editing.args.projects && !editing.projects.shown_once {
+    if editing.args.view.projects && !editing.projects.shown_once {
         editing.projects.shown_once = true;
         popovers.project.show();
         // `--doom <name>`: the confirmation, open on that project.
-        if let Some(name) = editing.args.doom.as_deref() {
+        if let Some(name) = editing.args.view.doom.as_deref() {
             let clear = name == session.project.name;
             let held = match clear {
                 true => crate::server::held::held_by(&session.project),
@@ -512,7 +524,7 @@ fn draw(
         }
     }
     // `--server`, once, for the same reason.
-    if editing.args.server && !popovers.server_shown_once {
+    if editing.args.server.panel && !popovers.server_shown_once {
         popovers.server_shown_once = true;
         popovers.server.show();
     }
@@ -634,7 +646,7 @@ fn draw(
                     flight: &mut flight,
                     editing: playing.state.editing(),
                     areas_shown: *tool == Tool::Areas,
-                    open_guides: editing.args.guides_menu
+                    open_guides: editing.args.view.guides_menu
                         && time.elapsed_secs() > 3.0
                         && !std::mem::replace(&mut editing.projects.guides_shown_once, true),
                     baseline: &baseline,
@@ -759,8 +771,6 @@ fn draw(
     // dragged in the viewport, so its form is in the inspector with every
     // other selection's numbers and the world keeps the middle.
     // `tools::draw` handles that, so nothing is needed for either here.
-    // Taken out of the bundle before the workspace borrows the rest of it.
-    let showing_hour = editing.clock.half_minutes;
     let covers = tool.covers_viewport();
     // A tool a panel asks to switch to, applied after everything is drawn.
     // The quest workspace's "back to Creatures" and the creature tool's quest
@@ -789,7 +799,6 @@ fn draw(
                         #[cfg(not(feature = "diagnostics"))]
                         wireframe: None,
                         particles: Some(&mut edited_world.particles),
-                        hour: showing_hour,
                         switch_to: &mut switch_to,
                     },
                 );
@@ -919,48 +928,40 @@ fn draw(
     // Its open flag is kept, so the window reappears when the tool is chosen
     // again.
     if *tool == Tool::Creatures {
-        let template = tools::spawns::creatures::template_window(
+        let template = tools::spawns::spawn::template_window(
             &ctx,
-            &mut tools::spawns::creatures::Subject {
+            &mut tools::spawns::creatures::Subject::new(
                 session,
-                creatures: &mut editing.creatures,
-                waypoints: &mut editing.waypoints,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                behaviour: &mut editing.behaviour,
-                services: &mut editing.services,
-                gossip: &mut editing.gossip,
-                server: &playing.server,
-                server_panel: &mut popovers.server,
-                standings: &mut playing.standings,
-                assets: &assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now: time.elapsed_secs_f64(),
-                gizmo: None,
-            },
+                &mut editing,
+                tools::spawns::Server {
+                    settings: &playing.server,
+                    panel: &mut popovers.server,
+                    standings: &mut playing.standings,
+                },
+                &assets,
+                time.elapsed_secs_f64(),
+                false,
+            ),
         );
         viewport.floating.extend(template);
     }
     // The game object template's window, the same window for
     // gameobject_template.
     if *tool == Tool::GameObjects {
-        let template = tools::spawns::gameobjects::template_window(
+        let template = tools::spawns::spawn::template_window(
             &ctx,
-            &mut tools::spawns::gameobjects::Subject {
+            &mut tools::spawns::gameobjects::Subject::new(
                 session,
-                objects: &mut editing.objects,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                server: &playing.server,
-                server_panel: &mut popovers.server,
-                standings: &mut playing.standings,
-                assets: &assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now: time.elapsed_secs_f64(),
-                gizmo: None,
-            },
+                &mut editing,
+                tools::spawns::Server {
+                    settings: &playing.server,
+                    panel: &mut popovers.server,
+                    standings: &mut playing.standings,
+                },
+                &assets,
+                time.elapsed_secs_f64(),
+                false,
+            ),
         );
         viewport.floating.extend(template);
     }
@@ -981,7 +982,6 @@ fn draw(
                 now: time.elapsed_secs_f64(),
                 wireframe: None,
                 particles: None,
-                hour: showing_hour,
                 switch_to: &mut switch_to,
             },
         );
@@ -994,25 +994,18 @@ fn draw(
         *tool = wanted;
     }
 
-    // An item a quest names, clicked in the quest form or its inspector,
-    // opens the item workspace on that item.
-    if let Some(entry) = editing.quests.show_item.take() {
-        editing.items.open = Some(entry);
-        *tool = Tool::Items;
-    }
-    // A reference clicked on the item, creature or game object form: a client
-    // table's row opens the table browser on it under the spell subject, which
-    // browses any table a reference reaches; a quest opens the quest
-    // workspace. The item form writes these requests to `show_row` and
-    // `show_quest` on the item tool's state, and the other two forms write
-    // them to the same fields on the quest tool's state.
-    let row = editing.items.show_row.take().or_else(|| editing.quests.show_row.take());
-    if let Some((table, id)) = row {
-        if session.open_table(&assets, table) && editing.browser.follow(session, table, id) {
-            editing.browser.followed_in = true;
-            *tool = Tool::for_table(table);
-        }
-    }
+    // What the panels asked of the shell while they were drawn: a row to open
+    // in another workspace, a tool to switch to, a texture to import. See
+    // [`shell::asks`].
+    shell::asks::carry_out(
+        &mut editing,
+        session,
+        &assets,
+        &mut tool,
+        &mut viewing.rail,
+        in_world,
+        time.elapsed_secs_f64(),
+    );
     // A set's item list changed in the set's form: the items' `set_id`
     // follows once their rows are read. See `Quests::follow_sets`.
     if !editing.quests.set_follows.is_empty() {
@@ -1020,119 +1013,6 @@ fn draw(
         if let Some(last) = said.last() {
             session.status = last.clone();
         }
-    }
-    // What the Areas panel asked of AreaTable: open a row in the Zones
-    // workspace, or make a zone or a sub-area and put it on the brush. The
-    // table is opened here, since the panel has no archives to open it from.
-    if let Some(ask) = editing.areas.ask.take() {
-        use crate::tools::ground::areas::Ask;
-        use crate::tables::{self, zones::area};
-        match (session.open_table(&assets, area::TABLE), ask) {
-            (false, _) => session.status = "AreaTable could not be opened".to_string(),
-            (true, Ask::Edit(id)) => {
-                if editing.browser.follow(session, area::TABLE, id) {
-                    editing.browser.followed_in = true;
-                    *tool = Tool::Zones;
-                }
-            }
-            (true, made) => {
-                let record = match made {
-                    Ask::NewSubArea(of) => tables::zones::add_sub_area(session, of),
-                    _ => {
-                        let map = session.map_id;
-                        tables::zones::add_zone(session, map)
-                    }
-                };
-                let id = record.and_then(|record| session.table(area::TABLE)?.u32_at(record, 0));
-                session.status = match id {
-                    Some(id) => {
-                        editing.areas.brush.area = id;
-                        format!("area {id} created and set as the brush area; use Edit\u{2026} to name it")
-                    }
-                    None => "the area could not be created".to_string(),
-                };
-            }
-        }
-    }
-    // An area the Zones workspace asked to paint: it goes on the Areas tool's
-    // brush and the tool is switched to. Dropped during a playtest, when no
-    // tool that keeps the viewport can be used.
-    if let Some(id) = editing.browser.paint_area.take().filter(|_| !in_world) {
-        editing.areas.brush.area = id;
-        editing.areas.search.clear();
-        *tool = Tool::Areas;
-        viewing.rail.follow(Tool::Areas);
-        session.status = format!("area {id} set as the brush area");
-    }
-    // A texture the texture browser asked to import: the Import Texture
-    // dialog, opened in the folder the field's file is found in, for the
-    // field that asked.
-    if let Some((folder, target)) = editing.browser.import_texture.take() {
-        editing.assets.ask = Some(crate::import::assets::Ask::Choose {
-            folder,
-            name: None,
-            for_field: Some(target),
-        });
-    }
-    // The texture tool's Import Ground Texture: the dialog, for a ground
-    // texture…
-    if std::mem::take(&mut editing.textures.import_asked) {
-        editing.assets.ask = Some(crate::import::assets::Ask::Choose {
-            folder: crate::import::assets::GROUND_FOLDER.to_string(),
-            name: None,
-            for_field: None,
-        });
-    }
-    // …and once a ground texture is written under the texture tool, the brush
-    // takes it, opened in its folder. The catalogue lists it once it reads the
-    // project's files again.
-    if let Some((vpath, purpose)) = editing.assets.imported.take() {
-        if purpose == crate::import::assets::Purpose::Ground && *tool == Tool::Textures {
-            let path = vpath.to_ascii_lowercase();
-            editing.textures.brush.effect_id = 0;
-            editing.textures.folder = match path.rfind('\\') {
-                Some(at) => path[..=at].to_string(),
-                None => crate::tools::ground::textures::ROOT.to_string(),
-            };
-            editing.textures.search.clear();
-            editing.textures.brush.texture = path;
-        }
-    }
-    // …and once it is written, the field is set to its name. A field whose
-    // table has been closed since is left.
-    if let Some((target, name)) = editing.assets.imported_for.take() {
-        if session.table(&target.table).is_some() {
-            crate::tables::fields::set_text(
-                session,
-                &target.table,
-                target.record,
-                target.field,
-                &name,
-                "Edit Texture",
-                time.elapsed_secs_f64(),
-            );
-            editing.browser.forget_buffers();
-        }
-    }
-    // A part of a workspace chosen on the strip at the head of its list.
-    let part = editing.items.switch_to.take().or_else(|| editing.browser.switch_to.take());
-    if let Some(part) = part {
-        *tool = part;
-    }
-    // Open in Workspace on a spawn's panel, and Place in World in the
-    // Creatures or Game Objects workspace's inspector. A tool that keeps the
-    // viewport is refused during a playtest, as the rail refuses it.
-    let linked = editing.creatures.switch_to.take().or_else(|| editing.objects.switch_to.take());
-    if let Some(wanted) = linked.filter(|wanted| !in_world || wanted.survives_playtest()) {
-        *tool = wanted;
-        viewing.rail.follow(wanted);
-    }
-    let quest = editing.items.show_quest.take().or_else(|| editing.quests.show_quest.take());
-    if let Some(entry) = quest {
-        editing.quests.open = Some(entry);
-        editing.quests.of_holder = None;
-        editing.quests.forget_matches();
-        *tool = Tool::Quests;
     }
 
     // The waypoint window, on the root context for the same reason. Its
@@ -1145,6 +1025,7 @@ fn draw(
             session,
             waypoints: &mut editing.waypoints,
             now: time.elapsed_secs_f64(),
+            fly: &mut editing.fly,
         },
     );
     viewport.floating.extend(path_window);
@@ -1156,7 +1037,7 @@ fn draw(
         *tool,
         &editing.creatures,
         &mut editing.objects,
-        &session.server_edits,
+        &session.rows.edits,
         &assets,
     );
 

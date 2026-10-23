@@ -258,7 +258,7 @@ pub struct SetFollow {
 fn write_set_id(session: &mut EditSession, item: u32, found: &ItemName, wanted: u32, now: f64) -> bool {
     let table = vale_mangos::item::TEMPLATE;
     let claimed_key = session
-        .server_edits
+        .rows.edits
         .rows()
         .filter(|(had, key, _)| *had == table && key.first() == Some(u64::from(item)))
         .map(|(_, key, _)| key.clone())
@@ -277,7 +277,7 @@ fn write_set_id(session: &mut EditSession, item: u32, found: &ItemName, wanted: 
         &key,
         "set_id",
         value,
-        Some(crate::session::rows::Gesture {
+        Some(crate::server::store::Gesture {
             label: "Edit item",
             subject: &subject,
             now,
@@ -348,7 +348,7 @@ pub struct ColumnTarget {
     /// The undo entry's label: "Edit item", "Edit creature", "Edit game object".
     pub label: &'static str,
     /// The undo entry's subject, which names the row and the column; see
-    /// [`crate::session::rows::Gesture`].
+    /// [`crate::server::store::Gesture`].
     pub subject: String,
 }
 
@@ -363,7 +363,7 @@ impl ColumnTarget {
         let set_change = (self.table == vale_mangos::item::TEMPLATE && self.column == "set_id")
             .then(|| {
                 let before = session
-                    .server_edits
+                    .rows.edits
                     .get(self.table, &self.key, self.column)
                     .map(str::to_string)
                     .or_else(|| self.in_database.clone());
@@ -379,7 +379,7 @@ impl ColumnTarget {
             &self.key,
             self.column,
             value,
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: self.label,
                 subject: &self.subject,
                 now,
@@ -559,22 +559,9 @@ pub struct Quests {
     /// as the [`Holder`], its template entry and its name. `None` when the
     /// window is closed.
     pub window_for: Option<(Holder, u32, String)>,
-    /// An item a form names that was clicked, to be opened in the item
-    /// workspace. Answered by the shell after everything is drawn, because the
-    /// shell holds the tool while the form and the inspector are drawn; see
-    /// `crate::ui::draw`.
-    pub show_item: Option<u32>,
     /// Changes to a set's item list whose items' `set_id` has yet to follow.
     /// See [`Self::follow_sets`].
     pub set_follows: Vec<SetFollow>,
-    /// A quest a form names that was clicked, to be opened in the quest
-    /// workspace. The creature and game object forms set it; the quest form
-    /// sets [`Self::open`] directly, because it is the workspace.
-    pub show_quest: Option<u32>,
-    /// A client table's row a form names that was clicked, to be opened in the
-    /// table browser. The same mailbox as `crate::subjects::items::Items::show_row`,
-    /// for the forms that have the quest tool in hand and not the item tool.
-    pub show_row: Option<(&'static str, u32)>,
     /// An item chosen for a loot set through the picker, as the set's
     /// table and entry and the item: taken by the loot window on the frame
     /// after — see [`PickFor::LootItem`].
@@ -790,7 +777,7 @@ impl Quests {
             return Ok(());
         };
         let subject = format!("quest {} entry", known.entry);
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Move quest entry",
             subject: &subject,
             now,
@@ -814,7 +801,7 @@ impl Quests {
     /// Make a new quest, and open it. Every column is written at once, at
     /// the server's own patch — see `vale_mangos::quest::new_quest`.
     pub fn create(&mut self, session: &mut EditSession, title: &str, patch: u32, now: f64) -> u32 {
-        let entry = self.next_entry(&session.server_edits);
+        let entry = self.next_entry(&session.rows.edits);
         let key = quest::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,
@@ -828,7 +815,7 @@ impl Quests {
             quest::TEMPLATE,
             &key,
             Some(&row),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "New quest",
                 subject: &subject,
                 now,
@@ -852,7 +839,7 @@ impl Quests {
             .as_ref()
             .filter(|held| Some(held.entry) == self.open)?;
         let source = quest::template_key(from.entry, from.patch);
-        let entry = self.next_entry(&session.server_edits);
+        let entry = self.next_entry(&session.rows.edits);
         let key = quest::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,
@@ -863,7 +850,7 @@ impl Quests {
             .filter(|column| column.editable())
         {
             let value = session
-                .server_edits
+                .rows.edits
                 .get(quest::TEMPLATE, &source, column.name)
                 .map(str::to_string)
                 .or_else(|| column.literal(&from.row))
@@ -890,7 +877,7 @@ impl Quests {
             quest::TEMPLATE,
             &key,
             Some(&row),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Copy quest",
                 subject: &subject,
                 now,
@@ -911,7 +898,7 @@ impl Quests {
     /// a quest that does not exist is a row the server drops at load.
     pub fn remove(&mut self, session: &mut EditSession, known: &Known, now: f64) {
         let subject = format!("quest {} remove", known.entry);
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Remove quest",
             subject: &subject,
             now,
@@ -919,7 +906,7 @@ impl Quests {
         match known.claim {
             Life::Insert => {
                 let added: Vec<(String, Key)> = session
-                    .server_edits
+                    .rows.edits
                     .rows()
                     .filter(|(table, key, _)| {
                         quest::is_relation(table)
@@ -960,7 +947,7 @@ impl Quests {
             quest::TEMPLATE,
             &known.key(),
             None,
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Keep quest",
                 subject: &subject,
                 now,
@@ -1037,13 +1024,13 @@ impl Quests {
     pub fn relate(&mut self, session: &mut EditSession, relation: Relation, now: f64) {
         let (table, key) = (relation.table(), relation.key());
         let subject = format!("{table} {}", key.text());
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Add quest relation",
             subject: &subject,
             now,
         };
         let in_database = self.relations.contains(&relation);
-        match (in_database, session.server_edits.life(table, &key)) {
+        match (in_database, session.rows.edits.life(table, &key)) {
             (true, Life::Delete) => session.set_server_row(table, &key, None, Some(gesture)),
             (true, _) => {}
             (false, _) => {
@@ -1065,7 +1052,7 @@ impl Quests {
     pub fn unrelate(&mut self, session: &mut EditSession, relation: Relation, now: f64) {
         let (table, key) = (relation.table(), relation.key());
         let subject = format!("{table} {}", key.text());
-        let gesture = crate::session::rows::Gesture {
+        let gesture = crate::server::store::Gesture {
             label: "Remove quest relation",
             subject: &subject,
             now,
@@ -1143,8 +1130,8 @@ impl Quests {
                 .into_iter()
                 .filter(|&item| item != 0)
                 .all(|item| {
-                    self.item(item, &session.server_edits).is_some()
-                        || self.item_known(item, &session.server_edits)
+                    self.item(item, &session.rows.edits).is_some()
+                        || self.item_known(item, &session.rows.edits)
                 });
             if !ready {
                 self.set_follows.push(follow);
@@ -1160,7 +1147,7 @@ impl Quests {
                 if item == 0 {
                     continue;
                 }
-                let Some(found) = self.item(item, &session.server_edits) else {
+                let Some(found) = self.item(item, &session.rows.edits) else {
                     said.push(format!("item {item} is not in item_template; its set_id is not written"));
                     continue;
                 };
@@ -1473,21 +1460,21 @@ pub fn fold_the_store_in(
 /// Rebuild the quests this project creates, from the store, when it moves.
 fn rebuild_created(mut quests: ResMut<Quests>, session: Option<Res<EditSession>>) {
     let Some(session) = session else { return };
-    if quests.created_for == Some(session.server_edit_revision) {
+    if quests.created_for == Some(session.rows.revision) {
         return;
     }
-    quests.created_for = Some(session.server_edit_revision);
+    quests.created_for = Some(session.rows.revision);
     {
         let quests = &mut *quests;
         fold_the_store_in(
             &mut quests.all,
             &mut quests.relations,
             &quests.relations_read,
-            &session.server_edits,
+            &session.rows.edits,
         );
     }
     quests.created.clear();
-    for (table, key, row) in session.server_edits.rows() {
+    for (table, key, row) in session.rows.edits.rows() {
         if table != quest::TEMPLATE || row.life != Life::Insert {
             continue;
         }
@@ -1887,7 +1874,7 @@ fn search_the_picker(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    let edits = session.as_ref().map(|session| &session.server_edits);
+    let edits = session.as_ref().map(|session| &session.rows.edits);
     let quests = &mut *quests;
     let Some(picker) = quests.picker.as_mut() else {
         return;
@@ -2035,10 +2022,10 @@ fn on_the_command_line(
     if quests.seeded {
         return;
     }
-    let wanted = args.quest.is_some()
-        || args.quest_new
-        || args.quests_of.is_some()
-        || args.quest_entry.is_some();
+    let wanted = args.subjects.quest.is_some()
+        || args.subjects.quest_new
+        || args.subjects.quests_of.is_some()
+        || args.subjects.quest_entry.is_some();
     if !wanted {
         quests.seeded = true;
         quests.scripted_done = true;
@@ -2053,9 +2040,9 @@ fn on_the_command_line(
     let Some(session) = session.as_mut() else {
         return;
     };
-    if let Some(entry) = args.quests_of {
+    if let Some(entry) = args.subjects.quests_of {
         quests.show_quests_of(Holder::Creature, entry);
-        let edits = &session.server_edits;
+        let edits = &session.rows.edits;
         let first = quests
             .relations_of_holder(Holder::Creature, entry, edits)
             .first()
@@ -2068,12 +2055,12 @@ fn on_the_command_line(
         );
         quests.open = first;
     }
-    if args.quest_new {
+    if args.subjects.quest_new {
         let patch = crate::server::settings::server_patch(&settings);
         let entry = quests.create(session, "New Quest", patch, time.elapsed_secs_f64());
         info!("--quest-new: quest {entry} created at patch {patch}");
     }
-    if let Some(which) = args.quest.clone() {
+    if let Some(which) = args.subjects.quest.clone() {
         match which.parse::<u32>() {
             Ok(entry) => quests.open = Some(entry),
             Err(_) => {
@@ -2098,7 +2085,7 @@ fn on_the_command_line(
     }
     // Not finished while a move is still to make. [`scripted_entry`] makes it,
     // in the same way as `crate::subjects::items::scripted_entry`.
-    quests.scripted_done = args.quest_entry.is_none();
+    quests.scripted_done = args.subjects.quest_entry.is_none();
 }
 
 /// `--quest-entry <n>`: move the open quest to entry `n` without user input.
@@ -2111,7 +2098,7 @@ fn scripted_entry(
     time: Res<Time>,
     mut done: Local<bool>,
 ) {
-    let Some(entry) = args.quest_entry else {
+    let Some(entry) = args.subjects.quest_entry else {
         return;
     };
     if *done || !quests.seeded {
@@ -2465,7 +2452,7 @@ mod tests {
         let table = vale_mangos::item::TEMPLATE;
         let edit = |session: &EditSession, item: u32| {
             session
-                .server_edits
+                .rows.edits
                 .get(table, &vale_mangos::item::template_key(item, 2), "set_id")
                 .map(str::to_string)
         };

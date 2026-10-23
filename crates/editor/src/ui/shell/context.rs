@@ -128,7 +128,7 @@ fn items(
     }
     // What every menu ends with: the clicked point, or the clicked spawn's
     // position, and the history.
-    let edits = Some(&session.server_edits);
+    let edits = Some(&session.rows.edits);
     let at = match open.target {
         Target::Ground { at, .. } => at,
         Target::Creature { guid } => editing.creatures.edited(guid, edits).map(|spawn| spawn.at),
@@ -756,7 +756,7 @@ fn areas(
         chosen = true;
     }
     if item(ui, "Edit this area", area != 0, "Open this chunk's AreaTable row in the Zones workspace.", "The chunk has no area.") {
-        editing.areas.ask = Some(Ask::Edit(area));
+        editing.asks.push(crate::ui::shell::asks::ShellAsk::Area(Ask::Edit(area)));
         chosen = true;
     }
     if item(
@@ -860,7 +860,7 @@ fn road(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, at:
 /// The selected spawns of the tool the menu is for, primary first, as the
 /// project's edits leave them.
 fn spawn_selection(tool: Tool, editing: &Editing, session: &EditSession) -> Vec<crate::tools::spawns::spawn::Standing> {
-    let edits = Some(&session.server_edits);
+    let edits = Some(&session.rows.edits);
     let mut all: Vec<_> = crate::tools::spawns::spawn::chosen(tool, &editing.creatures, &editing.objects, edits)
         .into_iter()
         .collect();
@@ -899,7 +899,7 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
     use crate::subjects::quests::Holder;
     use crate::subjects::services::Kind as Service;
     let mut chosen = false;
-    let Some(spawn) = editing.creatures.edited(guid, Some(&session.server_edits)) else {
+    let Some(spawn) = editing.creatures.edited(guid, Some(&session.rows.edits)) else {
         caption(ui, &format!("Creature {guid}, not on this map"));
         return false;
     };
@@ -923,7 +923,7 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
         "",
     ) {
         editing.creatures.open_listed(spawn.entry);
-        editing.creatures.switch_to = Some(Tool::CreatureData);
+        editing.asks.push(crate::ui::shell::asks::ShellAsk::Link(Tool::CreatureData));
         chosen = true;
     }
     if item(
@@ -1068,7 +1068,7 @@ fn game_object(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editi
     use crate::tools::spawns::gameobjects::GameObjects;
     use crate::subjects::quests::Holder;
     let mut chosen = false;
-    let Some(spawn) = editing.objects.edited(guid, Some(&session.server_edits)) else {
+    let Some(spawn) = editing.objects.edited(guid, Some(&session.rows.edits)) else {
         caption(ui, &format!("Game object {guid}, not on this map"));
         return false;
     };
@@ -1092,7 +1092,7 @@ fn game_object(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editi
         "",
     ) {
         editing.objects.open_listed(spawn.entry);
-        editing.objects.switch_to = Some(Tool::GameObjectData);
+        editing.asks.push(crate::ui::shell::asks::ShellAsk::Link(Tool::GameObjectData));
         chosen = true;
     }
     if item(ui, "Quests\u{2026}", true, "The quests this object starts and ends.", "") {
@@ -1274,7 +1274,7 @@ fn spawns_ground(
     if item(ui, "Deselect", count > 0, "Clear the selection.", "Nothing is selected.") {
         match tool {
             Tool::Creatures => editing.creatures.select_only(None),
-            _ => editing.objects.select(None),
+            _ => editing.objects.select_only(None),
         }
         chosen = true;
     }

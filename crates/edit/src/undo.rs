@@ -554,6 +554,45 @@ impl Change {
             .any(|(had, edit)| had == tile && edit.remeshes())
     }
 
+    /// What applying or reverting this change leaves out of date on screen:
+    /// for each tile it names, in the order they were first touched, the
+    /// chunks, placements and blend maps to patch and whether the tile has to
+    /// be read again; and the client tables it edits. The answer is the same in
+    /// both directions, because an undo and a redo touch the same things.
+    ///
+    /// A tile whose placement lists are renumbered lists no placement or
+    /// building indices, because no index survives the renumbering, and is
+    /// marked to be read again instead. A tile with a hole, liquid or path-list
+    /// edit is also marked to be read again; see [`Edit::remeshes`].
+    pub fn invalidates(&self) -> Invalidated {
+        let tiles = self
+            .tiles()
+            .into_iter()
+            .map(|tile| {
+                let renumbers = self.renumbers_placements(&tile);
+                TileRedraw {
+                    chunks: self.chunks(&tile),
+                    placements: match renumbers {
+                        true => Vec::new(),
+                        false => self.placements(&tile),
+                    },
+                    buildings: match renumbers {
+                        true => Vec::new(),
+                        false => self.buildings(&tile),
+                    },
+                    painted: self.painted(&tile),
+                    regroup: self.changes_the_texture_set(&tile),
+                    reread: renumbers || self.remeshes(&tile),
+                    tile,
+                }
+            })
+            .collect();
+        Invalidated {
+            tiles,
+            tables: self.tables(),
+        }
+    }
+
     /// Put this change's edits for one tile back in.
     pub fn apply(&self, tile: &TileKey, into: &mut AdtFile) {
         for (_, edit) in self.edits.iter().filter(|(had, _)| had == tile) {
@@ -573,6 +612,39 @@ impl Change {
             edit.revert(into);
         }
     }
+}
+
+/// What a [`Change`] leaves out of date once it is applied or reverted, as
+/// [`Change::invalidates`] answers it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Invalidated {
+    /// One entry per tile the change names, in the order it first touched them.
+    pub tiles: Vec<TileRedraw>,
+    /// The client tables it edits, by their bare name (`"Spell"`), in the order
+    /// it first touched them.
+    pub tables: Vec<String>,
+}
+
+/// What one tile needs redrawn after a change to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TileRedraw {
+    pub tile: TileKey,
+    /// The chunks whose ground vertices changed: see [`Edit::chunk`].
+    pub chunks: Vec<usize>,
+    /// The `MDDF` entries moved, turned or scaled. Empty when `reread` is set
+    /// because the lists were renumbered.
+    pub placements: Vec<usize>,
+    /// …and the `MODF` entries, numbered separately from `MDDF`.
+    pub buildings: Vec<usize>,
+    /// The chunks whose blend maps changed: see [`Edit::painted`].
+    pub painted: Vec<usize>,
+    /// A chunk carries a different set of textures, so the tile's draw groups
+    /// have to be cut again: see [`Edit::changes_the_texture_set`].
+    pub regroup: bool,
+    /// The tile has to be read again, because its placement lists were
+    /// renumbered or its mesh changed: see [`Edit::renumbers_placements`] and
+    /// [`Edit::remeshes`].
+    pub reread: bool,
 }
 
 /// Two edits about the same thing, as one edit spanning both.
@@ -1725,5 +1797,73 @@ mod tests {
         assert!(Placements::capture(&tile) == start, "undo puts both back");
         change.apply(&key(32, 48), &mut tile);
         assert!(Placements::capture(&tile) == end, "redo puts both in");
+    }
+
+    /// `invalidates` names, per tile and in the order the tiles were first
+    /// touched, the chunks, placements and painted chunks to patch, and the
+    /// tables the change edits.
+    #[test]
+    fn invalidates_names_what_each_tile_needs_redrawn() {
+        let tile = crate::adt::blank::blank_tile(32, 48, "a.blp", 0.0, 0);
+        let paint = crate::ops::ChunkPaint::capture(&tile, 4);
+        let mut change = Change::new("Several things");
+        change.absorb(&key(33, 48), edit(5, 0.0, 1.0));
+        change.absorb(&key(32, 48), edit(3, 0.0, 1.0));
+        change.absorb(&key(32, 48), Edit::Doodad { index: 2, before: doodad(1024), after: doodad(2048) });
+        change.absorb(
+            &key(32, 48),
+            Edit::Paint { chunk: 4, before: Box::new(paint.clone()), after: Box::new(paint) },
+        );
+        change.absorb_cell("Spell", crate::dbc::Cell { record: 1, field: 2, before: 0, after: 1 });
+
+        let invalidated = change.invalidates();
+        assert_eq!(invalidated.tables, vec!["Spell".to_string()]);
+        let tiles: Vec<&TileKey> = invalidated.tiles.iter().map(|redraw| &redraw.tile).collect();
+        assert_eq!(tiles, vec![&key(33, 48), &key(32, 48)]);
+        let first = &invalidated.tiles[0];
+        assert_eq!(first.chunks, vec![5]);
+        assert!(first.placements.is_empty() && first.painted.is_empty());
+        assert!(!first.regroup && !first.reread);
+        let second = &invalidated.tiles[1];
+        assert_eq!(second.chunks, vec![3], "a paint edit moves no vertex");
+        assert_eq!(second.placements, vec![2]);
+        assert!(second.buildings.is_empty());
+        assert_eq!(second.painted, vec![4]);
+        assert!(!second.regroup, "the same layers on both sides keep the texture set");
+        assert!(!second.reread);
+    }
+
+    /// A renumbering of the placement lists names no index, because none
+    /// survives it, and marks the tile to be read again.
+    #[test]
+    fn a_renumbering_rereads_the_tile_instead_of_naming_indices() {
+        use crate::ops::Placements;
+        let tile = crate::adt::blank::blank_tile(32, 48, "a.blp", 0.0, 0);
+        let mut change = Change::new("Remove doodad");
+        change.absorb(&key(32, 48), Edit::Doodad { index: 2, before: doodad(1024), after: doodad(2048) });
+        change.absorb(
+            &key(32, 48),
+            Edit::Placements {
+                before: Box::new(Placements::capture(&tile)),
+                after: Box::new(Placements::capture(&tile)),
+            },
+        );
+        let redraw = &change.invalidates().tiles[0];
+        assert!(redraw.placements.is_empty() && redraw.buildings.is_empty());
+        assert!(redraw.reread);
+    }
+
+    /// A hole changes the mesh, so the tile is read again, and a placement
+    /// moved in the same change is still named.
+    #[test]
+    fn a_hole_rereads_the_tile_and_keeps_its_placements() {
+        let mut change = Change::new("Cut hole");
+        change.absorb(&key(32, 48), Edit::Holes { chunk: 7, before: 0, after: 1 });
+        change.absorb(&key(32, 48), Edit::Doodad { index: 0, before: doodad(1024), after: doodad(2048) });
+        let redraw = &change.invalidates().tiles[0];
+        assert!(redraw.chunks.is_empty(), "a hole is not a moved vertex");
+        assert_eq!(redraw.placements, vec![0]);
+        assert!(redraw.reread);
+        assert!(change.invalidates().tables.is_empty());
     }
 }

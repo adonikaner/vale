@@ -678,3 +678,17 @@ fn chunks_textures(
             tileset_picker(ui, textures, thumbnails, session);
         });
 }
+
+/// The chunk tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, tables, .. } = subject;
+    chunks(
+        ui,
+        &mut editing.chunks,
+        &mut editing.areas,
+        &mut editing.textures,
+        &mut editing.thumbnails,
+        session,
+        tables,
+    );
+}

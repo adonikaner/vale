@@ -6,13 +6,19 @@
 //! The volume writes through `crate::tables::fields::set_fields` under a gesture
 //! key, so a value dragged through forty steps is one undo entry. The server
 //! half writes rows of the project's store through `crate::tools::places::triggers`,
-//! and is drawn only once the three tables have been read. What the pointer
-//! does in the world is described in `crate::tools::places::triggers`.
+//! and is drawn only once the three tables have been read. The teleport's
+//! columns are `crate::ui::widgets::rowform`'s fields, each with the edited
+//! mark and the revert arrow of every other server row's form. What the
+//! pointer does in the world is described in `crate::tools::places::triggers`.
 
 use bevy_egui::egui;
 
+use crate::ui::shell::asks::ShellAsks;
+use crate::ui::widgets::reference::Resolver;
+use crate::ui::widgets::rowform::{number_cell, page_spacing, server_field, FieldCtx, Hook};
 use crate::ui::widgets::theme;
 use crate::session::EditSession;
+use crate::subjects::quests::Quests;
 use crate::tools::places::triggers::{self, Armed, PickFor, Triggers};
 use vale_assets::tables::areatrigger::fields as tf;
 use vale_edit::dbc::places::{self, Trigger};
@@ -28,6 +34,14 @@ pub struct Subject<'a> {
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// The script window's state, which a template's script id opens.
     pub behaviour: &'a mut crate::subjects::behaviour::Behaviour,
+    /// The name cache and the reference picker the teleport's map column
+    /// resolves through.
+    pub quests: &'a mut Quests,
+    /// Where the map's name asks the shell to open its row.
+    pub asks: &'a mut ShellAsks,
+    /// Where the Fly to buttons send their requests. See
+    /// [`crate::camera::FlyTo`].
+    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
 pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
@@ -38,6 +52,9 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         now,
         server_panel,
         behaviour,
+        quests,
+        asks,
+        fly,
     } = subject;
     if !session.open_table(assets, places::TRIGGERS) {
         theme::note(ui, "opening AreaTrigger.dbc\u{2026}");
@@ -55,14 +72,14 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         .id_salt("triggers")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            match triggers.selected.and_then(|id| triggers.trigger(id).copied()) {
+            match triggers.points.selected.and_then(|id| triggers.trigger(id).copied()) {
                 Some(trigger) => {
                     ui.add_space(4.0);
                     theme::heading(ui, &format!("Trigger {}", trigger.id));
-                    volume(ui, session, triggers, &trigger, now);
+                    volume(ui, session, triggers, fly, &trigger, now);
                     ui.add_space(6.0);
                     theme::heading(ui, "Server rows");
-                    server_half(ui, session, triggers, behaviour, &trigger, now);
+                    server_half(ui, session, triggers, behaviour, &mut Rows { assets, quests, asks, fly }, &trigger, now);
                 }
                 None => theme::note(
                     ui,
@@ -96,7 +113,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
 
 /// The count, and the warning for a file whose maps are split.
 fn summary(ui: &mut egui::Ui, triggers: &Triggers) {
-    theme::note(ui, format!("{} triggers on this map", triggers.list.len()));
+    theme::note(ui, format!("{} triggers on this map", triggers.points.list.len()));
     if !triggers.blocks.is_empty() {
         let maps: Vec<String> = triggers.blocks.iter().map(u32::to_string).collect();
         ui.label(
@@ -140,7 +157,14 @@ fn controls(ui: &mut egui::Ui, triggers: &mut Triggers) {
 }
 
 /// The selected trigger's shape, size and place.
-fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers, trigger: &Trigger, now: f64) {
+fn volume(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    triggers: &mut Triggers,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    trigger: &Trigger,
+    now: f64,
+) {
     let mut sphere = trigger.is_sphere();
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("shape").color(theme::INK_FAINT));
@@ -206,7 +230,7 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
     }
     ui.horizontal(|ui| {
         if ui.button("Fly to").clicked() {
-            triggers.fly_to(trigger.at);
+            fly.write(crate::camera::FlyTo::at(trigger.at.into()));
         }
         if ui
             .button("Snap to ground")
@@ -223,7 +247,7 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
                 triggers.stale();
             }
         }
-        let shipped = triggers.is_shipped(trigger.id);
+        let shipped = triggers.points.is_shipped(trigger.id);
         let remove = ui.button(match shipped {
             true => "Remove\u{2026}",
             false => "Remove",
@@ -236,7 +260,7 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
             .clicked()
         {
             match shipped {
-                true => triggers.confirm_remove = Some(trigger.id),
+                true => triggers.points.confirm_remove = Some(trigger.id),
                 false => {
                     let line = triggers::remove_trigger(session, triggers, trigger.id, now);
                     session.status = line;
@@ -244,7 +268,7 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
             }
         }
     });
-    if triggers.confirm_remove == Some(trigger.id) {
+    if triggers.points.confirm_remove == Some(trigger.id) {
         ui.label(
             egui::RichText::new(
                 "This is a shipped trigger. Removing it also stops the server behaviour \
@@ -259,7 +283,7 @@ fn volume(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers,
                 session.status = line;
             }
             if ui.button("Cancel").clicked() {
-                triggers.confirm_remove = None;
+                triggers.points.confirm_remove = None;
             }
         });
     }
@@ -304,6 +328,7 @@ fn pick_buttons(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     triggers: &mut Triggers,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
     what: PickFor,
     trigger: u32,
     map: u32,
@@ -339,7 +364,7 @@ fn pick_buttons(
             .on_disabled_hover_text("The place is on another map.")
             .clicked()
         {
-            triggers.fly_to(at);
+            fly.write(crate::camera::FlyTo::at(at.into()));
         }
     });
 }
@@ -364,19 +389,29 @@ fn map_choice(ui: &mut egui::Ui, session: &EditSession, salt: (&str, u32), map: 
 }
 
 /// What the server does with the trigger.
+/// What the teleport's fields resolve a reference through, besides the
+/// session.
+struct Rows<'a> {
+    assets: &'a vale_client::assets::GameAssets,
+    quests: &'a mut Quests,
+    asks: &'a mut ShellAsks,
+    fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+}
+
 fn server_half(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     triggers: &mut Triggers,
     behaviour: &mut crate::subjects::behaviour::Behaviour,
+    rows: &mut Rows<'_>,
     trigger: &Trigger,
     now: f64,
 ) {
-    if let Some(trouble) = &triggers.trouble {
+    if let Some(trouble) = triggers.trouble() {
         theme::note(ui, format!("The server's rows could not be read: {trouble}"));
         return;
     }
-    if triggers.held.is_none() {
+    if triggers.held().is_none() {
         theme::note(ui, "reading the five areatrigger tables\u{2026}");
         return;
     }
@@ -404,10 +439,10 @@ fn server_half(
     }
     template(ui, session, triggers, behaviour, trigger, now);
     ui.add_space(6.0);
-    teleport(ui, session, triggers, trigger, now);
+    teleport(ui, session, triggers, rows, trigger, now);
     ui.add_space(4.0);
 
-    let edits = session.server_edits.clone();
+    let edits = session.rows.edits.clone();
     let (inn, _) = triggers.inn(&edits, id).unwrap_or((false, false));
     let mut ticked = inn;
     if ui
@@ -433,7 +468,7 @@ fn server_half(
         }
     });
     ui.add_space(4.0);
-    entrance(ui, session, triggers, trigger, now);
+    entrance(ui, session, triggers, rows.fly, trigger, now);
 }
 
 /// The template row's five server columns: the label, the script and what
@@ -448,7 +483,7 @@ fn template(
     now: f64,
 ) {
     let id = trigger.id;
-    let edits = session.server_edits.clone();
+    let edits = session.rows.edits.clone();
     let (template, in_database) = triggers
         .template(&edits, id)
         .unwrap_or((vale_mangos::trigger::Template { id, ..Default::default() }, false));
@@ -580,10 +615,17 @@ fn template(
 
 /// The battleground entrance block: off, or the battleground, the side and
 /// where a character leaving it returns to.
-fn entrance(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers, trigger: &Trigger, now: f64) {
+fn entrance(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    triggers: &mut Triggers,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    trigger: &Trigger,
+    now: f64,
+) {
     use vale_mangos::trigger::TEAMS;
     let id = trigger.id;
-    let edits = session.server_edits.clone();
+    let edits = session.rows.edits.clone();
     let live = triggers
         .entrance(&edits, id)
         .filter(|(_, _, life)| *life != Life::Delete)
@@ -598,7 +640,7 @@ fn entrance(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         .changed()
     {
         match on {
-            true => triggers::add_entrance(session, triggers, id, triggers.map, trigger.at, now),
+            true => triggers::add_entrance(session, triggers, id, triggers.points.map, trigger.at, now),
             false => triggers::remove_entrance(session, triggers, id, now),
         }
         return;
@@ -658,13 +700,25 @@ fn entrance(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
     for fault in entrance.check() {
         ui.label(egui::RichText::new(fault).size(theme::SMALL).color(theme::WARN));
     }
-    pick_buttons(ui, session, triggers, PickFor::BgExit, id, entrance.exit_map, entrance.exit, entrance.orientation);
+    pick_buttons(ui, session, triggers, fly, PickFor::BgExit, id, entrance.exit_map, entrance.exit, entrance.orientation);
 }
 
-/// The teleport block: off, or the target and its requirements.
-fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Triggers, trigger: &Trigger, now: f64) {
+/// The teleport block: off, or the target and its requirements, one
+/// `areatrigger_teleport` column per row of the page layout.
+///
+/// The target map is chosen from the session's list of maps, the facing is
+/// typed in degrees and written in radians, and the condition has the
+/// condition window's buttons; every other column is drawn as its type asks.
+fn teleport(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    triggers: &mut Triggers,
+    rows: &mut Rows<'_>,
+    trigger: &Trigger,
+    now: f64,
+) {
     let id = trigger.id;
-    let edits = session.server_edits.clone();
+    let edits = session.rows.edits.clone();
     let shown = triggers.teleport(&edits, id);
     let live = shown.as_ref().filter(|(_, _, life)| *life != Life::Delete);
     let mut on = live.is_some();
@@ -678,7 +732,7 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         .changed()
     {
         match on {
-            true => triggers::add_teleport(session, triggers, id, triggers.map, trigger.at, now),
+            true => triggers::add_teleport(session, triggers, id, triggers.points.map, trigger.at, now),
             false => triggers::remove_teleport(session, triggers, id, now),
         }
         return;
@@ -687,7 +741,7 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         return;
     };
     let lacking = triggers::missing(
-        &session.server_edits,
+        &session.rows.edits,
         vale_mangos::trigger::TELEPORT,
         &vale_mangos::trigger::teleport_key(id, teleport.patch),
     );
@@ -702,78 +756,66 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
             .color(theme::WARN),
         );
     }
-    let f = vale_mangos::sql::float;
-    let mut target_map = teleport.target_map;
-    theme::row(ui, "target map", |ui| map_choice(ui, session, ("trigger target map", id), &mut target_map));
-    if target_map != teleport.target_map {
-        triggers::set_teleport(session, triggers, id, "target_map", target_map.to_string(), now);
-    }
-    let mut target = teleport.target;
-    for (axis, (label, column)) in [
-        ("x", "target_position_x"),
-        ("y", "target_position_y"),
-        ("z", "target_position_z"),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        theme::row(ui, label, |ui| {
-            if ui.add(egui::DragValue::new(&mut target[axis]).speed(0.25).suffix(" yd")).changed() {
-                triggers::set_teleport(session, triggers, id, column, f(target[axis]), now);
+    let (key, held) = triggers.teleport_held(id);
+    ui.scope(|ui| {
+        page_spacing(ui);
+        let columns = vale_mangos::trigger::TELEPORT_COLUMNS.iter();
+        for column in columns.filter(|column| column.kind != vale_mangos::schema::Kind::Key) {
+            let field = FieldCtx::new(
+                ui,
+                &session.rows.edits,
+                vale_mangos::trigger::TELEPORT,
+                &key,
+                &held,
+                column,
+                "Edit teleport",
+                now,
+            );
+            let mut resolver = Resolver {
+                session: &mut *session,
+                assets: rows.assets,
+                quests: &mut *rows.quests,
+                asks: &mut *rows.asks,
+            };
+            let written = server_field(ui, &mut resolver, &field, |hook, ui, resolver, field, showing| {
+                if hook != Hook::Cell {
+                    return None;
+                }
+                match field.column.name {
+                    "target_map" => {
+                        let was: u32 = showing.trim().parse().unwrap_or(0);
+                        let mut map = was;
+                        map_choice(ui, resolver.session, ("trigger target map", id), &mut map);
+                        Some((map != was).then(|| map.to_string()))
+                    }
+                    "target_orientation" => {
+                        let radians: f32 = showing.trim().parse().unwrap_or(0.0);
+                        let mut degrees = radians.to_degrees();
+                        let turned = ui
+                            .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("\u{b0}"))
+                            .on_hover_text("The character's facing on arrival. The row stores it in radians.")
+                            .changed();
+                        Some(turned.then(|| vale_mangos::sql::float(degrees.rem_euclid(360.0).to_radians())))
+                    }
+                    "required_condition" => {
+                        let typed = number_cell(ui, field.kind, showing);
+                        let entry: u32 = showing.trim().parse().unwrap_or(0);
+                        let named = format!("{} {id} required_condition", vale_mangos::trigger::TELEPORT);
+                        let answered = crate::ui::subjects::conditions::cell(
+                            ui,
+                            egui::Id::new(("teleport-condition", id)),
+                            &named,
+                            entry,
+                            None,
+                        );
+                        Some(answered.map(|entry| entry.to_string()).or(typed))
+                    }
+                    _ => None,
+                }
+            });
+            if let Some(written) = written {
+                triggers::set_teleport(session, triggers, id, column.name, written, now);
             }
-        });
-    }
-    let mut degrees = teleport.orientation.to_degrees();
-    theme::row(ui, "facing", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("\u{b0}"))
-            .on_hover_text("The character's facing on arrival. The row stores it in radians.")
-            .changed()
-        {
-            let radians = degrees.rem_euclid(360.0).to_radians();
-            triggers::set_teleport(session, triggers, id, "target_orientation", f(radians), now);
-        }
-    });
-    let mut level = teleport.required_level;
-    theme::row(ui, "level", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut level).range(0..=60).speed(0.2))
-            .on_hover_text("Minimum character level for the teleport. 0 for any.")
-            .changed()
-        {
-            triggers::set_teleport(session, triggers, id, "required_level", level.to_string(), now);
-        }
-    });
-    let mut condition = teleport.required_condition;
-    let column = format!("areatrigger_teleport {id} required_condition");
-    theme::row(ui, "condition", |ui| {
-        let typed = ui
-            .add(egui::DragValue::new(&mut condition).speed(1.0))
-            .on_hover_text("required_condition: a row of `conditions` the character must meet to be sent, or 0.")
-            .changed();
-        let answered = crate::ui::subjects::conditions::cell(ui, egui::Id::new(("teleport-condition", id)), &column, teleport.required_condition, None);
-        if let Some(condition) = answered.or(typed.then_some(condition)).filter(|condition| *condition != teleport.required_condition) {
-            triggers::set_teleport(session, triggers, id, "required_condition", condition.to_string(), now);
-        }
-    });
-    let mut message = teleport.message.clone();
-    theme::row(ui, "message", |ui| {
-        if ui
-            .text_edit_singleline(&mut message)
-            .on_hover_text("Message shown to a character who does not meet the requirements.")
-            .changed()
-        {
-            triggers::set_teleport(session, triggers, id, "message", vale_mangos::sql::text(&message), now);
-        }
-    });
-    let mut name = teleport.name.clone();
-    theme::row(ui, "label", |ui| {
-        if ui
-            .text_edit_singleline(&mut name)
-            .on_hover_text("The row's name column, for people reading the table. The game does not show it.")
-            .changed()
-        {
-            triggers::set_teleport(session, triggers, id, "name", vale_mangos::sql::text(&name), now);
         }
     });
     for fault in teleport.check() {
@@ -794,10 +836,32 @@ fn teleport(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trigger
         ui,
         session,
         triggers,
+        rows.fly,
         PickFor::Teleport,
         id,
         teleport.target_map,
         teleport.target,
         teleport.orientation,
+    );
+}
+
+/// The trigger tool's inspector panel. Area triggers are client table rows
+/// that are places, picked in the viewport like a flight node, with server
+/// rows beside them.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, now, server_panel, .. } = subject;
+    draw(
+        ui,
+        Subject {
+            session,
+            triggers: &mut editing.triggers,
+            assets,
+            now,
+            server_panel,
+            behaviour: &mut editing.behaviour,
+            quests: &mut editing.quests,
+            asks: &mut editing.asks,
+            fly: &mut editing.fly,
+        },
     );
 }

@@ -24,8 +24,8 @@
 //! Two world tools share state with a workspace, and each pair is settled
 //! where it is read. The creature tool and the Creatures workspace hold one
 //! template row: with both in use the workspace follows the world's
-//! selection, so they show the same row (`tools::spawns::creatures::fetch_rows`; game
-//! objects alike). The table browser is used by the Lights, Flight Paths,
+//! selection, so they show the same row (`tools::spawns::spawn::fetch_rows`, for
+//! both spawn subjects). The table browser is used by the Lights, Flight Paths,
 //! Triggers and Graveyards tools as well as the table workspaces: the main
 //! window's tool has it while it is one of those, and the window says so in
 //! place of its form ([`Popout::browser_lent`]).
@@ -87,18 +87,10 @@ pub enum Group {
 
 impl Group {
     /// The group of a tool, or `None` for one with no state a workspace holds.
+    /// Every tool with a client table is in [`Group::Tables`]. See
+    /// [`crate::tools::Spec::window`].
     pub fn of(tool: Tool) -> Option<Group> {
-        if tool.table().is_some() {
-            return Some(Group::Tables);
-        }
-        match tool {
-            Tool::Items => Some(Group::Items),
-            Tool::Quests => Some(Group::Quests),
-            Tool::CreatureData => Some(Group::Creatures),
-            Tool::GameObjectData => Some(Group::Objects),
-            Tool::Assets => Some(Group::Assets),
-            _ => None,
-        }
+        tool.spec().window
     }
 }
 
@@ -481,7 +473,7 @@ fn open(commands: &mut Commands, popout: &mut Popout, workspace: Tool) {
 }
 
 /// `--pop-out`: the workspace the editor opens on goes to a window, once there
-/// is a session to draw it from. See `crate::args::Args::pop_out`.
+/// is a session to draw it from. See `crate::args::view::View::pop_out`.
 fn on_the_command_line(
     args: Res<crate::args::Args>,
     mut popout: ResMut<Popout>,
@@ -489,14 +481,14 @@ fn on_the_command_line(
     session: Option<Res<crate::session::EditSession>>,
     mut done: Local<bool>,
 ) {
-    if *done || !args.pop_out || session.is_none() {
+    if *done || !args.view.pop_out || session.is_none() {
         return;
     }
     *done = true;
     if tool.covers_viewport() {
         popout.asks.push(Ask::Open(*tool));
     }
-    for &also in &args.pop_out_also {
+    for &also in &args.view.pop_out_also {
         popout.asks.push(Ask::Open(also));
     }
 }

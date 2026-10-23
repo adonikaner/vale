@@ -703,14 +703,14 @@ fn press(
 /// `--chunks "<x,y>;<x,y>"`: select the block between the chunks two world
 /// positions are over, once both are over open tiles. One position selects
 /// its own chunk. `--stitch` then stitches the block to the ground around
-/// it. See `crate::args::Args::chunks`.
+/// it. See `crate::args::tools::Tools::chunks`.
 fn scripted(
     mut chunks: ResMut<Chunks>,
     mut session: Option<ResMut<EditSession>>,
     args: Res<crate::args::Args>,
     mut done: Local<bool>,
 ) {
-    let (Some(points), Some(session)) = (args.chunks.as_ref(), session.as_mut()) else {
+    let (Some(points), Some(session)) = (args.tools.chunks.as_ref(), session.as_mut()) else {
         return;
     };
     if *done {
@@ -729,7 +729,7 @@ fn scripted(
     chunks.select(block(from, to));
     chunks.primary = Some(to);
     info!("--chunks: {} selected", chunks.selected.len());
-    if args.stitch {
+    if args.tools.stitch {
         let changed = stitch(session, &chunks.selected, chunks.stitch);
         info!("--stitch: {changed} chunks moved");
         session.status = format!("stitched: {changed} chunks moved");

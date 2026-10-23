@@ -72,6 +72,7 @@ pub(in crate::ui::tools) fn paint(
     cursor: &Cursor,
     assets: &vale_client::assets::GameAssets,
     guides: &mut crate::tools::guides::Guides,
+    asks: &mut crate::ui::shell::asks::ShellAsks,
     now: f64,
 ) {
     tileset_chosen(ui, textures, thumbnails, session, assets);
@@ -89,7 +90,7 @@ pub(in crate::ui::tools) fn paint(
         )
         .clicked()
     {
-        textures.import_asked = true;
+        asks.push(crate::ui::shell::asks::ShellAsk::ImportGround);
     }
 
     ui.add_space(4.0);
@@ -943,4 +944,21 @@ fn counts_while_open(
     };
     ui.data_mut(|data| data.insert_temp(id, (pass, texture.to_string(), counts.clone())));
     counts
+}
+
+/// The texture brush's inspector panel, with the tablet's settings under it.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, cursor, assets, guides, now, .. } = subject;
+    paint(
+        ui,
+        &mut editing.textures,
+        &mut editing.thumbnails,
+        session,
+        cursor,
+        assets,
+        guides,
+        &mut editing.asks,
+        now,
+    );
+    crate::ui::tools::tablet::tablet(ui, &mut editing.tablet, &editing.pen);
 }

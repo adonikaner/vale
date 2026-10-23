@@ -22,7 +22,7 @@
 //! drags use (`creature {guid} position`, `gameobject {guid} facing`). A move
 //! made with the gizmo, the arrow keys and the pointer in quick succession
 //! therefore folds into one undo entry. A game object's facing is written by
-//! `GameObjects::turn`, which also writes `rotation2` and `rotation3` for an
+//! `GameObjectSubject::face`, which also writes `rotation2` and `rotation3` for an
 //! upright object so the quaternion the client is sent agrees with the facing.
 //!
 //! ## The keys
@@ -35,15 +35,15 @@
 //! While a new spawn is on the cursor in Place, `,` and `.` and `Alt` with
 //! the mouse turn that spawn and not the selection, in the doodad placer's
 //! steps: [`PLACE_TURN`] degrees a press, three times that with `Shift`, and
-//! `Ctrl` with `Alt` snaps to it. See `Creatures::turn_ghost`.
+//! `Ctrl` with `Alt` snaps to it. See `SpawnTool::turn_ghost`.
 
-use super::creatures::Creatures;
-use super::gameobjects::GameObjects;
+use crate::tools::spawns::creatures::Creatures;
+use crate::tools::spawns::gameobjects::GameObjects;
+use super::{SpawnSubject, SpawnTool, SpawnWrites, Spawned};
+use crate::session::EditSession;
 use crate::tools::Tool;
-use crate::session::{EditSession, rows::Gesture};
-use vale_mangos::row::{Edits, Key};
-use vale_mangos::{creature, gameobject};
 use bevy::prelude::*;
+use vale_mangos::row::Edits;
 
 /// Yards an arrow key or `PageUp`/`PageDown` moves a spawn. The doodad tool's
 /// step, because a creature is about the size of a doodad.
@@ -70,51 +70,30 @@ pub fn turned(facing: f32, degrees: f32, snap: bool) -> f32 {
     to.rem_euclid(360.0).to_radians()
 }
 
-/// Which table the selected spawn is a row of.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Kind {
-    Creature,
-    /// `tilted` is whether `rotation0` or `rotation1` is non-zero. A tilted
-    /// object's facing is written without the quaternion; see
-    /// `GameObjects::turn`.
-    Object { tilted: bool },
-}
-
 /// The selected spawn: which row, where it stands and which way it faces, as
-/// the project's edits leave it.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// the project's edits leave it, and the subject that writes it.
+#[derive(Debug, Clone, Copy)]
 pub struct Standing {
-    pub kind: Kind,
+    /// The subject's writes: which table the row is in and how a move and a
+    /// turn are written.
+    pub writes: &'static dyn SpawnWrites,
     pub guid: u64,
     /// World position, in WoW axes: x north, y west, z up.
     pub at: Vec3,
     /// Radians anticlockwise from north, as the `orientation` column stores it.
     pub orientation: f32,
+    /// Whether the row's turn is more than its facing. A tilted game object's
+    /// facing is written without the quaternion; see
+    /// `crate::tools::spawns::gameobjects::GameObjectSubject::face`.
+    pub tilted: bool,
 }
 
 /// The selected spawn of whichever of the two tools is chosen, or `None` for
 /// any other tool or when nothing is selected.
-pub fn chosen(
-    tool: Tool,
-    creatures: &Creatures,
-    objects: &GameObjects,
-    edits: Option<&Edits>,
-) -> Option<Standing> {
+pub fn chosen(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: Option<&Edits>) -> Option<Standing> {
     match tool {
-        Tool::Creatures => creatures.chosen_edited(edits).map(|spawn| Standing {
-            kind: Kind::Creature,
-            guid: spawn.guid,
-            at: spawn.at,
-            orientation: spawn.orientation,
-        }),
-        Tool::GameObjects => objects.chosen_edited(edits).map(|spawn| Standing {
-            kind: Kind::Object {
-                tilted: spawn.tilted,
-            },
-            guid: spawn.guid,
-            at: spawn.at,
-            orientation: spawn.orientation,
-        }),
+        Tool::Creatures => creatures.standing(edits),
+        Tool::GameObjects => objects.standing(edits),
         _ => None,
     }
 }
@@ -122,37 +101,10 @@ pub fn chosen(
 /// The rest of the chosen tool's selection, beside the primary [`chosen`]
 /// answers, as the project's edits leave each. A member no longer on the map is
 /// left out.
-pub fn members(
-    tool: Tool,
-    creatures: &Creatures,
-    objects: &GameObjects,
-    edits: Option<&Edits>,
-) -> Vec<Standing> {
+pub fn members(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: Option<&Edits>) -> Vec<Standing> {
     match tool {
-        Tool::Creatures => creatures
-            .also
-            .iter()
-            .filter_map(|&guid| creatures.edited(guid, edits))
-            .map(|spawn| Standing {
-                kind: Kind::Creature,
-                guid: spawn.guid,
-                at: spawn.at,
-                orientation: spawn.orientation,
-            })
-            .collect(),
-        Tool::GameObjects => objects
-            .also
-            .iter()
-            .filter_map(|&guid| objects.edited(guid, edits))
-            .map(|spawn| Standing {
-                kind: Kind::Object {
-                    tilted: spawn.tilted,
-                },
-                guid: spawn.guid,
-                at: spawn.at,
-                orientation: spawn.orientation,
-            })
-            .collect(),
+        Tool::Creatures => creatures.member_standings(edits),
+        Tool::GameObjects => objects.member_standings(edits),
         _ => Vec::new(),
     }
 }
@@ -176,15 +128,12 @@ pub fn move_group(
     let Some(first) = members.first() else {
         return;
     };
-    let noun = match first.kind {
-        Kind::Creature => "creatures",
-        Kind::Object { .. } => "game objects",
-    };
+    let noun = first.writes.nouns();
     let label = match what {
         "facing" => format!("Turn {} {noun}", members.len()),
         _ => format!("Move {} {noun}", members.len()),
     };
-    let subject = format!("{} group {} {what}", first.row().2, first.guid);
+    let subject = format!("{} group {} {what}", first.writes.table(), first.guid);
     let spin = crate::tools::placements::group::turn_about(Vec3::Z, turn.to_degrees());
     session.as_one(&label, &subject, |session| {
         for member in members {
@@ -200,87 +149,51 @@ pub fn move_group(
 }
 
 impl Standing {
+    /// A spawn of subject `S`, as it is drawn.
+    pub fn of<S: SpawnSubject>(spawn: &S::Spawn) -> Standing {
+        Standing {
+            writes: S::writes(),
+            guid: spawn.guid(),
+            at: spawn.at(),
+            orientation: spawn.orientation(),
+            tilted: spawn.tilted(),
+        }
+    }
+
     /// The word for it in an undo label and a status line.
     pub fn noun(&self) -> &'static str {
-        match self.kind {
-            Kind::Creature => "creature",
-            Kind::Object { .. } => "game object",
-        }
+        self.writes.noun()
     }
 
-    /// The table and key its spawn row is written under, and the prefix of
-    /// the gesture subjects the tool's own drag uses for the same row.
-    fn row(&self) -> (&'static str, Key, &'static str) {
-        match self.kind {
-            Kind::Creature => (creature::SPAWN, creature::spawn_key(self.guid), "creature"),
-            Kind::Object { .. } => (gameobject::SPAWN, gameobject::spawn_key(self.guid), "gameobject"),
-        }
-    }
-
-    /// Write the three position columns.
+    /// Write the three position columns, under the gesture subject the tool's
+    /// own drag uses for the same row.
     pub fn move_to(&self, session: &mut EditSession, to: Vec3, now: f64) {
-        let (table, key, prefix) = self.row();
-        let subject = format!("{prefix} {} position", self.guid);
-        let label = match self.kind {
-            Kind::Creature => "Move creature",
-            Kind::Object { .. } => "Move game object",
-        };
-        for (column, value) in [("position_x", to.x), ("position_y", to.y), ("position_z", to.z)] {
-            session.set_server_edit(
-                table,
-                &key,
-                column,
-                Some(vale_mangos::sql::float(value)),
-                Some(Gesture {
-                    label,
-                    subject: &subject,
-                    now,
-                }),
-            );
-        }
+        self.writes.move_to(session, self.guid, to, now);
     }
 
     /// Write the facing, in radians, brought into `0..2π`.
     pub fn face(&self, session: &mut EditSession, orientation: f32, now: f64) {
         let orientation = orientation.rem_euclid(std::f32::consts::TAU);
-        match self.kind {
-            Kind::Creature => {
-                let (table, key, prefix) = self.row();
-                let subject = format!("{prefix} {} facing", self.guid);
-                session.set_server_edit(
-                    table,
-                    &key,
-                    "orientation",
-                    Some(vale_mangos::sql::float(orientation)),
-                    Some(Gesture {
-                        label: "Turn creature",
-                        subject: &subject,
-                        now,
-                    }),
-                );
-            }
-            Kind::Object { tilted } => {
-                GameObjects::turn(session, self.guid, tilted, orientation, now);
-            }
-        }
+        self.writes.face(session, self.guid, self.tilted, orientation, now);
     }
 }
 
-/// Registers [`keys`].
+/// Registers [`keys`] for both tools.
 pub struct SpawnKeysPlugin;
 
 impl Plugin for SpawnKeysPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, keys);
+        use crate::tools::spawns::creatures::CreatureSubject;
+        use crate::tools::spawns::gameobjects::GameObjectSubject;
+        app.add_systems(Update, (keys::<CreatureSubject>, keys::<GameObjectSubject>));
     }
 }
 
 /// Move, turn, remove and duplicate the selected spawn from the keyboard.
 /// The keys are listed in the module comment and on both tools' panels.
 #[allow(clippy::too_many_arguments)]
-pub fn keys(
-    mut creatures: ResMut<Creatures>,
-    mut objects: ResMut<GameObjects>,
+pub fn keys<S: SpawnSubject>(
+    mut spawns: ResMut<SpawnTool<S>>,
     mut session: Option<ResMut<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -289,7 +202,7 @@ pub fn keys(
     time: Res<Time>,
     mut menu: ResMut<crate::context::ContextMenu>,
 ) {
-    if !matches!(*tool, Tool::Creatures | Tool::GameObjects) || !state.editing() {
+    if *tool != S::TOOL || !state.editing() {
         return;
     }
     // The right-click menu's Delete and Duplicate, carried out here so the
@@ -303,12 +216,8 @@ pub fn keys(
     }
     // While a spawn is on the cursor the keys are the placer's: `,` and `.`
     // turn it, and nothing reaches the selection, whose form the panel is not
-    // showing. `Escape` is each tool's own `ghost`.
-    let placing = match *tool {
-        Tool::Creatures => creatures.placing(),
-        _ => objects.placing(),
-    };
-    if placing {
+    // showing. `Escape` is the tool's own `ghost`.
+    if spawns.placing() {
         let far = match keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
             true => 3.0,
             false => 1.0,
@@ -321,60 +230,35 @@ pub fn keys(
             turn += PLACE_TURN * far;
         }
         if turn != 0.0 {
-            match *tool {
-                Tool::Creatures => creatures.turn_ghost(turn, false),
-                _ => objects.turn_ghost(turn, false),
-            }
+            spawns.turn_ghost(turn, false);
         }
         return;
     }
     let Some(session) = session.as_mut() else {
         return;
     };
-    let Some(was) = chosen(*tool, &creatures, &objects, Some(&session.server_edits)) else {
+    let Some(was) = spawns.standing(Some(&session.rows.edits)) else {
         return;
     };
     let now = time.elapsed_secs_f64();
     let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let delete = keys.just_pressed(KeyCode::Delete) || request == Some(Request::Delete);
-    let duplicate =
-        (control && keys.just_pressed(KeyCode::KeyD)) || request == Some(Request::Duplicate);
+    let duplicate = (control && keys.just_pressed(KeyCode::KeyD)) || request == Some(Request::Duplicate);
     // The group is looked up only on a frame a key is pressed: finding a member
     // is a walk of the map's spawns, and most frames press nothing.
-    let grouped = match *tool {
-        Tool::Creatures => !creatures.also.is_empty(),
-        _ => !objects.also.is_empty(),
-    };
-    if grouped {
+    if !spawns.also.is_empty() {
         if request.is_none() && !KEYS.iter().any(|&key| keys.just_pressed(key)) {
             return;
         }
-        let others = members(*tool, &creatures, &objects, Some(&session.server_edits));
-        group_keys(
-            &mut creatures,
-            &mut objects,
-            session,
-            &keys,
-            was,
-            others,
-            Asked {
-                control,
-                delete,
-                duplicate,
-            },
-            now,
-        );
+        let others = spawns.member_standings(Some(&session.rows.edits));
+        group_keys(&mut spawns, session, &keys, was, others, Asked { control, delete, duplicate }, now);
         return;
     }
 
     // Ctrl+D. `tools::shortcuts` handles it for doodads and WMOs and does not
     // name these two tools, so the two cannot both act on one press.
     if duplicate {
-        let made = match was.kind {
-            Kind::Creature => creatures.duplicate(session, now),
-            Kind::Object { .. } => objects.duplicate(session, now),
-        };
-        session.status = match made {
+        session.status = match spawns.duplicate(session, now) {
             Some(guid) => format!("duplicated as guid {guid}"),
             None => "not duplicated: the spawn row has not loaded yet".to_string(),
         };
@@ -387,14 +271,8 @@ pub fn keys(
     }
 
     if delete {
-        let created = match was.kind {
-            Kind::Creature => creatures.chosen().is_some_and(|spawn| spawn.is_new()),
-            Kind::Object { .. } => objects.chosen().is_some_and(|spawn| spawn.is_new()),
-        };
-        match was.kind {
-            Kind::Creature => Creatures::remove(session, was.guid, now),
-            Kind::Object { .. } => GameObjects::remove(session, was.guid, now),
-        }
+        let created = spawns.chosen().is_some_and(|spawn| spawn.is_new());
+        SpawnTool::<S>::remove(session, was.guid, now);
         // A spawn this project created has no row once its claim is dropped,
         // so the selection is cleared, as the panels' Remove buttons do.
         session.status = match created {
@@ -402,10 +280,7 @@ pub fn keys(
             false => format!("{} {} is marked for removal", was.noun(), was.guid),
         };
         if created {
-            match was.kind {
-                Kind::Creature => creatures.select_only(None),
-                Kind::Object { .. } => objects.select(None),
-            }
+            spawns.select_only(None);
         }
         return;
     }
@@ -414,6 +289,19 @@ pub fn keys(
         true => 10.0,
         false => 1.0,
     };
+    let step = step_of(&keys);
+    if step != Vec3::ZERO {
+        was.move_to(session, was.at + step * STEP * far, now);
+    }
+    let turn = turn_of(&keys) * far;
+    if turn != 0.0 {
+        was.face(session, was.orientation + turn.to_radians(), now);
+    }
+}
+
+/// The step the arrow keys and `PageUp`/`PageDown` pressed this frame ask for,
+/// one yard per key.
+fn step_of(keys: &ButtonInput<KeyCode>) -> Vec3 {
     let mut step = Vec3::ZERO;
     for (key, direction) in [
         (KeyCode::ArrowUp, Vec3::X),
@@ -427,22 +315,20 @@ pub fn keys(
             step += direction;
         }
     }
-    if step != Vec3::ZERO {
-        was.move_to(session, was.at + step * STEP * far, now);
-    }
-
-    let mut turn = 0.0;
-    if keys.just_pressed(KeyCode::Comma) {
-        turn -= TURN * far;
-    }
-    if keys.just_pressed(KeyCode::Period) {
-        turn += TURN * far;
-    }
-    if turn != 0.0 {
-        was.face(session, was.orientation + turn.to_radians(), now);
-    }
+    step
 }
 
+/// The turn `,` and `.` pressed this frame ask for, in degrees.
+fn turn_of(keys: &ButtonInput<KeyCode>) -> f32 {
+    let mut turn = 0.0;
+    if keys.just_pressed(KeyCode::Comma) {
+        turn -= TURN;
+    }
+    if keys.just_pressed(KeyCode::Period) {
+        turn += TURN;
+    }
+    turn
+}
 
 /// Every key [`keys`] answers. A group is looked up only on a frame one of
 /// these is pressed.
@@ -479,10 +365,8 @@ struct Asked {
 /// `Ctrl+D` does not copy a group. A spawn's copy carries every column of its
 /// row, and the whole row is read for the primary only, so copying the others
 /// would write rows with the table's defaults in place of their own columns.
-#[allow(clippy::too_many_arguments)]
-fn group_keys(
-    creatures: &mut Creatures,
-    objects: &mut GameObjects,
+fn group_keys<S: SpawnSubject>(
+    spawns: &mut SpawnTool<S>,
     session: &mut EditSession,
     keys: &ButtonInput<KeyCode>,
     was: Standing,
@@ -492,15 +376,9 @@ fn group_keys(
 ) {
     let mut all = vec![was];
     all.extend(others);
-    let noun = match was.kind {
-        Kind::Creature => "creatures",
-        Kind::Object { .. } => "game objects",
-    };
+    let noun = S::WORDS.nouns;
     if asked.duplicate {
-        session.status = format!(
-            "{} {noun} selected; Ctrl+D duplicates one spawn at a time",
-            all.len()
-        );
+        session.status = format!("{} {noun} selected; Ctrl+D duplicates one spawn at a time", all.len());
         return;
     }
     if asked.control {
@@ -508,34 +386,24 @@ fn group_keys(
     }
 
     if asked.delete {
-        let (table, prefix) = match was.kind {
-            Kind::Creature => (creature::SPAWN, "creature"),
-            Kind::Object { .. } => (gameobject::SPAWN, "gameobject"),
-        };
         // Which of them this project created, read before the claims change:
         // those have no row once removed, so they leave the selection.
         let created: Vec<u64> = all
             .iter()
             .filter(|member| {
-                let key = match member.kind {
-                    Kind::Creature => creature::spawn_key(member.guid),
-                    Kind::Object { .. } => gameobject::spawn_key(member.guid),
-                };
                 session
-                    .server_edits
-                    .row(table, &key)
+                    .rows
+                    .edits
+                    .row(S::SPAWN, &S::spawn_key(member.guid))
                     .is_some_and(|row| row.life == vale_mangos::row::Life::Insert)
             })
             .map(|member| member.guid)
             .collect();
         let label = format!("Remove {} {noun}", all.len());
-        let subject = format!("{prefix} group {} removal", was.guid);
+        let subject = format!("{} group {} removal", S::SPAWN, was.guid);
         session.as_one(&label, &subject, |session| {
             for member in &all {
-                match member.kind {
-                    Kind::Creature => Creatures::remove(session, member.guid, now),
-                    Kind::Object { .. } => GameObjects::remove(session, member.guid, now),
-                }
+                SpawnTool::<S>::remove(session, member.guid, now);
             }
         });
         let kept = all.len() - created.len();
@@ -546,23 +414,9 @@ fn group_keys(
         };
         // What is left selected is every member that still has a row, the
         // primary first when it is one of them.
-        let survivors: Vec<u64> = all
-            .iter()
-            .map(|member| member.guid)
-            .filter(|guid| !created.contains(guid))
-            .collect();
-        let primary = survivors.first().copied();
-        let rest: Vec<u64> = survivors.iter().skip(1).copied().collect();
-        match was.kind {
-            Kind::Creature => {
-                creatures.select_only(primary);
-                creatures.also = rest;
-            }
-            Kind::Object { .. } => {
-                objects.select(primary);
-                objects.also = rest;
-            }
-        }
+        let survivors: Vec<u64> = all.iter().map(|member| member.guid).filter(|guid| !created.contains(guid)).collect();
+        spawns.select_only(survivors.first().copied());
+        spawns.also = survivors.iter().skip(1).copied().collect();
         return;
     }
 
@@ -570,29 +424,11 @@ fn group_keys(
         true => 10.0,
         false => 1.0,
     };
-    let mut step = Vec3::ZERO;
-    for (key, direction) in [
-        (KeyCode::ArrowUp, Vec3::X),
-        (KeyCode::ArrowDown, Vec3::NEG_X),
-        (KeyCode::ArrowLeft, Vec3::Y),
-        (KeyCode::ArrowRight, Vec3::NEG_Y),
-        (KeyCode::PageUp, Vec3::Z),
-        (KeyCode::PageDown, Vec3::NEG_Z),
-    ] {
-        if keys.just_pressed(key) {
-            step += direction;
-        }
-    }
+    let step = step_of(keys);
     if step != Vec3::ZERO {
         move_group(session, &all, was.at, step * STEP * far, 0.0, "position", now);
     }
-    let mut turn = 0.0;
-    if keys.just_pressed(KeyCode::Comma) {
-        turn -= TURN * far;
-    }
-    if keys.just_pressed(KeyCode::Period) {
-        turn += TURN * far;
-    }
+    let turn = turn_of(keys) * far;
     if turn != 0.0 {
         move_group(session, &all, was.at, Vec3::ZERO, turn.to_radians(), "facing", now);
     }

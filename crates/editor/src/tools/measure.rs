@@ -296,7 +296,7 @@ fn scripted(
     args: Res<crate::args::Args>,
     mut done: Local<bool>,
 ) {
-    let (Some(points), Some(session)) = (args.measure.as_ref(), session.as_mut()) else {
+    let (Some(points), Some(session)) = (args.tools.measure.as_ref(), session.as_mut()) else {
         return;
     };
     if *done {

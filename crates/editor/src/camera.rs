@@ -152,13 +152,39 @@ impl Default for EditorCamera {
 impl EditorCamera {
     /// Put the focus somewhere on the map, and ask for the ground under it.
     ///
-    /// The one way anything outside this file moves the camera. It keeps the
-    /// yaw, the pitch and the distance, so a jump changes where the camera is
-    /// looking and not how.
+    /// It keeps the yaw, the pitch and the distance, so a jump changes where
+    /// the camera is looking and not how. A tool that names a height as well
+    /// sends a [`FlyTo`] instead.
     pub fn go_to(&mut self, at: Vec2) {
         self.target.x = at.x;
         self.target.y = at.y;
         self.wants_the_ground = true;
+    }
+}
+
+/// A request to move the camera's focus to a selected thing: a spawn, a light,
+/// a trigger, a graveyard, a flight node or path, a waypoint.
+///
+/// Sent by a tool's panel button or command-line flag and carried out by
+/// [`fly_to`], the one reader. The height is kept and `wants_the_ground` is
+/// cleared: a light's centre runs from 234 yards under the ground to 763
+/// above it, and a flight node or a waypoint is meant to be in the air, so
+/// dropping the focus to the ground would put the camera somewhere the row
+/// does not name. The yaw and the pitch are kept.
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
+pub struct FlyTo {
+    /// The new focus, in the world's own axes.
+    pub at: Vec3,
+    /// Yards the eye is to stand from the focus, when the request frames
+    /// something wider than a point (a whole flight path). `None` keeps the
+    /// current distance.
+    pub distance: Option<f32>,
+}
+
+impl FlyTo {
+    /// Look at a point from the current distance.
+    pub fn at(at: Vec3) -> FlyTo {
+        FlyTo { at, distance: None }
     }
 }
 
@@ -342,9 +368,13 @@ pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<EditorCamera>().init_resource::<TopDown>().add_systems(
+        app.init_resource::<EditorCamera>().init_resource::<TopDown>().add_message::<FlyTo>().add_systems(
             Update,
-            (fly, drive)
+            // `fly_to` first, so the keys read this frame move from the place
+            // a request named. A request sent later in the frame (the panels
+            // draw in the egui pass) is read on the next frame; a message is
+            // kept across one frame boundary, so none is lost.
+            (fly_to, fly, drive)
                 .chain()
                 // After the client's `orbit` and before its `collide`. The
                 // module comment says which fault each of the two orderings
@@ -357,6 +387,21 @@ impl Plugin for CameraPlugin {
                 // before this frame's input: two yards of lag at a sprint.
                 .before(vale_client::world::camera::place),
         );
+    }
+}
+
+/// Carry out the last [`FlyTo`] sent since the previous frame.
+///
+/// Runs whether or not the editor is driving: a request made during a
+/// playtest moves the editor's camera for when editing resumes.
+fn fly_to(mut asked: MessageReader<FlyTo>, mut camera: ResMut<EditorCamera>) {
+    let Some(last) = asked.read().last().copied() else {
+        return;
+    };
+    camera.target = last.at;
+    camera.wants_the_ground = false;
+    if let Some(distance) = last.distance {
+        camera.distance = distance;
     }
 }
 
@@ -694,6 +739,21 @@ mod tests {
         assert_eq!(right, Vec3::new(0.0, 1.0, 0.0), "+Y is west");
         // …and right is ninety degrees clockwise from forward, seen from above.
         assert!(forward.dot(right).abs() < 1e-6);
+    }
+
+    /// A request moves the focus once. `drive` writes the rig every frame, so
+    /// a request that stood would fight every later move of the camera.
+    #[test]
+    fn a_fly_to_is_carried_out_once() {
+        let mut app = App::new();
+        app.add_message::<FlyTo>().init_resource::<EditorCamera>().add_systems(Update, fly_to);
+        app.world_mut().write_message(FlyTo { at: Vec3::new(1.0, 2.0, 300.0), distance: Some(90.0) });
+        app.update();
+        let camera = app.world().resource::<EditorCamera>();
+        assert_eq!((camera.target, camera.distance, camera.wants_the_ground), (Vec3::new(1.0, 2.0, 300.0), 90.0, false));
+        app.world_mut().resource_mut::<EditorCamera>().target = Vec3::ZERO;
+        app.update();
+        assert_eq!(app.world().resource::<EditorCamera>().target, Vec3::ZERO);
     }
 
     /// In flight, W moves along the line of sight: from the eye toward the

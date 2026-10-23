@@ -297,3 +297,9 @@ fn road_texture(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str, effe
             );
     });
 }
+
+/// The road tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, .. } = subject;
+    road(ui, &mut editing.road, &mut editing.textures, &mut editing.thumbnails, session);
+}

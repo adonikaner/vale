@@ -904,7 +904,7 @@ impl Reverted {
 }
 
 /// `--revert`: the popover's Put back button, run from the command line. See
-/// [`crate::args::Args::revert`].
+/// [`crate::args::server::Server::revert`].
 ///
 /// Runs once, on the first frame that has a session to read the project from,
 /// and never again. A flag that ran on every frame would put the server back
@@ -915,7 +915,7 @@ pub fn on_the_command_line(
     server: Res<crate::server::settings::ServerSettings>,
     mut done: Local<bool>,
 ) {
-    if *done || !args.revert {
+    if *done || !args.server.revert {
         return;
     }
     let Some(mut session) = session else { return };

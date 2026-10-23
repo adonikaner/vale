@@ -100,7 +100,7 @@ pub(super) fn run_command(
             }
         }
         // The shell gives the area to the Areas tool and switches to it.
-        Command::PaintArea => work.browser.paint_area = Some(id),
+        Command::PaintArea => work.asks.push(crate::ui::shell::asks::ShellAsk::PaintArea(id)),
         // A `LightParams` row is copied with its bands, which no column
         // points at; see `tables::rows::copy_light_params`.
         Command::Clone if table == "LightParams" => {

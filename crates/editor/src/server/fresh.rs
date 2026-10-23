@@ -30,6 +30,11 @@
 //! * One counter for every subject, so a list is re-read after another
 //!   subject's write moves its rows (a renumber does).
 //! * [`Fresh`], a cache that empties itself when the counter has moved.
+//! * [`FreshTask`], one read on a task at a time: an answer to a read started
+//!   before the counter moved is dropped, and the last failure is kept until
+//!   it moves. [`FreshReads`] is the same with the answers kept by key. Both
+//!   take the counter as an argument to start a read, and start nothing at a
+//!   counter they have not been renewed to.
 //! * The test `every_read_is_started_by_a_function_that_checks_the_counter`,
 //!   which reads this crate's source and fails when a function that starts a
 //!   database read (`queue::read(`) does not mention the counter first.
@@ -37,6 +42,9 @@
 use crate::session::EditSession;
 use vale_mangos::row::{Edits, Life};
 use bevy::prelude::*;
+use bevy::tasks::{block_on, futures_lite::future, Task};
+use std::collections::HashMap;
+use std::hash::Hash;
 
 /// A value read from the world database, and the
 /// [`EditSession::database_writes`] it was read at. [`Self::renew`] empties it
@@ -76,6 +84,207 @@ impl<T> std::ops::Deref for Fresh<T> {
 impl<T> std::ops::DerefMut for Fresh<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.value
+    }
+}
+
+/// A database read that answers `Result<A, String>`, run on a task.
+pub type Read<A> = Task<Result<A, String>>;
+
+/// One read of the world database at a time, and why the last one failed.
+///
+/// The caller renews it with [`EditSession::database_writes`] every frame
+/// before reading anything out of it, and empties what it keeps from earlier
+/// answers when [`Self::renew`] says the counter moved. A read started at an
+/// earlier counter is let finish and its answer dropped, so one task is in
+/// flight at a time.
+pub struct FreshTask<A> {
+    read_at: Option<u64>,
+    /// The read in flight and the counter it was started at.
+    running: Option<(u64, Read<A>)>,
+    /// Why the last read answered nothing. A tool shows it in place of what
+    /// it would have read, and starts no read while it is set.
+    trouble: Option<String>,
+}
+
+impl<A> Default for FreshTask<A> {
+    fn default() -> FreshTask<A> {
+        FreshTask { read_at: None, running: None, trouble: None }
+    }
+}
+
+impl<A> std::fmt::Debug for FreshTask<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FreshTask")
+            .field("read_at", &self.read_at)
+            .field("running", &self.running.as_ref().map(|(at, _)| at))
+            .field("trouble", &self.trouble)
+            .finish()
+    }
+}
+
+impl<A> FreshTask<A> {
+    /// Note the counter. `true` when it moved since the last call, which is
+    /// when the caller empties what it holds; a failure against the database
+    /// as it was is forgotten, so the read is tried again.
+    pub fn renew(&mut self, writes: u64) -> bool {
+        if self.read_at == Some(writes) {
+            return false;
+        }
+        self.read_at = Some(writes);
+        self.trouble = None;
+        true
+    }
+
+    /// The answer of the read in flight, once it has one. A failure is kept as
+    /// [`Self::trouble`] as well as returned. An answer to a read started
+    /// before the counter moved is dropped and gives `None`.
+    pub fn poll(&mut self) -> Option<Result<A, String>> {
+        let (started, task) = self.running.as_mut()?;
+        let started = *started;
+        let done = block_on(future::poll_once(task))?;
+        self.running = None;
+        if Some(started) != self.read_at {
+            return None;
+        }
+        self.trouble = done.as_ref().err().cloned();
+        Some(done)
+    }
+
+    /// Whether a read is in flight.
+    pub fn is_busy(&self) -> bool {
+        self.running.is_some()
+    }
+
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.trouble.as_ref()
+    }
+
+    /// Start a read at `writes`, unless one is in flight, the last one failed,
+    /// or [`Self::renew`] has not been given `writes`. `read` builds the task,
+    /// or says why it cannot (no database is set); that reason becomes
+    /// [`Self::trouble`]. `true` when a read was started.
+    pub fn start(&mut self, writes: u64, read: impl FnOnce() -> Result<Read<A>, String>) -> bool {
+        if self.running.is_some() || self.trouble.is_some() || self.read_at != Some(writes) {
+            return false;
+        }
+        match read() {
+            Ok(task) => {
+                self.running = Some((writes, task));
+                true
+            }
+            Err(why) => {
+                self.trouble = Some(why);
+                false
+            }
+        }
+    }
+}
+
+/// Answers of the world database by key, read one key at a time on a task,
+/// and emptied when [`EditSession::database_writes`] moves. A [`FreshTask`]
+/// whose answers are kept in a map: a loot set by its table and entry, a
+/// vendor list, or one value under the key `()`.
+pub struct FreshReads<K, V> {
+    held: HashMap<K, V>,
+    /// The key the read in flight is for.
+    wanted: Option<K>,
+    task: FreshTask<V>,
+}
+
+impl<K, V> Default for FreshReads<K, V> {
+    fn default() -> FreshReads<K, V> {
+        FreshReads { held: HashMap::new(), wanted: None, task: FreshTask::default() }
+    }
+}
+
+impl<K: std::fmt::Debug, V> std::fmt::Debug for FreshReads<K, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FreshReads")
+            .field("held", &self.held.keys().collect::<Vec<_>>())
+            .field("wanted", &self.wanted)
+            .field("task", &self.task)
+            .finish()
+    }
+}
+
+impl<K: Eq + Hash + Clone, V> FreshReads<K, V> {
+    /// Note the counter, and empty every answer when it moved. `true` when it
+    /// did.
+    pub fn renew(&mut self, writes: u64) -> bool {
+        if !self.task.renew(writes) {
+            return false;
+        }
+        self.held.clear();
+        true
+    }
+
+    /// Keep the answer of the read in flight, once it has one, and say which
+    /// key it was for; a failure is returned as the reason. See
+    /// [`FreshTask::poll`].
+    pub fn poll(&mut self) -> Option<Result<K, String>> {
+        let done = self.task.poll();
+        if self.task.is_busy() {
+            return None;
+        }
+        let key = self.wanted.take();
+        match (done?, key) {
+            (Ok(value), Some(key)) => {
+                self.held.insert(key.clone(), value);
+                Some(Ok(key))
+            }
+            (Ok(_), None) => None,
+            (Err(why), _) => Some(Err(why)),
+        }
+    }
+
+    /// Start reading `key` at `writes`, unless it is held, a read is in
+    /// flight, or the last one failed. See [`FreshTask::start`].
+    pub fn want(&mut self, writes: u64, key: K, read: impl FnOnce() -> Result<Read<V>, String>) {
+        if self.held.contains_key(&key) {
+            return;
+        }
+        if self.task.start(writes, read) {
+            self.wanted = Some(key);
+        }
+    }
+
+    /// The answer held for `key`.
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.held.get(key)
+    }
+
+    /// Whether `key` has been read.
+    pub fn is_read(&self, key: &K) -> bool {
+        self.held.contains_key(key)
+    }
+
+    /// Whether `key` is being read now.
+    pub fn is_reading(&self, key: &K) -> bool {
+        self.task.is_busy() && self.wanted.as_ref() == Some(key)
+    }
+
+    /// Whether a read is in flight.
+    pub fn is_busy(&self) -> bool {
+        self.task.is_busy()
+    }
+
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.task.trouble()
+    }
+
+    /// Hold an answer without reading it, for a test.
+    #[cfg(test)]
+    pub fn insert(&mut self, key: K, value: V) {
+        self.held.insert(key, value);
+    }
+}
+
+impl<V> FreshReads<(), V> {
+    /// The one answer, for a reader that reads everything at once.
+    pub fn value(&self) -> Option<&V> {
+        self.held.get(&())
     }
 }
 
@@ -176,6 +385,43 @@ mod tests {
         assert!(names.is_empty());
         assert!(names.is_current(1));
         assert!(!names.is_current(0), "a read started before the move is not kept");
+    }
+
+    /// A read started before the counter moved is let finish and its answer
+    /// dropped; a failure is kept until the counter moves, and no read starts
+    /// while it is kept.
+    #[test]
+    fn a_keyed_read_drops_an_answer_from_before_a_write() {
+        let pool = bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        let answer = |name: &'static str| move || Ok(pool.spawn(async move { Ok::<_, String>(name) }));
+        // The read runs on another thread: poll until it has answered.
+        let settle = |reads: &mut FreshReads<u32, &'static str>| loop {
+            let done = reads.poll();
+            if !reads.is_busy() {
+                return done;
+            }
+            std::thread::yield_now();
+        };
+        let mut reads: FreshReads<u32, &'static str> = FreshReads::default();
+        reads.renew(0);
+        reads.want(0, 7, answer("Hamfort Gaga"));
+        assert!(reads.is_reading(&7));
+        assert_eq!(settle(&mut reads), Some(Ok(7)));
+        assert_eq!(reads.get(&7), Some(&"Hamfort Gaga"));
+        reads.renew(1);
+        assert!(!reads.is_read(&7), "an apply moved the counter");
+        reads.want(1, 7, answer("Old name"));
+        reads.renew(2);
+        assert_eq!(settle(&mut reads), None, "started at 1, answered at 2");
+        assert!(!reads.is_read(&7));
+        reads.want(1, 7, answer("stale"));
+        assert!(!reads.is_busy(), "the counter is at 2");
+        reads.want(2, 7, || Err("no database".to_string()));
+        assert_eq!(reads.trouble().map(String::as_str), Some("no database"));
+        reads.want(2, 8, answer("never"));
+        assert!(!reads.is_busy(), "a failure stops the next read");
+        reads.renew(3);
+        assert!(reads.trouble().is_none());
     }
 
     /// The creatures sharing a list are the database's with the project's

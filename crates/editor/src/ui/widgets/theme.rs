@@ -86,6 +86,40 @@ pub const INSPECTOR_WIDTH: f32 = 300.0;
 pub const INSPECTOR_MIN: f32 = 240.0;
 pub const INSPECTOR_MAX: f32 = 560.0;
 
+/// How wide a workspace's docked list is at first: the table browser's, the
+/// item and quest lists', and the Creatures and Game Objects lists'.
+pub const LIST_WIDTH: f32 = 320.0;
+
+/// The gap between a workspace's list and its form. A panel's margin ends at
+/// its edge, and without this the form's section heads sit against the
+/// list's border.
+pub const FORM_GAP: f32 = 12.0;
+
+/// The gap above a workspace's list and form, under the top bar. The docked
+/// panels carry their own margin and the middle region carries none, so it is
+/// applied to both, and the strip of chrome across the window is one height.
+pub const TOP_GAP: f32 = 10.0;
+
+/// A floating window over the shell: the title, a fixed id, resizable, in the
+/// shell's fill with a hairline edge.
+///
+/// The id is fixed because egui keeps a window's position under its id and
+/// the id defaults to the title. A window titled after the creature it shows
+/// would otherwise go back to its default position whenever another creature
+/// is chosen. The caller adds `open`, the default size and the position.
+pub fn window(title: impl Into<egui::WidgetText>, id: impl std::hash::Hash + std::fmt::Debug) -> egui::Window<'static> {
+    egui::Window::new(title)
+        .id(egui::Id::new(id))
+        .resizable(true)
+        .frame(
+            egui::Frame::default()
+                .fill(SHELL)
+                .stroke(egui::Stroke::new(1.0, LINE))
+                .corner_radius(egui::CornerRadius::same(4))
+                .inner_margin(egui::Margin::same(8)),
+        )
+}
+
 /// The size of secondary text, in points: notes, hover lines, the state line
 /// under a window's title, and everything drawn with `RichText::small`, which
 /// [`paint`] sets egui's `TextStyle::Small` to. egui's own default is 9,

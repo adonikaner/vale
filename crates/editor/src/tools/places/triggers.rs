@@ -65,13 +65,12 @@
 //! startup only, and the teleport, inn and quest tables on their own
 //! `.reload`.
 
-use super::flightpaths::{aim_of, eye, DRAG_PIXELS, HANDLE_PIXELS};
+use crate::tools::points::{self, Aim, MapPoint, PointTool, Points, HANDLE_PIXELS};
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
-use crate::session::{EditSession, rows::Gesture};
-use vale_client::assets::GameAssets;
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use vale_client::render::axes;
-use vale_client::render::focus::WorldFocus;
 use vale_client::world::camera::WorldCamera;
 use vale_edit::dbc::places::{self, Trigger};
 use vale_edit::dbc::DbcFile;
@@ -79,8 +78,8 @@ use vale_mangos::row::{Assignment, Edits, Key, Life, RowEdit};
 use vale_mangos::schema::Row;
 use vale_mangos::trigger::{self, BgEntrance, Teleport};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
-use std::collections::{HashMap, HashSet};
+use crate::server::fresh::FreshReads;
+use std::collections::HashMap;
 
 /// What a click on empty ground does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -135,19 +134,6 @@ pub enum Travel {
     Home,
 }
 
-/// A held left button on a trigger.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Drag {
-    pub id: u32,
-    /// Where the pointer was when the button went down, in logical pixels.
-    pub pressed_at: Vec2,
-    /// Whether the pointer has travelled far enough for this to be a drag.
-    pub moving: bool,
-    /// The offset from the pointer's hit to the centre, and whether it was
-    /// measured on the upright plane; see `crate::tools::places::flightpaths::Drag`.
-    pub grab: Option<(Vec3, bool)>,
-}
-
 /// The five server tables as the database holds them, one entry per trigger.
 #[derive(Debug, Clone, Default)]
 pub struct Held {
@@ -176,64 +162,36 @@ pub struct Does {
 /// The trigger tool's state.
 #[derive(Resource, Debug)]
 pub struct Triggers {
-    /// The triggers on the open map, in file order.
-    pub list: Vec<Trigger>,
+    /// The triggers on the open map, and what the pointer is doing with them.
+    pub points: Points<Trigger>,
     /// The maps whose rows are not one block of the file; see
     /// `vale_edit::dbc::places::trigger_blocks`. Empty for the shipped file.
     pub blocks: Vec<u32>,
-    /// The ids the game's own file has, read once, for the warning a removal
-    /// of one gives.
-    pub shipped: Option<HashSet<u32>>,
-    /// The session's table revision and the map the list was built for.
-    built: Option<(u64, u32)>,
-    pub map: u32,
-    pub selected: Option<u32>,
-    pub hovered: Option<u32>,
-    pub drag: Option<Drag>,
     pub armed: Armed,
     /// The radius a new trigger is made with, in yards.
     pub radius: f32,
-    /// A shipped trigger the panel is asking to remove, until it is confirmed.
-    pub confirm_remove: Option<u32>,
-    /// A fly-to asked for by the panel, consumed by [`fly`].
-    pub fly_to: Option<Vec3>,
     /// A place being picked; see [`Pick`].
     pub pick: Option<Pick>,
     /// A map change [`travel`] is to make.
     pub travel: Option<Travel>,
     /// The trigger to select once the list is rebuilt, after a pick returns.
     reselect: Option<u32>,
-    /// The server's rows, once read.
-    pub held: Option<Held>,
-    /// What [`Self::held`] was read at: `EditSession::database_writes`.
-    loaded_for: Option<u64>,
-    reading: Option<Task<Result<Held, String>>>,
-    /// Why the last read answered nothing, when it answered nothing.
-    pub trouble: Option<String>,
+    /// The server's rows, read at once and kept until an apply moves
+    /// `EditSession::database_writes`. See [`Self::held`].
+    reads: FreshReads<(), Held>,
 }
 
 impl Default for Triggers {
     fn default() -> Triggers {
         Triggers {
-            list: Vec::new(),
+            points: Points::default(),
             blocks: Vec::new(),
-            shipped: None,
-            built: None,
-            map: 0,
-            selected: None,
-            hovered: None,
-            drag: None,
             armed: Armed::Nothing,
             radius: DEFAULT_RADIUS,
-            confirm_remove: None,
-            fly_to: None,
             pick: None,
             travel: None,
             reselect: None,
-            held: None,
-            loaded_for: None,
-            reading: None,
-            trouble: None,
+            reads: FreshReads::default(),
         }
     }
 }
@@ -249,39 +207,54 @@ pub const DEFAULT_BOX: f32 = 10.0;
 const MARKER_RANGE: f32 = 2600.0;
 
 impl Triggers {
+    /// The server's rows, once read.
+    pub fn held(&self) -> Option<&Held> {
+        self.reads.value()
+    }
+
+    /// Why the last read of the server's rows answered nothing, when it
+    /// answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.reads.trouble()
+    }
+
     pub fn trigger(&self, id: u32) -> Option<&Trigger> {
-        self.list.iter().find(|trigger| trigger.id == id)
+        self.points.get(id)
     }
 
     /// Rebuild the list on the next frame, after an edit this frame.
     pub fn stale(&mut self) {
-        self.built = None;
-    }
-
-    pub fn is_shipped(&self, id: u32) -> bool {
-        self.shipped.as_ref().is_some_and(|ids| ids.contains(&id))
-    }
-
-    /// Ask the camera to look at a place, in the world's axes.
-    pub fn fly_to(&mut self, at: [f32; 3]) {
-        self.fly_to = Some(Vec3::from(at));
+        self.points.stale();
     }
 
     /// The trigger's teleport as the project leaves it, whether that row is
     /// the database's, and what the project says is to become of it. `None`
     /// when neither side has one.
     pub fn teleport(&self, edits: &Edits, id: u32) -> Option<(Teleport, bool, Life)> {
-        let held = self.held.as_ref()?.teleports.get(&id);
+        let held = self.held()?.teleports.get(&id);
         let key = teleport_key(held, id);
         let assignments = held.map(Teleport::assignments);
         let (row, life) = shown(edits, trigger::TELEPORT, &key, assignments.as_deref())?;
         Some((Teleport::from_row(&row)?, held.is_some(), life))
     }
 
+    /// The teleport row's key, and the row as the database holds it: what an
+    /// unedited column of the form shows, and what its revert arrow takes the
+    /// column back to. The row is empty for a teleport the database does not
+    /// hold.
+    pub fn teleport_held(&self, id: u32) -> (Key, Row) {
+        let held = self.held().and_then(|held| held.teleports.get(&id));
+        let key = teleport_key(held, id);
+        let row = held
+            .and_then(|held| shown(&Edits::default(), trigger::TELEPORT, &key, Some(&held.assignments())))
+            .map_or_else(Row::new, |(row, _)| row);
+        (key, row)
+    }
+
     /// The quest the trigger completes as the project leaves it, and whether
     /// the database holds the row.
     pub fn quest(&self, edits: &Edits, id: u32) -> Option<(u32, bool, Life)> {
-        let held = self.held.as_ref()?.quests.get(&id).copied();
+        let held = self.held()?.quests.get(&id).copied();
         let assignments = held.map(quest_assignments);
         let (row, life) = shown(edits, trigger::QUEST, &trigger::quest_key(id), assignments.as_deref())?;
         use vale_mangos::schema::RowValue;
@@ -291,7 +264,7 @@ impl Triggers {
     /// Whether the trigger is an inn as the project leaves it, and whether the
     /// database holds the row.
     pub fn inn(&self, edits: &Edits, id: u32) -> Option<(bool, bool)> {
-        let held = self.held.as_ref()?.taverns.get(&id);
+        let held = self.held()?.taverns.get(&id);
         let assignments = held.map(|(name, patch)| tavern_assignments(name, *patch));
         let shown = shown(edits, trigger::TAVERN, &trigger::tavern_key(id), assignments.as_deref());
         Some((shown.is_some_and(|(_, life)| life != Life::Delete), held.is_some()))
@@ -300,7 +273,7 @@ impl Triggers {
     /// The template row's server columns as the project leaves them, and
     /// whether the database holds a template row for the trigger at all.
     pub fn template(&self, edits: &Edits, id: u32) -> Option<(trigger::Template, bool)> {
-        let held = self.held.as_ref()?.templates.get(&id);
+        let held = self.held()?.templates.get(&id);
         let assignments = held.map(trigger::Template::assignments);
         let key = trigger::key(id);
         match shown(edits, trigger::TEMPLATE, &key, assignments.as_deref()) {
@@ -325,7 +298,7 @@ impl Triggers {
     /// The battleground entrance as the project leaves it, whether the
     /// database holds the row, and what the project says is to become of it.
     pub fn entrance(&self, edits: &Edits, id: u32) -> Option<(BgEntrance, bool, Life)> {
-        let held = self.held.as_ref()?.entrances.get(&id);
+        let held = self.held()?.entrances.get(&id);
         let assignments = held.map(BgEntrance::assignments);
         let (row, life) = shown(edits, trigger::BG_ENTRANCE, &trigger::bg_entrance_key(id), assignments.as_deref())?;
         Some((BgEntrance::from_row(&row)?, held.is_some(), life))
@@ -334,7 +307,7 @@ impl Triggers {
     /// The C++ script names the database's template rows use, sorted, as
     /// suggestions for the script name field.
     pub fn script_names(&self) -> Vec<String> {
-        let Some(held) = self.held.as_ref() else {
+        let Some(held) = self.held() else {
             return Vec::new();
         };
         let mut names: Vec<String> = held
@@ -510,7 +483,7 @@ pub fn missing(edits: &Edits, table: &str, key: &Key) -> Vec<&'static str> {
 /// back.
 fn the_databases_own(session: &EditSession, table: &str, key: &Key, held: bool) -> bool {
     held && session
-        .server_edits
+        .rows.edits
         .row(table, key)
         .is_none_or(|claim| claim.life != Life::Insert)
 }
@@ -552,7 +525,7 @@ pub(crate) fn remove_row(session: &mut EditSession, table: &str, key: &Key, held
 /// Give the trigger a teleport to a place, or keep the database's that was
 /// marked for removal.
 pub fn add_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: [f32; 3], now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.teleports.get(&id));
+    let held = triggers.held().and_then(|held| held.teleports.get(&id));
     let key = teleport_key(held, id);
     let label = format!("{} {}", trigger::TELEPORT, key.text());
     let gesture = Gesture { label: "Add teleport", subject: &label, now };
@@ -561,7 +534,7 @@ pub fn add_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, map
 }
 
 pub fn remove_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.teleports.get(&id));
+    let held = triggers.held().and_then(|held| held.teleports.get(&id));
     let key = teleport_key(held, id);
     let label = format!("{} {}", trigger::TELEPORT, key.text());
     let gesture = Gesture { label: "Remove teleport", subject: &label, now };
@@ -570,7 +543,7 @@ pub fn remove_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, 
 
 /// Set one column of the trigger's teleport. `value` is a SQL literal.
 pub fn set_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.teleports.get(&id));
+    let held = triggers.held().and_then(|held| held.teleports.get(&id));
     let key = teleport_key(held, id);
     let label = format!("{} {} {column}", trigger::TELEPORT, key.text());
     let gesture = Gesture { label: "Edit teleport", subject: &label, now };
@@ -594,7 +567,7 @@ pub fn set_target(session: &mut EditSession, triggers: &Triggers, id: u32, map: 
 /// Give the trigger a battleground entrance returning to a place, or keep the
 /// database's that was marked for removal.
 pub fn add_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: [f32; 3], now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.entrances.get(&id)).is_some();
+    let held = triggers.held().and_then(|held| held.entrances.get(&id)).is_some();
     let key = trigger::bg_entrance_key(id);
     let label = format!("{} {}", trigger::BG_ENTRANCE, key.text());
     let gesture = Gesture { label: "Add battleground entrance", subject: &label, now };
@@ -602,7 +575,7 @@ pub fn add_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, map
 }
 
 pub fn remove_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.entrances.get(&id)).is_some();
+    let held = triggers.held().and_then(|held| held.entrances.get(&id)).is_some();
     let key = trigger::bg_entrance_key(id);
     let label = format!("{} {}", trigger::BG_ENTRANCE, key.text());
     let gesture = Gesture { label: "Remove battleground entrance", subject: &label, now };
@@ -612,7 +585,7 @@ pub fn remove_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, 
 /// Set one column of the trigger's battleground entrance. `value` is a SQL
 /// literal.
 pub fn set_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.entrances.get(&id));
+    let held = triggers.held().and_then(|held| held.entrances.get(&id));
     let key = trigger::bg_entrance_key(id);
     let label = format!("{} {} {column}", trigger::BG_ENTRANCE, key.text());
     let gesture = Gesture { label: "Edit battleground entrance", subject: &label, now };
@@ -636,7 +609,7 @@ pub fn set_exit(session: &mut EditSession, triggers: &Triggers, id: u32, map: u3
 /// Set one of the template row's five server columns. `value` is a SQL
 /// literal. A value typed back to the database's clears the edit.
 pub fn set_template(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.templates.get(&id));
+    let held = triggers.held().and_then(|held| held.templates.get(&id));
     let key = trigger::key(id);
     let label = format!("{} {} {column}", trigger::TEMPLATE, key.text());
     let gesture = Gesture { label: "Edit area trigger script", subject: &label, now };
@@ -676,7 +649,7 @@ pub fn facing_toward(from: Vec3, to: Vec3) -> Option<f32> {
 
 /// Make the trigger an inn, or stop it being one.
 pub fn set_inn(session: &mut EditSession, triggers: &Triggers, id: u32, inn: bool, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.taverns.get(&id)).is_some();
+    let held = triggers.held().and_then(|held| held.taverns.get(&id)).is_some();
     let key = trigger::tavern_key(id);
     let label = format!("{} {}", trigger::TAVERN, key.text());
     match inn {
@@ -694,7 +667,7 @@ pub fn set_inn(session: &mut EditSession, triggers: &Triggers, id: u32, inn: boo
 /// Make standing in the trigger complete `quest`'s exploration objective, or,
 /// with 0, nothing's.
 pub fn set_quest(session: &mut EditSession, triggers: &Triggers, id: u32, quest: u32, now: f64) {
-    let held = triggers.held.as_ref().and_then(|held| held.quests.get(&id)).copied();
+    let held = triggers.held().and_then(|held| held.quests.get(&id)).copied();
     let key = trigger::quest_key(id);
     let label = format!("{} {}", trigger::QUEST, key.text());
     let gesture = Gesture { label: "Edit quest trigger", subject: &label, now };
@@ -702,7 +675,7 @@ pub fn set_quest(session: &mut EditSession, triggers: &Triggers, id: u32, quest:
         remove_row(session, trigger::QUEST, &key, held.is_some(), gesture);
         return;
     }
-    let claimed = session.server_edits.row(trigger::QUEST, &key).map(|row| row.life);
+    let claimed = session.rows.edits.row(trigger::QUEST, &key).map(|row| row.life);
     match (held, claimed) {
         (Some(_), Some(Life::Delete)) | (None, None | Some(Life::Delete)) => {
             create_row(session, trigger::QUEST, &key, false, &quest_assignments(quest), gesture);
@@ -772,12 +745,12 @@ pub fn set_sphere(session: &mut EditSession, trigger: &Trigger, sphere: bool, no
 pub fn new_trigger(session: &mut EditSession, triggers: &mut Triggers, ground: Vec3) -> String {
     let radius = triggers.radius.max(0.5);
     let at = [ground.x, ground.y, ground.z + radius * 0.5];
-    match places::new_trigger(&mut session.tables, triggers.map, at, radius) {
+    match places::new_trigger(&mut session.tables, triggers.points.map, at, radius) {
         Ok(done) => {
             let made = done.made;
             super::flightpaths::record(session, "Add area trigger", done);
             triggers.stale();
-            triggers.selected = made;
+            triggers.points.selected = made;
             format!("trigger {} made, radius {radius} yd", made.unwrap_or(0))
         }
         Err(e) => e.to_string(),
@@ -801,7 +774,7 @@ pub fn remove_trigger(session: &mut EditSession, triggers: &mut Triggers, id: u3
     // The rows naming it on the server go with it, on one entry of their own:
     // a server row and a table row are separate kinds of undo entry.
     session.as_one("Remove area trigger", &subject, |session| {
-        let edits = session.server_edits.clone();
+        let edits = session.rows.edits.clone();
         if triggers.teleport(&edits, id).is_some_and(|(_, _, life)| life != Life::Delete) {
             remove_teleport(session, triggers, id, now);
         }
@@ -822,8 +795,8 @@ pub fn remove_trigger(session: &mut EditSession, triggers: &mut Triggers, id: u3
             session.set_server_row(trigger::TEMPLATE, &key, None, Some(gesture));
         }
     });
-    triggers.selected = None;
-    triggers.confirm_remove = None;
+    triggers.points.selected = None;
+    triggers.points.confirm_remove = None;
     triggers.stale();
     format!("trigger {id} removed")
 }
@@ -835,11 +808,21 @@ impl Plugin for TriggerToolPlugin {
         app.init_resource::<Triggers>()
             .add_systems(
                 Update,
-                (travel, collect, scripted, read_the_rows, aim, press, drag, keys)
+                (
+                    travel,
+                    points::collect::<Triggers>,
+                    scripted,
+                    read_the_rows,
+                    points::aim::<Triggers>,
+                    press,
+                    pick_facing,
+                    points::drag::<Triggers>,
+                    keys,
+                )
                     .chain()
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (draw, fly).after(keys));
+            .add_systems(Update, draw.after(keys));
     }
 }
 
@@ -847,73 +830,87 @@ fn active(tool: &Tool, state: &crate::playtest::Playtest) -> bool {
     *tool == Tool::Triggers && state.editing()
 }
 
-/// Read the table into the list when the table or the map changed.
-fn collect(
-    mut triggers: ResMut<Triggers>,
-    session: Option<Res<EditSession>>,
-    assets: Res<GameAssets>,
-    focus: Res<WorldFocus>,
-    tool: Res<Tool>,
-    state: Res<crate::playtest::Playtest>,
-) {
-    if !active(&tool, &state) {
-        return;
+impl MapPoint for Trigger {
+    fn id(&self) -> u32 {
+        self.id
     }
-    let Some(session) = session else { return };
-    let key = (session.table_revision, focus.map_id);
-    if triggers.built == Some(key) {
-        return;
+
+    fn position(&self) -> Vec3 {
+        Vec3::from(self.at)
     }
-    let Some(table) = session.table(places::TRIGGERS) else {
-        return;
-    };
-    if triggers.shipped.is_none() {
-        triggers.shipped = Some(shipped_ids(&session, &assets, places::TRIGGERS));
-    }
-    triggers.built = Some(key);
-    rebuild(&mut triggers, table, focus.map_id);
 }
 
-/// The ids of the game's own copy of a table, read past the overlay and past
-/// this project's own archives. Empty when it cannot be read.
-pub(super) fn shipped_ids(session: &EditSession, assets: &GameAssets, table: &str) -> HashSet<u32> {
-    let own: Vec<String> = session.project.published().into_iter().map(|archive| archive.name).collect();
-    let path = vale_assets::tables::dbc::dbc_path(table);
-    assets
-        .read_past_overlay_skipping(&path, &own)
-        .ok()
-        .and_then(|bytes| DbcFile::parse(&bytes).ok())
-        .map(|file| (0..file.record_count()).filter_map(|record| file.u32_at(record, 0)).collect())
-        .unwrap_or_default()
-}
+impl PointTool for Triggers {
+    type Point = Trigger;
+    const TOOL: Tool = Tool::Triggers;
+    const TABLE: &'static str = places::TRIGGERS;
+    const RANGE: f32 = MARKER_RANGE;
+    const PICK_PIXELS: f32 = HANDLE_PIXELS;
+    const NOUN: &'static str = "trigger";
 
-fn rebuild(triggers: &mut Triggers, table: &DbcFile, map: u32) {
-    triggers.list = places::triggers(table).into_iter().filter(|trigger| trigger.map == map).collect();
-    triggers.blocks = places::trigger_blocks(table);
-    triggers.map = map;
-    if let Some(id) = triggers.reselect.filter(|id| triggers.list.iter().any(|trigger| trigger.id == *id)) {
-        triggers.selected = Some(id);
-        triggers.reselect = None;
+    fn points(&self) -> &Points<Trigger> {
+        &self.points
     }
-    if triggers.selected.is_some_and(|id| triggers.trigger(id).is_none()) {
-        triggers.selected = None;
+
+    fn points_mut(&mut self) -> &mut Points<Trigger> {
+        &mut self.points
+    }
+
+    fn rebuild(&mut self, table: &DbcFile, map: u32) {
+        self.points.list = places::triggers(table).into_iter().filter(|trigger| trigger.map == map).collect();
+        self.blocks = places::trigger_blocks(table);
+        if let Some(id) = self.reselect.filter(|id| self.points.get(*id).is_some()) {
+            self.points.selected = Some(id);
+            self.reselect = None;
+        }
+    }
+
+    fn set_position(session: &mut EditSession, trigger: &Trigger, to: Vec3, now: f64) {
+        use vale_assets::tables::areatrigger::fields as tf;
+        set_volume(
+            session,
+            trigger,
+            &[(tf::X, to.x.to_bits()), (tf::Y, to.y.to_bits()), (tf::Z, to.z.to_bits())],
+            "Move area trigger",
+            now,
+        );
+    }
+
+    /// The nearest volume the pointer's ray passes through.
+    fn aim_inside(&self, aim: &Aim, eye: Vec3) -> Option<u32> {
+        self.points
+            .list
+            .iter()
+            .filter(|trigger| self.points.near(trigger, eye, MARKER_RANGE))
+            .filter_map(|trigger| Some((ray_meets(trigger, aim.origin, aim.direction)?, trigger.id)))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id)
+    }
+
+    fn remove(&mut self, session: &mut EditSession, id: u32, now: f64) -> String {
+        remove_trigger(session, self, id, now)
     }
 }
 
 /// `--trigger <id>`: select one trigger of the open map and fly to it, once
 /// the list is built.
-fn scripted(mut triggers: ResMut<Triggers>, args: Res<crate::args::Args>, mut done: Local<bool>) {
-    let Some(id) = args.trigger.filter(|_| !*done) else {
+fn scripted(
+    mut triggers: ResMut<Triggers>,
+    args: Res<crate::args::Args>,
+    mut fly: MessageWriter<crate::camera::FlyTo>,
+    mut done: Local<bool>,
+) {
+    let Some(id) = args.tools.trigger.filter(|_| !*done) else {
         return;
     };
-    if triggers.built.is_none() {
+    if !triggers.points.is_built() {
         return;
     }
     *done = true;
     match triggers.trigger(id).copied() {
         Some(trigger) => {
-            triggers.selected = Some(id);
-            triggers.fly_to(trigger.at);
+            triggers.points.selected = Some(id);
+            fly.write(crate::camera::FlyTo::at(Vec3::from(trigger.at)));
             info!("--trigger: {id} on map {}", trigger.map);
         }
         None => warn!("--trigger {id}: no trigger by that id on this map"),
@@ -967,84 +964,69 @@ fn read_the_rows(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
 ) {
-    if let Some(task) = triggers.reading.as_mut() {
-        if let Some(done) = block_on(future::poll_once(task)) {
-            triggers.reading = None;
-            match done {
-                Ok(held) => {
-                    info!(
-                        "triggers: {} template row(s), {} teleport(s), {} inn(s), {} quest trigger(s), {} battleground entrance(s)",
-                        held.templates.len(),
-                        held.teleports.len(),
-                        held.taverns.len(),
-                        held.quests.len(),
-                        held.entrances.len()
-                    );
-                    triggers.held = Some(held);
-                    triggers.trouble = None;
-                }
-                Err(e) => {
-                    warn!("triggers: {e}");
-                    triggers.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
     if !active(&tool, &state) {
         return;
     }
     let Some(session) = session else { return };
-    if triggers.loaded_for != Some(session.database_writes) {
-        triggers.loaded_for = Some(session.database_writes);
-        triggers.held = None;
-        triggers.trouble = None;
+    let writes = session.database_writes;
+    triggers.reads.renew(writes);
+    match triggers.reads.poll() {
+        Some(Ok(())) => {
+            if let Some(held) = triggers.held() {
+                info!(
+                    "triggers: {} template row(s), {} teleport(s), {} inn(s), {} quest trigger(s), {} battleground entrance(s)",
+                    held.templates.len(),
+                    held.teleports.len(),
+                    held.taverns.len(),
+                    held.quests.len(),
+                    held.entrances.len()
+                );
+            }
+        }
+        Some(Err(e)) => warn!("triggers: {e}"),
+        None => {}
     }
-    if triggers.held.is_some() || triggers.trouble.is_some() {
-        return;
-    }
-    let Some((at, _source)) = settings.resolve() else {
-        triggers.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
     let patch = crate::server::settings::server_patch(&settings);
-    triggers.reading = Some(crate::server::queue::read(async move {
-        use vale_mangos::schema::RowValue;
-        let mut db = vale_mangos::conn::Db::open(&at)?;
-        let templates = db
-            .rows(&trigger::templates_query())?
-            .iter()
-            .filter_map(trigger::Template::from_row)
-            .map(|template| (template.id, template))
-            .collect();
-        let entrances = db
-            .rows(&trigger::bg_entrances_query())?
-            .iter()
-            .filter_map(BgEntrance::from_row)
-            .map(|entrance| (entrance.id, entrance))
-            .collect();
-        let teleports = db
-            .rows(&trigger::teleports_query(patch))?
-            .iter()
-            .filter_map(Teleport::from_row)
-            .map(|teleport| (teleport.id, teleport))
-            .collect();
-        let taverns = db
-            .rows(&trigger::taverns_query(patch))?
-            .iter()
-            .filter_map(|row| {
-                let name = row.text("name").unwrap_or("").to_string();
-                let patch_min = row.integer("patch_min").unwrap_or(0) as u32;
-                Some((row.integer("id")? as u32, (name, patch_min)))
-            })
-            .collect();
-        let quests = db
-            .rows(&trigger::quests_query())?
-            .iter()
-            .filter_map(|row| Some((row.integer("id")? as u32, row.integer("quest")? as u32)))
-            .collect();
-        Ok(Held { templates, teleports, entrances, taverns, quests })
-    }));
+    triggers.reads.want(writes, (), || {
+        let (at, _source) = settings.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
+        Ok(crate::server::queue::read(async move {
+            use vale_mangos::schema::RowValue;
+            let mut db = vale_mangos::conn::Db::open(&at)?;
+            let templates = db
+                .rows(&trigger::templates_query())?
+                .iter()
+                .filter_map(trigger::Template::from_row)
+                .map(|template| (template.id, template))
+                .collect();
+            let entrances = db
+                .rows(&trigger::bg_entrances_query())?
+                .iter()
+                .filter_map(BgEntrance::from_row)
+                .map(|entrance| (entrance.id, entrance))
+                .collect();
+            let teleports = db
+                .rows(&trigger::teleports_query(patch))?
+                .iter()
+                .filter_map(Teleport::from_row)
+                .map(|teleport| (teleport.id, teleport))
+                .collect();
+            let taverns = db
+                .rows(&trigger::taverns_query(patch))?
+                .iter()
+                .filter_map(|row| {
+                    let name = row.text("name").unwrap_or("").to_string();
+                    let patch_min = row.integer("patch_min").unwrap_or(0) as u32;
+                    Some((row.integer("id")? as u32, (name, patch_min)))
+                })
+                .collect();
+            let quests = db
+                .rows(&trigger::quests_query())?
+                .iter()
+                .filter_map(|row| Some((row.integer("id")? as u32, row.integer("quest")? as u32)))
+                .collect();
+            Ok(Held { templates, teleports, entrances, taverns, quests })
+        }))
+    });
 }
 
 /// How far down the ray it first meets a trigger's volume, or `None` when it
@@ -1073,55 +1055,6 @@ pub fn corners(trigger: &Trigger) -> [Vec3; 8] {
         out[n + 4] = turn(sx * half.x, sy * half.y, half.z);
     }
     out
-}
-
-/// Which trigger the pointer is over: the nearest centre within a handle's
-/// width, else the nearest volume the ray passes through.
-fn aim(
-    mut triggers: ResMut<Triggers>,
-    tool: Res<Tool>,
-    state: Res<crate::playtest::Playtest>,
-    viewport: Res<crate::ui::Viewport>,
-    wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-) {
-    if !active(&tool, &state) {
-        triggers.hovered = None;
-        return;
-    }
-    if triggers.drag.is_some_and(|drag| drag.moving) {
-        return;
-    }
-    if !crate::ui::over_the_world(&viewport, &wants, &windows) {
-        triggers.hovered = None;
-        return;
-    }
-    let (Some(aim), Some(eye)) = (aim_of(&windows, &camera), eye(&camera)) else {
-        triggers.hovered = None;
-        return;
-    };
-    let near = |trigger: &&Trigger| {
-        triggers.selected == Some(trigger.id) || (Vec3::from(trigger.at) - eye).length() <= MARKER_RANGE
-    };
-    let centre = triggers
-        .list
-        .iter()
-        .filter(near)
-        .filter_map(|trigger| Some((aim.to_point(Vec3::from(trigger.at))?, trigger.id)))
-        .filter(|(pixels, _)| *pixels <= HANDLE_PIXELS)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, id)| id);
-    let inside = || {
-        triggers
-            .list
-            .iter()
-            .filter(near)
-            .filter_map(|trigger| Some((ray_meets(trigger, aim.origin, aim.direction)?, trigger.id)))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, id)| id)
-    };
-    triggers.hovered = centre.or_else(inside);
 }
 
 /// A press: select and start a drag, or do what is armed.
@@ -1153,7 +1086,7 @@ fn press(
         }
         return;
     }
-    match (triggers.armed, triggers.hovered) {
+    match (triggers.armed, triggers.points.hovered) {
         (Armed::NewTrigger, _) => {
             if let Some(at) = cursor.surface {
                 triggers.armed = Armed::Nothing;
@@ -1161,27 +1094,16 @@ fn press(
                 session.status = line;
             }
         }
-        (Armed::Nothing, Some(id)) => {
-            let pointer = windows.single().ok().and_then(Window::cursor_position).unwrap_or_default();
-            triggers.selected = Some(id);
-            triggers.confirm_remove = None;
-            triggers.drag = Some(Drag {
-                id,
-                pressed_at: pointer,
-                moving: false,
-                grab: None,
-            });
-        }
+        (Armed::Nothing, Some(id)) => triggers.points.grab(id, &windows),
         (Armed::Nothing, None) => {}
     }
 }
 
-/// Move the held trigger.
-#[allow(clippy::too_many_arguments)]
-fn drag(
+/// A pick's facing: while the button is held after the press that set the
+/// place, the facing follows the pointer; on release the pick is written.
+fn pick_facing(
     mut triggers: ResMut<Triggers>,
     buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     time: Res<Time>,
@@ -1190,81 +1112,29 @@ fn drag(
     mut session: Option<ResMut<EditSession>>,
 ) {
     if !active(&tool, &state) {
-        triggers.drag = None;
         return;
     }
-    if let Some(pressed) = triggers.pick.as_ref().and_then(|pick| pick.pressed) {
-        let Some(session) = session.as_mut() else { return };
-        match buttons.pressed(MouseButton::Left) {
-            true => {
-                let hit = crate::pick::ray(&windows, &camera)
-                    .and_then(|(origin, direction)| crate::pick::meets_plane(origin, direction, pressed.z));
-                if let (Some(hit), Some(pick)) = (hit, triggers.pick.as_mut()) {
-                    if let Some(facing) = facing_toward(pressed, hit) {
-                        pick.facing = facing;
-                    }
+    let Some(pressed) = triggers.pick.as_ref().and_then(|pick| pick.pressed) else {
+        return;
+    };
+    let Some(session) = session.as_mut() else { return };
+    match buttons.pressed(MouseButton::Left) {
+        true => {
+            let hit = crate::pick::ray(&windows, &camera)
+                .and_then(|(origin, direction)| crate::pick::meets_plane(origin, direction, pressed.z));
+            if let (Some(hit), Some(pick)) = (hit, triggers.pick.as_mut()) {
+                if let Some(facing) = facing_toward(pressed, hit) {
+                    pick.facing = facing;
                 }
             }
-            false => {
-                let Some(pick) = triggers.pick.clone() else { return };
-                let line = finish_pick(session, &triggers, &pick, pressed, time.elapsed_secs_f64());
-                session.status = line;
-                triggers.end_pick();
-            }
         }
-        return;
-    }
-    if !buttons.pressed(MouseButton::Left) {
-        triggers.drag = None;
-        return;
-    }
-    let Some(mut held) = triggers.drag else { return };
-    let Some(pointer) = windows.single().ok().and_then(Window::cursor_position) else {
-        return;
-    };
-    if !held.moving {
-        if pointer.distance(held.pressed_at) < DRAG_PIXELS {
-            return;
+        false => {
+            let Some(pick) = triggers.pick.clone() else { return };
+            let line = finish_pick(session, &triggers, &pick, pressed, time.elapsed_secs_f64());
+            session.status = line;
+            triggers.end_pick();
         }
-        held.moving = true;
     }
-    let Some(session) = session.as_mut() else { return };
-    let Some(trigger) = triggers.trigger(held.id).copied() else {
-        triggers.drag = None;
-        return;
-    };
-    let from = Vec3::from(trigger.at);
-    let vertical = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-    let Some((origin, direction)) = crate::pick::ray(&windows, &camera) else {
-        return;
-    };
-    let hit = match vertical {
-        false => crate::pick::meets_plane(origin, direction, from.z),
-        true => crate::pick::meets_upright_plane(origin, direction, from),
-    };
-    let Some(hit) = hit else { return };
-    let grab = match held.grab {
-        Some((grab, was_vertical)) if was_vertical == vertical => grab,
-        _ => {
-            held.grab = Some((from - hit, vertical));
-            triggers.drag = Some(held);
-            return;
-        }
-    };
-    let to = match vertical {
-        false => Vec3::new(hit.x + grab.x, hit.y + grab.y, from.z),
-        true => Vec3::new(from.x, from.y, hit.z + grab.z),
-    };
-    triggers.drag = Some(held);
-    use vale_assets::tables::areatrigger::fields as tf;
-    set_volume(
-        session,
-        &trigger,
-        &[(tf::X, to.x.to_bits()), (tf::Y, to.y.to_bits()), (tf::Z, to.z.to_bits())],
-        "Move area trigger",
-        time.elapsed_secs_f64(),
-    );
-    triggers.stale();
 }
 
 /// Escape and Delete.
@@ -1288,26 +1158,18 @@ fn keys(
             }
         } else if triggers.armed != Armed::Nothing {
             triggers.armed = Armed::Nothing;
-        } else if triggers.confirm_remove.is_some() {
-            triggers.confirm_remove = None;
+        } else if triggers.points.confirm_remove.is_some() {
+            triggers.points.confirm_remove = None;
         } else {
-            triggers.selected = None;
+            triggers.points.selected = None;
         }
     }
     if !keys.just_pressed(KeyCode::Delete) {
         return;
     }
-    let (Some(id), Some(session)) = (triggers.selected, session.as_mut()) else {
-        return;
-    };
-    // A shipped trigger is asked about in the panel first.
-    if triggers.is_shipped(id) && triggers.confirm_remove != Some(id) {
-        triggers.confirm_remove = Some(id);
-        session.status = format!("trigger {id} is a shipped trigger: confirm the removal in the panel");
-        return;
+    if let Some(session) = session.as_mut() {
+        points::delete_selected(&mut *triggers, session, time.elapsed_secs_f64());
     }
-    let line = remove_trigger(session, &mut triggers, id, time.elapsed_secs_f64());
-    session.status = line;
 }
 
 /// The colour a trigger is drawn in: by what it does on the server.
@@ -1341,25 +1203,20 @@ fn draw(
     if !active(&tool, &state) {
         return;
     }
-    let (Some(eye), Some(session)) = (eye(&camera), session) else {
+    let (Some(eye), Some(session)) = (points::eye(&camera), session) else {
         return;
     };
     let bevy = |p: Vec3| axes::to_bevy(p.to_array());
-    for trigger in &triggers.list {
+    for trigger in &triggers.points.list {
         let at = Vec3::from(trigger.at);
-        let selected = triggers.selected == Some(trigger.id);
-        if !selected && (at - eye).length() > MARKER_RANGE {
+        if !triggers.points.near(trigger, eye, MARKER_RANGE) {
             continue;
         }
-        let hovered = triggers.hovered == Some(trigger.id);
-        let colour = match (selected, hovered) {
-            (true, _) => Color::WHITE,
-            (false, true) => Color::srgb(1.0, 1.0, 0.8),
-            _ => colour_of(triggers.does(&session.server_edits, trigger.id)),
-        };
+        let highlight = triggers.points.highlight(trigger.id);
+        let colour = highlight.unwrap_or_else(|| colour_of(triggers.does(&session.rows.edits, trigger.id)));
         let marker = marks.visible_radius(bevy(at), super::flightpaths::MARKER_RADIUS * 0.5);
         marks.sphere(bevy(at), marker, colour, Look::Ghosted);
-        let (look, fill) = match selected || hovered {
+        let (look, fill) = match highlight.is_some() {
             true => (Look::Ghosted, VOLUME_AIMED),
             false => (Look::Solid, VOLUME),
         };
@@ -1385,14 +1242,14 @@ fn draw(
     }
     // The selected trigger's teleport target and battleground exit, when they
     // are on this map, with the way a character faces there.
-    if let Some(id) = triggers.selected {
+    if let Some(id) = triggers.points.selected {
         let teleport = triggers
-            .teleport(&session.server_edits, id)
-            .filter(|(teleport, _, life)| *life != Life::Delete && teleport.target_map == triggers.map)
+            .teleport(&session.rows.edits, id)
+            .filter(|(teleport, _, life)| *life != Life::Delete && teleport.target_map == triggers.points.map)
             .map(|(teleport, _, _)| (Vec3::from(teleport.target), teleport.orientation, PickFor::Teleport));
         let exit = triggers
-            .entrance(&session.server_edits, id)
-            .filter(|(entrance, _, life)| *life != Life::Delete && entrance.exit_map == triggers.map)
+            .entrance(&session.rows.edits, id)
+            .filter(|(entrance, _, life)| *life != Life::Delete && entrance.exit_map == triggers.points.map)
             .map(|(entrance, _, _)| (Vec3::from(entrance.exit), entrance.orientation, PickFor::BgExit));
         let from = triggers.trigger(id).map(|trigger| Vec3::from(trigger.at));
         for (at, facing, what) in [teleport, exit].into_iter().flatten() {
@@ -1407,7 +1264,7 @@ fn draw(
         }
     }
     let Some(pointer) = cursor.surface else { return };
-    if let Some(pick) = triggers.pick.as_ref().filter(|pick| pick.map == triggers.map) {
+    if let Some(pick) = triggers.pick.as_ref().filter(|pick| pick.map == triggers.points.map) {
         let at = pick.pressed.unwrap_or(pointer);
         place_mark(&mut marks, at, pick.facing, Color::WHITE);
         return;
@@ -1452,15 +1309,6 @@ const BOX_EDGES: [(usize, usize); 12] = [
     (2, 6),
     (3, 7),
 ];
-
-/// Take the camera to a place the panel asked for.
-fn fly(mut triggers: ResMut<Triggers>, mut camera: ResMut<crate::camera::EditorCamera>) {
-    let Some(at) = triggers.fly_to.take() else {
-        return;
-    };
-    camera.target = at;
-    camera.wants_the_ground = false;
-}
 
 #[cfg(test)]
 mod tests {
@@ -1547,20 +1395,22 @@ mod tests {
         let project = vale_edit::project::Project::open(&install, "default").unwrap();
         let mut session = EditSession::for_tests(project);
         let mut triggers = Triggers::default();
-        triggers.held = Some(Held::default());
+        triggers.reads.insert((), Held::default());
         let key = trigger::teleport_key(4300, 0);
         add_teleport(&mut session, &triggers, 4300, 0, [-880.5, -1219.4, 53.5], 1.0);
         set_target(&mut session, &triggers, 4300, 0, Vec3::new(-770.37, -1100.2, 19.568), 5.79, 2.0);
         set_teleport(&mut session, &triggers, 4300, "required_level", "15".to_string(), 3.0);
-        assert!(missing(&session.server_edits, trigger::TELEPORT, &key).is_empty());
+        assert!(missing(&session.rows.edits, trigger::TELEPORT, &key).is_empty());
 
         // Applied: the database now holds the same row.
-        let (applied, _, _) = triggers.teleport(&session.server_edits, 4300).unwrap();
-        triggers.held.as_mut().unwrap().teleports.insert(4300, applied.clone());
+        let (applied, _, _) = triggers.teleport(&session.rows.edits, 4300).unwrap();
+        let mut held = triggers.held().cloned().unwrap();
+        held.teleports.insert(4300, applied.clone());
+        triggers.reads.insert((), held);
         let y = vale_mangos::sql::float(applied.target[1]);
         set_teleport(&mut session, &triggers, 4300, "target_position_y", y, 4.0);
-        assert!(missing(&session.server_edits, trigger::TELEPORT, &key).is_empty());
-        assert_eq!(session.server_edits.row(trigger::TELEPORT, &key).unwrap().life, Life::Insert);
+        assert!(missing(&session.rows.edits, trigger::TELEPORT, &key).is_empty());
+        assert_eq!(session.rows.edits.row(trigger::TELEPORT, &key).unwrap().life, Life::Insert);
         let _ = std::fs::remove_dir_all(&install);
     }
 
@@ -1569,7 +1419,7 @@ mod tests {
     #[test]
     fn a_creation_missing_a_column_is_shown_and_named() {
         let mut triggers = Triggers::default();
-        triggers.held = Some(Held::default());
+        triggers.reads.insert((), Held::default());
         let mut edits = Edits::default();
         let key = trigger::teleport_key(4300, 0);
         let mut row = crate::subjects::services::creation(&Teleport::new(4300, 0, [1.0, 2.0, 3.0]).assignments());
@@ -1606,7 +1456,7 @@ mod tests {
                 ..trigger::Template::default()
             },
         );
-        triggers.held = Some(held);
+        triggers.reads.insert((), held);
         let mut edits = Edits::default();
         let (template, in_database) = triggers.template(&edits, 1125).unwrap();
         assert!(in_database);

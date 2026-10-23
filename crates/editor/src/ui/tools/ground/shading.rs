@@ -114,3 +114,9 @@ pub(in crate::ui::tools) fn shading(ui: &mut egui::Ui, shading: &mut crate::tool
          undone tile is written back byte for byte.",
     );
 }
+
+/// The shading brush's inspector panel, with the tablet's settings under it.
+pub(crate) fn inspect(ui: &mut egui::Ui, _: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    shading(ui, &mut editing.shading);
+    crate::ui::tools::tablet::tablet(ui, &mut editing.tablet, &editing.pen);
+}

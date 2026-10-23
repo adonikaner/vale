@@ -1,6 +1,6 @@
 //! `--apply <subject>` and `--revert <subject>`: the Server panel's Apply and
 //! Put back on a row subject, with nobody at the keyboard. See
-//! [`crate::args::Args::apply_subjects`].
+//! [`crate::args::server::Server::apply_subjects`].
 
 use crate::server::reload::Reloads;
 use crate::server::settings::ServerSettings;
@@ -61,7 +61,7 @@ pub fn on_the_command_line(
     scripted: Scripted,
     mut done: Local<bool>,
 ) {
-    if *done || (args.apply_subjects.is_empty() && args.revert_subjects.is_empty()) {
+    if *done || (args.server.apply_subjects.is_empty() && args.server.revert_subjects.is_empty()) {
         return;
     }
     if !scripted.landed() {
@@ -73,8 +73,8 @@ pub fn on_the_command_line(
     for subject in Subject::ORDER {
         let word = subject.row_subject().word();
         let wanted = [
-            (args.revert_subjects.contains(&subject), "--revert", Wanted::PutBack(subject)),
-            (args.apply_subjects.contains(&subject), "--apply", Wanted::Apply(subject)),
+            (args.server.revert_subjects.contains(&subject), "--revert", Wanted::PutBack(subject)),
+            (args.server.apply_subjects.contains(&subject), "--apply", Wanted::Apply(subject)),
         ];
         for (asked, flag, wanted) in wanted {
             if !asked {

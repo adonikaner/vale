@@ -183,3 +183,8 @@ fn slope_rows(ui: &mut egui::Ui, water: &mut crate::tools::ground::water::Water)
         );
     }
 }
+
+/// The water tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, _: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    water(ui, &mut editing.water);
+}

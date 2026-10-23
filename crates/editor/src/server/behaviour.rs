@@ -7,7 +7,7 @@
 //! in the project's store, on [`super::loot`]'s terms: a created row is a `DELETE` and an
 //! `INSERT`, an edited one an `UPDATE`, a removed one a `DELETE`. The eleven
 //! `*_scripts` tables have no key, so a script is the unit and lives in the
-//! session's second store (`EditSession::server_scripts`), written whole on
+//! session's second store (`ServerRows::scripts`), written whole on
 //! [`super::creatures`]' path terms: `DELETE` under the id, then one `INSERT`
 //! per row. `vale_mangos::scripts`' module comment is where that was
 //! decided.

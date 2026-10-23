@@ -294,17 +294,22 @@ impl Plugin for TerrainToolPlugin {
                     // stroke would paint at the pointer's position from the
                     // previous frame, and while the camera moves the stroke
                     // would trail the cursor.
+                    //
+                    // The global keys (`crate::tools::shortcuts`, registered by
+                    // the shell) run between the stroke and the live steps:
+                    // undo and redo mark what they moved as a stroke does, and
+                    // the live steps catch the ground up on the same frame.
                     (
-                        stroke,
-                        vertex_asks,
-                        crate::tools::shortcuts::shortcuts,
-                        live_ground,
-                        live_foliage,
-                        publish,
-                        remesh,
+                        (stroke, vertex_asks)
+                            .chain()
+                            .before(crate::tools::shortcuts::shortcuts),
+                        (live_ground, live_foliage, publish, remesh)
+                            .chain()
+                            .after(crate::tools::shortcuts::shortcuts),
                     )
                         .chain()
                         .after(crate::pick::aim),
+                    modes,
                     draw_brush,
                     draw_vertices,
                     vertices_on_the_command_line,
@@ -321,6 +326,26 @@ impl Plugin for TerrainToolPlugin {
                 PostUpdate,
                 swap.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
             );
+    }
+}
+
+/// The number row on the height brush.
+///
+/// Unshifted digits cover the two long rows; shifted digits cover the short
+/// one. 1..5 are the five modes, 6..0 the five falloffs, and `Shift`+1..3 the
+/// three shapes: the panel's own rows in the panel's own order, so the panel
+/// shows which key does what. See [`crate::tools::modes`].
+fn modes(row: crate::tools::modes::NumberRow, mut terrain: ResMut<Terrain>) {
+    let Some(press) = row.read(&[Tool::Terrain]) else { return };
+    let Some(at) = press.digit else { return };
+    if press.shift {
+        if let Some(&(_, shape)) = SHAPES.get(at) {
+            terrain.brush.shape = shape;
+        }
+    } else if let Some(&(_, mode)) = MODES.get(at) {
+        terrain.brush.mode = mode;
+    } else if let Some(&(_, falloff)) = FALLOFFS.get(at - MODES.len()) {
+        terrain.brush.falloff = falloff;
     }
 }
 
@@ -823,7 +848,7 @@ fn change_locks(session: &mut EditSession, terrain: &Terrain, ask: VertexAsk) ->
 
 /// `--vertices <radius>[,<rise>]`: select the vertices round the camera's
 /// target once its tile is open, and move them when a rise is given. See
-/// [`crate::args::Args::vertices`].
+/// [`crate::args::tools::Tools::vertices`].
 fn vertices_on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<Res<EditSession>>,
@@ -831,11 +856,11 @@ fn vertices_on_the_command_line(
     mut terrain: ResMut<Terrain>,
     mut done: Local<u8>,
 ) {
-    let Some((radius, rise)) = args.vertices else {
+    let Some((radius, rise)) = args.tools.vertices else {
         return;
     };
     if *done == 0 {
-        if let Some((angle, toward)) = args.tilt {
+        if let Some((angle, toward)) = args.tools.tilt {
             terrain.tilt_angle = angle;
             terrain.tilt_toward = toward;
         }
@@ -871,13 +896,13 @@ fn vertices_on_the_command_line(
             );
             if let Some(rise) = rise {
                 terrain.ask = Some(VertexAsk::MoveTo(terrain.selected_mean + rise));
-            } else if let Some((angle, toward)) = args.tilt {
+            } else if let Some((angle, toward)) = args.tools.tilt {
                 // Set once the selection is made, which starts it level.
                 terrain.vertex_tilt = [angle, toward];
                 terrain.ask = Some(VertexAsk::Tilt);
             }
         }
-        2 if (rise.is_some() || args.tilt.is_some()) && terrain.ask.is_none() => {
+        2 if (rise.is_some() || args.tools.tilt.is_some()) && terrain.ask.is_none() => {
             *done = 3;
             info!(
                 "--vertices: moved to a mean of {:.2} yd, tilt {} toward {}",

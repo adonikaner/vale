@@ -10,7 +10,6 @@ use bevy::prelude::*;
 use std::sync::{Arc, RwLock};
 use super::{EditSession, Edited, overlay_over};
 use super::tiles::claimed_tiles;
-use super::rows::{read_server_edits, read_server_paths, read_server_scripts};
 use crate::places::map_directories;
 use super::originals::Shipped;
 
@@ -32,7 +31,7 @@ pub(super) fn open(
     // one is a file under `Edit\`, written here and on every switch — see
     // `vale_edit::project::last_opened`.
     let name = args
-        .project
+        .view.project
         .clone()
         .or_else(|| vale_edit::project::last_opened(&assets.root))
         .unwrap_or_else(|| vale_edit::project::DEFAULT.to_string());
@@ -51,7 +50,7 @@ pub(super) fn open(
     let maps = map_directories(&assets);
     let map_id = maps
         .iter()
-        .find(|(_, name)| name.eq_ignore_ascii_case(&args.map))
+        .find(|(_, name)| name.eq_ignore_ascii_case(&args.view.map))
         .map(|(id, _)| *id)
         .unwrap_or(0);
 
@@ -79,22 +78,20 @@ pub(super) fn open(
     // What the map claims, from the project's own copy of the WDT if it has
     // one and the archives' otherwise — so a tile made in a previous session is
     // there when this one opens. See `EditSession::claimed`.
-    let claimed = claimed_tiles(&assets, &project, &args.map);
+    let claimed = claimed_tiles(&assets, &project, &args.view.map);
     // …and what it changes on the server, which is a file of the project's own
     // because no client file carries a `creature_template` row.
-    let server_edits = read_server_edits(&project);
-    let server_paths = read_server_paths(&project);
-    let server_scripts = read_server_scripts(&project);
+    let rows = crate::server::store::ServerRows::read(&project);
     // …and which of its tiles are the archives' own, which it should not keep.
     // See [`Shipped::look_for_unchanged`].
     let shipped = Shipped::new(&assets);
     let unchanged = Some(shipped.look_for_unchanged(&project));
 
-    let at = args.at.unwrap_or((0.0, 0.0));
+    let at = args.view.at.unwrap_or((0.0, 0.0));
     camera.go_to(Vec2::new(at.0, at.1));
     // …and `--view`, which is how far back and at what angle. Written after
     // `go_to` because that keeps the framing and only moves the focus.
-    if let Some((distance, pitch, yaw)) = args.view {
+    if let Some((distance, pitch, yaw)) = args.view.camera {
         camera.distance = distance.max(1.0);
         if let Some(pitch) = pitch {
             camera.pitch = pitch.to_radians();
@@ -103,12 +100,12 @@ pub(super) fn open(
             camera.yaw = yaw.to_radians();
         }
     }
-    *focus = WorldFocus::at(map_id, args.map.clone(), camera.target);
+    *focus = WorldFocus::at(map_id, args.view.map.clone(), camera.target);
 
     commands.insert_resource(EditSession {
-        status: format!("{} in {}", args.map, project.root.display()),
+        status: format!("{} in {}", args.view.map, project.root.display()),
         project,
-        map: args.map.clone(),
+        map: args.view.map.clone(),
         map_id,
         maps,
         tiles: HashMap::default(),
@@ -135,19 +132,12 @@ pub(super) fn open(
         files_revision: 0,
         claimed,
         reread_everything: false,
-        claims_for: args.map.clone(),
+        claims_for: args.view.map.clone(),
         edited,
-        server_edits,
-        server_paths,
-        server_scripts,
-        server_edit_revision: 0,
-        server_edits_unsaved: false,
-        server_paths_unsaved: false,
-        server_scripts_unsaved: false,
+        rows,
         applied_signature: None,
         applied: [None; crate::server::stack::Subject::COUNT],
         database_writes: 0,
-        one_gesture: None,
         shipped: Some(shipped),
         unchanged,
         locks: HashMap::default(),

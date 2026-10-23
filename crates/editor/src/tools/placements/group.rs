@@ -15,7 +15,7 @@
 //! drag on empty ground a rectangle: everything drawn whose origin is inside it
 //!                      is selected. With shift it is added to the group
 //! click on nothing     drops the whole selection (doodads, WMOs); leaves it
-//!                      alone (creatures, objects — see `creatures::press`)
+//!                      alone (creatures, objects — see `spawn::press`)
 //! drag a member        moves every member by the same step. A press on a
 //!                      member that is released without moving selects that
 //!                      member alone
@@ -62,8 +62,13 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use crate::tools::Tool;
 
 /// How far the pointer must travel from a press before it is a drag, in
-/// pixels. The creature tool's threshold, for its reason: an ordinary click
-/// moves the pointer a few pixels between press and release.
+/// pixels. Every tool that moves a thing by dragging it uses this one value.
+///
+/// A click selects; moving is a second gesture. Without a threshold every
+/// click moved its subject a fraction of a yard, because the pointer moves
+/// between the press and the release of an ordinary click and the ground
+/// under it is a different point. Six is about the travel of an ordinary
+/// click, and well under the travel of an intended drag.
 pub const DRAG_PIXELS: f32 = 6.0;
 
 /// Yards north a group copy made with `Ctrl+D` is put from the original, so
@@ -104,8 +109,8 @@ impl Plugin for GroupPlugin {
                     .after(crate::pick::aim)
                     .before(super::doodads::select)
                     .before(super::wmos::select)
-                    .before(crate::tools::spawns::creatures::press)
-                    .before(crate::tools::spawns::gameobjects::press),
+                    .before(crate::tools::spawns::spawn::press::<crate::tools::spawns::creatures::CreatureSubject>)
+                    .before(crate::tools::spawns::spawn::press::<crate::tools::spawns::gameobjects::GameObjectSubject>),
             )
             .add_systems(EguiPrimaryContextPass, paint)
             // After the undo key, for the reason the tools' own chains are: a
@@ -118,7 +123,7 @@ impl Plugin for GroupPlugin {
 }
 
 /// `--enclose`: release a rectangle over the world once it has streamed in,
-/// and a second later print what it selected. See `crate::args::Args::enclose`.
+/// and a second later print what it selected. See `crate::args::tools::Tools::enclose`.
 #[allow(clippy::too_many_arguments)]
 fn scripted(
     mut marquee: ResMut<Marquee>,
@@ -132,7 +137,7 @@ fn scripted(
     creatures: Res<crate::tools::spawns::creatures::Creatures>,
     objects: Res<crate::tools::spawns::gameobjects::GameObjects>,
 ) {
-    let Some([x0, y0, x1, y1]) = args.enclose else {
+    let Some([x0, y0, x1, y1]) = args.tools.enclose else {
         return;
     };
     let at = (shot.after - 7.0).max(1.0);

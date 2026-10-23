@@ -52,8 +52,8 @@ use std::collections::HashSet;
 
 use crate::ui::widgets::reference;
 use crate::ui::widgets::rowform::{
-    choice_cell, flags_cell, meaning, number_cell, number_means, page_row, page_spacing, text_cell,
-    FORM_ROW,
+    choice_cell, flags_cell, meaning, number_cell, number_means, page_row, page_spacing, remove_keep,
+    text_cell, RowAct, FORM_ROW,
 };
 use vale_mangos::sql::unquote;
 use crate::ui::widgets::theme;
@@ -84,6 +84,21 @@ pub struct Subject<'a> {
     /// `crate::ui::widgets::thumbnails`.
     pub thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
     pub now: f64,
+    /// Where a reference's name asks the shell to open its row.
+    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+}
+
+impl Subject<'_> {
+    /// What a reference's name is resolved through, borrowed from the
+    /// subject.
+    fn resolver(&mut self) -> reference::Resolver<'_> {
+        reference::Resolver {
+            session: &mut *self.session,
+            assets: self.assets,
+            quests: &mut *self.quests,
+            asks: &mut *self.asks,
+        }
+    }
 }
 
 /// The client tables a sentence names rows of, opened once a frame so the
@@ -101,15 +116,6 @@ const COMMON_COMMANDS: [u32; 16] = [0, 1, 15, 14, 74, 10, 18, 44, 47, 3, 20, 25,
 /// How many steps of a script an event card lists before it says how many
 /// more there are.
 const STEPS_ON_A_CARD: usize = 6;
-
-/// The frame every window here is drawn in.
-fn frame() -> egui::Frame {
-    egui::Frame::default()
-        .fill(theme::SHELL)
-        .stroke(egui::Stroke::new(1.0, theme::LINE))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::same(8))
-}
 
 /// The frame of one card: an event, a step or a search hit.
 pub(super) fn card(stroke: egui::Color32) -> egui::Frame {
@@ -177,11 +183,11 @@ struct Namer<'s> {
 impl Namer<'_> {
     fn name(&self, table: &str, id: u32) -> Option<String> {
         match table {
-            "broadcast_text" => self.behaviour.said(id, &self.session.server_edits),
-            "creature_template" => self.quests.borrow_mut().holder(Holder::Creature, id, &self.session.server_edits),
-            "gameobject_template" => self.quests.borrow_mut().holder(Holder::Object, id, &self.session.server_edits),
-            "item_template" => self.quests.borrow_mut().item(id, &self.session.server_edits).map(|found| found.name),
-            "quest_template" => self.quests.borrow().title_of(id, &self.session.server_edits),
+            "broadcast_text" => self.behaviour.said(id, &self.session.rows.edits),
+            "creature_template" => self.quests.borrow_mut().holder(Holder::Creature, id, &self.session.rows.edits),
+            "gameobject_template" => self.quests.borrow_mut().holder(Holder::Object, id, &self.session.rows.edits),
+            "item_template" => self.quests.borrow_mut().item(id, &self.session.rows.edits).map(|found| found.name),
+            "quest_template" => self.quests.borrow().title_of(id, &self.session.rows.edits),
             dbc => super::quests::name_in(self.session, dbc, id),
         }
     }
@@ -282,13 +288,10 @@ fn events_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
     }
     let about = subject.behaviour.about.clone()?;
     let mut keep_open = true;
-    let shown = egui::Window::new(format!("{} \u{2014} events", about.label))
-        .id(egui::Id::new("events-window"))
+    let shown = theme::window(format!("{} \u{2014} events", about.label), "events-window")
         .open(&mut keep_open)
         .default_size([760.0, 600.0])
         .default_pos([300.0, 110.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             page_spacing(ui);
             ui.label(
@@ -300,7 +303,7 @@ fn events_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 .color(theme::INK_DIM),
             );
             ai_name_line(ui, subject, &about.template_key, &about.ai_name);
-            if let Some(trouble) = subject.behaviour.trouble.clone() {
+            if let Some(trouble) = subject.behaviour.trouble().cloned() {
                 ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
                 return;
             }
@@ -308,7 +311,7 @@ fn events_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 theme::waiting(ui, "reading the events\u{2026}");
                 return;
             }
-            let events = subject.behaviour.events_of(about.entry, &subject.session.server_edits);
+            let events = subject.behaviour.events_of(about.entry, &subject.session.rows.edits);
             events_toolbar(ui, subject, about.entry, &events);
             let cards: Vec<EventCard> = {
                 let namer = namer(subject.session, subject.behaviour, subject.quests);
@@ -325,7 +328,7 @@ fn events_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                             .map(|id| {
                                 (
                                     *id,
-                                    namer.session.server_scripts.touches(scripts::CREATURE_AI, *id),
+                                    namer.session.rows.scripts.touches(scripts::CREATURE_AI, *id),
                                     steps_of(&namer, scripts::CREATURE_AI, *id),
                                 )
                             })
@@ -454,7 +457,7 @@ fn set_template(subject: &mut Subject<'_>, template_key: &Key, column: &'static 
         template_key,
         column,
         Some(value),
-        Some(crate::session::rows::Gesture { label: "Edit creature", subject: &subject_line, now: subject.now }),
+        Some(crate::server::store::Gesture { label: "Edit creature", subject: &subject_line, now: subject.now }),
     );
 }
 
@@ -589,7 +592,7 @@ fn event_details(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEven
         theme::heading(ui, "Actions");
         action_fields(ui, subject, shown);
         theme::heading(ui, "Note");
-        let changed = subject.session.server_edits.get(eventai::TABLE, &shown.event.key(), "comment").is_some();
+        let changed = subject.session.rows.edits.get(eventai::TABLE, &shown.event.key(), "comment").is_some();
         let id = ui.make_persistent_id(("event", shown.event.id));
         if let Some(written) = page_row(ui, "comment", "not read by the server", changed, |ui| {
             text_cell(ui, id.with("comment"), &vale_mangos::sql::text(&shown.event.comment))
@@ -599,15 +602,14 @@ fn event_details(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEven
         }
     });
     ui.horizontal(|ui| {
-        let (label, about) = match shown.life {
-            Life::Delete => ("keep", "Clears the removal mark on this event."),
-            Life::Insert => ("discard", "Drops this unapplied event. The database is not changed."),
-            Life::Update => ("remove", "Marks the event for removal. Apply deletes the row."),
+        let about = match shown.life {
+            Life::Insert => "Drops this unapplied event. The database is not changed.",
+            _ => "Marks the event for removal. Apply deletes the row.",
         };
-        if small(ui, label, about) {
+        if let Some(act) = remove_keep(ui, shown.life, about) {
             let now = subject.now;
-            match shown.life {
-                Life::Delete => subject.behaviour.keep_event(subject.session, shown, now),
+            match act {
+                RowAct::Keep => subject.behaviour.keep_event(subject.session, shown, now),
                 _ => subject.behaviour.remove_event(subject.session, shown, now),
             }
         }
@@ -644,7 +646,7 @@ fn trigger_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEve
     let changed: Vec<&'static str> = eventai::COLUMNS
         .iter()
         .map(|column| column.name)
-        .filter(|column| subject.session.server_edits.get(eventai::TABLE, &key, column).is_some())
+        .filter(|column| subject.session.rows.edits.get(eventai::TABLE, &key, column).is_some())
         .collect();
     let edited = |column: &str| changed.contains(&column);
 
@@ -721,7 +723,7 @@ fn trigger_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEve
 fn action_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownEvent) {
     let event = shown.event.clone();
     let key = event.key();
-    let edited = |subject: &Subject<'_>, column: &str| subject.session.server_edits.get(eventai::TABLE, &key, column).is_some();
+    let edited = |subject: &Subject<'_>, column: &str| subject.session.rows.edits.get(eventai::TABLE, &key, column).is_some();
     let mut random = event.random_action();
     let was = random;
     let flags_edited = edited(subject, "event_flags");
@@ -808,17 +810,13 @@ pub(super) fn script_controls(
     } else {
         meaning(ui, "none");
     }
-    if ui
-        .small_button("choose\u{2026}")
-        .on_hover_text(format!("Search {table} by comment or id, and use an existing script."))
-        .clicked()
-    {
+    if reference::choose_button(ui, &format!("Search {table} by comment or id, and use an existing script.")) {
         behaviour.chooser = Some(Chooser::Script { table, answer, search: Search::default() });
     }
     let next = match preferred {
         Some(preferred) => behaviour
             .next_script_id(table, session)
-            .map(|next| match preferred >= next && !session.server_scripts.touches(table, preferred) {
+            .map(|next| match preferred >= next && !session.rows.scripts.touches(table, preferred) {
                 true => preferred,
                 false => next,
             }),
@@ -844,8 +842,11 @@ pub(super) fn script_controls(
     out
 }
 
-/// The value cell of one parameter, by its [`Kind`]: a number, a menu, a mask,
-/// or a reference with its name and picker after it.
+/// The value cell of one parameter, by its [`Kind`]: [`rowform::value_cell`],
+/// with a reference's name beside its number whatever the room, a time held
+/// to an unsigned number, and a percent sign after a chance.
+///
+/// [`rowform::value_cell`]: crate::ui::widgets::rowform::value_cell
 #[allow(clippy::too_many_arguments)]
 fn value_cell(
     ui: &mut egui::Ui,
@@ -856,36 +857,23 @@ fn value_cell(
     target: Option<ColumnTarget>,
     column: &str,
 ) -> Option<String> {
-    match kind {
-        Kind::Choice(values) => choice_cell(ui, showing, values, id),
-        Kind::Flags(bits) => flags_cell(ui, showing, bits, id),
-        Kind::Ref(dbc) => {
-            let written = number_cell(ui, Kind::Unsigned, showing);
-            let mut resolver = reference::Resolver {
-                session: &mut *subject.session,
-                assets: subject.assets,
-                quests: &mut *subject.quests,
-            };
-            if let Some(id) = reference::cell(ui, &mut resolver, dbc, showing, target) {
-                reference::name(ui, &mut resolver, dbc, id);
-            }
-            written
+    if matches!(kind, Kind::Millis | Kind::Seconds) {
+        let written = number_cell(ui, Kind::Unsigned, showing);
+        if let Some(means) = number_means(kind, showing) {
+            meaning(ui, means);
         }
-        Kind::Millis | Kind::Seconds => {
-            let written = number_cell(ui, Kind::Unsigned, showing);
-            if let Some(means) = number_means(kind, showing) {
-                meaning(ui, means);
-            }
-            written
-        }
-        kind => {
-            let written = number_cell(ui, kind, showing);
-            if column.contains("chance") || column.contains("probability") {
-                meaning(ui, "%");
-            }
-            written
-        }
+        return written;
     }
+    let mut resolver = subject.resolver();
+    let (written, name_later) = crate::ui::widgets::rowform::value_cell(ui, &mut resolver, kind, showing, id, target);
+    if let Some((table, id)) = name_later {
+        reference::name(ui, &mut resolver, table, id);
+    }
+    let number = !matches!(kind, Kind::Choice(_) | Kind::Flags(_) | Kind::Ref(_));
+    if number && (column.contains("chance") || column.contains("probability")) {
+        meaning(ui, "%");
+    }
+    written
 }
 
 // ---------------------------------------------------------------------------
@@ -901,16 +889,13 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
     }
     let about = subject.behaviour.about.clone()?;
     let mut keep_open = true;
-    let shown = egui::Window::new(format!("{} \u{2014} spells", about.label))
-        .id(egui::Id::new("spells-window"))
+    let shown = theme::window(format!("{} \u{2014} spells", about.label), "spells-window")
         .open(&mut keep_open)
         .default_size([740.0, 520.0])
         .default_pos([320.0, 140.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             page_spacing(ui);
-            if let Some(trouble) = subject.behaviour.trouble.clone() {
+            if let Some(trouble) = subject.behaviour.trouble().cloned() {
                 ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
                 return;
             }
@@ -920,12 +905,12 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 return;
             }
             if !subject.behaviour.list_read(about.spell_list_id)
-                && subject.behaviour.list_of(about.spell_list_id, &subject.session.server_edits).is_none()
+                && subject.behaviour.list_of(about.spell_list_id, &subject.session.rows.edits).is_none()
             {
                 theme::waiting(ui, "reading the list\u{2026}");
                 return;
             }
-            let Some(list) = subject.behaviour.list_of(about.spell_list_id, &subject.session.server_edits) else {
+            let Some(list) = subject.behaviour.list_of(about.spell_list_id, &subject.session.rows.edits) else {
                 ui.label(
                     egui::RichText::new(format!(
                         "creature_spells has no entry {}. The server logs an error at start \
@@ -960,7 +945,7 @@ fn spells_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                         .color(theme::INK_FAINT),
                 );
             });
-            match (list.life, subject.behaviour.users_of(list.list.entry, &subject.session.server_edits)) {
+            match (list.life, subject.behaviour.users_of(list.list.entry, &subject.session.rows.edits)) {
                 (Life::Insert, _) => {
                     ui.label(egui::RichText::new("New: this list is not in the database yet. Apply inserts it.").small().color(theme::WARN));
                 }
@@ -1047,7 +1032,7 @@ fn list_fields(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &ShownList) 
     let changed: Vec<&'static str> = creaturespells::COLUMNS
         .iter()
         .map(|column| column.name)
-        .filter(|column| subject.session.server_edits.get(creaturespells::TABLE, &key, column).is_some())
+        .filter(|column| subject.session.rows.edits.get(creaturespells::TABLE, &key, column).is_some())
         .collect();
     let edited = |column: &str| changed.contains(&column);
     let written = page_row(ui, "name", "not read by the server", edited("name"), |ui| {
@@ -1160,13 +1145,10 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
     }
     let (table, id) = subject.behaviour.script?;
     let mut keep_open = true;
-    let shown = egui::Window::new(format!("{table} {id} \u{2014} script"))
-        .id(egui::Id::new("script-window"))
+    let shown = theme::window(format!("{table} {id} \u{2014} script"), "script-window")
         .open(&mut keep_open)
         .default_size([760.0, 600.0])
         .default_pos([340.0, 150.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             page_spacing(ui);
             let table_info = scripts::table(table);
@@ -1191,7 +1173,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                      starts, where delay is in seconds.",
                 );
             }
-            if let Some(trouble) = subject.behaviour.trouble.clone() {
+            if let Some(trouble) = subject.behaviour.trouble().cloned() {
                 ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
                 return;
             }
@@ -1199,7 +1181,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                 theme::waiting(ui, "reading the script\u{2026}");
                 return;
             };
-            let claimed = subject.session.server_scripts.touches(table, id);
+            let claimed = subject.session.rows.scripts.touches(table, id);
             let in_database = subject.behaviour.script_in_database(table, id);
             match (claimed, in_database, script.rows.is_empty()) {
                 (true, true, true) => {
@@ -1227,7 +1209,7 @@ fn script_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui:
                         table,
                         id,
                         None,
-                        Some(crate::session::rows::Gesture { label: "Edit script", subject: &subject_line, now }),
+                        Some(crate::server::store::Gesture { label: "Edit script", subject: &subject_line, now }),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1566,22 +1548,14 @@ fn script_value_cell(
         Kind::Ref(dbc) => {
             let written = number_cell(ui, Kind::Unsigned, showing);
             if let Some(kind) = super::quests::target_of(dbc) {
-                if ui
-                    .add(egui::Button::new(egui::RichText::new("\u{2026}").size(13.0)).min_size(egui::vec2(24.0, FORM_ROW)))
-                    .on_hover_text(format!("choose {column} by name"))
-                    .clicked()
-                {
+                if reference::by_name_button(ui, &format!("Choose {column} by name.")) {
                     subject.quests.picker = Some(Picker::new(
                         kind,
                         PickFor::ScriptCell { table: script.table, id: script.id, row: at, column },
                     ));
                 }
             }
-            let mut resolver = reference::Resolver {
-                session: &mut *subject.session,
-                assets: subject.assets,
-                quests: &mut *subject.quests,
-            };
+            let mut resolver = subject.resolver();
             if let Some(id) = reference::cell(ui, &mut resolver, dbc, showing, None) {
                 reference::name(ui, &mut resolver, dbc, id);
             }
@@ -1599,7 +1573,7 @@ fn text_buttons(ui: &mut egui::Ui, subject: &mut Subject<'_>, showing: &str, cel
     let mut out = None;
     match entry {
         0 => meaning(ui, "none"),
-        entry => match subject.behaviour.said(entry, &subject.session.server_edits) {
+        entry => match subject.behaviour.said(entry, &subject.session.rows.edits) {
             Some(said) => {
                 // A truncated label is given its width: in a horizontal row
                 // it otherwise asks for the whole text's width, and the
@@ -1616,11 +1590,7 @@ fn text_buttons(ui: &mut egui::Ui, subject: &mut Subject<'_>, showing: &str, cel
             None => meaning(ui, "\u{2026}"),
         },
     }
-    if ui
-        .small_button("choose\u{2026}")
-        .on_hover_text("Search broadcast_text by what is said or by entry, and use an existing text.")
-        .clicked()
-    {
+    if reference::choose_button(ui, "Search broadcast_text by what is said or by entry, and use an existing text.") {
         subject.behaviour.chooser = Some(Chooser::Text { answer: cell, search: Search::default() });
     }
     let next = subject.behaviour.next_text_entry(subject.session);
@@ -1645,7 +1615,7 @@ fn text_buttons(ui: &mut egui::Ui, subject: &mut Subject<'_>, showing: &str, cel
 /// says it: what is said, how, in what language, and the sound and emotes
 /// that go with it.
 fn text_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
-    let Some(shown) = subject.behaviour.text_of(entry, &subject.session.server_edits) else {
+    let Some(shown) = subject.behaviour.text_of(entry, &subject.session.rows.edits) else {
         if subject.behaviour.text_read(entry) {
             ui.label(
                 egui::RichText::new(format!("broadcast_text has no entry {entry}; the step sends no text."))
@@ -1659,7 +1629,7 @@ fn text_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
     let changed: Vec<&'static str> = broadcast::COLUMNS
         .iter()
         .map(|column| column.name)
-        .filter(|column| subject.session.server_edits.get(broadcast::TABLE, &key, column).is_some())
+        .filter(|column| subject.session.rows.edits.get(broadcast::TABLE, &key, column).is_some())
         .collect();
     let stroke = match shown.life {
         Life::Insert => theme::WARN,
@@ -1906,7 +1876,7 @@ fn script_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, table: &'static 
     let mut offered: Vec<u32> = Vec::new();
     if table == scripts::CREATURE_AI {
         if let Some(about) = subject.behaviour.about.clone() {
-            for shown in subject.behaviour.events_of(about.entry, &subject.session.server_edits) {
+            for shown in subject.behaviour.events_of(about.entry, &subject.session.rows.edits) {
                 offered.extend(shown.event.scripts.iter().filter(|id| **id != 0));
             }
         }
@@ -2044,7 +2014,7 @@ fn text_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, answer: &ScriptAns
     let texts: Vec<ShownText> = search
         .hits()
         .iter()
-        .filter_map(|entry| subject.behaviour.text_of(*entry, &subject.session.server_edits))
+        .filter_map(|entry| subject.behaviour.text_of(*entry, &subject.session.rows.edits))
         .collect();
     let mut chosen: Option<u32> = None;
     egui::ScrollArea::vertical().max_height(420.0).auto_shrink([false, true]).show(ui, |ui| {

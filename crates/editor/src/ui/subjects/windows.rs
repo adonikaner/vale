@@ -5,6 +5,10 @@
 
 use bevy_egui::egui;
 
+use crate::subjects::behaviour::About;
+use crate::subjects::loot::Window;
+use crate::subjects::windows::Focus;
+use crate::subjects::{gossip, services};
 use crate::tools::Tool;
 use crate::ui::subjects;
 use crate::ui::workspace::Bench;
@@ -26,9 +30,10 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
     let mut floating = Vec::new();
     // The creature or game object the windows below are about: the selected
     // spawn's template under the rail tool, and the open row under the
-    // Creatures or Game Objects workspace. See [`Focus`].
-    let creature_focus = Focus::creature(tool, &editing.creatures, &session.server_edits);
-    let object_focus = Focus::object(tool, &editing.objects, &session.server_edits);
+    // Creatures or Game Objects workspace. See
+    // [`crate::subjects::windows::Focus`].
+    let creature_focus = Focus::creature(tool, &editing.creatures, &session.rows.edits);
+    let object_focus = Focus::object(tool, &editing.objects, &session.rows.edits);
 
     // The quest window of a creature or a game object, on the root context
     // for the same reason. It follows the selection as the template window
@@ -81,152 +86,30 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
     // the selection with the project's edits applied, so a `loot_id` typed
     // into the template form changes the tab on the next frame. See
     // [`crate::subjects::loot::Window`].
-    let mut fixes: Vec<Option<subjects::loot::Fix>> = Vec::new();
+    let edits = &session.rows.edits;
+    // The creature's template row as read, `None` while it is being read.
+    let template = creature_focus.as_ref().and_then(|focus| {
+        editing
+            .creatures
+            .template
+            .as_ref()
+            .filter(|held| held.entry == focus.entry)
+            .map(|held| &held.row)
+    });
     let described = match tool {
-        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().map(|spawn| {
-                let key = spawn.template_key.clone();
-                let template = editing
-                    .creatures
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == spawn.entry);
-                let column = |name: &str| -> Option<u32> {
-                    let row = template.map(|held| &held.row);
-                    session
-                        .server_edits
-                        .shown_integer(vale_mangos::creature::TEMPLATE, &key, name, row)
-                        .map(|value| value.max(0) as u32)
-                };
-                let sets = match template {
-                    None => Vec::new(),
-                    Some(_) => {
-                        let mut sets = Vec::new();
-                        for (table, name) in [
-                            (vale_mangos::loot::CREATURE, "loot_id"),
-                            (vale_mangos::loot::PICKPOCKETING, "pickpocket_loot_id"),
-                            (vale_mangos::loot::SKINNING, "skinning_loot_id"),
-                        ] {
-                            let entry = column(name).unwrap_or(0);
-                            sets.push(crate::subjects::loot::Set::new(table, entry));
-                            fixes.push((entry == 0).then(|| subjects::loot::Fix {
-                                table: vale_mangos::creature::TEMPLATE,
-                                key: key.clone(),
-                                column: name,
-                                value: spawn.entry.to_string(),
-                                label: format!("Set {name} to {}", spawn.entry),
-                                about: format!(
-                                    "Write creature_template.{name} = {}, the convention \
-                                     the shipped rows follow. This is a creature edit: \
-                                     apply it from the Creatures block of the Server \
-                                     panel, then restart the server.",
-                                    spawn.entry
-                                ),
-                                gesture: "Edit creature",
-                            }));
-                        }
-                        sets
-                    }
-                };
-                crate::subjects::loot::Window {
-                    title: spawn.label.clone(),
-                    about: match template {
-                        Some(_) => format!(
-                            "creature_template entry {}: every spawn of this creature drops this loot.",
-                            spawn.entry
-                        ),
-                        None => "reading the creature_template row\u{2026}".to_string(),
-                    },
-                    sets,
-                }
-            }),
-        Tool::GameObjects | Tool::GameObjectData => object_focus.as_ref().map(|spawn| {
-                let key = spawn.template_key.clone();
-                let known = spawn.object.as_ref();
-                let looted = known.is_some_and(|known| known.is_looted());
-                let entry = known.and_then(|known| known.loot()).unwrap_or(0);
-                if looted {
-                    fixes.push((entry == 0).then(|| subjects::loot::Fix {
-                        table: vale_mangos::gameobject::TEMPLATE,
-                        key: key.clone(),
-                        column: "data1",
-                        value: spawn.entry.to_string(),
-                        label: format!("Set lootId to {}", spawn.entry),
-                        about: format!(
-                            "Write gameobject_template.data1 = {}, the convention the \
-                             shipped rows follow. This is a game object edit: apply it from \
-                             the Objects block of the Server panel, then restart the \
-                             server.",
-                            spawn.entry
-                        ),
-                        gesture: "Edit game object",
-                    }));
-                }
-                crate::subjects::loot::Window {
-                    title: spawn.label.clone(),
-                    about: match (known, looted) {
-                        (None, _) => "No gameobject_template row at this content patch.".to_string(),
-                        (Some(known), false) => format!(
-                            "type is {}, which has no loot: the server reads lootId only for \
-                             chests and fishing holes.",
-                            known.type_word()
-                        ),
-                        (Some(_), true) => format!(
-                            "gameobject_template entry {}: every spawn of this object contains this loot.",
-                            spawn.entry
-                        ),
-                    },
-                    sets: match looted {
-                        true => vec![crate::subjects::loot::Set::new(vale_mangos::loot::GAMEOBJECT, entry)],
-                        false => Vec::new(),
-                    },
-                }
-            }),
-        Tool::Items => editing.items.open_item(&session.server_edits).map(|known| {
-            let key = known.key();
+        Tool::Creatures | Tool::CreatureData => creature_focus
+            .as_ref()
+            .map(|focus| Window::for_creature(focus, template, edits)),
+        Tool::GameObjects | Tool::GameObjectData => object_focus.as_ref().map(Window::for_object),
+        Tool::Items => editing.items.open_item(edits).map(|known| {
             let row = editing.items.row.as_ref().filter(|held| held.entry == known.entry);
-            let disenchant = session
-                .server_edits
-                .shown_integer(vale_mangos::item::TEMPLATE, &key, "disenchant_id", row.map(|held| &held.row))
-                .map(|value| value.max(0) as u32);
-            // `ITEM_FLAG_LOOTABLE`, the bit `LoadLootTemplates_Item` reads.
-            const LOOTABLE: u32 = 0x4;
-            fixes.push((known.flags & LOOTABLE == 0).then(|| subjects::loot::Fix {
-                table: vale_mangos::item::TEMPLATE,
-                key: key.clone(),
-                column: "flags",
-                value: (known.flags | LOOTABLE).to_string(),
-                label: "Set LOOTABLE".to_string(),
-                about: "Add LOOTABLE (0x4) to item_template.flags. With this flag the client \
-                        offers to open the item and the server reads this loot set. This is \
-                        an item edit: apply it from the Items block of the Server panel; it \
-                        is live after .reload item_template."
-                    .to_string(),
-                gesture: "Edit item",
-            }));
-            fixes.push(None);
-            let mut sets = vec![crate::subjects::loot::Set::new(vale_mangos::loot::ITEM, known.entry)];
-            match disenchant {
-                Some(disenchant) => {
-                    sets.push(crate::subjects::loot::Set::new(vale_mangos::loot::DISENCHANT, disenchant));
-                }
-                None => {
-                    fixes.pop();
-                }
-            }
-            crate::subjects::loot::Window {
-                title: known.label(),
-                about: match known.flags & LOOTABLE == 0 {
-                    true => format!(
-                        "item_template entry {}: flags has no LOOTABLE bit, so the server \
-                         reads no item_loot_template for it and the client will not open it.",
-                        known.entry
-                    ),
-                    false => format!("item_template entry {}: opening the item gives this loot.", known.entry),
-                },
-                sets,
-            }
+            Window::for_item(&known, row.map(|held| &held.row), edits)
         }),
         _ => None,
+    };
+    let (described, fixes) = match described {
+        Some((window, fixes)) => (Some(window), fixes),
+        None => (None, Vec::new()),
     };
     editing.loot.window = described;
     let loot_window = subjects::loot::window(
@@ -240,106 +123,32 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
             thumbnails: &mut editing.thumbnails,
             fixes,
             now,
+            asks: &mut editing.asks,
         },
     );
     floating.extend(loot_window);
 
-    // The behaviour windows of a creature, on the root context for the same
-    // reason. Their subject is rebuilt each frame from the selection with the
-    // project's edits over it, so `ai_name` or `spell_list_id` typed into the
-    // template form changes the window on the next frame. Drawn under the
-    // creature tool only; the windows keep their open flags across tools.
-    editing.behaviour.about = match tool {
-        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().map(|spawn| {
-                let key = spawn.template_key.clone();
-                let template = editing
-                    .creatures
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == spawn.entry);
-                let column = |name: &str| -> String {
-                    let row = template.map(|held| &held.row);
-                    session
-                        .server_edits
-                        .shown_text(vale_mangos::creature::TEMPLATE, &key, name, row)
-                        .unwrap_or_default()
-                };
-                crate::subjects::behaviour::About {
-                    entry: spawn.entry,
-                    label: spawn.label.clone(),
-                    template_key: key.clone(),
-                    spell_list_id: column("spell_list_id").trim().parse().unwrap_or(0),
-                    ai_name: column("ai_name"),
-                }
-            }),
-        _ => None,
-    };
-    // The Vendor and Trainer windows of a creature, on the same terms: the
-    // subject is rebuilt each frame from the selection with the project's
-    // edits over the template row, so a `vendor_id`, a `trainer_id` or
-    // `npc_flags` typed into the template form changes the window on the next
-    // frame.
-    editing.services.about = match tool {
-        Tool::Creatures | Tool::CreatureData => creature_focus.as_ref().and_then(|spawn| {
-                let key = spawn.template_key.clone();
-                let template = editing
-                    .creatures
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == spawn.entry)?;
-                let column = |name: &str| -> u32 {
-                    session
-                        .server_edits
-                        .shown_integer(vale_mangos::creature::TEMPLATE, &key, name, Some(&template.row))
-                        .map_or(0, |value| value.max(0) as u32)
-                };
-                Some(crate::subjects::services::About {
-                    entry: spawn.entry,
-                    label: spawn.label.clone(),
-                    template_key: key.clone(),
-                    npc_flags: column("npc_flags"),
-                    vendor_id: column("vendor_id"),
-                    trainer_id: column("trainer_id"),
-                    trainer_type: column("trainer_type"),
-                    trainer_class: column("trainer_class"),
-                    trainer_race: column("trainer_race"),
-                    trainer_spell: column("trainer_spell"),
-                })
-            }),
-        _ => None,
-    };
-    // The gossip window follows the selected creature on the same terms, and
-    // stays open on a menu opened by number under any tool. The texts it
-    // shows are read by the behaviour tool, which holds `broadcast_text`.
-    editing.gossip.about = match tool {
-        Tool::Creatures | Tool::CreatureData => editing.services.about.as_ref().map(|services| {
-            let template = editing
-                .creatures
-                .template
-                .as_ref()
-                .filter(|held| held.entry == services.entry);
-            let gossip_menu_id = session
-                .server_edits
-                .shown_integer(
-                    vale_mangos::creature::TEMPLATE,
-                    &services.template_key,
-                    "gossip_menu_id",
-                    template.map(|held| &held.row),
-                )
-                .map_or(0, |value| value.max(0) as u32);
-            crate::subjects::gossip::About {
-                entry: services.entry,
-                label: services.label.clone(),
-                template_key: services.template_key.clone(),
-                gossip_menu_id,
-                npc_flags: services.npc_flags,
-                at: creature_focus.as_ref().and_then(|focus| focus.at),
-            }
-        }),
-        _ => None,
-    };
+    // The behaviour, Vendor, Trainer and gossip windows of a creature, on the
+    // same terms: each subject is rebuilt each frame from the selection with
+    // the project's edits over the template row, so `ai_name`, `vendor_id`,
+    // `npc_flags` or `gossip_menu_id` typed into the template form changes the
+    // window on the next frame. They are drawn under the creature tool and
+    // its workspace only; the windows keep their open flags across tools, and
+    // the gossip window stays open on a menu opened by number under any tool.
+    let edits = &session.rows.edits;
+    let creature = matches!(tool, Tool::Creatures | Tool::CreatureData)
+        .then_some(creature_focus.as_ref())
+        .flatten();
+    editing.behaviour.about = creature.map(|focus| About::from_focus(focus, template, edits));
+    editing.services.about = creature.and_then(|focus| services::About::from_focus(focus, template, edits));
+    editing.gossip.about = editing.services.about.as_ref().map(|services| {
+        let at = creature.and_then(|focus| focus.at);
+        gossip::About::from_services(services, template, edits, at)
+    });
+    // The texts the gossip window shows are read by the behaviour tool, which
+    // holds `broadcast_text`.
     editing.behaviour.other_texts = match editing.gossip.open {
-        true => editing.gossip.broadcast_texts(&session.server_edits),
+        true => editing.gossip.broadcast_texts(&session.rows.edits),
         false => Vec::new(),
     };
     editing.behaviour.numbering_texts = editing.gossip.open || editing.gossip.numbering;
@@ -364,6 +173,7 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
             assets: &assets,
             thumbnails: &mut editing.thumbnails,
             now,
+            asks: &mut editing.asks,
         },
     );
     floating.extend(condition_window);
@@ -378,6 +188,7 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                 assets: &assets,
                 thumbnails: &mut editing.thumbnails,
                 now,
+                asks: &mut editing.asks,
             },
         );
         floating.extend(service_windows);
@@ -396,85 +207,10 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
                 assets: &assets,
                 thumbnails: &mut editing.thumbnails,
                 now,
+                asks: &mut editing.asks,
             },
         );
         floating.extend(behaviour_windows);
     }
     floating
-}
-
-/// The creature or game object template the windows that follow a selection
-/// (quests, loot, events, spells, gossip, vendor, trainer) are about.
-///
-/// Under the creature and game object tools it is the selected spawn's
-/// template; under the Creatures and Game Objects workspaces it is the
-/// open row. The windows'
-/// subjects are built from this, so each window works the same from either.
-struct Focus {
-    entry: u32,
-    label: String,
-    template_key: vale_mangos::row::Key,
-    /// `npc_flags`, for the creature's quest and service windows.
-    npc_flags: u32,
-    /// Where the spawn stands, for the gossip window. `None` for a template
-    /// opened in the workspace.
-    at: Option<[f32; 2]>,
-    /// The game object's brief row, for the quest window's type check and the
-    /// loot window's loot column. `None` for a creature, and for a spawn
-    /// whose template row is missing.
-    object: Option<crate::tools::spawns::gameobjects::Known>,
-}
-
-impl Focus {
-    fn creature(
-        tool: Tool,
-        creatures: &crate::tools::spawns::creatures::Creatures,
-        edits: &vale_mangos::row::Edits,
-    ) -> Option<Self> {
-        match tool {
-            Tool::Creatures => creatures.chosen_edited(Some(edits)).map(|spawn| Focus {
-                entry: spawn.entry,
-                label: spawn.label(),
-                template_key: spawn.template_key(),
-                npc_flags: spawn.npc_flags,
-                at: Some([spawn.at.x, spawn.at.y]),
-                object: None,
-            }),
-            Tool::CreatureData => creatures.listed.open_row(edits).map(|known| Focus {
-                entry: known.entry,
-                label: known.label(),
-                template_key: known.key(),
-                npc_flags: known.npc_flags,
-                at: None,
-                object: None,
-            }),
-            _ => None,
-        }
-    }
-
-    fn object(
-        tool: Tool,
-        objects: &crate::tools::spawns::gameobjects::GameObjects,
-        edits: &vale_mangos::row::Edits,
-    ) -> Option<Self> {
-        match tool {
-            Tool::GameObjects => objects.chosen_edited(Some(edits)).map(|spawn| Focus {
-                entry: spawn.entry,
-                label: spawn.label(),
-                template_key: spawn.template_key(),
-                npc_flags: 0,
-                at: Some([spawn.at.x, spawn.at.y]),
-                object: spawn.known.clone(),
-            }),
-            Tool::GameObjectData => objects.listed.open_row(edits).map(|known| Focus {
-                entry: known.entry,
-                label: known.label(),
-                template_key: known.key(),
-                npc_flags: 0,
-                at: None,
-                object: Some(known),
-            }),
-            _ => None,
-        }
-    }
 }

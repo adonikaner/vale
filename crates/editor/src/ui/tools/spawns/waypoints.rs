@@ -2,7 +2,7 @@
 //! same path drawn in the world.
 //!
 //! A window on the root context rather than a block in the inspector, for
-//! [`super::creatures::template_window`]'s reason and one of its own. The
+//! [`super::spawn::template_window`]'s reason and one of its own. The
 //! reason it shares: a window inside a panel is clipped to it, and this wants
 //! to sit where it does not cover the ground the points are on. The reason of
 //! its own: the pointer is doing the editing, so the panel has to be somewhere
@@ -26,7 +26,8 @@ use bevy_egui::egui;
 
 use crate::ui::widgets::theme;
 use crate::server::creatures::{PATHS_VPATH, SQL_VPATH};
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use crate::tools::spawns::waypoints::Waypoints;
 use vale_mangos::path::{self, Node, Path, Walk, Which};
 
@@ -36,6 +37,9 @@ pub struct Subject<'a> {
     pub waypoints: &'a mut Waypoints,
     /// The frame clock the undo stack folds a gesture by.
     pub now: f64,
+    /// Where the Fly here button and a double-click on a point send its request. See
+    /// [`crate::camera::FlyTo`].
+    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
 /// **The window**, or nothing when no creature's path is open.
@@ -62,12 +66,9 @@ pub fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Re
     // **The title names the table, not just the id.** `id 80849` and
     // `entry 330` are different rows with different blast radiuses and the
     // window is the only thing that can say which one is open.
-    let response = egui::Window::new(format!("Waypoints — {} {owner}", which.table()))
-        // One id whatever the title says, so the window keeps its place when
-        // another creature is clicked — see `super::creatures::template_window`.
-        // The reading form below shares it, so the switch between the two
-        // moves nothing on screen.
-        .id(egui::Id::new("waypoints"))
+    // The reading form below shares the window's id, so the switch between
+    // the two moves nothing on screen.
+    let response = theme::window(format!("Waypoints — {} {owner}", which.table()), "waypoints")
         .open(&mut open)
         // **Wide enough for the list and the form side by side** — see the
         // note on the two columns below. In one column the form sat under a
@@ -79,8 +80,6 @@ pub fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Re
         // To the left of the inspector and clear of the top bar, so it covers
         // neither the button that opened it nor, usually, the path itself.
         .default_pos([300.0, 120.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             head(ui, subject, &path);
             ui.add_space(4.0);
@@ -108,15 +107,6 @@ pub fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Re
     response.map(|response| response.response.rect)
 }
 
-/// The window's frame, the same for the path and for the reading form.
-fn frame() -> egui::Frame {
-    egui::Frame::default()
-        .fill(theme::SHELL)
-        .stroke(egui::Stroke::new(1.0, theme::LINE))
-        .corner_radius(egui::CornerRadius::same(4))
-        .inner_margin(egui::Margin::same(10))
-}
-
 /// **The window while the path is still being read**, which is the same window
 /// with one line in it.
 ///
@@ -126,14 +116,11 @@ fn frame() -> egui::Frame {
 fn reading(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect> {
     let guid = subject.waypoints.subject.map(|open| open.guid)?;
     let mut open = true;
-    let response = egui::Window::new(format!("Waypoints — creature {guid}"))
-        .id(egui::Id::new("waypoints"))
+    let response = theme::window(format!("Waypoints — creature {guid}"), "waypoints")
         .open(&mut open)
         .default_size([640.0, 560.0])
         .min_width(560.0)
         .default_pos([300.0, 120.0])
-        .resizable(true)
-        .frame(frame())
         .show(ctx, |ui| {
             theme::waiting(
                 ui,
@@ -484,7 +471,7 @@ fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
                 // **Double-click flies to it**, which is the only way to reach a
                 // point of a path that runs off the edge of what is streamed.
                 if row.double_clicked() {
-                    subject.waypoints.fly_to = Some(bevy::prelude::Vec3::new(node.x, node.y, node.z));
+                    subject.fly.write(crate::camera::FlyTo::at(bevy::prelude::Vec3::new(node.x, node.y, node.z)));
                 }
             }
         });
@@ -607,7 +594,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         if ui.button("Fly here").clicked() {
-            subject.waypoints.fly_to = Some(bevy::prelude::Vec3::new(node.x, node.y, node.z));
+            subject.fly.write(crate::camera::FlyTo::at(bevy::prelude::Vec3::new(node.x, node.y, node.z)));
         }
         if ui
             .button("Insert after")

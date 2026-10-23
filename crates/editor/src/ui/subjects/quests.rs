@@ -63,9 +63,11 @@
 //! `sql\quests.sql`; Apply is on the bar's Server… with the other
 //! subjects' — see [`crate::ui::shell::sync`] and [`crate::server::quests`].
 
+use crate::ui::shell::asks::ShellAsks;
+use crate::ui::widgets::reference::{self, Resolver};
 use crate::ui::widgets::rowform::{
-    choice_cell, draft_or, finished, flags_cell, meaning, number_cell, number_means, page_row,
-    page_spacing, paragraph_cell, revert_button, section, text_cell, RowAct, FORM_ROW,
+    entry_cell, meaning, number_cell, number_means, page_row, page_spacing, remove_keep,
+    revert_button, section, server_field, FieldCtx, Hook, Renumber, RowAct, FORM_ROW,
 };
 use crate::ui::widgets::theme;
 use crate::ui::widgets::thumbnails::Thumbnails;
@@ -81,18 +83,8 @@ use vale_mangos::quest::{self, Column, Group, Kind};
 use vale_mangos::row::Life;
 use bevy_egui::egui;
 
-/// How wide the quest list is.
-const LIST_WIDTH: f32 = 320.0;
-
-/// The gaps `super::items` draws its three columns with, for the same reasons.
-const FORM_GAP: f32 = 12.0;
-const TOP_GAP: f32 = 10.0;
-
 /// How wide the second cell of a pair is: a count, a reputation value, a delay.
 const COUNT: f32 = 64.0;
-
-/// How big an item's icon is drawn beside its name.
-const ICON: f32 = 18.0;
 
 /// What every part of the workspace reads: the project, the quests, and what a
 /// resolved id is drawn with.
@@ -106,6 +98,23 @@ pub struct Workspace<'a> {
     pub thumbnails: &'a mut Thumbnails,
     /// The frame clock the undo stack folds a gesture by.
     pub now: f64,
+    /// What a link on the form or the inspector asks of the shell: an item,
+    /// a client table's row or another quest to open. See
+    /// [`crate::ui::shell::asks`].
+    pub asks: &'a mut ShellAsks,
+}
+
+impl Workspace<'_> {
+    /// What a reference's name is resolved through, borrowed from the
+    /// workspace.
+    fn resolver(&mut self) -> Resolver<'_> {
+        Resolver {
+            session: &mut *self.session,
+            assets: self.assets,
+            quests: &mut *self.quests,
+            asks: &mut *self.asks,
+        }
+    }
 }
 
 /// What only the list and the head of the form need, which belongs to the
@@ -144,7 +153,7 @@ struct Shown {
 
 fn shown(session: &EditSession, open: &Open, column: &Column) -> Shown {
     let edited = session
-        .server_edits
+        .rows.edits
         .get(quest::TEMPLATE, &open.known.key(), column.name)
         .map(str::to_string);
     let in_database = column.literal(&open.row);
@@ -168,7 +177,7 @@ fn shown(session: &EditSession, open: &Open, column: &Column) -> Shown {
 /// The value of a column by name, as a number.
 fn number_of(session: &EditSession, open: &Open, name: &str) -> i64 {
     session
-        .server_edits
+        .rows.edits
         .shown_integer(quest::TEMPLATE, &open.known.key(), name, Some(&open.row))
         .unwrap_or(0)
 }
@@ -176,7 +185,7 @@ fn number_of(session: &EditSession, open: &Open, name: &str) -> i64 {
 /// The value of a column by name, as unquoted text.
 fn text_of(session: &EditSession, open: &Open, name: &str) -> String {
     session
-        .server_edits
+        .rows.edits
         .shown_text(quest::TEMPLATE, &open.known.key(), name, Some(&open.row))
         .unwrap_or_default()
 }
@@ -191,13 +200,13 @@ fn commit(session: &mut EditSession, open: &Open, column: &Column, written: Stri
         true => None,
         false => Some(written),
     };
-    let gesture = format!("quest {} {}", open.known.entry, column.name);
+    let gesture = format!("{} {} {}", quest::TEMPLATE, open.known.key().text(), column.name);
     session.set_server_edit(
         quest::TEMPLATE,
         &open.known.key(),
         column.name,
         value,
-        Some(crate::session::rows::Gesture {
+        Some(crate::server::store::Gesture {
             label: "Edit quest",
             subject: &gesture,
             now,
@@ -207,32 +216,18 @@ fn commit(session: &mut EditSession, open: &Open, column: &Column, written: Stri
 
 /// Draw the list and the form into the region the panels left.
 pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, mut shell: Shell<'_>) {
-    // Fill the region with the shell colour. The world is still drawn behind
-    // the workspace, and an unpainted strip would show it through; see the
-    // same note in `ui::tables`.
-    let all = ui.available_rect_before_wrap();
-    ui.painter().rect_filled(all, 0.0, theme::SHELL);
-
     // The headings, named once both client tables are open.
     name_the_zones(&mut work);
 
     let open = open_now(&work);
-
-    egui::Panel::left("quest-browser")
-        .default_size(LIST_WIDTH)
-        .min_size(240.0)
-        .max_size(520.0)
-        .resizable(true)
-        .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(8.0))
-        .show(ui, |ui| {
-            ui.add_space(TOP_GAP - 8.0);
-            list(ui, &mut work, &mut shell);
-        });
-
-    let rect = ui.available_rect_before_wrap();
-    let inset = egui::Rect::from_min_max(rect.min + egui::vec2(FORM_GAP, TOP_GAP), rect.max);
-    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(inset).layout(*ui.layout()));
-    form(&mut inner, &mut work, &mut shell, open.as_ref());
+    let mut both = (&mut work, &mut shell);
+    super::listing::frame(
+        ui,
+        &mut both,
+        "quest-browser",
+        |ui, (work, shell)| list(ui, work, shell),
+        |ui, (work, shell)| form(ui, work, shell, open.as_ref()),
+    );
 
     picker(
         ui.ctx(),
@@ -248,7 +243,7 @@ pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, mut shell: Shell<'_>) {
 /// The open quest with the project's edits over it, and its whole row — or
 /// `None` while nothing is open or the row is still being read.
 fn open_now(work: &Workspace<'_>) -> Option<Open> {
-    let known = work.quests.open_quest(&work.session.server_edits)?;
+    let known = work.quests.open_quest(&work.session.rows.edits)?;
     let row = work
         .quests
         .row
@@ -372,82 +367,35 @@ fn either_words(column: &str) -> (&'static str, &'static str) {
 
 /// The left column: what there is, what matches, and what makes or unmakes a row.
 fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Quests")
-                .strong()
-                .size(15.0)
-                .color(theme::INK),
-        );
-        ui.label(theme::number(format!("{} rows", work.quests.count())));
-    })
-    .response
-    .on_hover_text(
-        "quest_template as the server loads it: one row per quest, at the highest \
-         content patch at or below the server's patch.",
-    );
-
-    if let Some(trouble) = work.quests.trouble.clone() {
-        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
-        theme::note(
-            ui,
-            "Quests are rows in the vmangos world database, not files. Set the database \
-             in Server\u{2026} on the top bar, or with VALE_MANGOSD.",
-        );
-        return;
-    }
-    if work.quests.all.is_empty() {
-        theme::waiting(ui, "reading quest_template\u{2026}");
+    let (count, trouble, read) = (work.quests.count(), work.quests.trouble.clone(), !work.quests.all.is_empty());
+    if !super::listing::heading(ui, "Quests", quest::TEMPLATE, count, trouble.as_deref(), read) {
         return;
     }
 
     narrowing(ui, work, shell);
 
-    ui.add_space(4.0);
-    let width = ui.available_width();
-    ui.add(
-        egui::TextEdit::singleline(&mut work.quests.query)
-            .hint_text("title, entry, zone, or quest type")
-            .desired_width(width),
-    );
-    ui.add_space(4.0);
-    row_actions(ui, work, shell);
-    ui.add_space(2.0);
-
-    let revision = work.session.server_edit_revision;
+    super::listing::search_box(ui, &mut work.quests.query, "title, entry, zone, or quest type");
+    let revision = work.session.rows.revision;
     let matches: Vec<usize> = work
         .quests
-        .matches(&work.session.server_edits, revision)
+        .matches(&work.session.rows.edits, revision)
         .to_vec();
-    ui.label(
-        egui::RichText::new(format!("{} shown", matches.len()))
-            .small()
-            .color(theme::INK_FAINT),
-    );
+    super::listing::shown_count(ui, matches.len());
+    row_actions(ui, work, shell);
     ui.add_space(4.0);
 
     // Bring the open quest into view when it was opened from somewhere other
     // than this list, as the spell list does. See `theme::list_area`.
-    let mut reveal = None;
-    if work.quests.open != work.quests.revealed {
-        match work.quests.open {
-            Some(entry) => {
-                let found = matches
-                    .iter()
-                    .position(|&index| work.quests.at(index).is_some_and(|known| known.entry == entry));
-                if found.is_some() {
-                    reveal = found;
-                    work.quests.revealed = Some(entry);
-                }
-            }
-            None => work.quests.revealed = None,
-        }
-    }
+    let mut revealed = work.quests.revealed;
+    let reveal = super::listing::reveal_in(work.quests.open, &mut revealed, &matches, |index| {
+        work.quests.at(index).map(|known| known.entry)
+    });
+    work.quests.revealed = revealed;
     let mut asked: Option<(Known, RowAct)> = None;
     theme::list_area(ui, reveal, theme::LIST_ROW)
         .show_rows(ui, theme::LIST_ROW, matches.len(), |ui, range| {
             for at in range {
-                let Some(known) = work.quests.shown(matches[at], &work.session.server_edits) else {
+                let Some(known) = work.quests.shown(matches[at], &work.session.rows.edits) else {
                     continue;
                 };
                 let chosen = work.quests.open == Some(known.entry);
@@ -496,7 +444,7 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
     };
     let name = work
         .quests
-        .holder(holder, id, &work.session.server_edits)
+        .holder(holder, id, &work.session.rows.edits)
         .unwrap_or_else(|| format!("{} {id}", holder.word()));
     ui.add_space(4.0);
     egui::Frame::new()
@@ -543,7 +491,7 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
 /// red until Apply, and Keep takes the mark off. One this project created
 /// is in no database, so removing it gives the claim up.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
-    let open = work.quests.open_quest(&work.session.server_edits);
+    let open = work.quests.open_quest(&work.session.rows.edits);
     ui.horizontal(|ui| {
         let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
         let size = egui::vec2(third, 22.0);
@@ -786,7 +734,7 @@ fn groups(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
             .collect();
         let edited = columns.iter().any(|column| {
             work.session
-                .server_edits
+                .rows.edits
                 .get(quest::TEMPLATE, &key, column.name)
                 .is_some()
         });
@@ -816,19 +764,69 @@ fn groups(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     ui.add_space(24.0);
 }
 
-/// One column on a row of its own.
+/// One column on a row of its own, through [`server_field`]. The quest
+/// form's own cases are the hook's: `entry`, a signed reference whose sign
+/// picks the table, money paid or charged, and `RequiredCondition`.
+///
+/// A `NULL` is drawn as an empty value, not as the word. The six text columns
+/// default to `NULL` in the DDL and about a fifth of the shipped rows leave
+/// `EndText` that way; a box showing `NULL` would make the user delete the
+/// word before typing.
 fn field(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open, column: &'static Column) {
-    let state = shown(work.session, open, column);
-    page_row(ui, column.name, column.about, state.edited, |ui| {
-        if let Some(written) = cell(ui, work, open, column, &state.showing) {
-            commit(work.session, open, column, written, work.now);
+    let key = open.known.key();
+    let field = FieldCtx {
+        id: ui.make_persistent_id(("quest", open.known.entry, column.name)),
+        null_is_empty: true,
+        ..FieldCtx::new(ui, &work.session.rows.edits, quest::TEMPLATE, &key, &open.row, column, "Edit quest", work.now)
+    };
+    let now = work.now;
+    let written = server_field(ui, &mut work.resolver(), &field, |hook, ui, resolver, field, showing| {
+        if hook != Hook::Cell {
+            return None;
         }
-        revert(ui, work, open, column, &state);
+        match field.kind {
+            Kind::Key if field.column.name == "entry" => {
+                entry_field(ui, resolver, open, field.id, now);
+                Some(None)
+            }
+            Kind::Either(_, _) => {
+                let written = id_and_pick(ui, resolver.quests, field.column, showing);
+                resolved(ui, resolver, field.column, showing);
+                Some(written)
+            }
+            Kind::SignedMoney => {
+                let written = number_cell(ui, Kind::Signed, showing);
+                let copper: i64 = showing.trim().parse().unwrap_or(0);
+                match copper {
+                    0 => meaning(ui, "nothing"),
+                    copper if copper > 0 => {
+                        meaning(ui, format!("pays {}", quest::money_words(copper as u64)))
+                    }
+                    copper => meaning(
+                        ui,
+                        format!("costs {} to hand in", quest::money_words(copper.unsigned_abs())),
+                    ),
+                }
+                Some(written)
+            }
+            kind if field.column.name == "RequiredCondition" => {
+                let written = number_cell(ui, kind, showing);
+                let named = field.subject();
+                let entry = showing.trim().parse().unwrap_or(0);
+                let answered = super::conditions::cell(ui, field.id.with("condition"), &named, entry, None);
+                Some(answered.map(|entry| entry.to_string()).or(written))
+            }
+            _ => None,
+        }
     });
+    if let Some(written) = written {
+        field.write(work.session, written, now);
+    }
 }
 
-/// The revert arrow for one column — not drawn on a row this project creates,
-/// for [`super::items`]' reason: every column of one is the project's own.
+/// The revert arrow for one column of a composed line; not drawn on a row
+/// this project creates, for [`super::items`]' reason: every column of one is
+/// the project's own.
 fn revert(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
@@ -840,13 +838,13 @@ fn revert(
     if !state.edited || creating || !revert_button(ui, state.in_database.as_deref()) {
         return;
     }
-    let gesture = format!("quest {} {} revert", open.known.entry, column.name);
+    let gesture = format!("{} {} {} revert", quest::TEMPLATE, open.known.key().text(), column.name);
     work.session.set_server_edit(
         quest::TEMPLATE,
         &open.known.key(),
         column.name,
         None,
-        Some(crate::session::rows::Gesture {
+        Some(crate::server::store::Gesture {
             label: "Revert column",
             subject: &gesture,
             now: work.now,
@@ -854,64 +852,20 @@ fn revert(
     );
 }
 
-/// The `entry` column, which is the row's own key and is editable anyway —
-/// `super::items::entry_field` for this subject. Committed on Enter or on
-/// leaving the box, because a key that moved on every digit typed would re-key
-/// the quest four times on the way to `20000`.
+/// The `entry` column, which is the row's own key and is editable anyway.
 ///
 /// What it does is [`crate::subjects::quests::Quests::rekey`]: the project's claim
 /// is re-keyed, its relation rows and its other claims that name the quest
 /// follow, and the apply moves the row with every column of the world database
 /// that names a quest by entry.
-fn entry_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open, id: egui::Id) {
+fn entry_field(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, open: &Open, id: egui::Id, now: f64) {
     let known = &open.known;
-    let id = id.with("entry");
-    let mut text = draft_or(ui, id, known.entry.to_string());
-    let response = ui.add(
-        egui::TextEdit::singleline(&mut text)
-            .id(id)
-            .desired_width(90.0)
-            .horizontal_align(egui::Align::Center),
-    );
-    // What the trouble was, kept until the box is touched again.
-    let trouble_id = id.with("trouble");
-    if let Some(text) = finished(ui, id, &response, text) {
-        let trouble = match text.trim().parse::<u32>() {
-            Err(_) => Some(format!("{text:?} is not a valid entry number")),
-            Ok(wanted) => {
-                let now = work.now;
-                work.quests.rekey(work.session, known, wanted, now).err()
-            }
-        };
-        ui.data_mut(|data| match trouble {
-            Some(why) => {
-                data.insert_temp(trouble_id, why);
-            }
-            None => {
-                data.remove_temp::<String>(trouble_id);
-            }
-        });
-    }
-    if let Some(why) = ui.data_mut(|data| data.get_temp::<String>(trouble_id)) {
-        ui.label(egui::RichText::new(why).small().color(theme::BAD));
-        return;
-    }
-    let (word, colour) = match (known.claim, known.read_entry != known.entry) {
-        (Life::Insert, _) => ("renumbers this new quest".to_string(), theme::INK_FAINT),
-        (_, true) => (
-            format!(
-                "the database row stays at entry {} until applied",
-                known.read_entry
-            ),
-            theme::WARN,
-        ),
-        _ => (
-            "moves the row and every world database reference to it".to_string(),
-            theme::INK_FAINT,
-        ),
-    };
-    ui.label(egui::RichText::new(word).small().color(colour))
-        .on_hover_text(format!(
+    let renumber = Renumber {
+        entry: known.entry,
+        read_entry: known.read_entry,
+        is_new: known.claim == Life::Insert,
+        noun: "quest",
+        reaches: format!(
             "vmangos has no foreign keys, so Apply updates every reference itself: every \
              content-patch version of the row, and the {} columns of the world database \
              that name a quest by entry: the four relation tables, \
@@ -920,76 +874,17 @@ fn entry_cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open, id: egui
              it.\n\nNot updated: character_queststatus in the characters database, so a \
              character with the quest in progress loses it.",
             quest::REFERENCES.len()
-        ));
-}
-
-/// The control a column's kind asks for, answering the literal it wrote.
-fn cell(
-    ui: &mut egui::Ui,
-    work: &mut Workspace<'_>,
-    open: &Open,
-    column: &'static Column,
-    showing: &str,
-) -> Option<String> {
-    // One id per quest and column — see `super::items::field`.
-    let id = ui.make_persistent_id(("quest", open.known.entry, column.name));
-    match column.kind {
-        Kind::Key if column.name == "entry" => {
-            entry_cell(ui, work, open, id);
-            None
-        }
-        Kind::Key => {
-            ui.label(theme::number(showing));
-            None
-        }
-        Kind::Text => text_cell(ui, id.with("text"), showing),
-        Kind::Paragraph => paragraph_cell(ui, id.with("text"), showing, 5),
-        Kind::Flags(bits) => flags_cell(ui, showing, bits, id),
-        Kind::Choice(values) => choice_cell(ui, showing, values, id),
-        Kind::Ref(_) | Kind::Either(_, _) => {
-            let written = id_and_pick(ui, work, column, showing);
-            resolved(ui, work, column, showing);
-            written
-        }
-        Kind::SignedMoney => {
-            let written = number_cell(ui, Kind::Signed, showing);
-            let copper: i64 = showing.trim().parse().unwrap_or(0);
-            match copper {
-                0 => meaning(ui, "nothing"),
-                copper if copper > 0 => {
-                    meaning(ui, format!("pays {}", quest::money_words(copper as u64)))
-                }
-                copper => meaning(
-                    ui,
-                    format!(
-                        "costs {} to hand in",
-                        quest::money_words(copper.unsigned_abs())
-                    ),
-                ),
-            }
-            written
-        }
-        kind if column.name == "RequiredCondition" => {
-            let written = number_cell(ui, kind, showing);
-            let named = format!("{} {} {}", quest::TEMPLATE, open.known.entry, column.name);
-            let entry = showing.trim().parse().unwrap_or(0);
-            let answered = super::conditions::cell(ui, id.with("condition"), &named, entry, None);
-            answered.map(|entry| entry.to_string()).or(written)
-        }
-        kind => {
-            let written = number_cell(ui, kind, showing);
-            if let Some(means) = number_means(kind, showing) {
-                meaning(ui, means);
-            }
-            written
-        }
-    }
+        ),
+    };
+    entry_cell(ui, id.with("entry"), &renumber, |wanted| {
+        resolver.quests.rekey(resolver.session, known, wanted, now)
+    });
 }
 
 /// The number half of a reference, and the `…` that opens the picker.
 fn id_and_pick(
     ui: &mut egui::Ui,
-    work: &mut Workspace<'_>,
+    quests: &mut Quests,
     column: &'static Column,
     showing: &str,
 ) -> Option<String> {
@@ -1007,14 +902,7 @@ fn id_and_pick(
     if single.is_none() && targets.is_none() {
         return written;
     }
-    if ui
-        .add(
-            egui::Button::new(egui::RichText::new("\u{2026}").size(13.0))
-                .min_size(egui::vec2(24.0, FORM_ROW)),
-        )
-        .on_hover_text(format!("choose {} by name", column.name))
-        .clicked()
-    {
+    if reference::by_name_button(ui, &format!("Choose {} by name.", column.name)) {
         let negative = showing.trim().starts_with('-');
         let target = match (single, targets) {
             (Some(target), _) => target,
@@ -1032,13 +920,14 @@ fn id_and_pick(
             },
         );
         picker.either = targets;
-        work.quests.picker = Some(picker);
+        quests.picker = Some(picker);
     }
     written
 }
 
-/// What a reference resolves to, after the number.
-fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column, showing: &str) {
+/// What a reference resolves to, after the number: the table its sign picks
+/// for a signed reference, and the name through [`reference::name`].
+fn resolved(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, column: &'static Column, showing: &str) {
     let value: i64 = showing.trim().parse().unwrap_or(0);
     if value == 0 {
         ui.label(egui::RichText::new("none").small().color(theme::INK_FAINT));
@@ -1052,7 +941,6 @@ fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column
         },
         _ => return,
     };
-    let id = value.unsigned_abs() as u32;
     // The sign of a signed quest reference changes what it means (for
     // `PrevQuestId`, rewarded first or active at the time), so that reading is
     // drawn before the quest's title.
@@ -1066,134 +954,7 @@ fn resolved(ui: &mut egui::Ui, work: &mut Workspace<'_>, column: &'static Column
             },
         );
     }
-    match target_of(table) {
-        Some(Target::Item) => item_name(ui, work, id),
-        Some(Target::Creature) => holder_name(ui, work, Holder::Creature, id),
-        Some(Target::Object) => holder_name(ui, work, Holder::Object, id),
-        Some(Target::Quest) => quest_link(ui, work, id),
-        Some(Target::Dbc(table)) => {
-            if !open_for_names(work.session, work.assets, table) {
-                meaning(ui, format!("{table}\u{2026}"));
-                return;
-            }
-            match name_in(work.session, table, id) {
-                Some(name) => {
-                    ui.label(egui::RichText::new(name).color(theme::INK));
-                    ui.label(egui::RichText::new(table).small().color(theme::INK_FAINT));
-                }
-                None => {
-                    ui.label(
-                        egui::RichText::new(format!("not a row of {table}"))
-                            .small()
-                            .color(theme::BAD),
-                    );
-                }
-            }
-        }
-        Some(Target::List(_)) | None => meaning(ui, format!("{table} {id}")),
-    }
-}
-
-/// An item's icon and its name in its quality's colour, as a link: a click
-/// on either opens the item in the item workspace. The name is underlined
-/// while the pointer is over it and keeps its quality colour rather than a
-/// link colour, because the colour states the item's quality.
-fn item_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, entry: u32) {
-    let Some(found) = work.quests.item(entry, &work.session.server_edits) else {
-        match work.quests.item_known(entry, &work.session.server_edits) {
-            true => {
-                ui.label(
-                    egui::RichText::new("no such item")
-                        .small()
-                        .color(theme::BAD),
-                );
-            }
-            false => meaning(ui, "\u{2026}"),
-        }
-        return;
-    };
-    let icon = work
-        .items
-        .look(work.assets, found.display_id, 0)
-        .and_then(|look| look.icon);
-    let (rect, picture) = ui.allocate_exact_size(egui::Vec2::splat(ICON), egui::Sense::click());
-    ui.painter().rect_filled(rect, 2.0, theme::SUNK);
-    if let Some(path) = icon {
-        work.thumbnails.want(&path);
-        if let Some(texture) = work.thumbnails.get(&path) {
-            ui.painter().image(
-                texture,
-                rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
-        }
-    }
-    let colour = super::items::quality_colour(found.quality);
-    let name = ui.add(
-        egui::Label::new(egui::RichText::new(&found.name).color(colour))
-            .sense(egui::Sense::click()),
-    );
-    if name.hovered() {
-        let under = name.rect.bottom() - 1.0;
-        ui.painter()
-            .hline(name.rect.x_range(), under, egui::Stroke::new(1.0, colour));
-    }
-    let clicked = (picture | name)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(format!("Open item {entry} in the item workspace."))
-        .clicked();
-    if clicked {
-        work.quests.show_item = Some(entry);
-    }
-}
-
-/// A creature's or game object's name, with which of the two it is.
-fn holder_name(ui: &mut egui::Ui, work: &mut Workspace<'_>, holder: Holder, id: u32) {
-    match work.quests.holder(holder, id, &work.session.server_edits) {
-        Some(name) => {
-            ui.label(egui::RichText::new(name).color(theme::INK));
-            ui.label(
-                egui::RichText::new(holder.word())
-                    .small()
-                    .color(theme::INK_FAINT),
-            );
-        }
-        None => match work.quests.holder_known(holder, id, &work.session.server_edits) {
-            true => {
-                ui.label(
-                    egui::RichText::new(format!("no such {}", holder.word()))
-                        .small()
-                        .color(theme::BAD),
-                );
-            }
-            false => meaning(ui, "\u{2026}"),
-        },
-    }
-}
-
-/// Another quest's title, as a link that opens it.
-fn quest_link(ui: &mut egui::Ui, work: &mut Workspace<'_>, entry: u32) {
-    match work.quests.title_of(entry, &work.session.server_edits) {
-        Some(title) => {
-            if ui
-                .add(egui::Link::new(
-                    egui::RichText::new(title).color(theme::ACCENT),
-                ))
-                .on_hover_text(format!("open quest {entry}"))
-                .clicked()
-            {
-                work.quests.open = Some(entry);
-            }
-        }
-        None => {
-            ui.label(
-                egui::RichText::new("no such quest")
-                    .small()
-                    .color(theme::BAD),
-            );
-        }
-    }
+    reference::name(ui, resolver, table, value.unsigned_abs() as u32);
 }
 
 // ---------------------------------------------------------------------------
@@ -1239,7 +1000,7 @@ fn pair_row(
         first.name, first.about, second.name, second.about
     );
     page_row(ui, label, &about, a.edited || b.edited, |ui| {
-        if let Some(written) = id_and_pick(ui, work, first, &a.showing) {
+        if let Some(written) = id_and_pick(ui, work.quests, first, &a.showing) {
             commit(work.session, open, first, written, work.now);
         }
         ui.label(egui::RichText::new(joiner).color(theme::INK_FAINT));
@@ -1255,7 +1016,7 @@ fn pair_row(
         if let Some(means) = number_means(second.kind, &b.showing) {
             meaning(ui, means);
         }
-        resolved(ui, work, first, &a.showing);
+        resolved(ui, &mut work.resolver(), first, &a.showing);
         revert(ui, work, open, first, &a);
         revert(ui, work, open, second, &b);
     });
@@ -1674,7 +1435,7 @@ fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
                     true => Holder::Creature,
                     false => Holder::Object,
                 };
-                let found = work.quests.holder(holder, id.unsigned_abs() as u32, &work.session.server_edits);
+                let found = work.quests.holder(holder, id.unsigned_abs() as u32, &work.session.rows.edits);
                 // The client appends " slain" to a creature's own name.
                 found.map(|name| match holder {
                     Holder::Creature => format!("{name} slain"),
@@ -1693,7 +1454,7 @@ fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
         if id <= 0 || count == 0 {
             continue;
         }
-        let found = work.quests.item(id as u32, &work.session.server_edits);
+        let found = work.quests.item(id as u32, &work.session.rows.edits);
         let name = found
             .map(|item| item.name)
             .unwrap_or_else(|| format!("item {id}"));
@@ -1759,7 +1520,16 @@ fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     );
     let reward = |ui: &mut egui::Ui, work: &mut Workspace<'_>, (id, count): (u32, i64)| {
         ui.horizontal(|ui| {
-            item_name(ui, work, id);
+            super::loot::item_name(
+                ui,
+                work.quests,
+                work.items,
+                work.assets,
+                work.thumbnails,
+                work.asks,
+                &work.session.rows.edits,
+                id,
+            );
             if count > 1 {
                 ui.label(egui::RichText::new(format!("\u{d7}{count}")).color(theme::INK_DIM));
             }
@@ -1821,7 +1591,7 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     let entry = open.known.entry;
     let all = work
         .quests
-        .relations_of_quest(entry, &work.session.server_edits);
+        .relations_of_quest(entry, &work.session.rows.edits);
     for role in [Role::Gives, Role::Takes] {
         theme::heading(
             ui,
@@ -1886,7 +1656,7 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
         };
         let name = work
             .quests
-            .holder(relation.holder, relation.id, &work.session.server_edits)
+            .holder(relation.holder, relation.id, &work.session.rows.edits)
             .unwrap_or_else(|| format!("{} {}", relation.holder.word(), relation.id));
         if ui
             .add(egui::Link::new(egui::RichText::new(name).color(colour)))
@@ -1916,22 +1686,15 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
             }
             Life::Update => {}
         }
-        let (label, about) = match life {
-            Life::Delete => ("keep", "Take the removal mark off this row."),
-            Life::Insert => (
-                "\u{d7}",
-                "Discard this relation. It is not in the database yet.",
-            ),
-            Life::Update => (
-                "\u{d7}",
-                "Mark this row for removal. Apply deletes it, after writing the statement \
-                 that restores it.",
-            ),
+        let about = match life {
+            Life::Insert => "Discards this relation. It is not in the database yet.",
+            _ => "Marks this row for removal. Apply deletes it, after writing the statement \
+                  that restores it.",
         };
-        if ui.small_button(label).on_hover_text(about).clicked() {
+        if let Some(act) = remove_keep(ui, life, about) {
             let now = work.now;
-            match life {
-                Life::Delete => work.quests.relate(work.session, relation, now),
+            match act {
+                RowAct::Keep => work.quests.relate(work.session, relation, now),
                 _ => work.quests.unrelate(work.session, relation, now),
             }
         }
@@ -1948,7 +1711,7 @@ fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     let line = |ui: &mut egui::Ui, work: &mut Workspace<'_>, word: &str, other: u32| {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(word).small().color(theme::INK_DIM));
-            quest_link(ui, work, other);
+            reference::name(ui, &mut work.resolver(), quest::TEMPLATE, other);
             ui.label(theme::number(other.to_string()).color(theme::INK_FAINT));
         });
     };
@@ -2472,19 +2235,10 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
     };
     let mut keep_open = true;
     let mut switch: Option<Tool> = None;
-    let shown = egui::Window::new(format!("{name} \u{2014} quests"))
-        .id(egui::Id::new("holder-quests"))
+    let shown = theme::window(format!("{name} \u{2014} quests"), "holder-quests")
         .open(&mut keep_open)
         .default_size([380.0, 420.0])
         .default_pos([300.0, 120.0])
-        .resizable(true)
-        .frame(
-            egui::Frame::default()
-                .fill(theme::SHELL)
-                .stroke(egui::Stroke::new(1.0, theme::LINE))
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::same(8)),
-        )
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
@@ -2504,7 +2258,7 @@ pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Opti
             let all = subject.quests.relations_of_holder(
                 holder,
                 entry,
-                &subject.session.server_edits,
+                &subject.session.rows.edits,
             );
             let kept = all.iter().any(|(_, life)| *life != Life::Delete);
             if kept {
@@ -2615,7 +2369,7 @@ fn not_a_questgiver(ui: &mut egui::Ui, subject: &mut HolderQuests<'_>, entry: u3
                     template_key,
                     "npc_flags",
                     Some((npc_flags | QUESTGIVER).to_string()),
-                    Some(crate::session::rows::Gesture {
+                    Some(crate::server::store::Gesture {
                         label: "Edit creature",
                         subject: &subject_line,
                         now: subject.now,
@@ -2657,7 +2411,7 @@ fn not_a_questgiver(ui: &mut egui::Ui, subject: &mut HolderQuests<'_>, entry: u3
                     template_key,
                     "type",
                     Some(OBJECT_QUESTGIVER.to_string()),
-                    Some(crate::session::rows::Gesture {
+                    Some(crate::server::store::Gesture {
                         label: "Edit game object",
                         subject: &subject_line,
                         now: subject.now,
@@ -2679,7 +2433,7 @@ fn window_row(
 ) {
     let known = subject
         .quests
-        .shown_entry(relation.quest, &subject.session.server_edits);
+        .shown_entry(relation.quest, &subject.session.rows.edits);
     ui.horizontal(|ui| {
         let title = known
             .as_ref()
@@ -2719,21 +2473,58 @@ fn window_row(
             }
             Life::Update => {}
         }
-        let (label, about) = match life {
-            Life::Delete => ("keep", "Take the removal mark off this row."),
-            _ => (
-                "\u{d7}",
-                "Remove this relation. The quest itself is not touched.",
-            ),
-        };
-        if ui.small_button(label).on_hover_text(about).clicked() {
+        if let Some(act) = remove_keep(ui, life, "Removes this relation. The quest itself is not changed.") {
             let now = subject.now;
-            match life {
-                Life::Delete => subject.quests.relate(subject.session, relation, now),
+            match act {
+                RowAct::Keep => subject.quests.relate(subject.session, relation, now),
                 _ => subject.quests.unrelate(subject.session, relation, now),
             }
         }
     });
+}
+
+/// The quest workspace's inspector panel, its third part, following the
+/// shell's rule that the inspector shows the selection: the open quest as the
+/// log would show it, who gives and takes it, and its chain.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, now, .. } = subject;
+    inspector(
+        ui,
+        Workspace {
+            session,
+            quests: &mut editing.quests,
+            items: &mut editing.items,
+            assets,
+            thumbnails: &mut editing.thumbnails,
+            now,
+            asks: &mut editing.asks,
+        },
+    );
+}
+
+/// The quest workspace in the middle of a window: the item workspace's shape
+/// with a different third part.
+pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::ui::workspace::Bench<'_, '_, '_>) {
+    let crate::ui::workspace::Bench { session, editing, playing, popovers, assets, now, switch_to, .. } = bench;
+    draw(
+        ui,
+        Workspace {
+            session,
+            quests: &mut editing.quests,
+            items: &mut editing.items,
+            assets,
+            thumbnails: &mut editing.thumbnails,
+            now,
+            asks: &mut editing.asks,
+        },
+        Shell {
+            reloads: &mut playing.reloads,
+            server_panel: &mut popovers.server,
+            standings: &mut playing.standings,
+            patch: crate::server::settings::server_patch(&playing.server),
+            switch_to,
+        },
+    );
 }
 
 #[cfg(test)]

@@ -3,11 +3,12 @@
 //! ```text
 //! theme.rs      the palette, the style, and the widgets built on them
 //! rowform.rs    the widgets the server-row forms are built from: how a column
-//!               of each type is drawn, and what typing into one produces. The
-//!               form itself stays with its subject
-//! reference.rs  a column that names a row of another table, as the creature
-//!               and game object forms draw it: the picker button, the name
-//!               the number resolves to, and the link that opens the row
+//!               of each type is drawn, what typing into one produces, one
+//!               field with its revert arrow, the entry box and the remove or
+//!               keep button. The form itself stays with its subject
+//! reference.rs  a column that names a row of another table, as every
+//!               server-row form draws it: the picker button, the name the
+//!               number resolves to, and the link that opens the row
 //! members.rs    a group selection's members as a folded list, in which one
 //!               can be made the primary or taken out
 //! thumbnails.rs the pictures the inspector draws in a list, decoded a few per

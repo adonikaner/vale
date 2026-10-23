@@ -27,9 +27,10 @@
 //! `points_of_interest` is read whole with the first menu, a few hundred
 //! rows, so an option's point can be chosen by name.
 
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
+use crate::server::fresh::FreshTask;
 use std::collections::HashMap;
 use vale_mangos::gossip::{self, MenuOption, MenuText, NpcText, Point};
 use vale_mangos::row::{Edits, Key, Life};
@@ -46,6 +47,31 @@ pub struct About {
     /// Where the selected spawn stands, world x and y, which a new point of
     /// interest starts at.
     pub at: Option<[f32; 2]>,
+}
+
+impl About {
+    /// The window's subject for the creature the Vendor and Trainer windows
+    /// are about, with its `gossip_menu_id` read from `template`, the
+    /// template row as read, with this project's edits over it. `at` is
+    /// where the selected spawn stands.
+    pub fn from_services(
+        services: &crate::subjects::services::About,
+        template: Option<&vale_mangos::schema::Row>,
+        edits: &Edits,
+        at: Option<[f32; 2]>,
+    ) -> About {
+        let gossip_menu_id = edits
+            .shown_integer(vale_mangos::creature::TEMPLATE, &services.template_key, "gossip_menu_id", template)
+            .map_or(0, |value| value.max(0) as u32);
+        About {
+            entry: services.entry,
+            label: services.label.clone(),
+            template_key: services.template_key.clone(),
+            gossip_menu_id,
+            npc_flags: services.npc_flags,
+            at,
+        }
+    }
 }
 
 /// One row as the window draws it: the shown value, the database's value, and
@@ -112,12 +138,16 @@ pub struct Gossip {
     pub numbering: bool,
     /// A new menu asked for before the highest ids were read.
     pub pending: Option<NewMenu>,
-    loaded_for: Option<u64>,
-    reading: Option<Task<Result<Read, String>>>,
-    pub trouble: Option<String>,
+    /// The read in flight, and why the last one failed.
+    reads: FreshTask<Read>,
 }
 
 impl Gossip {
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.reads.trouble()
+    }
+
     /// The menu the window shows: one opened by number or through an option,
     /// else the selected creature's.
     pub fn showing(&self) -> Option<u32> {
@@ -241,7 +271,7 @@ impl Gossip {
     /// Add a text to a menu: an `npc_text` row of one line naming
     /// `broadcast_text`, and the menu row naming it. Answers the npc_text id.
     pub fn add_text(&mut self, session: &mut EditSession, menu: u32, broadcast_text: u32, now: f64) -> Option<u32> {
-        let id = self.next_npc_text(&session.server_edits)?;
+        let id = self.next_npc_text(&session.rows.edits)?;
         let subject = format!("{} {menu} text", gossip::MENU);
         session.as_one("Add gossip text", &subject, |session| {
             let text = NpcText::new(id, broadcast_text);
@@ -276,7 +306,7 @@ impl Gossip {
     /// Add an option at the end of a menu, a gossip line with `label`.
     pub fn add_option(&mut self, session: &mut EditSession, menu: u32, label: &str, now: f64) -> u32 {
         let id = self
-            .options_of(&session.server_edits, menu)
+            .options_of(&session.rows.edits, menu)
             .iter()
             .filter(|shown| shown.life != Life::Delete)
             .map(|shown| shown.row.id + 1)
@@ -303,7 +333,7 @@ impl Gossip {
     /// every column of the two rows, since an option's place is its key.
     pub fn move_option(&mut self, session: &mut EditSession, menu: u32, id: u32, by: i32, now: f64) {
         let shown: Vec<Shown<MenuOption>> = self
-            .options_of(&session.server_edits, menu)
+            .options_of(&session.rows.edits, menu)
             .into_iter()
             .filter(|shown| shown.life != Life::Delete)
             .collect();
@@ -380,7 +410,7 @@ impl Gossip {
 
     /// Make a point of interest at `x`, `y`. Answers its entry.
     pub fn new_point(&mut self, session: &mut EditSession, x: f32, y: f32, name: &str, now: f64) -> Option<u32> {
-        let entry = self.next_point(&session.server_edits)?;
+        let entry = self.next_point(&session.rows.edits)?;
         let point = Point::new(entry, x, y, name);
         create(session, gossip::POI, &point.key(), &point.assignments(), now);
         Some(entry)
@@ -401,7 +431,7 @@ impl Gossip {
     /// Make a new menu with one text, saying `broadcast_text`. Answers the
     /// menu's entry.
     pub fn new_menu(&mut self, session: &mut EditSession, broadcast_text: u32, now: f64) -> Option<u32> {
-        let menu = self.next_menu(&session.server_edits)?;
+        let menu = self.next_menu(&session.rows.edits)?;
         self.add_text(session, menu, broadcast_text, now)?;
         Some(menu)
     }
@@ -460,7 +490,7 @@ impl Plugin for GossipToolPlugin {
 fn on_the_command_line(args: Res<crate::args::Args>, mut gossip: ResMut<Gossip>, mut done: Local<bool>) {
     if !*done {
         *done = true;
-        gossip.open |= args.gossip_window;
+        gossip.open |= args.subjects.gossip_window;
     }
 }
 
@@ -473,50 +503,40 @@ fn read_the_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    if let Some(task) = gossip.reading.as_mut() {
-        if let Some(done) = block_on(future::poll_once(task)) {
-            gossip.reading = None;
-            match done {
-                Ok(read) => {
-                    if let Some(menu) = read.menu {
-                        info!("gossip: menu {menu}: {} text(s), {} option(s)", read.texts.len(), read.options.len());
-                        gossip.texts.insert(menu, read.texts);
-                        gossip.options.insert(menu, read.options);
-                    }
-                    for id in read.asked_texts {
-                        gossip.npc_texts.entry(id).or_insert(None);
-                    }
-                    for text in read.npc_texts {
-                        gossip.npc_texts.insert(text.id, Some(text));
-                    }
-                    if let Some((menu, text)) = read.highest {
-                        info!("gossip: highest menu {menu}, npc_text {text}");
-                        gossip.highest = read.highest;
-                    }
-                    if let Some(points) = read.points {
-                        gossip.points = Some(points.into_iter().map(|point| (point.entry, point)).collect());
-                    }
-                    gossip.trouble = None;
-                }
-                Err(e) => {
-                    warn!("gossip: {e}");
-                    gossip.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
     let Some(session) = session else { return };
-    if gossip.loaded_for != Some(session.database_writes) {
-        gossip.loaded_for = Some(session.database_writes);
+    let writes = session.database_writes;
+    if gossip.reads.renew(writes) {
         gossip.texts.clear();
         gossip.options.clear();
         gossip.npc_texts.clear();
         gossip.highest = None;
         gossip.points = None;
-        gossip.trouble = None;
     }
-    if gossip.trouble.is_some() {
+    match gossip.reads.poll() {
+        Some(Ok(read)) => {
+            if let Some(menu) = read.menu {
+                info!("gossip: menu {menu}: {} text(s), {} option(s)", read.texts.len(), read.options.len());
+                gossip.texts.insert(menu, read.texts);
+                gossip.options.insert(menu, read.options);
+            }
+            for id in read.asked_texts {
+                gossip.npc_texts.entry(id).or_insert(None);
+            }
+            for text in read.npc_texts {
+                gossip.npc_texts.insert(text.id, Some(text));
+            }
+            if let Some((menu, text)) = read.highest {
+                info!("gossip: highest menu {menu}, npc_text {text}");
+                gossip.highest = read.highest;
+            }
+            if let Some(points) = read.points {
+                gossip.points = Some(points.into_iter().map(|point| (point.entry, point)).collect());
+            }
+        }
+        Some(Err(e)) => warn!("gossip: {e}"),
+        None => {}
+    }
+    if gossip.reads.is_busy() || gossip.reads.trouble().is_some() {
         return;
     }
     let want_highest = gossip.highest.is_none() && (gossip.open || gossip.numbering);
@@ -524,7 +544,7 @@ fn read_the_rows(
     // The texts the project's own menu rows name, which the menu's read does
     // not know of, are read with it.
     let claimed: Vec<u32> = menu
-        .map(|menu| gossip.texts_of(&session.server_edits, menu))
+        .map(|menu| gossip.texts_of(&session.rows.edits, menu))
         .unwrap_or_default()
         .iter()
         .map(|shown| shown.row.text_id)
@@ -534,37 +554,36 @@ fn read_the_rows(
     if menu.is_none() && !want_highest {
         return;
     }
-    let Some((at, _source)) = settings.resolve() else {
-        gossip.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
     let want_points = menu.is_some() && gossip.points.is_none();
-    gossip.reading = Some(crate::server::queue::read(async move {
-        use vale_mangos::schema::RowValue;
-        let mut db = vale_mangos::conn::Db::open(&at)?;
-        let (mut texts, mut options, mut npc_texts, mut asked) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        if let Some(menu) = menu {
-            texts = db.rows(&gossip::texts_query(menu))?.iter().filter_map(MenuText::from_row).collect();
-            options = db.rows(&gossip::options_query(menu))?.iter().filter_map(MenuOption::from_row).collect();
-            asked = texts.iter().map(|text: &MenuText| text.text_id).chain(claimed).collect();
-            asked.sort_unstable();
-            asked.dedup();
-            if let Some(sql) = gossip::npc_texts_query(&asked) {
-                npc_texts = db.rows(&sql)?.iter().filter_map(NpcText::from_row).collect();
+    gossip.reads.start(writes, || {
+        let (at, _source) = settings.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
+        Ok(crate::server::queue::read(async move {
+            use vale_mangos::schema::RowValue;
+            let mut db = vale_mangos::conn::Db::open(&at)?;
+            let (mut texts, mut options, mut npc_texts, mut asked) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            if let Some(menu) = menu {
+                texts = db.rows(&gossip::texts_query(menu))?.iter().filter_map(MenuText::from_row).collect();
+                options = db.rows(&gossip::options_query(menu))?.iter().filter_map(MenuOption::from_row).collect();
+                asked = texts.iter().map(|text: &MenuText| text.text_id).chain(claimed).collect();
+                asked.sort_unstable();
+                asked.dedup();
+                if let Some(sql) = gossip::npc_texts_query(&asked) {
+                    npc_texts = db.rows(&sql)?.iter().filter_map(NpcText::from_row).collect();
+                }
             }
-        }
-        let highest = match want_highest {
-            true => db.row(&gossip::highest_query())?.map(|row| {
-                (row.integer("menu").unwrap_or(0) as u32, row.integer("text").unwrap_or(0) as u32)
-            }),
-            false => None,
-        };
-        let points = match want_points {
-            true => Some(db.rows(&gossip::points_query())?.iter().filter_map(Point::from_row).collect()),
-            false => None,
-        };
-        Ok(Read { menu, texts, options, npc_texts, asked_texts: asked, highest, points })
-    }));
+            let highest = match want_highest {
+                true => db.row(&gossip::highest_query())?.map(|row| {
+                    (row.integer("menu").unwrap_or(0) as u32, row.integer("text").unwrap_or(0) as u32)
+                }),
+                false => None,
+            };
+            let points = match want_points {
+                true => Some(db.rows(&gossip::points_query())?.iter().filter_map(Point::from_row).collect()),
+                false => None,
+            };
+            Ok(Read { menu, texts, options, npc_texts, asked_texts: asked, highest, points })
+        }))
+    });
 }
 
 #[cfg(test)]
@@ -585,23 +604,23 @@ mod tests {
         let (mut session, install) = session();
         let inn = Point::new(1693, -9459.0, 42.0, "Lion's Pride Inn");
         let mut gossip = Gossip { points: Some(HashMap::from([(1693, inn)])), ..Gossip::default() };
-        assert_eq!(gossip.next_point(&session.server_edits), Some(1694));
+        assert_eq!(gossip.next_point(&session.rows.edits), Some(1694));
         let made = gossip.new_point(&mut session, -8800.0, 600.0, "Bank", 1.0).unwrap();
         assert_eq!(made, 1694);
-        assert_eq!(gossip.next_point(&session.server_edits), Some(1695));
-        let found: Vec<u32> = gossip.points_matching(&session.server_edits, "BANK").iter().map(|point| point.row.entry).collect();
+        assert_eq!(gossip.next_point(&session.rows.edits), Some(1695));
+        let found: Vec<u32> = gossip.points_matching(&session.rows.edits, "BANK").iter().map(|point| point.row.entry).collect();
         assert_eq!(found, vec![1694]);
-        assert_eq!(gossip.points_matching(&session.server_edits, "1693").len(), 1);
-        assert_eq!(gossip.points_matching(&session.server_edits, "").len(), 2);
+        assert_eq!(gossip.points_matching(&session.rows.edits, "1693").len(), 1);
+        assert_eq!(gossip.points_matching(&session.rows.edits, "").len(), 2);
 
-        let created = gossip.point(&session.server_edits, 1694).unwrap();
+        let created = gossip.point(&session.rows.edits, 1694).unwrap();
         assert_eq!((created.life, created.row.icon, created.row.flags), (Life::Insert, 6, 99));
         gossip.set_point(&mut session, &created, "icon_name", vale_mangos::sql::text("Stormwind Bank"), 2.0);
-        assert_eq!(gossip.point(&session.server_edits, 1694).unwrap().row.name, "Stormwind Bank");
+        assert_eq!(gossip.point(&session.rows.edits, 1694).unwrap().row.name, "Stormwind Bank");
 
-        let held = gossip.point(&session.server_edits, 1693).unwrap();
+        let held = gossip.point(&session.rows.edits, 1693).unwrap();
         gossip.set_point(&mut session, &held, "x", "-9000".to_string(), 3.0);
-        let moved = gossip.point(&session.server_edits, 1693).unwrap();
+        let moved = gossip.point(&session.rows.edits, 1693).unwrap();
         assert_eq!((moved.row.x, moved.life), (-9000.0, Life::Update));
         let _ = std::fs::remove_dir_all(&install);
     }
@@ -614,19 +633,19 @@ mod tests {
         let mut gossip = Gossip { highest: Some((60402, 50009)), ..Gossip::default() };
         let menu = gossip.new_menu(&mut session, 777, 1.0).unwrap();
         assert_eq!(menu, 60403);
-        let texts = gossip.texts_of(&session.server_edits, menu);
+        let texts = gossip.texts_of(&session.rows.edits, menu);
         assert_eq!(texts.len(), 1);
         assert_eq!(texts[0].row.text_id, 50010);
-        let text = gossip.npc_text_of(&session.server_edits, 50010).unwrap();
+        let text = gossip.npc_text_of(&session.rows.edits, 50010).unwrap();
         assert_eq!(text.row.lines[0], (777, 1.0));
         assert_eq!(gossip.add_option(&mut session, menu, "Hello.", 2.0), 0);
         assert_eq!(gossip.add_option(&mut session, menu, "Goodbye.", 3.0), 1);
-        let options = gossip.options_of(&session.server_edits, menu);
+        let options = gossip.options_of(&session.rows.edits, menu);
         assert_eq!(options.iter().map(|o| o.row.text.as_str()).collect::<Vec<_>>(), vec!["Hello.", "Goodbye."]);
         gossip.move_option(&mut session, menu, 1, -1, 4.0);
-        let options = gossip.options_of(&session.server_edits, menu);
+        let options = gossip.options_of(&session.rows.edits, menu);
         assert_eq!(options.iter().map(|o| o.row.text.as_str()).collect::<Vec<_>>(), vec!["Goodbye.", "Hello."]);
-        assert_eq!(gossip.broadcast_texts(&session.server_edits), Vec::<u32>::new(), "no menu is shown");
+        assert_eq!(gossip.broadcast_texts(&session.rows.edits), Vec::<u32>::new(), "no menu is shown");
         let _ = std::fs::remove_dir_all(&install);
     }
 }

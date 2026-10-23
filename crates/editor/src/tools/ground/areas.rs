@@ -111,9 +111,6 @@ pub struct Areas {
     /// the picker's folder, which are fields of the same struct.
     pub table: Option<std::sync::Arc<vale_assets::tables::area::Areas>>,
     table_at: Option<u64>,
-    /// What the panel asks the shell to do with the table, taken by the shell
-    /// after the panel is drawn. See [`Ask`].
-    pub ask: Option<Ask>,
     /// Whether the press that began this stroke belonged to the world, and
     /// whether one is open — *a drag belongs to where it began*, the rule every
     /// tool in this directory keeps arriving at.
@@ -133,6 +130,52 @@ pub enum Ask {
     /// Make a sub-area of the zone this area is, or is in, and put it on the
     /// brush.
     NewSubArea(u32),
+}
+
+impl Ask {
+    /// Carry the ask out against the session's `AreaTable`: open the area's
+    /// row in the table browser, or make a zone or a sub-area and put it on
+    /// the brush. The table is opened here, since the panel has no archives
+    /// to open it from. Answers the tool to switch to; what was made, or why
+    /// nothing was, goes on the status line.
+    pub fn answer(
+        self,
+        areas: &mut Areas,
+        session: &mut EditSession,
+        browser: &mut crate::tables::browser::Browser,
+        assets: &vale_client::assets::GameAssets,
+    ) -> Option<Tool> {
+        use crate::tables::{self, zones::area};
+        match (session.open_table(assets, area::TABLE), self) {
+            (false, _) => {
+                session.status = "AreaTable could not be opened".to_string();
+                None
+            }
+            (true, Ask::Edit(id)) => {
+                let followed = browser.follow(session, area::TABLE, id);
+                browser.followed_in |= followed;
+                followed.then_some(Tool::Zones)
+            }
+            (true, made) => {
+                let record = match made {
+                    Ask::NewSubArea(of) => tables::zones::add_sub_area(session, of),
+                    _ => {
+                        let map = session.map_id;
+                        tables::zones::add_zone(session, map)
+                    }
+                };
+                let id = record.and_then(|record| session.table(area::TABLE)?.u32_at(record, 0));
+                session.status = match id {
+                    Some(id) => {
+                        areas.brush.area = id;
+                        format!("area {id} created and set as the brush area; use Edit\u{2026} to name it")
+                    }
+                    None => "the area could not be created".to_string(),
+                };
+                None
+            }
+        }
+    }
 }
 
 impl Areas {

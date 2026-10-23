@@ -87,6 +87,8 @@ pub struct Subject<'a> {
     pub assets: &'a GameAssets,
     pub thumbnails: &'a mut Thumbnails,
     pub now: f64,
+    /// Where an item's or a spell's name asks the shell to open its row.
+    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 /// The two windows, each drawn when it is open and a creature is selected.
@@ -188,23 +190,12 @@ fn window(ctx: &egui::Context, subject: &mut Subject<'_>, about: &About, kind: K
         Kind::Trainer => ("trainer", "trainer-window", [340.0, 160.0], 700.0),
     };
     let mut keep_open = true;
-    let shown = egui::Window::new(format!("{} \u{2014} {word}", about.label))
-        // One id whatever the title says, so the window keeps its place when
-        // another creature is clicked.
-        .id(egui::Id::new(id))
+    let shown = theme::window(format!("{} \u{2014} {word}", about.label), id)
         .open(&mut keep_open)
         // Wide enough for every cell of a row, and tall enough for the head,
         // the tabs and about eight rows. A longer list scrolls.
         .default_size([width, 460.0])
         .default_pos(pos)
-        .resizable(true)
-        .frame(
-            egui::Frame::default()
-                .fill(theme::SHELL)
-                .stroke(egui::Stroke::new(1.0, theme::LINE))
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::same(8)),
-        )
         .show(ctx, |ui| {
             ui.label(
                 egui::RichText::new(format!(
@@ -267,7 +258,7 @@ fn flag_offer(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind:
             &about.template_key,
             "npc_flags",
             Some((about.npc_flags | bit).to_string()),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Edit creature",
                 subject: &line,
                 now: subject.now,
@@ -337,7 +328,7 @@ fn list_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: 
     )
     .on_hover_text(format!("Keyed by {keyed_by}."));
     if list.is_template() {
-        if let Some(users) = subject.services.users(list, &subject.session.server_edits) {
+        if let Some(users) = subject.services.users(list, &subject.session.rows.edits) {
             let others: Vec<&(u32, String)> = users.iter().filter(|(entry, _)| *entry != about.entry).collect();
             match others.len() {
                 0 => {
@@ -371,7 +362,7 @@ fn list_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: 
 
 /// The rows, and the way to add one.
 fn body(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: Kind, list: List) {
-    if let Some(trouble) = subject.services.trouble.clone() {
+    if let Some(trouble) = subject.services.trouble().cloned() {
         ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
         return;
     }
@@ -471,7 +462,7 @@ fn adders(ui: &mut egui::Ui, subject: &mut Subject<'_>, kind: Kind, list: List) 
 /// Every row of a vendor list, with each row's reasons the server would skip
 /// it.
 fn vendor_rows(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, own: List, template: List, list: List) {
-    let edits = &subject.session.server_edits;
+    let edits = &subject.session.rows.edits;
     let rows = subject.services.wares_of(list, edits);
     let kept = |rows: &[ShownWare]| rows.iter().filter(|s| s.life != Life::Delete && !s.forbidden).count();
     let template_rows = subject.services.wares_of(template, edits);
@@ -513,7 +504,7 @@ fn vendor_rows(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, own:
                     place += 1;
                 }
                 let mut faults = shown.ware.check();
-                let edits = &subject.session.server_edits;
+                let edits = &subject.session.rows.edits;
                 if subject.quests.item_known(shown.ware.item, edits) && subject.quests.item(shown.ware.item, edits).is_none() {
                     faults.push(format!("item {} is not in item_template", shown.ware.item));
                 }
@@ -570,7 +561,8 @@ fn vendor_row(
                     subject.items,
                     subject.assets,
                     subject.thumbnails,
-                    &subject.session.server_edits,
+                    subject.asks,
+                    &subject.session.rows.edits,
                     ware.item,
                 );
             },
@@ -677,7 +669,7 @@ fn trainer_rows(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, own
         return;
     }
     open_skill_lines(subject);
-    let edits = &subject.session.server_edits;
+    let edits = &subject.session.rows.edits;
     let rows = subject.services.lessons_of(list, edits);
     let in_template: HashSet<u32> = subject
         .services
@@ -818,7 +810,7 @@ fn trainer_row(
                         .sense(egui::Sense::click()),
                 );
                 if link.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(hover).clicked() {
-                    subject.quests.show_row = Some(("Spell", lesson.spell));
+                    subject.asks.push(crate::ui::shell::asks::ShellAsk::ShowRow("Spell", lesson.spell));
                 }
             },
         );
@@ -1029,13 +1021,10 @@ fn remove_or_keep(
 ) {
     let now = subject.now;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let (label, about) = match life {
-            Life::Delete => ("keep", "Cancel the removal of this row."),
-            _ => ("\u{d7}", "Remove this row. The item or spell itself is not changed."),
-        };
-        if ui.small_button(label).on_hover_text(about).clicked() {
-            match life {
-                Life::Delete => subject.services.keep(subject.session, table, key, now),
+        let about = "Removes this row. The item or spell itself is not changed.";
+        if let Some(act) = crate::ui::widgets::rowform::remove_keep(ui, life, about) {
+            match act {
+                crate::ui::widgets::rowform::RowAct::Keep => subject.services.keep(subject.session, table, key, now),
                 _ => subject.services.remove(subject.session, table, key, in_database, now),
             }
         }

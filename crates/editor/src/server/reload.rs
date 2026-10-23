@@ -490,7 +490,7 @@ fn report(reloads: Res<Reloads>, session: Option<ResMut<EditSession>>) {
 }
 
 /// `--reload <table>[,<table>…]`, which is the only way this is reached without
-/// a person — see [`crate::args::Args::reload`].
+/// a person — see [`crate::args::server::Server::reload`].
 ///
 /// It fires once, on the first frame a playtest is in the world, and then never
 /// again: the flag is a check that the wire works, not a thing to repeat every
@@ -504,7 +504,7 @@ fn on_the_command_line(
     if *done {
         return;
     }
-    let Some(tables) = args.reload.as_deref() else {
+    let Some(tables) = args.server.reload.as_deref() else {
         *done = true;
         return;
     };

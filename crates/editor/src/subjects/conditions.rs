@@ -41,9 +41,10 @@
 //! must name lower entries than itself, and two rows may not test the same
 //! thing.
 
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
+use crate::server::fresh::FreshReads;
 use bevy_egui::egui;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -221,14 +222,17 @@ pub struct Conditions {
     /// The Rows view, which edits the shown row's columns, is shown instead
     /// of the Tests view.
     pub rows_view: bool,
-    held: Option<HashMap<u32, Condition>>,
-    loaded_for: Option<u64>,
-    reading: Option<Task<Result<Vec<Condition>, String>>>,
-    /// Why the last read answered nothing, when it answered nothing.
-    pub trouble: Option<String>,
+    /// The whole table by entry, read at once and kept until an apply moves
+    /// `EditSession::database_writes`.
+    held: FreshReads<(), HashMap<u32, Condition>>,
 }
 
 impl Conditions {
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.held.trouble()
+    }
+
     /// Show a condition, keeping the one shown now on the trail.
     pub fn show(&mut self, entry: Option<u32>) {
         if let Some(now) = self.showing.filter(|now| Some(*now) != entry) {
@@ -263,14 +267,14 @@ impl Conditions {
 
     /// Whether the table has been read.
     pub fn read(&self) -> bool {
-        self.held.is_some()
+        self.held.value().is_some()
     }
 
     /// One condition, the database's with the project's edits over it, or the
     /// project's creation. `None` when neither has it, or the table is not
     /// read.
     pub fn shown(&self, edits: &Edits, entry: u32) -> Option<Shown> {
-        let held = self.held.as_ref()?.get(&entry);
+        let held = self.held.value()?.get(&entry);
         let assignments = held.map(Condition::assignments);
         let (row, life) = crate::tools::places::triggers::shown(edits, condition::TABLE, &condition::key(entry), assignments.as_deref())?;
         Some(Shown {
@@ -283,7 +287,7 @@ impl Conditions {
     /// Every condition as the project leaves it, in entry order, removals
     /// left out.
     pub fn all(&self, edits: &Edits) -> Vec<Condition> {
-        let Some(held) = self.held.as_ref() else {
+        let Some(held) = self.held.value() else {
             return Vec::new();
         };
         let mut entries: Vec<u32> = held.keys().copied().collect();
@@ -315,7 +319,7 @@ impl Conditions {
     /// The entry a new condition takes: one above every entry the table holds
     /// and the project creates, which is also above any child it names.
     pub fn next_entry(&self, edits: &Edits) -> Option<u32> {
-        let held = self.held.as_ref()?.keys().copied().max().unwrap_or(0);
+        let held = self.held.value()?.keys().copied().max().unwrap_or(0);
         let created = edits
             .rows()
             .filter(|(table, _, row)| *table == condition::TABLE && row.life == Life::Insert)
@@ -330,9 +334,9 @@ impl Conditions {
     /// Answers the entry, and whether it is new; `None` while the table is
     /// not read.
     pub fn create(&mut self, session: &mut EditSession, kind: i32, values: [i32; 4], flags: u8, now: f64) -> Option<(u32, bool)> {
-        let entry = self.next_entry(&session.server_edits)?;
+        let entry = self.next_entry(&session.rows.edits)?;
         let made = Condition { entry, kind, values, flags };
-        let all = self.all(&session.server_edits);
+        let all = self.all(&session.rows.edits);
         if let Some(same) = condition::same_test(&made, &all) {
             return Some((same.entry, false));
         }
@@ -406,7 +410,7 @@ impl Conditions {
     /// Write the draft: create the rows [`Self::plan`] names, as one undo
     /// entry, and drop the draft. Answers the entry the draft is.
     pub fn save(&mut self, session: &mut EditSession, now: f64) -> Result<u32, String> {
-        let built = self.plan(&session.server_edits)?;
+        let built = self.plan(&session.rows.edits)?;
         let label = format!("{} {}", condition::TABLE, built.root);
         session.as_one("Edit condition", &label, |session| {
             for row in &built.created {
@@ -460,7 +464,7 @@ impl Plugin for ConditionToolPlugin {
 fn on_the_command_line(args: Res<crate::args::Args>, mut conditions: ResMut<Conditions>, mut done: Local<bool>) {
     if !*done {
         *done = true;
-        if let Some(entry) = args.condition {
+        if let Some(entry) = args.subjects.condition {
             conditions.show(Some(entry));
         }
     }
@@ -473,40 +477,24 @@ fn read_the_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    if let Some(task) = conditions.reading.as_mut() {
-        if let Some(done) = block_on(future::poll_once(task)) {
-            conditions.reading = None;
-            match done {
-                Ok(rows) => {
-                    info!("conditions: {} row(s)", rows.len());
-                    conditions.held = Some(rows.into_iter().map(|row| (row.entry, row)).collect());
-                    conditions.trouble = None;
-                }
-                Err(e) => {
-                    warn!("conditions: {e}");
-                    conditions.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
     let Some(session) = session else { return };
-    if conditions.loaded_for != Some(session.database_writes) {
-        conditions.loaded_for = Some(session.database_writes);
-        conditions.held = None;
-        conditions.trouble = None;
+    let writes = session.database_writes;
+    conditions.held.renew(writes);
+    match conditions.held.poll() {
+        Some(Ok(())) => info!("conditions: {} row(s)", conditions.held.value().map_or(0, HashMap::len)),
+        Some(Err(e)) => warn!("conditions: {e}"),
+        None => {}
     }
-    if !(conditions.open || conditions.wanted) || conditions.held.is_some() || conditions.trouble.is_some() {
+    if !(conditions.open || conditions.wanted) {
         return;
     }
-    let Some((at, _source)) = settings.resolve() else {
-        conditions.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
-    conditions.reading = Some(crate::server::queue::read(async move {
-        let mut db = vale_mangos::conn::Db::open(&at)?;
-        Ok(db.rows(&condition::all_query())?.iter().filter_map(Condition::from_row).collect())
-    }));
+    conditions.held.want(writes, (), || {
+        let (at, _source) = settings.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
+        Ok(crate::server::queue::read(async move {
+            let mut db = vale_mangos::conn::Db::open(&at)?;
+            Ok(db.rows(&condition::all_query())?.iter().filter_map(Condition::from_row).map(|row| (row.entry, row)).collect())
+        }))
+    });
 }
 
 #[cfg(test)]
@@ -514,10 +502,9 @@ mod tests {
     use super::*;
 
     fn read(rows: Vec<Condition>) -> Conditions {
-        Conditions {
-            held: Some(rows.into_iter().map(|row| (row.entry, row)).collect()),
-            ..Conditions::default()
-        }
+        let mut conditions = Conditions::default();
+        conditions.held.insert((), rows.into_iter().map(|row| (row.entry, row)).collect());
+        conditions
     }
 
     /// A new condition takes an entry above every other, and a repeated test
@@ -531,15 +518,15 @@ mod tests {
         let mut conditions = read(vec![Condition { entry: 40, kind: 8, values: [100, 0, 0, 0], flags: 0 }]);
         assert_eq!(conditions.create(&mut session, 8, [100, 0, 0, 0], 0, 1.0), Some((40, false)));
         assert_eq!(conditions.create(&mut session, 8, [101, 0, 0, 0], 0, 1.0), Some((41, true)));
-        assert_eq!(conditions.next_entry(&session.server_edits), Some(42));
-        let shown = conditions.shown(&session.server_edits, 41).unwrap();
+        assert_eq!(conditions.next_entry(&session.rows.edits), Some(42));
+        let shown = conditions.shown(&session.rows.edits, 41).unwrap();
         assert_eq!((shown.life, shown.condition.values[0]), (Life::Insert, 101));
         // An AND over both takes the next entry above them, and `users` lists
         // it as a user of each child.
         let (and, _) = conditions.create(&mut session, -1, [40, 41, 0, 0], 0, 2.0).unwrap();
         assert_eq!(and, 42);
-        assert_eq!(conditions.users(&session.server_edits, 41), vec![42]);
-        assert!(conditions.faults(&session.server_edits, &conditions.shown(&session.server_edits, 42).unwrap().condition).is_empty());
+        assert_eq!(conditions.users(&session.rows.edits, 41), vec![42]);
+        assert!(conditions.faults(&session.rows.edits, &conditions.shown(&session.rows.edits, 42).unwrap().condition).is_empty());
         let _ = std::fs::remove_dir_all(&install);
     }
 

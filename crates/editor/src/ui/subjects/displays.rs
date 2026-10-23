@@ -57,7 +57,7 @@ pub fn window(
     let mut close = false;
     let mut chosen: Option<u32> = None;
     let showing: u32 = session
-        .server_edits
+        .rows.edits
         .get(open.target.table, &open.target.key, open.target.column)
         .map(str::to_string)
         .or_else(|| open.target.in_database.clone())

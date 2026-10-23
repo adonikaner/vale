@@ -7,6 +7,12 @@
 //! they share is what a column of a given [`Kind`] looks like, and what a
 //! person typing into it produces. That is this file.
 //!
+//! One field of a form is here too, [`server_field`]: the name cell, the cell,
+//! the revert arrow and a reference's name, with a hook for the cases a form
+//! draws its own way. So are the entry box of a row that can be renumbered
+//! ([`entry_cell`]) and the button that removes a row or keeps it
+//! ([`remove_keep`]).
+//!
 //! The form itself is not here: which groups are open, what the head says,
 //! where a value goes and which sentence appears beside it. Each panel decides
 //! that for its own subject. A creature's panel says whether an edit is to
@@ -47,8 +53,13 @@
 //! project is. The caller does all of that, because the caller knows which
 //! row is being edited.
 
+use super::reference::{self, Resolver};
 use super::theme;
-use vale_mangos::schema::{self, Kind};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
+use crate::subjects::quests::ColumnTarget;
+use vale_mangos::row::{Edits, Key, Life};
+use vale_mangos::schema::{self, Column, Kind, Row};
 use bevy_egui::egui;
 
 /// The values an integer column can hold, as far as its [`Kind`] says.
@@ -197,7 +208,7 @@ pub fn text_field_wide(
 /// closes, because the value the next tick is computed from is the one the
 /// store now holds. It costs nothing in the history: two edits with the same
 /// subject close together in time are one undo entry, see
-/// [`crate::session::rows::Gesture`].
+/// [`crate::server::store::Gesture`].
 fn ticks<'a>(label: impl Into<egui::WidgetText>) -> egui::containers::menu::MenuButton<'a> {
     egui::containers::menu::MenuButton::new(label.into()).config(
         egui::containers::menu::MenuConfig::new()
@@ -511,6 +522,339 @@ pub fn revert_button(ui: &mut egui::Ui, in_database: Option<&str>) -> bool {
         .clicked()
 }
 
+// ---------------------------------------------------------------------------
+// One field of a server row
+// ---------------------------------------------------------------------------
+//
+// The creature, game object, item and quest forms and the area trigger
+// panel's teleport draw a column the same way: the name cell, the control the
+// column's type asks for, what the value means, the revert arrow when the
+// project has changed it, and, for a reference whose name does not fit beside
+// its number, the name on a row of its own. [`server_field`] is that, and a
+// form's own cases (a lock, a subclass, a display id) go in its hook.
+
+/// One column of one server row, as a form draws it.
+pub(in crate::ui) struct FieldCtx<'a> {
+    pub table: &'static str,
+    pub key: &'a Key,
+    /// The row as the database holds it: what an unedited column shows, and
+    /// what the revert arrow takes the column back to.
+    pub row: &'a Row,
+    pub column: &'static Column,
+    /// The name cell's text and its hover text. The column's own, unless the
+    /// form names the column by what it means.
+    pub title: &'a str,
+    pub about: &'a str,
+    /// What the value is drawn as. The column's own type, unless the form
+    /// reads the column as something else: a game object's `data` columns
+    /// are read by the template's type.
+    pub kind: Kind,
+    /// Whether this project creates the row. Every column of such a row is
+    /// the project's own, so no revert arrow is drawn: clearing a column would
+    /// leave the `INSERT` naming one column fewer than the table has.
+    pub creating: bool,
+    /// The undo entry a write goes on: "Edit creature", "Edit item".
+    pub label: &'static str,
+    /// What the cell's widgets are keyed on. One per table, row and column:
+    /// egui keeps a text box's draft and a menu's state under its id, so a
+    /// shared id would carry the half-typed value of one row into the next.
+    pub id: egui::Id,
+    /// The other columns a revert of this one also clears, because an edit of
+    /// this one wrote them too: a game object's facing and its rotation.
+    pub reverts_with: &'static [&'static str],
+    /// Whether a `NULL` is drawn as an empty text or a 0 that can be typed
+    /// over, rather than as the word. The quest form's six text columns
+    /// default to `NULL` in the table's definition.
+    pub null_is_empty: bool,
+    /// The frame clock the undo stack folds a gesture by.
+    pub now: f64,
+}
+
+impl<'a> FieldCtx<'a> {
+    /// A column drawn under its own name and type, keyed on the table, the
+    /// row and the column.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        ui: &egui::Ui,
+        edits: &Edits,
+        table: &'static str,
+        key: &'a Key,
+        row: &'a Row,
+        column: &'static Column,
+        label: &'static str,
+        now: f64,
+    ) -> FieldCtx<'a> {
+        FieldCtx {
+            table,
+            key,
+            row,
+            column,
+            title: column.name,
+            about: column.about,
+            kind: column.kind,
+            creating: edits.life(table, key) == Life::Insert,
+            label,
+            id: ui.make_persistent_id((table, key.text(), column.name)),
+            reverts_with: &[],
+            null_is_empty: false,
+            now,
+        }
+    }
+
+    /// The column's value as the database holds it, or `None` for a row this
+    /// project creates, which has nothing in the database to compare with.
+    pub fn in_database(&self) -> Option<String> {
+        match self.creating {
+            true => None,
+            false => self.column.literal(self.row),
+        }
+    }
+
+    /// The undo subject of an edit to this column. A value typed into the
+    /// cell and one chosen in a dialog name the same subject, so the two fold
+    /// into one undo entry.
+    pub fn subject(&self) -> String {
+        format!("{} {} {}", self.table, self.key.text(), self.column.name)
+    }
+
+    /// Where a dialog writes a value chosen for this column.
+    pub fn target(&self) -> ColumnTarget {
+        ColumnTarget {
+            table: self.table,
+            key: self.key.clone(),
+            column: self.column.name,
+            in_database: self.in_database(),
+            label: self.label,
+            subject: self.subject(),
+        }
+    }
+
+    /// Write a literal to the column, or clear the edit when the literal is
+    /// what the database holds: a statement for it would change nothing.
+    pub fn write(&self, session: &mut EditSession, written: String, now: f64) {
+        let value = match Some(&written) == self.in_database().as_ref() {
+            true => None,
+            false => Some(written),
+        };
+        let subject = self.subject();
+        session.set_server_edit(
+            self.table,
+            self.key,
+            self.column.name,
+            value,
+            Some(Gesture { label: self.label, subject: &subject, now }),
+        );
+    }
+}
+
+/// Which part of a field a hook is asked to draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui) enum Hook {
+    /// The value cell. A hook that draws it answers `Some` with what the cell
+    /// wrote; `None` leaves the cell to [`value_cell`].
+    Cell,
+    /// What goes after the cell, before the revert arrow. `Some(Some(_))` is
+    /// written as the cell's value.
+    After,
+}
+
+/// One column on a row of its own: the name cell, the cell its type asks for
+/// (or the hook's), what the value means, the revert arrow when the project
+/// has changed it, and a reference's name on the next row when it did not
+/// fit beside the number. Answers the literal the cell wrote; the caller
+/// writes it, through [`FieldCtx::write`] or its subject's own writer.
+///
+/// The revert arrow clears the column, and `reverts_with`, itself.
+pub(in crate::ui) fn server_field(
+    ui: &mut egui::Ui,
+    resolver: &mut Resolver<'_>,
+    field: &FieldCtx<'_>,
+    mut hook: impl FnMut(Hook, &mut egui::Ui, &mut Resolver<'_>, &FieldCtx<'_>, &str) -> Option<Option<String>>,
+) -> Option<String> {
+    let edited = resolver
+        .session
+        .rows
+        .edits
+        .get(field.table, field.key, field.column.name)
+        .map(str::to_string);
+    let in_database = field.column.literal(field.row);
+    let showing = edited.clone().or_else(|| in_database.clone()).or_else(|| {
+        field.null_is_empty.then(|| match field.kind.is_text() {
+            true => "''".to_string(),
+            false => "0".to_string(),
+        })
+    });
+    let mut written = None;
+    let pending = page_row(ui, field.title, field.about, edited.is_some(), |ui| {
+        let Some(showing) = showing.as_deref() else {
+            ui.label(egui::RichText::new("NULL").color(theme::INK_FAINT));
+            return None;
+        };
+        let mut pending = None;
+        written = match hook(Hook::Cell, ui, resolver, field, showing) {
+            Some(drawn) => drawn,
+            None => {
+                let (drawn, name_later) =
+                    value_cell(ui, resolver, field.kind, showing, field.id, Some(field.target()));
+                pending = name_later;
+                drawn
+            }
+        };
+        if let Some(Some(after)) = hook(Hook::After, ui, resolver, field, showing) {
+            written = Some(after);
+        }
+        if edited.is_some() && !field.creating && revert_button(ui, in_database.as_deref()) {
+            let gesture = format!("{} revert", field.subject());
+            for name in std::iter::once(&field.column.name).chain(field.reverts_with) {
+                resolver.session.set_server_edit(
+                    field.table,
+                    field.key,
+                    name,
+                    None,
+                    Some(Gesture { label: "Revert column", subject: &gesture, now: field.now }),
+                );
+            }
+        }
+        pending
+    });
+    if let Some((table, id)) = pending {
+        page_row(ui, "", "", false, |ui| reference::name(ui, resolver, table, id));
+    }
+    written
+}
+
+/// The cell a column of type `kind` is drawn as, by itself: a number with what
+/// it means, a line or a paragraph of text, a menu, a mask, or a reference's
+/// number with its picker and its name. Answers what it wrote, and, for a
+/// reference whose name did not fit beside the number, the table and id to
+/// draw the name of on a row of its own (see [`reference::cell`]).
+///
+/// The key is shown and never edited: it is what the `WHERE` names, and
+/// writing one would move the row the edit is about.
+pub(in crate::ui) fn value_cell(
+    ui: &mut egui::Ui,
+    resolver: &mut Resolver<'_>,
+    kind: Kind,
+    showing: &str,
+    id: egui::Id,
+    target: Option<ColumnTarget>,
+) -> (Option<String>, Option<(&'static str, u32)>) {
+    match kind {
+        Kind::Key => {
+            ui.label(theme::number(showing));
+            (None, None)
+        }
+        Kind::Text => (text_cell(ui, id.with("text"), showing), None),
+        Kind::Paragraph => (paragraph_cell(ui, id.with("text"), showing, 5), None),
+        Kind::Flags(bits) => (flags_cell(ui, showing, bits, id), None),
+        Kind::Choice(values) => (choice_cell(ui, showing, values, id), None),
+        Kind::Ref(table) => {
+            let written = number_cell(ui, Kind::Unsigned, showing);
+            let later = reference::cell(ui, resolver, table, showing, target).map(|id| (table, id));
+            (written, later)
+        }
+        kind => {
+            let written = number_cell(ui, kind, showing);
+            if let Some(means) = number_means(kind, showing) {
+                meaning(ui, means);
+            }
+            (written, None)
+        }
+    }
+}
+
+/// What a renumbering box says beside itself. See [`entry_cell`].
+pub(in crate::ui) struct Renumber<'a> {
+    /// The entry the row has in this project, which the box shows.
+    pub entry: u32,
+    /// The entry the database holds the row at.
+    pub read_entry: u32,
+    /// Whether this project creates the row.
+    pub is_new: bool,
+    /// What a row is called: "creature", "game object", "item", "quest".
+    pub noun: &'a str,
+    /// The hover text: what Apply renumbers with the row, and what it cannot.
+    pub reaches: String,
+}
+
+/// The `entry` box of a form whose row can be renumbered, and the sentence
+/// after it that says what pressing Enter does.
+///
+/// Committed on Enter or on leaving the box rather than per keystroke: a key
+/// that moved on every digit typed would re-key the row four times on the way
+/// to `20000`, and three of those are entries somebody else may own. `rekey`
+/// carries the renumbering out and answers why it refused one; the refusal is
+/// kept beside the box until it is typed into again, so that it is read.
+pub(in crate::ui) fn entry_cell(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    renumber: &Renumber<'_>,
+    rekey: impl FnOnce(u32) -> Result<(), String>,
+) {
+    let mut text = draft_or(ui, id, renumber.entry.to_string());
+    // The value cell's own size, so the key lines up with the numbers under it.
+    let response = ui.add_sized(
+        egui::vec2(FORM_VALUE, FORM_ROW),
+        egui::TextEdit::singleline(&mut text)
+            .id(id)
+            .horizontal_align(egui::Align::Center),
+    );
+    let trouble_id = id.with("trouble");
+    if let Some(text) = finished(ui, id, &response, text) {
+        let trouble = match text.trim().parse::<u32>() {
+            Err(_) => Some(format!("{text:?} is not a valid entry number")),
+            Ok(wanted) => rekey(wanted).err(),
+        };
+        ui.data_mut(|data| match trouble {
+            Some(why) => {
+                data.insert_temp(trouble_id, why);
+            }
+            None => {
+                data.remove_temp::<String>(trouble_id);
+            }
+        });
+    }
+    if let Some(why) = ui.data_mut(|data| data.get_temp::<String>(trouble_id)) {
+        ui.label(egui::RichText::new(why).small().color(theme::BAD));
+        return;
+    }
+    let (word, colour) = renumber_words(renumber);
+    ui.label(egui::RichText::new(word).small().color(colour))
+        .on_hover_text(&renumber.reaches);
+}
+
+/// What an entry box says it does: renumber a new row, say where the
+/// database still holds a renumbered one, or renumber a row the database
+/// holds together with every reference to it.
+fn renumber_words(renumber: &Renumber<'_>) -> (String, egui::Color32) {
+    match (renumber.is_new, renumber.read_entry != renumber.entry) {
+        (true, _) => (format!("renumbers this new {}", renumber.noun), theme::INK_FAINT),
+        (_, true) => (
+            format!(
+                "the database holds it at entry {} until this is applied",
+                renumber.read_entry
+            ),
+            theme::WARN,
+        ),
+        _ => (
+            "renumbers the row and every world database reference to it".to_string(),
+            theme::INK_FAINT,
+        ),
+    }
+}
+
+/// The button that marks a server row for removal, or takes the mark off: it
+/// reads Remove, or Keep on a row marked for removal. `about` is Remove's
+/// hover text, which says what removing this row comes to. Answers
+/// [`RowAct::Remove`] or [`RowAct::Keep`] when it is pressed.
+pub(in crate::ui) fn remove_keep(ui: &mut egui::Ui, life: Life, about: &str) -> Option<RowAct> {
+    let (label, hover, act) = match life {
+        Life::Delete => ("Keep", "Takes the removal mark off this row.", RowAct::Keep),
+        _ => ("Remove", about, RowAct::Remove),
+    };
+    ui.small_button(label).on_hover_text(hover).clicked().then_some(act)
+}
+
 /// What is done to a row of a server table's list other than editing a
 /// column: what the three buttons over the list do, and a row's menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -757,6 +1101,39 @@ mod tests {
             let away = form.next_at;
             assert_eq!(form.click(away, &showing, multiline), None);
         }
+    }
+
+    /// A chosen value and a typed value for one column share one undo
+    /// subject, so the two fold into one entry; a row this project creates
+    /// carries no database value for the write to clear against.
+    #[test]
+    fn a_target_names_the_row_and_the_column() {
+        use vale_mangos::gameobject;
+        let key = gameobject::template_key(2000000, 10);
+        let mut row = Row::new();
+        row.insert("displayId".to_string(), Some("42".to_string()));
+        let column = gameobject::TEMPLATE_TABLE.column("displayId").expect("a column");
+        let mut field = FieldCtx {
+            table: gameobject::TEMPLATE,
+            key: &key,
+            row: &row,
+            column,
+            title: column.name,
+            about: column.about,
+            kind: column.kind,
+            creating: false,
+            label: "Edit game object",
+            id: egui::Id::new("under test"),
+            reverts_with: &[],
+            null_is_empty: false,
+            now: 0.0,
+        };
+        let target = field.target();
+        assert_eq!(target.column, "displayId");
+        assert_eq!(target.in_database.as_deref(), Some("42"));
+        assert_eq!(target.subject, format!("gameobject_template {} displayId", key.text()));
+        field.creating = true;
+        assert_eq!(field.target().in_database, None);
     }
 
     /// A removal is named with what it comes to, which differs by what the

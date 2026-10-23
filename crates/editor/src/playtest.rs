@@ -234,7 +234,7 @@ fn seed(mut login: ResMut<Login>, config: Res<ClientConfig>, args: Res<crate::ar
     login.account = config.account.clone();
     login.password = config.password.clone();
     login.character = args
-        .character
+        .server.character
         .clone()
         .or_else(|| config.character.clone())
         .unwrap_or_default();
@@ -288,7 +288,7 @@ impl Plugin for PlaytestPlugin {
 }
 
 /// `--playtest <seconds>[,<back>]`, which is the only way either edge is reached
-/// without a person — see [`crate::args::Args::playtest`].
+/// without a person — see [`crate::args::server::Server::playtest`].
 ///
 /// It presses the same two buttons the panel does, once each and then never
 /// again: a scripted run that has come back to editing must not be dragged into
@@ -316,11 +316,11 @@ fn on_the_command_line(
     // set, and `arrange` clears the flag on the way back to editing, so the
     // condition is "a playtest is running and the panels are not open" rather
     // than a one-shot.
-    if args.shell && state.playing() && !shell.0 {
+    if args.server.shell && state.playing() && !shell.0 {
         shell.0 = true;
         *tool = crate::tools::open_on(*tool);
     }
-    let Some((after, back)) = args.playtest else {
+    let Some((after, back)) = args.server.playtest else {
         return;
     };
     let now = time.elapsed_secs();

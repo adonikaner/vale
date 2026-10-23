@@ -1,5 +1,5 @@
 //! The editor's global keys: undo, redo, save, the playtest, and the shell
-//! over one.
+//! over one. The shell's plugin, `crate::ui::PanelPlugin`, registers them.
 
 use crate::session::EditSession;
 use bevy::prelude::*;

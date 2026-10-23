@@ -236,7 +236,7 @@ pub fn migration_on_the_command_line(
     mut done: Local<bool>,
 ) {
     if *done
-        || !args.migration
+        || !args.server.migration
         || !waypoints.scripted_done
         || !creatures.scripted_done
         || !flights.scripted_done

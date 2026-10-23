@@ -37,15 +37,16 @@
 //! replaced by the spell that teaches it when `Spell.dbc` has one
 //! ([`teaching::teaching_spell`]), since that is what the loader's log line asks for.
 
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use vale_assets::tables::talent::Talents;
 use vale_assets::tables::teaching::{self, LineGroup};
 use vale_mangos::row::{Assignment, Edits, Key, Life, RowEdit};
 use vale_mangos::trainer::{self, Lesson, Taught};
 use vale_mangos::vendor::{self, Ware};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
-use std::collections::{HashMap, HashSet};
+use crate::server::fresh::FreshReads;
+use std::collections::HashSet;
 
 /// Which of the two windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -126,6 +127,36 @@ pub struct About {
 }
 
 impl About {
+    /// The windows' subject for the creature in focus, read from `template`,
+    /// its template row as read, with this project's edits over it: so a
+    /// `vendor_id`, a `trainer_id` or `npc_flags` typed into the template form
+    /// changes the window on the next frame. `None` while the row is being
+    /// read.
+    pub fn from_focus(
+        focus: &crate::subjects::windows::Focus,
+        template: Option<&vale_mangos::schema::Row>,
+        edits: &Edits,
+    ) -> Option<About> {
+        let template = template?;
+        let column = |name: &str| -> u32 {
+            edits
+                .shown_integer(vale_mangos::creature::TEMPLATE, &focus.template_key, name, Some(template))
+                .map_or(0, |value| value.max(0) as u32)
+        };
+        Some(About {
+            entry: focus.entry,
+            label: focus.label.clone(),
+            template_key: focus.template_key.clone(),
+            npc_flags: column("npc_flags"),
+            vendor_id: column("vendor_id"),
+            trainer_id: column("trainer_id"),
+            trainer_type: column("trainer_type"),
+            trainer_class: column("trainer_class"),
+            trainer_race: column("trainer_race"),
+            trainer_spell: column("trainer_spell"),
+        })
+    }
+
     /// The creature's two lists of a kind: its own, then its template's. The
     /// template list's entry is 0 when the column names none.
     pub fn lists(&self, kind: Kind) -> [List; 2] {
@@ -177,6 +208,13 @@ enum Read {
     Lessons(Vec<Lesson>),
 }
 
+/// One list as the database has it, and for a template list the creatures
+/// that name it, as entry and name.
+struct Held {
+    read: Read,
+    users: Option<Vec<(u32, String)>>,
+}
+
 /// What the two windows are holding.
 #[derive(Resource, Default)]
 pub struct Services {
@@ -189,16 +227,9 @@ pub struct Services {
     /// `None` until a tab is pressed; see [`Self::showing`].
     pub vendor_tab: Option<usize>,
     pub trainer_tab: Option<usize>,
-    wares: HashMap<List, Vec<HeldWare>>,
-    lessons: HashMap<List, Vec<Lesson>>,
-    /// The creatures that name each template list read so far, as entry and
-    /// name.
-    users: HashMap<List, Vec<(u32, String)>>,
-    /// What those were read at: `EditSession::database_writes`.
-    loaded_for: Option<u64>,
-    reading: Option<(List, Task<Result<(Read, Vec<(u32, String)>), String>>)>,
-    /// Why the last read answered nothing, when it answered nothing.
-    pub trouble: Option<String>,
+    /// Every list read so far, kept until an apply moves
+    /// `EditSession::database_writes`.
+    lists: FreshReads<List, Held>,
     /// Every spell id that is a rank of a talent, out of `Talent.dbc`; `None`
     /// until the trainer window has opened the table.
     pub talents: Option<HashSet<u32>>,
@@ -260,7 +291,7 @@ impl Services {
         }
         let Some(about) = self.about.as_ref() else { return 0 };
         let [own, template] = about.lists(kind);
-        let own_rows = self.wares.get(&own).map(Vec::len).or_else(|| self.lessons.get(&own).map(Vec::len));
+        let own_rows = self.wares(own).map(Vec::len).or_else(|| self.lessons(own).map(Vec::len));
         match (own_rows, template.entry) {
             (Some(0), entry) if entry != 0 => 1,
             _ => 0,
@@ -276,14 +307,35 @@ impl Services {
     /// Whether a list's rows are in hand. A list with entry 0 is never read
     /// and counts as read, with no rows.
     pub fn is_read(&self, list: List) -> bool {
-        list.entry == 0 || self.wares.contains_key(&list) || self.lessons.contains_key(&list)
+        list.entry == 0 || self.lists.is_read(&list)
+    }
+
+    /// Why the last read answered nothing, when it answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.lists.trouble()
+    }
+
+    /// A vendor list's rows as the database has them, once read.
+    fn wares(&self, list: List) -> Option<&Vec<HeldWare>> {
+        match &self.lists.get(&list)?.read {
+            Read::Wares(rows) => Some(rows),
+            Read::Lessons(_) => None,
+        }
+    }
+
+    /// A trainer list's rows as the database has them, once read.
+    fn lessons(&self, list: List) -> Option<&Vec<Lesson>> {
+        match &self.lists.get(&list)?.read {
+            Read::Lessons(rows) => Some(rows),
+            Read::Wares(_) => None,
+        }
     }
 
     /// The creatures that name a template list, once it has been read: the
     /// database's, with the project's `vendor_id` or `trainer_id` edits and
     /// its created templates over them.
     pub fn users(&self, list: List, edits: &Edits) -> Option<Vec<(u32, String)>> {
-        let from_database = self.users.get(&list)?;
+        let from_database = self.lists.get(&list)?.users.as_ref()?;
         Some(crate::server::fresh::naming(from_database, edits, list.kind().template_column(), list.entry))
     }
 
@@ -291,8 +343,7 @@ impl Services {
     /// them, in the order the server sends them: by slot, then by item.
     pub fn wares_of(&self, list: List, edits: &Edits) -> Vec<ShownWare> {
         let mut out: Vec<ShownWare> = self
-            .wares
-            .get(&list)
+            .wares(list)
             .map(Vec::as_slice)
             .unwrap_or(&[])
             .iter()
@@ -328,8 +379,7 @@ impl Services {
     /// them, by spell.
     pub fn lessons_of(&self, list: List, edits: &Edits) -> Vec<ShownLesson> {
         let mut out: Vec<ShownLesson> = self
-            .lessons
-            .get(&list)
+            .lessons(list)
             .map(Vec::as_slice)
             .unwrap_or(&[])
             .iter()
@@ -372,13 +422,13 @@ impl Services {
         item: u32,
         now: f64,
     ) -> Result<String, String> {
-        let shown = self.wares_of(list, &session.server_edits);
+        let shown = self.wares_of(list, &session.rows.edits);
         let kept: Vec<&ShownWare> = shown.iter().filter(|s| s.life != Life::Delete).collect();
         if kept.iter().any(|s| s.ware.item == item) {
             return Err(format!("item {item} is already in {} {}", list.table, list.entry));
         }
         let other_rows = match other {
-            Some(other) if other.entry != 0 => self.wares_of(other, &session.server_edits),
+            Some(other) if other.entry != 0 => self.wares_of(other, &session.rows.edits),
             _ => Vec::new(),
         };
         // The count leaves out what `forbidden_items` removes, as the
@@ -434,13 +484,13 @@ impl Services {
         if !faults.is_empty() {
             return Err(format!("spell {spell}: {}", faults.join("; ")));
         }
-        let shown = self.lessons_of(list, &session.server_edits);
+        let shown = self.lessons_of(list, &session.rows.edits);
         if shown.iter().any(|s| s.life != Life::Delete && s.lesson.spell == spell) {
             return Err(format!("spell {spell} is already in {} {}", list.table, list.entry));
         }
         if let Some(other) = other.filter(|other| other.entry != 0 && !list.is_template()) {
             let taught_there = self
-                .lessons_of(other, &session.server_edits)
+                .lessons_of(other, &session.rows.edits)
                 .iter()
                 .any(|s| s.life != Life::Delete && s.lesson.spell == spell);
             if taught_there {
@@ -535,7 +585,7 @@ impl Services {
     /// undo stack.
     pub fn move_ware(&mut self, session: &mut EditSession, list: List, item: u32, by: i32, now: f64) {
         let mut order: Vec<ShownWare> = self
-            .wares_of(list, &session.server_edits)
+            .wares_of(list, &session.rows.edits)
             .into_iter()
             .filter(|s| s.life != Life::Delete)
             .collect();
@@ -600,7 +650,7 @@ pub(crate) fn write_column(
     value: String,
     gesture: Gesture<'_>,
 ) {
-    let creating = session.server_edits.row(table, key).is_some_and(|row| row.life == Life::Insert);
+    let creating = session.rows.edits.row(table, key).is_some_and(|row| row.life == Life::Insert);
     match held.filter(|_| !creating) {
         Some(held) => {
             let had = held.iter().find(|change| change.column == column).map(|change| &change.value);
@@ -611,7 +661,7 @@ pub(crate) fn write_column(
             session.set_server_edit(table, key, column, value, Some(gesture));
         }
         None => {
-            let Some(mut row) = session.server_edits.row(table, key).cloned() else {
+            let Some(mut row) = session.rows.edits.row(table, key).cloned() else {
                 return;
             };
             row.columns.insert(column.to_string(), value);
@@ -665,45 +715,18 @@ fn read_the_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
 ) {
-    if let Some((list, task)) = services.reading.as_mut() {
-        let list = *list;
-        if let Some(done) = block_on(future::poll_once(task)) {
-            services.reading = None;
-            match done {
-                Ok((read, users)) => {
-                    match read {
-                        Read::Wares(rows) => {
-                            info!("services: {} {}: {} row(s)", list.table, list.entry, rows.len());
-                            services.wares.insert(list, rows);
-                        }
-                        Read::Lessons(rows) => {
-                            info!("services: {} {}: {} row(s)", list.table, list.entry, rows.len());
-                            services.lessons.insert(list, rows);
-                        }
-                    }
-                    if list.is_template() {
-                        services.users.insert(list, users);
-                    }
-                    services.trouble = None;
-                }
-                Err(e) => {
-                    warn!("services: {e}");
-                    services.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
     let Some(session) = session else { return };
-    if services.loaded_for != Some(session.database_writes) {
-        services.loaded_for = Some(session.database_writes);
-        services.wares.clear();
-        services.lessons.clear();
-        services.users.clear();
-        // A read that failed against the database as it was is tried again.
-        services.trouble = None;
+    let writes = session.database_writes;
+    services.lists.renew(writes);
+    match services.lists.poll() {
+        Some(Ok(list)) => {
+            let count = services.wares(list).map(Vec::len).or_else(|| services.lessons(list).map(Vec::len));
+            info!("services: {} {}: {} row(s)", list.table, list.entry, count.unwrap_or(0));
+        }
+        Some(Err(e)) => warn!("services: {e}"),
+        None => {}
     }
-    if services.trouble.is_some() {
+    if services.lists.is_busy() || services.trouble().is_some() {
         return;
     }
     let Some(about) = services.about.clone() else { return };
@@ -713,14 +736,10 @@ fn read_the_rows(
         .flat_map(|kind| about.lists(kind))
         .find(|list| !services.is_read(*list));
     let Some(list) = wanted else { return };
-    let Some((at, _source)) = settings.resolve() else {
-        services.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
     let patch = crate::server::settings::server_patch(&settings);
-    services.reading = Some((
-        list,
-        crate::server::queue::read(async move {
+    services.lists.want(writes, list, || {
+        let (at, _source) = settings.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
+        Ok(crate::server::queue::read(async move {
             let mut db = vale_mangos::conn::Db::open(&at)?;
             let read = match list.kind() {
                 Kind::Vendor => {
@@ -743,24 +762,26 @@ fn read_the_rows(
                 }
             };
             let users = match (list.is_template(), list.kind()) {
-                (false, _) => Vec::new(),
+                (false, _) => None,
                 (true, kind) => {
                     let sql = match kind {
                         Kind::Vendor => vendor::users_query(list.entry),
                         Kind::Trainer => trainer::users_query(list.entry),
                     };
-                    db.rows(&sql)?
+                    let users = db
+                        .rows(&sql)?
                         .iter()
                         .filter_map(|row| {
                             use vale_mangos::schema::RowValue;
                             Some((row.integer("entry")? as u32, row.text("name").unwrap_or("").to_string()))
                         })
-                        .collect()
+                        .collect();
+                    Some(users)
                 }
             };
-            Ok((read, users))
-        }),
-    ));
+            Ok(Held { read, users })
+        }))
+    });
 }
 
 /// `--vendor`, `--trainer`, `--vendor-add <item>`, `--trainer-add <spell>`,
@@ -779,16 +800,16 @@ fn on_the_command_line(
 ) {
     if !*opened {
         *opened = true;
-        services.vendor_open = args.vendor_window;
-        services.trainer_open = args.trainer_window;
+        services.vendor_open = args.subjects.vendor_window;
+        services.trainer_open = args.subjects.trainer_window;
         services.find = args
-            .vendor_find
+            .subjects.vendor_find
             .clone()
             .map(|text| (Kind::Vendor, text))
-            .or_else(|| args.trainer_find.clone().map(|text| (Kind::Trainer, text)));
+            .or_else(|| args.subjects.trainer_find.clone().map(|text| (Kind::Trainer, text)));
         let mut adds = Vec::new();
-        adds.extend(args.vendor_add.map(|item| (Kind::Vendor, item)));
-        adds.extend(args.trainer_add.map(|spell| (Kind::Trainer, spell)));
+        adds.extend(args.subjects.vendor_add.map(|item| (Kind::Vendor, item)));
+        adds.extend(args.subjects.trainer_add.map(|spell| (Kind::Trainer, spell)));
         *pending = Some(adds);
     }
     if services.scripted_done {
@@ -802,7 +823,7 @@ fn on_the_command_line(
     let Some(about) = services.about.clone() else { return };
     let [own, template] = about.lists(kind);
     if !services.is_read(own) || !services.is_read(template) {
-        if services.trouble.is_some() {
+        if services.trouble().is_some() {
             services.scripted_done = true;
         }
         return;
@@ -885,7 +906,11 @@ mod tests {
 
     fn held_wares(services: &mut Services, list: List, wares: &[Ware]) {
         let rows = wares.iter().map(|ware| HeldWare { ware: ware.clone(), forbidden: false }).collect();
-        services.wares.insert(list, rows);
+        hold(services, list, Read::Wares(rows));
+    }
+
+    fn hold(services: &mut Services, list: List, read: Read) {
+        services.lists.insert(list, Held { read, users: None });
     }
 
     /// The tabs are the creature's own list and its template's, and a
@@ -910,11 +935,11 @@ mod tests {
     fn an_empty_own_list_opens_on_the_template() {
         let mut services = Services { about: Some(about()), ..Services::default() };
         assert_eq!(services.tab(Kind::Trainer), 0, "nothing read yet");
-        services.lessons.insert(List::new(trainer::TRAINER, 3044), Vec::new());
+        hold(&mut services, List::new(trainer::TRAINER, 3044), Read::Lessons(Vec::new()));
         assert_eq!(services.tab(Kind::Trainer), 1);
         services.set_tab(Kind::Trainer, 0);
         assert_eq!(services.tab(Kind::Trainer), 0);
-        services.wares.insert(List::new(vendor::VENDOR, 3044), Vec::new());
+        hold(&mut services, List::new(vendor::VENDOR, 3044), Read::Wares(Vec::new()));
         assert_eq!(services.tab(Kind::Vendor), 0, "vendor_id is 0: no template list");
     }
 
@@ -944,7 +969,7 @@ mod tests {
     fn a_created_lesson_is_shown_in_its_own_list_only() {
         let list = List::new(trainer::TRAINER, 3044);
         let mut services = Services::default();
-        services.lessons.insert(list, vec![Lesson::new(3044, 1173)]);
+        hold(&mut services, list, Read::Lessons(vec![Lesson::new(3044, 1173)]));
         let mut edits = Edits::default();
         for entry in [3044, 3045] {
             let lesson = Lesson { cost: 90, ..Lesson::new(entry, 5504) };

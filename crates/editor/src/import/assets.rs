@@ -559,7 +559,7 @@ impl Plugin for AssetsPlugin {
 
 /// `--import-texture <picture> <archive path>`: open the import on the
 /// picture with the path's folder and name, and write it, once there is a
-/// session. See `crate::args::Args::import_texture`.
+/// session. See `crate::args::import::Import::import_texture`.
 fn on_the_command_line(
     args: Res<crate::args::Args>,
     mut assets: ResMut<Assets>,
@@ -570,7 +570,7 @@ fn on_the_command_line(
         return;
     }
     *done = true;
-    if let Some((picture, purpose)) = args.import_dialog.clone() {
+    if let Some((picture, purpose)) = args.import.import_dialog.clone() {
         let purpose = match purpose.to_ascii_lowercase().as_str() {
             "ground" => Purpose::Ground,
             "icon" => Purpose::Icon,
@@ -590,7 +590,7 @@ fn on_the_command_line(
             Err(why) => warn!("--import-dialog: {why}"),
         }
     }
-    let Some((picture, vpath)) = args.import_texture.clone() else { return };
+    let Some((picture, vpath)) = args.import.import_texture.clone() else { return };
     let vpath = vpath.replace('/', "\\");
     let (folder, file) = match vpath.rfind('\\') {
         Some(at) => (vpath[..=at].to_string(), vpath[at + 1..].to_string()),

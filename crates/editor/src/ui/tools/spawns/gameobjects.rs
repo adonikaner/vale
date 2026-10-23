@@ -31,58 +31,287 @@
 //!   spawn. On a tilted spawn the form states that it does not. See
 //!   `crate::tools::spawns::gameobjects::GameObjects::turn`.
 //!
+//! ## What is here
+//!
+//! The panel's frame, the picker, the edits block, the claim and the template
+//! window are the creature panel's too, in [`super::spawn`]. This file is what
+//! the game object panel adds ([`GameObjectSubject`]'s [`SpawnView`]): the
+//! type filter in the picker, the lock and the profession a gathering node
+//! needs, the summary and the quest and loot windows, and the form with its
+//! `data` columns named by type.
+//!
 //! Apply, Put back and Discard are on the top bar's Server… panel, in the
 //! Objects block. See [`crate::ui::shell::sync`].
 
 use bevy_egui::egui;
 
-use crate::ui::widgets::theme;
-use crate::server::gameobjects::{REVERT_VPATH as REVERT, SQL_VPATH as SQL};
+use super::spawn::{SpawnView, Text};
 use crate::session::EditSession;
 use crate::subjects::displays::{DisplayPick, Table as DisplayTable};
-use crate::tools::spawns::gameobjects::{GameObjects, Known, Spawn};
-use crate::tools::placements::place;
 use crate::subjects::quests::{ColumnTarget, Holder};
+use crate::tools::spawns::gameobjects::{GameObjectSubject, GameObjects, Known, Spawn};
+use crate::ui::widgets::theme;
 use vale_assets::tables::lock::{KeyKind, Locks};
 use vale_client::assets::GameAssets;
 use vale_mangos::gameobject::{self, Column, Group, Kind};
-use vale_mangos::row::{Key, Life};
+use vale_mangos::row::Key;
 
+use crate::ui::shell::asks::ShellAsks;
+use crate::ui::widgets::reference::{self, Resolver};
 use crate::ui::widgets::rowform::{
-    choice_cell, draft_or, finished, flags_cell, meaning, meaning_truncated, number_cell,
-    number_means, page_row, page_spacing, revert_button, section as page_section, text_cell,
-    FORM_ROW, FORM_VALUE,
+    meaning, meaning_truncated, number_cell, page_spacing, section as page_section, server_field, FieldCtx, Hook,
+    FORM_ROW,
 };
+use crate::ui::Editing;
 
-/// Everything the panel needs, as one argument.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub objects: &'a mut GameObjects,
-    /// The quest tool's state: which object's quests its window is showing,
-    /// the reference picker every form shares, and the name cache a
-    /// reference column resolves through.
-    pub quests: &'a mut crate::subjects::quests::Quests,
-    /// The loot window's state, for the Loot button beside the Quests button.
-    pub loot: &'a mut crate::subjects::loot::Loot,
-    pub server: &'a crate::server::settings::ServerSettings,
-    /// The top bar's Server… panel, which holds every server operation.
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
-    /// Where each server subject stands, held for half a second. See
-    /// `super::creatures::Subject::standings`.
-    pub standings: &'a mut crate::server::sync::Standings,
-    /// The archives, for what a display id looks like, what a lock needs and
-    /// the client tables a reference resolves through.
-    pub assets: &'a GameAssets,
-    pub portraits: &'a mut crate::preview::portraits::Portraits,
-    /// The icons the reference picker's spell and item rows draw. See
-    /// `crate::ui::widgets::thumbnails`.
-    pub thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
-    pub now: f64,
-    /// The gizmo, for the Handles switch drawn under the Select/Place switch.
-    /// `None` where the panel's parts are drawn without it, as in the
-    /// template window.
-    pub gizmo: Option<&'a mut crate::tools::placements::gizmo::Gizmo>,
+/// Everything the game object panel needs, as one argument.
+pub(crate) type Subject<'a> = super::spawn::Subject<'a, GameObjectSubject>;
+
+impl<'a> Subject<'a> {
+    /// The panel's subject out of the shell's state; see
+    /// `super::creatures::Subject::new`.
+    pub(in crate::ui) fn new(
+        session: &'a mut EditSession,
+        editing: &'a mut Editing<'_>,
+        server: super::Server<'a>,
+        assets: &'a GameAssets,
+        now: f64,
+        gizmo: bool,
+    ) -> Subject<'a> {
+        let gizmo = match gizmo {
+            true => Some(&mut *editing.gizmo),
+            false => None,
+        };
+        Subject {
+            session,
+            tool: &mut editing.objects,
+            quests: &mut editing.quests,
+            loot: &mut editing.loot,
+            server: server.settings,
+            server_panel: server.panel,
+            standings: server.standings,
+            assets,
+            portraits: &mut editing.portraits,
+            thumbnails: &mut editing.thumbnails,
+            now,
+            gizmo,
+            asks: &mut editing.asks,
+            fly: &mut editing.fly,
+            own: (),
+        }
+    }
 }
+
+impl SpawnView for GameObjectSubject {
+    /// A game object's panel reaches nothing beside the shared state.
+    type Panel<'a> = ();
+    const STACK: crate::server::stack::Subject = crate::server::stack::Subject::GameObjects;
+    const SQL: &'static str = crate::server::gameobjects::SQL_VPATH;
+    const REVERT: &'static str = crate::server::gameobjects::REVERT_VPATH;
+    const TEXT: Text = Text {
+        heading: "Game object",
+        title: "Game objects",
+        workspace: "Game Objects",
+        click: "Click a game object in the viewport to select it. The nearest spawns are drawn \
+                as models; the rest are drawn as squares on the ground.",
+        models: "Draws the nearest spawns with their models. Off, every spawn is drawn as a \
+                 square; spawns past the model limit are always squares.",
+        budget: "Maximum number of spawns drawn as models, nearest first.",
+        budget_max: 3000,
+        removal: "Marked for removal. Apply deletes the gameobject row and the spawn's \
+                  game_event_gameobject and gameobject_battleground rows.",
+        removed: "Removed and applied. The gameobject row and its game_event_gameobject and \
+                  gameobject_battleground rows are deleted; Restore reverts them.",
+        new_template: "Creates a gameobject_template row with an entry from 2,000,000 up, clear \
+                       of upstream vmangos entries. It starts as a Generic object of size 1 with \
+                       no model, drawn as a marker until displayId is set. Opens the template \
+                       window on the new row.",
+        new_listed: "Creates a gameobject_template row with an entry from 2,000,000 up, clear of \
+                     upstream vmangos entries. It starts as a Generic object of size 1 with no \
+                     model, and opens here.",
+        edit: "Edit object…",
+        edit_chosen: "Opens the gameobject_template columns in a separate window. The window \
+                      shows the chosen object.",
+        edit_selected: "Opens the 34 gameobject_template columns in a separate window. The 24 \
+                        data columns are labelled with the field names of this object's type.",
+        none_chosen: "No object chosen. Search below by name or entry, or choose a type, then \
+                      click the ground to place the chosen object.",
+        too_short: "Type two letters of a name, or an entry, or choose a type.",
+        no_model: Some(
+            "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The object is placed and \
+             drawn as a marker with no model. Traps and spell focus objects usually have no \
+             model.",
+        ),
+        list_search: "name, type or entry",
+        no_display: "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The editor draws a \
+                     spawn of it as a marker. Traps and spell focus objects usually have no \
+                     model.",
+        place: "Switches to the rail's Objects tool in Place with this game object chosen. The \
+                next click on the ground creates a spawn of it.",
+    };
+
+    fn subject<'a>(
+        session: &'a mut EditSession,
+        editing: &'a mut Editing<'_>,
+        server: super::Server<'a>,
+        assets: &'a GameAssets,
+        now: f64,
+        gizmo: bool,
+    ) -> Subject<'a> {
+        Subject::new(session, editing, server, assets, now, gizmo)
+    }
+
+    fn picture(ui: &mut egui::Ui, subject: &mut Subject<'_>, display_id: u32, rect: egui::Rect) -> bool {
+        match subject.tool.model_of(subject.assets, display_id) {
+            Some(path) => {
+                crate::preview::portraits::paint(ui, subject.portraits, &path, rect);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn preview(ui: &mut egui::Ui, subject: &mut Subject<'_>, display_id: u32, side: Option<f32>) -> bool {
+        let Some(path) = subject.tool.model_of(subject.assets, display_id) else {
+            return false;
+        };
+        match side {
+            Some(side) => crate::ui::widgets::preview::preview_pane_at(ui, subject.portraits, &path, side),
+            None => crate::ui::widgets::preview::preview_pane(ui, subject.portraits, &path),
+        }
+        true
+    }
+
+    /// The profession a gathering node needs, or the type.
+    fn row_line(subject: &mut Subject<'_>, known: &Known) -> String {
+        gathered_by(locks(&mut subject.tool.own.locks, subject.assets), known).unwrap_or_else(|| known.type_word())
+    }
+
+    fn list_line(subject: &mut Subject<'_>, known: &Known) -> String {
+        Self::row_line(subject, known)
+    }
+
+    fn chosen_detail(ui: &mut egui::Ui, subject: &mut Subject<'_>, chosen: &Known) {
+        let gathered = gathered_by(locks(&mut subject.tool.own.locks, subject.assets), chosen);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let faint = |text: String| egui::RichText::new(text).small().color(theme::INK_DIM);
+            ui.label(faint(format!("{} · display", chosen.type_word())));
+            let id = egui::RichText::new(chosen.display_id.to_string()).small();
+            match chosen.display_id {
+                0 => {
+                    ui.label(id.color(theme::INK_DIM));
+                }
+                display => reference::display_link(ui, id, subject.asks, DisplayTable::Object.name(), display),
+            }
+            if let Some(words) = gathered {
+                ui.label(faint(format!("· {words}")));
+            }
+        });
+    }
+
+    /// The type filter. With a type chosen, the list fills without any search
+    /// text.
+    fn search_filters(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("type").color(theme::INK_DIM));
+            let shown = match subject.tool.new_spawn.of_type {
+                Some(kind) => gameobject::value_word(&gameobject::TYPES, kind),
+                None => "any".to_string(),
+            };
+            egui::ComboBox::from_id_salt("object-type-filter")
+                .selected_text(shown)
+                .width(ui.available_width() - 8.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut subject.tool.new_spawn.of_type, None, "any");
+                    for named in gameobject::TYPES {
+                        ui.selectable_value(&mut subject.tool.new_spawn.of_type, Some(named.value), named.name);
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Filters the matches by gameobject_template.type. With a type chosen, the \
+                     list shows matches without search text. Mining veins, herbs and treasure \
+                     chests are all type Chest.",
+                );
+        });
+    }
+
+    /// As on the creature panel, everything above the spawn's columns stays
+    /// in place and only the columns scroll.
+    fn selected(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, on_server: &crate::server::sync::Standing) {
+        head(ui, subject, spawn);
+        super::spawn::claim(ui, subject, spawn, on_server);
+        ui.add_space(6.0);
+        what_it_is(ui, subject, spawn);
+        ui.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .min_scrolled_height(super::spawn::SPAWN_FORM_MIN)
+            .show(ui, |ui| spawn_form(ui, subject, spawn));
+    }
+
+    fn template_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, key: &Key, row: &gameobject::Row) {
+        let form = Form { table: gameobject::TEMPLATE, key, row, spawn: None };
+        groups(ui, subject, &form, &[Group::Identity, Group::Appearance, Group::Stats]);
+    }
+
+    fn renumber_reaches() -> String {
+        format!(
+            "vmangos has no foreign keys, so Apply updates the references itself: the row, \
+             and the {} world database columns that refer to a game object by entry: every \
+             spawn's id, the quest relations, the pool and locale rows, the spell script \
+             targets, and quest_template's objectives, which store an object as the negative \
+             of its entry. Restore reverts all of it.\n\nNot updated: a template's \
+             linkedTrapId data column, gameobject_loot_template (keyed by data1, not by \
+             entry), script datalong values, and the C++ scripts.",
+            gameobject::TEMPLATE_REFERENCES.len()
+        )
+    }
+
+    fn list_summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known) {
+        let lock = known.lock().map(|id| {
+            let locks = locks(&mut subject.tool.own.locks, subject.assets);
+            format!("{id} \u{2014} {}", lock_words(locks, id))
+        });
+        egui::Grid::new("gameobject-data-summary").num_columns(2).spacing([8.0, 2.0]).show(ui, |ui| {
+            let mut rows: Vec<(&str, String)> = vec![
+                ("Type", known.type_word()),
+                ("Display", known.display_id.to_string()),
+                ("Size", format!("{}", known.size)),
+                ("Faction", known.faction.to_string()),
+                ("Flags", gameobject::mask_words(&gameobject::FLAGS, known.flags)),
+            ];
+            if let Some(lock) = lock {
+                rows.push(("Lock", lock));
+            }
+            if let Some(loot) = known.loot() {
+                rows.push(("Loot", format!("gameobject_loot_template {loot}")));
+            }
+            for (name, value) in rows {
+                ui.label(egui::RichText::new(name).color(theme::INK_DIM));
+                match name == "Display" && known.display_id != 0 {
+                    true => reference::display_link(
+                        ui,
+                        egui::RichText::new(value),
+                        subject.asks,
+                        DisplayTable::Object.name(),
+                        known.display_id,
+                    ),
+                    false => {
+                        ui.label(egui::RichText::new(value).color(theme::INK));
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    }
+
+    fn list_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known) {
+        windows(ui, subject, known.entry, known.label(), false);
+    }
+}
+
 
 /// `Lock.dbc` and `LockType.dbc`, read the first time a lock is drawn.
 ///
@@ -156,662 +385,6 @@ pub(in crate::ui) fn gathered_by(locks: &Locks, known: &Known) -> Option<String>
     })
 }
 
-/// Draw the game-object tool's panel, and the two dialogs its forms open.
-pub fn draw(ui: &mut egui::Ui, mut subject: Subject<'_>) {
-    panel(ui, &mut subject);
-    dialogs(ui.ctx(), &mut subject);
-}
-
-/// The two dialogs a form here can open: the display picker and the
-/// reference picker. Drawn against the context, so the sidebar, the template
-/// window and the Game Objects workspace reach the same two.
-pub(in crate::ui) fn dialogs(ctx: &egui::Context, subject: &mut Subject<'_>) {
-    crate::ui::subjects::displays::window(
-        ctx,
-        &mut subject.objects.display_pick,
-        subject.session,
-        subject.assets,
-        subject.portraits,
-        subject.now,
-    );
-    crate::ui::subjects::quests::picker(
-        ctx,
-        subject.session,
-        subject.quests,
-        subject.assets,
-        subject.thumbnails,
-        None,
-        subject.now,
-    );
-}
-
-/// The panel itself.
-fn panel(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-    controls(ui, subject);
-    ui.add_space(8.0);
-
-    if subject.objects.trouble.is_some() {
-        nothing_to_show(ui, subject);
-        return;
-    }
-
-    // Read from the held standing, as on the creature panel.
-    let on_server = subject
-        .standings
-        .of(
-            crate::server::sync::Half::Row(crate::server::stack::Subject::GameObjects),
-            subject.session,
-            subject.assets,
-            subject.now,
-        )
-        .clone();
-    edits_block(ui, subject, &on_server);
-
-    let mut mode = subject.objects.mode;
-    theme::segmented(ui, &mut mode, &place::MODES, |a, b| a == b);
-    if mode != subject.objects.mode {
-        subject.objects.mode = mode;
-        if mode == place::Mode::Select {
-            subject.objects.new_spawn.chosen = None;
-        }
-    }
-    ui.add_space(6.0);
-
-    if subject.objects.mode == place::Mode::Place {
-        picker(ui, subject);
-        return;
-    }
-    if subject.objects.spawn_count() == 0 {
-        nothing_to_show(ui, subject);
-        return;
-    }
-    let Some(spawn) = subject.objects.chosen_edited(Some(&subject.session.server_edits)) else {
-        theme::note(
-            ui,
-            "Click a game object in the viewport to select it. The nearest spawns are drawn \
-             as models; the rest are drawn as squares on the ground.",
-        );
-        return;
-    };
-
-    if let Some(gizmo) = subject.gizmo.as_deref_mut() {
-        super::creatures::handles(ui, gizmo);
-    }
-    let asked = {
-        let objects = &*subject.objects;
-        let edits = Some(&subject.session.server_edits);
-        let member = |index: usize| {
-            let guid = match index {
-                0 => spawn.guid,
-                _ => objects.also[index - 1],
-            };
-            crate::ui::widgets::members::Member {
-                id: guid,
-                label: objects
-                    .edited(guid, edits)
-                    .map(|spawn| spawn.label())
-                    .unwrap_or_else(|| "not on this map".to_string()),
-                detail: format!("guid {guid}"),
-            }
-        };
-        super::creatures::group_line(ui, objects.also.len() + 1, "game objects", member)
-    };
-    use super::creatures::GroupAsk;
-    match asked {
-        Some(GroupAsk::Only) => subject.objects.also.clear(),
-        Some(GroupAsk::Clear) => subject.objects.select(None),
-        Some(GroupAsk::Primary(guid)) => subject.objects.promote(guid),
-        Some(GroupAsk::Drop(guid)) => subject.objects.also.retain(|&had| had != guid),
-        None => {}
-    }
-    // As on the creature panel, everything above the spawn's columns stays in
-    // place and only the columns scroll.
-    head(ui, subject, &spawn);
-    claim(ui, subject, &spawn, &on_server);
-    ui.add_space(6.0);
-    what_it_is(ui, subject, &spawn);
-    ui.add_space(8.0);
-    egui::ScrollArea::vertical()
-        .auto_shrink([false; 2])
-        .min_scrolled_height(super::creatures::SPAWN_FORM_MIN)
-        .show(ui, |ui| spawn_form(ui, subject, &spawn));
-}
-
-/// What the tool is showing, and the two switches that decide how much of it.
-fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-    let spawns = subject.objects.spawns.len();
-    let mine = subject.objects.created.len();
-    let near = subject.objects.near.len();
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(match (subject.objects.reading(), mine) {
-                (true, _) => "reading the map's spawns…".to_string(),
-                (false, 0) => format!("{spawns} spawn(s) on this map, {near} near"),
-                // Kept short: the Reload button shares the line, and egui
-                // clips text that does not fit.
-                (false, mine) => format!("{spawns} on this map, {mine} new, {near} near"),
-            })
-            .small()
-            .color(theme::INK_DIM),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("Reload")
-                .on_hover_text("Read the map's spawns from the database again.")
-                .clicked()
-            {
-                subject.objects.forget();
-            }
-        });
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut subject.objects.show_models, "Models").on_hover_text(
-            "Draws the nearest spawns with their models. Off, every spawn is drawn as a \
-             square; spawns past the model limit are always squares.",
-        );
-        ui.add(
-            egui::DragValue::new(&mut subject.objects.model_budget)
-                .speed(5.0)
-                .range(0..=3000)
-                .prefix("at most "),
-        )
-        .on_hover_text("Maximum number of spawns drawn as models, nearest first.");
-    });
-    ui.checkbox(&mut subject.objects.show_markers, "Markers").on_hover_text(
-        "Mark every spawn near the camera. Off, only the selected, hovered and grouped \
-         spawns are marked, which saves frame time where many spawns are near. Spawns can \
-         still be clicked.",
-    );
-}
-
-/// Why the list is empty: a connection error, a read in progress, or a map
-/// with no game objects.
-fn nothing_to_show(ui: &mut egui::Ui, subject: &Subject<'_>) {
-    match &subject.objects.trouble {
-        Some(trouble) => {
-            ui.label(egui::RichText::new(trouble).small().color(theme::WARN));
-            theme::note(
-                ui,
-                "Game objects are rows in the vmangos world database, not files in the \
-                 archives, so this tool needs a database connection. Set it in Server… on \
-                 the top bar.",
-            );
-        }
-        None if subject.objects.reading() => {
-            theme::waiting(ui, "reading\u{2026}");
-        }
-        None => theme::note(ui, "This map has no game object spawns."),
-    }
-}
-
-/// What this project changes in the server's game objects, and the button
-/// that opens the panel that applies it. The game-object counterpart of
-/// `super::creatures::edits_block`.
-fn edits_block(ui: &mut egui::Ui, subject: &mut Subject<'_>, on_server: &crate::server::sync::Standing) {
-    let undoable = on_server.applied;
-    let empty = on_server.changed == 0;
-    if empty && undoable == 0 {
-        return;
-    }
-    let outstanding = on_server.outstanding;
-
-    ui.separator();
-    theme::heading(ui, "This project");
-    if !empty {
-        let colour = match outstanding == 0 {
-            true => theme::INK_DIM,
-            false => theme::WARN,
-        };
-        ui.label(
-            egui::RichText::new(format!("{} — {}", on_server.summary, SQL))
-                .small()
-                .color(colour),
-        );
-    }
-    for refused in &on_server.refused {
-        ui.label(egui::RichText::new(refused).small().color(theme::BAD));
-    }
-    match (undoable, outstanding, empty) {
-        (0, _, false) => theme::note(
-            ui,
-            "Not applied. The database holds its original values; the editor draws this \
-             project's values.",
-        ),
-        (n, 0, false) => {
-            let line = match on_server.current {
-                true => format!(
-                    "Applied — all {n} row(s) are in the database. Restart the server to load \
-                     them; Restore reverts them."
-                ),
-                false => format!(
-                    "Applied — all {n} row(s) are in the database, but their values may differ \
-                     from the values shown: a row was edited after the apply, or the apply was \
-                     made in an earlier session. Apply again to write the values shown."
-                ),
-            };
-            ui.label(egui::RichText::new(line).small().color(theme::INK_DIM));
-        }
-        (n, out, false) => {
-            ui.label(
-                egui::RichText::new(format!(
-                    "{out} row(s) not applied; {n} applied row(s) can be restored"
-                ))
-                .small()
-                .color(theme::WARN),
-            );
-        }
-        (n, _, true) => {
-            ui.label(
-                egui::RichText::new(format!(
-                    "{n} applied row(s) can be restored; this project no longer changes any of them"
-                ))
-                .small()
-                .color(theme::WARN),
-            );
-        }
-    }
-    if ui
-        .button("Server\u{2026}")
-        .on_hover_text(format!(
-            "Opens the Server panel, which applies, restores or discards these rows. \
-             Restore runs {REVERT}.",
-        ))
-        .clicked()
-    {
-        subject.server_panel.show();
-    }
-    theme::note(
-        ui,
-        "Apply writes the rows only. The server reads game objects once, at startup; restart \
-         it to load them.",
-    );
-    ui.separator();
-}
-
-/// The Place mode: choose an object, then click the ground.
-///
-/// The same as `super::creatures::picker`, plus a type filter. With a type
-/// chosen, the list fills without any search text.
-fn picker(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-    theme::heading(ui, "Game object");
-    template_actions(ui, subject);
-    ui.add_space(4.0);
-    match subject.objects.new_spawn.chosen.clone() {
-        Some(chosen) => {
-            ui.label(egui::RichText::new(chosen.label()).color(theme::INK));
-            let gathered = gathered_by(locks(&mut subject.objects.locks, subject.assets), &chosen);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let faint = |text: String| egui::RichText::new(text).small().color(theme::INK_DIM);
-                ui.label(faint(format!("{} · display", chosen.type_word())));
-                let id = egui::RichText::new(chosen.display_id.to_string()).small();
-                match chosen.display_id {
-                    0 => {
-                        ui.label(id.color(theme::INK_DIM));
-                    }
-                    display => crate::ui::widgets::reference::display_link(
-                        ui,
-                        id,
-                        &mut subject.quests.show_row,
-                        DisplayTable::Object.name(),
-                        display,
-                    ),
-                }
-                if let Some(words) = gathered {
-                    ui.label(faint(format!("· {words}")));
-                }
-            });
-            if chosen.is_new() {
-                ui.label(
-                    egui::RichText::new(
-                        "New: this project creates it. There is no row in the database yet.",
-                    )
-                    .small()
-                    .color(theme::ACCENT),
-                );
-            }
-            theme::note(
-                ui,
-                "Click the ground to place it. Escape clears the chosen object. Every \
-                 column of the new row can be edited afterwards in Select.",
-            );
-            theme::note(ui, ", and . turn it \u{b7} shift turns three times as far \u{b7} alt + mouse turns it");
-            theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
-            // The window's toggle, here as well as under a selected spawn, so
-            // an object can be edited before any spawn of it exists.
-            ui.horizontal_wrapped(|ui| {
-                let open = subject.objects.template_window;
-                if ui
-                    .selectable_label(open, "Edit object…")
-                    .on_hover_text(
-                        "Opens the gameobject_template columns in a separate window. The \
-                         window shows the chosen object.",
-                    )
-                    .clicked()
-                {
-                    subject.objects.template_window = !open;
-                }
-                open_in_templates(ui, subject, chosen.entry);
-            });
-            match subject.objects.model_of(subject.assets, chosen.display_id) {
-                Some(path) => {
-                    ui.add_space(4.0);
-                    crate::ui::widgets::preview::preview_pane(ui, subject.portraits, &path);
-                }
-                None => theme::note(
-                    ui,
-                    "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The object is \
-                     placed and drawn as a marker with no model. Traps and spell focus objects \
-                     usually have no model.",
-                ),
-            }
-        }
-        None => theme::note(
-            ui,
-            "No object chosen. Search below by name or entry, or choose a type, then click \
-             the ground to place the chosen object.",
-        ),
-    }
-
-    created_templates(ui, subject);
-
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("find").color(theme::INK_DIM));
-        ui.add(
-            egui::TextEdit::singleline(&mut subject.objects.new_spawn.search)
-                .hint_text("name or entry")
-                .desired_width(f32::INFINITY),
-        );
-    });
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("type").color(theme::INK_DIM));
-        let shown = match subject.objects.new_spawn.of_type {
-            Some(kind) => gameobject::value_word(&gameobject::TYPES, kind),
-            None => "any".to_string(),
-        };
-        egui::ComboBox::from_id_salt("object-type-filter")
-            .selected_text(shown)
-            .width(ui.available_width() - 8.0)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut subject.objects.new_spawn.of_type, None, "any");
-                for named in gameobject::TYPES {
-                    ui.selectable_value(
-                        &mut subject.objects.new_spawn.of_type,
-                        Some(named.value),
-                        named.name,
-                    );
-                }
-            })
-            .response
-            .on_hover_text(
-                "Filters the matches by gameobject_template.type. With a type chosen, the \
-                 list shows matches without search text. Mining veins, herbs and treasure \
-                 chests are all type Chest.",
-            );
-    });
-    if let Some(trouble) = subject.objects.new_spawn.trouble.clone() {
-        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
-    }
-    if subject.objects.new_spawn.searching() {
-        theme::waiting(ui, "searching\u{2026}");
-        return;
-    }
-    let typed = subject.objects.new_spawn.search.trim().len();
-    if typed < 2 && subject.objects.new_spawn.of_type.is_none() {
-        theme::note(ui, "Type two letters of a name, or an entry, or choose a type.");
-        return;
-    }
-    let matches = subject.objects.new_spawn.matches.clone();
-    if matches.is_empty() {
-        ui.label(
-            egui::RichText::new("no matching game object")
-                .small()
-                .color(theme::INK_DIM),
-        );
-        return;
-    }
-    egui::ScrollArea::vertical()
-        .id_salt("new-object-matches")
-        .max_height(MATCH_LIST_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for known in &matches {
-                let on = subject
-                    .objects
-                    .new_spawn
-                    .chosen
-                    .as_ref()
-                    .is_some_and(|had| had.entry == known.entry);
-                if object_row(ui, subject, known, on) {
-                    subject.objects.new_spawn.chosen = Some(known.clone());
-                }
-            }
-        });
-    if matches.len() >= 50 {
-        theme::note(ui, "Showing the first 50 matches. Type more of the name to narrow the list.");
-    }
-}
-
-/// How much of the panel the picker's list may take.
-const MATCH_LIST_HEIGHT: f32 = 260.0;
-
-/// The three buttons over the picker: a new template, a copy of the one the
-/// window is about, and giving up a created one. The creature picker has the
-/// same row.
-fn template_actions(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-    let now = subject.now;
-    let patch = crate::server::settings::server_patch(subject.server);
-    let shown = subject.objects.template_subject(&subject.session.server_edits);
-    let row_read = shown.as_ref().is_some_and(|shown| {
-        subject.objects.template.as_ref().is_some_and(|held| held.entry == shown.entry)
-    });
-    let created = shown.as_ref().is_some_and(|shown| shown.is_new());
-    ui.horizontal(|ui| {
-        let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-        let size = egui::vec2(third, 22.0);
-        if ui
-            .add(egui::Button::new("+ New").min_size(size))
-            .on_hover_text(
-                "Creates a gameobject_template row with an entry from 2,000,000 up, clear of \
-                 upstream vmangos entries. It starts as a Generic object of size 1 with no \
-                 model, drawn as a marker until displayId is set. Opens the template window \
-                 on the new row.",
-            )
-            .clicked()
-        {
-            let entry =
-                subject.objects.create_template(subject.session, "New Game Object", patch, now);
-            subject.session.status = format!("gameobject_template {entry} created");
-        }
-        if ui
-            .add_enabled(row_read, egui::Button::new("Copy").min_size(size))
-            .on_hover_text(
-                "Creates a copy of the chosen gameobject_template row under a new entry. \
-                 Each column takes the value shown: this project's edit where there is one, \
-                 otherwise the database value.",
-            )
-            .on_disabled_hover_text("Choose an object first.")
-            .clicked()
-        {
-            if let Some(shown) = shown.as_ref() {
-                subject.session.status =
-                    match subject.objects.copy_template(subject.session, shown, patch, now) {
-                        Some(entry) => format!("copied as gameobject_template {entry}"),
-                        None => "still reading this object's row".to_string(),
-                    };
-            }
-        }
-        if ui
-            .add_enabled(created, egui::Button::new("Discard").min_size(size))
-            .on_hover_text(
-                "Discards the gameobject_template row this project creates. The database is \
-                 not changed. A row already in the database cannot be removed: \
-                 .reload gameobject_template never drops an entry it has read.",
-            )
-            .on_disabled_hover_text("Only an object this project created can be discarded.")
-            .clicked()
-        {
-            if let Some(shown) = shown.as_ref() {
-                subject.objects.discard_template(subject.session, shown.entry, now);
-                subject.session.status = format!("gameobject_template {} discarded", shown.entry);
-            }
-        }
-    });
-}
-
-/// The templates this project creates, listed above the search because no
-/// query returns them. Clicking one chooses it, as a search match does.
-fn created_templates(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-    let templates = subject.objects.templates.clone();
-    if templates.is_empty() {
-        return;
-    }
-    ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(format!("{} object(s) this project creates", templates.len()))
-            .small()
-            .color(theme::INK_DIM),
-    );
-    egui::ScrollArea::vertical()
-        .id_salt("created-object-templates")
-        .max_height(CREATED_LIST_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for known in &templates {
-                let on = subject
-                    .objects
-                    .new_spawn
-                    .chosen
-                    .as_ref()
-                    .is_some_and(|had| had.entry == known.entry);
-                if object_row(ui, subject, known, on) {
-                    subject.objects.new_spawn.chosen = Some(known.clone());
-                }
-            }
-        });
-}
-
-/// The height the created list may take before it scrolls.
-const CREATED_LIST_HEIGHT: f32 = 160.0;
-
-/// One row of the picker: a picture of the model, the name, the type and the
-/// entry.
-fn object_row(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known, on: bool) -> bool {
-    let sub = match gathered_by(locks(&mut subject.objects.locks, subject.assets), known) {
-        Some(words) => words,
-        None => known.type_word(),
-    };
-    let shape = theme::list_row(
-        ui,
-        theme::ListRow {
-            title: &known.name,
-            sub: &sub,
-            trailing: &known.entry.to_string(),
-            tint: theme::INK,
-            picture: true,
-        },
-        on,
-    );
-    match subject.objects.model_of(subject.assets, known.display_id) {
-        Some(path) => crate::preview::portraits::paint(ui, subject.portraits, &path, shape.picture),
-        None => {
-            ui.painter().rect_filled(shape.picture, 3.0, theme::LINE);
-        }
-    }
-    shape.response.clicked()
-}
-
-/// What this project claims about the selected spawn (new, marked for
-/// removal, or neither), one sentence per state, and the button that changes
-/// the claim.
-fn claim(
-    ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
-    spawn: &Spawn,
-    on_server: &crate::server::sync::Standing,
-) {
-    let now = subject.now;
-    let written = on_server.covers(gameobject::SPAWN, &spawn.key());
-    if spawn.is_new() {
-        ui.label(
-            egui::RichText::new(match written {
-                false => "New — this project creates it. There is no row in the database yet.",
-                true => {
-                    "New — created by this project and applied. The row is in the database; \
-                     restart the server to load it."
-                }
-            })
-            .small()
-            .color(theme::ACCENT),
-        );
-    }
-    if spawn.is_removed() {
-        ui.label(
-            egui::RichText::new(match written {
-                false => {
-                    "Marked for removal. Apply deletes the gameobject row and the spawn's \
-                     game_event_gameobject and gameobject_battleground rows."
-                }
-                true => {
-                    "Removed and applied. The gameobject row and its game_event_gameobject and \
-                     gameobject_battleground rows are deleted; Restore reverts them."
-                }
-            })
-            .small()
-            .color(theme::BAD),
-        );
-    }
-    ui.horizontal(|ui| match spawn.is_removed() {
-        true => {
-            if ui
-                .button("Cancel removal")
-                .on_hover_text(
-                    "Unmarks the spawn for removal. This project's column edits to it are \
-                     kept.",
-                )
-                .clicked()
-            {
-                GameObjects::keep(subject.session, spawn.guid, now);
-                subject.session.status = format!("game object {} removal cancelled", spawn.guid);
-            }
-        }
-        false => {
-            let word = match spawn.is_new() {
-                true => "Discard this spawn",
-                false => "Remove this spawn",
-            };
-            if ui
-                .button(egui::RichText::new(word).color(theme::BAD))
-                .on_hover_text(match (spawn.is_new(), written) {
-                    (true, true) => {
-                        "Discards the spawn from this project. The row is already in the \
-                         database and stays there; Restore removes it."
-                    }
-                    (true, false) => {
-                        "Discards the spawn this project creates. The database is not changed."
-                    }
-                    (false, _) => {
-                        "Marks the gameobject row for deletion. Apply deletes it; then restart \
-                         the server, because .reload gameobject never removes a spawn it has \
-                         already read."
-                    }
-                })
-                .clicked()
-            {
-                GameObjects::remove(subject.session, spawn.guid, now);
-                subject.session.status = match spawn.is_new() {
-                    true => format!("game object {} discarded", spawn.guid),
-                    false => format!("game object {} is marked for removal", spawn.guid),
-                };
-                if spawn.is_new() {
-                    subject.objects.select(None);
-                }
-            }
-        }
-    });
-}
-
 /// The selected spawn's name, what it is, and the buttons.
 fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     ui.label(egui::RichText::new(spawn.label()).strong().size(14.0));
@@ -826,46 +399,11 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
             .color(theme::INK_DIM),
     );
     if let Some(known) = &spawn.known {
-        if let Some(words) = gathered_by(locks(&mut subject.objects.locks, subject.assets), known) {
+        if let Some(words) = gathered_by(locks(&mut subject.tool.own.locks, subject.assets), known) {
             ui.label(egui::RichText::new(words).small().color(theme::ACCENT));
         }
     }
-    ui.horizontal(|ui| {
-        if ui.small_button("Go to").on_hover_text("Moves the camera to this spawn.").clicked() {
-            subject.objects.fly_to(spawn.at);
-        }
-        let has_row = subject
-            .objects
-            .spawn_row
-            .as_ref()
-            .is_some_and(|held| Some(held.guid) == subject.objects.selected);
-        if ui
-            .add_enabled(has_row, egui::Button::new("Duplicate"))
-            .on_hover_text(
-                "Creates a spawn of this object two yards north, with every column copied \
-                 from this spawn, including this project's edits.",
-            )
-            .on_disabled_hover_text("Still reading this spawn's row.")
-            .clicked()
-        {
-            let now = subject.now;
-            subject.session.status = match subject.objects.duplicate(subject.session, now) {
-                Some(guid) => format!("duplicated as guid {guid}"),
-                None => "nothing to duplicate".into(),
-            };
-        }
-        let others = subject
-            .objects
-            .spawns
-            .iter()
-            .filter(|other| other.entry == spawn.entry)
-            .count();
-        ui.label(
-            egui::RichText::new(format!("{others} spawn(s) of this object on this map"))
-                .small()
-                .color(theme::INK_FAINT),
-        );
-    });
+    super::spawn::head_buttons(ui, subject, spawn);
 }
 
 /// The `gameobject` row: one spawn, at one place.
@@ -889,17 +427,12 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         );
     }
     let key = spawn.key();
-    let Some(row) = subject.objects.spawn_row.as_ref().map(|held| held.row.clone()) else {
+    let Some(row) = subject.tool.spawn_row.as_ref().map(|held| held.row.clone()) else {
         theme::waiting(ui, "reading the row\u{2026}");
         return;
     };
-    let standing = crate::tools::spawns::spawn::Standing {
-        kind: crate::tools::spawns::spawn::Kind::Object { tilted: spawn.tilted },
-        guid: spawn.guid,
-        at: spawn.at,
-        orientation: spawn.orientation,
-    };
-    super::creatures::placement(ui, subject.session, &standing, subject.now);
+    let standing = crate::tools::spawns::spawn::Standing::of::<crate::tools::spawns::gameobjects::GameObjectSubject>(spawn);
+    super::spawn::placement(ui, subject.session, &standing, subject.now);
     let form = Form { table: gameobject::SPAWN, key: &key, row: &row, spawn: Some(spawn) };
     groups(ui, subject, &form, &[Group::Identity, Group::Place]);
 }
@@ -911,7 +444,7 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
 fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     let edited = subject
         .session
-        .server_edits
+        .rows.edits
         .touches(gameobject::TEMPLATE, &spawn.template_key());
     ui.label(
         egui::RichText::new(format!(
@@ -943,7 +476,7 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     };
 
     let lock = known.lock().map(|id| {
-        format!("{id} — {}", lock_words(locks(&mut subject.objects.locks, subject.assets), id))
+        format!("{id} — {}", lock_words(locks(&mut subject.tool.own.locks, subject.assets), id))
     });
     // The model is drawn at the panel's right edge, after the columns.
     ui.horizontal(|ui| {
@@ -970,7 +503,7 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                         true => crate::ui::widgets::reference::display_link(
                             ui,
                             egui::RichText::new(value),
-                            &mut subject.quests.show_row,
+                            subject.asks,
                             DisplayTable::Object.name(),
                             known.display_id,
                         ),
@@ -984,7 +517,7 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             let (rect, _) =
                 ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
-            match subject.objects.model_of(subject.assets, known.display_id) {
+            match subject.tool.model_of(subject.assets, known.display_id) {
                 Some(path) => crate::preview::portraits::paint(ui, subject.portraits, &path, rect),
                 None => {
                     ui.painter().rect_filled(rect, 3.0, theme::DEAD);
@@ -1013,17 +546,7 @@ pub(in crate::ui) fn windows(
 ) {
     ui.horizontal_wrapped(|ui| {
         if in_world {
-            let open = subject.objects.template_window;
-            if ui
-                .selectable_label(open, "Edit object…")
-                .on_hover_text(
-                    "Opens the 34 gameobject_template columns in a separate window. The 24 \
-                     data columns are labelled with the field names of this object's type.",
-                )
-                .clicked()
-            {
-                subject.objects.template_window = !open;
-            }
+            super::spawn::edit_toggle(ui, subject);
         }
         let quests_open = subject
             .quests
@@ -1061,199 +584,13 @@ pub(in crate::ui) fn windows(
             subject.loot.toggle();
         }
         if in_world {
-            open_in_templates(ui, subject, entry);
+            super::spawn::open_in_templates(ui, subject, entry);
         }
     });
-}
-
-/// The link from the game object tool to the Game Objects workspace on the
-/// top bar, open on this object's template. The shell switches tools after
-/// the frame is drawn.
-fn open_in_templates(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32) {
-    if ui
-        .button("Open in Workspace")
-        .on_hover_text(
-            "Opens this gameobject_template row in the Game Objects workspace on the top \
-             bar, which lists every gameobject_template row and edits the open one in the \
-             middle of the screen. The row and its edits are the same as in the template \
-             window.",
-        )
-        .clicked()
-    {
-        subject.objects.open_listed(entry);
-        subject.objects.switch_to = Some(crate::tools::Tool::GameObjectData);
-    }
 }
 
 /// The side of the picture beside the summary, in points.
 const SUMMARY_PICTURE: f32 = 56.0;
-
-/// The `gameobject_template` window, where an object's template is edited.
-pub fn template_window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect> {
-    if !subject.objects.template_window {
-        return None;
-    }
-    // The picker's object in Place, the selected spawn's template in Select;
-    // see `GameObjects::template_subject`.
-    let shown = subject.objects.template_subject(&subject.session.server_edits)?;
-    let mut open = true;
-    let response =
-        egui::Window::new(format!("{} — gameobject_template {}", shown.label, shown.entry))
-            .id(egui::Id::new("gameobject-template"))
-            .open(&mut open)
-            .default_size([680.0, 640.0])
-            .default_pos([300.0, 80.0])
-            .resizable(true)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::SHELL)
-                    .stroke(egui::Stroke::new(1.0, theme::LINE))
-                    .corner_radius(egui::CornerRadius::same(4))
-                    .inner_margin(egui::Margin::same(8)),
-            )
-            .show(ctx, |ui| {
-                template_head(ui, subject, &shown);
-                ui.add_space(6.0);
-                let key = shown.key();
-                let Some(row) = subject
-                    .objects
-                    .template
-                    .as_ref()
-                    .filter(|held| held.entry == shown.entry)
-                    .map(|held| held.row.clone())
-                else {
-                    theme::waiting(ui, "reading the row\u{2026}");
-                    return;
-                };
-                egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-                    let form =
-                        Form { table: gameobject::TEMPLATE, key: &key, row: &row, spawn: None };
-                    groups(
-                        ui,
-                        subject,
-                        &form,
-                        &[Group::Identity, Group::Appearance, Group::Stats],
-                    );
-                });
-            });
-    subject.objects.template_window = open;
-    // The dialogs are drawn here as well as under the panel, because the
-    // window is drawn whether or not the inspector is showing this tool's
-    // panel; each dialog keeps itself to one draw a frame.
-    dialogs(ctx, subject);
-    response.map(|shown| shown.response.rect)
-}
-
-/// The window's head: what this project says of the row, how many spawns of
-/// it the open map has, and the entry box.
-fn template_head(
-    ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
-    shown: &crate::tools::spawns::creatures::TemplateSubject,
-) {
-    match shown.claim {
-        Life::Insert => {
-            ui.label(
-                egui::RichText::new(
-                    "New: this row is not in the database yet. Apply writes it; restart the \
-                     server to load spawns of it.",
-                )
-                .small()
-                .color(theme::ACCENT),
-            );
-        }
-        _ => {
-            ui.label(
-                egui::RichText::new(format!(
-                    "Edits change every spawn of this entry, on every map — {} on this map",
-                    subject
-                        .objects
-                        .spawns
-                        .iter()
-                        .filter(|other| other.entry == shown.entry)
-                        .count()
-                ))
-                .small()
-                .color(theme::WARN),
-            );
-        }
-    }
-    ui.horizontal(|ui| {
-        let colour = match shown.entry != shown.read_entry {
-            true => theme::WARN,
-            false => theme::INK_DIM,
-        };
-        ui.label(egui::RichText::new("entry").color(colour))
-            .on_hover_text("the game object id");
-        let id = ui.make_persistent_id(("gameobject-template-entry", shown.patch));
-        entry_field(ui, subject, shown, id);
-    });
-}
-
-/// The `entry` box: the one field of the window that is not a column edit.
-/// It is committed on Enter or on leaving the box, and the commit is one
-/// operation whatever the row is: the project's claim on the row is re-keyed.
-/// See [`crate::tools::spawns::gameobjects::GameObjects::rekey_template`], and
-/// `super::creatures::entry_field`, which is the same field for the other table.
-pub(in crate::ui) fn entry_field(
-    ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
-    shown: &crate::tools::spawns::creatures::TemplateSubject,
-    id: egui::Id,
-) {
-    let mut text = draft_or(ui, id, shown.entry.to_string());
-    let response = ui.add_sized(
-        egui::vec2(FORM_VALUE, FORM_ROW),
-        egui::TextEdit::singleline(&mut text).id(id).horizontal_align(egui::Align::Center),
-    );
-    // The refusal is kept until the box is touched again, so that it is read.
-    let trouble_id = id.with("trouble");
-    if let Some(text) = finished(ui, id, &response, text) {
-        let trouble = match text.trim().parse::<u32>() {
-            Err(_) => Some(format!("{text:?} is not a valid entry number")),
-            Ok(wanted) => {
-                let now = subject.now;
-                match subject.objects.rekey_template(subject.session, shown, wanted, now) {
-                    Ok(()) => None,
-                    Err(why) => Some(why),
-                }
-            }
-        };
-        ui.data_mut(|data| match trouble {
-            Some(why) => {
-                data.insert_temp(trouble_id, why);
-            }
-            None => {
-                data.remove_temp::<String>(trouble_id);
-            }
-        });
-    }
-    if let Some(why) = ui.data_mut(|data| data.get_temp::<String>(trouble_id)) {
-        ui.label(egui::RichText::new(why).small().color(theme::BAD));
-        return;
-    }
-    let (word, colour) = match (shown.is_new(), shown.read_entry != shown.entry) {
-        (true, _) => ("changes this new object's entry".to_string(), theme::INK_FAINT),
-        (_, true) => (
-            format!("the database row is entry {} until applied", shown.read_entry),
-            theme::WARN,
-        ),
-        _ => (
-            "changes the row's entry and every world database reference to it".to_string(),
-            theme::INK_FAINT,
-        ),
-    };
-    ui.label(egui::RichText::new(word).small().color(colour)).on_hover_text(format!(
-        "vmangos has no foreign keys, so Apply updates the references itself: the row, \
-         and the {} world database columns that refer to a game object by entry: every \
-         spawn's id, the quest relations, the pool and locale rows, the spell script \
-         targets, and quest_template's objectives, which store an object as the negative \
-         of its entry. Restore reverts all of it.\n\nNot updated: a template's \
-         linkedTrapId data column, gameobject_loot_template (keyed by data1, not by \
-         entry), script datalong values, and the C++ scripts.",
-        vale_mangos::gameobject::TEMPLATE_REFERENCES.len()
-    ));
-}
 
 /// Which row a form is over.
 pub(in crate::ui) struct Form<'a> {
@@ -1277,7 +614,7 @@ impl Form<'_> {
     /// What one column holds right now, as a number.
     fn shown_number(&self, session: &EditSession, column: &str) -> i64 {
         session
-            .server_edits
+            .rows.edits
             .shown_integer(self.table, self.key, column, Some(self.row))
             .unwrap_or(0)
     }
@@ -1395,7 +732,7 @@ fn section(
     let edited = columns.iter().any(|column| {
         subject
             .session
-            .server_edits
+            .rows.edits
             .get(form.table, form.key, column.column.name)
             .is_some()
     });
@@ -1413,151 +750,60 @@ fn section(
     );
 }
 
-/// One column on a row of its own: its name, the control its kind asks for,
-/// what the value means, and the revert arrow when this project has changed
-/// it.
+/// One column on a row of its own, through [`server_field`], under the name
+/// and type `drawn` gives it. A lock is resolved through `Lock.dbc` and a
+/// display id drawn as its model. On an upright spawn the facing is written
+/// to three columns, so its revert clears all three; see
+/// [`GameObjects::turn`].
 fn field(ui: &mut egui::Ui, subject: &mut Subject<'_>, form: &Form<'_>, drawn: &Drawn) {
-    let (table, key, column) = (form.table, form.key, drawn.column);
-    let edited = subject
-        .session
-        .server_edits
-        .get(table, key, column.name)
-        .map(str::to_string);
-    let in_database = column.literal(form.row);
-    let showing = edited.clone().or_else(|| in_database.clone());
-    // No revert arrow on a row this project creates: every column of it is
-    // the project's own, and the database has no value to revert to.
-    let creating = subject.session.server_edits.life(table, key) == Life::Insert;
-    // On an upright object a spawn's facing is written to three columns. See
-    // `GameObjects::turn`.
-    let turns = table == gameobject::SPAWN && column.name == "orientation";
-
-    let id = ui.make_persistent_id((table, key.text(), column.name));
-    let pending = page_row(ui, &drawn.title, &drawn.about, edited.is_some(), |ui| {
-        let Some(showing) = showing.as_deref() else {
-            ui.label(egui::RichText::new("NULL").color(theme::INK_FAINT));
-            return None;
-        };
-        // A reference whose name did not fit beside its number, to be drawn
-        // on the row after this one.
-        let mut pending: Option<(&'static str, u32)> = None;
-        let written = match drawn.kind {
-            Kind::Key => {
-                ui.label(theme::number(showing));
-                None
-            }
-            Kind::Text => text_cell(ui, id.with("text"), showing),
-            Kind::Flags(bits) => flags_cell(ui, showing, bits, id),
-            Kind::Choice(values) => choice_cell(ui, showing, values, id),
-            Kind::Ref(dbc) if DisplayTable::of(dbc).is_some() => {
-                let target = target(table, key, column, &in_database, creating);
-                display_cell(ui, subject, showing, target)
+    let column = drawn.column;
+    let turns = form.table == gameobject::SPAWN && column.name == "orientation";
+    let upright = form.spawn.is_some_and(|spawn| !spawn.tilted);
+    let field = FieldCtx {
+        title: &drawn.title,
+        about: &drawn.about,
+        kind: drawn.kind,
+        reverts_with: match turns && upright {
+            true => &["rotation2", "rotation3"],
+            false => &[],
+        },
+        ..FieldCtx::new(ui, &subject.session.rows.edits, form.table, form.key, form.row, column, "Edit game object", subject.now)
+    };
+    let assets = subject.assets;
+    let (objects, portraits) = (&mut *subject.tool, &mut *subject.portraits);
+    let mut resolver = Resolver {
+        session: &mut *subject.session,
+        assets,
+        quests: &mut *subject.quests,
+        asks: &mut *subject.asks,
+    };
+    let written = server_field(ui, &mut resolver, &field, |hook, ui, resolver, field, showing| {
+        match (hook, field.kind) {
+            (Hook::Cell, Kind::Ref(dbc)) if DisplayTable::of(dbc).is_some() => {
+                Some(display_cell(ui, objects, portraits, resolver.asks, assets, showing, field.target()))
             }
             // A lock is resolved through the client's own table, in words,
             // and has no picker: `Lock.dbc` carries no name to search.
-            Kind::Ref("Lock") => {
+            (Hook::Cell, Kind::Ref("Lock")) => {
                 let written = number_cell(ui, Kind::Unsigned, showing);
-                let lock = showing.trim().parse::<u32>().unwrap_or(0);
-                let words = match lock {
+                let words = match showing.trim().parse::<u32>().unwrap_or(0) {
                     0 => "no lock".to_string(),
-                    lock => lock_words(locks(&mut subject.objects.locks, subject.assets), lock),
+                    lock => lock_words(locks(&mut objects.own.locks, assets), lock),
                 };
                 meaning_truncated(ui, words);
-                written
+                Some(written)
             }
-            Kind::Ref(dbc) => {
-                let written = number_cell(ui, Kind::Unsigned, showing);
-                let target = target(table, key, column, &in_database, creating);
-                let mut resolver = crate::ui::widgets::reference::Resolver {
-                    session: &mut *subject.session,
-                    assets: subject.assets,
-                    quests: &mut *subject.quests,
-                };
-                pending = crate::ui::widgets::reference::cell(ui, &mut resolver, dbc, showing, Some(target))
-                    .map(|id| (dbc, id));
-                written
-            }
-            kind => {
-                let written = number_cell(ui, kind, showing);
-                if let Some(means) = number_means(kind, showing) {
-                    meaning(ui, means);
-                }
-                written
-            }
-        };
-        if let Some(written) = written {
-            let turning = form.spawn.filter(|_| turns);
-            match (turning, written.trim().parse::<f32>()) {
-                (Some(spawn), Ok(orientation)) => GameObjects::turn(
-                    subject.session,
-                    spawn.guid,
-                    spawn.tilted,
-                    orientation,
-                    subject.now,
-                ),
-                _ => target(table, key, column, &in_database, creating).write(
-                    subject.session,
-                    written,
-                    subject.now,
-                ),
-            }
+            _ => None,
         }
-        if edited.is_some() && !creating && revert_button(ui, in_database.as_deref()) {
-            let gesture = format!("{table} {} {} revert", key.text(), column.name);
-            // Reverting the facing also reverts rotation2 and rotation3,
-            // because the edit wrote them too.
-            let upright = form.spawn.is_some_and(|spawn| !spawn.tilted);
-            let columns: &[&str] = match turns && upright {
-                true => &["orientation", "rotation2", "rotation3"],
-                false => std::slice::from_ref(&column.name),
-            };
-            for name in columns {
-                subject.session.set_server_edit(
-                    table,
-                    key,
-                    name,
-                    None,
-                    Some(crate::session::rows::Gesture {
-                        label: "Revert column",
-                        subject: &gesture,
-                        now: subject.now,
-                    }),
-                );
-            }
-        }
-        pending
     });
-    if let Some((dbc, id)) = pending {
-        page_row(ui, "", "", false, |ui| {
-            let mut resolver = crate::ui::widgets::reference::Resolver {
-                session: &mut *subject.session,
-                assets: subject.assets,
-                quests: &mut *subject.quests,
-            };
-            crate::ui::widgets::reference::name(ui, &mut resolver, dbc, id);
-        });
-    }
-}
-
-/// Where a value typed or chosen for a column is written; see
-/// `super::creatures::target`, which is the same for the other table.
-fn target(
-    table: &'static str,
-    key: &Key,
-    column: &'static Column,
-    in_database: &Option<String>,
-    creating: bool,
-) -> ColumnTarget {
-    ColumnTarget {
-        table,
-        key: key.clone(),
-        column: column.name,
-        in_database: match creating {
-            true => None,
-            false => in_database.clone(),
-        },
-        label: "Edit game object",
-        subject: format!("{table} {} {}", key.text(), column.name),
+    let Some(written) = written else {
+        return;
+    };
+    match (form.spawn.filter(|_| turns), written.trim().parse::<f32>()) {
+        (Some(spawn), Ok(orientation)) => {
+            GameObjects::turn(subject.session, spawn.guid, spawn.tilted, orientation, subject.now)
+        }
+        _ => field.write(subject.session, written, subject.now),
     }
 }
 
@@ -1565,36 +811,36 @@ fn target(
 /// that opens the picker, and the model's path.
 fn display_cell(
     ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
+    objects: &mut GameObjects,
+    portraits: &mut crate::preview::portraits::Portraits,
+    asks: &mut ShellAsks,
+    assets: &GameAssets,
     showing: &str,
     target: ColumnTarget,
 ) -> Option<String> {
     let written = number_cell(ui, Kind::Unsigned, showing);
     let id: u32 = showing.trim().parse().unwrap_or(0);
-    let path = subject.objects.model_of(subject.assets, id);
+    let path = objects.model_of(assets, id);
     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(FORM_ROW + 4.0), egui::Sense::hover());
     match path.as_deref() {
-        Some(path) => crate::preview::portraits::paint(ui, subject.portraits, path, rect),
+        Some(path) => crate::preview::portraits::paint(ui, portraits, path, rect),
         None if id != 0 => {
             ui.painter().rect_filled(rect, 3.0, theme::DEAD);
         }
         None => {}
     }
-    if ui
-        .small_button("choose\u{2026}")
-        .on_hover_text(
-            "Opens a picker of every GameObjectDisplayInfo.dbc row that has a model, \
-             shown as thumbnails and searchable by model path.",
-        )
-        .clicked()
-    {
-        subject.objects.display_pick = Some(DisplayPick::open(DisplayTable::Object, target, id));
+    if reference::choose_button(
+        ui,
+        "Opens a picker of every GameObjectDisplayInfo.dbc row that has a model, \
+         shown as thumbnails and searchable by model path.",
+    ) {
+        objects.display_pick = Some(DisplayPick::open(DisplayTable::Object, target, id));
     }
     match path {
-        Some(path) => crate::ui::widgets::reference::display_link(
+        Some(path) => reference::display_link(
             ui,
             egui::RichText::new(path).small(),
-            &mut subject.quests.show_row,
+            asks,
             DisplayTable::Object.name(),
             id,
         ),
@@ -1659,24 +905,5 @@ mod tests {
     #[test]
     fn a_lock_the_table_does_not_hold_says_so() {
         assert_eq!(lock_words(&Locks::default(), 38), "no such Lock.dbc row");
-    }
-
-    /// A chosen value and a typed value for one column share one undo
-    /// subject, so the two fold into one entry; a row this project creates
-    /// carries no database value for the write to clear against.
-    #[test]
-    fn a_target_names_the_row_and_the_column() {
-        let key = gameobject::template_key(2000000, 10);
-        let held = Some("42".to_string());
-        let target = target(gameobject::TEMPLATE, &key, column("displayId"), &held, false);
-        assert_eq!(target.column, "displayId");
-        assert_eq!(target.in_database.as_deref(), Some("42"));
-        assert_eq!(target.subject, format!("gameobject_template {} displayId", key.text()));
-        let created = target_for_created(&key, &held);
-        assert_eq!(created.in_database, None);
-    }
-
-    fn target_for_created(key: &Key, held: &Option<String>) -> ColumnTarget {
-        target(gameobject::TEMPLATE, key, column("displayId"), held, true)
     }
 }

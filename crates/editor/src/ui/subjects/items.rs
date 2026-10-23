@@ -65,9 +65,11 @@
 //! panel keeps is the state — what the project changes and how much of it the
 //! database holds — which is about the item on screen. See [`crate::ui::shell::sync`].
 
+use crate::ui::shell::asks::{ShellAsk, ShellAsks};
+use crate::ui::widgets::reference::{self, Resolver};
 use crate::ui::widgets::rowform::{
-    choice_cell, draft_or, finished, flags_cell, meaning, number_cell, number_means, page_row,
-    page_spacing, revert_button, section, text_cell, RowAct, FORM_ROW, FORM_VALUE,
+    choice_cell, entry_cell, number_cell, page_spacing, section, server_field,
+    FieldCtx, Hook, Renumber, RowAct,
 };
 use crate::ui::widgets::theme;
 use crate::ui::widgets::thumbnails::Thumbnails;
@@ -77,23 +79,6 @@ use vale_client::assets::GameAssets;
 use vale_mangos::item::{self, Column, Group, Kind};
 use vale_mangos::row::Life;
 use bevy_egui::egui;
-
-/// How wide the item list is.
-const LIST_WIDTH: f32 = 320.0;
-
-/// …and the gap between the list and the form, which is `ui::tables`'s own: a
-/// panel's margin ends at its edge, and without this the section heads sit
-/// against the list's border.
-const FORM_GAP: f32 = 12.0;
-
-/// …and the gap above everything, under the top bar.
-///
-/// The docked panels carry their own margin and the middle region carries none,
-/// so the form's first line sat against the bar while the two columns beside it
-/// did not. It is applied to all three rather than to the middle alone, because
-/// what a person sees is one strip of chrome across the window and 8 points on
-/// two thirds of it reads as a mistake.
-const TOP_GAP: f32 = 10.0;
 
 /// How tall one row of the list is, and how big the icon in it is drawn — the
 /// editor's own, so that this list and the spell list are one list drawn
@@ -158,7 +143,7 @@ pub struct Workspace<'a> {
     pub portraits: &'a mut crate::preview::portraits::Portraits,
     /// The quest workspace's state, for two things it already has: the
     /// reference picker, which is one dialog over every table a row names, and
-    /// the quest list, which names `start_quest`. See [`reference_field`].
+    /// the quest list, which names `start_quest`. See [`field`].
     pub quests: &'a mut crate::subjects::quests::Quests,
     /// …and the loot window's, for the Loot toggle at the head of the
     /// form: what the item contains and what it disenchants into — see
@@ -181,12 +166,15 @@ pub struct Workspace<'a> {
     pub patch: u32,
     /// The frame clock the undo stack folds a gesture by.
     pub now: f64,
+    /// What a link on the form asks of the shell: a row to open in another
+    /// workspace, a part to switch to. See [`crate::ui::shell::asks`].
+    pub asks: &'a mut ShellAsks,
 }
 
 impl Workspace<'_> {
     /// The open item, with this project's edits over it.
     fn open_item(&self) -> Option<Known> {
-        self.items.open_item(&self.session.server_edits)
+        self.items.open_item(&self.session.rows.edits)
     }
 }
 
@@ -199,43 +187,25 @@ pub struct Looking<'a> {
     pub assets: &'a GameAssets,
     pub thumbnails: &'a mut Thumbnails,
     pub portraits: &'a mut crate::preview::portraits::Portraits,
+    /// Where the display link asks the shell to open the display row.
+    pub asks: &'a mut ShellAsks,
 }
 
 impl Looking<'_> {
     fn open_item(&self) -> Option<Known> {
-        self.items.open_item(&self.session.server_edits)
+        self.items.open_item(&self.session.rows.edits)
     }
 }
 
 /// Draw the whole workspace into the region the panels left.
 pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>) {
-    // It paints its own ground. The world goes on being drawn behind this
-    // and a workspace that left a strip unpainted would be the world bleeding
-    // through it — `ui::tables`'s own note.
-    let all = ui.available_rect_before_wrap();
-    ui.painter().rect_filled(all, 0.0, theme::SHELL);
-
-    egui::Panel::left("item-browser")
-        .default_size(LIST_WIDTH)
-        .min_size(240.0)
-        .max_size(520.0)
-        .resizable(true)
-        .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(8.0))
-        .show(ui, |ui| {
-            ui.add_space(TOP_GAP - 8.0);
-            list(ui, &mut work);
-        });
-
-    let rect = ui.available_rect_before_wrap();
-    let inset = egui::Rect::from_min_max(rect.min + egui::vec2(FORM_GAP, TOP_GAP), rect.max);
-    let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(inset).layout(*ui.layout()));
-    form(&mut inner, &mut work);
+    super::listing::frame(ui, &mut work, "item-browser", list, form);
 
     if work.items.picking_display {
         picker(ui, &mut work);
     }
     // The reference picker, which is the quest form's dialog: its item
-    // column purpose writes into this item. See [`reference_field`].
+    // column purpose writes into this item. See [`field`].
     super::quests::picker(
         ui.ctx(),
         work.session,
@@ -257,83 +227,38 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     // The workspace's two parts, Items and Sets. The shell switches after
     // the frame is drawn.
     if let Some(part) = crate::ui::shell::rail::parts(ui, crate::tools::Tool::Items) {
-        work.items.switch_to = Some(part);
+        work.asks.push(ShellAsk::Part(part));
     }
-    ui.horizontal(|ui| {
-        // The rail's own word. The table's name belongs on the fields that
-        // are written to it, and the heading of a list is where somebody looks
-        // to know which list they are in.
-        ui.label(
-            egui::RichText::new("Items")
-                .strong()
-                .size(15.0)
-                .color(theme::INK),
-        );
-        ui.label(theme::number(format!("{} rows", work.items.count())));
-    })
-    .response
-    .on_hover_text("item_template as the server loads it: one row per item, at the highest content patch at or below the server's patch.");
-
-    if let Some(trouble) = work.items.trouble.clone() {
-        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
-        theme::note(
-            ui,
-            "Items are rows in the vmangos world database, not files. Set the database \
-             connection in Server\u{2026} on the top bar, or with VALE_MANGOSD.",
-        );
+    // The rail's own word. The table's name belongs on the fields that are
+    // written to it, and the heading of a list is where somebody looks to know
+    // which list they are in.
+    let (count, trouble, read) = (work.items.count(), work.items.trouble.clone(), !work.items.all.is_empty());
+    if !super::listing::heading(ui, "Items", item::TEMPLATE, count, trouble.as_deref(), read) {
         return;
     }
-    if work.items.all.is_empty() {
-        theme::waiting(ui, "reading item_template\u{2026}");
-        return;
-    }
-
-    ui.add_space(4.0);
-    let width = ui.available_width();
-    ui.add(
-        egui::TextEdit::singleline(&mut work.items.query)
-            .hint_text("name, entry, class, slot or level")
-            .desired_width(width),
-    );
-    ui.add_space(4.0);
-    row_actions(ui, work);
-    ui.add_space(2.0);
-
-    let revision = work.session.server_edit_revision;
+    super::listing::search_box(ui, &mut work.items.query, "name, entry, class, slot or level");
+    let revision = work.session.rows.revision;
     let matches: Vec<usize> = {
-        let edits = &work.session.server_edits;
+        let edits = &work.session.rows.edits;
         work.items.matches(edits, revision).to_vec()
     };
-    ui.label(
-        egui::RichText::new(format!("{} shown", matches.len()))
-            .small()
-            .color(theme::INK_FAINT),
-    );
+    super::listing::shown_count(ui, matches.len());
+    row_actions(ui, work);
     ui.add_space(4.0);
 
     // Bring the open item into view when it was opened from somewhere other
     // than this list, as the spell list does. See `theme::list_area`.
-    let mut reveal = None;
-    if work.items.open != work.items.revealed {
-        match work.items.open {
-            Some(entry) => {
-                let found = matches
-                    .iter()
-                    .position(|&index| work.items.at(index).is_some_and(|known| known.entry == entry));
-                if found.is_some() {
-                    reveal = found;
-                    work.items.revealed = Some(entry);
-                }
-            }
-            None => work.items.revealed = None,
-        }
-    }
+    let mut revealed = work.items.revealed;
+    let reveal = super::listing::reveal_in(work.items.open, &mut revealed, &matches, |index| {
+        work.items.at(index).map(|known| known.entry)
+    });
+    work.items.revealed = revealed;
     let mut asked: Option<(Known, RowAct)> = None;
     theme::list_area(ui, reveal, ROW_HEIGHT)
         .show_rows(ui, ROW_HEIGHT, matches.len(), |ui, range| {
             for at in range {
                 let index = matches[at];
-                let Some(known) = work.items.shown(index, &work.session.server_edits) else {
+                let Some(known) = work.items.shown(index, &work.session.rows.edits) else {
                     continue;
                 };
                 let chosen = work.items.open == Some(known.entry);
@@ -733,13 +658,13 @@ fn groups(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, row: &item
         }
     }
     for group in seen {
-        let columns: Vec<&Column> = item::TEMPLATE_COLUMNS
+        let columns: Vec<&'static Column> = item::TEMPLATE_COLUMNS
             .iter()
             .filter(|column| column.group == group)
             .collect();
         let edited = columns.iter().any(|column| {
             work.session
-                .server_edits
+                .rows.edits
                 .get(item::TEMPLATE, &key, column.name)
                 .is_some()
         });
@@ -759,194 +684,90 @@ fn groups(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, row: &item
     ui.add_space(24.0);
 }
 
-/// One column: its name, its value, what the value means, and whether this
-/// project has changed it.
+/// One column, through [`server_field`]. The item form's own cases are the
+/// hook's: `entry`, the subclass, the display id, and the set's item list
+/// after `set_id`.
 fn field(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
     known: &Known,
     row: &item::Row,
-    column: &Column,
+    column: &'static Column,
 ) {
     let key = known.key();
-    let edited = work
-        .session
-        .server_edits
-        .get(item::TEMPLATE, &key, column.name)
-        .map(str::to_string);
-
-    // What the field shows: this project's value where it has one, and the
-    // database's otherwise.
-    let in_database = column.literal(row);
-    let showing = edited.clone().or_else(|| in_database.clone());
-
-    // One id per row and column. Two items have the same column names, and
-    // egui keys a widget's own state — a text box's draft, a menu being open —
-    // on its id: sharing one would carry the half-typed name of one item into
-    // the next one clicked.
-    let id = ui.make_persistent_id(("item", known.entry, column.name));
-    page_row(ui, column.name, column.about, edited.is_some(), |ui| {
-        let Some(showing) = showing else {
-            ui.label(egui::RichText::new("NULL").color(theme::INK_FAINT));
-            return;
-        };
-        let written = match column.kind {
-            // The key is shown and not typed into — except `entry`.
-            // Writing a key column moves the row the edit is about, which for
-            // `patch` would silently retarget the statement at a version of the
-            // item the server is not loading. Renumbering an item is a thing
-            // people want, so it has a field of its own: see [`entry_field`],
-            // which is not a column edit at all for half the rows it draws.
-            Kind::Key if column.name == "entry" => {
-                entry_field(ui, work, known, id);
-                None
+    let field = FieldCtx {
+        // One id per row and column, keyed by the entry as it has always been.
+        id: ui.make_persistent_id(("item", known.entry, column.name)),
+        ..FieldCtx::new(ui, &work.session.rows.edits, item::TEMPLATE, &key, row, column, "Edit item", work.now)
+    };
+    let (assets, now) = (work.assets, work.now);
+    let (items, thumbnails) = (&mut *work.items, &mut *work.thumbnails);
+    let mut resolver = Resolver {
+        session: &mut *work.session,
+        assets,
+        quests: &mut *work.quests,
+        asks: &mut *work.asks,
+    };
+    let written = server_field(ui, &mut resolver, &field, |hook, ui, resolver, field, showing| {
+        match (hook, field.kind) {
+            // The key is shown and not typed into, except `entry`. Writing a
+            // key column moves the row the edit is about, which for `patch`
+            // would retarget the statement at a version of the item the
+            // server is not loading. Renumbering an item has a box of its
+            // own, which is not a column edit at all for half the rows it
+            // draws.
+            (Hook::Cell, Kind::Key) if field.column.name == "entry" => {
+                entry_field(ui, resolver.session, items, known, field.id, now);
+                Some(None)
             }
-            Kind::Key => {
-                ui.label(theme::number(&showing));
-                None
-            }
-            Kind::Text => text_cell(ui, id.with("text"), &showing),
-            Kind::Flags(bits) => flags_cell(ui, &showing, bits, id),
-            Kind::Choice(values) => choice_cell(ui, &showing, values, id),
             // The subclass is the one column whose options depend on another
-            // column of the same row: 0 is Axe on a weapon, Cloth on a
-            // piece of armour and Bandage on a consumable, so the list is
-            // the class's — see `vale_mangos::item::subclasses`.
-            Kind::Subclass => choice_cell(ui, &showing, item::subclasses(known.class), id),
+            // column of the same row: 0 is Axe on a weapon, Cloth on a piece
+            // of armour and Bandage on a consumable, so the list is the
+            // class's. See `vale_mangos::item::subclasses`.
+            (Hook::Cell, Kind::Subclass) => {
+                Some(choice_cell(ui, showing, item::subclasses(known.class), field.id))
+            }
             // A display id is picked by looking at it. The number stays
             // editable beside the button, because an id read off a wiki is a
             // thing people have in hand.
-            Kind::Ref("ItemDisplayInfo") => display_field(ui, work, known, &showing),
-            Kind::Ref(table) => reference_field(
-                ui,
-                work,
-                known,
-                column,
-                table,
-                &showing,
-                in_database.clone(),
-            ),
-            _ => {
-                let written = number_cell(ui, column.kind, &showing);
-                // What the number means, beside it: 1478900 is 147g 89s and
-                // 1800000 is half an hour, and a form that shows only the
-                // number makes those the same kind of thing.
-                if let Some(means) = number_means(column.kind, &showing) {
-                    meaning(ui, means);
-                }
-                written
+            (Hook::Cell, Kind::Ref("ItemDisplayInfo")) => {
+                Some(display_field(ui, items, thumbnails, resolver.asks, assets, known, showing))
             }
-        };
-        if let Some(written) = written {
-            // Cleared rather than written when it matches what the database
-            // holds: a project should not claim to change a column back to the
-            // value it already has, and a statement for one does nothing.
-            let value = match Some(&written) == in_database.as_ref() {
-                true => None,
-                false => Some(written),
-            };
-            let gesture = format!("item {} {}", known.entry, column.name);
-            work.session.set_server_edit(
-                item::TEMPLATE,
-                &key,
-                column.name,
-                value,
-                Some(crate::session::rows::Gesture {
-                    label: "Edit item",
-                    subject: &gesture,
-                    now: work.now,
-                }),
-            );
-        }
-        // No revert arrow on a row this project creates. Every column of
-        // one is the project's own and there is nothing in the database to put
-        // it back to — clearing it would leave the `INSERT` naming one column
-        // fewer than the table has, which is a value nobody chose.
-        let creating = known.claim == Life::Insert;
-        if edited.is_some() && !creating && revert_button(ui, in_database.as_deref()) {
-            let gesture = format!("item {} {} revert", known.entry, column.name);
-            work.session.set_server_edit(
-                item::TEMPLATE,
-                &key,
-                column.name,
-                None,
-                Some(crate::session::rows::Gesture {
-                    label: "Revert column",
-                    subject: &gesture,
-                    now: work.now,
-                }),
-            );
+            (Hook::After, Kind::Ref("ItemSet")) => {
+                let set = showing.trim().parse().unwrap_or(0);
+                set_membership(ui, resolver.session, assets, known.entry, set, now);
+                None
+            }
+            _ => None,
         }
     });
+    if let Some(written) = written {
+        field.write(work.session, written, work.now);
+    }
 }
 
 /// The `entry` column, which is the row's own key and is editable anyway.
 ///
-/// Committed on Enter or on leaving the box rather than per keystroke, for
-/// `rowform::text_field`'s reason one step further along: a key that moved on
-/// every digit typed would re-key the row four times on the way to `20000`, and
-/// three of those are entries somebody else may own.
-///
-/// What it does is one thing whatever the row is: the project's claim on the row
-/// is re-keyed — see [`crate::subjects::items::Items::rekey`]. For a row that is in
-/// the database the apply then moves the row, every other content-patch version
-/// of it, and every column of the world database that names an item by entry;
-/// the sentence under the box says so, and says what that cannot reach.
-fn entry_field(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: egui::Id) {
-    let id = id.with("entry");
-    let mut text = draft_or(ui, id, known.entry.to_string());
-    // The value cell's own size, so the key lines up with the numbers under it.
-    let response = ui.add_sized(
-        egui::vec2(FORM_VALUE, FORM_ROW),
-        egui::TextEdit::singleline(&mut text)
-            .id(id)
-            .horizontal_align(egui::Align::Center),
-    );
-    // What the trouble was, kept until the box is touched again. A refusal
-    // raised on the frame Enter was pressed and forgotten on the next one is a
-    // refusal nobody reads.
-    let trouble_id = id.with("trouble");
-    if let Some(text) = finished(ui, id, &response, text) {
-        let trouble = match text.trim().parse::<u32>() {
-            Err(_) => Some(format!("{text:?} is not a valid entry number")),
-            Ok(wanted) => {
-                let now = work.now;
-                match work.items.rekey(work.session, known, wanted, now) {
-                    Ok(()) => None,
-                    Err(why) => Some(why),
-                }
-            }
-        };
-        ui.data_mut(|data| match trouble {
-            Some(why) => {
-                data.insert_temp(trouble_id, why);
-            }
-            None => {
-                data.remove_temp::<String>(trouble_id);
-            }
-        });
-    }
-    if let Some(why) = ui.data_mut(|data| data.get_temp::<String>(trouble_id)) {
-        ui.label(egui::RichText::new(why).small().color(theme::BAD));
-        return;
-    }
-    // …and what pressing Enter would do.
-    let (word, colour) = match (known.claim, known.read_entry != known.entry) {
-        (Life::Insert, _) => ("changes this new item's entry".to_string(), theme::INK_FAINT),
-        (_, true) => (
-            format!(
-                "the database row is entry {} until applied",
-                known.read_entry
-            ),
-            theme::WARN,
-        ),
-        _ => (
-            "changes the row's entry and every world database reference to it".to_string(),
-            theme::INK_FAINT,
-        ),
-    };
-    ui.label(egui::RichText::new(word).small().color(colour))
-        .on_hover_text(format!(
+/// What it does is one thing whatever the row is: the project's claim on the
+/// row is re-keyed; see [`crate::subjects::items::Items::rekey`]. For a row
+/// that is in the database the apply then moves the row, every other
+/// content-patch version of it, and every column of the world database that
+/// names an item by entry; the sentence under the box says so, and says what
+/// that cannot reach.
+fn entry_field(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    items: &mut Items,
+    known: &Known,
+    id: egui::Id,
+    now: f64,
+) {
+    let renumber = Renumber {
+        entry: known.entry,
+        read_entry: known.read_entry,
+        is_new: known.claim == Life::Insert,
+        noun: "item",
+        reaches: format!(
             "vmangos has no foreign keys, so Apply updates the references itself: every \
              content-patch version of the row, and the {} world database columns that \
              refer to an item by entry: the loot tables, npc_vendor, \
@@ -956,24 +777,29 @@ fn entry_field(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: e
              has no item_template row after the change; and Spell.dbc's reagent and \
              created-item fields, which are in a client file.",
             vale_mangos::item::REFERENCES.len()
-        ));
+        ),
+    };
+    entry_cell(ui, id.with("entry"), &renumber, |wanted| items.rekey(session, known, wanted, now));
 }
 
 /// The `display_id` column: the number, the icon it resolves to, and the
 /// button that opens the grid.
 fn display_field(
     ui: &mut egui::Ui,
-    work: &mut Workspace<'_>,
+    items: &mut Items,
+    thumbnails: &mut Thumbnails,
+    asks: &mut ShellAsks,
+    assets: &GameAssets,
     known: &Known,
     showing: &str,
 ) -> Option<String> {
     let written = number_cell(ui, Kind::Unsigned, showing);
     let id: u32 = showing.trim().parse().unwrap_or(0);
-    let look = work.items.look(work.assets, id, known.inventory_type);
+    let look = items.look(assets, id, known.inventory_type);
     if let Some(path) = look.as_ref().and_then(|look| look.icon.clone()) {
-        work.thumbnails.want(&path);
+        thumbnails.want(&path);
         let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(20.0), egui::Sense::hover());
-        if let Some(texture) = work.thumbnails.get(&path) {
+        if let Some(texture) = thumbnails.get(&path) {
             ui.painter().image(
                 texture,
                 rect,
@@ -982,16 +808,13 @@ fn display_field(
             );
         }
     }
-    if ui
-        .small_button("choose\u{2026}")
-        .on_hover_text(
-            "Opens a picker of every ItemDisplayInfo.dbc row, shown as thumbnails. A row \
-             with a model is shown as its model; a row that only textures the wearer's \
-             body is shown as its icon.",
-        )
-        .clicked()
-    {
-        work.items.pick_display(id);
+    if reference::choose_button(
+        ui,
+        "Opens a picker of every ItemDisplayInfo.dbc row, shown as thumbnails. A row \
+         with a model is shown as its model; a row that only textures the wearer's \
+         body is shown as its icon.",
+    ) {
+        items.pick_display(id);
     }
     match look {
         Some(look) => {
@@ -999,13 +822,7 @@ fn display_field(
                 true => format!("{} model(s)", look.models.len()),
                 false => format!("{} texture(s)", look.painted()),
             };
-            crate::ui::widgets::reference::display_link(
-                ui,
-                egui::RichText::new(made_of).small(),
-                &mut work.items.show_row,
-                "ItemDisplayInfo",
-                id,
-            );
+            reference::display_link(ui, egui::RichText::new(made_of).small(), asks, "ItemDisplayInfo", id);
         }
         None if id != 0 => {
             ui.label(
@@ -1015,149 +832,6 @@ fn display_field(
             );
         }
         None => {}
-    }
-    written
-}
-
-/// A reference to another table: the number, the `…` that chooses one by
-/// name, and what it resolves to — as a link to where that row is edited.
-///
-/// The quest form's arrangement, and its picker: [`super::quests::target_of`]
-/// says which tables a name can be searched in, and the dialog writes the
-/// chosen id into this item through its item column purpose. The number stays
-/// editable beside the button, because an id read off a wiki is a thing people
-/// have in hand.
-///
-/// What a click on the name opens is where that row is edited: a spell, a
-/// skill, a faction, an area or a map opens the table browser on the row, an
-/// item opens it here, and a quest opens the quest workspace. The DBCs are
-/// opened on demand through the session, exactly as the spell workspace opens
-/// them. A table this editor cannot open, or a row it does not have, draws the
-/// number alone — which is what the column is.
-fn reference_field(
-    ui: &mut egui::Ui,
-    work: &mut Workspace<'_>,
-    known: &Known,
-    column: &Column,
-    table: &'static str,
-    showing: &str,
-    in_database: Option<String>,
-) -> Option<String> {
-    let written = number_cell(ui, Kind::Unsigned, showing);
-    if let Some(target) = super::quests::target_of(table) {
-        if ui
-            .add(
-                egui::Button::new(egui::RichText::new("\u{2026}").size(13.0))
-                    .min_size(egui::vec2(24.0, FORM_ROW)),
-            )
-            .on_hover_text(format!("choose {} by name", column.name))
-            .clicked()
-        {
-            work.quests.picker = Some(crate::subjects::quests::Picker::new(
-                target,
-                crate::subjects::quests::PickFor::ServerColumn(crate::subjects::quests::ColumnTarget {
-                    table: item::TEMPLATE,
-                    key: known.key(),
-                    column: column.name,
-                    in_database,
-                    label: "Edit item",
-                    subject: format!("item {} {}", known.entry, column.name),
-                }),
-            ));
-        }
-    }
-    let id: u32 = showing.trim().parse().unwrap_or(0);
-    if id == 0 {
-        ui.label(egui::RichText::new("none").small().color(theme::INK_FAINT));
-        if table == "ItemSet" {
-            set_membership(ui, work, known, 0);
-        }
-        return written;
-    }
-    // The item's own table is answered from the list that is already in
-    // memory, and a link to another item opens it in this workspace.
-    if table == item::TEMPLATE {
-        match work.items.by_entry(id).cloned() {
-            Some(found) => {
-                let found = found
-                    .with_edits(&work.session.server_edits)
-                    .unwrap_or(found);
-                let colour = quality_colour(found.quality);
-                if link(ui, &found.name, colour, &format!("Open item {id}.")) {
-                    work.items.open = Some(id);
-                }
-            }
-            None => {
-                ui.label(
-                    egui::RichText::new("no such item")
-                        .small()
-                        .color(theme::BAD),
-                );
-            }
-        }
-        return written;
-    }
-    // …and a quest's title from the quest list, which the quest tool reads
-    // while this workspace is up.
-    if table == vale_mangos::quest::TEMPLATE {
-        match work.quests.title_of(id, &work.session.server_edits) {
-            Some(title) => {
-                let hover = format!("Open quest {id} in the quest workspace.");
-                if link(ui, &title, theme::ACCENT, &hover) {
-                    work.items.show_quest = Some(id);
-                }
-            }
-            None if work.quests.all.is_empty() => meaning(ui, "\u{2026}"),
-            None => {
-                ui.label(
-                    egui::RichText::new("no such quest")
-                        .small()
-                        .color(theme::BAD),
-                );
-            }
-        }
-        return written;
-    }
-    if !is_a_dbc(table) {
-        ui.label(
-            egui::RichText::new(format!("{table} {id}"))
-                .small()
-                .color(theme::INK_FAINT),
-        );
-        return written;
-    }
-    if !work.session.open_table(work.assets, table) {
-        ui.label(
-            egui::RichText::new(format!("{table}\u{2026}"))
-                .small()
-                .color(theme::INK_FAINT),
-        );
-        return written;
-    }
-    let record = work.session.table(table).and_then(|open| open.row_of(id));
-    let Some(record) = record else {
-        ui.label(egui::RichText::new("no such row").small().color(theme::BAD));
-        return written;
-    };
-    let name = name_of(work, table, record).unwrap_or_else(|| id.to_string());
-    let hover = format!("Open {table} {id} in the table browser.");
-    if link(ui, &name, theme::ACCENT, &hover) {
-        work.items.show_row = Some((table, id));
-    }
-    if table == "ItemSet" {
-        set_membership(ui, work, known, id);
-    }
-    // A spell's rank, which is the only thing that tells nine Fireballs
-    // apart — field 129, the one the quest picker lists under the name.
-    if table == "Spell" {
-        let rank = work
-            .session
-            .table(table)
-            .and_then(|open| open.string_at(record, 129))
-            .filter(|rank| !rank.is_empty());
-        if let Some(rank) = rank {
-            ui.label(egui::RichText::new(rank).small().color(theme::INK_FAINT));
-        }
     }
     written
 }
@@ -1173,15 +847,14 @@ fn reference_field(
 /// other sets' ids, so the difference is drawn here with a button for each
 /// side of it: the named set not listing the item, and another set still
 /// listing it.
-fn set_membership(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, set: u32) {
+fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAssets, item: u32, set: u32, now: f64) {
     use crate::tables;
-    if !work.session.open_table(work.assets, "ItemSet") {
+    if !session.open_table(assets, "ItemSet") {
         return;
     }
-    let Some(sets) = work.session.table("ItemSet") else {
+    let Some(sets) = session.table("ItemSet") else {
         return;
     };
-    let item = known.entry;
     let unlisted = set != 0
         && sets
             .row_of(set)
@@ -1191,7 +864,7 @@ fn set_membership(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, se
         .filter_map(|record| sets.u32_at(record, 0))
         .filter(|&other| other != set)
         .collect();
-    let subject = format!("item {item} set_id");
+    let subject = format!("{} {} set_id", vale_mangos::item::TEMPLATE, item);
     let mut moves: Vec<(u32, u32)> = Vec::new();
     if unlisted {
         ui.label(
@@ -1230,68 +903,11 @@ fn set_membership(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, se
         }
     }
     for (from, to) in moves {
-        let said = tables::rows::move_between_sets(work.session, item, from, to, &subject, work.now);
+        let said = tables::rows::move_between_sets(session, item, from, to, &subject, now);
         if let Some(last) = said.last() {
-            work.session.status = last.clone();
+            session.status = last.clone();
         }
     }
-}
-
-/// A name that opens something, in the colour it is drawn in and
-/// underlined while the pointer is over it — the quest form's item link.
-/// Answers whether it was clicked.
-fn link(ui: &mut egui::Ui, text: &str, colour: egui::Color32, hover: &str) -> bool {
-    let name = ui.add(
-        egui::Label::new(egui::RichText::new(text).color(colour)).sense(egui::Sense::click()),
-    );
-    if name.hovered() {
-        let under = name.rect.bottom() - 1.0;
-        ui.painter()
-            .hline(name.rect.x_range(), under, egui::Stroke::new(1.0, colour));
-    }
-    name.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(hover)
-        .clicked()
-}
-
-/// Whether a reference names a client table this editor can open.
-fn is_a_dbc(table: &str) -> bool {
-    matches!(
-        table,
-        "Spell"
-            | "SkillLine"
-            | "Faction"
-            | "Lock"
-            | "AreaTable"
-            | "Map"
-            | "ItemDisplayInfo"
-            | "ItemSet"
-    )
-}
-
-/// What a row of one of those tables is called.
-///
-/// Which field holds the name is per table and is `super::quests::name_field`'s
-/// measured list: 3 for `SkillLine`, 19 for `Faction`, 11 for `AreaTable`, 4 for
-/// `Map`, 120 for `Spell`, 1 for `ItemSet`. This read field 1 for any table with no schema, which
-/// is an integer in all four of those and drew nothing or a fragment of another
-/// row's string. A table that list does not know falls back to the schema's
-/// column called `Name` — its field, not its position in the column list,
-/// which for `Spell` are different numbers. `Lock` has no name at all and draws
-/// its id.
-fn name_of(work: &mut Workspace<'_>, table: &str, record: usize) -> Option<String> {
-    let field = super::quests::name_field(table).or_else(|| {
-        vale_assets::tables::schema::for_table(table)?
-            .columns
-            .iter()
-            .find(|column| column.name.eq_ignore_ascii_case("Name"))
-            .map(|column| column.field)
-    });
-    let open = work.session.table(table)?;
-    let name = field
-        .and_then(|field| open.string_at(record, field))
-        .filter(|text| !text.is_empty());
-    name.or_else(|| open.u32_at(record, 0).map(|id| id.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,7 +971,7 @@ const PLATE_WIDTH: f32 = 270.0;
 /// would say something about nobody.
 fn plate(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
     theme::heading(ui, "Tooltip");
-    let Some(info) = work.items.open_info(&work.session.server_edits, known) else {
+    let Some(info) = work.items.open_info(&work.session.rows.edits, known) else {
         theme::waiting(ui, "reading the row\u{2026}");
         return;
     };
@@ -1472,13 +1088,13 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
                 crate::ui::widgets::reference::display_link(
                     ui,
                     theme::number(display_id.to_string()),
-                    &mut work.items.show_row,
+                    work.asks,
                     "ItemDisplayInfo",
                     display_id,
                 );
             }
         }
-        if ui.small_button("choose\u{2026}").clicked() {
+        if reference::choose_button(ui, "Opens a picker of every ItemDisplayInfo.dbc row, shown as thumbnails.") {
             work.items.pick_display(display_id);
         }
     });
@@ -1871,7 +1487,7 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             &key,
             "display_id",
             Some(id.to_string()),
-            Some(crate::session::rows::Gesture {
+            Some(crate::server::store::Gesture {
                 label: "Edit item",
                 subject: &gesture,
                 now: work.now,
@@ -2057,6 +1673,50 @@ pub(super) fn pager(
     start..end
 }
 
+/// The item workspace's inspector panel, its third part: what the open item
+/// looks like, which is the inspector's view of the selection.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, .. } = subject;
+    inspector(
+        ui,
+        Looking {
+            session,
+            items: &mut editing.items,
+            assets,
+            thumbnails: &mut editing.thumbnails,
+            portraits: &mut editing.portraits,
+            asks: &mut editing.asks,
+        },
+    );
+}
+
+/// The item workspace in the middle of a window. A separate panel from the
+/// spell workspace: a spell's row references a chain of other rows, and an
+/// item's row references one display id that cannot be read as text, which
+/// is why the inspector holds the item's appearance.
+pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::ui::workspace::Bench<'_, '_, '_>) {
+    let crate::ui::workspace::Bench { session, editing, playing, popovers, assets, now, .. } = bench;
+    draw(
+        ui,
+        Workspace {
+            session,
+            items: &mut editing.items,
+            assets,
+            thumbnails: &mut editing.thumbnails,
+            portraits: &mut editing.portraits,
+            quests: &mut editing.quests,
+            loot: &mut editing.loot,
+            server: &playing.server,
+            server_panel: &mut popovers.server,
+            standings: &mut playing.standings,
+            reloads: &mut playing.reloads,
+            patch: crate::server::settings::server_patch(&playing.server),
+            now,
+            asks: &mut editing.asks,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2089,16 +1749,5 @@ mod tests {
         assert_eq!(covered.len(), total);
         covered.dedup();
         assert_eq!(covered.len(), total, "no row is drawn twice");
-    }
-
-    /// The references this form resolves are the ones the editor can open, and
-    /// the two server tables are not among them: there is no file to read a
-    /// `quest_template` row out of.
-    #[test]
-    fn only_client_tables_are_resolved_by_name() {
-        assert!(is_a_dbc("Spell"));
-        assert!(is_a_dbc("SkillLine"));
-        assert!(!is_a_dbc("quest_template"));
-        assert!(!is_a_dbc(item::TEMPLATE));
     }
 }

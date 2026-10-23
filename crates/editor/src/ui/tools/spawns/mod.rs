@@ -1,6 +1,10 @@
 //! The windows of the spawn tools: the views of `crate::tools::spawns`.
 //!
 //! ```text
+//! spawn.rs      what the two spawn panels draw the same way, over SpawnView:
+//!               the panel's frame and switches, the edits block, the picker
+//!               with its template buttons, the claim, the template window
+//!               and its entry box
 //! creatures.rs  the form for the server's creature rows: one spawn, the
 //!               creature_template behind it, and which of the two an edit
 //!               changes. It is separate from the table browser
@@ -19,4 +23,17 @@
 
 pub mod creatures;
 pub mod gameobjects;
+pub mod spawn;
 pub mod waypoints;
+
+/// The shell's server state a spawn panel reads and links to, as one
+/// argument of the panels' constructors.
+pub(crate) struct Server<'a> {
+    /// Where this machine's server is.
+    pub(in crate::ui) settings: &'a crate::server::settings::ServerSettings,
+    /// The top bar's Server… popover, which holds every server operation.
+    pub(in crate::ui) panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where each server subject stands, held for half a second. See
+    /// [`crate::server::sync::Standings`].
+    pub(in crate::ui) standings: &'a mut crate::server::sync::Standings,
+}

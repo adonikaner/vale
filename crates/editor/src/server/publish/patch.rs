@@ -629,7 +629,7 @@ pub fn on_the_command_line(
     creatures: Res<crate::tools::spawns::creatures::Creatures>,
     mut done: Local<bool>,
 ) {
-    if *done || !args.publish {
+    if *done || !args.server.publish {
         return;
     }
     if !waypoints.scripted_done || !creatures.scripted_done {
@@ -637,7 +637,7 @@ pub fn on_the_command_line(
     }
     let Some(mut session) = session else { return };
     *done = true;
-    let name = args.publish_name.clone().unwrap_or_else(default_name);
+    let name = args.server.publish_name.clone().unwrap_or_else(default_name);
     let said = match publish(&mut session, &assets, &server, &mut queue, &step, &name) {
         Ok(said) => said,
         Err(e) => format!("publish: {e}"),

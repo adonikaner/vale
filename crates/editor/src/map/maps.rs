@@ -29,7 +29,8 @@
 //! The server opens the map's grids at startup, so it needs a restart after
 //! the row is applied.
 
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use vale_assets::tables::map::{self as map_table, fields as mf};
 use vale_client::assets::GameAssets;
 use vale_edit::dbc::places::{self, MapSpec};
@@ -487,7 +488,7 @@ pub fn read_edited_map(
         // holds.
         let created_key = vale_mangos::map::key(id, 0);
         let created = session
-            .server_edits
+            .rows.edits
             .row(vale_mangos::map::TEMPLATE, &created_key)
             .filter(|row| row.life == vale_mangos::row::Life::Insert)
             .cloned();
@@ -555,7 +556,7 @@ fn fill_server_fields(form: &mut Form, template: &Template) {
 /// `template` with the project's edits to its columns written over it.
 fn with_project_edits(session: &EditSession, mut template: Template, key: &vale_mangos::row::Key) -> Template {
     for column in vale_mangos::map::COLUMNS.iter().filter(|c| c.editable()) {
-        if let Some(literal) = session.server_edits.get(vale_mangos::map::TEMPLATE, key, column.name) {
+        if let Some(literal) = session.rows.edits.get(vale_mangos::map::TEMPLATE, key, column.name) {
             set_from_literal(&mut template, column.name, literal);
         }
     }

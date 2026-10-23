@@ -11,11 +11,11 @@
 //!                what a quest asks for, says and gives, and who hands it out.
 //!                A workspace of the same kind, and the list the creature
 //!                tool's Quests window reads from the other direction
-//! creature_data.rs   the Creatures workspace: every `creature_template` row
-//!                as a list, read once and searched in memory, edited with the
-//!                creature tool's own form and state
-//! gameobject_data.rs the Game Objects workspace: the same for
-//!                `gameobject_template`, over the game object tool's state
+//! templates.rs   the Creatures and Game Objects workspaces: every
+//!                `creature_template` or `gameobject_template` row as a list,
+//!                read once and searched in memory, edited with the spawn
+//!                tool's own form and state, written once over the spawn
+//!                subject
 //! listing.rs     a server table read whole and searched in memory: the list
 //!                the two workspaces above draw, written once over any row type
 //! loot.rs        the nine loot tables. No workspace and no rail entry: a set
@@ -44,16 +44,19 @@
 //! conditions.rs  the `conditions` table, read whole, and what an edit to a
 //!                condition is. Any form whose column names a condition opens
 //!                the window on it
+//! windows.rs     the creature or game object template the windows above
+//!                follow: the selected spawn's under a spawn tool, the open
+//!                row's under its workspace
 //! ```
 
 pub mod behaviour;
 pub mod conditions;
-pub mod creature_data;
 pub mod displays;
-pub mod gameobject_data;
 pub mod gossip;
 pub mod items;
 pub mod listing;
 pub mod loot;
 pub mod quests;
 pub mod services;
+pub mod templates;
+pub mod windows;

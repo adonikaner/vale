@@ -21,7 +21,8 @@
 //! Every write goes through the session under one gesture, so the move and
 //! everything that followed it are one entry on the undo stack.
 
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use vale_mangos::row::{Edits, Key, Reference, RowEdit};
 
 /// **Re-key one row's claim and make the project's own references follow.**
@@ -37,14 +38,14 @@ pub fn rekey(
     references: &[Reference],
     gesture: Gesture<'_>,
 ) -> Result<(), String> {
-    if session.server_edits.touches(table, to) {
+    if session.rows.edits.touches(table, to) {
         return Err(format!("this project already claims {table} {}", to.text()));
     }
     // The re-key is `Edits::rekey`'s decision. It is made on a copy of the one
     // claim so the write itself can go through the session, which is what puts
     // it on the undo stack.
     let mut scratch = Edits::default();
-    if let Some(line) = session.server_edits.row_line(table, from) {
+    if let Some(line) = session.rows.edits.row_line(table, from) {
         scratch.set_row_line(table, from, Some(&line));
     }
     scratch.rekey(table, from, to, at_base);
@@ -84,7 +85,7 @@ fn follow(
     new: u64,
     gesture: Gesture<'_>,
 ) {
-    for hit in hits(&session.server_edits, references, old, new) {
+    for hit in hits(&session.rows.edits, references, old, new) {
         match hit {
             Hit::Column {
                 table,
@@ -95,10 +96,10 @@ fn follow(
                 session.set_server_edit(&table, &key, &column, Some(value), Some(gesture));
             }
             Hit::KeyColumn { table, key, to } => {
-                if session.server_edits.touches(&table, &to) {
+                if session.rows.edits.touches(&table, &to) {
                     continue;
                 }
-                let Some(row) = session.server_edits.row(&table, &key).cloned() else {
+                let Some(row) = session.rows.edits.row(&table, &key).cloned() else {
                     continue;
                 };
                 session.set_server_row(&table, &key, None, Some(gesture));

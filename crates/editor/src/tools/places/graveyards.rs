@@ -37,22 +37,22 @@
 //! on the Server panel writes. Links are live on `.reload game_graveyard_zone`;
 //! a facing needs a restart.
 
-use super::flightpaths::{aim_of, eye, DRAG_PIXELS, HANDLE_PIXELS, MARKER_RADIUS};
-use super::triggers::{create_row, remove_row, shipped_ids, shown};
+use super::flightpaths::MARKER_RADIUS;
+use super::triggers::{create_row, remove_row, shown};
+use crate::tools::points::{self, MapPoint, PointTool, Points, HANDLE_PIXELS};
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use vale_assets::tables::area::Areas;
-use vale_client::assets::GameAssets;
 use vale_client::render::axes;
-use vale_client::render::focus::WorldFocus;
 use vale_client::world::camera::WorldCamera;
 use vale_edit::dbc::places::{self, SafeLoc};
 use vale_edit::dbc::DbcFile;
 use vale_mangos::graveyard::{self, Link};
 use vale_mangos::row::{Assignment, Edits, Life};
 use bevy::prelude::*;
-use bevy::tasks::{block_on, futures_lite::future, Task};
+use crate::server::fresh::FreshReads;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -65,15 +65,6 @@ pub enum Armed {
     NewPlace,
     /// Link the selected place to the zone clicked.
     LinkZone,
-}
-
-/// A held left button on a place.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Drag {
-    pub id: u32,
-    pub pressed_at: Vec2,
-    pub moving: bool,
-    pub grab: Option<(Vec3, bool)>,
 }
 
 /// The two server tables as the database holds them.
@@ -96,28 +87,20 @@ pub struct ShownLink {
 /// The graveyard tool's state.
 #[derive(Resource, Debug, Default)]
 pub struct Graveyards {
-    /// The safe places on the open map, in file order.
-    pub list: Vec<SafeLoc>,
-    pub shipped: Option<HashSet<u32>>,
-    built: Option<(u64, u32)>,
-    pub map: u32,
-    pub selected: Option<u32>,
-    pub hovered: Option<u32>,
-    pub drag: Option<Drag>,
+    /// The safe places on the open map, and what the pointer is doing with
+    /// them.
+    pub points: Points<SafeLoc>,
     pub armed: Armed,
     /// The zone under the pointer, for Link zone: the area's zone, or the
     /// area itself when it is a zone.
     pub pointed_zone: Option<u32>,
-    pub confirm_remove: Option<u32>,
-    pub fly_to: Option<Vec3>,
     /// `AreaTable` as this session has it, for zone names, and the table
     /// revision it was read at; see `crate::tools::ground::areas::Areas::follow_table`.
     pub areas: Option<Arc<Areas>>,
     areas_at: Option<u64>,
-    pub held: Option<Held>,
-    loaded_for: Option<u64>,
-    reading: Option<Task<Result<Held, String>>>,
-    pub trouble: Option<String>,
+    /// The two server tables, read at once and kept until an apply moves
+    /// `EditSession::database_writes`. See [`Self::held`].
+    reads: FreshReads<(), Held>,
 }
 
 /// How far from the camera a place is drawn and picked, in yards.
@@ -127,20 +110,23 @@ const MARKER_RANGE: f32 = 3000.0;
 pub const NEW_NAME: &str = "New graveyard";
 
 impl Graveyards {
+    /// The two server tables, once read.
+    pub fn held(&self) -> Option<&Held> {
+        self.reads.value()
+    }
+
+    /// Why the last read of the server tables answered nothing, when it
+    /// answered nothing.
+    pub fn trouble(&self) -> Option<&String> {
+        self.reads.trouble()
+    }
+
     pub fn place(&self, id: u32) -> Option<&SafeLoc> {
-        self.list.iter().find(|place| place.id == id)
+        self.points.get(id)
     }
 
     pub fn stale(&mut self) {
-        self.built = None;
-    }
-
-    pub fn is_shipped(&self, id: u32) -> bool {
-        self.shipped.as_ref().is_some_and(|ids| ids.contains(&id))
-    }
-
-    pub fn fly_to(&mut self, at: [f32; 3]) {
-        self.fly_to = Some(Vec3::from(at));
+        self.points.stale();
     }
 
     /// Read `AreaTable` again from the session's open copy when it changed.
@@ -169,7 +155,7 @@ impl Graveyards {
     /// ones the project creates. A creation the database holds because it was
     /// applied is listed once, as a creation.
     pub fn links_of(&self, edits: &Edits, id: u32) -> Vec<ShownLink> {
-        let Some(held) = self.held.as_ref() else {
+        let Some(held) = self.held() else {
             return Vec::new();
         };
         let created = |link: &Link| edits.row(graveyard::ZONE, &link.key()).is_some_and(|row| row.life == Life::Insert);
@@ -200,7 +186,7 @@ impl Graveyards {
     /// The place's facing as the project leaves it, in radians, and whether
     /// the database holds the row.
     pub fn facing(&self, edits: &Edits, id: u32) -> Option<(f32, bool)> {
-        let held = self.held.as_ref()?.facings.get(&id).copied();
+        let held = self.held()?.facings.get(&id).copied();
         let assignments = held.map(facing_assignments);
         let (row, life) = shown(edits, graveyard::FACING, &graveyard::facing_key(id), assignments.as_deref())?;
         if life == Life::Delete {
@@ -218,7 +204,7 @@ fn facing_assignments(orientation: f32) -> Vec<Assignment> {
 /// Link a place to a zone for both sides. Refused when the place already
 /// serves it.
 pub fn add_link(session: &mut EditSession, graveyards: &Graveyards, id: u32, zone: u32, now: f64) -> Result<String, String> {
-    let shown = graveyards.links_of(&session.server_edits, id);
+    let shown = graveyards.links_of(&session.rows.edits, id);
     let existing = shown.iter().find(|shown| shown.link.zone == zone);
     if existing.is_some_and(|shown| shown.life != Life::Delete) {
         return Err(format!("graveyard {id} is already linked to {}", graveyards.zone_name(zone)));
@@ -250,12 +236,12 @@ pub fn set_faction(session: &mut EditSession, shown: &ShownLink, faction: u32, n
 
 /// Set the way a spirit faces at the place, in radians.
 pub fn set_facing(session: &mut EditSession, graveyards: &Graveyards, id: u32, radians: f32, now: f64) {
-    let held = graveyards.held.as_ref().and_then(|held| held.facings.get(&id)).copied();
+    let held = graveyards.held().and_then(|held| held.facings.get(&id)).copied();
     let key = graveyard::facing_key(id);
     let label = format!("{} {}", graveyard::FACING, key.text());
     let gesture = Gesture { label: "Edit graveyard facing", subject: &label, now };
     let value = vale_mangos::sql::float(radians);
-    let claimed = session.server_edits.row(graveyard::FACING, &key).is_some();
+    let claimed = session.rows.edits.row(graveyard::FACING, &key).is_some();
     match (held, claimed) {
         (None, false) => create_row(session, graveyard::FACING, &key, false, &facing_assignments(radians), gesture),
         (held, _) => {
@@ -281,12 +267,12 @@ pub fn move_place(session: &mut EditSession, place: &SafeLoc, to: Vec3, now: f64
 
 /// Make a safe place on the ground at `at`. Answers the status line.
 pub fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec3) -> String {
-    match places::new_safe_loc(&mut session.tables, graveyards.map, at.to_array(), NEW_NAME) {
+    match places::new_safe_loc(&mut session.tables, graveyards.points.map, at.to_array(), NEW_NAME) {
         Ok(done) => {
             let made = done.made;
             super::flightpaths::record(session, "Add graveyard", done);
             graveyards.stale();
-            graveyards.selected = made;
+            graveyards.points.selected = made;
             format!("graveyard {} made; link it to a zone for the server to use it", made.unwrap_or(0))
         }
         Err(e) => e.to_string(),
@@ -295,7 +281,7 @@ pub fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec
 
 /// Remove a place, and the server rows that name it. Answers the status line.
 pub fn remove_place(session: &mut EditSession, graveyards: &mut Graveyards, id: u32, now: f64) -> String {
-    let edits = session.server_edits.clone();
+    let edits = session.rows.edits.clone();
     let links = graveyards.links_of(&edits, id);
     let facing = graveyards.facing(&edits, id);
     let done = match places::remove_safe_loc(&mut session.tables, id) {
@@ -314,8 +300,8 @@ pub fn remove_place(session: &mut EditSession, graveyards: &mut Graveyards, id: 
             remove_row(session, graveyard::FACING, &key, held, gesture);
         }
     });
-    graveyards.selected = None;
-    graveyards.confirm_remove = None;
+    graveyards.points.selected = None;
+    graveyards.points.confirm_remove = None;
     graveyards.stale();
     format!("graveyard {id} removed")
 }
@@ -340,11 +326,19 @@ impl Plugin for GraveyardToolPlugin {
         app.init_resource::<Graveyards>()
             .add_systems(
                 Update,
-                (collect, read_the_rows, aim, press, drag, keys)
+                (
+                    points::collect::<Graveyards>,
+                    read_the_rows,
+                    point_at_zone,
+                    points::aim::<Graveyards>,
+                    press,
+                    points::drag::<Graveyards>,
+                    keys,
+                )
                     .chain()
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (draw, fly).after(keys));
+            .add_systems(Update, draw.after(keys));
     }
 }
 
@@ -352,38 +346,48 @@ fn active(tool: &Tool, state: &crate::playtest::Playtest) -> bool {
     *tool == Tool::Graveyards && state.editing()
 }
 
-fn collect(
-    mut graveyards: ResMut<Graveyards>,
-    session: Option<Res<EditSession>>,
-    assets: Res<GameAssets>,
-    focus: Res<WorldFocus>,
-    tool: Res<Tool>,
-    state: Res<crate::playtest::Playtest>,
-) {
-    if !active(&tool, &state) {
-        return;
+impl MapPoint for SafeLoc {
+    fn id(&self) -> u32 {
+        self.id
     }
-    let Some(session) = session else { return };
-    graveyards.follow_table(&session);
-    let key = (session.table_revision, focus.map_id);
-    if graveyards.built == Some(key) {
-        return;
+
+    fn position(&self) -> Vec3 {
+        Vec3::from(self.at)
     }
-    let Some(table) = session.table(places::SAFE_LOCS) else {
-        return;
-    };
-    if graveyards.shipped.is_none() {
-        graveyards.shipped = Some(shipped_ids(&session, &assets, places::SAFE_LOCS));
-    }
-    graveyards.built = Some(key);
-    rebuild(&mut graveyards, table, focus.map_id);
 }
 
-fn rebuild(graveyards: &mut Graveyards, table: &DbcFile, map: u32) {
-    graveyards.list = places::safe_locs(table).into_iter().filter(|place| place.map == map).collect();
-    graveyards.map = map;
-    if graveyards.selected.is_some_and(|id| graveyards.place(id).is_none()) {
-        graveyards.selected = None;
+impl PointTool for Graveyards {
+    type Point = SafeLoc;
+    const TOOL: Tool = Tool::Graveyards;
+    const TABLE: &'static str = places::SAFE_LOCS;
+    const RANGE: f32 = MARKER_RANGE;
+    /// Wider than a trigger's centre: a graveyard is picked by its centre
+    /// alone, with no volume to fall back on.
+    const PICK_PIXELS: f32 = HANDLE_PIXELS * 1.5;
+    const NOUN: &'static str = "graveyard";
+
+    fn points(&self) -> &Points<SafeLoc> {
+        &self.points
+    }
+
+    fn points_mut(&mut self) -> &mut Points<SafeLoc> {
+        &mut self.points
+    }
+
+    fn rebuild(&mut self, table: &DbcFile, map: u32) {
+        self.points.list = places::safe_locs(table).into_iter().filter(|place| place.map == map).collect();
+    }
+
+    fn follow(&mut self, session: &EditSession) {
+        self.follow_table(session);
+    }
+
+    fn set_position(session: &mut EditSession, place: &SafeLoc, to: Vec3, now: f64) {
+        move_place(session, place, to, now);
+    }
+
+    fn remove(&mut self, session: &mut EditSession, id: u32, now: f64) -> String {
+        remove_place(session, self, id, now)
     }
 }
 
@@ -396,94 +400,50 @@ fn read_the_rows(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
 ) {
-    if let Some(task) = graveyards.reading.as_mut() {
-        if let Some(done) = block_on(future::poll_once(task)) {
-            graveyards.reading = None;
-            match done {
-                Ok(held) => {
-                    info!("graveyards: {} link(s), {} facing(s)", held.links.len(), held.facings.len());
-                    graveyards.held = Some(held);
-                    graveyards.trouble = None;
-                }
-                Err(e) => {
-                    warn!("graveyards: {e}");
-                    graveyards.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
     if !active(&tool, &state) {
         return;
     }
     let Some(session) = session else { return };
-    if graveyards.loaded_for != Some(session.database_writes) {
-        graveyards.loaded_for = Some(session.database_writes);
-        graveyards.held = None;
-        graveyards.trouble = None;
+    let writes = session.database_writes;
+    graveyards.reads.renew(writes);
+    match graveyards.reads.poll() {
+        Some(Ok(())) => {
+            if let Some(held) = graveyards.held() {
+                info!("graveyards: {} link(s), {} facing(s)", held.links.len(), held.facings.len());
+            }
+        }
+        Some(Err(e)) => warn!("graveyards: {e}"),
+        None => {}
     }
-    if graveyards.held.is_some() || graveyards.trouble.is_some() {
-        return;
-    }
-    let Some((at, _source)) = settings.resolve() else {
-        graveyards.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
     let patch = crate::server::settings::server_patch(&settings);
-    graveyards.reading = Some(crate::server::queue::read(async move {
-        use vale_mangos::schema::RowValue;
-        let mut db = vale_mangos::conn::Db::open(&at)?;
-        let links = db.rows(&graveyard::links_query(patch))?.iter().filter_map(Link::from_row).collect();
-        let facings = db
-            .rows(&graveyard::facings_query())?
-            .iter()
-            .filter_map(|row| Some((row.integer("id")? as u32, row.number("orientation")? as f32)))
-            .collect();
-        Ok(Held { links, facings })
-    }));
+    graveyards.reads.want(writes, (), || {
+        let (at, _source) = settings.resolve().ok_or_else(vale_mangos::conn::Where::absent)?;
+        Ok(crate::server::queue::read(async move {
+            use vale_mangos::schema::RowValue;
+            let mut db = vale_mangos::conn::Db::open(&at)?;
+            let links = db.rows(&graveyard::links_query(patch))?.iter().filter_map(Link::from_row).collect();
+            let facings = db
+                .rows(&graveyard::facings_query())?
+                .iter()
+                .filter_map(|row| Some((row.integer("id")? as u32, row.number("orientation")? as f32)))
+                .collect();
+            Ok(Held { links, facings })
+        }))
+    });
 }
 
-/// Which place the pointer is over, and the zone under it for Link zone.
-#[allow(clippy::too_many_arguments)]
-fn aim(
+/// The zone under the pointer, for Link zone.
+fn point_at_zone(
     mut graveyards: ResMut<Graveyards>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    viewport: Res<crate::ui::Viewport>,
-    wants: Res<bevy_egui::input::EguiWantsInput>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     cursor: Res<crate::pick::Cursor>,
     session: Option<Res<EditSession>>,
 ) {
-    if !active(&tool, &state) {
-        graveyards.hovered = None;
-        graveyards.pointed_zone = None;
-        return;
-    }
-    graveyards.pointed_zone = match (cursor.ground, session.as_deref()) {
-        (Some(at), Some(session)) => area_at(session, at).map(|area| zone_of(graveyards.areas.as_deref(), area)),
+    graveyards.pointed_zone = match (active(&tool, &state), cursor.ground, session.as_deref()) {
+        (true, Some(at), Some(session)) => area_at(session, at).map(|area| zone_of(graveyards.areas.as_deref(), area)),
         _ => None,
     };
-    if graveyards.drag.is_some_and(|drag| drag.moving) {
-        return;
-    }
-    if !crate::ui::over_the_world(&viewport, &wants, &windows) {
-        graveyards.hovered = None;
-        return;
-    }
-    let (Some(aim), Some(eye)) = (aim_of(&windows, &camera), eye(&camera)) else {
-        graveyards.hovered = None;
-        return;
-    };
-    graveyards.hovered = graveyards
-        .list
-        .iter()
-        .filter(|place| graveyards.selected == Some(place.id) || (Vec3::from(place.at) - eye).length() <= MARKER_RANGE)
-        .filter_map(|place| Some((aim.to_point(Vec3::from(place.at))?, place.id)))
-        .filter(|(pixels, _)| *pixels <= HANDLE_PIXELS * 1.5)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, id)| id);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -506,7 +466,7 @@ fn press(
         return;
     }
     let Some(session) = session.as_mut() else { return };
-    match (graveyards.armed, graveyards.hovered) {
+    match (graveyards.armed, graveyards.points.hovered) {
         (Armed::NewPlace, _) => {
             if let Some(at) = cursor.surface {
                 graveyards.armed = Armed::Nothing;
@@ -515,7 +475,7 @@ fn press(
             }
         }
         (Armed::LinkZone, _) => {
-            let (Some(zone), Some(id)) = (graveyards.pointed_zone, graveyards.selected) else {
+            let (Some(zone), Some(id)) = (graveyards.pointed_zone, graveyards.points.selected) else {
                 session.status = "no open ground with an area under the pointer".to_string();
                 return;
             };
@@ -525,77 +485,9 @@ fn press(
             };
             session.status = line;
         }
-        (Armed::Nothing, Some(id)) => {
-            let pointer = windows.single().ok().and_then(Window::cursor_position).unwrap_or_default();
-            graveyards.selected = Some(id);
-            graveyards.confirm_remove = None;
-            graveyards.drag = Some(Drag {
-                id,
-                pressed_at: pointer,
-                moving: false,
-                grab: None,
-            });
-        }
+        (Armed::Nothing, Some(id)) => graveyards.points.grab(id, &windows),
         (Armed::Nothing, None) => {}
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn drag(
-    mut graveyards: ResMut<Graveyards>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    tool: Res<Tool>,
-    state: Res<crate::playtest::Playtest>,
-    time: Res<Time>,
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-    mut session: Option<ResMut<EditSession>>,
-) {
-    if !active(&tool, &state) || !buttons.pressed(MouseButton::Left) {
-        graveyards.drag = None;
-        return;
-    }
-    let Some(mut held) = graveyards.drag else { return };
-    let Some(pointer) = windows.single().ok().and_then(Window::cursor_position) else {
-        return;
-    };
-    if !held.moving {
-        if pointer.distance(held.pressed_at) < DRAG_PIXELS {
-            return;
-        }
-        held.moving = true;
-    }
-    let Some(session) = session.as_mut() else { return };
-    let Some(place) = graveyards.place(held.id).cloned() else {
-        graveyards.drag = None;
-        return;
-    };
-    let from = Vec3::from(place.at);
-    let vertical = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-    let Some((origin, direction)) = crate::pick::ray(&windows, &camera) else {
-        return;
-    };
-    let hit = match vertical {
-        false => crate::pick::meets_plane(origin, direction, from.z),
-        true => crate::pick::meets_upright_plane(origin, direction, from),
-    };
-    let Some(hit) = hit else { return };
-    let grab = match held.grab {
-        Some((grab, was_vertical)) if was_vertical == vertical => grab,
-        _ => {
-            held.grab = Some((from - hit, vertical));
-            graveyards.drag = Some(held);
-            return;
-        }
-    };
-    let to = match vertical {
-        false => Vec3::new(hit.x + grab.x, hit.y + grab.y, from.z),
-        true => Vec3::new(from.x, from.y, hit.z + grab.z),
-    };
-    graveyards.drag = Some(held);
-    move_place(session, &place, to, time.elapsed_secs_f64());
-    graveyards.stale();
 }
 
 fn keys(
@@ -613,25 +505,18 @@ fn keys(
     if keys.just_pressed(KeyCode::Escape) {
         if graveyards.armed != Armed::Nothing {
             graveyards.armed = Armed::Nothing;
-        } else if graveyards.confirm_remove.is_some() {
-            graveyards.confirm_remove = None;
+        } else if graveyards.points.confirm_remove.is_some() {
+            graveyards.points.confirm_remove = None;
         } else {
-            graveyards.selected = None;
+            graveyards.points.selected = None;
         }
     }
     if !keys.just_pressed(KeyCode::Delete) {
         return;
     }
-    let (Some(id), Some(session)) = (graveyards.selected, session.as_mut()) else {
-        return;
-    };
-    if graveyards.is_shipped(id) && graveyards.confirm_remove != Some(id) {
-        graveyards.confirm_remove = Some(id);
-        session.status = format!("graveyard {id} is a shipped graveyard: confirm the removal in the panel");
-        return;
+    if let Some(session) = session.as_mut() {
+        points::delete_selected(&mut *graveyards, session, time.elapsed_secs_f64());
     }
-    let line = remove_place(session, &mut graveyards, id, time.elapsed_secs_f64());
-    session.status = line;
 }
 
 /// Draw the places near the camera: a dome on the ground with a post and a
@@ -650,27 +535,25 @@ fn draw(
     if !active(&tool, &state) {
         return;
     }
-    let (Some(eye), Some(session)) = (eye(&camera), session) else {
+    let (Some(eye), Some(session)) = (points::eye(&camera), session) else {
         return;
     };
     let bevy = |p: Vec3| axes::to_bevy(p.to_array());
     let linked: HashSet<u32> = graveyards
-        .held
-        .iter()
+        .held()
+        .into_iter()
         .flat_map(|held| held.links.iter().map(|link| link.safe_loc))
         .collect();
-    for place in &graveyards.list {
+    for place in &graveyards.points.list {
         let at = Vec3::from(place.at);
-        let selected = graveyards.selected == Some(place.id);
-        if !selected && (at - eye).length() > MARKER_RANGE {
+        if !graveyards.points.near(place, eye, MARKER_RANGE) {
             continue;
         }
-        let colour = match (selected, graveyards.hovered == Some(place.id)) {
-            (true, _) => Color::WHITE,
-            (false, true) => Color::srgb(1.0, 1.0, 0.8),
+        let colour = match graveyards.points.highlight(place.id) {
+            Some(colour) => colour,
             // A place no zone links to is never used by the server.
-            _ if graveyards.held.is_some() && !linked.contains(&place.id) => Color::srgb(0.6, 0.6, 0.65),
-            _ => Color::srgb(0.55, 0.8, 1.0),
+            None if graveyards.held().is_some() && !linked.contains(&place.id) => Color::srgb(0.6, 0.6, 0.65),
+            None => Color::srgb(0.55, 0.8, 1.0),
         };
         let radius = marks.visible_radius(bevy(at), MARKER_RADIUS);
         marks.dome(bevy(at), radius, colour, Look::Ghosted);
@@ -680,7 +563,7 @@ fn draw(
         // A cross at the top, as the world map draws a spirit healer.
         let arm = radius * 1.2;
         marks.tube(bevy(top - Vec3::X * arm), bevy(top + Vec3::X * arm), post, colour, Look::Ghosted);
-        if let Some((facing, _)) = graveyards.facing(&session.server_edits, place.id) {
+        if let Some((facing, _)) = graveyards.facing(&session.rows.edits, place.id) {
             let ahead = at + Vec3::new(facing.cos(), facing.sin(), 0.0) * radius * 4.0;
             let lift = Vec3::Z * radius * 0.3;
             marks.arrow(bevy(at + lift), bevy(ahead + lift), post, colour, Look::Ghosted);
@@ -693,7 +576,7 @@ fn draw(
             marks.dome(bevy(pointer), radius, Color::srgb(0.55, 0.8, 1.0), Look::Ghosted);
         }
         Armed::LinkZone => {
-            if let Some(place) = graveyards.selected.and_then(|id| graveyards.place(id)) {
+            if let Some(place) = graveyards.points.selected.and_then(|id| graveyards.place(id)) {
                 marks.line(bevy(Vec3::from(place.at)), bevy(pointer), Color::srgb(0.5, 1.0, 0.5), Look::Ghosted);
             }
         }
@@ -701,23 +584,14 @@ fn draw(
     }
 }
 
-fn fly(mut graveyards: ResMut<Graveyards>, mut camera: ResMut<crate::camera::EditorCamera>) {
-    let Some(at) = graveyards.fly_to.take() else {
-        return;
-    };
-    camera.target = at;
-    camera.wants_the_ground = false;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn held(links: Vec<Link>) -> Graveyards {
-        Graveyards {
-            held: Some(Held { links, facings: HashMap::new() }),
-            ..Graveyards::default()
-        }
+        let mut graveyards = Graveyards::default();
+        graveyards.reads.insert((), Held { links, facings: HashMap::new() });
+        graveyards
     }
 
     #[test]

@@ -222,3 +222,9 @@ fn probe_rows(
         });
     }
 }
+
+/// The Measure tool's inspector panel.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, cursor, tables, .. } = subject;
+    measure(ui, &mut editing.measuring, session, cursor, tables);
+}

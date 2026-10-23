@@ -134,7 +134,6 @@ pub(crate) fn draw<const SLOT: usize>(
         });
 
     let mut switch_to: Option<Tool> = None;
-    let hour = editing.clock.half_minutes;
     let lent = editing.popout.browser_lent(SLOT, *tool);
     egui::CentralPanel::default_margins()
         .frame(egui::Frame::NONE.fill(theme::SHELL))
@@ -173,7 +172,6 @@ pub(crate) fn draw<const SLOT: usize>(
                     now,
                     wireframe: None,
                     particles: None,
-                    hour,
                     switch_to: &mut switch_to,
                 },
             );
@@ -192,7 +190,6 @@ pub(crate) fn draw<const SLOT: usize>(
                 now,
                 wireframe: None,
                 particles: None,
-                hour,
                 switch_to: &mut switch_to,
             },
         );

@@ -1,55 +1,50 @@
-//! What the Creatures and Game Objects workspaces draw the same way: the
-//! docked list on the left with its heading and search box, the block that
-//! says what the project changes, and the head of the form.
+//! What the Creatures, Game Objects, Items and Quests workspaces draw the
+//! same way: the docked list on the left with its heading and search box, the
+//! block that says what the project changes, and the head of the form.
 //!
-//! The workspaces themselves are [`super::creature_data`] and
-//! [`super::gameobject_data`]; the list they draw is
-//! [`crate::subjects::listing::Listing`]. Nothing here names either subject.
+//! The Creatures and Game Objects workspaces are [`super::templates`], and
+//! the list they draw is
+//! [`crate::subjects::listing::Listing`]; the generic functions here take it.
+//! [`super::items`] and [`super::quests`] keep their own lists and use the
+//! parts that do not: [`frame`], [`heading`], [`search_box`], [`shown_count`],
+//! [`reveal_in`] and [`edits_block`]. Nothing here names a subject.
 
 use bevy_egui::egui;
 
 use crate::ui::widgets::theme;
-use crate::tools::spawns::creatures::TemplateSubject;
+use crate::tools::spawns::spawn::TemplateSubject;
 use crate::subjects::listing::{Listed, Listing};
 use vale_mangos::row::Life;
-
-/// How wide the list is at first. The item list's width, for the same rows.
-const LIST_WIDTH: f32 = 320.0;
-
-/// The gap between the list and the form, and above both; `ui::subjects::items` gives
-/// the reasons.
-const FORM_GAP: f32 = 12.0;
-const TOP_GAP: f32 = 10.0;
 
 /// The height of one list row, the editor's own.
 pub const ROW_HEIGHT: f32 = theme::LIST_ROW;
 
 /// Paint the workspace's ground, dock the list on the left and draw the form
-/// in what is left. The list and the form both take the subject, so each is a
-/// function over it rather than a closure.
+/// in what is left. The list and the form both take the subject, so each is
+/// handed it rather than capturing it.
 pub fn frame<S>(
     ui: &mut egui::Ui,
     subject: &mut S,
     id: &'static str,
-    list: fn(&mut egui::Ui, &mut S),
-    form: fn(&mut egui::Ui, &mut S),
+    list: impl FnOnce(&mut egui::Ui, &mut S),
+    form: impl FnOnce(&mut egui::Ui, &mut S),
 ) {
     // The world is drawn behind the workspace, so a strip left unpainted
     // would show it through.
     let all = ui.available_rect_before_wrap();
     ui.painter().rect_filled(all, 0.0, theme::SHELL);
     egui::Panel::left(id)
-        .default_size(LIST_WIDTH)
+        .default_size(theme::LIST_WIDTH)
         .min_size(240.0)
         .max_size(520.0)
         .resizable(true)
         .frame(egui::Frame::new().fill(theme::PANEL).inner_margin(8.0))
         .show(ui, |ui| {
-            ui.add_space(TOP_GAP - 8.0);
+            ui.add_space(theme::TOP_GAP - 8.0);
             list(ui, subject);
         });
     let rect = ui.available_rect_before_wrap();
-    let inset = egui::Rect::from_min_max(rect.min + egui::vec2(FORM_GAP, TOP_GAP), rect.max);
+    let inset = egui::Rect::from_min_max(rect.min + egui::vec2(theme::FORM_GAP, theme::TOP_GAP), rect.max);
     let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(inset).layout(*ui.layout()));
     form(&mut inner, subject);
 }
@@ -57,17 +52,30 @@ pub fn frame<S>(
 /// The list's heading: the workspace's name, the row count, and why there is
 /// nothing when there is nothing. Answers whether the list can be drawn.
 pub fn head<K: Listed>(ui: &mut egui::Ui, name: &str, list: &Listing<K>) -> bool {
+    heading(ui, name, K::TABLE, list.count(), list.trouble.as_deref(), list.is_read())
+}
+
+/// [`head`] for a list that is not a [`Listing`]: the name, the table, how
+/// many rows it has, the read's failure if it failed, and whether it has been
+/// read.
+pub fn heading(
+    ui: &mut egui::Ui,
+    name: &str,
+    table: &str,
+    count: usize,
+    trouble: Option<&str>,
+    read: bool,
+) -> bool {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(name).strong().size(15.0).color(theme::INK));
-        ui.label(theme::number(format!("{} rows", list.count())));
+        ui.label(theme::number(format!("{count} rows")));
     })
     .response
     .on_hover_text(format!(
-        "{} as the server loads it: one row per entry, at the highest content patch \
-         at or below the server's patch.",
-        K::TABLE
+        "{table} as the server loads it: one row per entry, at the highest content patch \
+         at or below the server's patch."
     ));
-    if let Some(trouble) = list.trouble.clone() {
+    if let Some(trouble) = trouble {
         ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
         theme::note(
             ui,
@@ -76,8 +84,8 @@ pub fn head<K: Listed>(ui: &mut egui::Ui, name: &str, list: &Listing<K>) -> bool
         );
         return false;
     }
-    if !list.is_read() {
-        theme::waiting(ui, format!("reading {}\u{2026}", K::TABLE));
+    if !read {
+        theme::waiting(ui, format!("reading {table}\u{2026}"));
         return false;
     }
     true
@@ -91,21 +99,31 @@ pub fn search<K: Listed>(
     edits: &vale_mangos::row::Edits,
     revision: u64,
 ) -> Vec<usize> {
+    search_box(ui, &mut list.query, hint);
+    let matches = list.matches(edits, revision).to_vec();
+    shown_count(ui, matches.len());
+    matches
+}
+
+/// The search box over a list, as wide as the list.
+pub fn search_box(ui: &mut egui::Ui, query: &mut String, hint: &str) {
     ui.add_space(4.0);
     let width = ui.available_width();
     ui.add(
-        egui::TextEdit::singleline(&mut list.query)
+        egui::TextEdit::singleline(query)
             .hint_text(hint)
             .desired_width(width),
     );
-    let matches = list.matches(edits, revision).to_vec();
+}
+
+/// How many rows match, under the search box.
+pub fn shown_count(ui: &mut egui::Ui, count: usize) {
     ui.label(
-        egui::RichText::new(format!("{} shown", matches.len()))
+        egui::RichText::new(format!("{count} shown"))
             .small()
             .color(theme::INK_FAINT),
     );
     ui.add_space(4.0);
-    matches
 }
 
 /// The index of the open row among the matches, when the list should scroll
@@ -123,6 +141,29 @@ pub fn reveal<K: Listed>(list: &mut Listing<K>, matches: &[usize]) -> Option<usi
         .position(|&index| list.at(index).is_some_and(|row| row.entry() == entry));
     if found.is_some() {
         list.revealed = Some(entry);
+    }
+    found
+}
+
+/// [`reveal`] for a list that is not a [`Listing`]: `open` and `revealed`
+/// are the list's two entries, and `entry_at` answers the entry of a row by
+/// its index.
+pub fn reveal_in(
+    open: Option<u32>,
+    revealed: &mut Option<u32>,
+    matches: &[usize],
+    entry_at: impl Fn(usize) -> Option<u32>,
+) -> Option<usize> {
+    if open == *revealed {
+        return None;
+    }
+    let Some(entry) = open else {
+        *revealed = None;
+        return None;
+    };
+    let found = matches.iter().position(|&index| entry_at(index) == Some(entry));
+    if found.is_some() {
+        *revealed = Some(entry);
     }
     found
 }

@@ -25,6 +25,9 @@ pub struct Subject<'a> {
     pub now: f64,
     /// The top bar's Server… popover, which holds Apply and Put back.
     pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    /// Where the Fly to button sends its request. See
+    /// [`crate::camera::FlyTo`].
+    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
 pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
@@ -34,6 +37,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         assets,
         now,
         server_panel,
+        fly,
     } = subject;
     for table in [places::SAFE_LOCS, tables::zones::area::TABLE] {
         if !session.open_table(assets, table) {
@@ -42,7 +46,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         }
     }
 
-    theme::note(ui, format!("{} graveyards on this map", graveyards.list.len()));
+    theme::note(ui, format!("{} graveyards on this map", graveyards.points.list.len()));
     ui.add_space(4.0);
     controls(ui, graveyards);
 
@@ -50,11 +54,11 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         .id_salt("graveyards")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            match graveyards.selected.and_then(|id| graveyards.place(id).cloned()) {
+            match graveyards.points.selected.and_then(|id| graveyards.place(id).cloned()) {
                 Some(place) => {
                     ui.add_space(4.0);
                     theme::heading(ui, &format!("Graveyard {}", place.id));
-                    place_block(ui, session, graveyards, &place, now);
+                    place_block(ui, session, graveyards, fly, &place, now);
                     ui.add_space(6.0);
                     theme::heading(ui, "Server rows");
                     server_half(ui, session, graveyards, &place, now);
@@ -103,7 +107,7 @@ fn controls(ui: &mut egui::Ui, graveyards: &mut Graveyards) {
         }
         let linking = graveyards.armed == Armed::LinkZone;
         let link = ui.add_enabled(
-            graveyards.selected.is_some() && graveyards.held.is_some(),
+            graveyards.points.selected.is_some() && graveyards.held().is_some(),
             egui::Button::selectable(linking, "Link zone"),
         );
         if link
@@ -133,7 +137,14 @@ fn controls(ui: &mut egui::Ui, graveyards: &mut Graveyards) {
 }
 
 /// The place's name and position.
-fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Graveyards, place: &SafeLoc, now: f64) {
+fn place_block(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    graveyards: &mut Graveyards,
+    fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    place: &SafeLoc,
+    now: f64,
+) {
     let mut name = place.name.clone();
     theme::row(ui, "name", |ui| {
         if ui
@@ -158,7 +169,7 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
     }
     ui.horizontal(|ui| {
         if ui.button("Fly to").clicked() {
-            graveyards.fly_to(place.at);
+            fly.write(crate::camera::FlyTo::at(place.at.into()));
         }
         if ui
             .button("Snap to ground")
@@ -170,7 +181,7 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
                 graveyards.stale();
             }
         }
-        let shipped = graveyards.is_shipped(place.id);
+        let shipped = graveyards.points.is_shipped(place.id);
         let remove = ui.button(match shipped {
             true => "Remove\u{2026}",
             false => "Remove",
@@ -183,7 +194,7 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
             .clicked()
         {
             match shipped {
-                true => graveyards.confirm_remove = Some(place.id),
+                true => graveyards.points.confirm_remove = Some(place.id),
                 false => {
                     let line = graveyards::remove_place(session, graveyards, place.id, now);
                     session.status = line;
@@ -191,7 +202,7 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
             }
         }
     });
-    if graveyards.confirm_remove == Some(place.id) {
+    if graveyards.points.confirm_remove == Some(place.id) {
         ui.label(
             egui::RichText::new(
                 "This is a shipped graveyard. Each zone linked to it then sends ghosts to \
@@ -206,7 +217,7 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
                 session.status = line;
             }
             if ui.button("Cancel").clicked() {
-                graveyards.confirm_remove = None;
+                graveyards.points.confirm_remove = None;
             }
         });
     }
@@ -214,16 +225,16 @@ fn place_block(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
 
 /// The facing and the links.
 fn server_half(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Graveyards, place: &SafeLoc, now: f64) {
-    if let Some(trouble) = &graveyards.trouble {
+    if let Some(trouble) = graveyards.trouble() {
         theme::note(ui, format!("The server's rows could not be read: {trouble}"));
         return;
     }
-    if graveyards.held.is_none() {
+    if graveyards.held().is_none() {
         theme::note(ui, "reading game_graveyard_zone and world_safe_locs_facing\u{2026}");
         return;
     }
     let id = place.id;
-    let edits = session.server_edits.clone();
+    let edits = session.rows.edits.clone();
     let facing = graveyards.facing(&edits, id);
     let mut degrees = facing.map_or(0.0, |(radians, _)| radians.to_degrees());
     theme::row(ui, "facing", |ui| {
@@ -265,7 +276,7 @@ fn server_half(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
                 if ui.small_button("Cancel removal").clicked() {
                     let key = shown.link.key();
                     let label = format!("{} {}", vale_mangos::graveyard::ZONE, key.text());
-                    let gesture = crate::session::rows::Gesture { label: "Cancel graveyard link removal", subject: &label, now };
+                    let gesture = crate::server::store::Gesture { label: "Cancel graveyard link removal", subject: &label, now };
                     session.set_server_row(vale_mangos::graveyard::ZONE, &key, None, Some(gesture));
                 }
                 return;
@@ -295,4 +306,20 @@ fn server_half(ui: &mut egui::Ui, session: &mut EditSession, graveyards: &mut Gr
             ui.label(egui::RichText::new(fault).size(theme::SMALL).color(theme::WARN));
         }
     }
+}
+
+/// The graveyard tool's inspector panel, on the trigger tool's terms.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, now, server_panel, .. } = subject;
+    draw(
+        ui,
+        Subject {
+            session,
+            graveyards: &mut editing.graveyards,
+            assets,
+            now,
+            server_panel,
+            fly: &mut editing.fly,
+        },
+    );
 }

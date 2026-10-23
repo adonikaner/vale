@@ -452,7 +452,7 @@ mod tests {
 /// terms and for the same reason: the panel is two text fields and a button,
 /// none of which a `--shot` run can press, so without this the only thing a
 /// script could do with a sweep is photograph an empty form. It finds and never
-/// replaces — see [`crate::args::Args::find`].
+/// replaces — see [`crate::args::tools::Tools::find`].
 ///
 /// The report goes to the log as well as to the status line, because a run that
 /// quits on `--after` is read from its output rather than from its last frame.
@@ -467,10 +467,10 @@ fn scripted(
     if *done {
         return;
     }
-    let (Some(asked), Some(session)) = (args.find.clone(), session) else {
+    let (Some(asked), Some(session)) = (args.tools.find.clone(), session) else {
         // No flag is nothing to do; no session yet is a frame too early, and
         // the session is inserted within the first few.
-        *done = args.find.is_none();
+        *done = args.tools.find.is_none();
         return;
     };
     if *tool != crate::tools::Tool::Sweep {
@@ -483,7 +483,7 @@ fn scripted(
 
 /// …and say what it came to, once it is over.
 fn report(sweep: Res<Sweep>, args: Res<crate::args::Args>, mut said: Local<bool>) {
-    if *said || args.find.is_none() || sweep.running.is_some() {
+    if *said || args.tools.find.is_none() || sweep.running.is_some() {
         return;
     }
     let Some(report) = &sweep.last else { return };

@@ -3,8 +3,8 @@
 //!
 //! Drawn only under the tool that owns the population, and only while that
 //! tool's own pick reports a spawn under the pointer
-//! ([`crate::tools::spawns::creatures::Creatures::hovered`],
-//! [`crate::tools::spawns::gameobjects::GameObjects::hovered`]). Those picks already
+//! ([`crate::tools::spawns::spawn::SpawnTool::hovered`], for creatures and
+//! game objects alike). Those picks already
 //! clear themselves over a panel, during a drag and while placing, so the card
 //! inherits all three conditions and adds none of its own.
 //!
@@ -148,7 +148,7 @@ fn object_card(
     let title = match &spawn.known {
         Some(known) => {
             rows.push(("Type", known.type_word()));
-            let locks = crate::ui::tools::spawns::gameobjects::locks(&mut objects.locks, assets);
+            let locks = crate::ui::tools::spawns::gameobjects::locks(&mut objects.own.locks, assets);
             match crate::ui::tools::spawns::gameobjects::gathered_by(locks, known) {
                 Some(node) => rows.push(("Gathering", node)),
                 None => {

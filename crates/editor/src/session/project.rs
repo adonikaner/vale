@@ -9,7 +9,6 @@ use bevy::prelude::*;
 use std::sync::{Arc, RwLock};
 use super::{EditSession, overlay_over};
 use super::tiles::claimed_tiles;
-use super::rows::{read_server_edits, read_server_paths, read_server_scripts};
 use crate::places::map_directories;
 
 impl EditSession {
@@ -102,13 +101,7 @@ impl EditSession {
         // old one's exactly as it does for the tiles and the tables — without
         // this, the rows one project changes would be applied under another
         // project's name on its first save.
-        self.server_edits = read_server_edits(&self.project);
-        self.server_paths = read_server_paths(&self.project);
-        self.server_scripts = read_server_scripts(&self.project);
-        self.server_edit_revision += 1;
-        self.server_edits_unsaved = false;
-        self.server_paths_unsaved = false;
-        self.server_scripts_unsaved = false;
+        self.rows.reread(&self.project);
         // A different project's rows are a different set of statements, so
         // what the last one applied says nothing about whether this one has to.
         self.applied_signature = None;

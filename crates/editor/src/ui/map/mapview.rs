@@ -322,8 +322,7 @@ pub fn draw(
     let mut asked = None;
     let mut open = view.open;
 
-    let response = egui::Window::new(format!("Map \u{2014} {}", session.map))
-        .id(egui::Id::new("map-window"))
+    let response = theme::window(format!("Map \u{2014} {}", session.map), "map-window")
         .open(&mut open)
         // Within a 720-point screen under the bar: a window taller than the
         // screen is moved up over the bar to fit, and then covers the button
@@ -332,14 +331,6 @@ pub fn draw(
         // Below the top bar, which holds the button that opens the window. A
         // window covering that button hides the control that closes it.
         .default_pos([40.0, 52.0])
-        .resizable(true)
-        .frame(
-            egui::Frame::default()
-                .fill(theme::SHELL)
-                .stroke(egui::Stroke::new(1.0, theme::LINE))
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::same(8)),
-        )
         .show(ctx, |ui| {
             asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile);
         });

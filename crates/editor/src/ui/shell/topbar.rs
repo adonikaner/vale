@@ -381,7 +381,7 @@ fn project(
     // label read "Saved" and the button was disabled while a creature or
     // waypoint edit was outstanding, which left Ctrl+S as the only way to
     // write it and nothing on screen saying a save was owed. See
-    // `EditSession::server_unsaved`.
+    // `ServerRows::unsaved`.
     let tiles = session.unsaved.len();
     let tables = session.unsaved_tables.len();
     let mut parts: Vec<String> = Vec::new();
@@ -391,7 +391,7 @@ fn project(
     if tables > 0 {
         parts.push(plural(tables, "table", "tables"));
     }
-    if session.server_unsaved() {
+    if session.rows.unsaved() {
         // Not a count: the two stores hold rows and whole paths, which do not
         // add up to one number. The label says only that a save is owed.
         parts.push("server rows".to_string());

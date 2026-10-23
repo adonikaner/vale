@@ -531,11 +531,10 @@ pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard,
             // list, taken from another spell, made blank, or copied so
             // that it is this spell's own.
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .small_button("choose\u{2026}")
-                    .on_hover_text("Choose a SpellVisual row from a list. Clicking a row previews it.")
-                    .clicked()
-                {
+                if crate::ui::widgets::reference::choose_button(
+                    ui,
+                    "Choose a SpellVisual row from a list. Clicking a row previews it.",
+                ) {
                     work.browser.modal = Some(Modal::Pick {
                         table: "Spell".to_string(),
                         record,
@@ -778,11 +777,10 @@ fn lane_buttons(
     kit: Option<u32>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        if ui
-            .small_button("choose\u{2026}")
-            .on_hover_text("Choose a SpellVisualKit for this lane from a list. Clicking a row previews it.")
-            .clicked()
-        {
+        if crate::ui::widgets::reference::choose_button(
+            ui,
+            "Choose a SpellVisualKit for this lane from a list. Clicking a row previews it.",
+        ) {
             work.browser.modal = Some(Modal::Pick {
                 table: "SpellVisual".to_string(),
                 record: visual_row,

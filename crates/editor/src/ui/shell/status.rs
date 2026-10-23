@@ -193,7 +193,7 @@ pub fn draw(
         // Without the mark, a creature edit could sit unsaved while this bar
         // read `unsaved 0`.
         let unsaved = session.unsaved.len();
-        let owed = session.server_unsaved();
+        let owed = session.rows.unsaved();
         let text = match (unsaved, owed) {
             (n, false) => n.to_string(),
             (n, true) => format!("{n}+rows"),

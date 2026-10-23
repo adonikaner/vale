@@ -85,7 +85,7 @@ pub fn open_tables(
         // `--table` on one of those and then ignored it, which left the run on
         // `Spell`.
         // A name that is not a table logs a warning, as `--without` does.
-        match (args.table.as_deref(), browser.seeded) {
+        match (args.tables.table.as_deref(), browser.seeded) {
             (Some(table), false) => match table_named(table) {
                 Some(name) => browser.look_at(name),
                 None => {
@@ -144,15 +144,15 @@ pub fn open_tables(
     }
     browser.index(&session, &open);
 
-    // `--row <id>`, once the table it names is here. See `crate::args::Args::row`.
-    if let (Some(id), false) = (args.row, browser.seeded) {
+    // `--row <id>`, once the table it names is here. See `crate::args::tables::Tables::row`.
+    if let (Some(id), false) = (args.tables.row, browser.seeded) {
         browser.seeded = true;
-        if args.story {
+        if args.tables.story {
             browser.view = crate::ui::tables::View::Storyboard;
         }
         // The stage holds the seek until the actors are spawned, then pauses
         // at that time; see `Stage::seek`.
-        if let Some(seek) = args.seek {
+        if let Some(seek) = args.tables.seek {
             stage.seek(seek);
         }
         match session.table(&open).and_then(|table| table.row_of(id)) {
@@ -160,7 +160,7 @@ pub fn open_tables(
                 browser.open = Some(record);
                 // `--lab` on an effect row opens the attachment lab on it,
                 // which otherwise requires a press on the form.
-                if args.lab && open == "SpellVisualEffectName" {
+                if args.tables.lab && open == "SpellVisualEffectName" {
                     crate::ui::preview::lab::open_on(&mut lab, &mut stage, &mut browser, &session, record);
                 }
                 // `--bits <column>` opens the mask dialog on that column. The
@@ -168,7 +168,7 @@ pub fn open_tables(
                 // cannot press. A name that is not a mask column of this table
                 // logs a warning instead of opening nothing, as `--without`
                 // does.
-                if let Some(wanted) = args.bits.as_deref() {
+                if let Some(wanted) = args.tables.bits.as_deref() {
                     match schema::for_table(&open).and_then(|schema| {
                         schema.columns.iter().find(|column| {
                             column.name.eq_ignore_ascii_case(wanted.trim())
@@ -193,7 +193,7 @@ pub fn open_tables(
                 // column, for the same reason. The picker selects the row
                 // the column holds, so one over the spell chain opens
                 // playing it.
-                if let Some(wanted) = args.choose.as_deref() {
+                if let Some(wanted) = args.tables.choose.as_deref() {
                     match schema::for_table(&open).and_then(|schema| {
                         schema.columns.iter().find_map(|column| match column.kind {
                             Kind::Reference(points_at)
@@ -247,7 +247,7 @@ pub fn open_tables(
                 }
                 // `--like <spell id>` opens the dialog that takes another
                 // spell's look, with that spell selected.
-                if let (Some(like), true) = (args.like, open == "Spell") {
+                if let (Some(like), true) = (args.tables.like, open == "Spell") {
                     browser.modal = Some(Modal::LooksLike { record });
                     browser.pick_query.clear();
                     browser.pick_selected = Some(like);
@@ -255,7 +255,7 @@ pub fn open_tables(
                 // `--browse` opens the model browser over the row. It is
                 // otherwise two presses in, so a scripted `--shot` could not
                 // reach it.
-                if args.browse && open == "SpellVisualEffectName" {
+                if args.tables.browse && open == "SpellVisualEffectName" {
                     browser.modal = Some(Modal::Models {
                         record,
                         field: vale_assets::tables::spell::fields::EFFECT_MODEL,
@@ -274,7 +274,7 @@ pub fn open_tables(
     /// How long after the row opens `--set` writes its field.
     const SET_AFTER: f64 = 6.0;
     if let (Some((wanted, value)), Some(record), false) =
-        (args.set.as_ref(), browser.open, scripted.1)
+        (args.tables.set.as_ref(), browser.open, scripted.1)
     {
         let now = time.elapsed_secs_f64();
         let since = *scripted.0.get_or_insert(now);

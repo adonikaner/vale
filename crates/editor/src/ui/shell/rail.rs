@@ -58,9 +58,10 @@ use bevy_egui::egui;
 
 use super::icons::Icons;
 use crate::ui::widgets::theme;
-use crate::tools::{Surface, Tool};
+use crate::tools::{Place, Surface, Tool, SPECS};
 
-/// One subject: its name, its tool, and what it does.
+/// One subject: its name, its tool, and what it does. Read from the tool's
+/// row of [`SPECS`].
 struct Subject {
     /// The label, and the key [`super::icons`] looks an icon up by.
     name: &'static str,
@@ -69,294 +70,54 @@ struct Subject {
     about: &'static str,
 }
 
-const fn s(name: &'static str, tool: Tool, about: &'static str) -> Subject {
-    Subject { name, tool, about }
+/// The rail's headings, in the order it draws them. A tile names its
+/// heading in [`Place::Rail`].
+const HEADINGS: [&str; 3] = ["Terrain", "World", "Spawns"];
+
+/// The tiles under `heading`, in the order the rail draws them. A tile is
+/// labelled with its tool's name.
+fn tiles(heading: &str) -> Vec<Subject> {
+    SPECS
+        .iter()
+        .filter(|spec| matches!(spec.place, Place::Rail(under) if under == heading))
+        .map(|spec| Subject { name: spec.name, tool: spec.tool, about: spec.about })
+        .collect()
 }
 
-/// The rail, in the order it is drawn.
-const GROUPS: [(&str, &[Subject]); 3] = [
-    (
-        "Terrain",
-        &[
-            s(
-                "Terrain",
-                Tool::Terrain,
-                "Raises, lowers, flattens and smooths the ground. Writes MCVT, the \
-                 145 heights of a chunk.",
-            ),
-            s(
-                "Grade",
-                Tool::Grade,
-                "Builds a straight ramp between two points. Click a start, click an \
-                 end, set the width, then apply.",
-            ),
-            s(
-                "Road",
-                Tool::Road,
-                "Builds a road along a run of points: grades the ground along it \
-                 and paints a surface texture and a verge texture. Click to add \
-                 points, then apply.",
-            ),
-            s(
-                "Shading",
-                Tool::Shading,
-                "Paints MCCV, the per-vertex colour of the ground. Each value is a \
-                 multiplier: 1.00 leaves a vertex unchanged. The reference client \
-                 does not read MCCV.",
-            ),
-            s(
-                "Textures",
-                Tool::Textures,
-                "Paints tilesets onto the ground. A painted tileset becomes a \
-                 texture layer of every chunk the brush covers.",
-            ),
-            s(
-                "Holes",
-                Tool::Holes,
-                "Cuts holes in the ground, sixteen squares per chunk. Click cuts a \
-                 square; shift-click fills it.",
-            ),
-            s(
-                "Water",
-                Tool::Water,
-                "Paints MCLQ water at a set level. Shift clears it. The level can be \
-                 taken from the water already under the pointer.",
-            ),
-            s(
-                "Areas",
-                Tool::Areas,
-                "Assigns an AreaTable row to each chunk. The client takes the zone \
-                 and sub-area a character is in from this field.",
-            ),
-            s(
-                "Chunks",
-                Tool::Chunks,
-                "Selects chunks: click one, drag a block on the ground, shift adds. \
-                 Then writes one area, base texture, hole mask or impassable flag \
-                 to all of them as one undo entry.",
-            ),
-        ],
-    ),
-    (
-        "World",
-        &[
-            s(
-                "Doodads",
-                Tool::Doodads,
-                "MDDF: one record per placed M2 model. Select, move, rotate, \
-                 scale.",
-            ),
-            s(
-                "WMO",
-                Tool::Wmos,
-                "MODF: one record per placed WMO building. Select, move, rotate, \
-                 remove. No scale: the 1.12 record has no scale field.",
-            ),
-            s(
-                "Lights",
-                Tool::Lights,
-                "Light.dbc and the tables it references (sun, fill light, sky dome, \
-                 fog and water colour) per map and per zone. Each light is a \
-                 sphere in the world, selected and dragged like a doodad.",
-            ),
-            s(
-                "Taxi",
-                Tool::Flightpaths,
-                "The taxi network: TaxiNodes, TaxiPath and TaxiPathNode. Nodes and \
-                 the paths between them are drawn on the map; drag a node or a \
-                 point, add points, connect two nodes, create a node.",
-            ),
-            s(
-                "Triggers",
-                Tool::Triggers,
-                "AreaTrigger.dbc: the spheres and boxes the client reports entering, \
-                 and the server's action for each: a teleport, an inn, a quest \
-                 objective. Drag a trigger, create one, change its shape.",
-            ),
-            s(
-                "Graveyards",
-                Tool::Graveyards,
-                "WorldSafeLocs.dbc: the graveyards where a released spirit appears. \
-                 Drag a graveyard, create one, and link it to the zones it serves \
-                 (game_graveyard_zone rows in vmangos' database).",
-            ),
-            s(
-                "Sweep",
-                Tool::Sweep,
-                "Finds and replaces a texture, model or building path across every \
-                 tile of the map: for example, a tileset retired from a zone, or one \
-                 tree model replaced across a forest.",
-            ),
-        ],
-    ),
-    (
-        "Spawns",
-        &[
-            s(
-                "Creatures",
-                Tool::Creatures,
-                "Every creature spawn on the map, drawn at its position. Click one \
-                 to open the spawn and its creature_template. Rows in vmangos' \
-                 database, so this needs a database connection.",
-            ),
-            s(
-                "Objects",
-                Tool::GameObjects,
-                "Every game object spawn on the map (chests, doors, mining veins and \
-                 herbs, mailboxes, signs), drawn at its position. Click one to open \
-                 the spawn and its gameobject_template. Rows in vmangos' \
-                 database, so this needs a database connection.",
-            ),
-        ],
-    ),
-];
+/// The workspaces after *World*, in the order the top bar draws them, under
+/// the names the top bar gives them.
+fn bar() -> impl Iterator<Item = Subject> {
+    SPECS.iter().filter_map(|spec| match spec.place {
+        Place::Bar(name) => Some(Subject { name, tool: spec.tool, about: spec.about }),
+        _ => None,
+    })
+}
 
-/// The workspaces after *World*, in the order the top bar draws them.
-const WORKSPACES: [Subject; 8] = [
-    s(
-        "Spells",
-        Tool::Spells,
-        "Spell.dbc: 22,360 rows of 173 fields, named, typed and cross-referenced. \
-         The workspace replaces the viewport, because a spell has no place in the \
-         world.",
-    ),
-    s(
-        "Items",
-        Tool::Items,
-        "Items, item sets and item display info: item_template rows in vmangos' \
-         database, and ItemSet.dbc and ItemDisplayInfo.dbc, which are client files \
-         and need no database.",
-    ),
-    s(
-        "Quests",
-        Tool::Quests,
-        "quest_template (objectives, text and rewards) and the four relation tables \
-         that set which creatures and game objects start and end each quest. Rows \
-         in vmangos' database, so this needs a database connection.",
-    ),
-    s(
-        "Creatures",
-        Tool::CreatureData,
-        "Creature templates and creature display info: creature_template rows in \
-         vmangos' database, and the client's CreatureDisplayInfo, \
-         CreatureDisplayInfoExtra and CreatureModelData, which need no database.",
-    ),
-    s(
-        "Game Objects",
-        Tool::GameObjectData,
-        "Game object templates and game object display info: gameobject_template \
-         rows in vmangos' database, and the client's GameObjectDisplayInfo, which \
-         needs no database.",
-    ),
-    s(
-        "Zones",
-        Tool::Zones,
-        "AreaTable.dbc: zones and their sub-areas. Each row's name, parent zone, \
-         music and ambience, duel and rest flags, area level and exploration bit. \
-         Create a zone or sub-area here, then paint it onto the ground with the \
-         Areas tool. The server loads its copy from area_template at startup.",
-    ),
-    s(
-        "Tables",
-        Tool::Tables,
-        "Any DBC table: the 158 files of DBFilesClient\\, chosen from a list. A \
-         table with a schema opens as named, typed fields and any other as numbered \
-         fields. The workspace replaces the viewport.",
-    ),
-    s(
-        "Assets",
-        Tool::Assets,
-        "The files this project adds to the archives: imported textures, baked \
-         models and the rest. Import Texture turns a PNG, TGA or BLP picture into a \
-         BLP the 1.12.1 client reads. Every file here is listed in the editor's \
-         pickers and published with the project.",
-    ),
-];
-
-/// The entries of a workspace's menu: every part of a workspace of several
-/// parts, by the name the menu gives it. A workspace's menu lists its
-/// [`Tool::parts`] in their order, each under its name here.
-const PARTS: [Subject; 7] = [
-    s(
-        "Items",
-        Tool::Items,
-        "item_template: an item's stats, effects and price, with a preview of its \
-         display id. Rows in vmangos' database, so this needs a database connection.",
-    ),
-    s(
-        "Item Sets",
-        Tool::ItemSets,
-        "ItemSet.dbc: the items in each set and the set bonuses. A client file; it \
-         needs no database.",
-    ),
-    s(
-        "Item Display Info",
-        Tool::ItemDisplays,
-        "ItemDisplayInfo.dbc: an item's bag icon, the models it hangs on the wearer \
-         and the textures it paints on the body. A client file; it needs no database.",
-    ),
-    s(
-        "Creature Templates",
-        Tool::CreatureData,
-        "creature_template: every creature the server loads, searched by name, \
-         subname or entry, with every column of the open row, its model, and its \
-         quests, loot, events, spells, gossip, vendor and trainer windows. Rows in \
-         vmangos' database, so this needs a database connection.",
-    ),
-    s(
-        "Creature Display Info",
-        Tool::CreatureDisplays,
-        "CreatureDisplayInfo.dbc: a creature's model, scale and skins, with \
-         CreatureDisplayInfoExtra and CreatureModelData as two more tabs. A new skin \
-         for an existing model is a copied row with another texture. Client files; \
-         they need no database.",
-    ),
-    s(
-        "Game Object Templates",
-        Tool::GameObjectData,
-        "gameobject_template: every game object the server loads, searched by name, \
-         type or entry, with every column of the open row, its model, and its quest \
-         and loot windows. Rows in vmangos' database, so this needs a database \
-         connection.",
-    ),
-    s(
-        "Game Object Display Info",
-        Tool::ObjectDisplays,
-        "GameObjectDisplayInfo.dbc: a game object's model and its ten sounds. A \
-         client file; it needs no database.",
-    ),
-];
-
-/// A part's menu entry, from [`PARTS`].
-fn part(tool: Tool) -> Option<&'static Subject> {
-    PARTS.iter().find(|subject| subject.tool == tool)
+/// A part's menu entry: every part of a workspace of several parts, by the
+/// name the menu gives it. A workspace's menu lists its [`Tool::parts`] in
+/// their order, each under its name here.
+fn part(tool: Tool) -> Option<Subject> {
+    let spec = tool.spec();
+    spec.menu.map(|entry| Subject { name: entry.name, tool, about: entry.about })
 }
 
 /// The two tools that change nothing, drawn over the viewport's corner.
-const POINTER: [Subject; 2] = [
-    s(
-        "Select",
-        Tool::Select,
-        "Reports the position under the pointer. Changes nothing.",
-    ),
-    s(
-        "Measure",
-        Tool::Measure,
-        "Reports the position, ground height, tile, chunk, area, slope and water \
-         at a point. Click two points for the distance, rise and facing between them; \
-         Escape clears. Changes nothing.",
-    ),
-];
+fn corner() -> impl Iterator<Item = Subject> {
+    SPECS
+        .iter()
+        .filter(|spec| spec.place == Place::Corner)
+        .map(|spec| Subject { name: spec.name, tool: spec.tool, about: spec.about })
+}
 
 /// The name of every subject this file draws a button for, which is what
 /// [`super::icons`] checks its icon names against.
 pub fn names() -> impl Iterator<Item = &'static str> {
-    GROUPS
+    HEADINGS
         .iter()
-        .flat_map(|(_, subjects)| subjects.iter())
-        .chain(WORKSPACES.iter())
-        .chain(PARTS.iter())
-        .chain(POINTER.iter())
+        .flat_map(|heading| tiles(heading))
+        .chain(bar())
+        .chain(SPECS.iter().filter_map(|spec| part(spec.tool)))
+        .chain(corner())
         .map(|subject| subject.name)
 }
 
@@ -455,10 +216,10 @@ pub fn draw(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
             ui.add_space(4.0);
-            for (group, subjects) in GROUPS {
-                theme::heading(ui, group);
+            for heading in HEADINGS {
+                theme::heading(ui, heading);
                 let width = ((ui.available_width() - GAP) / 2.0).floor();
-                for pair in subjects.chunks(2) {
+                for pair in tiles(heading).chunks(2) {
                     ui.horizontal(|ui| {
                         for subject in pair {
                             let why = held(subject.tool, playing, server);
@@ -620,7 +381,7 @@ pub fn workspaces(
 
 /// The workspace buttons and menus of [`workspaces`], after World.
 fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bool, popped: &[Tool]) {
-    for subject in &WORKSPACES {
+    for subject in bar() {
         // A workspace of several parts is available when any part is.
         let open = match subject.tool.parts() {
             [] => held(subject.tool, playing, server).is_none().then_some(subject.tool),
@@ -641,8 +402,8 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
                 egui::Button::selectable(lit, subject.name),
             );
             let response = match why {
-                Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
-                None => response.on_hover_text(tooltip(subject, None)),
+                Some(_) => response.on_disabled_hover_text(tooltip(&subject, why)),
+                None => response.on_hover_text(tooltip(&subject, None)),
             };
             if response.clicked() && (!lit || in_window) {
                 *tool = open.unwrap_or(subject.tool);
@@ -663,7 +424,7 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
                     let on = *tool == part_tool || popped.contains(&part_tool);
                     let item = ui.add_enabled(blocked.is_none(), egui::Button::selectable(on, entry.name));
                     let item = match blocked {
-                        Some(_) => item.on_disabled_hover_text(tooltip(entry, blocked)),
+                        Some(_) => item.on_disabled_hover_text(tooltip(&entry, blocked)),
                         None => item.on_hover_text(entry.about),
                     };
                     if item.clicked() {
@@ -673,8 +434,8 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
                 }
             });
             match why {
-                Some(_) => response.on_disabled_hover_text(tooltip(subject, why)),
-                None => response.on_hover_text(tooltip(subject, None)),
+                Some(_) => response.on_disabled_hover_text(tooltip(&subject, why)),
+                None => response.on_hover_text(tooltip(&subject, None)),
             };
         });
     }
@@ -723,7 +484,7 @@ pub fn pointer(
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 3.0;
-                        for subject in &POINTER {
+                        for subject in corner() {
                             let on = *tool == subject.tool;
                             let button = match icons.get(subject.name) {
                                 Some(id) => egui::Button::image(
@@ -733,7 +494,7 @@ pub fn pointer(
                                 None => egui::Button::new(subject.name),
                             };
                             let button = button.selected(on).min_size(egui::vec2(26.0, 26.0));
-                            if ui.add(button).on_hover_text(tooltip(subject, None)).clicked() {
+                            if ui.add(button).on_hover_text(tooltip(&subject, None)).clicked() {
                                 *tool = subject.tool;
                                 rail.follow(subject.tool);
                             }
@@ -749,11 +510,29 @@ mod tests {
     use super::*;
 
     fn rail_tools() -> Vec<Tool> {
-        GROUPS
+        HEADINGS
             .iter()
-            .flat_map(|(_, subjects)| subjects.iter())
+            .flat_map(|heading| tiles(heading))
             .map(|subject| subject.tool)
             .collect()
+    }
+
+    fn corner_tools() -> Vec<Tool> {
+        corner().map(|subject| subject.tool).collect()
+    }
+
+    /// Every heading a tile names is one the rail draws, and every heading
+    /// has a tile under it.
+    #[test]
+    fn every_tile_is_under_a_drawn_heading() {
+        for spec in SPECS {
+            if let Place::Rail(heading) = spec.place {
+                assert!(HEADINGS.contains(&heading), "{} is under {heading}", spec.name);
+            }
+        }
+        for heading in HEADINGS {
+            assert!(!tiles(heading).is_empty(), "{heading} has no tile");
+        }
     }
 
     /// Every tool is in exactly one of the three places: a tile, a workspace
@@ -764,14 +543,14 @@ mod tests {
     fn every_tool_is_in_exactly_one_place() {
         // A workspace of several tools places each of them, on the strip at
         // the head of its list.
-        let in_workspaces = WORKSPACES.iter().flat_map(|subject| match subject.tool.parts() {
+        let in_workspaces = bar().flat_map(|subject| match subject.tool.parts() {
             [] => vec![subject.tool],
             parts => parts.iter().map(|&(_, part)| part).collect(),
         });
         let placed: Vec<Tool> = rail_tools()
             .into_iter()
             .chain(in_workspaces)
-            .chain(POINTER.iter().map(|subject| subject.tool))
+            .chain(corner_tools())
             .collect();
         for tool in crate::tools::ALL {
             let count = placed.iter().filter(|had| **had == tool).count();
@@ -784,10 +563,10 @@ mod tests {
     /// [`Tool::surface`] decides.
     #[test]
     fn the_places_agree_with_the_surfaces() {
-        for tool in rail_tools().into_iter().chain(POINTER.iter().map(|s| s.tool)) {
+        for tool in rail_tools().into_iter().chain(corner_tools()) {
             assert_ne!(tool.surface(), Surface::Middle, "{} replaces the viewport", tool.name());
         }
-        for subject in &WORKSPACES {
+        for subject in bar() {
             assert_eq!(
                 subject.tool.surface(),
                 Surface::Middle,
@@ -803,8 +582,8 @@ mod tests {
     /// machine.
     #[test]
     fn the_spawn_tiles_and_only_they_name_a_server_table() {
-        for (group, subjects) in GROUPS {
-            for subject in subjects {
+        for group in HEADINGS {
+            for subject in tiles(group) {
                 assert_eq!(
                     subject.tool.server_table().is_some(),
                     group == "Spawns",
@@ -819,16 +598,14 @@ mod tests {
     /// every menu entry is a part of a workspace on the bar.
     #[test]
     fn every_part_is_on_its_workspaces_menu() {
-        for subject in &WORKSPACES {
+        for subject in bar() {
             for &(_, tool) in subject.tool.parts() {
                 assert!(part(tool).is_some(), "{} has no menu entry", tool.name());
             }
         }
-        for entry in &PARTS {
+        for entry in SPECS.iter().filter_map(|spec| part(spec.tool)) {
             assert!(
-                WORKSPACES
-                    .iter()
-                    .any(|subject| subject.tool.parts().iter().any(|&(_, tool)| tool == entry.tool)),
+                bar().any(|subject| subject.tool.parts().iter().any(|&(_, tool)| tool == entry.tool)),
                 "{} is on no workspace's menu",
                 entry.name
             );
@@ -838,11 +615,12 @@ mod tests {
     /// Every subject says what it is for, in more than a word.
     #[test]
     fn every_subject_says_what_it_is_for() {
-        for subject in GROUPS
+        for subject in HEADINGS
             .iter()
-            .flat_map(|(_, subjects)| subjects.iter())
-            .chain(WORKSPACES.iter())
-            .chain(POINTER.iter())
+            .flat_map(|heading| tiles(heading))
+            .chain(bar())
+            .chain(SPECS.iter().filter_map(|spec| part(spec.tool)))
+            .chain(corner())
         {
             assert!(!subject.name.is_empty());
             assert!(subject.about.len() > 20, "{} says too little", subject.name);
@@ -866,10 +644,10 @@ mod tests {
     /// unavailable.
     #[test]
     fn a_subject_is_held_for_the_stated_reasons() {
-        for tool in rail_tools().into_iter().chain(POINTER.iter().map(|s| s.tool)) {
+        for tool in rail_tools().into_iter().chain(corner_tools()) {
             assert!(held(tool, true, true).is_some(), "{}", tool.name());
         }
-        for subject in &WORKSPACES {
+        for subject in bar() {
             assert_eq!(
                 held(subject.tool, true, true).is_none(),
                 subject.tool.survives_playtest(),

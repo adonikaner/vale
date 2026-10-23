@@ -133,10 +133,6 @@ pub struct Textures {
     /// the chunk that refused it, which is the case the list exists for. The
     /// panel then already shows why the stroke stopped.
     pub pinned: Option<((u32, u32), usize)>,
-    /// The panel's Import Ground Texture asked for the import dialog. The
-    /// shell opens it, and puts the texture on the brush once it is written.
-    /// See `crate::import::assets::Assets::imported`.
-    pub import_asked: bool,
 }
 
 impl Default for Textures {
@@ -152,8 +148,23 @@ impl Default for Textures {
             // would begin with a click into that folder.
             folder: ROOT.to_string(),
             pinned: None,
-            import_asked: false,
         }
+    }
+}
+
+impl Textures {
+    /// Put a ground texture the Import Texture dialog has just written on
+    /// the brush, with the picker open on its folder. The catalogue lists it
+    /// once it reads the project's files again.
+    pub fn take_imported(&mut self, vpath: &str) {
+        let path = vpath.to_ascii_lowercase();
+        self.brush.effect_id = 0;
+        self.folder = match path.rfind('\\') {
+            Some(at) => path[..=at].to_string(),
+            None => ROOT.to_string(),
+        };
+        self.search.clear();
+        self.brush.texture = path;
     }
 }
 
@@ -187,7 +198,30 @@ impl Plugin for TextureToolPlugin {
             )
             // After the stroke, so the cross over a full chunk is drawn on the
             // frame the stroke found it.
-            .add_systems(Update, (draw_brush.after(stroke), draw_pin));
+            .add_systems(Update, (draw_brush.after(stroke), draw_pin))
+            .add_systems(Update, modes);
+    }
+}
+
+/// The number row on the texture brush.
+///
+/// The brush has no modes, so its unshifted digits are the falloffs, the
+/// panel's first row of choices, and `Shift` is the shapes, as on the height
+/// brush. See [`crate::tools::modes`].
+fn modes(row: crate::tools::modes::NumberRow, mut textures: ResMut<Textures>) {
+    let Some(press) = row.read(&[Tool::Textures]) else { return };
+    let Some(at) = press.digit else { return };
+    match press.shift {
+        true => {
+            if let Some(&(_, shape)) = SHAPES.get(at) {
+                textures.brush.shape = shape;
+            }
+        }
+        false => {
+            if let Some(&(_, falloff)) = FALLOFFS.get(at) {
+                textures.brush.falloff = falloff;
+            }
+        }
     }
 }
 

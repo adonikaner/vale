@@ -138,8 +138,8 @@
 //! row would get wrong: the map, the parent, and an explore bit no other row
 //! holds ([`next_explore_bit`](vale_edit::dbc::places::next_explore_bit)). A sub-area also
 //! starts with its zone's flags, reverb, ambience and music. A row is put on
-//! the ground by the Areas tool, which [`Browser::paint_area`] asks the shell
-//! to switch to.
+//! the ground by the Areas tool, which the form asks the shell
+//! to switch to with `crate::ui::shell::asks::ShellAsk::PaintArea`.
 //!
 //! ## Commands on a row
 //!

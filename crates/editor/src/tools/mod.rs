@@ -9,6 +9,8 @@
 //!                waypoint paths, and the handles a spawn is moved by
 //! places/        the client-table rows that are places on the map: lights,
 //!                flight paths, area triggers and graveyards
+//! points.rs      points on the map picked and dragged by the pointer: the
+//!                aim, the drag and the list the place tools share
 //! measure.rs     a pointer tool that changes nothing and reports what is at a
 //!                point, and the distance and facing between two points
 //! guides.rs      what is drawn on the ground to read it by, under every
@@ -17,7 +19,8 @@
 //!                the view bar; nothing here edits
 //! shortcuts.rs   the keys that work whichever tool is chosen: undo, redo,
 //!                save, the playtest, and the shell over one
-//! modes.rs       the number row, which selects the chosen tool's modes
+//! modes.rs       the number row: when a digit reaches the chosen tool, read
+//!                by each tool's own system that maps it onto its modes
 //! ```
 //!
 //! ## The four steps every tool follows
@@ -52,6 +55,7 @@ pub mod guides;
 pub mod measure;
 pub(crate) mod modes;
 pub mod places;
+pub mod points;
 pub mod placements;
 pub(crate) mod shortcuts;
 pub mod spawns;
@@ -59,7 +63,7 @@ pub mod spawns;
 use crate::map::open::{close_tiles, open_tiles, Opening};
 use crate::session::EditSession;
 use bevy::prelude::*;
-use modes::modes;
+use bevy_egui::egui;
 
 /// Which tool the pointer is holding.
 ///
@@ -164,7 +168,7 @@ pub enum Tool {
     Quests,
     /// The Creatures workspace: every `creature_template` row as a list,
     /// searched by name, subname or entry, and edited in the middle of the
-    /// screen — see [`crate::subjects::creature_data`].
+    /// screen — see [`crate::subjects::templates`].
     ///
     /// The same row the creature tool's template window edits, reached by
     /// name rather than by clicking a spawn. A template has no place in the
@@ -172,7 +176,7 @@ pub enum Tool {
     /// playtest, because the server reads `creature_template` at startup.
     CreatureData,
     /// The Game Objects workspace: every `gameobject_template` row, on
-    /// [`Tool::CreatureData`]'s terms — see [`crate::subjects::gameobject_data`].
+    /// [`Tool::CreatureData`]'s terms — see [`crate::subjects::templates`].
     GameObjectData,
     /// `CreatureDisplayInfo.dbc` with `CreatureDisplayInfoExtra` and
     /// `CreatureModelData` as two more tabs: what a creature looks like. A
@@ -238,6 +242,15 @@ pub enum Tool {
 }
 
 /// Where a tool's controls are drawn — see [`Tool::surface`].
+///
+/// The surface is also the line between the two sorts of entry [`Tool`]
+/// holds: a pointer tool on the world ([`Surface::World`] and
+/// [`Surface::Inspector`]) and a workspace that replaces the viewport
+/// ([`Surface::Middle`]). They are one type because the chosen entry is one
+/// value: the `Tool` resource, the pop-out windows' list, `--tool`, the
+/// rail's last world tool and every panel's switch request each hold or set
+/// one of either sort. Two types would make each of those an enum over the
+/// two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
     /// The viewport is the document and the inspector describes what is
@@ -252,7 +265,609 @@ pub enum Surface {
     Inspector,
 }
 
-/// Every tool, listed once.
+/// Where the shell offers a tool. See [`crate::ui::shell::rail`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Place {
+    /// A button over the viewport's top-left corner, for the tools that
+    /// change nothing.
+    Corner,
+    /// A tile on the rail, under the heading named.
+    Rail(&'static str),
+    /// A workspace on the top bar, under the name given. A workspace of
+    /// several parts is a menu of them.
+    Bar(&'static str),
+    /// A part of a workspace of several parts, reached through that
+    /// workspace's menu ([`Spec::menu`]) and the strip at the head of its
+    /// list.
+    Part,
+}
+
+/// A part's entry in its workspace's menu.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Entry {
+    /// The name the menu gives it, and the key an icon is looked up by.
+    pub(crate) name: &'static str,
+    /// What it does, for the tooltip.
+    pub(crate) about: &'static str,
+}
+
+/// A tool's inspector panel. [`crate::ui::tools::draw`] draws the header and
+/// the undo row, then this.
+pub(crate) type InspectorPanel =
+    fn(&mut egui::Ui, crate::ui::tools::Subject<'_>, &mut crate::ui::Editing<'_>);
+
+/// What a [`Surface::Middle`] tool puts in the middle of a window. See
+/// [`crate::ui::workspace::workspace`].
+pub(crate) type WorkspacePanel = fn(&mut egui::Ui, Tool, crate::ui::workspace::Bench<'_, '_, '_>);
+
+/// What the editor knows about one tool: a row of [`SPECS`].
+///
+/// The methods on [`Tool`] read it, and so do the rail and the top bar
+/// ([`Spec::place`]), the inspector ([`Spec::inspector`]), the middle of the
+/// window ([`Spec::workspace`]) and the pop-out windows ([`Spec::window`]).
+/// A new tool is a variant, its index in [`Tool::at`], its row here, its
+/// plugin and its panel functions.
+#[derive(Clone, Copy)]
+pub(crate) struct Spec {
+    pub(crate) tool: Tool,
+    /// See [`Tool::name`].
+    pub(crate) name: &'static str,
+    /// See [`Tool::surface`].
+    pub(crate) surface: Surface,
+    /// See [`Tool::edits`].
+    pub(crate) edits: bool,
+    /// See [`Tool::table`].
+    pub(crate) table: Option<&'static str>,
+    /// See [`Tool::server_table`].
+    pub(crate) server_table: Option<&'static str>,
+    /// See [`Tool::survives_playtest`].
+    pub(crate) survives_playtest: bool,
+    /// See [`Tool::tabs`].
+    pub(crate) tabs: &'static [(&'static str, &'static str)],
+    /// Whether a table on the chain of [`Spec::table`]
+    /// (`vale_assets::tables::schema::chain_for`) is browsed here when a
+    /// reference is followed to it, as the tables of its tabs are. See
+    /// [`Tool::for_table`].
+    pub(crate) chain: bool,
+    /// See [`Tool::parts`].
+    pub(crate) parts: &'static [(&'static str, Tool)],
+    /// Where the shell offers it.
+    pub(crate) place: Place,
+    /// What it does, for the tooltip on its tile, corner button or top-bar
+    /// button. Empty for a [`Place::Part`], whose text is its menu entry's.
+    pub(crate) about: &'static str,
+    /// Its entry in its workspace's menu, for a part of a workspace of
+    /// several parts.
+    pub(crate) menu: Option<Entry>,
+    /// The pop-out window it shares with the other tools over the same
+    /// state, or `None` for a tool with no state a workspace holds. See
+    /// [`crate::popout::Group`].
+    pub(crate) window: Option<crate::popout::Group>,
+    /// What the inspector shows while it is chosen.
+    pub(crate) inspector: InspectorPanel,
+    /// What the middle of the window shows while it is chosen. `Some` for a
+    /// [`Surface::Middle`] tool alone.
+    pub(crate) workspace: Option<WorkspacePanel>,
+}
+
+/// A row for a pointer tool on the world: drawn over the viewport, editing,
+/// with no table, no window and unavailable during a playtest. A row built
+/// from it states what differs.
+const fn world(
+    tool: Tool,
+    name: &'static str,
+    place: Place,
+    about: &'static str,
+    inspector: InspectorPanel,
+) -> Spec {
+    Spec {
+        tool,
+        name,
+        surface: Surface::World,
+        edits: true,
+        table: None,
+        server_table: None,
+        survives_playtest: false,
+        tabs: &[],
+        chain: false,
+        parts: &[],
+        place,
+        about,
+        menu: None,
+        window: None,
+        inspector,
+        workspace: None,
+    }
+}
+
+/// A row for a workspace that replaces the viewport. A row built from it
+/// states its table, its window and whether it survives a playtest.
+const fn middle(
+    tool: Tool,
+    name: &'static str,
+    place: Place,
+    about: &'static str,
+    inspector: InspectorPanel,
+    workspace: WorkspacePanel,
+) -> Spec {
+    Spec {
+        surface: Surface::Middle,
+        workspace: Some(workspace),
+        ..world(tool, name, place, about, inspector)
+    }
+}
+
+/// A row for a workspace drawn by the table browser: its first table, its
+/// tabs, and the browser's window.
+const fn browsed(
+    tool: Tool,
+    name: &'static str,
+    place: Place,
+    about: &'static str,
+    table: &'static str,
+    tabs: &'static [(&'static str, &'static str)],
+) -> Spec {
+    Spec {
+        table: Some(table),
+        tabs,
+        window: Some(crate::popout::Group::Tables),
+        ..middle(tool, name, place, about, crate::ui::tables::inspect, crate::ui::tables::workspace)
+    }
+}
+
+/// The Items workspace's parts, in the order its strip and menu list them.
+const ITEM_PARTS: [(&str, Tool); 3] = [
+    ("Items", Tool::Items),
+    ("Sets", Tool::ItemSets),
+    ("Displays", Tool::ItemDisplays),
+];
+
+/// The Creatures workspace's parts.
+const CREATURE_PARTS: [(&str, Tool); 2] = [
+    ("Templates", Tool::CreatureData),
+    ("Displays", Tool::CreatureDisplays),
+];
+
+/// The Game Objects workspace's parts.
+const OBJECT_PARTS: [(&str, Tool); 2] = [
+    ("Templates", Tool::GameObjectData),
+    ("Displays", Tool::ObjectDisplays),
+];
+
+/// Every tool's row, in [`Tool::at`]'s order, which is also the order the
+/// shell draws them in: the corner, the rail's three headings, then the top
+/// bar's workspaces each followed by its other parts.
+pub(crate) const SPECS: &[Spec] = &[
+    Spec {
+        edits: false,
+        ..world(
+            Tool::Select,
+            "Select",
+            Place::Corner,
+            "Reports the position under the pointer. Changes nothing.",
+            crate::ui::tools::pointer,
+        )
+    },
+    Spec {
+        edits: false,
+        ..world(
+            Tool::Measure,
+            "Measure",
+            Place::Corner,
+            "Reports the position, ground height, tile, chunk, area, slope and water \
+             at a point. Click two points for the distance, rise and facing between them; \
+             Escape clears. Changes nothing.",
+            crate::ui::tools::measure::inspect,
+        )
+    },
+    world(
+        Tool::Terrain,
+        "Terrain",
+        Place::Rail("Terrain"),
+        "Raises, lowers, flattens and smooths the ground. Writes MCVT, the \
+         145 heights of a chunk.",
+        crate::ui::tools::ground::terrain::inspect,
+    ),
+    world(
+        Tool::Grade,
+        "Grade",
+        Place::Rail("Terrain"),
+        "Builds a straight ramp between two points. Click a start, click an \
+         end, set the width, then apply.",
+        crate::ui::tools::ground::grade::inspect,
+    ),
+    world(
+        Tool::Road,
+        "Road",
+        Place::Rail("Terrain"),
+        "Builds a road along a run of points: grades the ground along it \
+         and paints a surface texture and a verge texture. Click to add \
+         points, then apply.",
+        crate::ui::tools::ground::road::inspect,
+    ),
+    world(
+        Tool::Shading,
+        "Shading",
+        Place::Rail("Terrain"),
+        "Paints MCCV, the per-vertex colour of the ground. Each value is a \
+         multiplier: 1.00 leaves a vertex unchanged. The reference client \
+         does not read MCCV.",
+        crate::ui::tools::ground::shading::inspect,
+    ),
+    world(
+        Tool::Textures,
+        "Textures",
+        Place::Rail("Terrain"),
+        "Paints tilesets onto the ground. A painted tileset becomes a \
+         texture layer of every chunk the brush covers.",
+        crate::ui::tools::ground::textures::inspect,
+    ),
+    world(
+        Tool::Holes,
+        "Holes",
+        Place::Rail("Terrain"),
+        "Cuts holes in the ground, sixteen squares per chunk. Click cuts a \
+         square; shift-click fills it.",
+        crate::ui::tools::ground::holes::inspect,
+    ),
+    world(
+        Tool::Water,
+        "Water",
+        Place::Rail("Terrain"),
+        "Paints MCLQ water at a set level. Shift clears it. The level can be \
+         taken from the water already under the pointer.",
+        crate::ui::tools::ground::water::inspect,
+    ),
+    world(
+        Tool::Areas,
+        "Areas",
+        Place::Rail("Terrain"),
+        "Assigns an AreaTable row to each chunk. The client takes the zone \
+         and sub-area a character is in from this field.",
+        crate::ui::tools::ground::areas::inspect,
+    ),
+    world(
+        Tool::Chunks,
+        "Chunks",
+        Place::Rail("Terrain"),
+        "Selects chunks: click one, drag a block on the ground, shift adds. \
+         Then writes one area, base texture, hole mask or impassable flag \
+         to all of them as one undo entry.",
+        crate::ui::tools::ground::chunks::inspect,
+    ),
+    world(
+        Tool::Doodads,
+        "Doodads",
+        Place::Rail("World"),
+        "MDDF: one record per placed M2 model. Select, move, rotate, \
+         scale.",
+        crate::ui::tools::placements::doodads::inspect,
+    ),
+    world(
+        Tool::Wmos,
+        // "WMO" rather than "Buildings": it is what `MWMO` names, what
+        // `MODF` places and what `vale wmos` checks, and half of what a
+        // `.wmo` holds is not a building — a bridge, a gate, a canal.
+        "WMO",
+        Place::Rail("World"),
+        "MODF: one record per placed WMO building. Select, move, rotate, \
+         remove. No scale: the 1.12 record has no scale field.",
+        crate::ui::tools::placements::wmos::inspect,
+    ),
+    // A light's row, a flight path node or point, a trigger and a safe place
+    // are each a place in the world, so each is picked with the pointer and
+    // puts its form where every other selection's numbers go.
+    Spec {
+        surface: Surface::Inspector,
+        table: Some("Light"),
+        tabs: &crate::tables::tabs::LIGHT_TABS,
+        window: Some(crate::popout::Group::Tables),
+        ..world(
+            Tool::Lights,
+            "Lights",
+            Place::Rail("World"),
+            "Light.dbc and the tables it references (sun, fill light, sky dome, \
+             fog and water colour) per map and per zone. Each light is a \
+             sphere in the world, selected and dragged like a doodad.",
+            crate::ui::tools::places::lights::inspect,
+        )
+    },
+    Spec {
+        surface: Surface::Inspector,
+        table: Some("TaxiNodes"),
+        tabs: &crate::tables::tabs::TAXI_TABS,
+        window: Some(crate::popout::Group::Tables),
+        ..world(
+            Tool::Flightpaths,
+            // "Taxi" is the prefix of the three tables it edits: TaxiNodes,
+            // TaxiPath and TaxiPathNode. One word, so `--tool taxi` needs no
+            // quoting.
+            "Taxi",
+            Place::Rail("World"),
+            "The taxi network: TaxiNodes, TaxiPath and TaxiPathNode. Nodes and \
+             the paths between them are drawn on the map; drag a node or a \
+             point, add points, connect two nodes, create a node.",
+            crate::ui::tools::places::flightpaths::inspect,
+        )
+    },
+    Spec {
+        surface: Surface::Inspector,
+        table: Some(vale_edit::dbc::places::TRIGGERS),
+        tabs: &crate::tables::tabs::TRIGGER_TABS,
+        window: Some(crate::popout::Group::Tables),
+        ..world(
+            Tool::Triggers,
+            "Triggers",
+            Place::Rail("World"),
+            "AreaTrigger.dbc: the spheres and boxes the client reports entering, \
+             and the server's action for each: a teleport, an inn, a quest \
+             objective. Drag a trigger, create one, change its shape.",
+            crate::ui::tools::places::triggers::inspect,
+        )
+    },
+    Spec {
+        surface: Surface::Inspector,
+        table: Some(vale_edit::dbc::places::SAFE_LOCS),
+        tabs: &crate::tables::tabs::SAFE_LOC_TABS,
+        window: Some(crate::popout::Group::Tables),
+        ..world(
+            Tool::Graveyards,
+            "Graveyards",
+            Place::Rail("World"),
+            "WorldSafeLocs.dbc: the graveyards where a released spirit appears. \
+             Drag a graveyard, create one, and link it to the zones it serves \
+             (game_graveyard_zone rows in vmangos' database).",
+            crate::ui::tools::places::graveyards::inspect,
+        )
+    },
+    world(
+        Tool::Sweep,
+        "Sweep",
+        Place::Rail("World"),
+        "Finds and replaces a texture, model or building path across every \
+         tile of the map: for example, a tileset retired from a zone, or one \
+         tree model replaced across a forest.",
+        crate::ui::map::sweep::inspect,
+    ),
+    // A creature's spawn row and a game object's are places too, for the
+    // reason above.
+    Spec {
+        surface: Surface::Inspector,
+        server_table: Some(vale_mangos::creature::SPAWN),
+        ..world(
+            Tool::Creatures,
+            "Creatures",
+            Place::Rail("Spawns"),
+            "Every creature spawn on the map, drawn at its position. Click one \
+             to open the spawn and its creature_template. Rows in vmangos' \
+             database, so this needs a database connection.",
+            crate::ui::tools::spawns::spawn::inspect::<spawns::creatures::CreatureSubject>,
+        )
+    },
+    Spec {
+        surface: Surface::Inspector,
+        server_table: Some(vale_mangos::gameobject::SPAWN),
+        ..world(
+            Tool::GameObjects,
+            // "Objects" is this repository's own word for them: `vale
+            // objects` is the CLI check over the same population.
+            // The rail's tooltip says game objects, which is vmangos' word.
+            "Objects",
+            Place::Rail("Spawns"),
+            "Every game object spawn on the map (chests, doors, mining veins and \
+             herbs, mailboxes, signs), drawn at its position. Click one to open \
+             the spawn and its gameobject_template. Rows in vmangos' \
+             database, so this needs a database connection.",
+            crate::ui::tools::spawns::spawn::inspect::<spawns::gameobjects::GameObjectSubject>,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        chain: true,
+        ..browsed(
+            Tool::Spells,
+            "Spells",
+            Place::Bar("Spells"),
+            "Spell.dbc: 22,360 rows of 173 fields, named, typed and cross-referenced. \
+             The workspace replaces the viewport, because a spell has no place in the \
+             world.",
+            "Spell",
+            &crate::tables::tabs::SPELL_TABS,
+        )
+    },
+    Spec {
+        server_table: Some(vale_mangos::item::TEMPLATE),
+        survives_playtest: true,
+        parts: &ITEM_PARTS,
+        menu: Some(Entry {
+            name: "Items",
+            about: "item_template: an item's stats, effects and price, with a preview of its \
+                    display id. Rows in vmangos' database, so this needs a database connection.",
+        }),
+        window: Some(crate::popout::Group::Items),
+        ..middle(
+            Tool::Items,
+            "Items",
+            Place::Bar("Items"),
+            "Items, item sets and item display info: item_template rows in vmangos' \
+             database, and ItemSet.dbc and ItemDisplayInfo.dbc, which are client files \
+             and need no database.",
+            crate::ui::subjects::items::inspect,
+            crate::ui::subjects::items::workspace,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &ITEM_PARTS,
+        menu: Some(Entry {
+            name: "Item Sets",
+            about: "ItemSet.dbc: the items in each set and the set bonuses. A client file; it \
+                    needs no database.",
+        }),
+        ..browsed(Tool::ItemSets, "Sets", Place::Part, "", "ItemSet", &crate::tables::tabs::SET_TABS)
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &ITEM_PARTS,
+        menu: Some(Entry {
+            name: "Item Display Info",
+            about: "ItemDisplayInfo.dbc: an item's bag icon, the models it hangs on the wearer \
+                    and the textures it paints on the body. A client file; it needs no database.",
+        }),
+        ..browsed(
+            Tool::ItemDisplays,
+            "Item Display Info",
+            Place::Part,
+            "",
+            "ItemDisplayInfo",
+            &crate::tables::tabs::ITEM_DISPLAY_TABS,
+        )
+    },
+    Spec {
+        server_table: Some(vale_mangos::quest::TEMPLATE),
+        survives_playtest: true,
+        window: Some(crate::popout::Group::Quests),
+        ..middle(
+            Tool::Quests,
+            "Quests",
+            Place::Bar("Quests"),
+            "quest_template (objectives, text and rewards) and the four relation tables \
+             that set which creatures and game objects start and end each quest. Rows \
+             in vmangos' database, so this needs a database connection.",
+            crate::ui::subjects::quests::inspect,
+            crate::ui::subjects::quests::workspace,
+        )
+    },
+    Spec {
+        server_table: Some(vale_mangos::creature::TEMPLATE),
+        parts: &CREATURE_PARTS,
+        menu: Some(Entry {
+            name: "Creature Templates",
+            about: "creature_template: every creature the server loads, searched by name, \
+                    subname or entry, with every column of the open row, its model, and its \
+                    quests, loot, events, spells, gossip, vendor and trainer windows. Rows in \
+                    vmangos' database, so this needs a database connection.",
+        }),
+        window: Some(crate::popout::Group::Creatures),
+        ..middle(
+            Tool::CreatureData,
+            // The top bar calls these two workspaces Creatures and Game
+            // Objects. The tool names differ because `--tool` matches a name,
+            // and the rail's spawn tools are already Creatures and Objects.
+            "Creature Data",
+            Place::Bar("Creatures"),
+            "Creature templates and creature display info: creature_template rows in \
+             vmangos' database, and the client's CreatureDisplayInfo, \
+             CreatureDisplayInfoExtra and CreatureModelData, which need no database.",
+            crate::ui::subjects::templates::inspect::<spawns::creatures::CreatureSubject>,
+            crate::ui::subjects::templates::workspace::<spawns::creatures::CreatureSubject>,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &CREATURE_PARTS,
+        menu: Some(Entry {
+            name: "Creature Display Info",
+            about: "CreatureDisplayInfo.dbc: a creature's model, scale and skins, with \
+                    CreatureDisplayInfoExtra and CreatureModelData as two more tabs. A new skin \
+                    for an existing model is a copied row with another texture. Client files; \
+                    they need no database.",
+        }),
+        ..browsed(
+            Tool::CreatureDisplays,
+            "Creature Display Info",
+            Place::Part,
+            "",
+            "CreatureDisplayInfo",
+            &crate::tables::tabs::CREATURE_DISPLAY_TABS,
+        )
+    },
+    Spec {
+        server_table: Some(vale_mangos::gameobject::TEMPLATE),
+        parts: &OBJECT_PARTS,
+        menu: Some(Entry {
+            name: "Game Object Templates",
+            about: "gameobject_template: every game object the server loads, searched by name, \
+                    type or entry, with every column of the open row, its model, and its quest \
+                    and loot windows. Rows in vmangos' database, so this needs a database \
+                    connection.",
+        }),
+        window: Some(crate::popout::Group::Objects),
+        ..middle(
+            Tool::GameObjectData,
+            "Game Object Data",
+            Place::Bar("Game Objects"),
+            "Game object templates and game object display info: gameobject_template \
+             rows in vmangos' database, and the client's GameObjectDisplayInfo, which \
+             needs no database.",
+            crate::ui::subjects::templates::inspect::<spawns::gameobjects::GameObjectSubject>,
+            crate::ui::subjects::templates::workspace::<spawns::gameobjects::GameObjectSubject>,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &OBJECT_PARTS,
+        menu: Some(Entry {
+            name: "Game Object Display Info",
+            about: "GameObjectDisplayInfo.dbc: a game object's model and its ten sounds. A \
+                    client file; it needs no database.",
+        }),
+        ..browsed(
+            Tool::ObjectDisplays,
+            "Game Object Display Info",
+            Place::Part,
+            "",
+            "GameObjectDisplayInfo",
+            &crate::tables::tabs::OBJECT_DISPLAY_TABS,
+        )
+    },
+    browsed(
+        Tool::Zones,
+        // "Zones" and not "Areas": the rail's Areas tool paints an area
+        // onto chunks, and this workspace is what a zone and its
+        // sub-areas are. Two subjects with one name would be two answers
+        // to `--tool areas`.
+        "Zones",
+        Place::Bar("Zones"),
+        "AreaTable.dbc: zones and their sub-areas. Each row's name, parent zone, \
+         music and ambience, duel and rest flags, area level and exploration bit. \
+         Create a zone or sub-area here, then paint it onto the ground with the \
+         Areas tool. The server loads its copy from area_template at startup.",
+        crate::tables::zones::area::TABLE,
+        &crate::tables::tabs::ZONE_TABS,
+    ),
+    // No one table: the workspace starts on the list of them.
+    Spec {
+        survives_playtest: true,
+        ..browsed(
+            Tool::Tables,
+            "Tables",
+            Place::Bar("Tables"),
+            "Any DBC table: the 158 files of DBFilesClient\\, chosen from a list. A \
+             table with a schema opens as named, typed fields and any other as numbered \
+             fields. The workspace replaces the viewport.",
+            crate::tables::tabs::ANY,
+            &[],
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        window: Some(crate::popout::Group::Assets),
+        ..middle(
+            Tool::Assets,
+            "Assets",
+            Place::Bar("Assets"),
+            "The files this project adds to the archives: imported textures, baked \
+             models and the rest. Import Texture turns a PNG, TGA or BLP picture into a \
+             BLP the 1.12.1 client reads. Every file here is listed in the editor's \
+             pickers and published with the project.",
+            crate::ui::import::assets::inspect,
+            crate::ui::import::assets::workspace,
+        )
+    },
+];
+
+/// Every tool, listed once, in the order of [`SPECS`].
 ///
 /// Three places enumerate the tools: `--tool`, the rail's own check, and any
 /// later caller. Each kept, or would have kept, its own list. `--tool` had
@@ -262,45 +877,20 @@ pub enum Surface {
 ///
 /// A fieldless enum cannot enumerate itself without a derive crate, so
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
-/// until a new variant has an index, plus a test that this list is exactly
+/// until a new variant has an index, plus a test that [`SPECS`] is exactly
 /// those indices in order.
-pub const ALL: [Tool; 32] = [
-    Tool::Select,
-    Tool::Terrain,
-    Tool::Grade,
-    Tool::Shading,
-    Tool::Textures,
-    Tool::Holes,
-    Tool::Areas,
-    Tool::Water,
-    Tool::Doodads,
-    Tool::Wmos,
-    Tool::Sweep,
-    Tool::Spells,
-    Tool::Lights,
-    Tool::Creatures,
-    Tool::GameObjects,
-    Tool::Items,
-    Tool::Quests,
-    Tool::Measure,
-    Tool::Flightpaths,
-    Tool::Chunks,
-    Tool::ItemSets,
-    Tool::Tables,
-    Tool::Zones,
-    Tool::Triggers,
-    Tool::Graveyards,
-    Tool::Road,
-    Tool::CreatureData,
-    Tool::GameObjectData,
-    Tool::CreatureDisplays,
-    Tool::ObjectDisplays,
-    Tool::ItemDisplays,
-    Tool::Assets,
-];
+pub const ALL: [Tool; SPECS.len()] = {
+    let mut all = [Tool::Select; SPECS.len()];
+    let mut i = 0;
+    while i < SPECS.len() {
+        all[i] = SPECS[i].tool;
+        i += 1;
+    }
+    all
+};
 
 impl Tool {
-    /// Where this tool sits in [`ALL`].
+    /// Where this tool sits in [`SPECS`] and [`ALL`].
     ///
     /// The `match` is exhaustive so that a new variant does not compile until
     /// it is given an index. That is the half of the check the compiler does;
@@ -308,40 +898,45 @@ impl Tool {
     pub fn at(self) -> usize {
         match self {
             Tool::Select => 0,
-            Tool::Terrain => 1,
+            Tool::Measure => 1,
+            Tool::Terrain => 2,
             // Beside the height brush, because it is the shape that brush
-            // cannot make — see `ALL`, whose order this must match.
-            Tool::Grade => 2,
-            Tool::Shading => 3,
-            Tool::Textures => 4,
-            Tool::Holes => 5,
-            Tool::Areas => 6,
-            Tool::Water => 7,
-            Tool::Doodads => 8,
-            Tool::Wmos => 9,
-            Tool::Sweep => 10,
-            Tool::Spells => 11,
-            Tool::Lights => 12,
-            Tool::Creatures => 13,
-            Tool::GameObjects => 14,
-            Tool::Items => 15,
-            Tool::Quests => 16,
-            Tool::Measure => 17,
-            Tool::Flightpaths => 18,
-            Tool::Chunks => 19,
-            Tool::ItemSets => 20,
-            Tool::Tables => 21,
-            Tool::Zones => 22,
-            Tool::Triggers => 23,
-            Tool::Graveyards => 24,
-            Tool::Road => 25,
-            Tool::CreatureData => 26,
+            // cannot make — see `SPECS`, whose order this must match.
+            Tool::Grade => 3,
+            Tool::Road => 4,
+            Tool::Shading => 5,
+            Tool::Textures => 6,
+            Tool::Holes => 7,
+            Tool::Water => 8,
+            Tool::Areas => 9,
+            Tool::Chunks => 10,
+            Tool::Doodads => 11,
+            Tool::Wmos => 12,
+            Tool::Lights => 13,
+            Tool::Flightpaths => 14,
+            Tool::Triggers => 15,
+            Tool::Graveyards => 16,
+            Tool::Sweep => 17,
+            Tool::Creatures => 18,
+            Tool::GameObjects => 19,
+            Tool::Spells => 20,
+            Tool::Items => 21,
+            Tool::ItemSets => 22,
+            Tool::ItemDisplays => 23,
+            Tool::Quests => 24,
+            Tool::CreatureData => 25,
+            Tool::CreatureDisplays => 26,
             Tool::GameObjectData => 27,
-            Tool::CreatureDisplays => 28,
-            Tool::ObjectDisplays => 29,
-            Tool::ItemDisplays => 30,
+            Tool::ObjectDisplays => 28,
+            Tool::Zones => 29,
+            Tool::Tables => 30,
             Tool::Assets => 31,
         }
+    }
+
+    /// This tool's row of [`SPECS`].
+    pub(crate) fn spec(self) -> &'static Spec {
+        &SPECS[self.at()]
     }
 
     /// Which client table this tool edits, or `None` for a tool that edits the
@@ -353,21 +948,7 @@ impl Tool {
     /// with the first: `Tool::Flightpaths` answers `TaxiNodes`, not
     /// `TaxiPath` or `TaxiPathNode`. See [`crate::tables`].
     pub fn table(self) -> Option<&'static str> {
-        match self {
-            Tool::Spells => Some("Spell"),
-            Tool::Lights => Some("Light"),
-            Tool::Flightpaths => Some("TaxiNodes"),
-            Tool::ItemSets => Some("ItemSet"),
-            Tool::Zones => Some(crate::tables::zones::area::TABLE),
-            Tool::Triggers => Some(vale_edit::dbc::places::TRIGGERS),
-            Tool::Graveyards => Some(vale_edit::dbc::places::SAFE_LOCS),
-            Tool::CreatureDisplays => Some("CreatureDisplayInfo"),
-            Tool::ObjectDisplays => Some("GameObjectDisplayInfo"),
-            Tool::ItemDisplays => Some("ItemDisplayInfo"),
-            // No one table: the workspace starts on the list of them.
-            Tool::Tables => Some(crate::tables::tabs::ANY),
-            _ => None,
-        }
+        self.spec().table
     }
 
     /// Which table of the server's database this tool edits, or `None`.
@@ -378,15 +959,7 @@ impl Tool {
     /// The name is the one the row writers use, so it is also the name a
     /// `.reload` is sent for.
     pub fn server_table(self) -> Option<&'static str> {
-        match self {
-            Tool::Creatures => Some(vale_mangos::creature::SPAWN),
-            Tool::GameObjects => Some(vale_mangos::gameobject::SPAWN),
-            Tool::Items => Some(vale_mangos::item::TEMPLATE),
-            Tool::Quests => Some(vale_mangos::quest::TEMPLATE),
-            Tool::CreatureData => Some(vale_mangos::creature::TEMPLATE),
-            Tool::GameObjectData => Some(vale_mangos::gameobject::TEMPLATE),
-            _ => None,
-        }
+        self.spec().server_table
     }
 
     /// Whether this tool keeps working while a playtest is running.
@@ -422,18 +995,7 @@ impl Tool {
     /// Assets workspace edits files, so the four survive for the spells'
     /// reason.
     pub fn survives_playtest(self) -> bool {
-        matches!(
-            self,
-            Tool::Spells
-                | Tool::Items
-                | Tool::ItemSets
-                | Tool::Quests
-                | Tool::Tables
-                | Tool::CreatureDisplays
-                | Tool::ObjectDisplays
-                | Tool::ItemDisplays
-                | Tool::Assets
-        )
+        self.spec().survives_playtest
     }
 
     /// Where this tool's controls are drawn.
@@ -451,37 +1013,13 @@ impl Tool {
     /// Only a [`Surface::Middle`] tool works while a playtest is running; see
     /// [`Tool::survives_playtest`].
     pub fn surface(self) -> Surface {
-        match self {
-            Tool::Spells
-            | Tool::Items
-            | Tool::ItemSets
-            | Tool::Quests
-            | Tool::Tables
-            | Tool::Zones
-            | Tool::CreatureData
-            | Tool::GameObjectData
-            | Tool::CreatureDisplays
-            | Tool::ObjectDisplays
-            | Tool::ItemDisplays
-            | Tool::Assets => Surface::Middle,
-            // A light's row, a flight path node or point, a creature's spawn
-            // row and a game object's are each a place in the world, so each
-            // is picked with the pointer and puts its form where every other
-            // selection's numbers go.
-            Tool::Lights
-            | Tool::Flightpaths
-            | Tool::Triggers
-            | Tool::Graveyards
-            | Tool::Creatures
-            | Tool::GameObjects => Surface::Inspector,
-            _ => Surface::World,
-        }
+        self.spec().surface
     }
 
     /// Whether this tool can change anything. Select and Measure only report,
     /// so the inspector draws no undo row for them; `Ctrl+Z` still works.
     pub fn edits(self) -> bool {
-        !matches!(self, Tool::Select | Tool::Measure)
+        self.spec().edits
     }
 
     /// Whether the workspace replaces the viewport. [`Surface::Middle`] alone.
@@ -497,19 +1035,7 @@ impl Tool {
     /// reached by following a reference, such as `SpellIcon` or `LightSkybox`,
     /// is not a tab and highlights none; the browser still navigates to it.
     pub fn tabs(self) -> &'static [(&'static str, &'static str)] {
-        match self {
-            Tool::Spells => &crate::tables::tabs::SPELL_TABS,
-            Tool::Lights => &crate::tables::tabs::LIGHT_TABS,
-            Tool::Flightpaths => &crate::tables::tabs::TAXI_TABS,
-            Tool::ItemSets => &crate::tables::tabs::SET_TABS,
-            Tool::Zones => &crate::tables::tabs::ZONE_TABS,
-            Tool::Triggers => &crate::tables::tabs::TRIGGER_TABS,
-            Tool::Graveyards => &crate::tables::tabs::SAFE_LOC_TABS,
-            Tool::CreatureDisplays => &crate::tables::tabs::CREATURE_DISPLAY_TABS,
-            Tool::ObjectDisplays => &crate::tables::tabs::OBJECT_DISPLAY_TABS,
-            Tool::ItemDisplays => &crate::tables::tabs::ITEM_DISPLAY_TABS,
-            _ => &[],
-        }
+        self.spec().tabs
     }
 
     /// The tools that make up this tool's workspace, in the order the strip
@@ -522,22 +1048,7 @@ impl Tool {
     /// workspace's skill tables are tabs of one tool instead ([`Tool::tabs`]),
     /// since they are tables in the same browser.
     pub fn parts(self) -> &'static [(&'static str, Tool)] {
-        match self {
-            Tool::Items | Tool::ItemSets | Tool::ItemDisplays => &[
-                ("Items", Tool::Items),
-                ("Sets", Tool::ItemSets),
-                ("Displays", Tool::ItemDisplays),
-            ],
-            Tool::CreatureData | Tool::CreatureDisplays => &[
-                ("Templates", Tool::CreatureData),
-                ("Displays", Tool::CreatureDisplays),
-            ],
-            Tool::GameObjectData | Tool::ObjectDisplays => &[
-                ("Templates", Tool::GameObjectData),
-                ("Displays", Tool::ObjectDisplays),
-            ],
-            _ => &[],
-        }
+        self.spec().parts
     }
 
     /// The tool the top bar's workspace control shows for this one: the
@@ -550,75 +1061,29 @@ impl Tool {
     /// from another form: Sets for `ItemSet`, Zones for `AreaTable`, Spells
     /// for the spell chain and the skill tables, and Tables for everything
     /// else.
+    ///
+    /// A workspace whose tabs name the table comes first, then one whose
+    /// chain holds it ([`Spec::chain`]).
     pub fn for_table(table: &str) -> Tool {
-        let in_spells = table == "Spell"
-            || crate::tables::tabs::SPELL_TABS.iter().any(|&(_, name)| name == table)
-            || vale_assets::tables::schema::chain_for("Spell").contains(&table);
-        match table {
-            "ItemSet" => Tool::ItemSets,
-            "AreaTable" => Tool::Zones,
-            "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" | "CreatureModelData" => {
-                Tool::CreatureDisplays
-            }
-            "GameObjectDisplayInfo" => Tool::ObjectDisplays,
-            "ItemDisplayInfo" => Tool::ItemDisplays,
-            _ if in_spells => Tool::Spells,
-            _ => Tool::Tables,
-        }
+        let workspaces = || SPECS.iter().filter(|spec| spec.surface == Surface::Middle);
+        let on_tabs = |spec: &&Spec| {
+            spec.table == Some(table) || spec.tabs.iter().any(|&(_, name)| name == table)
+        };
+        let on_chain = |spec: &&Spec| {
+            spec.chain
+                && spec
+                    .table
+                    .is_some_and(|first| vale_assets::tables::schema::chain_for(first).contains(&table))
+        };
+        workspaces()
+            .find(on_tabs)
+            .or_else(|| workspaces().find(on_chain))
+            .map_or(Tool::Tables, |spec| spec.tool)
     }
 
     /// What to call it in an interface.
     pub fn name(self) -> &'static str {
-        match self {
-            Tool::Select => "Select",
-            Tool::Terrain => "Terrain",
-            Tool::Grade => "Grade",
-            Tool::Road => "Road",
-            Tool::Shading => "Shading",
-            Tool::Textures => "Textures",
-            Tool::Holes => "Holes",
-            Tool::Areas => "Areas",
-            Tool::Water => "Water",
-            Tool::Doodads => "Doodads",
-            // "WMO" rather than "Buildings": it is what `MWMO` names, what
-            // `MODF` places and what `vale wmos` checks, and half of what a
-            // `.wmo` holds is not a building — a bridge, a gate, a canal.
-            Tool::Wmos => "WMO",
-            Tool::Sweep => "Sweep",
-            Tool::Spells => "Spells",
-            Tool::Lights => "Lights",
-            Tool::Creatures => "Creatures",
-            // "Objects" is this repository's own word for them: `vale
-            // objects` is the CLI check over the same population.
-            // The rail's tooltip says game objects, which is vmangos' word.
-            Tool::GameObjects => "Objects",
-            Tool::Items => "Items",
-            Tool::Quests => "Quests",
-            Tool::Measure => "Measure",
-            // "Taxi" is the prefix of the three tables it edits: TaxiNodes,
-            // TaxiPath and TaxiPathNode. One word, so `--tool taxi` needs no
-            // quoting.
-            Tool::Flightpaths => "Taxi",
-            Tool::Chunks => "Chunks",
-            Tool::ItemSets => "Sets",
-            Tool::Tables => "Tables",
-            // "Zones" and not "Areas": the rail's Areas tool paints an area
-            // onto chunks, and this workspace is what a zone and its
-            // sub-areas are. Two subjects with one name would be two answers
-            // to `--tool areas`.
-            Tool::Zones => "Zones",
-            Tool::Triggers => "Triggers",
-            Tool::Graveyards => "Graveyards",
-            // The top bar calls these two workspaces Creatures and Game
-            // Objects. The tool names differ because `--tool` matches a name,
-            // and the rail's spawn tools are already Creatures and Objects.
-            Tool::CreatureData => "Creature Data",
-            Tool::GameObjectData => "Game Object Data",
-            Tool::CreatureDisplays => "Creature Display Info",
-            Tool::ObjectDisplays => "Game Object Display Info",
-            Tool::ItemDisplays => "Item Display Info",
-            Tool::Assets => "Assets",
-        }
+        self.spec().name
     }
 }
 
@@ -628,7 +1093,7 @@ impl Plugin for ToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tool>()
             .init_resource::<Opening>()
-            .add_systems(Update, (open_tiles, close_tiles, modes).chain())
+            .add_systems(Update, (open_tiles, close_tiles).chain())
             .add_systems(Update, (crate::map::maps::follow_map_table, crate::map::maps::read_edited_map))
             .add_systems(Update, release_held);
         app.add_plugins((
@@ -660,8 +1125,8 @@ impl Plugin for ToolPlugin {
             // keeps the tuple within what `add_plugins` accepts.
             (
                 crate::subjects::items::ItemToolPlugin,
-                crate::subjects::creature_data::CreatureDataPlugin,
-                crate::subjects::gameobject_data::GameObjectDataPlugin,
+                crate::subjects::templates::TemplatesPlugin::<spawns::creatures::CreatureSubject>::default(),
+                crate::subjects::templates::TemplatesPlugin::<spawns::gameobjects::GameObjectSubject>::default(),
                 crate::import::assets::AssetsPlugin,
             ),
             crate::subjects::quests::QuestToolPlugin,
@@ -816,7 +1281,8 @@ mod tests {
         assert_eq!(open_on(Tool::Items), Tool::Items);
     }
 
-    /// [`ALL`] is every tool, in index order.
+    /// [`ALL`], and the [`SPECS`] it is read from, is every tool, in index
+    /// order.
     ///
     /// The compiler catches a new variant with no index; this test catches one
     /// with an index that is not in the list. The three hand-kept copies this
@@ -831,6 +1297,47 @@ mod tests {
         // is missing from the end.
         let highest = ALL.iter().map(|tool| tool.at()).max().unwrap_or(0);
         assert_eq!(ALL.len(), highest + 1);
+    }
+
+    /// [`SPECS`] has one row per tool, each at its tool's index.
+    ///
+    /// The rows are read by index ([`Tool::spec`]), so a row out of place
+    /// gives one tool another's name, panel and table.
+    #[test]
+    fn the_specs_have_one_row_per_tool_in_order() {
+        for (i, spec) in SPECS.iter().enumerate() {
+            assert_eq!(spec.tool.at(), i, "{} is in row {i}", spec.name);
+        }
+        let highest = SPECS.iter().map(|spec| spec.tool.at()).max().unwrap_or(0);
+        assert_eq!(SPECS.len(), highest + 1);
+    }
+
+    /// A tool has a workspace exactly when it replaces the viewport, and a
+    /// tool with a client table shares the table browser's window.
+    #[test]
+    fn a_spec_agrees_with_itself() {
+        use crate::popout::Group;
+        for spec in SPECS {
+            assert_eq!(
+                spec.workspace.is_some(),
+                spec.surface == Surface::Middle,
+                "{}",
+                spec.name
+            );
+            if spec.table.is_some() {
+                assert_eq!(spec.window, Some(Group::Tables), "{}", spec.name);
+            }
+            if spec.window.is_some() && spec.window != Some(Group::Tables) {
+                assert!(spec.table.is_none() && spec.surface == Surface::Middle, "{}", spec.name);
+            }
+            assert_eq!(spec.place == Place::Part, spec.about.is_empty(), "{}", spec.name);
+            assert_eq!(
+                spec.menu.is_some(),
+                !spec.parts.is_empty(),
+                "{} is a part of a workspace without a menu entry, or the reverse",
+                spec.name
+            );
+        }
     }
 
     /// Every tool answers to a distinct name, because that name is what

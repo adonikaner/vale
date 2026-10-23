@@ -65,9 +65,11 @@
 //! node's distance from the terrain as a distribution, and says why that is a
 //! measurement rather than a fault.
 
+use crate::tools::placements::group::DRAG_PIXELS;
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
-use crate::session::{EditSession, rows::Gesture};
+use crate::server::store::Gesture;
+use crate::session::EditSession;
 use vale_client::world::camera::WorldCamera;
 use vale_mangos::path::{self, Node, Path, Walk, Which};
 use bevy::prelude::*;
@@ -128,8 +130,6 @@ pub struct Waypoints {
     /// Whether a node placed or moved takes the ground's height — see the
     /// module comment.
     pub follow_ground: bool,
-    /// A fly-to asked for by the panel, consumed by [`fly`].
-    pub fly_to: Option<Vec3>,
     /// What the spawn's `movement_type` is, so the panel can say whether the
     /// path is walked at all. Read with the path.
     pub movement_type: u32,
@@ -163,7 +163,6 @@ impl Default for Waypoints {
             // creatures this tool is for. Turned off for anything flying or
             // indoors.
             follow_ground: true,
-            fly_to: None,
             movement_type: 0,
             scripted_done: false,
         }
@@ -208,12 +207,6 @@ pub struct NodeDrag {
     pub moving: bool,
 }
 
-/// How far the pointer must travel before a drag moves anything, in pixels.
-///
-/// `creatures::DRAG_PIXELS`' value and its reason: a click on a node is a
-/// selection, and without a threshold every one of them nudged the node.
-const DRAG_PIXELS: f32 = 6.0;
-
 /// How near the pointer has to be to a node to pick it, in pixels.
 ///
 /// About twice the size a node is drawn at editing distance. At 14 a press a
@@ -249,7 +242,7 @@ impl Waypoints {
             .clone()
             .unwrap_or_else(|| Path::empty(which, owner));
         Some(match session {
-            Some(session) => session.server_paths.over(&from_database),
+            Some(session) => session.rows.paths.over(&from_database),
             None => from_database,
         })
     }
@@ -259,7 +252,7 @@ impl Waypoints {
         let Some((which, owner)) = self.open else {
             return false;
         };
-        session.is_some_and(|session| session.server_paths.touches(which, owner))
+        session.is_some_and(|session| session.rows.paths.touches(which, owner))
     }
 
     /// What the open creature's movement type does with a path.
@@ -369,16 +362,16 @@ impl Plugin for WaypointToolPlugin {
             // rectangle instead. It reads the path as the last frame left it.
             .add_systems(
                 Update,
-                aim.after(crate::pick::aim).before(super::creatures::press),
+                aim.after(crate::pick::aim).before(super::spawn::press::<super::creatures::CreatureSubject>),
             )
             .add_systems(
                 Update,
                 // After the creature tool's own press, which is what moves the
                 // selection this follows, so that a click cannot be taken by
                 // both.
-                (follow_the_selection, read_the_path, press, drag, draw, fly)
+                (follow_the_selection, read_the_path, press, drag, draw)
                     .chain()
-                    .after(super::creatures::press),
+                    .after(super::spawn::press::<super::creatures::CreatureSubject>),
             )
             .add_systems(
                 Update,
@@ -434,7 +427,7 @@ fn follow_the_selection(
 /// Read the open creature's path, on a task.
 ///
 /// Re-read when the selection changes and when an apply has put something
-/// different in the database, on `creatures::read_the_map`'s rule — never on
+/// different in the database, on `spawn::systems::read_the_map`'s rule — never on
 /// the project's edit counter, which moves on every keystroke.
 fn read_the_path(
     mut waypoints: ResMut<Waypoints>,
@@ -475,7 +468,7 @@ fn read_the_path(
             // edit read the template's path from the database and drew that,
             // so the project's edit was not visible until it had been applied.
             if let (Some(subject), Some(session)) = (subject, session.as_deref()) {
-                if session.server_paths.touches(Which::Spawn, subject.guid)
+                if session.rows.paths.touches(Which::Spawn, subject.guid)
                     && waypoints.open != Some((Which::Spawn, subject.guid))
                 {
                     waypoints.open = Some((Which::Spawn, subject.guid));
@@ -491,7 +484,7 @@ fn read_the_path(
     let writes = session.as_ref().map_or(0, |session| session.database_writes);
     let claim_gone = match (waypoints.subject, session.as_deref()) {
         (Some(subject), Some(session)) => {
-            waypoints.stands_in && !session.server_paths.touches(Which::Spawn, subject.guid)
+            waypoints.stands_in && !session.rows.paths.touches(Which::Spawn, subject.guid)
         }
         _ => false,
     };
@@ -551,7 +544,7 @@ fn read_the_path(
 
 /// Which node the pointer is over, by its distance in pixels on screen.
 ///
-/// In pixels rather than in yards, for `creatures::aim`'s reason: a node twenty
+/// In pixels rather than in yards, for `spawn::systems::aim`'s reason: a node twenty
 /// yards off is a speck and a node underfoot fills the screen, and a grab
 /// radius in world units is either unusable close up or impossible far away.
 fn aim(
@@ -569,7 +562,7 @@ fn aim(
         return;
     }
     // A pointer over a panel is not over the world, and a node behind the
-    // waypoint window must not be highlighted under it. `creatures::aim` makes
+    // waypoint window must not be highlighted under it. `spawn::systems::aim` makes
     // the same check for the same reason.
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
         waypoints.hovered = None;
@@ -706,7 +699,7 @@ fn press(
 /// Move the held node, once the pointer has travelled far enough.
 ///
 /// The whole path is written on every frame of the drag, under one gesture, for
-/// `creatures::drag`'s reason: the drawing reads the project's store over the
+/// `spawn::drag`'s reason: the drawing reads the project's store over the
 /// database's, so a drag that only wrote at the end would move nothing until
 /// the button came up. It costs one undo entry and one store entry however many
 /// frames it takes, because the gesture names the path.
@@ -895,7 +888,7 @@ fn draw(
 /// `--waypoint-add <n>`: ring the chosen creature with points.
 ///
 /// The scripted stand-in for placing a point with the pointer — see
-/// [`crate::args::Args::waypoint_add`]. It waits for the path to have been read,
+/// [`crate::args::spawns::Spawns::waypoint_add`]. It waits for the path to have been read,
 /// because the edit it makes is written over whatever the database holds and a
 /// read landing afterwards would be read into `from_database` under an edit
 /// that had already been recorded against the empty one.
@@ -921,7 +914,7 @@ pub fn on_the_command_line(
     if *done {
         return;
     }
-    let Some(count) = args.waypoint_add else {
+    let Some(count) = args.spawns.waypoint_add else {
         *done = true;
         waypoints.scripted_done = true;
         return;
@@ -986,19 +979,6 @@ pub fn on_the_command_line(
     waypoints.scripted_done = true;
     info!("--waypoint-add: {nodes} point(s) around guid {owner}, radius {radius:.1} yards");
     session.status = format!("{nodes} point(s) added around {owner}");
-}
-
-/// Take the camera to a node the panel asked for.
-///
-/// `creatures::fly`'s two lines: the target is in the world's own axes and the
-/// camera stops wanting the ground, so it holds the height it is given rather
-/// than dropping to the terrain under a node that is meant to be in the air.
-fn fly(mut waypoints: ResMut<Waypoints>, mut camera: ResMut<crate::camera::EditorCamera>) {
-    let Some(at) = waypoints.fly_to.take() else {
-        return;
-    };
-    camera.target = at;
-    camera.wants_the_ground = false;
 }
 
 #[cfg(test)]

@@ -53,7 +53,8 @@
 //! finished path is one undo entry.
 //!
 //! A press does not move anything until the pointer has travelled
-//! [`DRAG_PIXELS`], so a click that selects does not also nudge. A dragged
+//! [`DRAG_PIXELS`](crate::tools::placements::group::DRAG_PIXELS), so a click
+//! that selects does not also nudge. A dragged
 //! node carries the first point of every path leaving it and the last point of
 //! every path arriving at it, when [`Flightpaths::carry_ends`] is on: the
 //! shipped paths start and end within a few yards of their nodes, and a node
@@ -67,6 +68,7 @@
 //! `taxi_nodes` table, which a save's server half writes (`crate::server::rows`).
 //! vmangos reads all three at startup only.
 
+use crate::tools::points::{aim_of, eye, PointDrag, HANDLE_PIXELS};
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
 use crate::session::EditSession;
@@ -152,21 +154,6 @@ impl Draft {
     }
 }
 
-/// A held left button on a node or a point.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Drag {
-    pub handle: Handle,
-    /// Where the pointer was when the button went down, in logical pixels.
-    pub pressed_at: Vec2,
-    /// Whether the pointer has travelled far enough for this to be a drag.
-    pub moving: bool,
-    /// The offset from the pointer's hit to the handle, measured on the first
-    /// moving frame, and whether it was measured for the vertical plane. A
-    /// change of plane measures it again, so pressing or releasing Ctrl in the
-    /// middle of a drag does not make the handle jump.
-    pub grab: Option<(Vec3, bool)>,
-}
-
 /// The flight path tool's state.
 #[derive(Resource, Debug)]
 pub struct Flightpaths {
@@ -187,7 +174,9 @@ pub struct Flightpaths {
     pub path: Option<u32>,
     pub point: Option<u32>,
     pub hovered: Option<Handle>,
-    pub drag: Option<Drag>,
+    /// A held left button on a node or a point. See
+    /// [`crate::tools::points`] for what a drag does.
+    pub drag: Option<PointDrag<Handle>>,
     pub armed: Armed,
     /// Make the path back as well when connecting two nodes. On by default:
     /// 270 of the 275 shipped flights have one.
@@ -203,11 +192,6 @@ pub struct Flightpaths {
     pub clearance: f32,
     /// Draw the boat and zeppelin routes as well as the flights.
     pub transports: bool,
-    /// A fly-to asked for by the panel, consumed by [`fly`].
-    pub fly_to: Option<Vec3>,
-    /// The camera distance that `fly_to` asks for, when it asks for one: a
-    /// path is framed whole, a node or a point is not.
-    pub fly_distance: Option<f32>,
     /// Whether the command line's flight path flags have run, or none were
     /// given. `crate::server::publish::release::migration_on_the_command_line` waits on
     /// it.
@@ -238,8 +222,6 @@ impl Default for Flightpaths {
             carry_ends: true,
             clearance: DEFAULT_CLEARANCE,
             transports: false,
-            fly_to: None,
-            fly_distance: None,
             scripted_done: false,
             picture_known: None,
         }
@@ -307,29 +289,25 @@ impl Flightpaths {
         self.point = Some(id);
     }
 
-    /// Ask the camera to look at a place, in the world's axes.
-    pub fn fly_to(&mut self, at: [f32; 3]) {
-        self.fly_to = Some(Vec3::from(at));
-    }
-
-    /// Ask the camera to frame a whole path: the middle of the box its points
-    /// on this map span, from a distance that fits the box's width.
-    pub fn fly_to_path(&mut self, id: u32) {
-        let Some(route) = self.route(id) else { return };
+    /// The camera request that frames a whole path: the middle of the box its
+    /// points on this map span, from a distance that fits the box's width. A
+    /// node or a point is looked at from the current distance instead.
+    pub fn path_flight(&self, id: u32) -> Option<crate::camera::FlyTo> {
+        let route = self.route(id)?;
         let here: Vec<Vec3> = route
             .points
             .iter()
             .filter(|point| point.map == self.map)
             .map(|point| Vec3::from(point.at))
             .collect();
-        let Some(first) = here.first().copied() else {
-            return;
-        };
+        let first = here.first().copied()?;
         let (low, high) = here
             .iter()
             .fold((first, first), |(low, high), p| (low.min(*p), high.max(*p)));
-        self.fly_to = Some((low + high) * 0.5);
-        self.fly_distance = Some(framing_distance((high - low).truncate().length()));
+        Some(crate::camera::FlyTo {
+            at: (low + high) * 0.5,
+            distance: Some(framing_distance((high - low).truncate().length())),
+        })
     }
 
     /// Rebuild the lists on the next frame, after an edit this frame.
@@ -369,14 +347,6 @@ impl Flightpaths {
 /// flights cruise well above this; it is a floor for a point placed by hand.
 pub const DEFAULT_CLEARANCE: f32 = 40.0;
 
-/// How wide a handle is to the pointer, in logical pixels. The light tool
-/// uses the same width for the same reason: a handle is a point, so the
-/// pointer picks it within a disc of this width around it.
-pub(super) const HANDLE_PIXELS: f32 = 12.0;
-
-/// How far the pointer travels before a press on a handle becomes a drag.
-pub(super) const DRAG_PIXELS: f32 = 4.0;
-
 /// How far from the camera a node marker is drawn and picked, in yards. A
 /// little past the block the editor streams.
 const MARKER_RANGE: f32 = 2600.0;
@@ -405,7 +375,7 @@ impl Plugin for FlightpathToolPlugin {
                     .chain()
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (draw, draw_draft, fly).after(keys));
+            .add_systems(Update, (draw, draw_draft).after(keys));
     }
 }
 
@@ -491,62 +461,6 @@ fn rebuild(
     if flights.point.is_some_and(|id| flights.point(id).is_none()) {
         flights.point = None;
     }
-}
-
-/// The pointer's ray and the numbers that turn a distance off it into pixels.
-pub(super) struct Aim {
-    pub(super) origin: Vec3,
-    pub(super) direction: Vec3,
-    /// The projection's `[1][1]`, `1 / tan(fov / 2)`.
-    focal: f32,
-    /// The window's height in logical pixels.
-    height: f32,
-}
-
-impl Aim {
-    /// How many pixels a distance of `off` yards from the ray is, at `along`
-    /// yards down it.
-    pub(super) fn pixels(&self, off: f32, along: f32) -> f32 {
-        off / along * self.focal * self.height * 0.5
-    }
-
-    /// How far a point is from the ray in pixels, or `None` behind the eye.
-    pub(super) fn to_point(&self, at: Vec3) -> Option<f32> {
-        let to = at - self.origin;
-        let along = to.dot(self.direction);
-        if along <= 0.0 {
-            return None;
-        }
-        Some(self.pixels((to - self.direction * along).length(), along))
-    }
-
-    /// How far a segment is from the ray in pixels, at its nearest.
-    fn to_segment(&self, a: Vec3, b: Vec3) -> Option<f32> {
-        let (along, off) = crate::pick::ray_to_segment(self.origin, self.direction, a, b)?;
-        Some(self.pixels(off, along))
-    }
-}
-
-pub(super) fn aim_of(
-    windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
-    camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
-) -> Option<Aim> {
-    let (origin, direction) = crate::pick::ray(windows, camera)?;
-    let window = windows.single().ok()?;
-    let (camera, _) = camera.single().ok()?;
-    let focal = camera.clip_from_view().to_cols_array()[5];
-    (focal.abs() > f32::EPSILON).then_some(Aim {
-        origin,
-        direction,
-        focal,
-        height: window.height().max(1.0),
-    })
-}
-
-/// The eye, in the world's axes.
-pub(super) fn eye(camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>) -> Option<Vec3> {
-    let (_, at) = camera.single().ok()?;
-    Some(Vec3::from(axes::to_wow(at.translation())))
 }
 
 /// Whether a leg is drawn and picked: near the eye, or on a path that is
@@ -669,17 +583,7 @@ fn press(
         }
         return;
     }
-    let pointer = windows
-        .single()
-        .ok()
-        .and_then(Window::cursor_position)
-        .unwrap_or_default();
-    let begin = |handle: Handle| Drag {
-        handle,
-        pressed_at: pointer,
-        moving: false,
-        grab: None,
-    };
+    let begin = |handle: Handle| PointDrag::press(handle, &windows);
     match (flights.armed, flights.hovered) {
         (Armed::Connect { from }, Some(Handle::Node(to))) => {
             flights.armed = Armed::Nothing;
@@ -742,44 +646,14 @@ fn drag(
         return;
     }
     let Some(mut held) = flights.drag else { return };
-    let Some(pointer) = windows.single().ok().and_then(Window::cursor_position) else {
-        return;
-    };
-    if !held.moving {
-        if pointer.distance(held.pressed_at) < DRAG_PIXELS {
-            return;
-        }
-        held.moving = true;
-    }
-    let Some(session) = session.as_mut() else { return };
     let Some(from) = handle_position(&flights, held.handle) else {
         flights.drag = None;
         return;
     };
-    let vertical = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-    let Some((origin, direction)) = crate::pick::ray(&windows, &camera) else {
-        return;
-    };
-    let hit = match vertical {
-        false => crate::pick::meets_plane(origin, direction, from.z),
-        true => crate::pick::meets_upright_plane(origin, direction, from),
-    };
-    let Some(hit) = hit else { return };
-    let grab = match held.grab {
-        Some((grab, was_vertical)) if was_vertical == vertical => grab,
-        _ => {
-            // First moving frame, or the plane changed: measure the offset and
-            // write nothing, so the handle does not jump.
-            held.grab = Some((from - hit, vertical));
-            flights.drag = Some(held);
-            return;
-        }
-    };
-    let to = match vertical {
-        false => Vec3::new(hit.x + grab.x, hit.y + grab.y, from.z),
-        true => Vec3::new(from.x, from.y, hit.z + grab.z),
-    };
+    let Some(session) = session.as_mut() else { return };
+    let to = held.follow(from, crate::tools::points::vertical(&keys), &windows, &camera);
     flights.drag = Some(held);
+    let Some(to) = to else { return };
     let now = time.elapsed_secs_f64();
     match held.handle {
         Handle::Node(id) => move_node(session, &flights, id, to, now),
@@ -1455,18 +1329,6 @@ fn chevron(marks: &mut Marks, a: Vec3, b: Vec3, colour: Color) {
     );
 }
 
-/// Take the camera to a place the panel asked for.
-fn fly(mut flights: ResMut<Flightpaths>, mut camera: ResMut<crate::camera::EditorCamera>) {
-    let Some(at) = flights.fly_to.take() else {
-        return;
-    };
-    camera.target = at;
-    camera.wants_the_ground = false;
-    if let Some(distance) = flights.fly_distance.take() {
-        camera.distance = distance;
-    }
-}
-
 /// How far back the camera stands to see a box `across` yards wide: about its
 /// width, within the range the editor streams.
 pub fn framing_distance(across: f32) -> f32 {
@@ -1484,13 +1346,14 @@ fn scripted(
     mut session: Option<ResMut<EditSession>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    mut fly: MessageWriter<crate::camera::FlyTo>,
     mut done: Local<bool>,
 ) {
-    let asked = args.taxi_node.is_some()
-        || args.taxi_path.is_some()
-        || args.taxi_connect.is_some()
-        || args.taxi_node_add.is_some()
-        || args.flight_map;
+    let asked = args.tools.taxi_node.is_some()
+        || args.tools.taxi_path.is_some()
+        || args.tools.taxi_connect.is_some()
+        || args.tools.taxi_node_add.is_some()
+        || args.tools.flight_map;
     if *done {
         return;
     }
@@ -1503,7 +1366,7 @@ fn scripted(
         return;
     }
     let Some(session) = session.as_mut() else { return };
-    if let Some((x, y)) = args.taxi_node_add {
+    if let Some((x, y)) = args.tools.taxi_node_add {
         let Some(z) = crate::tools::placements::doodads::ground_height(session, x, y) else {
             return;
         };
@@ -1513,7 +1376,7 @@ fn scripted(
         session.status = line;
         rebuilt(session, &mut flights);
     }
-    if args.flight_map {
+    if args.tools.flight_map {
         use vale_edit::flightmap;
         if !session.open_table(&assets, flightmap::TABLE) || !session.open_table(&assets, WORLD_MAP_AREA) {
             return;
@@ -1525,21 +1388,21 @@ fn scripted(
         info!("--flight-map: {line}");
         session.status = line;
     }
-    if let Some((from, to)) = args.taxi_connect {
+    if let Some((from, to)) = args.tools.taxi_connect {
         let (with_return, clearance) = (flights.with_return, flights.clearance);
         let line = connect(session, &mut flights, from, to, with_return, clearance);
         info!("--taxi-connect: {line}");
         session.status = line;
         rebuilt(session, &mut flights);
-        if let Some(path) = flights.path {
-            flights.fly_to_path(path);
+        if let Some(flight) = flights.path.and_then(|path| flights.path_flight(path)) {
+            fly.write(flight);
         }
     }
-    if let Some(id) = args.taxi_node {
+    if let Some(id) = args.tools.taxi_node {
         match flights.node(id).cloned() {
             Some(node) => {
                 flights.select_node(id);
-                flights.fly_to(node.at);
+                fly.write(crate::camera::FlyTo::at(Vec3::from(node.at)));
                 let (leaving, arriving) = flights.routes_of(id);
                 info!(
                     "--taxi-node: {id} {}, {} path(s) leaving and {} arriving",
@@ -1551,11 +1414,13 @@ fn scripted(
             None => warn!("--taxi-node {id}: no node by that id on this map"),
         }
     }
-    if let Some(id) = args.taxi_path {
+    if let Some(id) = args.tools.taxi_path {
         match flights.route(id).cloned() {
             Some(route) => {
                 flights.select_path(id);
-                flights.fly_to_path(id);
+                if let Some(flight) = flights.path_flight(id) {
+                    fly.write(flight);
+                }
                 info!(
                     "--taxi-path: {id} {} -> {}, {} points, {:.0} yd, {} copper",
                     flights.name(route.path.from),

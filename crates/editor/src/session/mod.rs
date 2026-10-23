@@ -7,7 +7,6 @@
 //! project.rs    switching and clearing the project the session writes to
 //! tables.rs     the open client tables, in the overlay and in the project
 //! files.rs      any other file of the project, in the overlay and the folder
-//! rows.rs       the server row store: row edits, paths and scripts
 //! save.rs       saving tiles, and packing the project into an archive
 //! history.rs    undo and redo
 //! originals.rs  the archives' own copies, and project files that match them
@@ -80,7 +79,6 @@ pub(crate) mod tiles;
 pub(crate) mod project;
 pub(crate) mod tables;
 pub(crate) mod files;
-pub(crate) mod rows;
 pub(crate) mod save;
 pub(crate) mod history;
 pub(crate) mod originals;
@@ -305,43 +303,10 @@ pub struct EditSession {
     /// so the read sees every edit made so far.
     unpublished: HashSet<(u32, u32)>,
     edited: Edited,
-    /// The rows this project changes in the server's database.
-    ///
-    /// Held here and not in the tool, for the reason the open tables are: a
-    /// project's edits outlive whichever tool is chosen, and a save has to be
-    /// able to write all of them without asking a panel what it is holding.
-    ///
-    /// Empty for every project that has not touched a server table, which is
-    /// every terrain project. See [`vale_mangos::row::Edits`], and
-    /// [`crate::server::rows`], which writes them.
-    pub server_edits: vale_mangos::row::Edits,
-    /// …and the waypoint paths it changes, which are the one server subject
-    /// whose edit is a set of rows rather than a column.
-    ///
-    /// A second store rather than more entries in the first, because the two
-    /// are written differently: a column edit is an `UPDATE` of a row that is
-    /// already there, and a path is every row under a key replaced. See
-    /// [`vale_mangos::path::Paths`], and the reason the unit is the whole
-    /// path in that module's own comment.
-    pub server_paths: vale_mangos::path::Paths,
-    /// The scripts it changes, which are the other subject whose edit is a
-    /// set of rows: a script's rows have no key of their own, so every row
-    /// under an id is replaced. See [`vale_mangos::scripts::Scripts`].
-    pub server_scripts: vale_mangos::scripts::Scripts,
-    /// How many row edits have landed, for anything that cached a reading
-    /// of the database.
-    ///
-    /// `crate::tools::spawns::creatures` is the one reader: it holds a map's worth of
-    /// spawns read over a connection, and an edit to a position has to move the
-    /// marker without a second round trip. A counter rather than a flag,
-    /// because what it answers is "is what I read still true".
-    pub server_edit_revision: u64,
-    /// Whether [`Self::server_edits`] is ahead of the project folder.
-    pub server_edits_unsaved: bool,
-    /// …and whether [`Self::server_paths`] is.
-    pub server_paths_unsaved: bool,
-    /// …and whether [`Self::server_scripts`] is.
-    pub server_scripts_unsaved: bool,
+    /// The rows this project changes in the server's database: the row
+    /// edits, waypoint paths and scripts, and whether each is ahead of the
+    /// project folder. See [`crate::server::store::ServerRows`].
+    pub rows: crate::server::store::ServerRows,
     /// What the last apply that succeeded in this process put in the
     /// database, as `crate::server::rows::Plan::signature` measures it.
     ///
@@ -387,14 +352,6 @@ pub struct EditSession {
     /// Not [`Self::applied`], which cannot tell a
     /// put-back from nothing in a session that did not make the apply.
     pub database_writes: u64,
-    /// The undo entry every server-row write goes on while a group is being
-    /// changed, as `(label, subject)`. See [`Self::as_one`].
-    ///
-    /// A spawn's writers each name their own row in their gesture subject, so a
-    /// move of twelve creatures would be twelve entries on the stack. While this
-    /// is set, every write that carries a gesture takes this one instead, and
-    /// the twelve fold into one.
-    one_gesture: Option<(String, String)>,
     /// The archives' own copy of a file, which [`Self::save`] compares a
     /// tile against. `None` in a test session, which has no archives; every
     /// tile is then written.
@@ -450,17 +407,10 @@ impl EditSession {
             reread_everything: false,
             claims_for: "Azeroth".to_string(),
             edited: Edited::default(),
-            server_edits: Default::default(),
-            server_paths: Default::default(),
-            server_scripts: Default::default(),
-            server_edit_revision: 0,
-            server_edits_unsaved: false,
-            server_paths_unsaved: false,
-            server_scripts_unsaved: false,
+            rows: Default::default(),
             applied_signature: None,
             applied: [None; crate::server::stack::Subject::COUNT],
             database_writes: 0,
-            one_gesture: None,
             shipped: None,
             unchanged: None,
             locks: HashMap::default(),
@@ -468,6 +418,12 @@ impl EditSession {
         }
     }
 
+    /// Record that the world database has changed under every cache of it:
+    /// an Apply or a Put back of any subject finished, whether or not it
+    /// succeeded, or the editor was pointed at another database.
+    pub fn wrote_the_database(&mut self) {
+        self.database_writes += 1;
+    }
 }
 
 /// Open the project, install the overlay, and point the world at the map.

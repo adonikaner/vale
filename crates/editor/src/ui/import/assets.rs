@@ -894,6 +894,37 @@ fn source_picture(ui: &mut egui::Ui, import: &Import) {
     );
 }
 
+/// The Assets workspace's inspector panel, its third part: the chosen file,
+/// drawn.
+pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
+    let crate::ui::tools::Subject { session, assets, .. } = subject;
+    inspector(
+        ui,
+        Work {
+            session,
+            assets: &mut editing.assets,
+            game: assets,
+            thumbnails: &mut editing.thumbnails,
+            portraits: &mut editing.portraits,
+        },
+    );
+}
+
+/// The Assets workspace in the middle of a window: the project's own files.
+pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::ui::workspace::Bench<'_, '_, '_>) {
+    let crate::ui::workspace::Bench { session, editing, assets, .. } = bench;
+    draw(
+        ui,
+        Work {
+            session,
+            assets: &mut editing.assets,
+            game: assets,
+            thumbnails: &mut editing.thumbnails,
+            portraits: &mut editing.portraits,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

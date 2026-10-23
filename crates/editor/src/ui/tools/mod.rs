@@ -22,9 +22,10 @@
 //!
 //! ## One panel for every tool
 //!
-//! Every subject on the rail draws into the same rectangle, and one `match`
-//! here decides what goes in it. A person learns where the settings are once,
-//! and a new subject takes the same position instead of choosing one.
+//! Every subject on the rail draws into the same rectangle, and the tool's
+//! row of `crate::tools::SPECS` names the function that fills it. A person
+//! learns where the settings are once, and a new subject takes the same
+//! position instead of choosing one.
 //!
 //! A subject that is not built yet (a greyed row on the rail) has nothing to
 //! draw, and says so in this one place.
@@ -63,22 +64,7 @@ use crate::pick::Cursor;
 use crate::session::EditSession;
 use crate::tools::Tool;
 use crate::ui::Editing;
-use crate::ui::map::sweep::sweep;
-use crate::ui::tables::table;
-use crate::ui::tools::ground::areas::zones;
-use crate::ui::tools::ground::chunks::chunks;
-use crate::ui::tools::ground::grade::grading;
-use crate::ui::tools::ground::holes::holes;
-use crate::ui::tools::ground::road::road;
-use crate::ui::tools::ground::shading::shading;
-use crate::ui::tools::ground::terrain::brush;
-use crate::ui::tools::ground::textures::paint;
-use crate::ui::tools::ground::water::water;
 use crate::ui::tools::history::history;
-use crate::ui::tools::measure::measure;
-use crate::ui::tools::placements::doodads::doodad;
-use crate::ui::tools::placements::wmos::wmo;
-use crate::ui::tools::tablet::tablet;
 use crate::ui::widgets::theme;
 
 /// What the panel is about this frame, as one argument.
@@ -119,20 +105,11 @@ pub struct Subject<'a> {
     pub guides: &'a mut crate::tools::guides::Guides,
 }
 
-/// Draw the panel for whichever tool is chosen.
+/// Draw the panel for whichever tool is chosen: the header, the undo row
+/// for a tool that edits, and then the tool's own panel
+/// ([`crate::tools::Spec::inspector`]).
 pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) {
-    let Subject {
-        tool,
-        session,
-        tables,
-        assets,
-        cursor,
-        now,
-        server,
-        server_panel,
-        standings,
-        guides,
-    } = subject;
+    let tool = subject.tool;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(
@@ -148,10 +125,7 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
                 let pop = ui
                     .add_enabled(editing.popout.editing, egui::Button::new("Pop Out").small())
                     .on_hover_text(
-                        "Open this workspace in a window of its own, and return this window \
-                         to the world. Dock or close that window to bring it back. Each \
-                         workspace can have a window, except that the table workspaces share \
-                         one.",
+                        "Open this workspace in a window of its own, and return this window                          to the world. Dock or close that window to bring it back. Each                          workspace can have a window, except that the table workspaces share                          one.",
                     )
                     .on_disabled_hover_text("Not during a playtest.");
                 if pop.clicked() {
@@ -162,291 +136,17 @@ pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) 
     });
     ui.add_space(2.0);
     if tool.edits() {
-        history(ui, session, assets);
+        history(ui, subject.session, subject.assets);
     }
     ui.add_space(4.0);
+    (tool.spec().inspector)(ui, subject, editing);
+}
 
-    let showing_hour = editing.clock.half_minutes;
-    match tool {
-        Tool::Select => {
-            theme::heading(ui, "Pointer");
-            theme::note(
-                ui,
-                "Select reports the position under the pointer and changes \
-                 nothing. Choose a tool on the rail to edit, or Measure to inspect \
-                 a point and the distance between two points.",
-            );
-        }
-        Tool::Measure => measure(ui, &mut editing.measuring, session, cursor, tables),
-        Tool::Terrain => brush(ui, &mut editing.terrain),
-        Tool::Grade => grading(ui, &mut editing.grading, session),
-        Tool::Road => road(
-            ui,
-            &mut editing.road,
-            &mut editing.textures,
-            &mut editing.thumbnails,
-            session,
-        ),
-        Tool::Shading => shading(ui, &mut editing.shading),
-        Tool::Holes => holes(ui, &editing.holes, session),
-        Tool::Areas => zones(ui, &mut editing.areas, session, tables, cursor),
-        Tool::Chunks => chunks(
-            ui,
-            &mut editing.chunks,
-            &mut editing.areas,
-            &mut editing.textures,
-            &mut editing.thumbnails,
-            session,
-            tables,
-        ),
-        Tool::Water => water(ui, &mut editing.water),
-        Tool::Sweep => sweep(ui, &mut editing.sweep, session, assets),
-        Tool::Textures => paint(
-            ui,
-            &mut editing.textures,
-            &mut editing.thumbnails,
-            session,
-            cursor,
-            assets,
-            guides,
-            now,
-        ),
-        Tool::Doodads => doodad(
-            ui,
-            session,
-            &mut editing.selection,
-            &mut editing.doodad_held,
-            &mut editing.gizmo,
-            &mut editing.placing,
-            &mut editing.portraits,
-            &mut editing.favourites,
-            now,
-        ),
-        Tool::Wmos => wmo(
-            ui,
-            session,
-            &mut editing.wmos,
-            &mut editing.wmo_held,
-            &mut editing.gizmo,
-            &mut editing.placing,
-            &mut editing.portraits,
-            &mut editing.favourites,
-            now,
-        ),
-        // A light's whole form is drawn here, because a light is picked in the
-        // viewport and the inspector is where this shell shows the selection,
-        // as it does a doodad's position and turn. The list of all 374 lights
-        // is a dialog behind a button, for finding one that is not in view.
-        Tool::Lights => places::lights::light_inspector(
-            ui,
-            crate::ui::tables::Workspace {
-                tool,
-                session,
-                browser: &mut editing.browser,
-                assets,
-                thumbnails: &mut editing.thumbnails,
-                portraits: &mut editing.portraits,
-                favourites: &mut editing.favourites,
-                now,
-                wireframe: None,
-                particles: None,
-                lights: Some(&mut editing.lights),
-                quests: None,
-                hour: showing_hour,
-            },
-        ),
-        // The flight paths are client tables whose rows are places, picked in
-        // the viewport like a light, so their form is drawn here too.
-        Tool::Flightpaths => places::flightpaths::draw(
-            ui,
-            places::flightpaths::Subject {
-                session,
-                flights: &mut editing.flightpaths,
-                assets,
-                now,
-                server_panel,
-            },
-        ),
-        // Area triggers and safe places are client tables whose rows are
-        // places, picked in the viewport like a flight node, with server rows
-        // beside them.
-        Tool::Triggers => places::triggers::draw(
-            ui,
-            places::triggers::Subject {
-                session,
-                triggers: &mut editing.triggers,
-                assets,
-                now,
-                server_panel,
-                behaviour: &mut editing.behaviour,
-            },
-        ),
-        Tool::Graveyards => places::graveyards::draw(
-            ui,
-            places::graveyards::Subject {
-                session,
-                graveyards: &mut editing.graveyards,
-                assets,
-                now,
-                server_panel,
-            },
-        ),
-        // The server's creatures are picked in the viewport like a light, so
-        // their form is drawn here for the same reason. It shows two rows: the
-        // spawn that was clicked and the template behind it. See
-        // `spawns::creatures`.
-        Tool::Creatures => spawns::creatures::draw(
-            ui,
-            spawns::creatures::Subject {
-                session,
-                creatures: &mut editing.creatures,
-                waypoints: &mut editing.waypoints,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                behaviour: &mut editing.behaviour,
-                services: &mut editing.services,
-                gossip: &mut editing.gossip,
-                server,
-                server_panel,
-                standings,
-                assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now,
-                gizmo: Some(&mut editing.gizmo),
-            },
-        ),
-        // The server's game objects, handled the same way as creatures. See
-        // `spawns::gameobjects`.
-        Tool::GameObjects => spawns::gameobjects::draw(
-            ui,
-            spawns::gameobjects::Subject {
-                session,
-                objects: &mut editing.objects,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                server,
-                server_panel,
-                standings,
-                assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now,
-                gizmo: Some(&mut editing.gizmo),
-            },
-        ),
-        // The item workspace's third part: what the open item looks like,
-        // which is this panel's view of the selection. `crate::ui::subjects::items` says why
-        // it is not a column of its own.
-        Tool::Items => crate::ui::subjects::items::inspector(
-            ui,
-            crate::ui::subjects::items::Looking {
-                session,
-                items: &mut editing.items,
-                assets,
-                thumbnails: &mut editing.thumbnails,
-                portraits: &mut editing.portraits,
-            },
-        ),
-        // The quest workspace's third part, following the shell's rule that the
-        // inspector shows the selection: the open quest as the log would show
-        // it, who gives and takes it, and its chain. `crate::ui::subjects::quests` says why
-        // it is not a column of its own.
-        Tool::Quests => crate::ui::subjects::quests::inspector(
-            ui,
-            crate::ui::subjects::quests::Workspace {
-                session,
-                quests: &mut editing.quests,
-                items: &mut editing.items,
-                assets,
-                thumbnails: &mut editing.thumbnails,
-                now,
-            },
-        ),
-        // The Assets workspace's third part: the chosen file, drawn. See
-        // `crate::ui::import::assets`.
-        Tool::Assets => crate::ui::import::assets::inspector(
-            ui,
-            crate::ui::import::assets::Work {
-                session,
-                assets: &mut editing.assets,
-                game: assets,
-                thumbnails: &mut editing.thumbnails,
-                portraits: &mut editing.portraits,
-            },
-        ),
-        // The Creatures and Game Objects workspaces' third part: the open
-        // template's model, a summary, and the windows for its other tables.
-        // See `crate::ui::subjects::creature_data` and `crate::ui::subjects::gameobject_data`.
-        Tool::CreatureData => crate::ui::subjects::creature_data::inspector(
-            ui,
-            spawns::creatures::Subject {
-                session,
-                creatures: &mut editing.creatures,
-                waypoints: &mut editing.waypoints,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                behaviour: &mut editing.behaviour,
-                services: &mut editing.services,
-                gossip: &mut editing.gossip,
-                server,
-                server_panel,
-                standings,
-                assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now,
-                gizmo: None,
-            },
-        ),
-        Tool::GameObjectData => crate::ui::subjects::gameobject_data::inspector(
-            ui,
-            spawns::gameobjects::Subject {
-                session,
-                objects: &mut editing.objects,
-                quests: &mut editing.quests,
-                loot: &mut editing.loot,
-                server,
-                server_panel,
-                standings,
-                assets,
-                portraits: &mut editing.portraits,
-                thumbnails: &mut editing.thumbnails,
-                now,
-                gizmo: None,
-            },
-        ),
-        // A table's inspector shows what the open row points at. The form
-        // itself is in the middle, where the viewport would be; see
-        // `crate::ui::tables`. This follows the shell's rule that the inspector
-        // shows the selection.
-        Tool::Spells
-        | Tool::ItemSets
-        | Tool::Tables
-        | Tool::Zones
-        | Tool::CreatureDisplays
-        | Tool::ObjectDisplays
-        | Tool::ItemDisplays => table(
-            ui,
-            crate::ui::tables::Workspace {
-                tool,
-                session,
-                browser: &mut editing.browser,
-                assets,
-                thumbnails: &mut editing.thumbnails,
-                portraits: &mut editing.portraits,
-                favourites: &mut editing.favourites,
-                now,
-                wireframe: None,
-                particles: None,
-                lights: None,
-                quests: None,
-                hour: showing_hour,
-            },
-        ),
-    }
-    // The three brushes whose strength and radius a pen's pressure scales.
-    if matches!(tool, Tool::Terrain | Tool::Textures | Tool::Shading) {
-        tablet(ui, &mut editing.tablet, &editing.pen);
-    }
+/// The Select tool's panel, which has no settings.
+pub(crate) fn pointer(ui: &mut egui::Ui, _: Subject<'_>, _: &mut Editing<'_>) {
+    theme::heading(ui, "Pointer");
+    theme::note(
+        ui,
+        "Select reports the position under the pointer and changes          nothing. Choose a tool on the rail to edit, or Measure to inspect          a point and the distance between two points.",
+    );
 }

@@ -206,6 +206,9 @@ pub struct Marks {
     eye: Vec3,
     forward: Vec3,
     scale: Scale,
+    /// The last colour pushed and its bytes. A tool pushes runs of one
+    /// colour, so most marks skip the conversion.
+    last_colour: Option<(Color, [u8; 4])>,
 }
 
 impl Marks {
@@ -241,11 +244,24 @@ impl Marks {
         radius.max(self.pixel(at) * MARKER_PIXELS)
     }
 
+    /// A colour as the bytes a material is keyed by.
+    fn bytes(&mut self, colour: Color) -> [u8; 4] {
+        match self.last_colour {
+            Some((had, bytes)) if had == colour => bytes,
+            _ => {
+                let bytes = colour.to_srgba().to_u8_array();
+                self.last_colour = Some((colour, bytes));
+                bytes
+            }
+        }
+    }
+
     fn push(&mut self, shape: Shape, pose: Transform, colour: Color, look: Look) {
+        let colour = self.bytes(colour);
         self.list.push(Mark {
             shape,
             pose,
-            colour: colour.to_srgba().to_u8_array(),
+            colour,
             look,
         });
     }
@@ -288,9 +304,10 @@ impl Marks {
         if line.a.distance_squared(line.b) < 1e-8 {
             return;
         }
+        let colour = self.bytes(colour);
         self.lines.push(LineMark {
             line,
-            colour: colour.to_srgba().to_u8_array(),
+            colour,
             look,
         });
     }
@@ -532,6 +549,10 @@ struct Slots {
     shown: usize,
     /// The [`signature`] of the poses the entities were last given.
     posed: (u64, usize),
+    /// …and the poses, in the order they came. The same list in the same
+    /// order, which is what one tool drawing the same marks sends, is
+    /// recognised by comparing it rather than hashing it.
+    last: Vec<Transform>,
     /// The most marks the key has drawn in one frame since the count of
     /// `frames` began.
     most: usize,
@@ -556,8 +577,12 @@ struct Pool {
     materials: HashMap<MaterialKey, Handle<MarkMaterial>>,
     entities: HashMap<PoolKey, Slots>,
     lines: HashMap<MaterialKey, Lines>,
-    /// This frame's poses and lines per key, kept to reuse the allocations.
-    wanted: HashMap<PoolKey, Vec<Transform>>,
+    /// This frame's poses per key, kept to reuse the allocations. A list
+    /// rather than a map, so a run of marks of one key is gathered without a
+    /// lookup per mark; [`Self::wanted_at`] finds a key's place otherwise.
+    wanted: Vec<(PoolKey, Vec<Transform>)>,
+    wanted_at: HashMap<PoolKey, usize>,
+    /// …and this frame's lines per key.
     wanted_lines: HashMap<MaterialKey, Vec<Line>>,
 }
 
@@ -619,7 +644,7 @@ fn show(
     mut entities: Query<(&mut Transform, &mut Visibility), With<Pooled>>,
 ) {
     let pool = &mut *pool;
-    for poses in pool.wanted.values_mut() {
+    for (_, poses) in pool.wanted.iter_mut() {
         poses.clear();
     }
     for lines in pool.wanted_lines.values_mut() {
@@ -638,16 +663,13 @@ fn show(
         }
         return;
     }
+    let mut hint = usize::MAX;
     for mark in marks.list.drain(..) {
-        pool.wanted
-            .entry((mark.shape, mark.colour, false))
-            .or_default()
-            .push(mark.pose);
+        hint = place_of(&mut pool.wanted, &mut pool.wanted_at, (mark.shape, mark.colour, false), hint);
+        pool.wanted[hint].1.push(mark.pose);
         if mark.look == Look::Ghosted {
-            pool.wanted
-                .entry((mark.shape, ghost_of(mark.colour), true))
-                .or_default()
-                .push(mark.pose);
+            let ghost = place_of(&mut pool.wanted, &mut pool.wanted_at, (mark.shape, ghost_of(mark.colour), true), usize::MAX);
+            pool.wanted[ghost].1.push(mark.pose);
         }
     }
     for mark in marks.lines.drain(..) {
@@ -681,26 +703,34 @@ fn show(
 
     // Every key with marks this frame, and every key that has entities, so a
     // key with nothing this frame hides them.
+    let wanted_poses = |key: &PoolKey| -> &[Transform] {
+        pool.wanted_at.get(key).map(|&at| pool.wanted[at].1.as_slice()).unwrap_or(&[])
+    };
     let keys: Vec<PoolKey> = pool
         .wanted
         .iter()
         .filter(|(_, poses)| !poses.is_empty())
         .map(|(key, _)| *key)
-        .chain(
-            pool.entities
-                .keys()
-                .filter(|key| pool.wanted.get(*key).is_none_or(Vec::is_empty))
-                .copied(),
-        )
+        .chain(pool.entities.keys().filter(|key| wanted_poses(key).is_empty()).copied())
         .collect();
     for key in keys {
-        let poses = pool.wanted.get(&key).map(Vec::as_slice).unwrap_or(&[]);
+        let poses = pool.wanted_at.get(&key).map(|&at| pool.wanted[at].1.as_slice()).unwrap_or(&[]);
         let slots = pool.entities.entry(key).or_default();
         // The same poses as last frame, in whatever order, leave the entities
         // as they are: one shape in one material, they are interchangeable.
-        let posed = signature(poses.iter().map(pose_hash));
-        let unchanged = posed == slots.posed && slots.shown == poses.len();
-        slots.posed = posed;
+        // The same order is compared first, which costs less than the hashes.
+        let unchanged = match slots.last.as_slice() == poses {
+            // The same list has the same signature.
+            true => slots.shown == poses.len(),
+            false => {
+                let posed = signature(poses.iter().map(pose_hash));
+                let same = posed == slots.posed && slots.shown == poses.len();
+                slots.posed = posed;
+                slots.last.clear();
+                slots.last.extend_from_slice(poses);
+                same
+            }
+        };
         for (i, pose) in poses.iter().enumerate().filter(|_| !unchanged) {
             match slots.entities.get(i) {
                 Some(&entity) => {
@@ -849,15 +879,28 @@ fn hash_of(words: impl IntoIterator<Item = f32>) -> u64 {
     hash
 }
 
-/// One pose's hash, for [`signature`].
+/// One pose's hash, for [`signature`]: its translation, rotation and scale.
 fn pose_hash(pose: &Transform) -> u64 {
-    hash_of(
-        pose.translation
-            .to_array()
-            .into_iter()
-            .chain(pose.rotation.to_array())
-            .chain(pose.scale.to_array()),
-    )
+    let (t, r, s) = (pose.translation, pose.rotation, pose.scale);
+    hash_of([t.x, t.y, t.z, r.x, r.y, r.z, r.w, s.x, s.y, s.z])
+}
+
+/// The place of `key` in `list`, added when it is not there. `hint` is the
+/// place found for the last mark, which is usually the answer: a tool's marks
+/// come in runs of one shape and colour.
+fn place_of(
+    list: &mut Vec<(PoolKey, Vec<Transform>)>,
+    at: &mut HashMap<PoolKey, usize>,
+    key: PoolKey,
+    hint: usize,
+) -> usize {
+    if list.get(hint).is_some_and(|(had, _)| *had == key) {
+        return hint;
+    }
+    *at.entry(key).or_insert_with(|| {
+        list.push((key, Vec::new()));
+        list.len() - 1
+    })
 }
 
 /// One line's hash, for [`signature`]. A raised line's width is fed negated,

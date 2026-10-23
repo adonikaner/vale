@@ -4,15 +4,15 @@
 //! The item workspace reads `item_template` the same way, with a list of its
 //! own; this is the same mechanism written once over any row type that
 //! implements [`Listed`], so the two workspaces that came after it do not each
-//! carry a copy. It knows nothing about either subject. The row type, the query
-//! and the read system are in [`super::creature_data`] and
-//! [`super::gameobject_data`].
+//! carry a copy. It knows nothing about either subject. The row type is the
+//! spawn subject's, and the query and the read system are in
+//! [`super::templates`].
 //!
 //! The brief columns of every row the server would load are read on a task
 //! when the workspace is first opened and again after every Apply or Put back
 //! (`EditSession::database_writes`), and a search is a filter over memory.
 
-use crate::tools::spawns::creatures::TemplateSubject;
+use crate::tools::spawns::spawn::TemplateSubject;
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, Task};
@@ -61,7 +61,7 @@ pub struct Listing<K> {
     /// The rows this project creates that the last read did not return. They
     /// are rebuilt from the store whenever it changes.
     pub created: Vec<K>,
-    /// The `EditSession::server_edit_revision` [`Self::created`] and the
+    /// The `ServerRows::revision` [`Self::created`] and the
     /// entries of [`Self::all`] were brought up to.
     followed: Option<u64>,
     task: Option<Task<Result<ListRead<K>, String>>>,

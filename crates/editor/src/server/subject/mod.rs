@@ -167,9 +167,9 @@ impl<'a> Stores<'a> {
     /// The session's own.
     pub fn of(session: &'a EditSession) -> Stores<'a> {
         Stores {
-            edits: &session.server_edits,
-            paths: &session.server_paths,
-            scripts: &session.server_scripts,
+            edits: &session.rows.edits,
+            paths: &session.rows.paths,
+            scripts: &session.rows.scripts,
         }
     }
 }
@@ -541,7 +541,13 @@ pub fn save(session: &mut EditSession, subject: &'static dyn RowSubject) {
 /// scripts. `false` when one could not be written, with the reason already on
 /// the status line.
 pub fn save_stores(session: &mut EditSession) -> bool {
-    session.save_server_edits() && session.save_server_paths() && session.save_server_scripts()
+    match session.rows.save(&session.project) {
+        Ok(()) => true,
+        Err(e) => {
+            session.status = e;
+            false
+        }
+    }
 }
 
 /// Every row subject's half of a save: the stores, then each subject's SQL in

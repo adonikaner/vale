@@ -14,19 +14,19 @@ impl EditSession {
     /// the argument for two lists on one stack is. What a person sees is one
     /// stack: `Ctrl+Z` takes back the last thing done, whether that was a wall
     /// or a spell's name.
-    fn step_tables(&mut self, change: &vale_edit::undo::Change, forward: bool) {
-        for name in change.tables() {
-            let Some(table) = self.tables.get_mut(&name) else {
+    fn step_tables(&mut self, change: &vale_edit::undo::Change, tables: &[String], forward: bool) {
+        for name in tables {
+            let Some(table) = self.tables.get_mut(name) else {
                 // The table is not open. Nothing to put back — and nothing is
                 // lost, because opening it again reads the project folder,
                 // which is where the change was written.
                 continue;
             };
             match forward {
-                true => change.apply_table(&name, table),
-                false => change.revert_table(&name, table),
+                true => change.apply_table(name, table),
+                false => change.revert_table(name, table),
             }
-            self.table_edited(&name);
+            self.table_edited(name);
         }
     }
 
@@ -46,108 +46,66 @@ impl EditSession {
     /// the overlay, so what comes back is the edited tile, which is the one
     /// the change applies to.
     pub fn undo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
-        let Some(change) = self.history.undo() else {
-            return Vec::new();
-        };
-        self.status = format!("undo {}", change.label);
-        self.step_tables(&change, false);
-        self.step_server(&change, false);
-        let mut touched = Vec::new();
-        for key in change.tiles() {
-            let coord = (key.x, key.y);
-            self.open(assets, coord);
-            if let Some(tile) = self.tiles.get_mut(&coord) {
-                change.revert(&key, tile);
-                self.publish(coord);
-                for chunk in change.chunks(&key) {
-                    self.touched(coord, chunk);
-                }
-                // …and the placements, which are neither a chunk nor in one.
-                // A change that renumbers the lists marks the whole tile stale
-                // instead: no index survives it, so reconciling entry by entry
-                // would move the wrong ones.
-                match change.renumbers_placements(&key) {
-                    true => {
-                        self.stale.insert(coord);
-                    }
-                    false => {
-                        for index in change.placements(&key) {
-                            self.moved(coord, index);
-                        }
-                        for index in change.buildings(&key) {
-                            self.moved_building(coord, index);
-                        }
-                    }
-                }
-                // …and the paint. A change that gave a chunk a texture it did
-                // not have also moves the chunk to another draw group, because
-                // the set is part of the material the group was built with.
-                if change.changes_the_texture_set(&key) {
-                    self.regroup.insert(coord);
-                }
-                for chunk in change.painted(&key) {
-                    self.repainted(coord, chunk);
-                }
-                // …and the third fork, which has no `false` arm at all: a hole
-                // changes how many vertices a chunk contributes, so there is
-                // nothing on screen to patch back and the tile is read again.
-                if change.remeshes(&key) {
-                    self.stale.insert(coord);
-                }
-                touched.push(coord);
-            }
-        }
-        touched
+        self.step(assets, false)
     }
 
     /// …and put it back, opening what it names on [`Self::undo`]'s own terms.
     pub fn redo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
-        let Some(change) = self.history.redo() else {
+        self.step(assets, true)
+    }
+
+    /// Take the next change off the history, backward for an undo or forward
+    /// for a redo, apply it to the tiles, tables and server rows it names, and
+    /// mark what it leaves out of date on screen. Answers the tiles it changed.
+    ///
+    /// What has to be redrawn is [`vale_edit::undo::Change::invalidates`]'s
+    /// answer: the chunks, placements and blend maps patched in place, the
+    /// draw groups cut again when a texture set changed, and the whole tile
+    /// read again where nothing on screen can be patched.
+    fn step(&mut self, assets: &GameAssets, forward: bool) -> Vec<(u32, u32)> {
+        let taken = match forward {
+            true => self.history.redo(),
+            false => self.history.undo(),
+        };
+        let Some(change) = taken else {
             return Vec::new();
         };
-        self.status = format!("redo {}", change.label);
-        self.step_tables(&change, true);
-        self.step_server(&change, true);
+        let verb = if forward { "redo" } else { "undo" };
+        self.status = format!("{verb} {}", change.label);
+        let invalidated = change.invalidates();
+        self.step_tables(&change, &invalidated.tables, forward);
+        self.rows.step(&change, forward);
         let mut touched = Vec::new();
-        for key in change.tiles() {
-            let coord = (key.x, key.y);
+        for redraw in &invalidated.tiles {
+            let coord = (redraw.tile.x, redraw.tile.y);
             self.open(assets, coord);
-            if let Some(tile) = self.tiles.get_mut(&coord) {
-                change.apply(&key, tile);
-                self.publish(coord);
-                for chunk in change.chunks(&key) {
-                    self.touched(coord, chunk);
-                }
-                match change.renumbers_placements(&key) {
-                    true => {
-                        self.stale.insert(coord);
-                    }
-                    false => {
-                        for index in change.placements(&key) {
-                            self.moved(coord, index);
-                        }
-                        for index in change.buildings(&key) {
-                            self.moved_building(coord, index);
-                        }
-                    }
-                }
-                // …and the paint. A change that gave a chunk a texture it did
-                // not have also moves the chunk to another draw group, because
-                // the set is part of the material the group was built with.
-                if change.changes_the_texture_set(&key) {
-                    self.regroup.insert(coord);
-                }
-                for chunk in change.painted(&key) {
-                    self.repainted(coord, chunk);
-                }
-                // …and the third fork, which has no `false` arm at all: a hole
-                // changes how many vertices a chunk contributes, so there is
-                // nothing on screen to patch back and the tile is read again.
-                if change.remeshes(&key) {
-                    self.stale.insert(coord);
-                }
-                touched.push(coord);
+            let Some(tile) = self.tiles.get_mut(&coord) else {
+                continue;
+            };
+            match forward {
+                true => change.apply(&redraw.tile, tile),
+                false => change.revert(&redraw.tile, tile),
             }
+            self.publish(coord);
+            for &chunk in &redraw.chunks {
+                self.touched(coord, chunk);
+            }
+            for &index in &redraw.placements {
+                self.moved(coord, index);
+            }
+            for &index in &redraw.buildings {
+                self.moved_building(coord, index);
+            }
+            if redraw.regroup {
+                self.regroup.insert(coord);
+            }
+            for &chunk in &redraw.painted {
+                self.repainted(coord, chunk);
+            }
+            if redraw.reread {
+                self.stale.insert(coord);
+            }
+            touched.push(coord);
         }
         touched
     }
