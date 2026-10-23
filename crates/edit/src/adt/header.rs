@@ -13,15 +13,14 @@
 /// Where each named field sits in the header.
 pub mod at {
     pub const FLAGS: usize = 0x00;
-    pub const INDEX_X: usize = 0x04;
-    pub const INDEX_Y: usize = 0x08;
-    pub const LAYER_COUNT: usize = 0x0c;
-    pub const DOODAD_REF_COUNT: usize = 0x10;
-    pub const AREA_ID: usize = 0x34;
-    pub const BUILDING_REF_COUNT: usize = 0x38;
-    pub const HOLES: usize = 0x3c;
-    pub const SOUND_EMITTER_COUNT: usize = 0x5c;
-    pub const POSITION: usize = 0x68;
+    pub(crate) const INDEX_X: usize = 0x04;
+    pub(crate) const INDEX_Y: usize = 0x08;
+    pub(crate) const LAYER_COUNT: usize = 0x0c;
+    pub(crate) const DOODAD_REF_COUNT: usize = 0x10;
+    pub(crate) const AREA_ID: usize = 0x34;
+    pub(crate) const BUILDING_REF_COUNT: usize = 0x38;
+    pub(crate) const HOLES: usize = 0x3c;
+    pub(crate) const POSITION: usize = 0x68;
 }
 
 fn u32_at(buf: &[u8], at: usize) -> u32 {
@@ -64,11 +63,11 @@ impl<'a> McnkHeader<'a> {
     /// How many of `MCRF`'s entries are doodads. The rest are buildings, so the
     /// two counts are the only thing that says where one list ends and the other
     /// begins.
-    pub fn doodad_ref_count(&self) -> u32 {
+    pub(crate) fn doodad_ref_count(&self) -> u32 {
         u32_at(self.bytes, at::DOODAD_REF_COUNT)
     }
 
-    pub fn building_ref_count(&self) -> u32 {
+    pub(crate) fn building_ref_count(&self) -> u32 {
         u32_at(self.bytes, at::BUILDING_REF_COUNT)
     }
 
@@ -80,10 +79,6 @@ impl<'a> McnkHeader<'a> {
     /// block of the chunk's 8x8 cells.
     pub fn holes(&self) -> u16 {
         u16::from_le_bytes([self.bytes[at::HOLES], self.bytes[at::HOLES + 1]])
-    }
-
-    pub fn sound_emitter_count(&self) -> u32 {
-        u32_at(self.bytes, at::SOUND_EMITTER_COUNT)
     }
 
     /// The chunk origin in world space, which is its **maximum** x and y corner:
@@ -98,7 +93,7 @@ impl<'a> McnkHeader<'a> {
 }
 
 /// The same header, writably.
-pub struct McnkHeaderMut<'a> {
+pub(crate) struct McnkHeaderMut<'a> {
     bytes: &'a mut [u8],
 }
 
@@ -111,32 +106,28 @@ impl<'a> McnkHeaderMut<'a> {
         self.bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
     }
 
-    pub fn set_flags(&mut self, value: u32) {
+    pub(crate) fn set_flags(&mut self, value: u32) {
         self.put_u32(at::FLAGS, value);
     }
 
-    pub fn set_layer_count(&mut self, value: u32) {
+    pub(crate) fn set_layer_count(&mut self, value: u32) {
         self.put_u32(at::LAYER_COUNT, value);
     }
 
-    pub fn set_doodad_ref_count(&mut self, value: u32) {
+    pub(crate) fn set_doodad_ref_count(&mut self, value: u32) {
         self.put_u32(at::DOODAD_REF_COUNT, value);
     }
 
-    pub fn set_building_ref_count(&mut self, value: u32) {
+    pub(crate) fn set_building_ref_count(&mut self, value: u32) {
         self.put_u32(at::BUILDING_REF_COUNT, value);
     }
 
-    pub fn set_area_id(&mut self, value: u32) {
+    pub(crate) fn set_area_id(&mut self, value: u32) {
         self.put_u32(at::AREA_ID, value);
     }
 
     pub fn set_holes(&mut self, value: u16) {
         self.bytes[at::HOLES..at::HOLES + 2].copy_from_slice(&value.to_le_bytes());
-    }
-
-    pub fn set_sound_emitter_count(&mut self, value: u32) {
-        self.put_u32(at::SOUND_EMITTER_COUNT, value);
     }
 
     /// Move the chunk origin.

@@ -28,7 +28,7 @@ impl EditSession {
     ///
     /// `false` when the folder cannot be made, which leaves the session exactly
     /// where it was.
-    pub fn switch_to(&mut self, assets: &GameAssets, name: &str) -> bool {
+    pub(crate) fn switch_to(&mut self, assets: &GameAssets, name: &str) -> bool {
         if name == self.project.name {
             return true;
         }
@@ -135,7 +135,7 @@ impl EditSession {
     ///
     /// Returns how many files went, or `None` when the folder would not
     /// empty; the status line says which.
-    pub fn clear_open_project(&mut self, assets: &GameAssets) -> Option<usize> {
+    pub(crate) fn clear_open_project(&mut self, assets: &GameAssets) -> Option<usize> {
         let name = self.project.name.clone();
         let went = match vale_edit::project::clear(&assets.root, &name) {
             Ok(went) => went,
@@ -171,7 +171,7 @@ impl EditSession {
 /// stale, which is the same route a texture edit takes: the streamer reads it
 /// again and `terrain::swap` puts the new one up in one frame, leaving the old
 /// one on screen until then.
-pub fn reread_after_a_switch(
+pub(crate) fn reread_after_a_switch(
     session: Option<ResMut<EditSession>>,
     tiles: Query<&vale_client::render::terrain::TerrainTile>,
 ) {

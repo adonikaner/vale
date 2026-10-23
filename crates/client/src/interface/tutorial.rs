@@ -52,14 +52,14 @@ use crate::world::session::Session;
 
 /// The tutorial ids triggered on entering the world, in the client's order:
 /// "Welcome", then "Questgivers".
-pub const ON_ENTERING_WORLD: [u32; 2] = [42, 1];
+pub(crate) const ON_ENTERING_WORLD: [u32; 2] = [42, 1];
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TutorialAnswer(pub TutorialFlags);
+pub(crate) struct TutorialAnswer(pub(crate) TutorialFlags);
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<TutorialAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<TutorialAnswer> {
     match event {
         PlayerEvent::TutorialFlags(flags) => Some(TutorialAnswer(*flags)),
         _ => None,
@@ -68,7 +68,7 @@ pub fn answer_of(event: &PlayerEvent) -> Option<TutorialAnswer> {
 
 /// The two masks; see the module comment.
 #[derive(Resource, Default, Debug)]
-pub struct Tutorials {
+pub(crate) struct Tutorials {
     received: bool,
     triggered: TutorialFlags,
     flagged: TutorialFlags,
@@ -120,7 +120,7 @@ impl Tutorials {
     }
 }
 
-pub struct TutorialPlugin;
+pub(crate) struct TutorialPlugin;
 
 impl Plugin for TutorialPlugin {
     fn build(&self, app: &mut App) {

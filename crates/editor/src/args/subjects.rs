@@ -8,54 +8,54 @@ use crate::tools::Tool;
 
 /// The subjects' windows and workspaces.
 #[derive(Debug, Clone, Default)]
-pub struct Subjects {
+pub(crate) struct Subjects {
     /// `--quests`: open the quest window on `--spawn`'s creature. It is the
     /// next button along from `--template`'s and exists for the same reason.
-    pub creature_quests: bool,
+    pub(crate) creature_quests: bool,
     /// `--loot`: open the loot window on `--spawn`'s creature, `--object`'s
     /// object or `--item`'s item. It is the third button along, for the same
     /// reason. The window follows the selection, so it needs one of the three.
-    pub loot_window: bool,
+    pub(crate) loot_window: bool,
     /// `--loot-add <item>`: add that item to the set the loot window shows.
     /// A scripted run cannot make this gesture otherwise, and every later check
     /// needs it: the store, the SQL, the apply and the revert. Implies
     /// `--loot`.
-    pub loot_add: Option<u32>,
+    pub(crate) loot_add: Option<u32>,
     /// `--vendor` and `--trainer`: open the Vendor or the Trainer window on
     /// `--spawn`'s creature. Each follows the selection, so it needs
     /// `--spawn`.
-    pub vendor_window: bool,
-    pub trainer_window: bool,
+    pub(crate) vendor_window: bool,
+    pub(crate) trainer_window: bool,
     /// `--gossip`: open the gossip window on `--spawn`'s creature.
-    pub gossip_window: bool,
+    pub(crate) gossip_window: bool,
     /// `--condition <id>`: open the condition window on one condition.
-    pub condition: Option<u32>,
+    pub(crate) condition: Option<u32>,
     /// `--vendor-add <item>` and `--trainer-add <spell>`: add a row to the
     /// list the window shows, which a scripted run cannot do otherwise. A
     /// spell that is not a teaching spell is replaced by the one that teaches
     /// it, as the window's own add does. Each implies its window.
-    pub vendor_add: Option<u32>,
-    pub trainer_add: Option<u32>,
+    pub(crate) vendor_add: Option<u32>,
+    pub(crate) trainer_add: Option<u32>,
     /// `--vendor-find <text>` and `--trainer-find <text>`: open the window's
     /// own picker for adding an item or a spell, with `text` searched. The
     /// picker is two clicks in, so a scripted run cannot reach it otherwise.
     /// Each implies its window.
-    pub vendor_find: Option<String>,
-    pub trainer_find: Option<String>,
+    pub(crate) vendor_find: Option<String>,
+    pub(crate) trainer_find: Option<String>,
     /// `--events`: open the events window on `--spawn`'s creature;
     /// `--event-add`: add an event to it, which is the gesture a scripted run
     /// cannot make and every check downstream needs. `--spells`: open the
     /// spells window. Each follows the selection, so it needs `--spawn`.
-    pub events_window: bool,
-    pub event_add: bool,
-    pub spells_window: bool,
+    pub(crate) events_window: bool,
+    pub(crate) event_add: bool,
+    pub(crate) spells_window: bool,
     /// `--script <table>:<id>`: open the script window on one script, with
     /// every step unfolded, which a scripted run cannot reach by a press on
     /// an event's action.
-    pub script_window: Option<(&'static str, u32)>,
+    pub(crate) script_window: Option<(&'static str, u32)>,
     /// `--find-event <text>`: open the events window and the chooser that
     /// adds an existing event, with `text` searched.
-    pub find_event: Option<String>,
+    pub(crate) find_event: Option<String>,
     /// `--item <entry or name>`: open the item workspace on that row.
     ///
     /// `--row` for items. It takes a name as well as an entry because items
@@ -64,12 +64,12 @@ pub struct Subjects {
     /// name nothing matches opens nothing and prints that.
     ///
     /// It implies `--tool items`.
-    pub item: Option<String>,
+    pub(crate) item: Option<String>,
     /// `--item-new`: make a new item, and open it.
     ///
     /// The item counterpart of `--spawn-add`: creating a row is only a press on
     /// a panel, so without this a script cannot check a new item.
-    pub item_new: bool,
+    pub(crate) item_new: bool,
     /// `--item-display <id>`: open the appearance picker, and choose that id
     /// for the open item.
     ///
@@ -81,43 +81,43 @@ pub struct Subjects {
     /// It is stored in two fields, because `0` is a display id a row can
     /// legitimately hold (`vale_assets::tables::item` documents it as
     /// "nothing worn"), so it cannot also mean "no id was given".
-    pub item_picker: bool,
-    pub item_display: Option<u32>,
+    pub(crate) item_picker: bool,
+    pub(crate) item_display: Option<u32>,
     /// `--item-entry <n>`: renumber the open item to that entry.
     ///
     /// This is the one action on the item form that is not a column edit: it
     /// re-keys the project's claim on the row. It needs its own flag to be
     /// checked with nobody at the keyboard. See
     /// `crate::subjects::items::Items::rekey`.
-    pub item_entry: Option<u32>,
+    pub(crate) item_entry: Option<u32>,
     /// `--item-remove`: mark the open item for removal, or give it up when this
     /// project created it. It is the item list's Remove button, for a scripted
     /// run. See `crate::subjects::items::Items::remove`.
-    pub item_remove: bool,
+    pub(crate) item_remove: bool,
     /// `--quest <entry or title>`: open the quest workspace on that row. It is
     /// `--item` for quests, and takes a title for the same reason. It implies
     /// `--tool quests`.
-    pub quest: Option<String>,
+    pub(crate) quest: Option<String>,
     /// `--quest-new`: make a new quest, and open it.
-    pub quest_new: bool,
+    pub(crate) quest_new: bool,
     /// `--quest-entry <n>`: renumber the open quest to that entry. It is
     /// `--item-entry` for quests. See
     /// `crate::subjects::quests::Quests::rekey`.
-    pub quest_entry: Option<u32>,
+    pub(crate) quest_entry: Option<u32>,
     /// `--quests-of <creature entry>`: open the quest workspace narrowed to the
     /// quests that creature gives or takes, on the first of them.
     ///
     /// This is what the Quests button on a selected creature does. Reaching it
     /// takes a click on a creature and then a press on its panel, two gestures
     /// a scripted run cannot make. It implies `--tool quests`.
-    pub quests_of: Option<u32>,
+    pub(crate) quests_of: Option<u32>,
     /// `--creature-data <entry>`: open the Creatures workspace on that
     /// `creature_template` row. It implies the workspace as the tool. See
     /// `crate::subjects::templates`.
-    pub creature_data: Option<u32>,
+    pub(crate) creature_data: Option<u32>,
     /// `--object-data <entry>`: the same for the Game Objects workspace and
     /// `gameobject_template`.
-    pub object_data: Option<u32>,
+    pub(crate) object_data: Option<u32>,
 }
 
 pub(super) const FLAGS: &[Flag] = &[

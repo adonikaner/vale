@@ -65,47 +65,47 @@ use std::collections::{HashMap, HashSet};
 /// One row of the list, as the columns
 /// [`vale_mangos::quest::all_quests_query`] reads.
 #[derive(Debug, Clone)]
-pub struct Known {
+pub(crate) struct Known {
     /// The entry the project says the quest has: what the list shows, what
     /// the panel opens by and what the store keys its claim under.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The entry the last read found it at, which differs while the
     /// project changes the quest's entry and has not applied it. See
     /// [`fold_the_store_in`].
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// Which content patch of the row the server would load — the other half of
     /// the key an edit is written under.
-    pub patch: u32,
-    pub title: String,
-    pub method: u32,
-    pub zone_or_sort: i32,
-    pub min_level: u32,
-    pub level: u32,
+    pub(crate) patch: u32,
+    pub(crate) title: String,
+    pub(crate) method: u32,
+    pub(crate) zone_or_sort: i32,
+    pub(crate) min_level: u32,
+    pub(crate) level: u32,
     /// `Type`: a `QuestInfo.dbc` id.
-    pub kind: u32,
-    pub special_flags: u32,
-    pub prev: i32,
-    pub next: i32,
-    pub next_in_chain: u32,
+    pub(crate) kind: u32,
+    pub(crate) special_flags: u32,
+    pub(crate) prev: i32,
+    pub(crate) next: i32,
+    pub(crate) next_in_chain: u32,
     /// What `zone_or_sort` is called, filled in once from `AreaTable.dbc`
     /// and `QuestSort.dbc` by the panel, which is what has the archives — see
     /// [`Quests::name_the_zones`]. Empty until then, and for a quest filed
     /// under nothing.
-    pub zone: String,
+    pub(crate) zone: String,
     /// What this project says is to become of the row.
-    pub claim: Life,
+    pub(crate) claim: Life,
 }
 
 impl Known {
     /// Its key: the entry and the patch together.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         quest::template_key(self.entry, self.patch)
     }
 
     /// The second line of a list row: its level, where it is filed, its quest
     /// type (`Type`), and whether it auto-completes, is disabled or is
     /// repeatable.
-    pub fn sub(&self) -> String {
+    pub(crate) fn sub(&self) -> String {
         let mut parts = vec![format!("level {}", self.level)];
         if !self.zone.is_empty() {
             parts.push(self.zone.clone());
@@ -126,7 +126,7 @@ impl Known {
 
     /// This row with the project's edits over it, or `None` when the
     /// project says nothing about it.
-    pub fn with_edits(&self, edits: &Edits) -> Option<Known> {
+    pub(crate) fn with_edits(&self, edits: &Edits) -> Option<Known> {
         let key = self.key();
         let life = edits.life(quest::TEMPLATE, &key);
         if !edits.touches(quest::TEMPLATE, &key) && life == self.claim {
@@ -189,64 +189,64 @@ fn read_known(row: &quest::Row) -> Option<Known> {
 
 /// One row of `quest_template`, whole.
 #[derive(Debug, Clone)]
-pub struct QuestRow {
-    pub entry: u32,
-    pub patch: u32,
-    pub row: quest::Row,
+pub(crate) struct QuestRow {
+    pub(crate) entry: u32,
+    pub(crate) patch: u32,
+    pub(crate) row: quest::Row,
 }
 
-pub use vale_mangos::quest::{Holder, Role};
+pub(crate) use vale_mangos::quest::{Holder, Role};
 
 /// One row of one of the four relation tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Relation {
-    pub holder: Holder,
-    pub role: Role,
+pub(crate) struct Relation {
+    pub(crate) holder: Holder,
+    pub(crate) role: Role,
     /// The creature's or game object's template entry.
-    pub id: u32,
-    pub quest: u32,
+    pub(crate) id: u32,
+    pub(crate) quest: u32,
 }
 
 impl Relation {
     /// Which of the four tables the row is in.
-    pub fn table(&self) -> &'static str {
+    pub(crate) fn table(&self) -> &'static str {
         quest::relation_table(self.holder, self.role)
     }
 
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         quest::relation_key(self.id, self.quest)
     }
 }
 
 /// What the form needs of an item a quest names.
 #[derive(Debug, Clone)]
-pub struct ItemName {
-    pub name: String,
-    pub quality: u32,
-    pub display_id: u32,
+pub(crate) struct ItemName {
+    pub(crate) name: String,
+    pub(crate) quality: u32,
+    pub(crate) display_id: u32,
     /// The content patch of the row the server would load, which with the
     /// entry is the key an edit to the row is written under. `None` for an
     /// item the database does not hold, which is one this project creates.
-    pub patch: Option<u32>,
+    pub(crate) patch: Option<u32>,
     /// The `ItemSet.dbc` row the item belongs to, or 0: the project's value
     /// where it has one, the database's otherwise.
-    pub set_id: u32,
+    pub(crate) set_id: u32,
     /// `set_id` as the database holds it, which is what choosing that value
     /// clears the edit against. `None` for an item this project creates.
-    pub set_in_database: Option<u32>,
+    pub(crate) set_in_database: Option<u32>,
 }
 
 /// A change to a set's item list made in the set's form, waiting for the
 /// items' rows to be read so that their `set_id` can follow it. See
 /// [`Quests::follow_sets`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SetFollow {
+pub(crate) struct SetFollow {
     /// The `ItemSet.dbc` row.
-    pub set: u32,
+    pub(crate) set: u32,
     /// The item that left one of the set's item columns, or 0.
-    pub left: u32,
+    pub(crate) left: u32,
     /// The item that entered one, or 0.
-    pub joined: u32,
+    pub(crate) joined: u32,
 }
 
 /// Write one item's `set_id`, or clear the project's edit when `wanted` is
@@ -288,7 +288,7 @@ fn write_set_id(session: &mut EditSession, item: u32, found: &ItemName, wanted: 
 
 /// What a reference picker is choosing from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Target {
+pub(crate) enum Target {
     Item,
     Creature,
     Object,
@@ -308,22 +308,22 @@ pub enum Target {
 /// icon, and for an item the quality its name is coloured by. `about` is the
 /// hover: a spell's effects one to a line, an item's quality and levels.
 #[derive(Debug, Clone, Default)]
-pub struct Hit {
-    pub id: u32,
-    pub title: String,
-    pub sub: String,
-    pub picture: Option<Picture>,
-    pub quality: Option<u32>,
-    pub about: Vec<String>,
+pub(crate) struct Hit {
+    pub(crate) id: u32,
+    pub(crate) title: String,
+    pub(crate) sub: String,
+    pub(crate) picture: Option<Picture>,
+    pub(crate) quality: Option<u32>,
+    pub(crate) about: Vec<String>,
     /// An item row's columns, kept so the project's edits can be laid over
     /// them. `None` for every other target.
-    pub item: Option<ItemFacts>,
+    pub(crate) item: Option<ItemFacts>,
 }
 
 /// The picture of a picker row, by the id it is found through. The path is
 /// resolved when the row is drawn, as the workspace lists resolve theirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Picture {
+pub(crate) enum Picture {
     /// A `SpellIcon.dbc` row.
     SpellIcon(u32),
     /// An `ItemDisplayInfo.dbc` row, whose inventory icon is the picture.
@@ -337,25 +337,25 @@ pub enum Picture {
 /// This names the column, the value the database holds there, and the undo
 /// entry the write goes on, so the dialogs write through one function.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ColumnTarget {
-    pub table: &'static str,
-    pub key: vale_mangos::row::Key,
-    pub column: &'static str,
+pub(crate) struct ColumnTarget {
+    pub(crate) table: &'static str,
+    pub(crate) key: vale_mangos::row::Key,
+    pub(crate) column: &'static str,
     /// The column's value as read from the database. Choosing that value takes
     /// the edit off rather than writing it, because a statement for it would
     /// change nothing. `None` for a row this project creates.
-    pub in_database: Option<String>,
+    pub(crate) in_database: Option<String>,
     /// The undo entry's label: "Edit item", "Edit creature", "Edit game object".
-    pub label: &'static str,
+    pub(crate) label: &'static str,
     /// The undo entry's subject, which names the row and the column; see
     /// [`crate::server::store::Gesture`].
-    pub subject: String,
+    pub(crate) subject: String,
 }
 
 impl ColumnTarget {
     /// Write `written` to the column, or clear the edit when `written` is what
     /// the database holds.
-    pub fn write(&self, session: &mut EditSession, written: String, now: f64) {
+    pub(crate) fn write(&self, session: &mut EditSession, written: String, now: f64) {
         // An item's set, chosen in the picker: the set's item list follows in
         // the same undo entry. A number typed into the cell does not, since
         // a number being typed passes through other sets' ids; the form shows
@@ -396,7 +396,7 @@ impl ColumnTarget {
 
 /// Where a chosen row is written.
 #[derive(Debug, Clone, PartialEq)]
-pub enum PickFor {
+pub(crate) enum PickFor {
     /// A column of the open quest. `negated` writes the id with a minus sign,
     /// which is how `ZoneOrSort` names a `QuestSort` row and
     /// `ReqCreatureOrGOId` a game object.
@@ -442,28 +442,28 @@ pub enum PickFor {
 
 /// The reference picker's state — see [`crate::ui::subjects::quests`], which draws it.
 #[derive(Debug)]
-pub struct Picker {
+pub(crate) struct Picker {
     /// The window the dialog was opened in. Several windows can draw it, and
     /// it is drawn in this one only. See `crate::ui::dialog_home`.
-    pub home: Option<bevy_egui::egui::Context>,
-    pub target: Target,
-    pub purpose: PickFor,
+    pub(crate) home: Option<bevy_egui::egui::Context>,
+    pub(crate) target: Target,
+    pub(crate) purpose: PickFor,
     /// For a column whose sign picks the table: the two targets, positive
     /// first, so the dialog can offer the switch. `None` for an ordinary one.
-    pub either: Option<(Target, Target)>,
-    pub query: String,
-    pub focus: bool,
-    pub hits: Vec<Hit>,
+    pub(crate) either: Option<(Target, Target)>,
+    pub(crate) query: String,
+    pub(crate) focus: bool,
+    pub(crate) hits: Vec<Hit>,
     /// What [`Self::hits`] was built for, so an unchanged query is not searched
     /// again on every frame.
-    pub built: Option<(Target, String)>,
+    pub(crate) built: Option<(Target, String)>,
     /// The `EditSession::database_writes` [`Self::hits`] was built at.
     built_at: Option<u64>,
     task: Option<Task<Result<Vec<Hit>, String>>>,
 }
 
 impl Picker {
-    pub fn new(target: Target, purpose: PickFor) -> Picker {
+    pub(crate) fn new(target: Target, purpose: PickFor) -> Picker {
         Picker {
             target,
             purpose,
@@ -479,27 +479,27 @@ impl Picker {
     }
 
     /// Whether a database search is running.
-    pub fn searching(&self) -> bool {
+    pub(crate) fn searching(&self) -> bool {
         self.task.is_some()
     }
 }
 
 /// How many rows a picker lists. A search that matches more says so.
-pub const PICK_LIMIT: usize = 200;
+pub(crate) const PICK_LIMIT: usize = 200;
 
 /// What the quest workspace is holding.
 #[derive(Resource, Default)]
-pub struct Quests {
+pub(crate) struct Quests {
     /// Every quest the server would load, as the database has it.
-    pub all: Vec<Known>,
+    pub(crate) all: Vec<Known>,
     /// The quests this project creates, rebuilt from the store when it moves.
-    pub created: Vec<Known>,
+    pub(crate) created: Vec<Known>,
     created_for: Option<u64>,
     /// The highest entry the table holds at any patch.
-    pub max_entry: Option<u32>,
+    pub(crate) max_entry: Option<u32>,
     /// Every relation row the server would load, with each quest under the
     /// entry the project gives it — see [`fold_the_store_in`].
-    pub relations: Vec<Relation>,
+    pub(crate) relations: Vec<Relation>,
     /// The relation rows as the read returned them, under the database's
     /// entries. [`Self::relations`] is rebuilt from these when the store moves.
     relations_read: Vec<Relation>,
@@ -527,68 +527,68 @@ pub struct Quests {
     /// the tables — see `EditSession::database_writes`.
     loaded: Option<u64>,
     /// Why the list is empty, when a read failed or no database is set.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// What is in the search box.
-    pub query: String,
+    pub(crate) query: String,
     matches: Vec<usize>,
     built: Option<(String, u64, usize, usize, Option<(Holder, u32)>)>,
     /// Only the quests one creature or game object gives or takes, when
     /// set. The list's own header shows it and clears it.
-    pub of_holder: Option<(Holder, u32)>,
+    pub(crate) of_holder: Option<(Holder, u32)>,
     /// The open quest, by entry.
-    pub open: Option<u32>,
+    pub(crate) open: Option<u32>,
     /// The quest the list last brought into view, or was clicked on. The list
     /// scrolls to the open quest when it is another. See
     /// `crate::ui::widgets::theme::list_area`.
-    pub revealed: Option<u32>,
+    pub(crate) revealed: Option<u32>,
     /// The open quest's whole row, read when the open quest changes.
-    pub row: Option<QuestRow>,
+    pub(crate) row: Option<QuestRow>,
     row_task: Option<Task<Result<Option<QuestRow>, String>>>,
     /// What [`Self::row`] was made at, on `crate::subjects::items::Items`'
     /// terms: the counter, and whether the project created the quest.
     row_at: Option<(u64, bool)>,
     /// The reference picker, when one is open.
-    pub picker: Option<Picker>,
+    pub(crate) picker: Option<Picker>,
     /// The pass the picker was last drawn on. Several panels draw the one
     /// dialog (the quest and item workspaces, the loot, behaviour, vendor and
     /// trainer windows, and the creature and game object forms), and two of
     /// them may be up in one frame; the second draw of a pass is skipped, or
     /// egui would see two widgets with one id.
-    pub picker_pass: Option<u64>,
+    pub(crate) picker_pass: Option<u64>,
     /// The creature or game object whose quests its tool's window is showing,
     /// as the [`Holder`], its template entry and its name. `None` when the
     /// window is closed.
-    pub window_for: Option<(Holder, u32, String)>,
+    pub(crate) window_for: Option<(Holder, u32, String)>,
     /// Changes to a set's item list whose items' `set_id` has yet to follow.
     /// See [`Self::follow_sets`].
-    pub set_follows: Vec<SetFollow>,
+    pub(crate) set_follows: Vec<SetFollow>,
     /// An item chosen for a loot set through the picker, as the set's
     /// table and entry and the item: taken by the loot window on the frame
     /// after — see [`PickFor::LootItem`].
-    pub loot_pick: Option<(&'static str, u32, u32)>,
+    pub(crate) loot_pick: Option<(&'static str, u32, u32)>,
     /// An item or a spell chosen for a vendor or trainer list, as the list's
     /// table and entry and the id chosen: taken by that window on the frame
     /// after. See [`PickFor::VendorItem`].
-    pub service_pick: Option<(&'static str, u32, u32)>,
+    pub(crate) service_pick: Option<(&'static str, u32, u32)>,
     /// A value chosen for one cell of a script row through the picker, as
     /// the script's table and id, the row's index, the column and the value:
     /// taken by the script window on the frame after. See
     /// [`PickFor::ScriptCell`].
-    pub script_pick: Option<(&'static str, u32, usize, &'static str, u32)>,
+    pub(crate) script_pick: Option<(&'static str, u32, usize, &'static str, u32)>,
     /// A value chosen for a test of the condition window's draft, as the
     /// test's path, the value's index and the id chosen: taken by the
     /// condition window on the frame after. See [`PickFor::ConditionValue`].
-    pub condition_pick: Option<(Vec<usize>, usize, u32)>,
+    pub(crate) condition_pick: Option<(Vec<usize>, usize, u32)>,
     /// Whether the headings have been named — see [`Self::name_the_zones`].
     zones_named: bool,
     /// Whether the scripted flags have been acted on — see
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
     seeded: bool,
 }
 
 /// What one read of the tables answered.
-pub struct TableRead {
+pub(crate) struct TableRead {
     quests: Vec<Known>,
     highest: Option<u32>,
     relations: Vec<Relation>,
@@ -596,7 +596,7 @@ pub struct TableRead {
 }
 
 /// What one batch of name lookups answered.
-pub struct NamesRead {
+pub(crate) struct NamesRead {
     items: Vec<(u32, Option<ItemName>)>,
     holders: Vec<((Holder, u32), Option<String>)>,
     lists: Vec<((&'static str, u32), Option<Hit>)>,
@@ -604,12 +604,12 @@ pub struct NamesRead {
 
 impl Quests {
     /// How many quests there are: the database's and this project's own.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.all.len() + self.created.len()
     }
 
     /// One of them, by an index over both lists — the database's first.
-    pub fn at(&self, index: usize) -> Option<&Known> {
+    pub(crate) fn at(&self, index: usize) -> Option<&Known> {
         match self.all.get(index) {
             Some(known) => Some(known),
             None => self.created.get(index - self.all.len()),
@@ -617,7 +617,7 @@ impl Quests {
     }
 
     /// One quest by entry, from either list.
-    pub fn by_entry(&self, entry: u32) -> Option<&Known> {
+    pub(crate) fn by_entry(&self, entry: u32) -> Option<&Known> {
         // The database's list is sorted by entry, which is the query's own
         // `ORDER BY`, so this is a binary search rather than a walk of 4,433.
         match self.all.binary_search_by_key(&entry, |known| known.entry) {
@@ -628,25 +628,25 @@ impl Quests {
 
     /// One quest as it should be drawn: the database's reading with the
     /// project's edits over it.
-    pub fn shown(&self, index: usize, edits: &Edits) -> Option<Known> {
+    pub(crate) fn shown(&self, index: usize, edits: &Edits) -> Option<Known> {
         let base = self.at(index)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
     }
 
     /// One quest by entry, with the project's edits over it, as
     /// [`Self::shown`] gives it.
-    pub fn shown_entry(&self, entry: u32, edits: &Edits) -> Option<Known> {
+    pub(crate) fn shown_entry(&self, entry: u32, edits: &Edits) -> Option<Known> {
         let base = self.by_entry(entry)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
     }
 
     /// The open quest, with this project's edits over it.
-    pub fn open_quest(&self, edits: &Edits) -> Option<Known> {
+    pub(crate) fn open_quest(&self, edits: &Edits) -> Option<Known> {
         self.shown_entry(self.open?, edits)
     }
 
     /// What a quest is called, for a line that has only its entry.
-    pub fn title_of(&self, entry: u32, edits: &Edits) -> Option<String> {
+    pub(crate) fn title_of(&self, entry: u32, edits: &Edits) -> Option<String> {
         self.shown_entry(entry, edits).map(|known| known.title)
     }
 
@@ -655,7 +655,7 @@ impl Quests {
     /// A number matches the quest with that entry; text matches a title, a
     /// heading or a word of the second line. [`Self::of_holder`] narrows the
     /// whole list first.
-    pub fn matches(&mut self, edits: &Edits, revision: u64) -> &[usize] {
+    pub(crate) fn matches(&mut self, edits: &Edits, revision: u64) -> &[usize] {
         let asked = (
             self.query.trim().to_ascii_lowercase(),
             revision,
@@ -700,7 +700,7 @@ impl Quests {
 
     /// Forget the cached search, for a caller that has changed what is in the
     /// lists rather than what is in the box.
-    pub fn forget_matches(&mut self) {
+    pub(crate) fn forget_matches(&mut self) {
         self.built = None;
     }
 
@@ -709,7 +709,7 @@ impl Quests {
     /// `zone_of` is the panel's, because the panel is what has the session the
     /// tables are opened through: it answers `None` until both are open, and
     /// this does nothing until it answers.
-    pub fn name_the_zones(&mut self, mut zone_of: impl FnMut(i32) -> Option<String>) {
+    pub(crate) fn name_the_zones(&mut self, mut zone_of: impl FnMut(i32) -> Option<String>) {
         if self.zones_named || self.all.is_empty() {
             return;
         }
@@ -734,14 +734,14 @@ impl Quests {
 
     /// The entry a new quest gets: the highest of the reserved base, one
     /// past what the table holds, and one past what this project has claimed.
-    pub fn next_entry(&self, edits: &Edits) -> u32 {
+    pub(crate) fn next_entry(&self, edits: &Edits) -> u32 {
         quest::NUMBERING.next_entry(self.max_entry, edits)
     }
 
     /// Whether an entry is already a quest, by the entry the project gives
     /// each row and by the one the database has it at — see
     /// `crate::subjects::items::Items::entry_taken`, where the reason for both is.
-    pub fn entry_taken(&self, entry: u32) -> bool {
+    pub(crate) fn entry_taken(&self, entry: u32) -> bool {
         self.all
             .iter()
             .chain(self.created.iter())
@@ -759,7 +759,7 @@ impl Quests {
     ///
     /// A quest this project removes cannot be moved: there is no row the move
     /// would be of.
-    pub fn rekey(
+    pub(crate) fn rekey(
         &mut self,
         session: &mut EditSession,
         known: &Known,
@@ -800,7 +800,7 @@ impl Quests {
 
     /// Make a new quest, and open it. Every column is written at once, at
     /// the server's own patch — see `vale_mangos::quest::new_quest`.
-    pub fn create(&mut self, session: &mut EditSession, title: &str, patch: u32, now: f64) -> u32 {
+    pub(crate) fn create(&mut self, session: &mut EditSession, title: &str, patch: u32, now: f64) -> u32 {
         let entry = self.next_entry(&session.rows.edits);
         let key = quest::template_key(entry, patch);
         let mut row = RowEdit {
@@ -833,7 +833,7 @@ impl Quests {
     /// The relations are not copied, because who gives the copy is a separate
     /// decision. Copying them would make the original's giver offer a second
     /// quest as a side effect of the copy button.
-    pub fn duplicate(&mut self, session: &mut EditSession, patch: u32, now: f64) -> Option<u32> {
+    pub(crate) fn duplicate(&mut self, session: &mut EditSession, patch: u32, now: f64) -> Option<u32> {
         let from = self
             .row
             .as_ref()
@@ -896,7 +896,7 @@ impl Quests {
     /// in no database, so its claim is taken back and it leaves the list — and
     /// the relations this project added to it go with it, because a relation to
     /// a quest that does not exist is a row the server drops at load.
-    pub fn remove(&mut self, session: &mut EditSession, known: &Known, now: f64) {
+    pub(crate) fn remove(&mut self, session: &mut EditSession, known: &Known, now: f64) {
         let subject = format!("quest {} remove", known.entry);
         let gesture = crate::server::store::Gesture {
             label: "Remove quest",
@@ -941,7 +941,7 @@ impl Quests {
     /// Keep a quest that was marked for removal: the claim is taken back,
     /// and with it any column edit made before the mark, which a `Delete` row
     /// does not carry.
-    pub fn keep(&mut self, session: &mut EditSession, known: &Known, now: f64) {
+    pub(crate) fn keep(&mut self, session: &mut EditSession, known: &Known, now: f64) {
         let subject = format!("quest {} keep", known.entry);
         session.set_server_row(
             quest::TEMPLATE,
@@ -960,13 +960,13 @@ impl Quests {
     /// them, each with what the project says is to become of it:
     /// [`Life::Update`] for a row left as it is, [`Life::Insert`] for one this
     /// project adds and [`Life::Delete`] for one it removes.
-    pub fn relations_of_quest(&self, entry: u32, edits: &Edits) -> Vec<(Relation, Life)> {
+    pub(crate) fn relations_of_quest(&self, entry: u32, edits: &Edits) -> Vec<(Relation, Life)> {
         self.relations_where(edits, |relation| relation.quest == entry)
     }
 
     /// Every relation of one creature or game object, on the same terms as
     /// [`Self::relations_of_quest`].
-    pub fn relations_of_holder(
+    pub(crate) fn relations_of_holder(
         &self,
         holder: Holder,
         id: u32,
@@ -1021,7 +1021,7 @@ impl Quests {
 
     /// Add a relation. One that is in the database and marked for removal
     /// is kept instead; one that is already there is left alone.
-    pub fn relate(&mut self, session: &mut EditSession, relation: Relation, now: f64) {
+    pub(crate) fn relate(&mut self, session: &mut EditSession, relation: Relation, now: f64) {
         let (table, key) = (relation.table(), relation.key());
         let subject = format!("{table} {}", key.text());
         let gesture = crate::server::store::Gesture {
@@ -1049,7 +1049,7 @@ impl Quests {
 
     /// Remove a relation: a `Delete` row for one in the database, and the
     /// claim taken back for one this project added.
-    pub fn unrelate(&mut self, session: &mut EditSession, relation: Relation, now: f64) {
+    pub(crate) fn unrelate(&mut self, session: &mut EditSession, relation: Relation, now: f64) {
         let (table, key) = (relation.table(), relation.key());
         let subject = format!("{table} {}", key.text());
         let gesture = crate::server::store::Gesture {
@@ -1079,7 +1079,7 @@ impl Quests {
     /// creates has its name before it is applied, and one it renames shows the
     /// new name. The database's answer is kept only until the database is next
     /// written; see `crate::server::fresh`.
-    pub fn item(&mut self, entry: u32, edits: &Edits) -> Option<ItemName> {
+    pub(crate) fn item(&mut self, entry: u32, edits: &Edits) -> Option<ItemName> {
         let name = claimed(edits, vale_mangos::item::TEMPLATE, entry, "name");
         let quality = claimed(edits, vale_mangos::item::TEMPLATE, entry, "quality").and_then(|v| v.parse().ok());
         let display = claimed(edits, vale_mangos::item::TEMPLATE, entry, "display_id").and_then(|v| v.parse().ok());
@@ -1122,7 +1122,7 @@ impl Quests {
     /// left has its `set_id` cleared when it named this set and the set no
     /// longer lists it in any column. A change stays pending while a row is
     /// still being read, and is dropped when the table has no such item.
-    pub fn follow_sets(&mut self, session: &mut EditSession, now: f64) -> Vec<String> {
+    pub(crate) fn follow_sets(&mut self, session: &mut EditSession, now: f64) -> Vec<String> {
         let mut said = Vec::new();
         let pending = std::mem::take(&mut self.set_follows);
         for follow in pending {
@@ -1171,14 +1171,14 @@ impl Quests {
 
     /// Whether an item's name is settled: the project names it, or the
     /// database has answered, with a row or without one.
-    pub fn item_known(&self, entry: u32, edits: &Edits) -> bool {
+    pub(crate) fn item_known(&self, entry: u32, edits: &Edits) -> bool {
         self.items.contains_key(&entry) || claimed(edits, vale_mangos::item::TEMPLATE, entry, "name").is_some()
     }
 
     /// What a creature or game object is called, on [`Self::item`]'s terms:
     /// the project's claim on its template's `name` first, the database's
     /// answer after.
-    pub fn holder(&mut self, holder: Holder, id: u32, edits: &Edits) -> Option<String> {
+    pub(crate) fn holder(&mut self, holder: Holder, id: u32, edits: &Edits) -> Option<String> {
         if let Some(name) = claimed(edits, holder.template(), id, "name") {
             return Some(name);
         }
@@ -1193,14 +1193,14 @@ impl Quests {
 
     /// Whether a creature's or game object's name is settled, on
     /// [`Self::item_known`]'s terms.
-    pub fn holder_known(&self, holder: Holder, id: u32, edits: &Edits) -> bool {
+    pub(crate) fn holder_known(&self, holder: Holder, id: u32, edits: &Edits) -> bool {
         self.holders.contains_key(&(holder, id)) || claimed(edits, holder.template(), id, "name").is_some()
     }
 
     /// What one id of a [`Target::List`] table holds, as the picker lists it:
     /// the database's answer, or a line saying the project creates rows under
     /// it when the database has none. Asked for when it is not known yet.
-    pub fn listed(&mut self, table: &'static str, id: u32, edits: &Edits) -> Option<Hit> {
+    pub(crate) fn listed(&mut self, table: &'static str, id: u32, edits: &Edits) -> Option<Hit> {
         match self.lists.get(&(table, id)) {
             Some(Some(found)) => Some(found.clone()),
             Some(None) => created_list(table, id, edits),
@@ -1213,13 +1213,13 @@ impl Quests {
 
     /// Whether an id of a [`Target::List`] table has been answered, with rows or
     /// without.
-    pub fn listed_known(&self, table: &'static str, id: u32) -> bool {
+    pub(crate) fn listed_known(&self, table: &'static str, id: u32) -> bool {
         self.lists.contains_key(&(table, id))
     }
 
     /// Remember a name a picker's own search answered, so the row that was just
     /// chosen is drawn with its name on the frame it is written.
-    pub fn learn(&mut self, target: Target, hit: &Hit) {
+    pub(crate) fn learn(&mut self, target: Target, hit: &Hit) {
         match target {
             Target::List(table) => {
                 self.lists.insert((table, hit.id), Some(hit.clone()));
@@ -1239,7 +1239,7 @@ impl Quests {
     }
 
     /// Open the workspace on one creature's or game object's quests.
-    pub fn show_quests_of(&mut self, holder: Holder, id: u32) {
+    pub(crate) fn show_quests_of(&mut self, holder: Holder, id: u32) {
         self.of_holder = Some((holder, id));
         self.forget_matches();
     }
@@ -1429,7 +1429,7 @@ fn read_the_row(
 ///
 /// The list is sorted again afterwards, because [`Quests::by_entry`] is a
 /// binary search over it.
-pub fn fold_the_store_in(
+pub(crate) fn fold_the_store_in(
     all: &mut Vec<Known>,
     relations: &mut Vec<Relation>,
     relations_read: &[Relation],
@@ -1790,14 +1790,14 @@ fn item_hit(id: u32, title: String, row: &impl RowValue) -> Hit {
 
 /// The seven `item_template` columns a picker row describes an item by.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ItemFacts {
-    pub quality: u32,
-    pub display_id: u32,
-    pub class: u32,
-    pub subclass: u32,
-    pub inventory_type: u32,
-    pub item_level: u32,
-    pub required_level: u32,
+pub(crate) struct ItemFacts {
+    pub(crate) quality: u32,
+    pub(crate) display_id: u32,
+    pub(crate) class: u32,
+    pub(crate) subclass: u32,
+    pub(crate) inventory_type: u32,
+    pub(crate) item_level: u32,
+    pub(crate) required_level: u32,
 }
 
 impl ItemFacts {
@@ -2118,7 +2118,7 @@ fn scripted_entry(
     quests.scripted_done = true;
 }
 
-pub struct QuestToolPlugin;
+pub(crate) struct QuestToolPlugin;
 
 impl Plugin for QuestToolPlugin {
     fn build(&self, app: &mut App) {

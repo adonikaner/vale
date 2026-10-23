@@ -20,32 +20,32 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 
 /// The file's name under `Edit\`.
-pub const FILE: &str = "bookmarks.txt";
+pub(crate) const FILE: &str = "bookmarks.txt";
 
 /// One place, as the camera stood.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Bookmark {
-    pub name: String,
+pub(crate) struct Bookmark {
+    pub(crate) name: String,
     /// The map's `World\Maps\` directory name, which is what the session
     /// keys the map by.
-    pub map: String,
+    pub(crate) map: String,
     /// The focus, in the world's own axes, height included.
-    pub target: [f32; 3],
-    pub yaw: f32,
-    pub pitch: f32,
-    pub distance: f32,
+    pub(crate) target: [f32; 3],
+    pub(crate) yaw: f32,
+    pub(crate) pitch: f32,
+    pub(crate) distance: f32,
 }
 
 /// The list, and where it was read from.
 #[derive(Resource, Default)]
-pub struct Bookmarks {
+pub(crate) struct Bookmarks {
     loaded_from: Option<PathBuf>,
-    pub list: Vec<Bookmark>,
+    pub(crate) list: Vec<Bookmark>,
 }
 
 impl Bookmarks {
     /// Read the file under `dir` once. Idempotent per directory.
-    pub fn load_from(&mut self, dir: &Path) {
+    pub(crate) fn load_from(&mut self, dir: &Path) {
         if self.loaded_from.as_deref() == Some(dir) {
             return;
         }
@@ -55,13 +55,13 @@ impl Bookmarks {
     }
 
     /// Add one, replacing a bookmark of the same name.
-    pub fn add(&mut self, bookmark: Bookmark) {
+    pub(crate) fn add(&mut self, bookmark: Bookmark) {
         self.list.retain(|had| had.name != bookmark.name);
         self.list.push(bookmark);
         self.save();
     }
 
-    pub fn remove(&mut self, name: &str) {
+    pub(crate) fn remove(&mut self, name: &str) {
         self.list.retain(|had| had.name != name);
         self.save();
     }

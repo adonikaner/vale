@@ -79,7 +79,7 @@ use crate::world::m2::{M2Camera, M2};
 
 /// The `M2Camera::kind` that frames a portrait. `1` is the character-info
 /// camera — the character sheet's full-body shot — and `-1` is anything else.
-pub const PORTRAIT_KIND: i32 = 0;
+pub(crate) const PORTRAIT_KIND: i32 = 0;
 
 /// How far round from dead ahead a derived framing stands, in radians.
 ///
@@ -87,7 +87,7 @@ pub const PORTRAIT_KIND: i32 = 0;
 /// *files* use rather than picked for looks: over the models that carry a
 /// portrait camera the eye is 20° to 50° off the aim axis, and this is at the
 /// low end of that, which is the safe end — a head turned too far shows an ear.
-pub const THREE_QUARTER: f32 = std::f32::consts::FRAC_PI_8;
+pub(crate) const THREE_QUARTER: f32 = std::f32::consts::FRAC_PI_8;
 
 /// The vertical field of view a derived framing uses, in radians.
 ///
@@ -96,7 +96,7 @@ pub const THREE_QUARTER: f32 = std::f32::consts::FRAC_PI_8;
 /// carry exactly this, and the human male's 0.785 is the outlier. Deriving a
 /// framing at some other angle would put a model with no camera at a visibly
 /// different apparent size from its neighbour on the same unit frame.
-pub const DERIVED_FOV: f32 = 0.95;
+pub(crate) const DERIVED_FOV: f32 = 0.95;
 
 /// How much of a model's height a derived framing treats as its head.
 ///
@@ -296,7 +296,7 @@ const BODY_ASPECT: f32 = 233.0 / 224.0;
 /// Chosen by kind and never by index, for [`camera`]'s reason turned round: a
 /// model that lists only a portrait camera would frame a whole paper doll as a
 /// close-up of a face, which is a picture rather than an error.
-pub fn body_camera(model: &M2) -> Option<&M2Camera> {
+pub(crate) fn body_camera(model: &M2) -> Option<&M2Camera> {
     model.cameras.iter().find(|c| c.kind == BODY_KIND)
 }
 

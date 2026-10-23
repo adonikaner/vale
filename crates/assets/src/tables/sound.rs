@@ -115,44 +115,44 @@ use std::collections::HashMap;
 /// was pinned.
 pub mod fields {
     pub mod entry {
-        pub const KIND: usize = 1;
+        pub(crate) const KIND: usize = 1;
         pub const NAME: usize = 2;
         pub const FILE: usize = 3;
-        pub const FILE_COUNT: usize = 10;
-        pub const FREQ: usize = 13;
+        pub(crate) const FILE_COUNT: usize = 10;
+        pub(crate) const FREQ: usize = 13;
         pub const DIRECTORY: usize = 23;
         pub const VOLUME: usize = 24;
         pub const FLAGS: usize = 25;
-        pub const MIN_DISTANCE: usize = 26;
-        pub const CUTOFF: usize = 27;
+        pub(crate) const MIN_DISTANCE: usize = 26;
+        pub(crate) const CUTOFF: usize = 27;
     }
     pub mod area {
-        pub const AMBIENCE: usize = 7;
+        pub(crate) const AMBIENCE: usize = 7;
         pub const ZONE_MUSIC: usize = 8;
-        pub const INTRO_MUSIC: usize = 9;
+        pub(crate) const INTRO_MUSIC: usize = 9;
     }
     pub mod zone_music {
-        pub const SET_NAME: usize = 1;
-        pub const SILENCE_MIN: usize = 2; // [2,3] day/night
-        pub const SILENCE_MAX: usize = 4; // [4,5]
+        pub(crate) const SET_NAME: usize = 1;
+        pub(crate) const SILENCE_MIN: usize = 2; // [2,3] day/night
+        pub(crate) const SILENCE_MAX: usize = 4; // [4,5]
         pub const SOUND: usize = 6; // [6,7]
     }
     pub mod intro {
         pub const SOUND: usize = 2;
-        pub const MIN_DELAY_MINUTES: usize = 4;
+        pub(crate) const MIN_DELAY_MINUTES: usize = 4;
     }
     pub mod ambience {
         pub const SOUND: usize = 1; // [1,2] day/night
     }
     pub mod creature {
-        pub const EXERTION: usize = 1;
-        pub const WOUND: usize = 3;
-        pub const WOUND_CRITICAL: usize = 4;
+        pub(crate) const EXERTION: usize = 1;
+        pub(crate) const WOUND: usize = 3;
+        pub(crate) const WOUND_CRITICAL: usize = 4;
         /// `SoundInjuryCrushingBlowID` — the third injury column, for
         /// `HITINFO_CRUSHING`.
-        pub const WOUND_CRUSHING: usize = 5;
+        pub(crate) const WOUND_CRUSHING: usize = 5;
         pub const DEATH: usize = 6;
-        pub const FOOTSTEP: usize = 9;
+        pub(crate) const FOOTSTEP: usize = 9;
         pub const AGGRO: usize = 10;
         /// `SoundAlertID` — the pre-aggro bark, `AI_REACTION_ALERT`'s.
         pub const ALERT: usize = 13;
@@ -160,12 +160,12 @@ pub mod fields {
         /// played instead of a `WeaponImpactSounds` row by a creature that is
         /// biting rather than swinging. Pinned by name: the basilisk's first is
         /// entry 7374, `BiteMedium`.
-        pub const CUSTOM_ATTACK: usize = 19;
-        pub const CUSTOM_ATTACK_COUNT: usize = 4;
+        pub(crate) const CUSTOM_ATTACK: usize = 19;
+        pub(crate) const CUSTOM_ATTACK_COUNT: usize = 4;
         /// `CreatureImpactType` — **what this unit is made of**, and therefore
         /// which of a weapon row's ten slots a blow on it lands in. Not a sound
         /// id: 0..2 over flesh, chain and plate. See [`super::super::impact_slot`].
-        pub const IMPACT_TYPE: usize = 25;
+        pub(crate) const IMPACT_TYPE: usize = 25;
         /// **The three pet-talk columns**, pinned twice over: by name — the
         /// only rows that state them are the four warlock demons, and they
         /// resolve to `A_IMP_KILL` / `A_IMP_ORDER` / `A_Imp_Dismiss` and their
@@ -175,20 +175,20 @@ pub mod fields {
         /// reads `+0x74` directly.
         pub const PET_ATTACK: usize = 27;
         pub const PET_ORDER: usize = 28;
-        pub const PET_DISMISS: usize = 29;
+        pub(crate) const PET_DISMISS: usize = 29;
     }
     pub mod footstep {
-        pub const CREATURE_FOOTSTEP: usize = 1;
+        pub(crate) const CREATURE_FOOTSTEP: usize = 1;
         pub const TERRAIN: usize = 2;
         pub const SOUND: usize = 3;
-        pub const SPLASH: usize = 4;
+        pub(crate) const SPLASH: usize = 4;
     }
     pub mod display {
         /// `CreatureDisplayInfo`: the per-display override…
-        pub const SOUND_OVERRIDE: usize = 2;
-        pub const MODEL_ID: usize = 1;
+        pub(crate) const SOUND_OVERRIDE: usize = 2;
+        pub(crate) const MODEL_ID: usize = 1;
         /// …and `CreatureModelData`: the model's own.
-        pub const MODEL_SOUND: usize = 13;
+        pub(crate) const MODEL_SOUND: usize = 13;
     }
     pub mod swing {
         pub const SIZE: usize = 1;
@@ -196,13 +196,13 @@ pub mod fields {
         pub const SOUND: usize = 3;
     }
     pub mod impact {
-        pub const SUBCLASS: usize = 1;
+        pub(crate) const SUBCLASS: usize = 1;
         /// **The second half of the key**, and the reason this table is not a
         /// map from subclass alone: 11 of the 21 subclasses have two rows here,
         /// one metal and one not. Pinned by name — subclass 4 is
         /// `Mace1H_ArmorFlesh` at 0 and `Mace1HMetal_ArmorFlesh` at 1.
-        pub const METAL: usize = 2;
-        pub const HIT: usize = 3; // [3..12]
+        pub(crate) const METAL: usize = 2;
+        pub(crate) const HIT: usize = 3; // [3..12]
         pub const CRIT: usize = 13; // [13..22]
         pub const COUNT: usize = 10;
     }
@@ -227,8 +227,8 @@ pub mod fields {
         pub const CAST_KIT: usize = 2;
         pub const IMPACT_KIT: usize = 3;
         pub const CHANNEL_KIT: usize = 5;
-        pub const MISSILE_SOUND: usize = 10;
-        pub const KIT_SOUND: usize = 13;
+        pub(crate) const MISSILE_SOUND: usize = 10;
+        pub(crate) const KIT_SOUND: usize = 13;
     }
 }
 
@@ -404,7 +404,7 @@ pub struct CreatureSounds {
 }
 
 /// How many `$AHn` columns a creature has.
-pub const CUSTOM_ATTACKS: usize = fields::creature::CUSTOM_ATTACK_COUNT;
+pub(crate) const CUSTOM_ATTACKS: usize = fields::creature::CUSTOM_ATTACK_COUNT;
 
 /// **The ten slots of a `WeaponImpactSounds` row, named by the file itself.**
 ///
@@ -475,7 +475,7 @@ pub const ABSORB_GET_HIT: &str = "(DONOTRENAME)AbsorbGetHit";
 /// sounds behind it rather than an absence. What a texture with no ground-effect
 /// row should sound like is dirt, so the fallback has to be this and not the
 /// zero that a `unwrap_or` reaches for.
-pub const FOOTSTEP_KEY_DIRT: u32 = 1;
+pub(crate) const FOOTSTEP_KEY_DIRT: u32 = 1;
 
 /// One `(creatureFootstep, terrain)` cell of `FootstepTerrainLookup`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -508,7 +508,7 @@ pub struct CastSounds {
 }
 
 impl CastSounds {
-    pub fn is_silent(&self) -> bool {
+    pub(crate) fn is_silent(&self) -> bool {
         self.precast == 0
             && self.cast == 0
             && self.impact == 0

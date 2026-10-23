@@ -43,95 +43,115 @@ use crate::dbc::{Cell, DbcFile, Row};
 use crate::ops::Edit;
 use crate::TileKey;
 
-/// One column of one row of the server's database, set to one value.
+/// One edit to the server's database, before and after, as text.
 ///
-/// The fourth kind of thing a [`Change`] carries, and the only one whose
-/// subject this crate cannot reach: a tile is a file it holds, a DBC cell is a
-/// record in a file it holds, and this is a row in a MySQL database this
-/// crate has no connection to and does not need one.
+/// The one entry whose subject this crate cannot reach: a tile is a file it
+/// holds, a DBC cell is a record in a file it holds, and this is a row in a
+/// MySQL database this crate has no connection to. So it is addressed by
+/// text: a table name, a key written as its own `column=value;column=value`
+/// form, and what [`Shape`] of edit it is. What the key and the values mean is
+/// the caller's (`vale-mangos` writes and reads them); this crate carries them
+/// between the caller's store and the stack and reads none of them.
 ///
-/// So it is addressed by text: a table name, a key written as its own
-/// `column=value;column=value` form, and a column name. What the key means is
-/// the caller's — `vale-mangos` builds it and reads it back — and what this
-/// crate does with it is put the value in the caller's own store and take it
-/// out again. That keeps `vale-edit` what it is: no connection, no driver,
-/// and a `Change` that is still one list of things that happened.
-///
-/// `before` and `after` are `Option<String>` because absent is a value: a
-/// column the project does not change has no entry in the store at all, which
-/// is different from one it sets to the empty string. Undoing the first edit to
-/// a column must remove it rather than write something.
+/// `before` and `after` are `Option<String>` because absent is a value. `None`
+/// is the project saying nothing about the subject, which is different from a
+/// claim of the empty string: undoing the first edit to a column removes the
+/// column from the store rather than writing an empty value, and claiming no
+/// path leaves the database's own path where claiming an empty one deletes it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ServerCell {
-    /// The server table, as `vale-mangos` names it: `creature_template`.
+pub struct ServerEntry {
+    pub shape: Shape,
+    /// The server table, as `vale-mangos` names it: `creature_template`,
+    /// `creature`, `creature_movement`, or a script table.
     pub table: String,
-    /// Which row of it, as `vale_mangos::row::Key::text` writes one:
-    /// `entry=68;patch=0`.
+    /// Which row or path, as `vale_mangos::row::Key::text` writes one:
+    /// `entry=68;patch=0`, `guid=10000001`, `id=12345`.
     pub key: String,
-    pub column: String,
-    /// What the project's store held before, or `None` for a column it was not
-    /// changing at all.
+    /// What the project's store held before, or `None` for nothing.
     pub before: Option<String>,
-    /// …and after.
+    /// What it holds after, or `None` for nothing.
     pub after: Option<String>,
 }
 
-impl ServerCell {
-    /// Whether two cells are about the same column of the same row, which is
-    /// what [`Change::absorb_server_cell`] folds on.
-    pub fn names_the_same_column_as(&self, other: &ServerCell) -> bool {
-        self.table == other.table && self.key == other.key && self.column == other.column
-    }
+/// What a [`ServerEntry`] is an edit of, which decides how the caller's store
+/// applies it and what two entries fold on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Shape {
+    /// One column of one row, set to one value. The column is named here.
+    Column(String),
+    /// The project's whole claim on one row: created, removed, or nothing.
+    /// Creating a spawn sets no column of a row that exists, and removing one
+    /// sets none at all, so the claim is the unit. The text is what
+    /// `vale_mangos::row::Edits::row_line` writes.
+    Row,
+    /// Every row under one key, replaced together: a waypoint path, or a
+    /// script under a script table's name. vmangos renumbers a path's points
+    /// at each start, so a per-row edit would address rows that move, and a
+    /// script's rows have no key of their own.
+    Path,
+}
 
-    /// This cell reversed, for an undo.
-    pub fn reversed(&self) -> ServerCell {
-        ServerCell {
-            table: self.table.clone(),
-            key: self.key.clone(),
-            column: self.column.clone(),
-            before: self.after.clone(),
-            after: self.before.clone(),
+impl ServerEntry {
+    /// One column of one row, before and after.
+    pub fn column(
+        table: impl Into<String>,
+        key: impl Into<String>,
+        column: impl Into<String>,
+        before: Option<String>,
+        after: Option<String>,
+    ) -> ServerEntry {
+        ServerEntry {
+            shape: Shape::Column(column.into()),
+            table: table.into(),
+            key: key.into(),
+            before,
+            after,
         }
     }
-}
 
-/// A whole waypoint path this project claims, before and after.
-///
-/// [`ServerCell`]'s sibling for the one server subject whose edit is a set of
-/// rows rather than a column. A path is written by replacing every row under
-/// its key — vmangos renumbers the points at each start, so a per-row edit
-/// would address rows that move — and the undo therefore has to carry the whole
-/// path rather than one value. See `vale_mangos::path`.
-///
-/// The path is carried as text for [`ServerCell`]'s reason: this crate is
-/// what an edit to a file is and knows nothing about a database, so what it
-/// stores is what the caller's own store writes, opaque to everything here.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ServerPath {
-    /// The movement table: `creature_movement` or `creature_movement_template`.
-    pub table: String,
-    /// Which path, as `vale_mangos::row::Key::text` writes one: `id=12345`.
-    pub key: String,
-    /// The path the project claimed before, or `None` when it claimed none.
-    ///
-    /// `None` and an empty path are different, which is the whole reason
-    /// this is an `Option<String>` and not a `String`: claiming no path leaves
-    /// the database's own, and claiming an empty one deletes it.
-    pub before: Option<String>,
-    /// …and after.
-    pub after: Option<String>,
-}
+    /// The project's claim on one whole row, before and after.
+    pub fn row(
+        table: impl Into<String>,
+        key: impl Into<String>,
+        before: Option<String>,
+        after: Option<String>,
+    ) -> ServerEntry {
+        ServerEntry {
+            shape: Shape::Row,
+            table: table.into(),
+            key: key.into(),
+            before,
+            after,
+        }
+    }
 
-impl ServerPath {
-    /// Whether two entries are about the same path, which is what
-    /// [`Change::absorb_server_path`] folds on.
-    pub fn names_the_same_path_as(&self, other: &ServerPath) -> bool {
-        self.table == other.table && self.key == other.key
+    /// One whole path or script, before and after.
+    pub fn path(
+        table: impl Into<String>,
+        key: impl Into<String>,
+        before: Option<String>,
+        after: Option<String>,
+    ) -> ServerEntry {
+        ServerEntry {
+            shape: Shape::Path,
+            table: table.into(),
+            key: key.into(),
+            before,
+            after,
+        }
+    }
+
+    /// Whether two entries edit the same thing: the same shape, table and key,
+    /// and for a column the same column. What [`Change::absorb_server`] folds
+    /// on.
+    pub(crate) fn names_the_same_subject_as(&self, other: &ServerEntry) -> bool {
+        self.shape == other.shape && self.table == other.table && self.key == other.key
     }
 
     /// This entry reversed, for an undo.
-    pub fn reversed(&self) -> ServerPath {
-        ServerPath {
+    pub fn reversed(&self) -> ServerEntry {
+        ServerEntry {
+            shape: self.shape.clone(),
             table: self.table.clone(),
             key: self.key.clone(),
             before: self.after.clone(),
@@ -140,114 +160,69 @@ impl ServerPath {
     }
 }
 
-/// A whole row of the server's database this project creates or removes,
-/// before and after.
+/// One thing a [`Change`] did.
 ///
-/// [`ServerCell`]'s sibling for the change that is not a column. Creating a
-/// creature spawn sets no column of a row that is already there — there is no
-/// row — and removing one sets no column at all. What moves in both cases is
-/// the project's whole claim on the row, so that is what the entry carries.
-///
-/// The claim is carried as text, as [`ServerPath`]'s path is and for its
-/// reason: this crate is what an edit to a file is and knows nothing about a
-/// database, so what it stores is what the caller's own store writes, opaque to
-/// everything here. `vale_mangos::row::Edits::row_line` is the writer.
-///
-/// `None` is the project saying nothing about the row, which is what
-/// undoing a creation leaves behind and is different from a claim that happens
-/// to name no column.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ServerRow {
-    /// The server table, as `vale-mangos` names it: `creature`.
-    pub table: String,
-    /// Which row of it, as `vale_mangos::row::Key::text` writes one:
-    /// `guid=10000001`.
-    pub key: String,
-    /// What the project claimed about the row before, or `None` for nothing.
-    pub before: Option<String>,
-    /// …and after.
-    pub after: Option<String>,
+/// The variants apply to different objects: a tile edit to an `AdtFile`, a
+/// cell or row to a `DbcFile`, and a server entry to the caller's own store.
+/// So each is applied through its own method on [`Change`] ([`Change::apply`]
+/// for a tile, [`Change::apply_table`] for a table, [`Change::server_steps`]
+/// for the server store), and every one of those reads the list in the order
+/// [`Change::in_order`] gives.
+#[derive(Debug, Clone)]
+pub enum Entry {
+    /// A tile edit and the tile it belongs to.
+    Tile(TileKey, Edit),
+    /// A field edit and its table, named as the table is (`"Spell"`).
+    Cell(String, Cell),
+    /// A whole record added or removed, and its table.
+    Row(String, Row),
+    /// An edit to the server's database.
+    Server(ServerEntry),
 }
 
-impl ServerRow {
-    /// Whether two entries are about the same row, which is what
-    /// [`Change::absorb_server_row`] folds on.
-    pub fn names_the_same_row_as(&self, other: &ServerRow) -> bool {
-        self.table == other.table && self.key == other.key
+/// Where an entry falls in the order a change is applied in. See
+/// [`Change::in_order`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// Entries that add or remove a record: a DBC row and a server row claim.
+    Records,
+    /// Every other entry.
+    Contents,
+}
+
+impl Entry {
+    fn stage(&self) -> Stage {
+        match self {
+            Entry::Row(..) => Stage::Records,
+            Entry::Server(entry) if entry.shape == Shape::Row => Stage::Records,
+            _ => Stage::Contents,
+        }
     }
 
-    /// This entry reversed, for an undo.
-    pub fn reversed(&self) -> ServerRow {
-        ServerRow {
-            table: self.table.clone(),
-            key: self.key.clone(),
-            before: self.after.clone(),
-            after: self.before.clone(),
+    /// The client table this entry edits, if it edits one.
+    fn table(&self) -> Option<&str> {
+        match self {
+            Entry::Cell(table, _) | Entry::Row(table, _) => Some(table),
+            _ => None,
         }
     }
 }
 
-/// One entry on the stack: everything one action did, across every tile it did
-/// it to.
+/// One entry on the stack: everything one action did, to tiles, client tables
+/// and server rows.
 ///
-/// ## Table edits are a second list, not a second stack
-///
-/// A change carries tile edits and table edits side by side, in two lists
-/// rather than one. The two apply to different objects — a tile edit is
-/// `apply(&mut AdtFile)` and a table edit is `apply(&mut DbcFile)` — so
-/// merging them into one enum would give every existing arm a target it
-/// cannot use. There is still one stack: pressing `Ctrl+Z` undoes the last
-/// thing done, whether that was a wall or a spell's name.
+/// What the action did is one list of [`Entry`] in the order it was done, and
+/// there is one stack: `Ctrl+Z` undoes the last thing done, whether that was a
+/// wall, a spell's name or a creature's level. The order the list is applied
+/// and reverted in is one rule, [`Self::in_order`], which every apply and
+/// revert path reads.
 #[derive(Debug, Clone)]
 pub struct Change {
     /// What to call it in an interface. "Raise terrain", "Move doodad".
     pub label: String,
-    /// Each edit and the tile it belongs to, in the order they were made.
-    pub edits: Vec<(TileKey, Edit)>,
-    /// …and each field edit with the table it belongs to, named as the table is
-    /// (`"Spell"`), in the order they were made.
-    pub cells: Vec<(String, Cell)>,
-    /// …and each whole record added or removed, with its table, in the order
-    /// they were made.
-    ///
-    /// Applied before the cells and reverted after them. A change that adds
-    /// a row and then writes its fields has to put the row in before the fields
-    /// can be written, and take the fields back before the row goes; and a
-    /// removal moves every index after it, so a cell recorded after one is
-    /// addressed against the table as the removal left it. The two lists are
-    /// kept apart so that order is a rule here rather than a property of how
-    /// the caller happened to record them.
-    pub rows: Vec<(String, Row)>,
-    /// …and each column of a row in the server's database, in the order
-    /// they were made — see [`ServerCell`].
-    ///
-    /// A fourth list rather than a variant of [`Self::cells`], because the two
-    /// are addressed differently and cannot be folded together: a DBC cell is a
-    /// record index and a field index into a file this crate holds, and a
-    /// server cell is a keyed row in a database this crate cannot reach. What
-    /// they have in common is only that both are one column set to one value.
-    pub server_cells: Vec<ServerCell>,
-    /// …and each whole waypoint path, in the order they were made — see
-    /// [`ServerPath`].
-    ///
-    /// A fifth list rather than a variant of [`Self::server_cells`], on that
-    /// list's own argument: a column and a set of rows are addressed
-    /// differently and cannot be folded together.
-    pub server_paths: Vec<ServerPath>,
-    /// …and each whole row of the server's database created or removed, in the
-    /// order they were made — see [`ServerRow`].
-    ///
-    /// A sixth list on the same argument as the fifth, and the claim it carries
-    /// is not a column: creating a row sets no column of anything that exists,
-    /// and removing one sets none at all.
-    ///
-    /// Applied before the cells and reverted after them, for
-    /// [`Self::rows`]' reason one container along: a change that creates a row
-    /// and then writes a column of it has to have the row first, and taking the
-    /// row away has to come after the column. The two lists are kept apart so
-    /// that the order is a rule here rather than a property of how the caller
-    /// happened to record them.
-    pub server_rows: Vec<ServerRow>,
+    /// What it did, in the order it was done. Applied and reverted through
+    /// [`Self::in_order`], not in this order.
+    entries: Vec<Entry>,
     /// What this change is about, for the gestures that have no release to
     /// close them — `doodad 7 scale`, `doodad 7 position`. Two changes with the
     /// same subject close together in time are one action; two with different
@@ -265,15 +240,45 @@ impl Change {
     pub fn new(label: impl Into<String>) -> Change {
         Change {
             label: label.into(),
-            edits: Vec::new(),
-            cells: Vec::new(),
-            rows: Vec::new(),
-            server_cells: Vec::new(),
-            server_paths: Vec::new(),
-            server_rows: Vec::new(),
+            entries: Vec::new(),
             gesture: None,
             at: 0.0,
         }
+    }
+
+    /// The entries in the order they are applied (`forward`) or reverted.
+    ///
+    /// Applied: every entry that adds or removes a record (an [`Entry::Row`]
+    /// and a server [`Shape::Row`]) in the order made, then every other entry
+    /// in the order made. Reverted: the exact reverse, so the other entries
+    /// last first and then the record entries last first.
+    ///
+    /// Records come first because a change that adds a row and then writes
+    /// into it has to have the row before the write, and has to take the write
+    /// back before the row goes. A DBC removal moves every index after it, so a
+    /// cell recorded after one is addressed against the table as the removal
+    /// left it. Within each stage the order made is kept, because two edits to
+    /// one chunk only invert in the order they were made, and a placement edit
+    /// names an index that an [`Edit::Placements`] edit before it can move.
+    ///
+    /// Each target filters this to its own entries, so the order holds per
+    /// tile, per table and for the server store, and does not depend on the
+    /// order the caller recorded rows and cells in.
+    pub fn in_order(&self, forward: bool) -> impl Iterator<Item = &Entry> + '_ {
+        let stages = match forward {
+            true => [Stage::Records, Stage::Contents],
+            false => [Stage::Contents, Stage::Records],
+        };
+        let count = self.entries.len();
+        stages.into_iter().flat_map(move |stage| {
+            (0..count)
+                .map(move |at| match forward {
+                    true => at,
+                    false => count - 1 - at,
+                })
+                .map(move |at| &self.entries[at])
+                .filter(move |entry| entry.stage() == stage)
+        })
     }
 
     /// Add a field edit, folding it into one already here about the same field
@@ -282,124 +287,103 @@ impl Change {
     /// The folding is what makes typing into a name box one undo step rather
     /// than one per keystroke: the first `before` stands and the last `after`
     /// wins, which is the same rule [`Self::absorb`] applies to a held brush.
-    pub fn absorb_cell(&mut self, table: &str, cell: Cell) {
-        for (had, existing) in self.cells.iter_mut() {
-            if had == table && existing.record == cell.record && existing.field == cell.field {
-                existing.after = cell.after;
-                return;
+    pub(crate) fn absorb_cell(&mut self, table: &str, cell: Cell) {
+        for entry in self.entries.iter_mut() {
+            if let Entry::Cell(had, existing) = entry {
+                if had == table && existing.record == cell.record && existing.field == cell.field {
+                    existing.after = cell.after;
+                    return;
+                }
             }
         }
-        self.cells.push((table.to_string(), cell));
+        self.entries.push(Entry::Cell(table.to_string(), cell));
     }
 
     /// Add a whole record, added or removed. Never folded: two rows are two
     /// rows.
-    pub fn absorb_row(&mut self, table: &str, row: Row) {
-        self.rows.push((table.to_string(), row));
+    pub(crate) fn absorb_row(&mut self, table: &str, row: Row) {
+        self.entries.push(Entry::Row(table.to_string(), row));
     }
 
-    /// Add a column of a server row, folding it into one already here about the
-    /// same column of the same row of the same table.
+    /// Add a server entry, folding it into one already here about the same
+    /// subject (see [`ServerEntry::names_the_same_subject_as`]).
     ///
-    /// [`Self::absorb_cell`]'s rule, for [`Self::absorb_cell`]'s reason: the
-    /// first `before` stands and the last `after` wins, so typing into a name
-    /// box is one undo step and a drag across a courtyard is one entry rather
-    /// than sixty.
-    pub fn absorb_server_cell(&mut self, cell: ServerCell) {
-        for existing in self.server_cells.iter_mut() {
-            if existing.names_the_same_column_as(&cell) {
-                existing.after = cell.after;
-                return;
+    /// [`Self::absorb_cell`]'s rule for its reason: the first `before` stands
+    /// and the last `after` wins. Typing into a name box is one undo step, a
+    /// node dragged across a field writes its path on every frame and is one
+    /// entry, and a row created and then removed inside one gesture is one
+    /// entry that does nothing.
+    pub(crate) fn absorb_server(&mut self, server: ServerEntry) {
+        for entry in self.entries.iter_mut() {
+            if let Entry::Server(existing) = entry {
+                if existing.names_the_same_subject_as(&server) {
+                    existing.after = server.after;
+                    return;
+                }
             }
         }
-        self.server_cells.push(cell);
-    }
-
-    /// Take a whole path into this change, folding it into one already here.
-    ///
-    /// [`Self::absorb_server_cell`]'s rule for the same reason: dragging a node
-    /// writes the path on every frame of the drag, and the gesture has to be
-    /// one undo step rather than sixty.
-    pub fn absorb_server_path(&mut self, path: ServerPath) {
-        for existing in self.server_paths.iter_mut() {
-            if existing.names_the_same_path_as(&path) {
-                existing.after = path.after;
-                return;
-            }
-        }
-        self.server_paths.push(path);
-    }
-
-    /// Take a whole row claim into this change, folding it into one already
-    /// here about the same row.
-    ///
-    /// [`Self::absorb_server_path`]'s rule for its reason: the first `before`
-    /// stands and the last `after` wins, so a row created and then removed
-    /// inside one gesture is one entry that does nothing rather than two.
-    pub fn absorb_server_row(&mut self, row: ServerRow) {
-        for existing in self.server_rows.iter_mut() {
-            if existing.names_the_same_row_as(&row) {
-                existing.after = row.after;
-                return;
-            }
-        }
-        self.server_rows.push(row);
+        self.entries.push(Entry::Server(server));
     }
 
     /// The tables this change touched, in the order they were first touched.
     pub fn tables(&self) -> Vec<String> {
         let mut found: Vec<String> = Vec::new();
-        for table in self
-            .rows
-            .iter()
-            .map(|(table, _)| table)
-            .chain(self.cells.iter().map(|(table, _)| table))
-        {
+        for table in self.entries.iter().filter_map(Entry::table) {
             if !found.iter().any(|had| had == table) {
-                found.push(table.clone());
+                found.push(table.to_string());
             }
         }
         found
     }
 
-    /// Put this change's edits for one table back in: the rows first, then the
-    /// fields — see [`Self::rows`].
+    /// Put this change's edits for one table back in, in [`Self::in_order`]'s
+    /// order: the rows first, then the fields.
     pub fn apply_table(&self, table: &str, into: &mut DbcFile) {
-        for (_, row) in self.rows.iter().filter(|(had, _)| had == table) {
-            row.apply(into);
-        }
-        for (_, cell) in self.cells.iter().filter(|(had, _)| had == table) {
-            cell.apply(into);
+        for entry in self.in_order(true).filter(|entry| entry.table() == Some(table)) {
+            match entry {
+                Entry::Row(_, row) => row.apply(into),
+                Entry::Cell(_, cell) => cell.apply(into),
+                _ => {}
+            }
         }
     }
 
-    /// …and take them back out, in reverse for [`Self::revert`]'s reason: the
-    /// fields first, then the rows.
+    /// …and take them back out, in the reverse: the fields first, then the
+    /// rows.
     pub fn revert_table(&self, table: &str, into: &mut DbcFile) {
-        for (_, cell) in self.cells.iter().filter(|(had, _)| had == table).rev() {
-            cell.revert(into);
+        for entry in self.in_order(false).filter(|entry| entry.table() == Some(table)) {
+            match entry {
+                Entry::Row(_, row) => row.revert(into),
+                Entry::Cell(_, cell) => cell.revert(into),
+                _ => {}
+            }
         }
-        for (_, row) in self.rows.iter().filter(|(had, _)| had == table).rev() {
-            row.revert(into);
-        }
-    }
-
-    /// Whether this change adds or removes a record of `table`, which moves
-    /// record indices — a caller holding one has to look its row up again.
-    pub fn renumbers_records(&self, table: &str) -> bool {
-        self.rows.iter().any(|(had, _)| had == table)
     }
 
     /// The records this change touched in one table, for a panel that has one
     /// of them open.
     pub fn records(&self, table: &str) -> Vec<usize> {
         let mut found: Vec<usize> = Vec::new();
-        for (_, cell) in self.cells.iter().filter(|(had, _)| had == table) {
-            if !found.contains(&cell.record) {
-                found.push(cell.record);
+        for entry in &self.entries {
+            if let Entry::Cell(had, cell) = entry {
+                if had == table && !found.contains(&cell.record) {
+                    found.push(cell.record);
+                }
             }
         }
         found
+    }
+
+    /// The server entries in [`Self::in_order`]'s order, each as the edit the
+    /// caller's store makes: as recorded going forward, reversed going back.
+    pub fn server_steps(&self, forward: bool) -> impl Iterator<Item = ServerEntry> + '_ {
+        self.in_order(forward).filter_map(move |entry| match entry {
+            Entry::Server(server) => Some(match forward {
+                true => server.clone(),
+                false => server.reversed(),
+            }),
+            _ => None,
+        })
     }
 
     /// Add an edit, folding it into one already here when the two are about the
@@ -413,8 +397,11 @@ impl Change {
     /// folded back past an index edit would be applied before that edit on a
     /// redo. The case is a group move followed by its members being put in the
     /// tiles their origins are in, all in one entry.
-    pub fn absorb(&mut self, tile: &TileKey, edit: Edit) {
-        for (had, existing) in self.edits.iter_mut().rev() {
+    pub(crate) fn absorb(&mut self, tile: &TileKey, edit: Edit) {
+        for entry in self.entries.iter_mut().rev() {
+            let Entry::Tile(had, existing) = entry else {
+                continue;
+            };
             if had != tile {
                 continue;
             }
@@ -426,34 +413,51 @@ impl Change {
                 break;
             }
         }
-        self.edits.push((tile.clone(), edit));
+        self.entries.push(Entry::Tile(tile.clone(), edit));
     }
 
     pub fn is_empty(&self) -> bool {
-        self.edits.is_empty()
-            && self.cells.is_empty()
-            && self.rows.is_empty()
-            && self.server_cells.is_empty()
-            && self.server_paths.is_empty()
-            && self.server_rows.is_empty()
+        self.entries.is_empty()
     }
 
     /// Drop everything this change says about one table, leaving what it says
-    /// about other tables and about tiles. `true` when anything was dropped.
-    /// See [`History::forget_table`].
+    /// about other tables, tiles and server rows. `true` when anything was
+    /// dropped. See [`History::forget_table`].
     pub fn forget_table(&mut self, table: &str) -> bool {
-        let before = self.cells.len() + self.rows.len();
-        self.cells.retain(|(had, _)| had != table);
-        self.rows.retain(|(had, _)| had != table);
-        before != self.cells.len() + self.rows.len()
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.table() != Some(table));
+        before != self.entries.len()
+    }
+
+    /// The tile edits on one tile, in [`Self::in_order`]'s order. Every tile
+    /// edit is in the same stage, so forward this is the order they were made.
+    fn on_tile<'a>(&'a self, tile: &'a TileKey, forward: bool) -> impl Iterator<Item = &'a Edit> + 'a {
+        self.in_order(forward).filter_map(move |entry| match entry {
+            Entry::Tile(had, edit) if had == tile => Some(edit),
+            _ => None,
+        })
     }
 
     /// The tiles this change touched, in the order they were first touched.
     pub fn tiles(&self) -> Vec<TileKey> {
         let mut found: Vec<TileKey> = Vec::new();
-        for (tile, _) in &self.edits {
-            if !found.contains(tile) {
-                found.push(tile.clone());
+        for entry in &self.entries {
+            if let Entry::Tile(tile, _) = entry {
+                if !found.contains(tile) {
+                    found.push(tile.clone());
+                }
+            }
+        }
+        found
+    }
+
+    /// The indices `pick` names among the edits on one tile, each once, in the
+    /// order first named.
+    fn indices(&self, tile: &TileKey, pick: impl Fn(&Edit) -> Option<usize>) -> Vec<usize> {
+        let mut found: Vec<usize> = Vec::new();
+        for index in self.on_tile(tile, true).filter_map(pick) {
+            if !found.contains(&index) {
+                found.push(index);
             }
         }
         found
@@ -461,97 +465,47 @@ impl Change {
 
     /// The chunks it touched on one tile, for a caller rebuilding meshes.
     pub fn chunks(&self, tile: &TileKey) -> Vec<usize> {
-        let mut found: Vec<usize> = Vec::new();
-        for chunk in self
-            .edits
-            .iter()
-            .filter(|(had, _)| had == tile)
-            .filter_map(|(_, edit)| edit.chunk())
-        {
-            if !found.contains(&chunk) {
-                found.push(chunk);
-            }
-        }
-        found
+        self.indices(tile, Edit::chunk)
     }
 
     /// …and the `MDDF` entries it moved on one tile, for a caller that has them
     /// drawn — the placement counterpart of [`Self::chunks`].
     pub fn placements(&self, tile: &TileKey) -> Vec<usize> {
-        let mut found: Vec<usize> = Vec::new();
-        for index in self
-            .edits
-            .iter()
-            .filter(|(had, _)| had == tile)
-            .filter_map(|(_, edit)| edit.placement())
-        {
-            if !found.contains(&index) {
-                found.push(index);
-            }
-        }
-        found
+        self.indices(tile, Edit::placement)
     }
 
     /// …and the `MODF` entries it moved, which is a separate list from
     /// [`Self::placements`] because `MDDF` and `MODF` are numbered separately.
     pub fn buildings(&self, tile: &TileKey) -> Vec<usize> {
-        let mut found: Vec<usize> = Vec::new();
-        for index in self
-            .edits
-            .iter()
-            .filter(|(had, _)| had == tile)
-            .filter_map(|(_, edit)| edit.building())
-        {
-            if !found.contains(&index) {
-                found.push(index);
-            }
-        }
-        found
+        self.indices(tile, Edit::building)
     }
 
     /// …and the chunks it repainted on one tile, for a caller that has the
     /// blend maps on the GPU. A different set from [`Self::chunks`] because a
     /// repaint takes a different route to the screen: see [`Edit::painted`].
     pub fn painted(&self, tile: &TileKey) -> Vec<usize> {
-        let mut found: Vec<usize> = Vec::new();
-        for chunk in self
-            .edits
-            .iter()
-            .filter(|(had, _)| had == tile)
-            .filter_map(|(_, edit)| edit.painted())
-        {
-            if !found.contains(&chunk) {
-                found.push(chunk);
-            }
-        }
-        found
+        self.indices(tile, Edit::painted)
     }
 
     /// Whether this change gave a chunk on one tile a texture it did not have,
     /// which is the half of a repaint that the atlas cannot carry — see
     /// [`Edit::changes_the_texture_set`].
     pub fn changes_the_texture_set(&self, tile: &TileKey) -> bool {
-        self.edits
-            .iter()
-            .any(|(had, edit)| had == tile && edit.changes_the_texture_set())
+        self.on_tile(tile, true).any(Edit::changes_the_texture_set)
     }
 
     /// Whether this change renumbers a tile's placement lists — see
     /// [`Edit::renumbers_placements`]. A caller holding an index into them has
     /// to let go of it rather than reconcile.
-    pub fn renumbers_placements(&self, tile: &TileKey) -> bool {
-        self.edits
-            .iter()
-            .any(|(had, edit)| had == tile && edit.renumbers_placements())
+    pub(crate) fn renumbers_placements(&self, tile: &TileKey) -> bool {
+        self.on_tile(tile, true).any(Edit::renumbers_placements)
     }
 
     /// …and whether it changes the ground mesh rather than anything the mesh
     /// holds, so the tile has to be read again — see [`Edit::remeshes`]. An undo
     /// of a hole is the case: nothing on screen can be patched back.
     pub fn remeshes(&self, tile: &TileKey) -> bool {
-        self.edits
-            .iter()
-            .any(|(had, edit)| had == tile && edit.remeshes())
+        self.on_tile(tile, true).any(Edit::remeshes)
     }
 
     /// What applying or reverting this change leaves out of date on screen:
@@ -595,7 +549,7 @@ impl Change {
 
     /// Put this change's edits for one tile back in.
     pub fn apply(&self, tile: &TileKey, into: &mut AdtFile) {
-        for (_, edit) in self.edits.iter().filter(|(had, _)| had == tile) {
+        for edit in self.on_tile(tile, true) {
             edit.apply(into);
         }
     }
@@ -603,12 +557,7 @@ impl Change {
     /// …and take them back out. In reverse, because two edits about one chunk
     /// only invert in the order they were made.
     pub fn revert(&self, tile: &TileKey, into: &mut AdtFile) {
-        for (_, edit) in self
-            .edits
-            .iter()
-            .filter(|(had, _)| had == tile)
-            .rev()
-        {
+        for edit in self.on_tile(tile, false) {
             edit.revert(into);
         }
     }
@@ -851,26 +800,30 @@ impl History {
         }
     }
 
-    /// Record what has already been applied to a tile.
-    pub fn record(&mut self, tile: &TileKey, edits: impl IntoIterator<Item = Edit>) {
+    /// Fold what `fold` adds into the stroke being held, or outside one make
+    /// it an entry of its own under `label`, so a caller that forgets to open
+    /// a stroke still gets a working undo. An entry that ends up empty is not
+    /// pushed.
+    fn take(&mut self, label: &str, fold: impl FnOnce(&mut Change)) {
         match self.open.as_mut() {
-            Some(change) => {
-                for edit in edits {
-                    change.absorb(tile, edit);
-                }
-            }
-            // Outside a stroke each call is its own entry, so a caller that
-            // forgets to open one still gets a working undo.
+            Some(change) => fold(change),
             None => {
-                let mut change = Change::new("Edit");
-                for edit in edits {
-                    change.absorb(tile, edit);
-                }
+                let mut change = Change::new(label);
+                fold(&mut change);
                 if !change.is_empty() {
                     self.push(change);
                 }
             }
         }
+    }
+
+    /// Record what has already been applied to a tile.
+    pub fn record(&mut self, tile: &TileKey, edits: impl IntoIterator<Item = Edit>) {
+        self.take("Edit", |change| {
+            for edit in edits {
+                change.absorb(tile, edit);
+            }
+        });
     }
 
     /// Record a field edit that has already been applied to a table.
@@ -884,96 +837,34 @@ impl History {
         if !cell.moves() {
             return;
         }
-        match self.open.as_mut() {
-            Some(change) => change.absorb_cell(table, cell),
-            None => {
-                let mut change = Change::new("Edit");
-                change.absorb_cell(table, cell);
-                self.push(change);
-            }
-        }
+        self.take("Edit", |change| change.absorb_cell(table, cell));
     }
 
-    /// Record a column of a server row, already applied to the caller's own
-    /// store.
-    ///
-    /// [`History::record_cell`]'s counterpart one container along, and it
-    /// follows the same two rules: inside a gesture it folds, outside one it is
-    /// its own entry, and a cell that moved nothing is dropped here rather than
-    /// making an undo step that does nothing. That check matters here for the
-    /// same reason it does there: a form writes its value back on every frame
-    /// it is drawn.
-    pub fn record_server_cell(&mut self, cell: ServerCell) {
-        if cell.before == cell.after {
-            return;
-        }
-        match self.open.as_mut() {
-            Some(change) => change.absorb_server_cell(cell),
-            None => {
-                let mut change = Change::new("Edit");
-                change.absorb_server_cell(cell);
-                self.push(change);
-            }
-        }
-    }
-
-    /// Record a whole waypoint path, already applied to the caller's own store.
-    ///
-    /// [`Self::record_server_cell`]'s counterpart for the subject whose edit is
-    /// a set of rows, and it follows the same three rules: inside a gesture it
-    /// folds, outside one it is its own entry, and a path that moved nothing is
-    /// dropped here rather than making an undo step that does nothing.
-    pub fn record_server_path(&mut self, path: ServerPath) {
-        if path.before == path.after {
-            return;
-        }
-        match self.open.as_mut() {
-            Some(change) => change.absorb_server_path(path),
-            None => {
-                let mut change = Change::new("Edit");
-                change.absorb_server_path(path);
-                self.push(change);
-            }
-        }
-    }
-
-    /// Record a whole server row created or removed, already applied to the
+    /// Record an edit to the server's database, already applied to the
     /// caller's own store.
     ///
-    /// [`Self::record_server_path`]'s counterpart for the claim that is not a
-    /// column, and it follows the same three rules: inside a gesture it folds,
-    /// outside one it is its own entry, and a claim that moved nothing is
-    /// dropped here rather than making an undo step that does nothing.
-    pub fn record_server_row(&mut self, row: ServerRow) {
-        if row.before == row.after {
+    /// [`History::record_cell`]'s counterpart for the server, with the same
+    /// rules: inside a gesture it folds, outside one it is its own entry, and
+    /// an entry that moved nothing is dropped rather than making an undo step
+    /// that does nothing, because a form writes its value back on every frame
+    /// it is drawn.
+    pub fn record_server(&mut self, entry: ServerEntry) {
+        if entry.before == entry.after {
             return;
         }
-        match self.open.as_mut() {
-            Some(change) => change.absorb_server_row(row),
-            None => {
-                let mut change = Change::new("Edit");
-                change.absorb_server_row(row);
-                self.push(change);
-            }
-        }
+        self.take("Edit", |change| change.absorb_server(entry));
     }
 
     /// Record a record added or removed, already applied to the table.
     ///
     /// Inside a stroke it joins the stroke; outside one it is an entry of its
-    /// own. See [`Change::rows`] for the order it is applied in.
+    /// own. See [`Change::in_order`] for the order it is applied in.
     pub fn record_row(&mut self, table: &str, row: Row) {
-        match self.open.as_mut() {
-            Some(change) => change.absorb_row(table, row),
-            None => {
-                let mut change = Change::new(match row.added {
-                    true => "Add row",
-                    false => "Remove row",
-                });
-                change.absorb_row(table, row);
-                self.push(change);
-            }
-        }
+        let label = match row.added {
+            true => "Add row",
+            false => "Remove row",
+        };
+        self.take(label, |change| change.absorb_row(table, row));
     }
 
     /// Close the stroke and put it on the stack. A stroke that changed nothing
@@ -995,7 +886,8 @@ impl History {
     /// argument exactly: an entry's `before` and `after` are addressed against
     /// the store as it was when the entry was made, so undoing against an empty
     /// one would put a value back into a row the project has stopped claiming.
-    pub fn forget_server_rows(&mut self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn forget_server_rows(&mut self) -> usize {
         self.forget_server_rows_where(|_| true, true)
     }
 
@@ -1004,7 +896,7 @@ impl History {
     /// The store holds every subject's rows together and so does the stack, so
     /// a discard that forgot both outright would take the panel next door's
     /// undo with it. `wanted` is asked the table's name, exactly as the store's
-    /// own `forget_where` is. A [`ServerPath`] entry goes by its table too:
+    /// own `forget_where` is. A [`Shape::Path`] entry goes by its table too:
     /// the waypoint entries with the creature tables, the script entries with
     /// the script tables. `paths` clears every path entry as well, for a
     /// caller that has emptied the path store outright.
@@ -1013,31 +905,14 @@ impl History {
         mut wanted: impl FnMut(&str) -> bool,
         paths: bool,
     ) -> usize {
-        let mut strip = |change: &mut Change| {
-            change.server_cells.retain(|cell| !wanted(&cell.table));
-            change.server_rows.retain(|row| !wanted(&row.table));
-            change.server_paths.retain(|path| !wanted(&path.table));
-            if paths {
-                change.server_paths.clear();
-            }
-        };
-        let mut dropped = 0;
-        for branch in [&mut self.done, &mut self.undone] {
-            let before = branch.len();
-            for change in branch.iter_mut() {
-                strip(change);
-            }
-            branch.retain(|change| !change.is_empty());
-            dropped += before - branch.len();
-        }
-        if let Some(open) = self.open.as_mut() {
-            strip(open);
-            if open.is_empty() {
-                self.open = None;
-                dropped += 1;
-            }
-        }
-        dropped
+        self.strip(|change| {
+            change.entries.retain(|entry| match entry {
+                Entry::Server(server) => {
+                    !(wanted(&server.table) || (paths && server.shape == Shape::Path))
+                }
+                _ => true,
+            })
+        })
     }
 
     /// Forget everything on the stack about one table, on both branches
@@ -1053,18 +928,27 @@ impl History {
     /// against it would write a plausible wrong value rather than fail, so the
     /// entries are dropped rather than left.
     pub fn forget_table(&mut self, table: &str) -> usize {
+        self.strip(|change| {
+            change.forget_table(table);
+        })
+    }
+
+    /// Run `strip` over every entry on both branches and the stroke being
+    /// held, and drop each entry it leaves empty. Returns how many were
+    /// dropped.
+    fn strip(&mut self, mut strip: impl FnMut(&mut Change)) -> usize {
         let mut dropped = 0;
         for branch in [&mut self.done, &mut self.undone] {
             let before = branch.len();
             for change in branch.iter_mut() {
-                change.forget_table(table);
+                strip(change);
             }
             branch.retain(|change| !change.is_empty());
             dropped += before - branch.len();
         }
-        if let Some(change) = self.open.as_mut() {
-            change.forget_table(table);
-            if change.is_empty() {
+        if let Some(open) = self.open.as_mut() {
+            strip(open);
+            if open.is_empty() {
                 self.open = None;
                 dropped += 1;
             }
@@ -1116,7 +1000,12 @@ impl History {
             .iter()
             .chain(self.undone.iter())
             .chain(self.open.iter())
-            .any(|change| change.edits.iter().any(|(key, _)| key == tile))
+            .any(|change| {
+                change
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, Entry::Tile(key, _) if key == tile))
+            })
     }
 
     /// What undo would take back, and what redo would put in.
@@ -1154,40 +1043,76 @@ mod tests {
         }
     }
 
-    fn server_cell(column: &str, before: Option<&str>, after: Option<&str>) -> ServerCell {
-        ServerCell {
-            table: "creature_template".into(),
-            key: "entry=68;patch=0".into(),
-            column: column.into(),
-            before: before.map(str::to_string),
-            after: after.map(str::to_string),
-        }
+    fn server_cell(column: &str, before: Option<&str>, after: Option<&str>) -> ServerEntry {
+        ServerEntry::column(
+            "creature_template",
+            "entry=68;patch=0",
+            column,
+            before.map(str::to_string),
+            after.map(str::to_string),
+        )
     }
 
-    fn server_path(before: Option<&str>, after: Option<&str>) -> ServerPath {
-        ServerPath {
-            table: "creature_movement".into(),
-            key: "id=12345".into(),
-            before: before.map(str::to_string),
-            after: after.map(str::to_string),
-        }
+    fn server_path(before: Option<&str>, after: Option<&str>) -> ServerEntry {
+        ServerEntry::path(
+            "creature_movement",
+            "id=12345",
+            before.map(str::to_string),
+            after.map(str::to_string),
+        )
+    }
+
+    /// The server entries of one shape, in the order made.
+    fn server_of(change: &Change, shape: fn(&Shape) -> bool) -> Vec<&ServerEntry> {
+        change
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Server(server) if shape(&server.shape) => Some(server),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn columns(change: &Change) -> Vec<&ServerEntry> {
+        server_of(change, |shape| matches!(shape, Shape::Column(_)))
+    }
+
+    fn paths(change: &Change) -> Vec<&ServerEntry> {
+        server_of(change, |shape| *shape == Shape::Path)
+    }
+
+    fn rows(change: &Change) -> Vec<&ServerEntry> {
+        server_of(change, |shape| *shape == Shape::Row)
+    }
+
+    /// The tile edits, in the order made.
+    fn tile_edits(change: &Change) -> Vec<&Edit> {
+        change
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Tile(_, edit) => Some(edit),
+                _ => None,
+            })
+            .collect()
     }
 
     /// A change that carries only a path is not an empty change.
     ///
     /// This guards a regression from the waypoint feature: a path edit makes
-    /// a `Change` with no `server_cells` at all, and the session stepped its
-    /// paths after an `is_empty` return on that other list. The entry was on
+    /// a `Change` with no column entries at all, and the session stepped its
+    /// paths after an `is_empty` return on the columns. The entry was on
     /// the stack and the Undo button was lit, but pressing it did nothing at
-    /// all. Anything that walks a change by asking one list whether it is
-    /// empty is wrong for the same reason.
+    /// all. Anything that walks a change by asking whether one shape of entry
+    /// is empty is wrong for the same reason.
     #[test]
     fn a_change_carrying_only_a_path_is_not_empty() {
         let mut change = Change::new("Add waypoint");
         assert!(change.is_empty());
-        change.absorb_server_path(server_path(None, Some("1,2,3,100,0,0,0,0")));
+        change.absorb_server(server_path(None, Some("1,2,3,100,0,0,0,0")));
         assert!(!change.is_empty(), "a path-only change must reach every step of an undo");
-        assert!(change.server_cells.is_empty(), "and it has no cells, which is the trap");
+        assert!(columns(&change).is_empty(), "and it has no cells, which is the trap");
     }
 
     /// A path edit outside a gesture is its own entry, and inside one it folds
@@ -1197,13 +1122,13 @@ mod tests {
     fn server_paths_fold_within_a_gesture() {
         let mut history = History::new();
         history.begin_gesture("Move waypoint", "creature_movement 12345 path", 1.0);
-        history.record_server_path(server_path(Some("a"), Some("b")));
-        history.record_server_path(server_path(Some("b"), Some("c")));
+        history.record_server(server_path(Some("a"), Some("b")));
+        history.record_server(server_path(Some("b"), Some("c")));
         history.end();
         let change = history.next_undo().expect("one entry");
-        assert_eq!(change.server_paths.len(), 1);
-        assert_eq!(change.server_paths[0].before.as_deref(), Some("a"));
-        assert_eq!(change.server_paths[0].after.as_deref(), Some("c"));
+        assert_eq!(paths(&change).len(), 1);
+        assert_eq!(paths(&change)[0].before.as_deref(), Some("a"));
+        assert_eq!(paths(&change)[0].after.as_deref(), Some("c"));
     }
 
     /// A path that moved nothing makes no entry, because the window writes
@@ -1211,7 +1136,7 @@ mod tests {
     #[test]
     fn a_path_that_did_not_change_makes_no_entry() {
         let mut history = History::new();
-        history.record_server_path(server_path(Some("a"), Some("a")));
+        history.record_server(server_path(Some("a"), Some("a")));
         assert!(history.next_undo().is_none());
     }
 
@@ -1237,42 +1162,42 @@ mod tests {
     fn server_cells_fold_by_column_within_a_gesture() {
         let mut history = History::new();
         history.begin_gesture("Edit creature", "creature_template name", 0.0);
-        history.record_server_cell(server_cell("name", Some("'A'"), Some("'AB'")));
-        history.record_server_cell(server_cell("name", Some("'AB'"), Some("'ABC'")));
+        history.record_server(server_cell("name", Some("'A'"), Some("'AB'")));
+        history.record_server(server_cell("name", Some("'AB'"), Some("'ABC'")));
         history.end();
 
         let change = history.undo().expect("one entry");
-        assert_eq!(change.server_cells.len(), 1);
-        assert_eq!(change.server_cells[0].before.as_deref(), Some("'A'"));
-        assert_eq!(change.server_cells[0].after.as_deref(), Some("'ABC'"));
+        assert_eq!(columns(&change).len(), 1);
+        assert_eq!(columns(&change)[0].before.as_deref(), Some("'A'"));
+        assert_eq!(columns(&change)[0].after.as_deref(), Some("'ABC'"));
         assert!(history.undo().is_none(), "the two keystrokes were one entry");
     }
 
-    fn server_row(before: Option<&str>, after: Option<&str>) -> ServerRow {
-        ServerRow {
-            table: "creature".into(),
-            key: "guid=10000001".into(),
-            before: before.map(str::to_string),
-            after: after.map(str::to_string),
-        }
+    fn server_row(before: Option<&str>, after: Option<&str>) -> ServerEntry {
+        ServerEntry::row(
+            "creature",
+            "guid=10000001",
+            before.map(str::to_string),
+            after.map(str::to_string),
+        )
     }
 
     /// A change carrying only a created row is not empty, which is the same
     /// trap the paths have: creating a spawn makes a `Change` with no
-    /// `server_cells` at all, and anything that asks one list whether it is
+    /// column entries at all, and anything that asks one list whether it is
     /// empty reads the whole entry as nothing and drops it. The entry would be
     /// on no stack and the Undo button would be grey.
     #[test]
     fn a_change_carrying_only_a_created_row_is_not_empty() {
         let mut history = History::new();
         history.begin_gesture("New spawn", "creature 10000001", 0.0);
-        history.record_server_row(server_row(None, Some("insert\tid=68")));
+        history.record_server(server_row(None, Some("insert\tid=68")));
         history.end();
 
         let change = history.next_undo().expect("the creation is on the stack");
         assert!(!change.is_empty());
-        assert!(change.server_cells.is_empty(), "and it has no cells, which is the trap");
-        assert_eq!(change.server_rows.len(), 1);
+        assert!(columns(&change).is_empty(), "and it has no cells, which is the trap");
+        assert_eq!(rows(&change).len(), 1);
     }
 
     /// A row claimed and then given up inside one gesture folds to one entry,
@@ -1281,16 +1206,16 @@ mod tests {
     fn server_rows_fold_within_a_gesture() {
         let mut history = History::new();
         history.begin_gesture("New spawn", "creature 10000001", 0.0);
-        history.record_server_row(server_row(None, Some("insert\tid=68")));
-        history.record_server_row(server_row(Some("insert\tid=68"), Some("insert\tid=69")));
+        history.record_server(server_row(None, Some("insert\tid=68")));
+        history.record_server(server_row(Some("insert\tid=68"), Some("insert\tid=69")));
         history.end();
 
         let change = history.undo().expect("one entry");
-        assert_eq!(change.server_rows.len(), 1);
-        assert_eq!(change.server_rows[0].before, None);
-        assert_eq!(change.server_rows[0].after.as_deref(), Some("insert\tid=69"));
+        assert_eq!(rows(&change).len(), 1);
+        assert_eq!(rows(&change)[0].before, None);
+        assert_eq!(rows(&change)[0].after.as_deref(), Some("insert\tid=69"));
         // …and reversed is what an undo applies: the claim goes away again.
-        assert_eq!(change.server_rows[0].reversed().after, None);
+        assert_eq!(rows(&change)[0].reversed().after, None);
     }
 
     /// A claim that moved nothing is not an entry, on the cells' own rule:
@@ -1298,8 +1223,8 @@ mod tests {
     #[test]
     fn a_server_row_that_moved_nothing_is_dropped() {
         let mut history = History::new();
-        history.record_server_row(server_row(Some("delete"), Some("delete")));
-        history.record_server_row(server_row(None, None));
+        history.record_server(server_row(Some("delete"), Some("delete")));
+        history.record_server(server_row(None, None));
         assert!(history.next_undo().is_none());
     }
 
@@ -1309,7 +1234,7 @@ mod tests {
     #[test]
     fn forgetting_the_server_rows_takes_the_claims_too() {
         let mut history = History::new();
-        history.record_server_row(server_row(None, Some("insert\tid=68")));
+        history.record_server(server_row(None, Some("insert\tid=68")));
         assert_eq!(history.forget_server_rows(), 1);
         assert!(history.next_undo().is_none());
     }
@@ -1323,22 +1248,22 @@ mod tests {
     #[test]
     fn forgetting_one_subjects_rows_leaves_the_others() {
         let mut history = History::new();
-        history.record_server_row(server_row(None, Some("insert\tid=68")));
-        history.record_server_cell(ServerCell {
-            table: "item_template".into(),
-            key: "entry=19019;patch=10".into(),
-            column: "Quality".into(),
-            before: Some("3".into()),
-            after: Some("4".into()),
-        });
+        history.record_server(server_row(None, Some("insert\tid=68")));
+        history.record_server(ServerEntry::column(
+            "item_template",
+            "entry=19019;patch=10",
+            "Quality",
+            Some("3".into()),
+            Some("4".into()),
+        ));
 
         let creatures = |table: &str| table == "creature" || table == "creature_template";
         assert_eq!(history.forget_server_rows_where(creatures, true), 1);
 
         let change = history.next_undo().expect("the item edit is still on the stack");
-        assert!(change.server_rows.is_empty(), "the creature claim went");
-        assert_eq!(change.server_cells.len(), 1);
-        assert_eq!(change.server_cells[0].table, "item_template");
+        assert!(rows(&change).is_empty(), "the creature claim went");
+        assert_eq!(columns(&change).len(), 1);
+        assert_eq!(columns(&change)[0].table, "item_template");
     }
 
     /// An edit is undoable the moment it is made.
@@ -1354,13 +1279,13 @@ mod tests {
     fn one_edit_is_undoable_without_waiting_for_a_second() {
         let mut history = History::new();
         history.begin_gesture("Edit creature", "creature_template name", 0.0);
-        history.record_server_cell(server_cell("name", None, Some("'A'")));
+        history.record_server(server_cell("name", None, Some("'A'")));
         history.end();
 
         assert!(history.next_undo().is_some(), "the only edit made is on the stack");
         let change = history.undo().expect("one entry");
-        assert_eq!(change.server_cells.len(), 1);
-        assert_eq!(change.server_cells[0].after.as_deref(), Some("'A'"));
+        assert_eq!(columns(&change).len(), 1);
+        assert_eq!(columns(&change)[0].after.as_deref(), Some("'A'"));
     }
 
     /// …and two edits to different columns of the same row are two cells on
@@ -1371,12 +1296,12 @@ mod tests {
         let mut history = History::new();
         history.begin_gesture("Move creature", "creature 19272 position", 0.0);
         for column in ["position_x", "position_y", "position_z"] {
-            history.record_server_cell(server_cell(column, Some("1"), Some("2")));
+            history.record_server(server_cell(column, Some("1"), Some("2")));
         }
         history.end();
 
         let change = history.undo().expect("one entry");
-        assert_eq!(change.server_cells.len(), 3);
+        assert_eq!(columns(&change).len(), 3);
         assert_eq!(change.label, "Move creature");
     }
 
@@ -1386,9 +1311,9 @@ mod tests {
     #[test]
     fn a_server_cell_that_moved_nothing_is_dropped() {
         let mut history = History::new();
-        history.record_server_cell(server_cell("name", Some("'A'"), Some("'A'")));
+        history.record_server(server_cell("name", Some("'A'"), Some("'A'")));
         assert!(history.undo().is_none());
-        history.record_server_cell(server_cell("name", None, None));
+        history.record_server(server_cell("name", None, None));
         assert!(history.undo().is_none());
     }
 
@@ -1411,7 +1336,7 @@ mod tests {
     fn a_change_of_server_cells_alone_is_not_empty() {
         let mut change = Change::new("Edit creature");
         assert!(change.is_empty());
-        change.absorb_server_cell(server_cell("name", None, Some("'A'")));
+        change.absorb_server(server_cell("name", None, Some("'A'")));
         assert!(!change.is_empty());
     }
 
@@ -1420,11 +1345,11 @@ mod tests {
     #[test]
     fn two_rows_are_two_cells() {
         let mut change = Change::new("Edit creature");
-        change.absorb_server_cell(server_cell("name", None, Some("'A'")));
+        change.absorb_server(server_cell("name", None, Some("'A'")));
         let mut other = server_cell("name", None, Some("'B'"));
         other.key = "entry=69;patch=0".into();
-        change.absorb_server_cell(other);
-        assert_eq!(change.server_cells.len(), 2);
+        change.absorb_server(other);
+        assert_eq!(columns(&change).len(), 2);
     }
 
     /// A consequence of a change folds into it, so one press of undo takes
@@ -1485,8 +1410,8 @@ mod tests {
         history.end();
         assert_eq!(history.depth_done(), 1);
         let change = history.next_undo().unwrap();
-        assert_eq!(change.edits.len(), 1);
-        match &change.edits[0].1 {
+        assert_eq!(tile_edits(&change).len(), 1);
+        match tile_edits(&change)[0] {
             Edit::Heights { before, after, .. } => {
                 assert_eq!(before[0], 0.0, "the first before is kept");
                 assert_eq!(after[0], 40.0, "the last after is taken");
@@ -1504,7 +1429,7 @@ mod tests {
         history.record(&key(32, 48), [edit(70, 0.0, 1.0), edit(71, 0.0, 1.0)]);
         history.end();
         let change = history.next_undo().unwrap();
-        assert_eq!(change.edits.len(), 2);
+        assert_eq!(tile_edits(&change).len(), 2);
         assert_eq!(change.chunks(&key(32, 48)), vec![70, 71]);
     }
 
@@ -1523,17 +1448,17 @@ mod tests {
 
         assert_eq!(history.depth_done(), 1, "one stroke is one entry");
         let change = history.next_undo().unwrap();
-        assert_eq!(change.edits.len(), 2, "one edit per tile, folded");
+        assert_eq!(tile_edits(&change).len(), 2, "one edit per tile, folded");
         assert_eq!(change.tiles(), vec![key(32, 48), key(33, 48)]);
         // The fold happened on the right one: the first tile's edit spans both
         // of its steps and the second tile's is untouched.
-        match &change.edits[0].1 {
+        match tile_edits(&change)[0] {
             Edit::Heights { before, after, .. } => {
                 assert_eq!((before[0], after[0]), (0.0, 2.0));
             }
             other => panic!("{other:?}"),
         }
-        match &change.edits[1].1 {
+        match tile_edits(&change)[1] {
             Edit::Heights { before, after, .. } => {
                 assert_eq!((before[0], after[0]), (5.0, 6.0));
             }
@@ -1571,8 +1496,8 @@ mod tests {
         }
         assert_eq!(history.depth_done(), 1);
         let change = history.next_undo().unwrap();
-        assert_eq!(change.edits.len(), 1, "folded into one edit");
-        match &change.edits[0].1 {
+        assert_eq!(tile_edits(&change).len(), 1, "folded into one edit");
+        match tile_edits(&change)[0] {
             // The first before and the last after, which is what makes one press
             // of undo put the placement back where the run started.
             Edit::Doodad { before, after, .. } => {
@@ -1728,11 +1653,11 @@ mod tests {
         let subject = "creature group 7 position";
         history.hold(10.0);
         history.begin_gesture("Move 3 creatures", subject, 10.0);
-        history.record_server_cell(server_cell("position_x", Some("1"), Some("2")));
+        history.record_server(server_cell("position_x", Some("1"), Some("2")));
         history.end();
         // Three seconds without a write, and the drag goes on.
         history.begin_gesture("Move 3 creatures", subject, 13.0);
-        history.record_server_cell(server_cell("position_x", Some("2"), Some("3")));
+        history.record_server(server_cell("position_x", Some("2"), Some("3")));
         history.end();
         assert_eq!(history.depth_done(), 1, "one drag with a pause in it");
         history.release();
@@ -1740,7 +1665,7 @@ mod tests {
         // The next drag, with its own hold, starts an entry of its own.
         history.hold(20.0);
         history.begin_gesture("Move 3 creatures", subject, 20.0);
-        history.record_server_cell(server_cell("position_x", Some("3"), Some("4")));
+        history.record_server(server_cell("position_x", Some("3"), Some("4")));
         history.end();
         history.release();
         assert_eq!(history.depth_done(), 2, "two drags");
@@ -1792,7 +1717,7 @@ mod tests {
         let end = Placements::capture(&tile);
 
         let change = history.undo().expect("one entry");
-        assert_eq!(change.edits.len(), 3, "nothing folded across the renumbering");
+        assert_eq!(tile_edits(&change).len(), 3, "nothing folded across the renumbering");
         change.revert(&key(32, 48), &mut tile);
         assert!(Placements::capture(&tile) == start, "undo puts both back");
         change.apply(&key(32, 48), &mut tile);
@@ -1865,5 +1790,104 @@ mod tests {
         assert_eq!(redraw.placements, vec![0]);
         assert!(redraw.reread);
         assert!(change.invalidates().tables.is_empty());
+    }
+
+    /// A table of one field, one record per value, for the test below.
+    fn one_field_table(values: &[u32]) -> DbcFile {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"WDBC");
+        out.extend_from_slice(&(values.len() as u32).to_le_bytes()); // records
+        out.extend_from_slice(&1u32.to_le_bytes()); // fields
+        out.extend_from_slice(&4u32.to_le_bytes()); // record size
+        out.extend_from_slice(&1u32.to_le_bytes()); // string block
+        for value in values {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        out.push(0);
+        DbcFile::parse(&out).unwrap()
+    }
+
+    /// A change holding every type of entry applies the record entries first
+    /// and then the rest, each group in the order made, and reverts in exactly
+    /// the reverse.
+    ///
+    /// The cell is recorded before the row it writes into. It is still applied
+    /// after the row and reverted before it, so the table comes back byte for
+    /// byte in both directions.
+    #[test]
+    fn a_mixed_change_applies_records_first_and_reverts_in_reverse() {
+        fn name(entry: &Entry) -> &'static str {
+            match entry {
+                Entry::Tile(..) => "tile",
+                Entry::Cell(..) => "cell",
+                Entry::Row(..) => "row",
+                Entry::Server(server) => match server.shape {
+                    Shape::Column(_) => "server column",
+                    Shape::Row => "server row",
+                    Shape::Path => "server path",
+                },
+            }
+        }
+
+        let mut table = one_field_table(&[5]);
+        let original = table.write();
+        assert!(table.insert_record(1, &7u32.to_le_bytes()));
+        let row = Row::added(&table, 1).unwrap();
+        let cell = Cell::new(&table, 1, 0, 9).unwrap();
+        cell.apply(&mut table);
+        let edited = table.write();
+
+        let mut tile = AdtFile {
+            version: 18,
+            header: [0; 16],
+            textures: Vec::new(),
+            models: Vec::new(),
+            model_offsets: Vec::new(),
+            buildings: Vec::new(),
+            building_offsets: Vec::new(),
+            doodads: Vec::new(),
+            placements: Vec::new(),
+            chunks: vec![blank_chunk()],
+        };
+        crate::adt::heights::set_heights(tile.chunk_mut(0).unwrap(), &[7.0; 145]);
+
+        let mut change = Change::new("Everything");
+        change.absorb(&key(32, 48), edit(0, 3.0, 7.0));
+        change.absorb_cell("T", cell);
+        change.absorb_server(server_cell("name", None, Some("'A'")));
+        change.absorb_row("T", row);
+        change.absorb_server(server_row(None, Some("insert	id=68")));
+        change.absorb_server(server_path(None, Some("1,2,3,100,0,0,0,0")));
+        change.absorb(&key(33, 48), edit(0, 1.0, 2.0));
+
+        let forward: Vec<&str> = change.in_order(true).map(name).collect();
+        assert_eq!(
+            forward,
+            vec!["row", "server row", "tile", "cell", "server column", "server path", "tile"]
+        );
+        let backward: Vec<&str> = change.in_order(false).map(name).collect();
+        let mut reversed = forward.clone();
+        reversed.reverse();
+        assert_eq!(backward, reversed);
+
+        // The server store gets its entries in the same order, each reversed
+        // going back.
+        let column = Shape::Column("name".into());
+        let ahead: Vec<Shape> = change.server_steps(true).map(|step| step.shape).collect();
+        assert_eq!(ahead, vec![Shape::Row, column.clone(), Shape::Path]);
+        let back: Vec<ServerEntry> = change.server_steps(false).collect();
+        let shapes: Vec<Shape> = back.iter().map(|step| step.shape.clone()).collect();
+        assert_eq!(shapes, vec![Shape::Path, column, Shape::Row]);
+        assert!(back.iter().all(|step| step.before.is_some() && step.after.is_none()));
+
+        change.revert_table("T", &mut table);
+        assert_eq!(table.write(), original, "the cell came out before the row");
+        change.apply_table("T", &mut table);
+        assert_eq!(table.write(), edited, "the row went in before the cell");
+
+        change.revert(&key(32, 48), &mut tile);
+        assert_eq!(crate::adt::heights::heights(tile.chunk(0).unwrap())[0], 3.0);
+        change.apply(&key(32, 48), &mut tile);
+        assert_eq!(crate::adt::heights::heights(tile.chunk(0).unwrap())[0], 7.0);
     }
 }

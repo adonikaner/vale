@@ -397,7 +397,7 @@ impl Predicted {
 
     /// Adopt the keys `send_input` is about to hand the session thread, held
     /// from `now` on the render clock.
-    pub fn set_controls(&mut self, controls: Controls, now: f32) {
+    pub(crate) fn set_controls(&mut self, controls: Controls, now: f32) {
         if controls != self.controls() {
             self.changes.push((now, controls));
         }
@@ -446,7 +446,7 @@ impl Predicted {
     /// `input::controls::send_input`, where a heading offered to a mover that will
     /// refuse it is a heading that never gets offered again. `true` with no
     /// base, which is "nothing says otherwise".
-    pub fn can_turn(&self) -> bool {
+    pub(crate) fn can_turn(&self) -> bool {
         self.base
             .as_ref()
             .is_none_or(|b| b.riding.is_none() && can_turn(b.restraint))

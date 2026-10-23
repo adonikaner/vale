@@ -114,7 +114,7 @@ const MIN_RADIUS: f32 = 0.5;
 
 /// The decal under the selected unit. There is at most one.
 #[derive(Component)]
-pub struct SelectionRing {
+pub(crate) struct SelectionRing {
     /// The unit the ring is under, so a target change is one comparison.
     unit: Entity,
     /// The half-width the ring was built at, so a unit that grows while
@@ -125,7 +125,7 @@ pub struct SelectionRing {
     half: f32,
 }
 
-pub struct SelectionPlugin;
+pub(crate) struct SelectionPlugin;
 
 impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {

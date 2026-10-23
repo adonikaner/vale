@@ -58,7 +58,7 @@ pub struct Skill {
     pub value: u16,
     pub max: u16,
     /// A buff's contribution, drawn as the striped overfill.
-    pub temporary: i16,
+    pub(crate) temporary: i16,
     /// …and the permanent one, which is part of both numbers the panel prints.
     pub permanent: i16,
 }
@@ -194,7 +194,7 @@ pub const ITEM_CLASS_WEAPON: u8 = 2;
 /// `ITEM_CLASS_ARMOR`, the second.
 pub const ITEM_CLASS_ARMOR: u8 = 4;
 
-pub fn parse_proficiency(body: &[u8]) -> Option<Proficiency> {
+pub(crate) fn parse_proficiency(body: &[u8]) -> Option<Proficiency> {
     let mut r = Reader::new(body);
     if !r.has(1 + 4) {
         return None;

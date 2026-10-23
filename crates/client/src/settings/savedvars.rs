@@ -84,7 +84,7 @@ use crate::world::session::ClientConfig;
 /// `path` is `None` until an account is known, as on the login screen of a
 /// fresh install: there is nothing to read and nowhere to save to.
 #[derive(Resource, Default)]
-pub struct SavedVariables {
+pub(crate) struct SavedVariables {
     /// The account the file was read for, as the session spelled it. `None`
     /// until a session names one.
     account: Option<String>,
@@ -105,7 +105,7 @@ pub struct SavedVariables {
     pub character: Option<(String, String)>,
 }
 
-pub struct SavedVariablesPlugin;
+pub(crate) struct SavedVariablesPlugin;
 
 impl Plugin for SavedVariablesPlugin {
     fn build(&self, app: &mut App) {

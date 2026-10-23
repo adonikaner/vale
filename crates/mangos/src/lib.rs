@@ -128,12 +128,12 @@ macro_rules! client_build {
 /// loader of such a table takes the highest row at or below this build, so a
 /// row written here wins over every shipped one, and one written above it is
 /// never read.
-pub const CLIENT_BUILD: u32 = client_build!();
+pub(crate) const CLIENT_BUILD: u32 = client_build!();
 
 /// How far from a map's centre a point may be on either axis, in yards: half
 /// of 64 grids of 533⅓ yards, less half a yard. vmangos' `IsValidMapCoord`
 /// (`GridDefines.h`) refuses a coordinate outside it.
-pub const MAP_REACH: f32 = 64.0 * 533.333_3 / 2.0 - 0.5;
+pub(crate) const MAP_REACH: f32 = 64.0 * 533.333_3 / 2.0 - 0.5;
 
 pub mod area;
 pub mod broadcast;

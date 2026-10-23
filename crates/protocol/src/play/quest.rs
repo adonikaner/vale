@@ -66,23 +66,23 @@ use crate::bytes::{Reader, Writer};
 use crate::opcodes::Opcode;
 
 /// How many quests a 1.12 log holds. `MAX_QUEST_LOG_SIZE`.
-pub const MAX_QUESTS: usize = 20;
+pub(crate) const MAX_QUESTS: usize = 20;
 
 /// Update fields per slot: the id, the packed counters and state, the timer.
-pub const SLOT_FIELDS: usize = 3;
+pub(crate) const SLOT_FIELDS: usize = 3;
 
 /// How many creature/object/item objectives a quest may have.
 /// `QUEST_OBJECTIVES_COUNT`.
-pub const OBJECTIVES: usize = 4;
+pub(crate) const OBJECTIVES: usize = 4;
 
 /// …and how many rewards: 4 given outright, 6 to choose between.
-pub const REWARDS: usize = 4;
-pub const REWARD_CHOICES: usize = 6;
+pub(crate) const REWARDS: usize = 4;
+pub(crate) const REWARD_CHOICES: usize = 6;
 
 /// `QUEST_STATE_COMPLETE` — byte 3 of the packed word, bit 0.
-pub const STATE_COMPLETE: u8 = 0x01;
+pub(crate) const STATE_COMPLETE: u8 = 0x01;
 /// `QUEST_STATE_FAIL` — the same byte, bit 1.
-pub const STATE_FAILED: u8 = 0x02;
+pub(crate) const STATE_FAILED: u8 = 0x02;
 
 /// **What goes over a quest giver's head**, out of vmangos' `DIALOG_STATUS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -387,7 +387,7 @@ pub struct QuestKill {
 // --- parsing ----------------------------------------------------------------
 
 /// `SMSG_QUESTGIVER_STATUS` — guid, then the status as a `u32`.
-pub fn parse_questgiver_status(body: &[u8]) -> Option<(u64, DialogStatus)> {
+pub(crate) fn parse_questgiver_status(body: &[u8]) -> Option<(u64, DialogStatus)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -399,7 +399,7 @@ pub fn parse_questgiver_status(body: &[u8]) -> Option<(u64, DialogStatus)> {
 }
 
 /// `SMSG_QUESTGIVER_QUEST_LIST`.
-pub fn parse_quest_list(body: &[u8]) -> Option<QuestGreeting> {
+pub(crate) fn parse_quest_list(body: &[u8]) -> Option<QuestGreeting> {
     let mut r = Reader::new(body);
     if !r.has(8) {
         return None;
@@ -478,7 +478,7 @@ fn bounded(count: u32) -> usize {
 }
 
 /// `SMSG_QUESTGIVER_QUEST_DETAILS`.
-pub fn parse_quest_details(body: &[u8]) -> Option<QuestDetails> {
+pub(crate) fn parse_quest_details(body: &[u8]) -> Option<QuestDetails> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -517,7 +517,7 @@ pub fn parse_quest_details(body: &[u8]) -> Option<QuestDetails> {
 }
 
 /// `SMSG_QUESTGIVER_OFFER_REWARD`.
-pub fn parse_offer_reward(body: &[u8]) -> Option<QuestReward> {
+pub(crate) fn parse_offer_reward(body: &[u8]) -> Option<QuestReward> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -571,7 +571,7 @@ pub fn parse_offer_reward(body: &[u8]) -> Option<QuestReward> {
 }
 
 /// `SMSG_QUESTGIVER_REQUEST_ITEMS`.
-pub fn parse_request_items(body: &[u8]) -> Option<QuestProgress> {
+pub(crate) fn parse_request_items(body: &[u8]) -> Option<QuestProgress> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -610,7 +610,7 @@ pub fn parse_request_items(body: &[u8]) -> Option<QuestProgress> {
 }
 
 /// `SMSG_QUESTGIVER_QUEST_COMPLETE`.
-pub fn parse_quest_complete(body: &[u8]) -> Option<QuestComplete> {
+pub(crate) fn parse_quest_complete(body: &[u8]) -> Option<QuestComplete> {
     let mut r = Reader::new(body);
     if !r.has(4 * 5) {
         return None;
@@ -636,7 +636,7 @@ pub fn parse_quest_complete(body: &[u8]) -> Option<QuestComplete> {
 }
 
 /// `SMSG_QUESTUPDATE_ADD_KILL`.
-pub fn parse_quest_kill(body: &[u8]) -> Option<QuestKill> {
+pub(crate) fn parse_quest_kill(body: &[u8]) -> Option<QuestKill> {
     let mut r = Reader::new(body);
     if !r.has(4 * 4 + 8) {
         return None;
@@ -675,7 +675,7 @@ pub fn parse_quest_item(body: &[u8]) -> Option<(u32, u32)> {
 /// `SMSG_QUESTUPDATE_FAILED`, `SMSG_QUESTUPDATE_FAILEDTIMER` and
 /// `SMSG_QUESTGIVER_QUEST_FAILED` all carry a quest id and nothing else —
 /// and `SMSG_QUESTGIVER_QUEST_INVALID` carries a *reason* in the same shape.
-pub fn parse_quest_id(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_quest_id(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
@@ -775,7 +775,7 @@ pub fn parse_quest_template(body: &[u8]) -> Option<QuestTemplate> {
 // --- what we send -----------------------------------------------------------
 
 /// `CMSG_QUESTGIVER_STATUS_QUERY` and `CMSG_QUESTGIVER_HELLO` — a guid apiece.
-pub fn guid_body(guid: u64) -> Vec<u8> {
+pub(crate) fn guid_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -783,7 +783,7 @@ pub fn guid_body(guid: u64) -> Vec<u8> {
 
 /// `CMSG_QUESTGIVER_QUERY_QUEST`, `..._ACCEPT_QUEST`, `..._COMPLETE_QUEST` and
 /// `..._REQUEST_REWARD` — a guid and a quest id.
-pub fn quest_body(guid: u64, quest_id: u32) -> Vec<u8> {
+pub(crate) fn quest_body(guid: u64, quest_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(quest_id);
@@ -792,7 +792,7 @@ pub fn quest_body(guid: u64, quest_id: u32) -> Vec<u8> {
 
 /// `CMSG_QUESTGIVER_CHOOSE_REWARD` — and the reward **index**, zero-based,
 /// which the server range-checks against `QUEST_REWARD_CHOICES_COUNT`.
-pub fn choose_reward_body(guid: u64, quest_id: u32, choice: u32) -> Vec<u8> {
+pub(crate) fn choose_reward_body(guid: u64, quest_id: u32, choice: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(quest_id);
@@ -801,7 +801,7 @@ pub fn choose_reward_body(guid: u64, quest_id: u32, choice: u32) -> Vec<u8> {
 }
 
 /// `CMSG_QUEST_QUERY` — one id.
-pub fn quest_query_body(quest_id: u32) -> Vec<u8> {
+pub(crate) fn quest_query_body(quest_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(quest_id);
     w.buf
@@ -811,7 +811,7 @@ pub fn quest_query_body(quest_id: u32) -> Vec<u8> {
 ///
 /// Zero-based, which is the interface's index minus one: `QuestLog_Update`
 /// counts from 1.
-pub fn abandon_body(slot: u8) -> Vec<u8> {
+pub(crate) fn abandon_body(slot: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(slot);
     w.buf

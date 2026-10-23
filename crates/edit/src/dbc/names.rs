@@ -23,7 +23,7 @@ pub fn name_field(table: &str, file: &DbcFile) -> Option<usize> {
 /// string's first byte in the table's string block: past the block's
 /// opening NUL, directly after another NUL, and printable. `None` for a
 /// value that is a number.
-pub fn string_started_at(table: &DbcFile, raw: u32) -> Option<String> {
+pub(crate) fn string_started_at(table: &DbcFile, raw: u32) -> Option<String> {
     let offset = raw as usize;
     if offset == 0 || offset >= table.string_size() {
         return None;
@@ -37,7 +37,7 @@ pub fn string_started_at(table: &DbcFile, raw: u32) -> Option<String> {
 }
 
 /// How many rows the guesses about a table with no schema read.
-pub const GUESS_ROWS: usize = 64;
+pub(crate) const GUESS_ROWS: usize = 64;
 
 /// Whether a column of a table with no schema holds strings, and in how
 /// many of the sampled rows: every sampled row holds zero or the offset of

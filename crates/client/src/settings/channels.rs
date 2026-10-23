@@ -31,7 +31,7 @@ use vale_assets::interface::chatcache;
 /// The character's `chat-cache.txt`, located at login; see the module doc.
 /// `text` is the file as read, which the write-back edits in place.
 #[derive(Resource, Default)]
-pub struct ChatCacheFile {
+pub(crate) struct ChatCacheFile {
     pub path: Option<PathBuf>,
     text: Option<String>,
     loaded: bool,
@@ -46,7 +46,7 @@ impl ChatCacheFile {
     }
 }
 
-pub struct ChatCachePlugin;
+pub(crate) struct ChatCachePlugin;
 
 impl Plugin for ChatCachePlugin {
     fn build(&self, app: &mut App) {

@@ -76,7 +76,7 @@
 /// this game needs.
 pub mod model {
     pub const AVAILABLE: &str = r"Interface\Buttons\TalkToMe.m2";
-    pub const UNAVAILABLE: &str = r"Interface\Buttons\TalkToMeGrey.m2";
+    pub(crate) const UNAVAILABLE: &str = r"Interface\Buttons\TalkToMeGrey.m2";
     pub const REWARD: &str = r"Interface\Buttons\TalkToMeQuestionMark.m2";
     pub const INCOMPLETE: &str = r"Interface\Buttons\TalkToMeQuestion_Grey.m2";
     /// **The green `!`: a flight master whose node this character has never
@@ -88,7 +88,7 @@ pub mod model {
     /// **Slot 5, and the one this client still has no caller for.** It is
     /// selected by something that is not a quest or a taxi path, and what that
     /// is is not known.
-    pub const BLUE: &str = r"Interface\Buttons\TalkToMeBlue.m2";
+    pub(crate) const BLUE: &str = r"Interface\Buttons\TalkToMeBlue.m2";
 }
 
 /// The model table, in slot order. Slot 0 is "no mark".
@@ -107,7 +107,8 @@ pub const SLOTS: [Option<&str>; 8] = [
 pub const TAXI_UNDISCOVERED: usize = 4;
 
 /// Which slot each of the eight `DIALOG_STATUS` values selects.
-pub const STATUS_SLOTS: [usize; 8] = [0, 3, 0, 2, 7, 1, 6, 6];
+#[cfg(test)]
+pub(crate) const STATUS_SLOTS: [usize; 8] = [0, 3, 0, 2, 7, 1, 6, 6];
 
 /// The model one of the eight slots names, or `None` for slot 0 and for
 /// anything past the end of the table.
@@ -125,7 +126,8 @@ pub fn slot_model(slot: usize) -> Option<&'static str> {
 /// A status past the end of the table answers slot 0, which is the honest
 /// reading of a bounds check the client does not appear to make: the enum is
 /// eight long and vmangos never sends more.
-pub fn slot_for_status(status: u32) -> usize {
+#[cfg(test)]
+pub(crate) fn slot_for_status(status: u32) -> usize {
     STATUS_SLOTS.get(status as usize).copied().unwrap_or(0)
 }
 

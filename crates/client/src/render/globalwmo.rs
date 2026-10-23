@@ -63,11 +63,11 @@ const HOST_TILE: (u32, u32) = (64, 64);
 /// The host entity, so the terrain streamer can exclude it and so this pass can
 /// find its own work again.
 #[derive(Component)]
-pub struct GlobalWmo;
+pub(crate) struct GlobalWmo;
 
 /// What has been built, and for which map.
 #[derive(Resource, Default)]
-pub struct GlobalBuilding {
+pub(crate) struct GlobalBuilding {
     /// The `Map.dbc` directory the host was built for — the same string
     /// [`WorldStatus::map_name`] carries, and `None` outside the world.
     map: Option<String>,
@@ -114,7 +114,7 @@ impl GlobalBuilding {
     }
 }
 
-pub struct GlobalWmoPlugin;
+pub(crate) struct GlobalWmoPlugin;
 
 impl Plugin for GlobalWmoPlugin {
     fn build(&self, app: &mut App) {

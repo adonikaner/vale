@@ -62,14 +62,14 @@ const SUB_STEP: f32 = Z_STEP / 16.0;
 const SUB_MAX: usize = 15;
 
 /// One draw: a texture, a blend, and the triangles that share them.
-pub struct Batch {
+pub(crate) struct Batch {
     pub image: Handle<Image>,
     pub blend: Blend,
     pub z: f32,
     /// Window pixels, y-down — [`super::to_screen_mesh`] turns them into the
     /// 2d camera's units.
     pub positions: Vec<[f32; 2]>,
-    pub uvs: Vec<[f32; 2]>,
+    pub(crate) uvs: Vec<[f32; 2]>,
     /// Linear rgb, byte-space-compensated straight alpha.
     pub colours: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
@@ -123,11 +123,11 @@ impl Emitter {
 
     /// Close the open batch: the next emission starts a new one whatever its
     /// texture. Called where an item's pixels are drawn by another pass.
-    pub fn barrier(&mut self) {
+    pub(crate) fn barrier(&mut self) {
         self.open = false;
     }
 
-    pub fn into_batches(self) -> Vec<Batch> {
+    pub(crate) fn into_batches(self) -> Vec<Batch> {
         self.batches
     }
 
@@ -364,7 +364,7 @@ pub struct Painter<'w> {
     pub models: &'w crate::lua::widgets::model::UiModels,
     pub portraits: &'w crate::render::portraits::Portraits,
     /// The paper-doll pictures; see [`crate::render::paperdoll`].
-    pub dolls: &'w crate::render::paperdoll::Dolls,
+    pub(crate) dolls: &'w crate::render::paperdoll::Dolls,
     pub place: &'w crate::interface::minimap::MinimapView,
     pub view: Viewport,
     /// Device pixels per interface pixel: the window's scale factor. This is
@@ -375,22 +375,22 @@ pub struct Painter<'w> {
     /// `size * dpi` and its quad is placed by [`fonts::quad`], so one atlas
     /// texel lands on one screen pixel. See that function for the effect of
     /// rounding in interface pixels instead.
-    pub dpi: f32,
+    pub(crate) dpi: f32,
     /// The wall clock in milliseconds, for a `<Model>`'s global sequences.
-    pub now_ms: u32,
+    pub(crate) now_ms: u32,
     /// `<Model>` files named on screen and not loaded, reported once each.
     ///
     /// Per file rather than one flag, because a session has models that draw
     /// and models that cannot: the glue screens' backdrops are 3D scenes that
     /// `render::glue` draws and this pass does not, so a single flag would be
     /// used up on `UI_Orc.mdx` before the first cooldown of the session.
-    pub reported_models: &'w mut std::collections::HashSet<String>,
+    pub(crate) reported_models: &'w mut std::collections::HashSet<String>,
 }
 
 /// The static pass: every item except the minimap, which [`minimap_batches`]
 /// rebuilds on its own cadence, and the `<Model>` frames, which
 /// [`model_batches`] rebuilds.
-pub fn item_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
+pub(crate) fn item_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     let mut emit = Emitter::new();
     for (index, item) in items.iter().enumerate() {
         emit.item(index);
@@ -422,7 +422,7 @@ pub fn item_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
 /// item, so a running cooldown rebuilt the whole static list thirty times a
 /// second, which is the cost this module exists to avoid. In this pass it
 /// rebuilds only its own batches.
-pub fn model_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
+pub(crate) fn model_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     let mut emit = Emitter::new();
     for (index, item) in items.iter().enumerate() {
         let Content::Model(scene) = &item.content else {
@@ -440,7 +440,7 @@ pub fn model_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
 
 /// The minimap pass: the one widget that shows the world, so its batches
 /// change on every frame the player moves, while the other items do not.
-pub fn minimap_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
+pub(crate) fn minimap_batches(items: &[Item], painter: &mut Painter) -> Vec<Batch> {
     let mut emit = Emitter::new();
     for (index, item) in items.iter().enumerate() {
         let Content::Minimap(widget) = &item.content else {
@@ -473,7 +473,7 @@ const CARRIED_ICON: f32 = 32.0;
 /// so it scales with the rest of the interface rather than with the window.
 /// That is `Interface\Icons\` art at its own size, the size every action
 /// button and bag square draws it at.
-pub fn carried_batch(painter: &mut Painter, path: &str, at: Vec2) -> Vec<Batch> {
+pub(crate) fn carried_batch(painter: &mut Painter, path: &str, at: Vec2) -> Vec<Batch> {
     let Some(image) = painter.textures.texture(painter.images, painter.assets, path) else {
         return Vec::new();
     };

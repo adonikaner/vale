@@ -421,7 +421,7 @@ impl SpellbookAnswers for super::super::api::Live<'_, '_, '_> {
         let Some(info) = self.book.book.spell(index) else {
             return (0.0, 0.0, true);
         };
-        api::cooldown_of(self.cooldowns, info, self.now)
+        api::cooldown_of(&self.cooldowns, info, self.now)
     }
 
     fn spell_passive(&self, index: usize) -> bool {

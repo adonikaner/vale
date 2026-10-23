@@ -5,6 +5,7 @@
 use super::super::api::Answers;
 
 /// The reads this module registers, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 1] = ["TutorialsEnabled"];
 
 /// What the options panel may ask about tips. The default is "on", the state

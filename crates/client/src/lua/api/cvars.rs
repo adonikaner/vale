@@ -71,16 +71,9 @@ use std::rc::Rc;
 
 use vale_assets::interface::cvars::{self, DEFAULTS};
 
-/// The globals this module registers.
-///
-/// They were in [`super::stubs`] and are not stubs: a stub answers a constant,
-/// and these three answer the client's own state. See that file's first line,
-/// which is what the split is for.
-pub const GLOBALS: [&str; 4] = ["GetCVar", "GetCVarDefault", "GetWorldDetail", "SetCVar"];
-
 /// **A `SetCVar` that happened**, for whoever acts on the setting.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CVarWrite {
+pub(crate) struct CVarWrite {
     /// The CVar's own name, as the caller spelled it.
     pub name: String,
     /// …and its new value, already a string.
@@ -90,7 +83,7 @@ pub struct CVarWrite {
     pub script_name: Option<String>,
 }
 
-pub type CVarQueue = Rc<RefCell<Vec<CVarWrite>>>;
+pub(crate) type CVarQueue = Rc<RefCell<Vec<CVarWrite>>>;
 
 /// The registry key the store lives under. Not a global, for the reason
 /// [`super::super::widgets::frames`] gives about its own: a script assigning to
@@ -263,6 +256,7 @@ pub(in crate::lua) fn seed(lua: &mlua::Lua, values: &[(String, String)]) -> mlua
 /// Read once when the settings resource is built rather than per frame: after
 /// that the queue carries every change, which is the same bargain every other
 /// `take_*` in [`super::super::host`] makes.
+#[cfg(test)]
 pub(in crate::lua) fn snapshot(lua: &mlua::Lua) -> Vec<(String, String)> {
     let Ok(store) = lua.named_registry_value::<mlua::Table>(REG_CVARS) else {
         return Vec::new();

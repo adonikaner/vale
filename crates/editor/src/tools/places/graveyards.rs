@@ -58,7 +58,7 @@ use std::sync::Arc;
 
 /// What a click on empty ground does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Armed {
+pub(crate) enum Armed {
     #[default]
     Nothing,
     /// Make a safe place on the ground.
@@ -69,34 +69,34 @@ pub enum Armed {
 
 /// The two server tables as the database holds them.
 #[derive(Debug, Clone, Default)]
-pub struct Held {
-    pub links: Vec<Link>,
-    pub facings: HashMap<u32, f32>,
+pub(crate) struct Held {
+    pub(crate) links: Vec<Link>,
+    pub(crate) facings: HashMap<u32, f32>,
 }
 
 /// One link as the panel draws it: the project's edits over the database.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShownLink {
-    pub link: Link,
+pub(crate) struct ShownLink {
+    pub(crate) link: Link,
     /// The row as the database holds it, for an edit typed back to that value
     /// to be cleared. `None` for a row the project creates.
-    pub in_database: Option<Link>,
-    pub life: Life,
+    pub(crate) in_database: Option<Link>,
+    pub(crate) life: Life,
 }
 
 /// The graveyard tool's state.
 #[derive(Resource, Debug, Default)]
-pub struct Graveyards {
+pub(crate) struct Graveyards {
     /// The safe places on the open map, and what the pointer is doing with
     /// them.
-    pub points: Points<SafeLoc>,
-    pub armed: Armed,
+    pub(crate) points: Points<SafeLoc>,
+    pub(crate) armed: Armed,
     /// The zone under the pointer, for Link zone: the area's zone, or the
     /// area itself when it is a zone.
-    pub pointed_zone: Option<u32>,
+    pub(crate) pointed_zone: Option<u32>,
     /// `AreaTable` as this session has it, for zone names, and the table
     /// revision it was read at; see `crate::tools::ground::areas::Areas::follow_table`.
-    pub areas: Option<Arc<Areas>>,
+    pub(crate) areas: Option<Arc<Areas>>,
     areas_at: Option<u64>,
     /// The two server tables, read at once and kept until an apply moves
     /// `EditSession::database_writes`. See [`Self::held`].
@@ -107,30 +107,30 @@ pub struct Graveyards {
 const MARKER_RANGE: f32 = 3000.0;
 
 /// The name a new place is given, to be replaced.
-pub const NEW_NAME: &str = "New graveyard";
+pub(crate) const NEW_NAME: &str = "New graveyard";
 
 impl Graveyards {
     /// The two server tables, once read.
-    pub fn held(&self) -> Option<&Held> {
+    pub(crate) fn held(&self) -> Option<&Held> {
         self.reads.value()
     }
 
     /// Why the last read of the server tables answered nothing, when it
     /// answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.reads.trouble()
     }
 
-    pub fn place(&self, id: u32) -> Option<&SafeLoc> {
+    pub(crate) fn place(&self, id: u32) -> Option<&SafeLoc> {
         self.points.get(id)
     }
 
-    pub fn stale(&mut self) {
+    pub(crate) fn stale(&mut self) {
         self.points.stale();
     }
 
     /// Read `AreaTable` again from the session's open copy when it changed.
-    pub fn follow_table(&mut self, session: &EditSession) {
+    pub(crate) fn follow_table(&mut self, session: &EditSession) {
         let Some(open) = session.table(crate::tables::zones::area::TABLE) else {
             self.areas = None;
             self.areas_at = None;
@@ -144,7 +144,7 @@ impl Graveyards {
     }
 
     /// A zone's or an area's name, with its id when the table has no name.
-    pub fn zone_name(&self, id: u32) -> String {
+    pub(crate) fn zone_name(&self, id: u32) -> String {
         match self.areas.as_ref().and_then(|areas| areas.get(id)) {
             Some(area) if !area.name.is_empty() => area.name.clone(),
             _ => format!("area {id}"),
@@ -154,7 +154,7 @@ impl Graveyards {
     /// The place's links as the project leaves them: the database's, then the
     /// ones the project creates. A creation the database holds because it was
     /// applied is listed once, as a creation.
-    pub fn links_of(&self, edits: &Edits, id: u32) -> Vec<ShownLink> {
+    pub(crate) fn links_of(&self, edits: &Edits, id: u32) -> Vec<ShownLink> {
         let Some(held) = self.held() else {
             return Vec::new();
         };
@@ -185,7 +185,7 @@ impl Graveyards {
 
     /// The place's facing as the project leaves it, in radians, and whether
     /// the database holds the row.
-    pub fn facing(&self, edits: &Edits, id: u32) -> Option<(f32, bool)> {
+    pub(crate) fn facing(&self, edits: &Edits, id: u32) -> Option<(f32, bool)> {
         let held = self.held()?.facings.get(&id).copied();
         let assignments = held.map(facing_assignments);
         let (row, life) = shown(edits, graveyard::FACING, &graveyard::facing_key(id), assignments.as_deref())?;
@@ -203,7 +203,7 @@ fn facing_assignments(orientation: f32) -> Vec<Assignment> {
 
 /// Link a place to a zone for both sides. Refused when the place already
 /// serves it.
-pub fn add_link(session: &mut EditSession, graveyards: &Graveyards, id: u32, zone: u32, now: f64) -> Result<String, String> {
+pub(crate) fn add_link(session: &mut EditSession, graveyards: &Graveyards, id: u32, zone: u32, now: f64) -> Result<String, String> {
     let shown = graveyards.links_of(&session.rows.edits, id);
     let existing = shown.iter().find(|shown| shown.link.zone == zone);
     if existing.is_some_and(|shown| shown.life != Life::Delete) {
@@ -218,7 +218,7 @@ pub fn add_link(session: &mut EditSession, graveyards: &Graveyards, id: u32, zon
     Ok(format!("graveyard {id} linked to {} ({zone})", graveyards.zone_name(zone)))
 }
 
-pub fn remove_link(session: &mut EditSession, shown: &ShownLink, now: f64) {
+pub(crate) fn remove_link(session: &mut EditSession, shown: &ShownLink, now: f64) {
     let key = shown.link.key();
     let label = format!("{} {}", graveyard::ZONE, key.text());
     let gesture = Gesture { label: "Unlink graveyard", subject: &label, now };
@@ -226,7 +226,7 @@ pub fn remove_link(session: &mut EditSession, shown: &ShownLink, now: f64) {
 }
 
 /// Set which side a link serves: 0 both, 67 Horde, 469 Alliance.
-pub fn set_faction(session: &mut EditSession, shown: &ShownLink, faction: u32, now: f64) {
+pub(crate) fn set_faction(session: &mut EditSession, shown: &ShownLink, faction: u32, now: f64) {
     let key = shown.link.key();
     let label = format!("{} {} faction", graveyard::ZONE, key.text());
     let gesture = Gesture { label: "Edit graveyard link", subject: &label, now };
@@ -235,7 +235,7 @@ pub fn set_faction(session: &mut EditSession, shown: &ShownLink, faction: u32, n
 }
 
 /// Set the way a spirit faces at the place, in radians.
-pub fn set_facing(session: &mut EditSession, graveyards: &Graveyards, id: u32, radians: f32, now: f64) {
+pub(crate) fn set_facing(session: &mut EditSession, graveyards: &Graveyards, id: u32, radians: f32, now: f64) {
     let held = graveyards.held().and_then(|held| held.facings.get(&id)).copied();
     let key = graveyard::facing_key(id);
     let label = format!("{} {}", graveyard::FACING, key.text());
@@ -252,7 +252,7 @@ pub fn set_facing(session: &mut EditSession, graveyards: &Graveyards, id: u32, r
 }
 
 /// Write a place's position as one gesture.
-pub fn move_place(session: &mut EditSession, place: &SafeLoc, to: Vec3, now: f64) {
+pub(crate) fn move_place(session: &mut EditSession, place: &SafeLoc, to: Vec3, now: f64) {
     use vale_assets::tables::safeloc::fields as sf;
     crate::tables::fields::set_fields(
         session,
@@ -266,7 +266,7 @@ pub fn move_place(session: &mut EditSession, place: &SafeLoc, to: Vec3, now: f64
 }
 
 /// Make a safe place on the ground at `at`. Answers the status line.
-pub fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec3) -> String {
+pub(crate) fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec3) -> String {
     match places::new_safe_loc(&mut session.tables, graveyards.points.map, at.to_array(), NEW_NAME) {
         Ok(done) => {
             let made = done.made;
@@ -280,7 +280,7 @@ pub fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec
 }
 
 /// Remove a place, and the server rows that name it. Answers the status line.
-pub fn remove_place(session: &mut EditSession, graveyards: &mut Graveyards, id: u32, now: f64) -> String {
+pub(crate) fn remove_place(session: &mut EditSession, graveyards: &mut Graveyards, id: u32, now: f64) -> String {
     let edits = session.rows.edits.clone();
     let links = graveyards.links_of(&edits, id);
     let facing = graveyards.facing(&edits, id);
@@ -307,7 +307,7 @@ pub fn remove_place(session: &mut EditSession, graveyards: &mut Graveyards, id: 
 }
 
 /// The area id of the chunk under a point, where its tile is open.
-pub fn area_at(session: &EditSession, at: Vec3) -> Option<u32> {
+pub(crate) fn area_at(session: &EditSession, at: Vec3) -> Option<u32> {
     let coord = vale_assets::tile_for_position(at.x, at.y);
     let tile = session.tiles.get(&coord)?;
     let chunk = vale_edit::adt::heights::chunk_at(tile, at.x, at.y)?;
@@ -315,11 +315,11 @@ pub fn area_at(session: &EditSession, at: Vec3) -> Option<u32> {
 }
 
 /// The zone an area is in: its parent, or itself when it is a zone.
-pub fn zone_of(areas: Option<&Areas>, area: u32) -> u32 {
+pub(crate) fn zone_of(areas: Option<&Areas>, area: u32) -> u32 {
     areas.and_then(|areas| areas.zone_of(area)).map_or(area, |zone| zone.id)
 }
 
-pub struct GraveyardToolPlugin;
+pub(crate) struct GraveyardToolPlugin;
 
 impl Plugin for GraveyardToolPlugin {
     fn build(&self, app: &mut App) {

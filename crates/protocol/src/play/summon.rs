@@ -31,7 +31,7 @@ pub struct SummonRequest {
 }
 
 /// `SMSG_SUMMON_REQUEST` — sixteen bytes.
-pub fn parse_summon_request(body: &[u8]) -> Option<SummonRequest> {
+pub(crate) fn parse_summon_request(body: &[u8]) -> Option<SummonRequest> {
     if body.len() < 16 {
         return None;
     }
@@ -44,7 +44,7 @@ pub fn parse_summon_request(body: &[u8]) -> Option<SummonRequest> {
 }
 
 /// `CMSG_SUMMON_RESPONSE` — the summoner's guid, which is the whole of "yes".
-pub fn summon_response_body(summoner: u64) -> Vec<u8> {
+pub(crate) fn summon_response_body(summoner: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(summoner);
     w.buf

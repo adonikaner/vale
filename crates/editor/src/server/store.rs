@@ -18,20 +18,20 @@ use crate::session::EditSession;
 /// three position columns it writes are one entry — without that, moving a
 /// creature would take three presses of `Ctrl+Z` to put back, one per axis.
 #[derive(Debug, Clone, Copy)]
-pub struct Gesture<'a> {
+pub(crate) struct Gesture<'a> {
     /// What to call it in the history: "Move creature", "Edit creature".
-    pub label: &'a str,
+    pub(crate) label: &'a str,
     /// What it is about. Two edits with the same subject close together in time
     /// are one entry; two with different subjects never are.
-    pub subject: &'a str,
+    pub(crate) subject: &'a str,
     /// The frame clock the fold window is measured on.
-    pub now: f64,
+    pub(crate) now: f64,
 }
 
 /// The rows this project changes in the server's database, held by
 /// [`EditSession::rows`].
 #[derive(Default)]
-pub struct ServerRows {
+pub(crate) struct ServerRows {
     /// The column and whole-row edits.
     ///
     /// Held by the session and not in the tool, for the reason the open tables
@@ -42,7 +42,7 @@ pub struct ServerRows {
     /// Empty for every project that has not touched a server table, which is
     /// every terrain project. See [`vale_mangos::row::Edits`], and
     /// [`crate::server::rows`], which writes them.
-    pub edits: vale_mangos::row::Edits,
+    pub(crate) edits: vale_mangos::row::Edits,
     /// …and the waypoint paths it changes, which are the one server subject
     /// whose edit is a set of rows rather than a column.
     ///
@@ -51,11 +51,11 @@ pub struct ServerRows {
     /// already there, and a path is every row under a key replaced. See
     /// [`vale_mangos::path::Paths`], and the reason the unit is the whole
     /// path in that module's own comment.
-    pub paths: vale_mangos::path::Paths,
+    pub(crate) paths: vale_mangos::path::Paths,
     /// The scripts it changes, which are the other subject whose edit is a
     /// set of rows: a script's rows have no key of their own, so every row
     /// under an id is replaced. See [`vale_mangos::scripts::Scripts`].
-    pub scripts: vale_mangos::scripts::Scripts,
+    pub(crate) scripts: vale_mangos::scripts::Scripts,
     /// How many row edits have landed, for anything that cached a reading
     /// of the database.
     ///
@@ -63,13 +63,13 @@ pub struct ServerRows {
     /// spawns read over a connection, and an edit to a position has to move the
     /// marker without a second round trip. A counter rather than a flag,
     /// because what it answers is "is what I read still true".
-    pub revision: u64,
+    pub(crate) revision: u64,
     /// Whether [`Self::edits`] is ahead of the project folder.
-    pub edits_unsaved: bool,
+    pub(crate) edits_unsaved: bool,
     /// …and whether [`Self::paths`] is.
-    pub paths_unsaved: bool,
+    pub(crate) paths_unsaved: bool,
     /// …and whether [`Self::scripts`] is.
-    pub scripts_unsaved: bool,
+    pub(crate) scripts_unsaved: bool,
     /// The undo entry every server-row write goes on while a group is being
     /// changed, as `(label, subject)`. See [`EditSession::as_one`].
     ///
@@ -115,7 +115,7 @@ impl ServerRows {
     /// All three stores, because all are written by the same press and none has
     /// a count worth showing — what a person needs to know is that a save is
     /// owed, not how many rows it is.
-    pub fn unsaved(&self) -> bool {
+    pub(crate) fn unsaved(&self) -> bool {
         self.edits_unsaved || self.paths_unsaved || self.scripts_unsaved
     }
 
@@ -128,127 +128,90 @@ impl ServerRows {
     /// the edit itself was, because the statements a save emits are a diff of
     /// the project rather than a log of what was typed.
     pub(crate) fn step(&mut self, change: &vale_edit::undo::Change, forward: bool) {
-        // The paths first, and outside the guard in `step_cells`. A
-        // waypoint edit is a change with no `server_cells` at all, so when
-        // this call came after an `is_empty` return on that list, Undo and
-        // Redo did nothing to a path edit even though the entry was on the
-        // stack and the button was lit. Each list of a change must be stepped
-        // independently of the others being empty.
-        self.step_paths(change, forward);
-        // A created or removed row is stepped before its columns going
-        // forward, and after them coming back. A change that creates a spawn
-        // and then writes one of its columns has to have the row first, and
-        // taking the row away has to come after the column — see
-        // `vale_edit::undo::Change::server_rows`.
-        if forward {
-            self.step_rows(change, forward);
+        // One loop over every server entry, in the change's own order: a
+        // created or removed row before its columns going forward and after
+        // them coming back, because a change that creates a spawn and then
+        // writes one of its columns has to have the row first. See
+        // `vale_edit::undo::Change::in_order`. No shape of entry is stepped
+        // behind a check on another: a waypoint edit has no columns at all,
+        // and when its paths were stepped after an `is_empty` return on the
+        // columns, Undo and Redo did nothing to it with the button lit.
+        let mut stepped = false;
+        for entry in change.server_steps(forward) {
+            stepped = true;
+            self.step_one(&entry);
         }
-        self.step_cells(change, forward);
-        if !forward {
-            self.step_rows(change, forward);
+        if stepped {
+            self.revision += 1;
         }
     }
 
-    /// …and the cells on their own, so [`Self::step`] can put the row
-    /// claims on either side of them.
-    fn step_cells(&mut self, change: &vale_edit::undo::Change, forward: bool) {
-        if change.server_cells.is_empty() {
-            return;
-        }
-        for cell in &change.server_cells {
-            let cell = match forward {
-                true => cell.clone(),
-                false => cell.reversed(),
-            };
-            let Some(key) = vale_mangos::row::Key::parse(&cell.key) else {
-                // The key is written by `Key::text` and read by `Key::parse`,
-                // so this cannot happen from anything this crate wrote. It is
-                // logged rather than ignored, because otherwise an undo would
-                // do nothing and give no reason.
-                warn!("undo: {} is not a row key", cell.key);
-                continue;
-            };
-            self.edits
-                .set(&cell.table, &key, &cell.column, cell.after.clone());
-        }
-        self.edits_unsaved = true;
-        self.revision += 1;
-    }
-
-    /// …and the same for the whole-row claims, which are a list of their own
-    /// on the change for the paths' reason: a column and a claim about whether
-    /// the row exists at all are addressed differently.
-    fn step_rows(&mut self, change: &vale_edit::undo::Change, forward: bool) {
-        if change.server_rows.is_empty() {
-            return;
-        }
-        for entry in &change.server_rows {
-            let entry = match forward {
-                true => entry.clone(),
-                false => entry.reversed(),
-            };
-            let Some(key) = vale_mangos::row::Key::parse(&entry.key) else {
-                warn!("undo: {} is not a row key", entry.key);
-                continue;
-            };
-            self.edits
-                .set_row_line(&entry.table, &key, entry.after.as_deref());
-        }
-        self.edits_unsaved = true;
-        self.revision += 1;
-    }
-
-    /// …and the same for the paths, which are a list of their own on the change.
-    ///
-    /// Separate because the two are addressed differently — a column and a set
-    /// of rows — and folding them would need one of them to pretend to be the
-    /// other. See [`vale_edit::undo::ServerPath`].
-    fn step_paths(&mut self, change: &vale_edit::undo::Change, forward: bool) {
-        if change.server_paths.is_empty() {
-            return;
-        }
-        for entry in &change.server_paths {
-            let entry = match forward {
-                true => entry.clone(),
-                false => entry.reversed(),
-            };
-            // A script's entry carries a script table's name; see
-            // [`EditSession::set_server_script`].
-            if let Some(table) = vale_mangos::scripts::table_named(&entry.table) {
-                let Some(id) = vale_mangos::row::Key::parse(&entry.key).and_then(|key| key.first())
-                else {
-                    warn!("undo: {} is not a script key", entry.key);
-                    continue;
+    /// Put one server entry into its store, already turned the way
+    /// [`Self::step`] is going.
+    fn step_one(&mut self, entry: &vale_edit::undo::ServerEntry) {
+        use vale_edit::undo::Shape;
+        match &entry.shape {
+            Shape::Column(column) => {
+                self.edits_unsaved = true;
+                let Some(key) = vale_mangos::row::Key::parse(&entry.key) else {
+                    // The key is written by `Key::text` and read by `Key::parse`,
+                    // so this cannot happen from anything this crate wrote. It is
+                    // logged rather than ignored, because otherwise an undo would
+                    // do nothing and give no reason.
+                    warn!("undo: {} is not a row key", entry.key);
+                    return;
                 };
-                let id = id as u32;
-                match &entry.after {
-                    Some(line) => self
-                        .scripts
-                        .set(&vale_mangos::scripts::Script::from_line(table, id, line)),
-                    None => self.scripts.forget(table, id),
-                }
-                self.scripts_unsaved = true;
-                continue;
+                self.edits.set(&entry.table, &key, column, entry.after.clone());
             }
-            let Some(which) = vale_mangos::path::Which::named(&entry.table) else {
-                warn!("undo: {} is not a movement table", entry.table);
-                continue;
-            };
-            let Some(owner) =
-                vale_mangos::row::Key::parse(&entry.key).and_then(|key| key.first())
+            Shape::Row => {
+                self.edits_unsaved = true;
+                let Some(key) = vale_mangos::row::Key::parse(&entry.key) else {
+                    warn!("undo: {} is not a row key", entry.key);
+                    return;
+                };
+                self.edits
+                    .set_row_line(&entry.table, &key, entry.after.as_deref());
+            }
+            Shape::Path => self.step_path(entry),
+        }
+    }
+
+    /// …and one path or script, which are two stores under one shape of
+    /// entry: a script's entry carries a script table's name. See
+    /// [`EditSession::set_server_script`].
+    fn step_path(&mut self, entry: &vale_edit::undo::ServerEntry) {
+        self.paths_unsaved = true;
+        if let Some(table) = vale_mangos::scripts::table_named(&entry.table) {
+            let Some(id) = vale_mangos::row::Key::parse(&entry.key).and_then(|key| key.first())
             else {
-                warn!("undo: {} is not a path key", entry.key);
-                continue;
+                warn!("undo: {} is not a script key", entry.key);
+                return;
             };
+            let id = id as u32;
             match &entry.after {
                 Some(line) => self
-                    .paths
-                    .set(&vale_mangos::path::Path::from_line(which, owner, line)),
-                None => self.paths.forget(which, owner),
+                    .scripts
+                    .set(&vale_mangos::scripts::Script::from_line(table, id, line)),
+                None => self.scripts.forget(table, id),
             }
+            self.scripts_unsaved = true;
+            return;
         }
-        self.paths_unsaved = true;
-        self.revision += 1;
+        let Some(which) = vale_mangos::path::Which::named(&entry.table) else {
+            warn!("undo: {} is not a movement table", entry.table);
+            return;
+        };
+        let Some(owner) = vale_mangos::row::Key::parse(&entry.key).and_then(|key| key.first())
+        else {
+            warn!("undo: {} is not a path key", entry.key);
+            return;
+        };
+        match &entry.after {
+            Some(line) => self
+                .paths
+                .set(&vale_mangos::path::Path::from_line(which, owner, line)),
+            None => self.paths.forget(which, owner),
+        }
     }
 
     /// Throw away one subject's rows, and with `paths` every waypoint path.
@@ -294,7 +257,7 @@ impl ServerRows {
     /// Write the three stores to their files: the rows, the paths, then the
     /// scripts. Stops at the first that cannot be written and answers what
     /// went wrong, as `<path>: <error>`.
-    pub fn save(&mut self, project: &Project) -> Result<(), String> {
+    pub(crate) fn save(&mut self, project: &Project) -> Result<(), String> {
         self.save_edits(project)?;
         self.save_paths(project)?;
         self.save_scripts(project)
@@ -385,7 +348,7 @@ impl EditSession {
     /// the same entry because the subject does not change.
     ///
     /// Writes made by an undo carry no gesture and are unaffected.
-    pub fn as_one<R>(
+    pub(crate) fn as_one<R>(
         &mut self,
         label: &str,
         subject: &str,
@@ -425,7 +388,7 @@ impl EditSession {
     /// Nothing is sent anywhere here. The project's file is written and the
     /// database is reached by [`crate::server::rows::save`], which is what
     /// Save and a playtest call.
-    pub fn set_server_edit(
+    pub(crate) fn set_server_edit(
         &mut self,
         table: &str,
         key: &vale_mangos::row::Key,
@@ -450,14 +413,13 @@ impl EditSession {
                 .get(table, key, column)
                 .map(str::to_string);
             self.open_gesture(gesture);
-            self.history
-                .record_server_cell(vale_edit::undo::ServerCell {
-                    table: table.to_string(),
-                    key: key.text(),
-                    column: column.to_string(),
-                    before,
-                    after: value.clone(),
-                });
+            self.history.record_server(vale_edit::undo::ServerEntry::column(
+                table,
+                key.text(),
+                column,
+                before,
+                value.clone(),
+            ));
             // Closed at once, as `tables::fields::set_fields` closes its own.
             // `History::begin_gesture` leaves the change open, and an open
             // change is not on the stack: `next_undo` reads `done` and the panel
@@ -479,14 +441,14 @@ impl EditSession {
     /// column. Creating a spawn sets no column of a row that is already there,
     /// because there is no row; removing one sets no column at all. What moves
     /// in both cases is the project's whole claim, so that is what is written
-    /// and what goes on the undo stack — see `vale_edit::undo::ServerRow`.
+    /// and what goes on the undo stack — see `vale_edit::undo::Shape::Row`.
     ///
     /// `None` takes the claim back entirely. Undoing a creation does this, and
     /// so does keeping a spawn that was marked for removal.
     ///
     /// Nothing is sent anywhere. The project's file is written and the database
     /// is reached by an Apply on the Server panel, which is a button.
-    pub fn set_server_row(
+    pub(crate) fn set_server_row(
         &mut self,
         table: &str,
         key: &vale_mangos::row::Key,
@@ -504,13 +466,12 @@ impl EditSession {
         }
         if let Some(gesture) = under {
             self.open_gesture(gesture);
-            self.history
-                .record_server_row(vale_edit::undo::ServerRow {
-                    table: table.to_string(),
-                    key: key.text(),
-                    before,
-                    after: after.clone(),
-                });
+            self.history.record_server(vale_edit::undo::ServerEntry::row(
+                table,
+                key.text(),
+                before,
+                after.clone(),
+            ));
             // Closed at once, for `set_server_edit`'s reason: an open
             // change is not on the stack, so the last edit made would be the
             // one that could not be undone.
@@ -531,7 +492,7 @@ impl EditSession {
     ///
     /// Nothing is sent anywhere. The project's file is written and the database
     /// is reached by an Apply on the Server panel, which is a button.
-    pub fn set_server_path(
+    pub(crate) fn set_server_path(
         &mut self,
         which: vale_mangos::path::Which,
         owner: u64,
@@ -552,13 +513,12 @@ impl EditSession {
         }
         if let Some(gesture) = under {
             self.open_gesture(gesture);
-            self.history
-                .record_server_path(vale_edit::undo::ServerPath {
-                    table: which.table().to_string(),
-                    key: vale_mangos::row::Key::one(which.key_column(), owner).text(),
-                    before: before.as_ref().map(vale_mangos::path::Path::to_line),
-                    after: after.as_ref().map(vale_mangos::path::Path::to_line),
-                });
+            self.history.record_server(vale_edit::undo::ServerEntry::path(
+                which.table(),
+                vale_mangos::row::Key::one(which.key_column(), owner).text(),
+                before.as_ref().map(vale_mangos::path::Path::to_line),
+                after.as_ref().map(vale_mangos::path::Path::to_line),
+            ));
             // Closed at once, for `set_server_edit`'s reason: an open change
             // is not on the stack, so the last edit made would be the one that
             // could not be undone.
@@ -577,10 +537,10 @@ impl EditSession {
     /// set of rows: `None` takes the claim back, and a script with no rows is
     /// the edit that removes it.
     ///
-    /// The undo entry is a [`vale_edit::undo::ServerPath`] under the
+    /// The undo entry is a [`vale_edit::undo::Shape::Path`] entry under the
     /// script table's name, which is how [`ServerRows::step`] tells
     /// the two stores apart.
-    pub fn set_server_script(
+    pub(crate) fn set_server_script(
         &mut self,
         table: &'static str,
         id: u32,
@@ -594,13 +554,12 @@ impl EditSession {
         }
         if let Some(gesture) = under {
             self.open_gesture(gesture);
-            self.history
-                .record_server_path(vale_edit::undo::ServerPath {
-                    table: table.to_string(),
-                    key: vale_mangos::row::Key::one("id", u64::from(id)).text(),
-                    before: before.as_ref().map(vale_mangos::scripts::Script::to_line),
-                    after: after.as_ref().map(vale_mangos::scripts::Script::to_line),
-                });
+            self.history.record_server(vale_edit::undo::ServerEntry::path(
+                table,
+                vale_mangos::row::Key::one("id", u64::from(id)).text(),
+                before.as_ref().map(vale_mangos::scripts::Script::to_line),
+                after.as_ref().map(vale_mangos::scripts::Script::to_line),
+            ));
             self.history.end();
         }
         match script {
@@ -624,7 +583,7 @@ impl EditSession {
     /// entry was made, and after it is emptied there is nothing for them to put
     /// back — undoing would write a value into a row the project has stopped
     /// claiming.
-    pub fn forget_server_edits(
+    pub(crate) fn forget_server_edits(
         &mut self,
         mut wanted: impl FnMut(&str) -> bool,
         paths: bool,

@@ -76,25 +76,25 @@ const CONDITION: f32 = 130.0;
 const CELL: f32 = 18.0;
 
 /// Everything the two windows need.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub services: &'a mut Services,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) services: &'a mut Services,
     /// The quest tool's state, for the batched item names and the reference
     /// picker.
-    pub quests: &'a mut Quests,
+    pub(crate) quests: &'a mut Quests,
     /// The item workspace's state, for what an item's icon is.
-    pub items: &'a mut Items,
-    pub assets: &'a GameAssets,
-    pub thumbnails: &'a mut Thumbnails,
-    pub now: f64,
+    pub(crate) items: &'a mut Items,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) thumbnails: &'a mut Thumbnails,
+    pub(crate) now: f64,
     /// Where an item's or a spell's name asks the shell to open its row.
-    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+    pub(crate) asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 /// The two windows, each drawn when it is open and a creature is selected.
 /// Returns their rectangles, so the viewport can keep a click inside one from
 /// also being a click on the world behind it.
-pub fn windows(ctx: &egui::Context, mut subject: Subject<'_>) -> Vec<egui::Rect> {
+pub(crate) fn windows(ctx: &egui::Context, mut subject: Subject<'_>) -> Vec<egui::Rect> {
     // An item or a spell chosen through the picker on the last frame, taken
     // now; see `PickFor::VendorItem`.
     if let Some((table, entry, id)) = subject.quests.service_pick.take() {

@@ -70,7 +70,7 @@ use bevy_egui::egui;
 /// negative; `Signed` and `SignedMoney` are a signed 32-bit column. The rest
 /// hold one or the other, so they are held to the two together. A column
 /// narrower than 32 bits is not known here: the schema does not carry widths.
-pub fn integer_range(kind: Kind) -> std::ops::RangeInclusive<i64> {
+pub(crate) fn integer_range(kind: Kind) -> std::ops::RangeInclusive<i64> {
     match kind {
         Kind::Unsigned | Kind::Money => 0..=i64::from(u32::MAX),
         Kind::Signed | Kind::SignedMoney => i64::from(i32::MIN)..=i64::from(i32::MAX),
@@ -84,7 +84,7 @@ pub fn integer_range(kind: Kind) -> std::ops::RangeInclusive<i64> {
 /// `1478900` is 147g 89s and `1800000` is half an hour. The stored value is
 /// the number either way: this is a line of text beside it, not a second
 /// widget. A caller draws nothing for `None` rather than an empty line.
-pub fn number_means(kind: Kind, showing: &str) -> Option<String> {
+pub(crate) fn number_means(kind: Kind, showing: &str) -> Option<String> {
     let value: i64 = showing.trim().parse().ok()?;
     match kind {
         Kind::Money => Some(schema::money_words(value.max(0) as u64)),
@@ -178,7 +178,7 @@ pub(in crate::ui) fn finished(
 ///
 /// Escaped once, here, by `vale_mangos::sql::text`. What is answered is
 /// already the literal a statement carries.
-pub fn text_field_wide(
+pub(crate) fn text_field_wide(
     ui: &mut egui::Ui,
     id: egui::Id,
     showing: &str,
@@ -221,17 +221,17 @@ fn ticks<'a>(label: impl Into<egui::WidgetText>) -> egui::containers::menu::Menu
 // ---------------------------------------------------------------------------
 
 /// How wide the name cell of a page row is. The name is centred in it.
-pub const FORM_LABEL: f32 = 210.0;
+pub(crate) const FORM_LABEL: f32 = 210.0;
 
 /// How wide the value cell is: a number box, or the number half of a
 /// reference.
-pub const FORM_VALUE: f32 = 100.0;
+pub(crate) const FORM_VALUE: f32 = 100.0;
 
 /// How wide a line of text is, and an enumeration's menu at six tenths of it.
-pub const FORM_TEXT: f32 = 420.0;
+pub(crate) const FORM_TEXT: f32 = 420.0;
 
 /// How tall a page row's cells are.
-pub const FORM_ROW: f32 = 22.0;
+pub(crate) const FORM_ROW: f32 = 22.0;
 
 /// The spacing a page of fields is laid out with.
 ///
@@ -244,7 +244,7 @@ pub const FORM_ROW: f32 = 22.0;
 /// above it whenever anything on the page was wider than the page: egui grows
 /// a `Ui` to hold what overflowed it, so every row after an overflow saw more
 /// room, took a wider name cell, and started its value further right.
-pub fn page_spacing(ui: &mut egui::Ui) {
+pub(crate) fn page_spacing(ui: &mut egui::Ui) {
     ui.spacing_mut().item_spacing = egui::vec2(8.0, 7.0);
     ui.spacing_mut().interact_size.y = 24.0;
     let width = FORM_LABEL.min(ui.available_width() * 0.45);
@@ -261,7 +261,7 @@ fn label_width_id() -> egui::Id {
 /// `edited` marks the heading when a column under it carries an edit of this
 /// project's, and such a section opens whatever `open` says, so an edit is
 /// never hidden under a folded heading.
-pub fn section<R>(
+pub(crate) fn section<R>(
     ui: &mut egui::Ui,
     id: impl egui::AsIdSalt,
     title: &str,
@@ -284,7 +284,7 @@ pub fn section<R>(
 /// The name cell is [`FORM_LABEL`] wide, or 45% of the form when the form has
 /// less room than that; [`page_spacing`] decides which, once. The name is
 /// centred in it and truncated rather than wrapped. `about` is the hover text.
-pub fn page_row<R>(
+pub(crate) fn page_row<R>(
     ui: &mut egui::Ui,
     name: &str,
     about: &str,
@@ -324,7 +324,7 @@ pub fn page_row<R>(
 /// A float column goes back as a float literal through the same rule every
 /// other float in this crate is written by, so an infinity read out of a
 /// damaged row cannot reach a statement.
-pub fn number_cell(ui: &mut egui::Ui, kind: Kind, showing: &str) -> Option<String> {
+pub(crate) fn number_cell(ui: &mut egui::Ui, kind: Kind, showing: &str) -> Option<String> {
     match kind {
         Kind::Float => {
             let was: f32 = showing.trim().parse().unwrap_or(0.0);
@@ -351,7 +351,7 @@ pub fn number_cell(ui: &mut egui::Ui, kind: Kind, showing: &str) -> Option<Strin
 }
 
 /// What a value means, in the quieter ink, after the cell it is typed into.
-pub fn meaning(ui: &mut egui::Ui, text: impl Into<String>) {
+pub(crate) fn meaning(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.label(
         egui::RichText::new(text.into())
             .small()
@@ -361,7 +361,7 @@ pub fn meaning(ui: &mut egui::Ui, text: impl Into<String>) {
 
 /// [`meaning`], truncated to the room the row has left. For a model path or
 /// any other text that may be longer than the row.
-pub fn meaning_truncated(ui: &mut egui::Ui, text: impl Into<String>) {
+pub(crate) fn meaning_truncated(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(text.into())
@@ -373,7 +373,7 @@ pub fn meaning_truncated(ui: &mut egui::Ui, text: impl Into<String>) {
 }
 
 /// A line of text on a page, as wide as the row allows up to [`FORM_TEXT`].
-pub fn text_cell(ui: &mut egui::Ui, id: egui::Id, showing: &str) -> Option<String> {
+pub(crate) fn text_cell(ui: &mut egui::Ui, id: egui::Id, showing: &str) -> Option<String> {
     let width = FORM_TEXT.min((ui.available_width() - 40.0).max(140.0));
     text_field_wide(ui, id, showing, width)
 }
@@ -385,7 +385,7 @@ pub fn text_cell(ui: &mut egui::Ui, id: egui::Id, showing: &str) -> Option<Strin
 /// new line here, so leaving the box is the only commit there is, which is
 /// why the draft has to outlive the focus by the pass `lost_focus` is
 /// deferred by. See the note above [`Draft`].
-pub fn paragraph_cell(
+pub(crate) fn paragraph_cell(
     ui: &mut egui::Ui,
     id: egui::Id,
     showing: &str,
@@ -409,7 +409,7 @@ pub fn paragraph_cell(
 ///
 /// The menu is six tenths of [`FORM_TEXT`] wide, or what the row has left
 /// when that is less, which is the 300-point inspector's case.
-pub fn choice_cell(
+pub(crate) fn choice_cell(
     ui: &mut egui::Ui,
     showing: &str,
     values: &[schema::Value],
@@ -454,7 +454,7 @@ pub fn choice_cell(
 /// The hex and the words need about 200 points after the button. A row with
 /// less than that, which is the 300-point inspector's case, carries the words
 /// as the button's hover text instead.
-pub fn flags_cell(
+pub(crate) fn flags_cell(
     ui: &mut egui::Ui,
     showing: &str,
     bits: &'static [schema::Bit],
@@ -513,7 +513,7 @@ pub fn flags_cell(
 /// and there is nothing to put it back to. Clearing it would leave the
 /// `INSERT` naming one column fewer than the table has, which is a value
 /// nobody chose.
-pub fn revert_button(ui: &mut egui::Ui, in_database: Option<&str>) -> bool {
+pub(crate) fn revert_button(ui: &mut egui::Ui, in_database: Option<&str>) -> bool {
     ui.small_button("\u{21ba}")
         .on_hover_text(match in_database {
             Some(was) => format!("Revert to {was}, the value the database holds."),
@@ -535,46 +535,46 @@ pub fn revert_button(ui: &mut egui::Ui, in_database: Option<&str>) -> bool {
 
 /// One column of one server row, as a form draws it.
 pub(in crate::ui) struct FieldCtx<'a> {
-    pub table: &'static str,
-    pub key: &'a Key,
+    pub(crate) table: &'static str,
+    pub(crate) key: &'a Key,
     /// The row as the database holds it: what an unedited column shows, and
     /// what the revert arrow takes the column back to.
-    pub row: &'a Row,
-    pub column: &'static Column,
+    pub(crate) row: &'a Row,
+    pub(crate) column: &'static Column,
     /// The name cell's text and its hover text. The column's own, unless the
     /// form names the column by what it means.
-    pub title: &'a str,
-    pub about: &'a str,
+    pub(crate) title: &'a str,
+    pub(crate) about: &'a str,
     /// What the value is drawn as. The column's own type, unless the form
     /// reads the column as something else: a game object's `data` columns
     /// are read by the template's type.
-    pub kind: Kind,
+    pub(crate) kind: Kind,
     /// Whether this project creates the row. Every column of such a row is
     /// the project's own, so no revert arrow is drawn: clearing a column would
     /// leave the `INSERT` naming one column fewer than the table has.
-    pub creating: bool,
+    pub(crate) creating: bool,
     /// The undo entry a write goes on: "Edit creature", "Edit item".
-    pub label: &'static str,
+    pub(crate) label: &'static str,
     /// What the cell's widgets are keyed on. One per table, row and column:
     /// egui keeps a text box's draft and a menu's state under its id, so a
     /// shared id would carry the half-typed value of one row into the next.
-    pub id: egui::Id,
+    pub(crate) id: egui::Id,
     /// The other columns a revert of this one also clears, because an edit of
     /// this one wrote them too: a game object's facing and its rotation.
-    pub reverts_with: &'static [&'static str],
+    pub(crate) reverts_with: &'static [&'static str],
     /// Whether a `NULL` is drawn as an empty text or a 0 that can be typed
     /// over, rather than as the word. The quest form's six text columns
     /// default to `NULL` in the table's definition.
-    pub null_is_empty: bool,
+    pub(crate) null_is_empty: bool,
     /// The frame clock the undo stack folds a gesture by.
-    pub now: f64,
+    pub(crate) now: f64,
 }
 
 impl<'a> FieldCtx<'a> {
     /// A column drawn under its own name and type, keyed on the table, the
     /// row and the column.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         ui: &egui::Ui,
         edits: &Edits,
         table: &'static str,
@@ -603,7 +603,7 @@ impl<'a> FieldCtx<'a> {
 
     /// The column's value as the database holds it, or `None` for a row this
     /// project creates, which has nothing in the database to compare with.
-    pub fn in_database(&self) -> Option<String> {
+    pub(crate) fn in_database(&self) -> Option<String> {
         match self.creating {
             true => None,
             false => self.column.literal(self.row),
@@ -613,12 +613,12 @@ impl<'a> FieldCtx<'a> {
     /// The undo subject of an edit to this column. A value typed into the
     /// cell and one chosen in a dialog name the same subject, so the two fold
     /// into one undo entry.
-    pub fn subject(&self) -> String {
+    pub(crate) fn subject(&self) -> String {
         format!("{} {} {}", self.table, self.key.text(), self.column.name)
     }
 
     /// Where a dialog writes a value chosen for this column.
-    pub fn target(&self) -> ColumnTarget {
+    pub(crate) fn target(&self) -> ColumnTarget {
         ColumnTarget {
             table: self.table,
             key: self.key.clone(),
@@ -631,7 +631,7 @@ impl<'a> FieldCtx<'a> {
 
     /// Write a literal to the column, or clear the edit when the literal is
     /// what the database holds: a statement for it would change nothing.
-    pub fn write(&self, session: &mut EditSession, written: String, now: f64) {
+    pub(crate) fn write(&self, session: &mut EditSession, written: String, now: f64) {
         let value = match Some(&written) == self.in_database().as_ref() {
             true => None,
             false => Some(written),
@@ -766,15 +766,15 @@ pub(in crate::ui) fn value_cell(
 /// What a renumbering box says beside itself. See [`entry_cell`].
 pub(in crate::ui) struct Renumber<'a> {
     /// The entry the row has in this project, which the box shows.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The entry the database holds the row at.
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// Whether this project creates the row.
-    pub is_new: bool,
+    pub(crate) is_new: bool,
     /// What a row is called: "creature", "game object", "item", "quest".
-    pub noun: &'a str,
+    pub(crate) noun: &'a str,
     /// The hover text: what Apply renumbers with the row, and what it cannot.
-    pub reaches: String,
+    pub(crate) reaches: String,
 }
 
 /// The `entry` box of a form whose row can be renumbered, and the sentence
@@ -858,7 +858,7 @@ pub(in crate::ui) fn remove_keep(ui: &mut egui::Ui, life: Life, about: &str) -> 
 /// What is done to a row of a server table's list other than editing a
 /// column: what the three buttons over the list do, and a row's menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RowAct {
+pub(crate) enum RowAct {
     Open,
     Copy,
     Remove,
@@ -868,7 +868,7 @@ pub enum RowAct {
 
 /// What removing a row is called, with what it comes to. A menu acts on a
 /// row whose form may not be open, so the consequence is in the name.
-pub fn remove_label(word: &str, claim: vale_mangos::row::Life) -> String {
+pub(crate) fn remove_label(word: &str, claim: vale_mangos::row::Life) -> String {
     use vale_mangos::row::Life;
     match claim {
         Life::Delete => "Keep: clear the removal mark".to_string(),
@@ -883,7 +883,7 @@ pub fn remove_label(word: &str, claim: vale_mangos::row::Life) -> String {
 ///
 /// Copy is offered on the open row only: a copy is made from the whole row
 /// as it was read, and the list holds a few columns of each row.
-pub fn row_menu(
+pub(crate) fn row_menu(
     ui: &mut egui::Ui,
     word: &str,
     entry: u32,

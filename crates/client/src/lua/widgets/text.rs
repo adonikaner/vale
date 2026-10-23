@@ -218,14 +218,14 @@ pub fn plain(line: &str) -> String {
 /// own mean advance is 0.61 of the em. Kept because it is the honest answer to
 /// "how wide is this, with nothing to measure it with", which is the state of
 /// the login screen and of every bare-interpreter test in this directory.
-pub const FALLBACK_RATIO: f64 = 0.5;
+pub(crate) const FALLBACK_RATIO: f64 = 0.5;
 
 /// The game's own faces, once something has read them out of the archives.
 ///
 /// Held as the Lua state's app data rather than passed: see the module comment.
 /// Installed at the same moment the interface is, by
 /// [`super::super::host::LuaHost::load_interface`].
-pub fn install_faces(lua: &mlua::Lua, faces: vale_assets::interface::font::Faces) {
+pub(crate) fn install_faces(lua: &mlua::Lua, faces: vale_assets::interface::font::Faces) {
     lua.set_app_data(faces);
 }
 
@@ -314,7 +314,7 @@ pub fn rows(lua: &mlua::Lua, font: Option<&str>, height: f64, text: &str, max_wi
 /// measured answer is not always larger than the height: Arial Narrow's line
 /// box is 0.98 of its em, so the chat's own lines sit *closer* than the
 /// assumption had them.
-pub fn line_height(lua: &mlua::Lua, font: Option<&str>, height: f64) -> f64 {
+pub(crate) fn line_height(lua: &mlua::Lua, font: Option<&str>, height: f64) -> f64 {
     match lua
         .app_data_ref::<vale_assets::interface::font::Faces>()
         .as_deref()

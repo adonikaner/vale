@@ -118,24 +118,24 @@ pub struct DebugOverlay {
     pub wireframe: bool,
     /// Its line width in screen pixels. 1.0 is a hairline, which disappears on
     /// a busy frame; 2.0 survives a screenshot.
-    pub wireframe_width: f32,
+    pub(crate) wireframe_width: f32,
     /// Every `Aabb` in the scene, as a box. Bevy's own
     /// `AabbGizmoConfigGroup::draw_all`.
     ///
     /// This is what the culler sees, which is not always the mesh: a bad or
     /// stale `Aabb` is a model that vanishes when viewed from one side, and
     /// nothing else in the frame would say so.
-    pub aabbs: bool,
+    pub(crate) aabbs: bool,
     /// Every `Frustum` in the scene, as its six planes.
     ///
     /// Three cameras in this client are not the world's (the glue scene, the
     /// portraits and the present blit), and nothing else says which camera a
     /// view is on.
-    pub frustums: bool,
+    pub(crate) frustums: bool,
     /// The bounds each skinned mesh's joints contribute: the animated half of
     /// the same question. A pose that reaches outside them is a character
     /// that pops out of existence mid-swing.
-    pub skinned_bounds: bool,
+    pub(crate) skinned_bounds: bool,
     /// The solid triangles standing near the world's focus, floors in one
     /// colour and walls in the other. See the module note.
     pub collision: bool,
@@ -269,7 +269,7 @@ impl DebugOverlay {
 /// three lines each is inside a frame's budget and far more than
 /// [`DebugOverlay::collision_radius`]'s default produces; when the cap is
 /// reached, the panel says so rather than quietly drawing half a building.
-pub const MAX_COLLISION_TRIANGLES: usize = 10_000;
+pub(crate) const MAX_COLLISION_TRIANGLES: usize = 10_000;
 
 /// How many triangles the last collision draw wanted, and how many it drew.
 ///
@@ -323,9 +323,9 @@ impl WireframeSupported {
 /// See the module note: the plugin costs 0.104 ms a frame at 30,000 meshes
 /// with the switch off, and a cost paid by a switch nobody has touched has to
 /// remain subtractable. Nothing else in this client reads it.
-pub const SUPPRESS: &str = "VALE_NO_WIREFRAME";
+pub(crate) const SUPPRESS: &str = "VALE_NO_WIREFRAME";
 
-pub struct OverlayPlugin;
+pub(crate) struct OverlayPlugin;
 
 impl Plugin for OverlayPlugin {
     fn build(&self, app: &mut App) {

@@ -3,7 +3,8 @@
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
-use super::{CASTER_GUID, STAGE_LAYER, StageArea, StageUnit, TARGET_GUID};
+use vale_client::render::effect::EffectOf;
+use super::{STAGE_LAYER, StageArea, StageUnit};
 
 /// Light the stage with the world's own sun.
 ///
@@ -14,7 +15,7 @@ use super::{CASTER_GUID, STAGE_LAYER, StageArea, StageUnit, TARGET_GUID};
 ///
 /// The alternative, lights of the stage's own, draws the actors as a teal
 /// patchwork.
-pub fn light_the_stage(
+pub(crate) fn light_the_stage(
     mut commands: Commands,
     lights: Query<(Entity, Option<&RenderLayers>), With<DirectionalLight>>,
 ) {
@@ -41,15 +42,12 @@ pub fn light_the_stage(
 ///
 /// Most of a spell is not under the actor at all. The client spawns a
 /// missile, every particle emitter, every ribbon trail, every ground quad and
-/// every chain bolt at the world's root, tied to what owns them by an
-/// `owner` entity or a guid rather than by the hierarchy, so the walk above
-/// never reaches them. A stage that stamps only the descendants draws the
-/// bodies, the poses and the hand models and none of those root-level
-/// effects, so most spell effects do not render at all. Each of those kinds
-/// is found by its component and stamped when its owner is one of the stage's
-/// own; the owner join is the client's read-only accessor on each component.
-#[allow(clippy::too_many_arguments)]
-pub fn stamp_the_layer(
+/// every chain bolt at the world's root, so the walk above never reaches them.
+/// Each carries the client's [`EffectOf`], naming the entity it belongs to;
+/// an effect whose owner is one of the stage's own is stamped with its
+/// subtree, and the join is repeated until it finds nothing new, which is what
+/// reaches the emitters on a missile's model.
+pub(crate) fn stamp_the_layer(
     mut commands: Commands,
     roots: Query<
         Entity,
@@ -71,28 +69,29 @@ pub fn stamp_the_layer(
     >,
     children: Query<&Children>,
     already: Query<&RenderLayers>,
-    // A missile is not a child of its caster. `render::missiles` spawns it
-    // at the root of the world with a transform of its own. There are none in
-    // an editor that is not previewing, so this needs no proximity test: the
-    // only thing throwing one is the stage.
-    missiles: Query<Entity, With<vale_client::render::missiles::Missile>>,
-    emitters: Query<(Entity, &vale_client::render::particles::Emitter)>,
-    ribbons: Query<(Entity, &vale_client::render::ribbons::Ribbon)>,
-    decals: Query<(Entity, &vale_client::render::decals::GroundDecal)>,
-    bolts: Query<(Entity, &vale_client::render::lightning::Bolt)>,
+    effects: Query<(Entity, &EffectOf)>,
 ) {
     let layer = RenderLayers::from_layers(&[0, STAGE_LAYER]);
     let world_only = RenderLayers::layer(0);
-    // Everything that hangs under a stage root or a missile, as a set — the
-    // owners the root-level effects are matched against.
+    // Everything that hangs under a stage root, and every effect owned by
+    // something in the set, with its subtree.
     let mut ours: std::collections::HashSet<Entity> = std::collections::HashSet::new();
     // The mannequin's own body, when it is to be kept off the stage: its
     // descendants that are not under one of its hung roots.
     let mut hidden: std::collections::HashSet<Entity> = std::collections::HashSet::new();
-    for root in roots.iter().chain(missiles.iter()) {
+    for root in &roots {
         ours.insert(root);
-        for entity in children.iter_descendants(root) {
-            ours.insert(entity);
+        ours.extend(children.iter_descendants(root));
+    }
+    loop {
+        let before = ours.len();
+        for (entity, effect) in &effects {
+            if ours.contains(&effect.owner()) && ours.insert(entity) {
+                ours.extend(children.iter_descendants(entity));
+            }
+        }
+        if ours.len() == before {
+            break;
         }
     }
     if lab.alone {
@@ -103,7 +102,7 @@ pub fn stamp_the_layer(
                 shown.extend(children.iter_descendants(hung));
             }
             // The body minus the effect. The stage's other actors are not
-            // touched, and neither is a missile.
+            // touched, and neither is an effect at the world root.
             hidden.insert(root);
             hidden.extend(
                 children
@@ -112,56 +111,14 @@ pub fn stamp_the_layer(
             );
         }
     }
-    let stamp = |entity: Entity, layer: &RenderLayers, commands: &mut Commands| {
-        if already.get(entity).is_ok_and(|had| had == layer) {
-            return;
-        }
-        commands.entity(entity).insert(layer.clone());
-    };
     for &entity in &ours {
         let wanted = match hidden.contains(&entity) {
             true => &world_only,
             false => &layer,
         };
-        stamp(entity, wanted, &mut commands);
-    }
-    // The root-level effects, by owner. A geometry-model emitter's instances
-    // are its children, which the descendant walk covers.
-    let mut owned: Vec<Entity> = Vec::new();
-    owned.extend(
-        emitters
-            .iter()
-            .filter(|(_, e)| ours.contains(&e.owner()))
-            .map(|(entity, _)| entity),
-    );
-    owned.extend(
-        ribbons
-            .iter()
-            .filter(|(_, r)| ours.contains(&r.owner()))
-            .map(|(entity, _)| entity),
-    );
-    owned.extend(
-        decals
-            .iter()
-            .filter(|(_, d)| ours.contains(&d.owner()))
-            .map(|(entity, _)| entity),
-    );
-    owned.extend(
-        bolts
-            .iter()
-            .filter(|(_, bolt)| {
-                bolt.points().first().is_some_and(|guid| {
-                    *guid == CASTER_GUID
-                        || *guid == TARGET_GUID
-                        || *guid == crate::preview::lab::MANNEQUIN_GUID
-                })
-            })
-            .map(|(entity, _)| entity),
-    );
-    for entity in owned {
-        stamp(entity, &layer, &mut commands);
-        for child in children.iter_descendants(entity) {
-            stamp(child, &layer, &mut commands);
+        if already.get(entity).is_ok_and(|had| had == wanted) {
+            continue;
         }
+        commands.entity(entity).insert(wanted.clone());
     }
 }

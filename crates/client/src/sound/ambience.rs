@@ -47,13 +47,13 @@ use bevy::prelude::*;
 const AMBIENCE_FADE_SECS: f32 = 5.0;
 
 #[derive(Resource, Default)]
-pub struct AmbienceState {
+pub(crate) struct AmbienceState {
     /// The looping voice and the `SoundEntries` id it is looping, as the
     /// reference keeps them.
     playing: Option<(Entity, u32)>,
 }
 
-pub struct AmbiencePlugin;
+pub(crate) struct AmbiencePlugin;
 
 impl Plugin for AmbiencePlugin {
     fn build(&self, app: &mut App) {

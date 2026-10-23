@@ -37,7 +37,7 @@ const VALUE: f32 = 90.0;
 
 /// Open the lab on the effect row that is open, with what the tables say
 /// about it: its name, its model, its scale, and where it is used.
-pub fn open_on(
+pub(crate) fn open_on(
     lab: &mut Lab,
     stage: &mut Stage,
     browser: &mut tables::browser::Browser,
@@ -49,7 +49,7 @@ pub fn open_on(
 
 /// Open the model view on the effect row that is open: the same as
 /// [`open_on`], with the model shown by itself.
-pub fn open_alone(
+pub(crate) fn open_alone(
     lab: &mut Lab,
     stage: &mut Stage,
     browser: &mut tables::browser::Browser,
@@ -94,7 +94,7 @@ fn open_in(
 }
 
 /// The card: the body, the point, the nine numbers, the export.
-pub fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: usize) {
+pub(crate) fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, record: usize) {
     egui::Frame::new()
         .fill(theme::PANEL)
         .stroke(egui::Stroke::new(1.0, theme::LINE))
@@ -504,7 +504,7 @@ fn export(work: &mut Workspace<'_>, lab: &mut Lab, record: usize) {
 ///
 /// In the model view the arrows are not drawn and every press orbits; the
 /// title says which model is on show, and the foot carries the switches.
-pub fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab: &mut Lab) {
+pub(crate) fn pane(ui: &mut egui::Ui, work: &mut Workspace<'_>, stage: &mut Stage, lab: &mut Lab) {
     let now = work.now;
     stage.close();
     stage.lab = true;

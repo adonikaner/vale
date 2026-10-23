@@ -89,7 +89,7 @@ impl Friend {
 ///
 /// A short tail stops the walk rather than failing the packet: the friends
 /// already read out of a damaged body are still the server's answer.
-pub fn parse_friend_list(body: &[u8]) -> Option<Vec<Friend>> {
+pub(crate) fn parse_friend_list(body: &[u8]) -> Option<Vec<Friend>> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -131,7 +131,7 @@ fn read_friend(r: &mut Reader) -> Option<Friend> {
 }
 
 /// `SMSG_IGNORE_LIST` (107): guids, and nothing else at all.
-pub fn parse_ignore_list(body: &[u8]) -> Option<Vec<u64>> {
+pub(crate) fn parse_ignore_list(body: &[u8]) -> Option<Vec<u64>> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -200,31 +200,6 @@ impl FriendsResult {
             0x11 => FriendsResult::IgnoreAmbiguous,
             other => FriendsResult::Unknown(other),
         }
-    }
-
-    /// **Does this result change the friends list?**
-    ///
-    /// It has to be asked, because nothing re-sends the list:
-    /// `SMSG_FRIEND_LIST` arrives once at login and vmangos answers every later
-    /// add, removal and status change with this one packet. So the client keeps
-    /// its own copy and patches it, and this is what decides which copy.
-    pub fn touches_friends(self) -> bool {
-        matches!(
-            self,
-            FriendsResult::AddedOnline
-                | FriendsResult::AddedOffline
-                | FriendsResult::Removed
-                | FriendsResult::Online
-                | FriendsResult::Offline
-        )
-    }
-
-    /// …and the same question for the ignore list.
-    pub fn touches_ignores(self) -> bool {
-        matches!(
-            self,
-            FriendsResult::IgnoreAdded | FriendsResult::IgnoreRemoved
-        )
     }
 
     /// Does this result *remove* the named player from whichever list it is
@@ -304,7 +279,7 @@ pub struct FriendStatus {
 }
 
 /// `SMSG_FRIEND_STATUS` (104).
-pub fn parse_friend_status(body: &[u8]) -> Option<FriendStatus> {
+pub(crate) fn parse_friend_status(body: &[u8]) -> Option<FriendStatus> {
     let mut r = Reader::new(body);
     if !r.has(9) {
         return None;
@@ -405,14 +380,14 @@ pub fn parse_who(body: &[u8]) -> Option<WhoResults> {
 /// vmangos reads it as a `NullClientPacket`, so a body would be ignored rather
 /// than refused; it is spelled as an empty vector so that the one door every
 /// outbound packet goes through keeps its shape.
-pub fn friend_list_body() -> Vec<u8> {
+pub(crate) fn friend_list_body() -> Vec<u8> {
     Vec::new()
 }
 
 /// `CMSG_ADD_FRIEND` (105) — by **name**, because the client has no guid for
 /// somebody it has not met. The server looks the name up in its own player cache
 /// and answers `SMSG_FRIEND_STATUS` with a guid.
-pub fn add_friend_body(name: &str) -> Vec<u8> {
+pub(crate) fn add_friend_body(name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(name);
     w.buf
@@ -420,21 +395,21 @@ pub fn add_friend_body(name: &str) -> Vec<u8> {
 
 /// `CMSG_DEL_FRIEND` (106) — by **guid**, because by then the client has one.
 /// The asymmetry is the server's: `HandleDelFriendOpcode` reads an `ObjectGuid`.
-pub fn del_friend_body(guid: u64) -> Vec<u8> {
+pub(crate) fn del_friend_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
 }
 
 /// `CMSG_ADD_IGNORE` (108) — by name, as [`add_friend_body`].
-pub fn add_ignore_body(name: &str) -> Vec<u8> {
+pub(crate) fn add_ignore_body(name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(name);
     w.buf
 }
 
 /// `CMSG_DEL_IGNORE` (109) — by guid, as [`del_friend_body`].
-pub fn del_ignore_body(guid: u64) -> Vec<u8> {
+pub(crate) fn del_ignore_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -449,8 +424,8 @@ pub const MASK_ALL: u32 = 0xFFFF_FFFF;
 /// rather than have the request silently dropped: vmangos returns without
 /// answering when either is exceeded, which at this end looks exactly like a
 /// lost packet.
-pub const MAX_WHO_ZONES: usize = 10;
-pub const MAX_WHO_TERMS: usize = 4;
+pub(crate) const MAX_WHO_ZONES: usize = 10;
+pub(crate) const MAX_WHO_TERMS: usize = 4;
 
 /// What `/who` asks for.
 ///
@@ -500,7 +475,7 @@ impl Default for WhoRequest {
 /// whole. Exceeding either makes `HandleWhoOpcode` return without answering, and
 /// an unanswered who is indistinguishable from a lost packet at this end — the
 /// list simply never fills.
-pub fn who_body(request: &WhoRequest) -> Vec<u8> {
+pub(crate) fn who_body(request: &WhoRequest) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(request.level_min);
     w.u32(request.level_max);

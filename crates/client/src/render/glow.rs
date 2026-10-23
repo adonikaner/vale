@@ -124,14 +124,14 @@ const FFX_GLOW: &str = "ffxGlow";
 /// What the reference multiplies the squared blur by while the world is up.
 /// The `0.15` written beside it belongs to the wave variant this client
 /// does not draw.
-pub const AMOUNT: f32 = 0.4;
+pub(crate) const AMOUNT: f32 = 0.4;
 
 /// …and before it is: the `0.3` the config starts with, which is what the login and character screens are
 /// drawn through until the world is entered.
-pub const GLUE_AMOUNT: f32 = 0.3;
+pub(crate) const GLUE_AMOUNT: f32 = 0.3;
 
 /// The downsample the box pass makes, per axis.
-pub const DOWNSAMPLE: u32 = 4;
+pub(crate) const DOWNSAMPLE: u32 = 4;
 
 /// **The format the pass is written for**: the world camera's main texture
 /// under `CompositingSpace::Srgb`, whose bytes are the game's own. The three
@@ -143,17 +143,17 @@ const FORMAT: TextureFormat = TextureFormat::Rgba8Unorm;
 /// world camera, extracted to the render world every frame, and the one
 /// number both switches write. Zero is the pass's early-out.
 #[derive(Component, ExtractComponent, Clone, Copy, Default, ShaderType)]
-pub struct Glow {
+pub(crate) struct Glow {
     pub amount: f32,
     /// 1 while the player is a ghost and `ffxDeath` is on: the combine is
     /// `FFXDeath.bls` instead of `FFXGlow.bls`. See `glow_combine.wgsl`.
-    pub death: f32,
+    pub(crate) death: f32,
 }
 
 /// The CVar for the full-screen death effect, registered `"1"`.
 const FFX_DEATH: &str = "ffxDeath";
 
-pub struct GlowPlugin;
+pub(crate) struct GlowPlugin;
 
 impl Plugin for GlowPlugin {
     fn build(&self, app: &mut App) {

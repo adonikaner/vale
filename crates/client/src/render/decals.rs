@@ -98,7 +98,7 @@ const SLAB: f32 = 2.0;
 
 /// One flat ground quad of one attached model, re-projected onto the ground.
 #[derive(Component)]
-pub struct GroundDecal {
+pub(crate) struct GroundDecal {
     /// The attachment root this belongs to. Gone means [`retire_decals`]
     /// despawns this too — the emitters' rule, for the emitters' reason.
     owner: Entity,
@@ -120,14 +120,6 @@ pub struct GroundDecal {
     cached_hulls: usize,
 }
 
-impl GroundDecal {
-    /// **Whose this quad is** — the attachment root its life is tied to.
-    /// Read-only, for the reason `Emitter::owner` gives.
-    pub fn owner(&self) -> Entity {
-        self.owner
-    }
-}
-
 /// Build the entity for one ground quad. Nothing here is a child of anything;
 /// the tie to the model that owns it is [`GroundDecal::owner`].
 ///
@@ -144,7 +136,7 @@ impl GroundDecal {
 /// is invisible on the shipped population's commonest value — 1.00, which is
 /// what Arcane Explosion and every effect traced so far carries — which is
 /// exactly why it is written down rather than left to be found by eye later.
-pub fn spawn_ground_decal(
+pub(crate) fn spawn_ground_decal(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     owner: Entity,
@@ -156,6 +148,7 @@ pub fn spawn_ground_decal(
     let corners = quad.corners.map(axes::to_bevy);
     commands
         .spawn((
+            crate::render::effect::EffectOf(owner),
             GroundDecal {
                 owner,
                 joint,
@@ -191,9 +184,9 @@ pub fn spawn_ground_decal(
 /// ([`crate::render::selection`]) and a decal spawned after the projection has
 /// run is a frame of an unprojected mesh at the world origin — under the map.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DecalSet;
+pub(crate) struct DecalSet;
 
-pub struct DecalPlugin;
+pub(crate) struct DecalPlugin;
 
 impl Plugin for DecalPlugin {
     fn build(&self, app: &mut App) {

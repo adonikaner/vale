@@ -155,7 +155,7 @@ impl Falloff {
 /// so roughness grows the way every other mode's effect grows and an undo takes
 /// back one coherent shape. It is the same argument `ChunkFoliage`'s scatter
 /// makes for hashing a chunk's world position rather than keeping a seed.
-pub fn wobble(x: f32, y: f32, scale: f32) -> f32 {
+pub(crate) fn wobble(x: f32, y: f32, scale: f32) -> f32 {
     // A cell smaller than this is finer than the vertices can express, and zero
     // would divide by nothing.
     let scale = scale.max(0.5);

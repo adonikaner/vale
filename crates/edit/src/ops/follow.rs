@@ -32,7 +32,7 @@ use vale_assets::world::adt::placement_to_world;
 /// yards. A smooth or a flatten leaves most of the ground under the brush's
 /// rim moved by less than this, and a record rewritten for a thousandth of a
 /// yard is an undo entry full of moves nobody can see.
-pub const LEAST: f32 = 0.01;
+pub(crate) const LEAST: f32 = 0.01;
 
 /// The ground height under each placement of a tile, by the placement's
 /// `unique_id`. See [`standing`].

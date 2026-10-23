@@ -82,10 +82,10 @@
 use crate::row::Key;
 
 /// The per-spawn table, keyed by the creature's guid.
-pub const MOVEMENT: &str = "creature_movement";
+pub(crate) const MOVEMENT: &str = "creature_movement";
 
 /// …and the per-template one, keyed by the creature's entry.
-pub const MOVEMENT_TEMPLATE: &str = "creature_movement_template";
+pub(crate) const MOVEMENT_TEMPLATE: &str = "creature_movement_template";
 
 /// Every table this module writes.
 pub const TABLES: [&str; 2] = [MOVEMENT, MOVEMENT_TEMPLATE];
@@ -221,13 +221,8 @@ impl Node {
         self.orientation != NO_FACING
     }
 
-    /// The distance to another node, on the ground plane and in three
-    /// dimensions. The first is what a person reads off a map; the second is
-    /// what the creature walks.
-    pub fn flat_distance(&self, other: &Node) -> f32 {
-        ((other.x - self.x).powi(2) + (other.y - self.y).powi(2)).sqrt()
-    }
-
+    /// The distance to another node in three dimensions, which is what the
+    /// creature walks.
     pub fn distance(&self, other: &Node) -> f32 {
         ((other.x - self.x).powi(2) + (other.y - self.y).powi(2) + (other.z - self.z).powi(2)).sqrt()
     }

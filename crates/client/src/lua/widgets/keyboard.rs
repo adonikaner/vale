@@ -139,6 +139,7 @@ pub(in crate::lua) fn set_enabled(
 /// How many frames have ever declared themselves receivers — the census
 /// `vale-client --audit` prints, and the number that says whether the
 /// loader's two rules found anything at all.
+#[cfg(feature = "diagnostics")]
 pub(in crate::lua) fn receiver_names(lua: &mlua::Lua) -> Vec<String> {
     let Some(receivers) = lua
         .named_registry_value::<Option<mlua::Table>>(REG_RECEIVERS)
@@ -165,6 +166,7 @@ pub(in crate::lua) fn receiver_names(lua: &mlua::Lua) -> Vec<String> {
         .collect()
 }
 
+#[cfg(any(test, feature = "diagnostics"))]
 pub(in crate::lua) fn receiver_count(lua: &mlua::Lua) -> usize {
     lua.named_registry_value::<Option<mlua::Table>>(REG_RECEIVERS)
         .ok()
@@ -268,14 +270,6 @@ fn level_of(frame: &mlua::Table) -> i64 {
         .flatten()
         .unwrap_or(0)
 }
-
-/// The methods this module installs, sorted.
-///
-/// **Two, and the markup is where the flag actually comes from** — the same
-/// shape `EnableMouse` has: `EnableKeyboard(` is one call site in the whole
-/// directory (`StaticPopup.lua`, turning it off on a hidden dialog) against the
-/// attribute the loader reads. They are here for that call site and for addons.
-pub const METHODS: [&str; 2] = ["EnableKeyboard", "IsKeyboardEnabled"];
 
 /// Install the two.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {

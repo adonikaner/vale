@@ -26,9 +26,6 @@ use std::collections::HashMap;
 
 use super::dbc::Dbc;
 
-/// The row id the interface treats as plain, and the name it falls back to.
-pub const PARCHMENT: u32 = 1;
-
 /// `PageTextMaterial.dbc`, as a row id to its name.
 #[derive(Debug, Clone, Default)]
 pub struct PageMaterials(HashMap<u32, String>);

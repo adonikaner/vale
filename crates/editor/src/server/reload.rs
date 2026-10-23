@@ -94,7 +94,7 @@ const KEPT: usize = 32;
 
 /// What became of one command.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub enum Answer {
+pub(crate) enum Answer {
     /// Written down, with something else outstanding or no session to send on.
     #[default]
     Queued,
@@ -116,13 +116,14 @@ pub enum Answer {
 
 impl Answer {
     /// Whether this command is still going to change.
-    pub fn pending(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn pending(&self) -> bool {
         matches!(self, Answer::Queued | Answer::Waiting)
     }
 
     /// One line for a person: what happened, in the server's words where there
     /// are any.
-    pub fn line(&self, command: &str) -> String {
+    pub(crate) fn line(&self, command: &str) -> String {
         match self {
             Answer::Queued => format!("{command}: queued"),
             Answer::Waiting => format!("{command}: sent"),
@@ -139,26 +140,26 @@ impl Answer {
 
 /// One command, from written down to answered.
 #[derive(Debug, Clone)]
-pub struct Request {
+pub(crate) struct Request {
     /// The line as it goes on the wire, leading `.` included.
-    pub command: String,
+    pub(crate) command: String,
     /// What a confirmation has to name in backticks — the bare table name for
     /// a `.reload`. Empty for a command whose answer this cannot recognise, in
     /// which case the first system line to arrive is taken as the answer.
-    pub names: String,
+    pub(crate) names: String,
     /// When it went out, on the app's own clock.
-    pub sent_at: Option<f64>,
-    pub answer: Answer,
+    pub(crate) sent_at: Option<f64>,
+    pub(crate) answer: Answer,
     /// Every system line that arrived while it was outstanding, in order.
     ///
     /// Kept and not interpreted: a refusal is a `mangos_string` row, which a
     /// server may reword. See the module comment.
-    pub heard: Vec<String>,
+    pub(crate) heard: Vec<String>,
 }
 
 impl Request {
     /// `.reload <table>`, the only shape anything sends today.
-    pub fn table(table: &str) -> Self {
+    pub(crate) fn table(table: &str) -> Self {
         Self {
             command: format!(".reload {table}"),
             names: table.to_string(),
@@ -169,7 +170,7 @@ impl Request {
     }
 
     /// One line for a person — the command and what became of it.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         match (&self.answer, self.heard.first()) {
             // Nothing came back that answers it, but the server did say
             // something. That is nearly always the refusal, so it is shown in
@@ -182,13 +183,13 @@ impl Request {
 
 /// What has been said to the server and what came back.
 #[derive(Resource, Default)]
-pub struct Reloads {
+pub(crate) struct Reloads {
     /// Written down, not yet sent. One goes out at a time.
     queue: VecDeque<Request>,
     /// On the wire.
     outstanding: Option<Request>,
     /// The last [`KEPT`], newest last.
-    pub answered: Vec<Request>,
+    pub(crate) answered: Vec<Request>,
     /// Tables to reload as soon as there is a session to say it on — see
     /// [`Reloads::when_there_is_a_session`].
     deferred: Vec<String>,
@@ -206,13 +207,13 @@ impl Reloads {
     /// Queued rather than sent: the send is a system, so this can be called
     /// from anywhere that can reach the resource, including from a `&mut World`
     /// with no session in hand.
-    pub fn table(&mut self, table: &str) {
+    pub(crate) fn table(&mut self, table: &str) {
         self.ask(Request::table(table));
     }
 
     /// Queue any other GM line, for a command whose answer this file does not
     /// recognise.
-    pub fn ask(&mut self, request: Request) {
+    pub(crate) fn ask(&mut self, request: Request) {
         self.queue.push_back(request);
     }
 
@@ -230,7 +231,7 @@ impl Reloads {
     /// while the playtest is still logging in. The request waits for the
     /// character to be in the world and is sent on that frame.
     /// [`forget_the_deferred`] drops it when the playtest ends first.
-    pub fn when_there_is_a_session(&mut self, table: &str) {
+    pub(crate) fn when_there_is_a_session(&mut self, table: &str) {
         if !self.live {
             return;
         }
@@ -241,23 +242,19 @@ impl Reloads {
     }
 
     /// How many are waiting for a session.
-    pub fn deferred(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn deferred(&self) -> usize {
         self.deferred.len()
     }
 
     /// Whether anything is queued or on the wire.
-    pub fn busy(&self) -> bool {
+    pub(crate) fn busy(&self) -> bool {
         self.outstanding.is_some() || !self.queue.is_empty()
-    }
-
-    /// How many are still to be answered, for a status line.
-    pub fn pending(&self) -> usize {
-        self.queue.len() + usize::from(self.outstanding.is_some())
     }
 
     /// The status line's text: the outstanding command, or the last one
     /// answered.
-    pub fn status(&self) -> Option<String> {
+    pub(crate) fn status(&self) -> Option<String> {
         if let Some(out) = self.outstanding.as_ref() {
             return Some(match self.queue.len() {
                 0 => out.line(),
@@ -265,14 +262,6 @@ impl Reloads {
             });
         }
         self.answered.last().map(Request::line)
-    }
-
-    /// Everything, in the order it was asked — for a panel.
-    pub fn all(&self) -> impl Iterator<Item = &Request> {
-        self.answered
-            .iter()
-            .chain(self.outstanding.iter())
-            .chain(self.queue.iter())
     }
 
     /// Move the outstanding request to the history with its answer on it.
@@ -304,7 +293,7 @@ impl Reloads {
 ///
 /// An empty `names` matches any line. For a command whose confirmation is not
 /// known, the next line the server sends is taken as the answer.
-pub fn confirms(line: &str, names: &str) -> bool {
+pub(crate) fn confirms(line: &str, names: &str) -> bool {
     if names.is_empty() {
         return true;
     }
@@ -519,7 +508,7 @@ fn on_the_command_line(
     }
 }
 
-pub struct ReloadPlugin;
+pub(crate) struct ReloadPlugin;
 
 impl Plugin for ReloadPlugin {
     fn build(&self, app: &mut App) {

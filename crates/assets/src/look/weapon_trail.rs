@@ -40,7 +40,7 @@ pub const RING_PAIRS: usize = 64;
 
 /// The span, in milliseconds, the opacity step is computed over; see the
 /// module comment.
-pub const FADE_SPAN_MS: f32 = 300.0;
+pub(crate) const FADE_SPAN_MS: f32 = 300.0;
 
 /// One point on a weapon: a bone of the weapon's own skeleton and a position
 /// in model space, in the file's axes.

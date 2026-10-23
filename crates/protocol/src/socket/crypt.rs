@@ -13,7 +13,7 @@
 //! Both directions share the same 40-byte key K but keep independent (i, j)
 //! state. Encryption is enabled only *after* the unencrypted CMSG_AUTH_SESSION.
 
-pub struct HeaderCrypt {
+pub(crate) struct HeaderCrypt {
     key: [u8; 40],
     send_i: usize,
     send_j: u8,
@@ -46,7 +46,7 @@ impl HeaderCrypt {
     }
 
     /// Encrypt an outgoing 6-byte client header in place.
-    pub fn encrypt_send(&mut self, data: &mut [u8]) {
+    pub(crate) fn encrypt_send(&mut self, data: &mut [u8]) {
         if !self.enabled {
             return;
         }
@@ -60,7 +60,7 @@ impl HeaderCrypt {
     }
 
     /// Decrypt an incoming 4-byte server header in place.
-    pub fn decrypt_recv(&mut self, data: &mut [u8]) {
+    pub(crate) fn decrypt_recv(&mut self, data: &mut [u8]) {
         if !self.enabled {
             return;
         }

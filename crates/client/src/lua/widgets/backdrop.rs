@@ -67,7 +67,8 @@ const BORDER_COLOUR_KEY: &str = "__backdropBorderColour";
 /// `SetBackdropColor` 26, `SetBackdropBorderColor` 24, `SetBackdrop` 2,
 /// `GetBackdrop` and `GetBackdropColor` 0. The two getters exist for addons,
 /// not for the shipped files.
-pub const METHODS: [&str; 6] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 6] = [
     "GetBackdrop",
     "GetBackdropBorderColor",
     "GetBackdropColor",
@@ -89,21 +90,21 @@ const DEFAULT_EDGE: f32 = 16.0;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Backdrop {
     /// The tiled fill, inset by [`Backdrop::insets`].
-    pub bg: Option<String>,
+    pub(crate) bg: Option<String>,
     /// The eight-cell border strip; see [`vale_assets::interface::backdrop`].
     pub edge: Option<String>,
     /// Whether the background repeats at [`Backdrop::tile_size`] or is stretched
     /// over the whole inset rectangle.
     pub tile: bool,
-    pub tile_size: f32,
+    pub(crate) tile_size: f32,
     /// How big one border piece is drawn, in the interface's own units.
-    pub edge_size: f32,
+    pub(crate) edge_size: f32,
     /// `left, right, top, bottom`, all positive inwards.
-    pub insets: [f32; 4],
+    pub(crate) insets: [f32; 4],
     /// `SetBackdropColor`, which tints the fill.
     pub colour: [f32; 4],
     /// `SetBackdropBorderColor`, which tints the eight pieces.
-    pub border_colour: [f32; 4],
+    pub(crate) border_colour: [f32; 4],
 }
 
 impl Default for Backdrop {

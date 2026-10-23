@@ -97,14 +97,14 @@ const MINIMUM_SECS: f32 = 0.5;
 /// [`crate::interface::action`]'s drain — the destination map, which is the packet's whole
 /// content.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TransferPending(pub u32);
+pub(crate) struct TransferPending(pub(crate) u32);
 
 /// Whether the world is hidden, and behind what.
 ///
 /// The painter reads exactly two things off this — [`LoadingScreen::picture`]
 /// and [`LoadingScreen::progress`] — and holds no opinion about either.
 #[derive(Resource, Default)]
-pub struct LoadingScreen {
+pub(crate) struct LoadingScreen {
     up: Option<Raised>,
     /// The two DBCs, taken once on the first raise. Not at startup: opening the
     /// archive chain is ~19 files and the login screen should paint first, which
@@ -146,7 +146,7 @@ impl LoadingScreen {
     }
 }
 
-pub struct LoadingPlugin;
+pub(crate) struct LoadingPlugin;
 
 impl Plugin for LoadingPlugin {
     fn build(&self, app: &mut App) {

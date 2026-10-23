@@ -250,11 +250,11 @@ impl UnitAnswers for Live<'_, '_, '_> {
     }
 
     fn binder_in_range(&self) -> bool {
-        crate::interface::binder::binder_in_range(self.binder, self.units)
+        crate::interface::binder::binder_in_range(&self.binder, &self.units)
     }
 
     fn untrainer_in_range(&self) -> bool {
-        crate::interface::untrainer::untrainer_in_range(self.untrainer, self.units)
+        crate::interface::untrainer::untrainer_in_range(&self.untrainer, &self.units)
     }
 
     fn unit_exists(&self, token: &str) -> bool {

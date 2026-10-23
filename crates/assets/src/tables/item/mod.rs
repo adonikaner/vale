@@ -43,14 +43,14 @@ mod fields {
     /// `modelName[2]`: the attached models, for shoulders, weapons and helmets.
     /// Not drawn yet: an attachment needs `M2Attachment`, which the M2 parser
     /// skips.
-    pub const MODEL_NAME: usize = 1;
-    pub const MODEL_TEXTURE: usize = 3;
+    pub(crate) const MODEL_NAME: usize = 1;
+    pub(crate) const MODEL_TEXTURE: usize = 3;
     /// `inventoryIcon`. The 1.12 table has one icon field, not two.
     ///
     /// Every field between this one and the textures is placed relative to it:
     /// reading two icon fields shifts all of them by one. See
     /// [`GEOSET_GROUP`].
-    pub const INVENTORY_ICON: usize = 5;
+    pub(crate) const INVENTORY_ICON: usize = 5;
     /// Three variant numbers. The slot the item is worn in decides their
     /// groups.
     ///
@@ -77,7 +77,7 @@ mod fields {
     /// bare feet, a robe has no skirt, and gloves have no cuffs, while every
     /// path resolves, every texture is painted onto the skin underneath, and
     /// no warning is logged.
-    pub const GEOSET_GROUP: usize = 6;
+    pub(crate) const GEOSET_GROUP: usize = 6;
     /// `flags`, then `spellVisualID`, then the sound group: the three fields
     /// between the variants and the helmet masks. They are named because they
     /// show where the block ends.
@@ -100,15 +100,15 @@ mod fields {
     ///   nothing for a value outside that table.
     /// * 8,274 rows hold 7, which is `PickUpCloth_Leather`, the largest class
     ///   of item in the game.
-    pub const GROUP_SOUND: usize = 11;
+    pub(crate) const GROUP_SOUND: usize = 11;
     /// Which of the wearer's own geosets a helmet hides — hair, ears, facial
     /// hair.
-    pub const HELMET_GEOSET_VIS: usize = 12;
+    pub(crate) const HELMET_GEOSET_VIS: usize = 12;
     /// The eight body-component textures, in [`Component`] order.
     pub const TEXTURE: usize = 14;
     /// `itemVisual`, the last field: 14 + 8 = 22, and the table is 23 wide.
     /// An `ItemVisuals.dbc` id; see [`super::ItemDisplays::item_visual`].
-    pub const ITEM_VISUAL: usize = 22;
+    pub(crate) const ITEM_VISUAL: usize = 22;
     /// How many fields the 1.12 table has, which every constant above is
     /// checked against.
     pub const COUNT: usize = 23;
@@ -667,7 +667,7 @@ impl Slot {
     /// when the chest also has one. So a robe's skirt covers the boots, and a
     /// bootleg covers the trousers. `look` is this item's row and
     /// `chest_skirt` whether the worn chest has a skirt.
-    pub fn paint_priority(
+    pub(crate) fn paint_priority(
         self,
         component: Component,
         look: &ItemAppearance,
@@ -782,7 +782,7 @@ impl Slot {
     /// Only the head is: a helm has to fit a tauren's muzzle and a gnome's
     /// skull, so the archive holds sixteen of each. Shoulders sit outside the
     /// body and ship once; 3,496 of them resolve from the row's own name.
-    pub fn cut_per_race(self) -> bool {
+    pub(crate) fn cut_per_race(self) -> bool {
         matches!(self, Slot::Head)
     }
 
@@ -790,7 +790,7 @@ impl Slot {
     ///
     /// Left first, then right: the order `modelName` is written in, which the
     /// file names show and `vale attach` checks over the whole table.
-    pub fn attachment_points(self) -> &'static [u32] {
+    pub(crate) fn attachment_points(self) -> &'static [u32] {
         use crate::world::m2::attach;
         match self {
             Slot::Head => &[attach::HELM],
@@ -1052,26 +1052,26 @@ pub enum WeaponAnim {
 /// `ItemSubclassWeapon`, transcribed from vmangos `ItemPrototype.h`. Only the
 /// ones that pick a different animation are named.
 mod weapon_subclass {
-    pub const AXE: u8 = 0;
-    pub const AXE2: u8 = 1;
-    pub const BOW: u8 = 2;
-    pub const GUN: u8 = 3;
-    pub const MACE: u8 = 4;
-    pub const MACE2: u8 = 5;
-    pub const POLEARM: u8 = 6;
-    pub const SWORD: u8 = 7;
-    pub const SWORD2: u8 = 8;
-    pub const STAFF: u8 = 10;
+    pub(crate) const AXE: u8 = 0;
+    pub(crate) const AXE2: u8 = 1;
+    pub(crate) const BOW: u8 = 2;
+    pub(crate) const GUN: u8 = 3;
+    pub(crate) const MACE: u8 = 4;
+    pub(crate) const MACE2: u8 = 5;
+    pub(crate) const POLEARM: u8 = 6;
+    pub(crate) const SWORD: u8 = 7;
+    pub(crate) const SWORD2: u8 = 8;
+    pub(crate) const STAFF: u8 = 10;
     pub const EXOTIC: u8 = 11;
-    pub const EXOTIC2: u8 = 12;
-    pub const FIST: u8 = 13;
-    pub const MISC: u8 = 14;
-    pub const DAGGER: u8 = 15;
-    pub const THROWN: u8 = 16;
-    pub const SPEAR: u8 = 17;
-    pub const CROSSBOW: u8 = 18;
-    pub const WAND: u8 = 19;
-    pub const FISHING_POLE: u8 = 20;
+    pub(crate) const EXOTIC2: u8 = 12;
+    pub(crate) const FIST: u8 = 13;
+    pub(crate) const MISC: u8 = 14;
+    pub(crate) const DAGGER: u8 = 15;
+    pub(crate) const THROWN: u8 = 16;
+    pub(crate) const SPEAR: u8 = 17;
+    pub(crate) const CROSSBOW: u8 = 18;
+    pub(crate) const WAND: u8 = 19;
+    pub(crate) const FISHING_POLE: u8 = 20;
 }
 
 impl WeaponAnim {
@@ -1295,7 +1295,8 @@ const SHEATHETYPE_SHIELD: u8 = 4;
 /// A piece whose file is not there costs its own component and nothing else,
 /// the same rule as for a missing `CharSections` layer. What shows is the skin
 /// underneath, which is a bare arm rather than a hole.
-pub fn item_layers(
+#[cfg(test)]
+pub(crate) fn item_layers(
     table: &ItemDisplays,
     gender: u8,
     items: &[Equipped],
@@ -1312,7 +1313,7 @@ pub fn item_layers(
 /// six layers in place of its own two textures. A preview paints them after
 /// every item when no guild tabard did, because the designer shows the
 /// design on a character who wears no tabard.
-pub fn item_layers_with_emblem(
+pub(crate) fn item_layers_with_emblem(
     table: &ItemDisplays,
     gender: u8,
     items: &[Equipped],

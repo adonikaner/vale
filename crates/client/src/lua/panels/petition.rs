@@ -54,7 +54,8 @@ use crate::lua::host::LuaHost;
 
 /// The functions this file registers, sorted. Checked against [`register`]
 /// by `every_verb_is_registered`.
-pub const VERBS: [&str; 13] = [
+#[cfg(test)]
+pub(crate) const VERBS: [&str; 13] = [
     "BuyGuildCharter",
     "CanSignPetition",
     "CloseGuildRegistrar",
@@ -72,12 +73,12 @@ pub const VERBS: [&str; 13] = [
 
 /// The most bytes a guild name may have. `GuildRegistrarFrameEditBox` and the
 /// `RENAME_GUILD` popup both allow 24 letters.
-pub const MAX_NAME_BYTES: usize = 24;
+pub(crate) const MAX_NAME_BYTES: usize = 24;
 
 /// The `flags` bit of a petition record that marks a guild charter.
 /// `GetPetitionInfo` answers `"charter"` for a record with it and
 /// `"petition"` for one without.
-pub const FLAG_CHARTER: u32 = 1;
+pub(crate) const FLAG_CHARTER: u32 = 1;
 
 /// A press the interface made, for [`crate::interface::petition`] to act on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,20 +118,20 @@ pub struct Open {
 /// The charter state the interface reads, shared between the interpreter and
 /// the ECS.
 #[derive(Default)]
-pub struct Charter {
+pub(crate) struct Charter {
     /// The guild registrar the registrar window is open at.
-    pub registrar: Option<u64>,
+    pub(crate) registrar: Option<u64>,
     /// What that registrar sells: the first entry of its
     /// `SMSG_PETITION_SHOWLIST`.
     pub offer: Option<CharterOffer>,
     /// The open charter.
-    pub petition: Option<Open>,
+    pub(crate) petition: Option<Open>,
     /// Every `SMSG_PETITION_QUERY_RESPONSE` received, by petition id.
     pub records: HashMap<u32, PetitionQuery>,
     /// The character's own guid and whether it is in a guild, which decide
     /// `CanSignPetition` and `isOriginator`.
-    pub own_guid: u64,
-    pub in_guild: bool,
+    pub(crate) own_guid: u64,
+    pub(crate) in_guild: bool,
     /// Player names by guid, for the owner and the signers. Written by
     /// [`crate::interface::petition`] from the name cache.
     pub names: HashMap<u64, String>,
@@ -144,7 +145,7 @@ impl Charter {
 
     /// The guids whose names the open charter shows: its owner and its
     /// signers.
-    pub fn named_guids(&self) -> Vec<u64> {
+    pub(crate) fn named_guids(&self) -> Vec<u64> {
         let Some(open) = &self.petition else {
             return Vec::new();
         };
@@ -189,7 +190,7 @@ impl Charter {
 /// over [`MAX_NAME_BYTES`]. Its checks on the characters themselves are not;
 /// the server makes its own and answers a name it refuses with
 /// `SMSG_GUILD_COMMAND_RESULT`.
-pub fn name_fault(name: &str) -> Option<&'static str> {
+pub(crate) fn name_fault(name: &str) -> Option<&'static str> {
     if name.is_empty() {
         Some("ERR_GUILD_ENTER_NAME")
     } else if name.len() > MAX_NAME_BYTES {
@@ -200,7 +201,7 @@ pub fn name_fault(name: &str) -> Option<&'static str> {
 }
 
 pub type Held = Rc<RefCell<Charter>>;
-pub type Queue = Rc<RefCell<Vec<Press>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<Press>>>;
 
 /// Register the thirteen functions.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

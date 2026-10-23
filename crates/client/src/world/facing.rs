@@ -246,7 +246,7 @@ const DEFAULT_TURN_RATE: f32 = std::f32::consts::PI;
 /// How a standing body follows its aim — the reference's own split, plus the
 /// one case this client turns a unit on its own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Chase {
+pub(crate) enum Chase {
     /// Everybody but the mover: the whole gap in one frame, and the step it
     /// took counts. See the module comment for why.
     Snap,
@@ -268,7 +268,7 @@ pub enum Chase {
 /// **game object** — a Wanted poster, a mailbox, a quest board, each of which
 /// opens a window and takes the token — has no body to turn and must not be
 /// rotated toward whoever reads it.
-pub fn turned_by_client(
+pub(crate) fn turned_by_client(
     kind: vale_protocol::state::update::ObjectType,
     moving: bool,
     is_self: bool,
@@ -292,7 +292,7 @@ pub struct Body {
     /// **Held for [`SHUFFLE_HOLD`] past the last step rather than cleared on the
     /// first still frame**, which is the whole of what stops the foot-shuffle
     /// flickering at the mouse's report rate. See the module comment.
-    pub turning: u32,
+    pub(crate) turning: u32,
     /// Seconds since the body last took a step worth [`STEP_FLOOR`].
     ///
     /// Private: it is the hold's own clock and nothing outside decides on it.

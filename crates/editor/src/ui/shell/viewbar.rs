@@ -92,9 +92,9 @@ use vale_client::render::overlay::{CollisionDrawn, DebugOverlay, WireframeSuppor
 /// nearest building.
 /// Both are on `DebugOverlay`, which every host may set for itself.
 #[cfg(feature = "diagnostics")]
-pub const COLLISION_RADIUS: f32 = 200.0;
+pub(crate) const COLLISION_RADIUS: f32 = 200.0;
 #[cfg(feature = "diagnostics")]
-pub const COLLISION_TRIANGLES: usize = 150_000;
+pub(crate) const COLLISION_TRIANGLES: usize = 150_000;
 
 /// The radius the control on the bar may reach, in yards.
 #[cfg(feature = "diagnostics")]
@@ -105,7 +105,7 @@ const COLLISION_RADIUS_RANGE: std::ops::RangeInclusive<f32> = 25.0..=1000.0;
 /// radius and cap at the editor's own values. The bar's `reset` returns to
 /// this rather than to the client's defaults.
 #[cfg(feature = "diagnostics")]
-pub fn editor_overlay(list: Option<&str>) -> DebugOverlay {
+pub(crate) fn editor_overlay(list: Option<&str>) -> DebugOverlay {
     let mut overlay = match list {
         Some(list) => DebugOverlay::with(list),
         None => DebugOverlay::default(),
@@ -133,7 +133,7 @@ const PICTURE: f32 = 24.0;
 /// by. `short` is drawn when the switch has no icon.
 ///
 /// A label absent from this table is drawn from [`initials`].
-pub const ART: [(&str, &str); 32] = [
+pub(crate) const ART: [(&str, &str); 32] = [
     // --- the world, in the order the frame is built ---
     ("fog", "FOG"),
     ("sky dome", "SKY"),
@@ -182,7 +182,8 @@ fn art(label: &str) -> String {
 
 /// The label of every button this bar can draw: the client's three switch
 /// lists and the navmesh. [`super::icons`] checks its icon names against it.
-pub fn names() -> Vec<&'static str> {
+#[cfg(test)]
+pub(crate) fn names() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = WORLD.iter().map(|(label, _)| *label).collect();
     names.extend(FRAME.iter().map(|(_, label, _)| *label));
     #[cfg(feature = "diagnostics")]
@@ -219,45 +220,45 @@ fn initials(label: &str) -> String {
 /// these borrow the caller's copies, and `ui::draw` writes each one back only
 /// if it differs from the resource. The navmesh switch is not copied, because
 /// nothing reads its change flag.
-pub struct Bar<'a> {
-    pub world: &'a mut WorldTuning,
-    pub frame: &'a mut RenderTuning,
+pub(crate) struct Bar<'a> {
+    pub(crate) world: &'a mut WorldTuning,
+    pub(crate) frame: &'a mut RenderTuning,
     #[cfg(feature = "diagnostics")]
-    pub overlay: &'a mut DebugOverlay,
+    pub(crate) overlay: &'a mut DebugOverlay,
     #[cfg(feature = "diagnostics")]
-    pub wireframe: &'a WireframeSupported,
+    pub(crate) wireframe: &'a WireframeSupported,
     /// What the collision overlay drew last frame, for the radius control's
     /// hover text.
     #[cfg(feature = "diagnostics")]
-    pub drawn: &'a CollisionDrawn,
+    pub(crate) drawn: &'a CollisionDrawn,
     /// The server's navmesh, which is the editor's own overlay rather than
     /// the client's. See [`crate::navmesh`].
-    pub navmesh: &'a mut crate::navmesh::Navmesh,
+    pub(crate) navmesh: &'a mut crate::navmesh::Navmesh,
     /// The ground guides. A copy, written back by the caller when it changed.
-    pub guides: &'a mut crate::tools::guides::Guides,
+    pub(crate) guides: &'a mut crate::tools::guides::Guides,
     /// Whether the top-down map view is on. A copy, written back by the caller
     /// when it changed. See [`crate::camera::TopDown`].
-    pub map_view: &'a mut bool,
+    pub(crate) map_view: &'a mut bool,
     /// Whether W and S follow the line of sight. A copy, written back by the
     /// caller when it changed. See [`crate::camera::Movement`].
-    pub flight: &'a mut bool,
+    pub(crate) flight: &'a mut bool,
     /// Whether the editor is editing. The map view is the editor camera's, so
     /// it is unavailable during a playtest.
-    pub editing: bool,
+    pub(crate) editing: bool,
     /// Whether the Areas tool is drawing its own wash, which takes the place
     /// of the texture count while it is. The menu says so.
-    pub areas_shown: bool,
+    pub(crate) areas_shown: bool,
     /// `--guides-menu`: open the Guides menu, which a scripted run cannot
     /// press.
-    pub open_guides: bool,
+    pub(crate) open_guides: bool,
     /// The world switches as the editor sets them in its current state, which
     /// is what a button's "moved" mark and `reset` measure against. See
     /// [`crate::playtest::world_baseline`].
-    pub baseline: &'a WorldTuning,
-    pub icons: &'a Icons,
+    pub(crate) baseline: &'a WorldTuning,
+    pub(crate) icons: &'a Icons,
 }
 
-pub fn draw(ui: &mut Ui, bar: &mut Bar) {
+pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
     // Wrapped, not scrolled: thirty-two buttons at 32 points with 3 between
     // them are about 1,120 points before the rules and `reset`, which fits one
     // row on a full-width window, and a narrow window still shows all of them
@@ -657,7 +658,7 @@ fn toggle(
 /// With the map view on, `--map-view` is echoed and the five switches it
 /// turns off are measured against a baseline that has them off, so they are
 /// not echoed again as `--without`.
-pub fn scripted(
+pub(crate) fn scripted(
     world: &WorldTuning,
     baseline: &WorldTuning,
     #[cfg(feature = "diagnostics")] overlay: &DebugOverlay,

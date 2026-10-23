@@ -105,7 +105,7 @@ pub struct WorldMapState {
     /// is common and reads as open country. Nothing about the *zone* cares, and
     /// the minimap does not read it: [`super::minimap`] decides indoors from the
     /// floor under the feet, as [`Self::outdoors`] does.
-    pub indoors: bool,
+    pub(crate) indoors: bool,
     /// **Whether the character is under open sky for the rules that care** —
     /// a mount, and every outdoor-only or indoor-only spell.
     ///
@@ -116,7 +116,7 @@ pub struct WorldMapState {
     /// own test instead — the group the floor underfoot belongs to, read for
     /// `MOGP` `0x8000` — see [`vale_assets::world::wmo::outdoors_at`], which
     /// states the rule and its two sources.
-    pub outdoors: bool,
+    pub(crate) outdoors: bool,
     /// **What this place sounds like** — the ambience, the zone music and the
     /// intro fanfare, already resolved through all three levels: the building's
     /// own columns, then the area's row, then the zone's, **a column at a
@@ -175,7 +175,7 @@ impl Default for WorldMapState {
 /// `AreaTable` and the *saying* needs `GlobalStrings.lua`, and those are two
 /// different resources in two different systems.
 #[derive(Message, Debug, Clone)]
-pub struct Discovered {
+pub(crate) struct Discovered {
     pub name: String,
     pub experience: u32,
 }
@@ -187,7 +187,7 @@ pub struct Discovered {
 /// every other packet's answer is one: the parse runs on the session thread and
 /// the state is a Bevy resource, and there is exactly one place the two meet.
 #[derive(Message, Debug, Clone)]
-pub struct PoiAnswer {
+pub(crate) struct PoiAnswer {
     pub poi: vale_assets::tables::areapoi::GossipPoi,
 }
 
@@ -203,7 +203,7 @@ pub struct PoiAnswer {
 /// character's own; a flag named in Stormwind and then carried to Kalimdor
 /// would otherwise be drawn at the same yards on the wrong continent.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct MapLandmarks {
+pub(crate) struct MapLandmarks {
     pub gossip: Option<vale_assets::tables::areapoi::GossipPoi>,
     /// The map the character was standing on when it arrived.
     pub map: u32,
@@ -245,7 +245,7 @@ fn take_poi(
     }
 }
 
-pub struct WorldMapPlugin;
+pub(crate) struct WorldMapPlugin;
 
 impl Plugin for WorldMapPlugin {
     fn build(&self, app: &mut App) {
@@ -684,7 +684,7 @@ fn building_here<'a>(
 ///
 /// Public because the interface calls the verb: `WorldMapFrame`'s own
 /// `ToggleWorldMap` runs it every time the panel is opened.
-pub fn aim_at_current_zone(
+pub(crate) fn aim_at_current_zone(
     assets: &crate::assets::GameAssets,
     state: &mut WorldMapState,
     map: u32,

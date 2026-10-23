@@ -80,22 +80,22 @@ pub struct TrainerLine {
     /// `header` for a grouping row, else the state's own word.
     pub kind: String,
     pub name: String,
-    pub sub_text: String,
+    pub(crate) sub_text: String,
     /// A header's group is only ever asked about this way.
     pub expanded: bool,
     pub icon: Option<String>,
     pub description: String,
     /// Copper, then the two point costs.
     pub cost: (u32, u32, u32),
-    pub level_req: u32,
+    pub(crate) level_req: u32,
     /// `(skill line name, rank, met)`; `None` for no such requirement.
-    pub skill_req: Option<(String, u32, bool)>,
+    pub(crate) skill_req: Option<(String, u32, bool)>,
     /// `(spell name, known)` per prerequisite that is set.
-    pub ability_reqs: Vec<(String, bool)>,
+    pub(crate) ability_reqs: Vec<(String, bool)>,
     /// What `GetTrainerServiceSkillLine` answers — the group's own title.
-    pub skill_line: String,
-    pub learn_spell: bool,
-    pub learn_pet_spell: bool,
+    pub(crate) skill_line: String,
+    pub(crate) learn_spell: bool,
+    pub(crate) learn_pet_spell: bool,
 }
 
 /// **The reads this module registers**, for the count that measures the gap.
@@ -287,7 +287,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trainer::TrainerPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trainer::TrainerPress>>>;
 
 /// Register the six writes. Unscoped — they record.
 ///

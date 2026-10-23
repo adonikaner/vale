@@ -77,7 +77,7 @@ pub(super) struct Drawn {
     reported: bool,
 }
 
-pub struct FrameXmlPlugin;
+pub(crate) struct FrameXmlPlugin;
 
 impl Plugin for FrameXmlPlugin {
     fn build(&self, app: &mut App) {

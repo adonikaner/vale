@@ -68,8 +68,9 @@ use std::sync::Arc;
 /// accumulates behind a shut panel is about sampling work, of which there is
 /// none here.
 #[derive(Resource, Default, Clone, Copy)]
-pub struct HullWork {
+pub(crate) struct HullWork {
     /// Game-object hulls whose placement no longer matches their object.
+    #[cfg(feature = "diagnostics")]
     pub wanted: usize,
     /// …and how many of those the frame **settled** — which is not quite the
     /// same as rebuilt, and the difference is deliberate. A `.wmo` game object
@@ -80,7 +81,7 @@ pub struct HullWork {
     /// intended. What is *not* counted is a candidate the loop could not decide
     /// yet — no display id, an unresolved display, a model still loading — and
     /// that is right: it will be asked again next frame.
-    pub paid: usize,
+    pub(crate) paid: usize,
     /// The largest [`staleness`] left unpaid, in yards. Zero when the budget
     /// covered everything, which is the ordinary case and the one to expect.
     pub worst: f32,
@@ -229,6 +230,7 @@ pub(super) fn solidify_objects(
         .collect();
     spend_order(&mut changed);
     *work = HullWork {
+        #[cfg(feature = "diagnostics")]
         wanted: changed.len(),
         paid: 0,
         worst: 0.0,

@@ -102,7 +102,7 @@ use vale_edit::adt::AdtFile;
 use vale_edit::ops::chunks::{self as grid, block, border, by_tile, released, repaint, texture_id, tile_cells, Written};
 use vale_edit::ops::Edit;
 
-pub use vale_edit::ops::chunks::{copy, Cell, Census, Clip, Level, Parts, Stitch, Turn, Yields, FURTHEST};
+pub(crate) use vale_edit::ops::chunks::{copy, Cell, Census, Clip, Level, Parts, Stitch, Turn, Yields, FURTHEST};
 
 /// The session's open tiles, as the chunk grid reads them.
 impl grid::Tiles for EditSession {
@@ -120,27 +120,27 @@ impl grid::TilesMut for EditSession {
 /// The tool's state: the selection, what the pointer is over, and the block
 /// being dragged.
 #[derive(Resource, Debug, Default)]
-pub struct Chunks {
+pub(crate) struct Chunks {
     /// The selected chunks.
-    pub selected: BTreeSet<Cell>,
+    pub(crate) selected: BTreeSet<Cell>,
     /// The chunk the last release was on. The panel's "Add all in" button reads
     /// its area id.
-    pub primary: Option<Cell>,
+    pub(crate) primary: Option<Cell>,
     /// The chunk under the pointer, or `None` when the pointer is over no open
     /// tile.
-    pub at: Option<Cell>,
+    pub(crate) at: Option<Cell>,
     /// What `Ctrl+C` took.
-    pub clip: Clip,
+    pub(crate) clip: Clip,
     /// Which parts of the clip `Ctrl+V` writes, and at what height.
-    pub parts: Parts,
-    pub level: Level,
+    pub(crate) parts: Parts,
+    pub(crate) level: Level,
     /// How the selection is stitched to the ground around it.
-    pub stitch: Stitch,
+    pub(crate) stitch: Stitch,
     /// Whether `Ctrl+V` stitches the pasted block to the ground around it, in
     /// the same undo entry as the paste.
-    pub stitch_pasted: bool,
+    pub(crate) stitch_pasted: bool,
     /// Which page of the panel is open.
-    pub page: Page,
+    pub(crate) page: Page,
     /// The press a drag began with, while the button is held.
     drag: Option<Drag>,
     /// What the panel reports about the selection, and the stamp it was
@@ -169,7 +169,7 @@ type Stamp = (u64, usize, bool, usize);
 /// Which page of the chunk panel is open. The panel's operations are grouped
 /// by what they write, one group a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Page {
+pub(crate) enum Page {
     #[default]
     Paste,
     Stitch,
@@ -180,26 +180,26 @@ pub enum Page {
 
 impl Chunks {
     /// Replace the selection.
-    pub fn select(&mut self, cells: impl IntoIterator<Item = Cell>) {
+    pub(crate) fn select(&mut self, cells: impl IntoIterator<Item = Cell>) {
         self.selected = cells.into_iter().collect();
         self.revision += 1;
     }
 
     /// Add to the selection.
-    pub fn add(&mut self, cells: impl IntoIterator<Item = Cell>) {
+    pub(crate) fn add(&mut self, cells: impl IntoIterator<Item = Cell>) {
         self.selected.extend(cells);
         self.revision += 1;
     }
 
     /// Drop the selection.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.selected.clear();
         self.primary = None;
         self.revision += 1;
     }
 
     /// The block a held drag has swept, for the outline.
-    pub fn sweeping(&self) -> &[Cell] {
+    pub(crate) fn sweeping(&self) -> &[Cell] {
         self.drag.as_ref().map(|drag| drag.swept.as_slice()).unwrap_or(&[])
     }
 
@@ -207,7 +207,7 @@ impl Chunks {
     /// the set of open tiles has changed since the last count, and otherwise
     /// answered from the last one: reading a chunk's textures decodes its
     /// blend maps, and the panel asks sixty times a second.
-    pub fn census(&mut self, session: &EditSession) -> &Census {
+    pub(crate) fn census(&mut self, session: &EditSession) -> &Census {
         let stamp: Stamp = (
             self.revision,
             session.history.depth_done(),
@@ -222,7 +222,7 @@ impl Chunks {
 
     /// Every open tile's chunks that lie in a tile the selection already
     /// touches.
-    pub fn whole_tiles(&self, session: &EditSession) -> Vec<Cell> {
+    pub(crate) fn whole_tiles(&self, session: &EditSession) -> Vec<Cell> {
         let tiles: BTreeSet<(u32, u32)> = self.selected.iter().map(|cell| cell.tile()).collect();
         tiles
             .into_iter()
@@ -232,7 +232,7 @@ impl Chunks {
     }
 
     /// Every chunk of every open tile whose area id is `area`.
-    pub fn in_area(session: &EditSession, area: u32) -> Vec<Cell> {
+    pub(crate) fn in_area(session: &EditSession, area: u32) -> Vec<Cell> {
         let mut cells = Vec::new();
         for (coord, tile) in &session.tiles {
             for chunk in &tile.chunks {
@@ -246,14 +246,14 @@ impl Chunks {
 }
 
 /// The area id of one cell's chunk, when its tile is open.
-pub fn area_of(session: &EditSession, cell: Cell) -> Option<u32> {
+pub(crate) fn area_of(session: &EditSession, cell: Cell) -> Option<u32> {
     let tile = session.tiles.get(&cell.tile())?;
     Some(tile.chunk(cell.chunk_in(tile)?)?.head().area_id())
 }
 
 /// Stitch the selection to the ground around it, as one undo entry. Returns
 /// how many chunks' heights changed. See the module comment.
-pub fn stitch(session: &mut EditSession, cells: &BTreeSet<Cell>, how: Stitch) -> usize {
+pub(crate) fn stitch(session: &mut EditSession, cells: &BTreeSet<Cell>, how: Stitch) -> usize {
     session.history.begin(format!("Stitch {} chunks", cells.len()));
     let changed = stitch_in(session, cells, how);
     session.history.end();
@@ -354,7 +354,7 @@ fn over(
 }
 
 /// Give every selected chunk the area id `area`.
-pub fn set_area(session: &mut EditSession, cells: &BTreeSet<Cell>, area: u32) -> usize {
+pub(crate) fn set_area(session: &mut EditSession, cells: &BTreeSet<Cell>, area: u32) -> usize {
     over(session, cells, &format!("Set area {area}"), false, |tile, chunk| {
         let before = tile.chunk(chunk)?.head().area_id();
         if before == area {
@@ -371,7 +371,7 @@ pub fn set_area(session: &mut EditSession, cells: &BTreeSet<Cell>, area: u32) ->
 }
 
 /// Set or clear the impassable flag on every selected chunk.
-pub fn set_impassable(session: &mut EditSession, cells: &BTreeSet<Cell>, on: bool) -> usize {
+pub(crate) fn set_impassable(session: &mut EditSession, cells: &BTreeSet<Cell>, on: bool) -> usize {
     let label = match on {
         true => "Set impassable",
         false => "Clear impassable",
@@ -391,7 +391,7 @@ pub fn set_impassable(session: &mut EditSession, cells: &BTreeSet<Cell>, on: boo
 }
 
 /// Cut all sixteen squares of every selected chunk, or put all sixteen back.
-pub fn set_holes(session: &mut EditSession, cells: &BTreeSet<Cell>, cut: bool) -> usize {
+pub(crate) fn set_holes(session: &mut EditSession, cells: &BTreeSet<Cell>, cut: bool) -> usize {
     let (label, after) = match cut {
         true => ("Cut holes in chunks", u16::MAX),
         false => ("Fill holes in chunks", 0),
@@ -413,7 +413,7 @@ pub fn set_holes(session: &mut EditSession, cells: &BTreeSet<Cell>, cut: bool) -
 
 /// Make `path` the base texture of every selected chunk, under whatever each
 /// already carries. Every blend map is kept.
-pub fn set_base(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -> usize {
+pub(crate) fn set_base(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -> usize {
     let label = format!("Set base texture {}", super::textures::leaf(path));
     over(session, cells, &label, true, |tile, chunk| {
         repaint(tile, chunk, |tile, paint| {
@@ -424,7 +424,7 @@ pub fn set_base(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -
 }
 
 /// Take every layer but the base off every selected chunk.
-pub fn clear_paint(session: &mut EditSession, cells: &BTreeSet<Cell>) -> usize {
+pub(crate) fn clear_paint(session: &mut EditSession, cells: &BTreeSet<Cell>) -> usize {
     over(session, cells, "Clear paint", true, |tile, chunk| {
         repaint(tile, chunk, |_, paint| paint.clear_to_base() > 0)
     })
@@ -435,7 +435,7 @@ pub fn clear_paint(session: &mut EditSession, cells: &BTreeSet<Cell>) -> usize {
 ///
 /// A chunk that already carries `to` on another layer is left alone: two
 /// layers drawing one texture is a slot spent on nothing.
-pub fn swap_texture(
+pub(crate) fn swap_texture(
     session: &mut EditSession,
     cells: &BTreeSet<Cell>,
     from: &str,
@@ -464,7 +464,7 @@ pub fn swap_texture(
 /// Take the layer that draws `path` off every selected chunk that carries it
 /// above its base. A base is replaced, never removed, so a chunk based on
 /// `path` is left alone.
-pub fn remove_texture(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -> usize {
+pub(crate) fn remove_texture(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -> usize {
     let label = format!("Remove {}", super::textures::leaf(path));
     over(session, cells, &label, true, |tile, chunk| {
         let had = texture_id(tile, path)?;
@@ -484,7 +484,8 @@ pub fn remove_texture(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &
 ///
 /// The pasted block's edge meets the ground around it at whatever height that
 /// ground has. [`stitch`] joins the two.
-pub fn paste(
+#[cfg(test)]
+pub(crate) fn paste(
     session: &mut EditSession,
     clip: &Clip,
     at: Cell,
@@ -503,7 +504,7 @@ pub fn paste(
 /// settings, as one undo entry; the pasted footprint becomes the selection.
 /// Answers the status line. `Ctrl+V` and the right-click menu's Paste here
 /// both come here.
-pub fn paste_at(session: &mut EditSession, chunks: &mut Chunks, at: Cell) -> String {
+pub(crate) fn paste_at(session: &mut EditSession, chunks: &mut Chunks, at: Cell) -> String {
     if chunks.clip.is_empty() {
         return "no chunks have been copied".to_string();
     }
@@ -557,7 +558,7 @@ fn paste_in(
     cells
 }
 
-pub struct ChunkToolPlugin;
+pub(crate) struct ChunkToolPlugin;
 
 impl Plugin for ChunkToolPlugin {
     fn build(&self, app: &mut App) {

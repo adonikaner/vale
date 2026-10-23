@@ -63,7 +63,7 @@ use crate::world::session::Session;
 
 /// One of the two bank packets, handed on from [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub enum BankAnswer {
+pub(crate) enum BankAnswer {
     /// `SMSG_SHOW_BANK` — the banker.
     Show(u64),
     /// `SMSG_BUY_BANK_SLOT_RESULT` — a refusal, or a code this client does not
@@ -103,7 +103,7 @@ impl BankWindow {
     }
 }
 
-pub struct BankPlugin;
+pub(crate) struct BankPlugin;
 
 impl Plugin for BankPlugin {
     fn build(&self, app: &mut App) {

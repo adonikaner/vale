@@ -87,7 +87,7 @@ pub fn float(value: f32) -> String {
 /// store is a text file beside the project, so a value is checked when it is
 /// read: `0; DROP TABLE item_template` is not a literal and is refused rather
 /// than carried into an `UPDATE`.
-pub fn is_literal(value: &str) -> bool {
+pub(crate) fn is_literal(value: &str) -> bool {
     if value == "NULL" {
         return true;
     }

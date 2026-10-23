@@ -12,9 +12,9 @@
 //! rehome.rs      what moving a doodad or a building past a tile border means
 //! ```
 
-pub mod doodads;
-pub mod gizmo;
-pub mod group;
-pub mod place;
-pub mod rehome;
-pub mod wmos;
+pub(crate) mod doodads;
+pub(crate) mod gizmo;
+pub(crate) mod group;
+pub(crate) mod place;
+pub(crate) mod rehome;
+pub(crate) mod wmos;

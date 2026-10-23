@@ -17,8 +17,8 @@
 //! every speed change about another unit. See [`handler`].
 
 pub mod auth;
-pub mod crypt;
+pub(crate) mod crypt;
 pub mod handler;
 pub mod session;
-pub mod srp;
+pub(crate) mod srp;
 pub mod world;

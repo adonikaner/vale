@@ -207,7 +207,7 @@ impl Held {
     /// nothing else, so a potion dragged out of a bag and the same potion
     /// dragged off another button produce the identical word. See
     /// [`super::items::UseCarriedItem`] for the other end of that.
-    pub fn as_action(&self) -> Option<(u8, u32)> {
+    pub(crate) fn as_action(&self) -> Option<(u8, u32)> {
         match self {
             Held::Item(item) => Some((action_kind::ITEM, item.entry)),
             Held::Action(action) => Some((action.kind, action.action)),
@@ -220,7 +220,7 @@ impl Held {
 
     /// …and the other way: the pet slot being carried, or `None` for anything
     /// that may not land on the pet's bar — which is everything else.
-    pub fn as_pet_action(&self) -> Option<&HeldPetAction> {
+    pub(crate) fn as_pet_action(&self) -> Option<&HeldPetAction> {
         match self {
             Held::PetAction(pet) => Some(pet),
             _ => None,
@@ -259,12 +259,12 @@ impl Cursor {
     /// click is a put-down, and answering `1` for a spell there would make
     /// `BagSlotButton_OnClick` swallow the click without opening the bag. A
     /// spell on the cursor is [`Self::has_spell`]'s question.
-    pub fn has_item(&self) -> bool {
+    pub(crate) fn has_item(&self) -> bool {
         matches!(self.held, Some(Held::Item(_)))
     }
 
     /// `CursorHasSpell()` — is what is being carried a spell?
-    pub fn has_spell(&self) -> bool {
+    pub(crate) fn has_spell(&self) -> bool {
         matches!(&self.held, Some(Held::Action(action)) if action.kind == action_kind::SPELL)
     }
 
@@ -294,7 +294,7 @@ impl Cursor {
     }
 }
 
-pub struct CursorPlugin;
+pub(crate) struct CursorPlugin;
 
 impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {

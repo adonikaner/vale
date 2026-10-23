@@ -7,7 +7,7 @@ const MAGIC: &[u8; 4] = b"WDBC";
 /// Magic plus the four counts.
 const HEADER_LEN: usize = 20;
 /// Every field is four bytes wide, whatever it holds.
-pub const FIELD_LEN: usize = 4;
+pub(crate) const FIELD_LEN: usize = 4;
 
 /// One `DBFilesClient\*.dbc`, carried whole.
 ///
@@ -160,10 +160,6 @@ impl DbcFile {
         self.set_u32(record, field, value as u32)
     }
 
-    pub fn set_f32(&mut self, record: usize, field: usize, value: f32) -> bool {
-        self.set_u32(record, field, value.to_bits())
-    }
-
     /// One record's own bytes, whatever its width.
     pub fn record_bytes(&self, record: usize) -> Option<&[u8]> {
         if record >= self.record_count() {
@@ -174,7 +170,8 @@ impl DbcFile {
     }
 
     /// Replace one record's bytes, which must be exactly one record wide.
-    pub fn set_record_bytes(&mut self, record: usize, bytes: &[u8]) -> bool {
+    #[cfg(test)]
+    pub(crate) fn set_record_bytes(&mut self, record: usize, bytes: &[u8]) -> bool {
         if record >= self.record_count() || bytes.len() != self.record_size() {
             return false;
         }
@@ -204,7 +201,7 @@ impl DbcFile {
     /// which is what [`Self::push_record`] does; anything past that is refused.
     /// A string offset a record carries stays valid, because the string block
     /// is addressed absolutely and is not touched here.
-    pub fn insert_record(&mut self, index: usize, bytes: &[u8]) -> bool {
+    pub(crate) fn insert_record(&mut self, index: usize, bytes: &[u8]) -> bool {
         if bytes.len() != self.record_size() || index > self.record_count() {
             return false;
         }
@@ -219,7 +216,7 @@ impl DbcFile {
     ///
     /// **Every record index past `index` changes**, which is why a caller holding
     /// one — an open row, a reverse index — has to be told; see
-    /// `vale_edit::undo::Change::rows`. The string block keeps whatever the
+    /// `vale_edit::undo::Change::in_order`. The string block keeps whatever the
     /// record pointed at, on the append-only rule.
     pub fn remove_record(&mut self, index: usize) -> Option<Vec<u8>> {
         if index >= self.record_count() {

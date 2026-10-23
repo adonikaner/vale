@@ -148,6 +148,7 @@ fn position(list: &mlua::Table, frame: &mlua::Table) -> mlua::Result<Option<usiz
 
 /// How many frames have an `OnUpdate`: the number the HUD shows, and the one
 /// that says whether this pass has anything to do.
+#[cfg(any(test, feature = "diagnostics"))]
 pub(in crate::lua) fn tracked(lua: &mlua::Lua) -> usize {
     candidates(lua).map_or(0, |list| list.raw_len())
 }
@@ -309,7 +310,7 @@ fn first_line(e: &mlua::Error) -> String {
 /// 30: the rate 1.12 ran its `OnUpdate` bodies at on the hardware it shipped
 /// for, and the rate every fade, spark and flash in `Interface\FrameXML\` was
 /// authored for. It is not the frame rate; the module comment gives the costs.
-pub const TICK_HZ: f64 = 30.0;
+pub(crate) const TICK_HZ: f64 = 30.0;
 
 /// The interval between ticks, in seconds.
 ///
@@ -327,7 +328,7 @@ pub(crate) const TICK_INTERVAL: f64 = 1.0 / TICK_HZ;
 /// effect, and because two accumulators could give two different answers to
 /// "is this frame a tick".
 #[derive(Resource, Default)]
-pub struct InterfaceClock {
+pub(crate) struct InterfaceClock {
     /// Seconds since the last tick, not yet spent.
     owed: f64,
     /// The seconds the last tick covered, which a body reads as `arg1`.
@@ -389,7 +390,7 @@ impl InterfaceClock {
 
     /// Rendered frames a second over the last closed window; see
     /// [`FRAMERATE_WINDOW`]. Counts every rendered frame, not ticks.
-    pub fn framerate(&self) -> f64 {
+    pub(crate) fn framerate(&self) -> f64 {
         self.framerate
     }
 
@@ -407,7 +408,7 @@ impl InterfaceClock {
     /// one frame later than the tick, on top of the up-to-one-tick latency it
     /// already has. When every frame is a tick (30 fps or less), every frame
     /// walks too.
-    pub fn walk_due(&self) -> bool {
+    pub(crate) fn walk_due(&self) -> bool {
         self.walk
     }
 
@@ -423,7 +424,7 @@ fn advance(time: Res<Time>, mut clock: ResMut<InterfaceClock>) {
     clock.advance(time.delta_secs_f64());
 }
 
-pub struct UpdatePlugin;
+pub(crate) struct UpdatePlugin;
 
 impl Plugin for UpdatePlugin {
     fn build(&self, app: &mut App) {

@@ -56,14 +56,14 @@ pub const NUM_STATS: usize = 5;
 pub const NUM_RESISTANCES: usize = 7;
 
 /// The armour school. See [`NUM_RESISTANCES`].
-pub const ARMOR_SCHOOL: usize = 0;
+pub(crate) const ARMOR_SCHOOL: usize = 0;
 
 /// `SKILL_DEFENSE` — `SkillLine.dbc` row 95, and the only skill line this
 /// module needs by name.
-pub const SKILL_DEFENSE: u16 = 95;
+pub(crate) const SKILL_DEFENSE: u16 = 95;
 
 /// `SKILL_UNARMED` — what a hand with nothing in it swings with.
-pub const SKILL_UNARMED: u16 = 162;
+pub(crate) const SKILL_UNARMED: u16 = 162;
 
 /// `PLAYER_SKILL_INFO_1_1` holds 128 of these triplets.
 const NUM_SKILL_SLOTS: u16 = 128;

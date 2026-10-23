@@ -85,7 +85,7 @@ pub const MAX_NEW_ID: u32 = 999;
 /// The longest directory a new map is given. No shipped one is longer than 24
 /// characters; the limit keeps a tile's file name within what every archive
 /// tool accepts.
-pub const MAX_DIRECTORY: usize = 64;
+pub(crate) const MAX_DIRECTORY: usize = 64;
 
 /// Why `directory` cannot be a new map's folder, or `None` when it can.
 /// `taken` is every directory the table already holds.

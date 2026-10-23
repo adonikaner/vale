@@ -63,7 +63,7 @@ pub struct BindPoint {
 }
 
 /// `SMSG_BINDPOINTUPDATE` — 20 bytes, and every one of them fixed width.
-pub fn parse_bind_point(body: &[u8]) -> Option<BindPoint> {
+pub(crate) fn parse_bind_point(body: &[u8]) -> Option<BindPoint> {
     if body.len() < 20 {
         return None;
     }
@@ -82,7 +82,7 @@ pub fn parse_bind_point(body: &[u8]) -> Option<BindPoint> {
 /// `Spell::EffectBind`. It is read anyway because the two are sent
 /// independently and a client that trusted only one of them would be reading a
 /// packet it does not need to.
-pub fn parse_player_bound(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_player_bound(body: &[u8]) -> Option<(u64, u32)> {
     if body.len() < 12 {
         return None;
     }
@@ -91,7 +91,7 @@ pub fn parse_player_bound(body: &[u8]) -> Option<(u64, u32)> {
 }
 
 /// `SMSG_BINDER_CONFIRM` — the guid of the innkeeper asking.
-pub fn parse_binder_confirm(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_binder_confirm(body: &[u8]) -> Option<u64> {
     if body.len() < 8 {
         return None;
     }
@@ -104,7 +104,7 @@ pub fn parse_binder_confirm(body: &[u8]) -> Option<u64> {
 /// `GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_INNKEEPER)`, so it must be the
 /// innkeeper's own guid and not the player's: a wrong one is dropped silently,
 /// which would read as the confirmation doing nothing.
-pub fn binder_activate_body(npc_guid: u64) -> Vec<u8> {
+pub(crate) fn binder_activate_body(npc_guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc_guid);
     w.buf

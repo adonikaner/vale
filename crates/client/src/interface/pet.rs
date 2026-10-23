@@ -64,13 +64,13 @@ pub struct PetSlot {
     /// A spell's name, or a **global name** for a token — see the module note.
     pub name: String,
     /// A spell's rank. Empty for a token, which answers nil.
-    pub subtext: String,
+    pub(crate) subtext: String,
     /// An icon path, or a **global name** for a token.
     pub texture: String,
-    pub is_token: bool,
+    pub(crate) is_token: bool,
     pub is_active: bool,
-    pub auto_cast_allowed: bool,
-    pub auto_cast_enabled: bool,
+    pub(crate) auto_cast_allowed: bool,
+    pub(crate) auto_cast_enabled: bool,
     /// The packed word this slot arrived as — **what a press sends back
     /// unchanged**, which is why it is kept rather than rebuilt from the three
     /// fields above.
@@ -92,7 +92,7 @@ impl PetSlot {
 /// **The pet's bar as the panel reads it**, rebuilt when the server's own copy
 /// moves.
 #[derive(Resource, Default)]
-pub struct PetBar {
+pub(crate) struct PetBar {
     /// Whose bar it is. Zero for no pet, which is what `PetHasActionBar`
     /// answers off.
     pub pet: u64,
@@ -100,7 +100,7 @@ pub struct PetBar {
     /// The cooldowns as they arrived, and **the moment they were stated** — the
     /// packet carries milliseconds remaining, and `GetPetActionCooldown` has to
     /// answer a start and a duration on `GetTime()`'s own clock.
-    pub cooldowns: Vec<PetCooldownRow>,
+    pub(crate) cooldowns: Vec<PetCooldownRow>,
     /// `0x8` on the wire: the pet may not be commanded at all — charmed away,
     /// or feared. `GetPetActionsUsable` is its inverse.
     pub disabled: bool,
@@ -118,8 +118,8 @@ pub struct PetBar {
     /// the same packet, and a different thing from the bar's five spell slots:
     /// a hunter pet knows every rank it has been taught and shows the highest.
     /// `HasPetSpells` is this, and `SpellBookFrame`'s pet tab is drawn off it.
-    pub spell_count: u32,
-    pub personality: u32,
+    pub(crate) spell_count: u32,
+    pub(crate) personality: u32,
     /// **The attack command was pressed at a target and not withdrawn** — the
     /// reference's own flag, mirrored in
     /// `ObjectManager::pet_attacking`. `IsPetAttackActive(i)` is this flag on
@@ -135,7 +135,7 @@ pub struct PetBar {
 
 /// One cooldown, stamped onto the interface's own clock.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PetCooldownRow {
+pub(crate) struct PetCooldownRow {
     pub spell_id: u32,
     /// `GetTime()` when the packet was read.
     pub start: f64,
@@ -165,7 +165,7 @@ impl PetBar {
     }
 }
 
-pub struct PetBarPlugin;
+pub(crate) struct PetBarPlugin;
 
 impl Plugin for PetBarPlugin {
     fn build(&self, app: &mut App) {
@@ -198,7 +198,7 @@ fn rebuild(
         return;
     };
     let (version, spells, name, personality, attacking) = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         let pet = world.get(world.pet.pet);
         let name = pet
             .map(vale_protocol::state::objects::Entity::pet_number)
@@ -417,7 +417,7 @@ fn verbs(
 ///
 /// **A pick-up from an empty slot picks up nothing**, which is what stops a
 /// click on a bare button from arming a carry that can only ever be dropped.
-pub fn pick_up_or_place(
+pub(crate) fn pick_up_or_place(
     cursor: &mut super::cursor::Cursor,
     session: &Session,
     bar: &PetBar,

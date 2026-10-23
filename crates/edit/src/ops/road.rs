@@ -46,7 +46,7 @@ use vale_assets::world::adt::{vertex_offset, CHUNK_SIZE};
 /// half-yard texel does not need it either: the distance to a segment is
 /// exact between samples, so the spacing decides only how closely the
 /// samples follow a curve.
-pub const SPACING: f32 = 1.0;
+pub(crate) const SPACING: f32 = 1.0;
 
 /// One of the points a road runs through.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -323,7 +323,7 @@ impl Path {
 
     /// The segments, by the index of their first sample, whose box comes
     /// within `reach` of the box `[min x, min y, max x, max y]`.
-    pub fn segments_near(&self, area: [f32; 4], reach: f32) -> Vec<usize> {
+    pub(crate) fn segments_near(&self, area: [f32; 4], reach: f32) -> Vec<usize> {
         (0..self.samples.len().saturating_sub(1))
             .filter(|&i| {
                 let (a, b) = (self.samples[i], self.samples[i + 1]);
@@ -343,7 +343,7 @@ impl Path {
 
     /// …relative to the given segments only, which a caller has already
     /// narrowed to the ones that can matter. `None` for no segments.
-    pub fn near_among(&self, segments: &[usize], x: f32, y: f32) -> Option<Near> {
+    pub(crate) fn near_among(&self, segments: &[usize], x: f32, y: f32) -> Option<Near> {
         let mut best: Option<Near> = None;
         for &i in segments {
             let (a, b) = (self.samples[i], self.samples[i + 1]);
@@ -468,7 +468,7 @@ impl Painting {
     }
 
     /// **The surface's share of a point**, 0 to 1.
-    pub fn surface_weight(&self, path: &Path, segments: &[usize], x: f32, y: f32) -> f32 {
+    pub(crate) fn surface_weight(&self, path: &Path, segments: &[usize], x: f32, y: f32) -> f32 {
         let Some(surface) = &self.surface else {
             return 0.0;
         };
@@ -480,7 +480,7 @@ impl Painting {
 
     /// **The verge's share of a point**, 0 to 1: out to its own outer edge,
     /// and nothing where the surface over it is solid.
-    pub fn verge_weight(&self, path: &Path, segments: &[usize], x: f32, y: f32) -> f32 {
+    pub(crate) fn verge_weight(&self, path: &Path, segments: &[usize], x: f32, y: f32) -> f32 {
         let Some(verge) = &self.verge else {
             return 0.0;
         };

@@ -71,16 +71,16 @@ use vale_mangos::item;
 use vale_mangos::row::{self, Edits};
 
 /// The project file holding the project's item changes as SQL.
-pub const SQL_VPATH: &str = "sql\\items.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\items.sql";
 
 /// The project file holding the statements that put the changed rows back.
-pub const REVERT_VPATH: &str = "sql\\items-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\items-revert.sql";
 
 /// The table `.reload` is asked for after an apply.
-pub const RELOAD_TABLE: &str = item::TEMPLATE;
+pub(crate) const RELOAD_TABLE: &str = item::TEMPLATE;
 
 /// The item subject: `item_template`.
-pub struct Items;
+pub(crate) struct Items;
 
 impl RowSubject for Items {
     fn subject(&self) -> Subject {

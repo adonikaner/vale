@@ -90,7 +90,7 @@ use tiles::refresh_claims;
 use project::reread_after_a_switch;
 use originals::{Shipped, Unchanged, drop_unchanged_tiles};
 use open::open;
-use republish::{forget_what_changed, publish_for_the_preview};
+use republish::{forget_what_changed, publish_for_the_preview, show_the_edit};
 
 /// The tiles this editor has changed and not yet saved, keyed by virtual path in
 /// lower case.
@@ -103,30 +103,30 @@ type Edited = Arc<RwLock<HashMap<String, Vec<u8>>>>;
 
 /// What is open.
 #[derive(Resource)]
-pub struct EditSession {
-    pub project: Project,
+pub(crate) struct EditSession {
+    pub(crate) project: Project,
     /// The map being edited, by its `World\Maps\` directory name.
-    pub map: String,
+    pub(crate) map: String,
     /// …and its id, which is what the light chain and the collision world are
     /// keyed by.
-    pub map_id: u32,
+    pub(crate) map_id: u32,
     /// Every map the archives name, so a panel can offer them. Sorted by name.
-    pub maps: Vec<(u32, String)>,
+    pub(crate) maps: Vec<(u32, String)>,
     /// Tiles parsed for editing.
-    pub tiles: HashMap<(u32, u32), AdtFile>,
+    pub(crate) tiles: HashMap<(u32, u32), AdtFile>,
     /// …and client tables, by their bare name (`"Spell"`).
     ///
     /// The same arrangement as `tiles` and for the same reasons: opened on
     /// demand, edited in memory, written to the project folder and into the
     /// overlay. There is no 3x3 to stream, so a table stays open for the
     /// session once something has asked for it.
-    pub tables: std::collections::HashMap<String, DbcFile>,
-    pub history: History,
+    pub(crate) tables: std::collections::HashMap<String, DbcFile>,
+    pub(crate) history: History,
     /// The chunks whose ground on screen is behind their heights, per tile.
     ///
     /// Cleared by [`crate::tools::live_ground`], which pushes the new vertices
     /// straight into the meshes already on the GPU.
-    pub dirty: HashMap<(u32, u32), HashSet<usize>>,
+    pub(crate) dirty: HashMap<(u32, u32), HashSet<usize>>,
     /// The chunks whose foliage is behind their heights, per tile.
     ///
     /// Separate from `dirty` because the two are caught up at different rates
@@ -138,7 +138,7 @@ pub struct EditSession {
     /// last frame's four chunks.
     ///
     /// Cleared by [`crate::tools::ground::terrain::live_foliage`].
-    pub regrow: HashMap<(u32, u32), HashSet<usize>>,
+    pub(crate) regrow: HashMap<(u32, u32), HashSet<usize>>,
     /// The `MDDF` entries whose drawn placement is behind their record, per
     /// tile.
     ///
@@ -147,12 +147,12 @@ pub struct EditSession {
     /// Cleared by [`crate::tools::placements::doodads::reconcile`], every frame of a drag —
     /// which it can afford to be, because moving a placement is writing one
     /// transform where moving the ground is writing a buffer.
-    pub moved: HashMap<(u32, u32), HashSet<usize>>,
+    pub(crate) moved: HashMap<(u32, u32), HashSet<usize>>,
     /// …and the `MODF` entries, which is a separate set because the two
     /// lists are numbered separately: `MDDF` entry 3 and `MODF` entry 3 are
     /// different objects, and one set of indices shared between them moves the
     /// wrong thing. Cleared by [`crate::tools::placements::wmos::reconcile`].
-    pub moved_buildings: HashMap<(u32, u32), HashSet<usize>>,
+    pub(crate) moved_buildings: HashMap<(u32, u32), HashSet<usize>>,
     /// The chunks whose blend maps on the GPU are behind their `MCAL`, per
     /// tile.
     ///
@@ -165,20 +165,20 @@ pub struct EditSession {
     /// A chunk whose set of textures changed is here as well, for its new
     /// cell, and its tile is in `regroup`: the set is part of the material a
     /// draw group was built with, so the chunk has to move to another group.
-    pub repaint: HashMap<(u32, u32), HashSet<usize>>,
+    pub(crate) repaint: HashMap<(u32, u32), HashSet<usize>>,
     /// Tiles whose ground has to be cut into draw groups again because a chunk
     /// carries a different set of textures: done in place, replacing only the
     /// groups that changed, by [`crate::tools::ground::textures::live_regroup`]. A tile
     /// that cannot be done that way is moved to `stale`.
-    pub regroup: HashSet<(u32, u32)>,
+    pub(crate) regroup: HashSet<(u32, u32)>,
     /// Tiles that need the whole tile read again rather than a vertex patch:
     /// what the live path could not do, and anything that changes more than
     /// heights.
-    pub stale: HashSet<(u32, u32)>,
+    pub(crate) stale: HashSet<(u32, u32)>,
     /// Tiles whose bytes are ahead of the project folder.
-    pub unsaved: HashSet<(u32, u32)>,
+    pub(crate) unsaved: HashSet<(u32, u32)>,
     /// Tables whose bytes are ahead of the project folder, by name.
-    pub unsaved_tables: HashSet<String>,
+    pub(crate) unsaved_tables: HashSet<String>,
     /// How many field edits have landed, for anything that caches a reading
     /// of a table rather than the table itself.
     ///
@@ -186,20 +186,20 @@ pub struct EditSession {
     /// archives about every model, which is not a per-frame cost. A counter
     /// rather than a per-table flag because what it answers is "is what I built
     /// still true", and an edit to any table in a chain can make it false.
-    pub table_revision: u64,
+    pub(crate) table_revision: u64,
     /// Which tiles this map claims — the WDT's `MAIN` grid.
     ///
     /// Held here rather than asked for each time because it is the answer to a
     /// question the map window asks for all 4,096 cells every frame, and the
     /// file it comes from is 32 KB. `crate::map::tiles` changes it at the same
     /// time it writes the file.
-    pub claimed: HashSet<(u32, u32)>,
+    pub(crate) claimed: HashSet<(u32, u32)>,
     /// Tiles whose existence changed, for the streamer to be told about.
     ///
     /// Made and unmade ground both land here. See
     /// `crate::map::tiles::restream`, which is what acts on it, and the note
     /// there on why the streamer has to be told at all rather than noticing.
-    pub restream: HashSet<(u32, u32)>,
+    pub(crate) restream: HashSet<(u32, u32)>,
     /// Paths whose bytes have changed under the overlay, for the caches
     /// that key on a path and keep what they read.
     ///
@@ -214,11 +214,11 @@ pub struct EditSession {
     /// and the things that publish (a bake, a save, the lab's own scratch
     /// copy) are panels with no `World` to hand. See
     /// [`forget_what_changed`], which drains it.
-    pub republished: Vec<String>,
+    pub(crate) republished: Vec<String>,
     /// Whether every path has changed under the overlay, which is what a
     /// project switch does: every path the overlay answers now comes out of a
     /// different folder.
-    pub republished_all: bool,
+    pub(crate) republished_all: bool,
     /// The edited tables have been put where the client reads them, and
     /// the banks that have already read them have to be told.
     ///
@@ -231,7 +231,7 @@ pub struct EditSession {
     ///
     /// Set by [`publish_for_the_preview`] and by `crate::playtest::start`,
     /// drained by [`forget_what_changed`].
-    pub tables_republished: bool,
+    pub(crate) tables_republished: bool,
     /// How many times a file has been forgotten, for anything holding a
     /// picture of a file rather than the file.
     ///
@@ -241,20 +241,20 @@ pub struct EditSession {
     /// on showing the copy it hung the first time, even after the model cache
     /// has forgotten the path. Bumped by [`forget_what_changed`], which runs
     /// before the hang.
-    pub republished_revision: u64,
+    pub(crate) republished_revision: u64,
     /// Moved by every change to the project's own files that a picker lists:
     /// a save or removal through [`Self::save_bytes`] or
     /// [`Self::remove_file`], and a switch of project. A list built from
     /// [`Self::listed`] is built again when it moves. See
     /// `crate::import::assets`.
-    pub files_revision: u64,
+    pub(crate) files_revision: u64,
     /// Everything drawn is from a project that is no longer open.
     ///
     /// Set by [`Self::switch_to`] and drained by [`reread_after_a_switch`],
     /// which is where the reason for the indirection is: the session has no
     /// list of what is on screen, and the tiles that are drawn are the
     /// streamer's business rather than the session's.
-    pub reread_everything: bool,
+    pub(crate) reread_everything: bool,
     /// Which map [`Self::claimed`] is of.
     ///
     /// Without it the grid is the first map's for the whole session: switching
@@ -264,9 +264,9 @@ pub struct EditSession {
     /// that has no minimap, so the fault was not visible as an error.
     /// [`refresh_claims`] puts it back in step for every route that changes
     /// the map, not only the drop-down.
-    pub claims_for: String,
+    pub(crate) claims_for: String,
     /// The last thing worth telling the person at the keyboard.
-    pub status: String,
+    pub(crate) status: String,
     /// How many times each tile's bytes have been republished.
     ///
     /// A counter and not a flag, and it exists for one reader. A tile's
@@ -306,7 +306,7 @@ pub struct EditSession {
     /// The rows this project changes in the server's database: the row
     /// edits, waypoint paths and scripts, and whether each is ahead of the
     /// project folder. See [`crate::server::store::ServerRows`].
-    pub rows: crate::server::store::ServerRows,
+    pub(crate) rows: crate::server::store::ServerRows,
     /// What the last apply that succeeded in this process put in the
     /// database, as `crate::server::rows::Plan::signature` measures it.
     ///
@@ -320,7 +320,7 @@ pub struct EditSession {
     /// Per process rather than kept in the project, deliberately: what is in
     /// the database between one launch and the next is not this editor's to
     /// know, since a row may have been changed by hand or by another project.
-    pub applied_signature: Option<u64>,
+    pub(crate) applied_signature: Option<u64>,
     /// …and the same for each row subject, indexed by
     /// [`crate::server::stack::Subject::index`]: what the last Apply of that
     /// subject that succeeded in this process put in the database, as
@@ -336,7 +336,7 @@ pub struct EditSession {
     /// start of a session means the panel falls back to what the revert file
     /// says, which is that the rows in it were applied — because what happened
     /// in an earlier session is not this editor's to know beyond that.
-    pub applied: [Option<u64>; crate::server::stack::Subject::COUNT],
+    pub(crate) applied: [Option<u64>; crate::server::stack::Subject::COUNT],
     /// How many times this session has written the world database, applying
     /// or putting back any subject, or pointed at a different database. Every
     /// cache of what the database holds is keyed on it; see
@@ -351,11 +351,11 @@ pub struct EditSession {
     ///
     /// Not [`Self::applied`], which cannot tell a
     /// put-back from nothing in a session that did not make the apply.
-    pub database_writes: u64,
+    pub(crate) database_writes: u64,
     /// The archives' own copy of a file, which [`Self::save`] compares a
     /// tile against. `None` in a test session, which has no archives; every
     /// tile is then written.
-    pub shipped: Option<Shipped>,
+    pub(crate) shipped: Option<Shipped>,
     /// The check for tiles the project folder already holds unchanged,
     /// started when a project is opened. See [`drop_unchanged_tiles`].
     unchanged: Option<Task<Vec<Unchanged>>>,
@@ -421,13 +421,13 @@ impl EditSession {
     /// Record that the world database has changed under every cache of it:
     /// an Apply or a Put back of any subject finished, whether or not it
     /// succeeded, or the editor was pointed at another database.
-    pub fn wrote_the_database(&mut self) {
+    pub(crate) fn wrote_the_database(&mut self) {
         self.database_writes += 1;
     }
 }
 
 /// Open the project, install the overlay, and point the world at the map.
-pub struct SessionPlugin;
+pub(crate) struct SessionPlugin;
 
 impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
@@ -469,10 +469,23 @@ impl Plugin for SessionPlugin {
             //
             // …and the publish before the drain, so an edit that settles on
             // this frame is told about on this frame rather than the next.
+            //
+            // The client's banks forget in `ForgetChanged`, between the drain
+            // and the hang, and the stage is shown the edit after they have.
             .add_systems(
                 Update,
                 (publish_for_the_preview, forget_what_changed)
                     .chain()
+                    .before(vale_client::assets::ForgetChanged),
+            )
+            .configure_sets(
+                Update,
+                vale_client::assets::ForgetChanged.before(crate::preview::lab::hang_the_effect),
+            )
+            .add_systems(
+                Update,
+                show_the_edit
+                    .after(vale_client::assets::ForgetChanged)
                     .before(crate::preview::lab::hang_the_effect),
             )
             .add_systems(Update, drop_unchanged_tiles);

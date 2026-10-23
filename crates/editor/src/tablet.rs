@@ -100,21 +100,21 @@ use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use crate::ui::widgets::theme;
 
 /// The file's name under `Edit\`.
-pub const FILE: &str = "tablet.txt";
+pub(crate) const FILE: &str = "tablet.txt";
 
 /// The tablet settings a person chooses, read from and written to
 /// [`FILE`].
 #[derive(Resource, Debug, Clone, PartialEq)]
-pub struct Tablet {
+pub(crate) struct Tablet {
     /// Read pointer motion from the cursor's position at all times, rather
     /// than only while a Windows Ink pen is in range. For a tablet driver with
     /// Windows Ink switched off, whose pen Windows reports as an absolute
     /// mouse.
-    pub pointer_position: bool,
+    pub(crate) pointer_position: bool,
     /// Pen pressure scales a brush's strength.
-    pub pressure_strength: bool,
+    pub(crate) pressure_strength: bool,
     /// Pen pressure scales a brush's radius.
-    pub pressure_radius: bool,
+    pub(crate) pressure_radius: bool,
     loaded_from: Option<PathBuf>,
 }
 
@@ -131,7 +131,7 @@ impl Default for Tablet {
 
 impl Tablet {
     /// Read the file under `dir` once. Idempotent per directory.
-    pub fn load_from(&mut self, dir: &Path) {
+    pub(crate) fn load_from(&mut self, dir: &Path) {
         if self.loaded_from.as_deref() == Some(dir) {
             return;
         }
@@ -141,7 +141,7 @@ impl Tablet {
     }
 
     /// Write the file, if one was read.
-    pub fn save(&self) {
+    pub(crate) fn save(&self) {
         let Some(dir) = &self.loaded_from else { return };
         if let Err(e) =
             std::fs::create_dir_all(dir).and_then(|_| std::fs::write(dir.join(FILE), render(self)))
@@ -188,33 +188,33 @@ fn render(tablet: &Tablet) -> String {
 
 /// The pen as the last pointer message reported it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct Pen {
+pub(crate) struct Pen {
     /// Whether the window subclass is installed. False on a platform other
     /// than Windows, and for the frames before the window exists.
-    pub hooked: bool,
+    pub(crate) hooked: bool,
     /// Whether any pen pointer message has arrived in this run. False for a
     /// mouse, and for a tablet driver with Windows Ink switched off.
-    pub seen: bool,
+    pub(crate) seen: bool,
     /// The pen is close enough to the tablet to move the cursor.
-    pub in_range: bool,
+    pub(crate) in_range: bool,
     /// The pen tip is on the tablet.
-    pub contact: bool,
+    pub(crate) contact: bool,
     /// The tip's pressure, 0 to 1. Kept from the last report, so it reads the
     /// pressure the pen was lifted at once [`Pen::contact`] is false.
-    pub pressure: f32,
+    pub(crate) pressure: f32,
     /// The barrel button is held.
-    pub barrel: bool,
+    pub(crate) barrel: bool,
 }
 
 /// What one frame of a brush stroke multiplies its settings by.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Scale {
-    pub strength: f32,
-    pub radius: f32,
+pub(crate) struct Scale {
+    pub(crate) strength: f32,
+    pub(crate) radius: f32,
 }
 
 impl Scale {
-    pub const NONE: Scale = Scale {
+    pub(crate) const NONE: Scale = Scale {
         strength: 1.0,
         radius: 1.0,
     };
@@ -222,14 +222,14 @@ impl Scale {
 
 /// The pen and the settings, for a brush's stroke and its ring.
 #[derive(SystemParam)]
-pub struct Pressure<'w> {
+pub(crate) struct Pressure<'w> {
     pen: Res<'w, Pen>,
     tablet: Res<'w, Tablet>,
 }
 
 impl Pressure<'_> {
     /// The factors for this frame. [`Scale::NONE`] unless a pen is in contact.
-    pub fn scale(&self) -> Scale {
+    pub(crate) fn scale(&self) -> Scale {
         scale(&self.pen, &self.tablet)
     }
 }
@@ -247,21 +247,21 @@ fn scale(pen: &Pen, tablet: &Tablet) -> Scale {
 
 /// The pointer as every editor gesture reads it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct Pointer {
+pub(crate) struct Pointer {
     /// Motion this frame, in physical pixels: raw mouse motion, or the change
     /// in the cursor's position. See the module comment.
-    pub delta: Vec2,
+    pub(crate) delta: Vec2,
     /// Whether [`Pointer::delta`] was read from the cursor's position.
-    pub from_position: bool,
+    pub(crate) from_position: bool,
     /// The right mouse button or the pen's barrel button is held.
-    pub right: bool,
+    pub(crate) right: bool,
     /// …and was not held last frame.
-    pub right_pressed: bool,
+    pub(crate) right_pressed: bool,
     /// …and was held last frame and is not now.
-    pub right_released: bool,
+    pub(crate) right_released: bool,
 }
 
-pub struct TabletPlugin;
+pub(crate) struct TabletPlugin;
 
 impl Plugin for TabletPlugin {
     fn build(&self, app: &mut App) {
@@ -344,7 +344,7 @@ fn measure(
 /// held that still: the tip shakes, and pressing the barrel button moves it.
 /// `camera::fly` measures a pen's travel as its distance from the press, not
 /// the length of its path. Applies while [`Pointer::from_position`] is true.
-pub const PEN_CLICK_SLOP: f32 = 16.0;
+pub(crate) const PEN_CLICK_SLOP: f32 = 16.0;
 
 /// The size of the pressure bar, in egui points.
 const METER: egui::Vec2 = egui::vec2(7.0, 44.0);

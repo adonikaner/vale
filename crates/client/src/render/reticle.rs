@@ -98,7 +98,7 @@ struct GroundCircle {
 #[derive(Component)]
 struct CircleAnchor;
 
-pub struct ReticlePlugin;
+pub(crate) struct ReticlePlugin;
 
 impl Plugin for ReticlePlugin {
     fn build(&self, app: &mut App) {

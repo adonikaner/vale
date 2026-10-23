@@ -31,16 +31,16 @@
 //!               texture, make an area
 //! ```
 
-pub mod asks;
-pub mod context;
-pub mod hovercard;
-pub mod icons;
-pub mod manifest;
-pub mod popout;
-pub mod popover;
-pub mod rail;
-pub mod servicemarks;
-pub mod status;
-pub mod sync;
-pub mod topbar;
-pub mod viewbar;
+pub(crate) mod asks;
+pub(crate) mod context;
+pub(crate) mod hovercard;
+pub(crate) mod icons;
+pub(crate) mod manifest;
+pub(crate) mod popout;
+pub(crate) mod popover;
+pub(crate) mod rail;
+pub(crate) mod servicemarks;
+pub(crate) mod status;
+pub(crate) mod sync;
+pub(crate) mod topbar;
+pub(crate) mod viewbar;

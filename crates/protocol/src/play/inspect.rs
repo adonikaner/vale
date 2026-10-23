@@ -56,19 +56,19 @@ pub struct InspectHonor {
 }
 
 /// `CMSG_INSPECT` and the `MSG_INSPECT_HONOR_STATS` request: the guid alone.
-pub fn inspect_body(guid: u64) -> Vec<u8> {
+pub(crate) fn inspect_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
 }
 
 /// `SMSG_INSPECT`: the guid the server accepted the request for.
-pub fn parse_inspect(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_inspect(body: &[u8]) -> Option<u64> {
     (body.len() >= 8).then(|| Reader::new(body).u64())
 }
 
 /// `MSG_INSPECT_HONOR_STATS` from the server. `None` for a short body.
-pub fn parse_honor_stats(body: &[u8]) -> Option<InspectHonor> {
+pub(crate) fn parse_honor_stats(body: &[u8]) -> Option<InspectHonor> {
     if body.len() < HONOR_STATS_LEN {
         return None;
     }

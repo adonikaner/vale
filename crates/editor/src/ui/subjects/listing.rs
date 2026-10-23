@@ -17,12 +17,12 @@ use crate::subjects::listing::{Listed, Listing};
 use vale_mangos::row::Life;
 
 /// The height of one list row, the editor's own.
-pub const ROW_HEIGHT: f32 = theme::LIST_ROW;
+pub(crate) const ROW_HEIGHT: f32 = theme::LIST_ROW;
 
 /// Paint the workspace's ground, dock the list on the left and draw the form
 /// in what is left. The list and the form both take the subject, so each is
 /// handed it rather than capturing it.
-pub fn frame<S>(
+pub(crate) fn frame<S>(
     ui: &mut egui::Ui,
     subject: &mut S,
     id: &'static str,
@@ -51,14 +51,14 @@ pub fn frame<S>(
 
 /// The list's heading: the workspace's name, the row count, and why there is
 /// nothing when there is nothing. Answers whether the list can be drawn.
-pub fn head<K: Listed>(ui: &mut egui::Ui, name: &str, list: &Listing<K>) -> bool {
+pub(crate) fn head<K: Listed>(ui: &mut egui::Ui, name: &str, list: &Listing<K>) -> bool {
     heading(ui, name, K::TABLE, list.count(), list.trouble.as_deref(), list.is_read())
 }
 
 /// [`head`] for a list that is not a [`Listing`]: the name, the table, how
 /// many rows it has, the read's failure if it failed, and whether it has been
 /// read.
-pub fn heading(
+pub(crate) fn heading(
     ui: &mut egui::Ui,
     name: &str,
     table: &str,
@@ -92,7 +92,7 @@ pub fn heading(
 }
 
 /// The search box and the count under it. Answers the matching rows.
-pub fn search<K: Listed>(
+pub(crate) fn search<K: Listed>(
     ui: &mut egui::Ui,
     list: &mut Listing<K>,
     hint: &str,
@@ -106,7 +106,7 @@ pub fn search<K: Listed>(
 }
 
 /// The search box over a list, as wide as the list.
-pub fn search_box(ui: &mut egui::Ui, query: &mut String, hint: &str) {
+pub(crate) fn search_box(ui: &mut egui::Ui, query: &mut String, hint: &str) {
     ui.add_space(4.0);
     let width = ui.available_width();
     ui.add(
@@ -117,7 +117,7 @@ pub fn search_box(ui: &mut egui::Ui, query: &mut String, hint: &str) {
 }
 
 /// How many rows match, under the search box.
-pub fn shown_count(ui: &mut egui::Ui, count: usize) {
+pub(crate) fn shown_count(ui: &mut egui::Ui, count: usize) {
     ui.label(
         egui::RichText::new(format!("{count} shown"))
             .small()
@@ -128,7 +128,7 @@ pub fn shown_count(ui: &mut egui::Ui, count: usize) {
 
 /// The index of the open row among the matches, when the list should scroll
 /// to it: it was opened from somewhere other than this list.
-pub fn reveal<K: Listed>(list: &mut Listing<K>, matches: &[usize]) -> Option<usize> {
+pub(crate) fn reveal<K: Listed>(list: &mut Listing<K>, matches: &[usize]) -> Option<usize> {
     if list.open == list.revealed {
         return None;
     }
@@ -148,7 +148,7 @@ pub fn reveal<K: Listed>(list: &mut Listing<K>, matches: &[usize]) -> Option<usi
 /// [`reveal`] for a list that is not a [`Listing`]: `open` and `revealed`
 /// are the list's two entries, and `entry_at` answers the entry of a row by
 /// its index.
-pub fn reveal_in(
+pub(crate) fn reveal_in(
     open: Option<u32>,
     revealed: &mut Option<u32>,
     matches: &[usize],
@@ -169,7 +169,7 @@ pub fn reveal_in(
 }
 
 /// What the project says of a row, as the end of its second line.
-pub fn claim_word(claim: Life) -> &'static str {
+pub(crate) fn claim_word(claim: Life) -> &'static str {
     match claim {
         Life::Insert => " \u{b7} new",
         _ => "",
@@ -177,7 +177,7 @@ pub fn claim_word(claim: Life) -> &'static str {
 }
 
 /// A row's right-click menu: the entry to the clipboard.
-pub fn row_menu(
+pub(crate) fn row_menu(
     response: &egui::Response,
     session: &mut crate::session::EditSession,
     table: &str,
@@ -194,7 +194,7 @@ pub fn row_menu(
 
 /// The Server… button's hover text for a subject the server reads at startup:
 /// the Creatures and Game Objects workspaces' [`edits_block`].
-pub const TABLE_LIVE: &str = "Opens the Server panel, which applies, restores or discards these \
+pub(crate) const TABLE_LIVE: &str = "Opens the Server panel, which applies, restores or discards these \
      rows. The server reads this table at startup, so restart it after Apply.";
 
 /// What the project changes in one subject's rows, and the way to the panel
@@ -205,7 +205,7 @@ pub const TABLE_LIVE: &str = "Opens the Server panel, which applies, restores or
 /// text, which says when an applied row of the subject is live. `reload` is
 /// the state of the last `.reload` an apply sent, for the subjects that have
 /// one, drawn beside the button.
-pub fn edits_block(
+pub(crate) fn edits_block(
     ui: &mut egui::Ui,
     standing: &crate::server::sync::Standing,
     about: &str,
@@ -239,7 +239,7 @@ pub fn edits_block(
 /// The head of the form: the row's name, and what this project says of it or
 /// how far an edit reaches. The template window's head without the count of
 /// spawns on the map, which a workspace has not read.
-pub fn form_head(ui: &mut egui::Ui, shown: &TemplateSubject, table: &str) {
+pub(crate) fn form_head(ui: &mut egui::Ui, shown: &TemplateSubject, table: &str) {
     ui.label(
         egui::RichText::new(&shown.label)
             .strong()
@@ -269,7 +269,7 @@ pub fn form_head(ui: &mut egui::Ui, shown: &TemplateSubject, table: &str) {
 
 /// The waiting line or the empty form, for a form with no open row. `noun` is
 /// what a row is called.
-pub fn nothing_open<K: Listed>(ui: &mut egui::Ui, list: &Listing<K>, noun: &str) {
+pub(crate) fn nothing_open<K: Listed>(ui: &mut egui::Ui, list: &Listing<K>, noun: &str) {
     if list.open.is_some() && !list.is_read() {
         theme::waiting(ui, format!("reading {}\u{2026}", K::TABLE));
         return;

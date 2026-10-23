@@ -220,45 +220,45 @@ const CASTER_GUID: u64 = 0xED17_0000_0000_0001;
 const TARGET_GUID: u64 = 0xED17_0000_0000_0002;
 /// Marks the two units the preview owns.
 #[derive(Component)]
-pub struct StageUnit {
+pub(crate) struct StageUnit {
     /// Whether this one is the caster. The other is what it aims at.
-    pub caster: bool,
+    pub(crate) caster: bool,
 }
 
 /// Marks the persistent area the spell puts on the ground, while it is there.
 #[derive(Component)]
-pub struct StageArea;
+pub(crate) struct StageArea;
 
 /// Marks the camera that draws the stage's units and area.
 #[derive(Component)]
-pub struct StageCamera;
+pub(crate) struct StageCamera;
 
 /// One kit pushed onto one actor at one point of the loop.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Push {
+pub(crate) struct Push {
     /// Seconds from the start of the loop.
-    pub at: f32,
-    pub kit: u32,
+    pub(crate) at: f32,
+    pub(crate) kit: u32,
     /// Whether the kit lands on the target, as an impact, and not on the
     /// caster, as something the caster does.
-    pub on_target: bool,
+    pub(crate) on_target: bool,
 }
 
 /// A loop of pushed kits, played in place of a spell. See the module
 /// comment.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Pushes {
+pub(crate) struct Pushes {
     /// What the loop is of, as the table and the row's id, so that the same
     /// loop asked for again on the next frame is not started again.
-    pub of: (&'static str, u32),
-    pub pushes: Vec<Push>,
+    pub(crate) of: (&'static str, u32),
+    pub(crate) pushes: Vec<Push>,
     /// The loop as segments, for the bar under the picture.
-    pub segments: Vec<Segment>,
-    pub whole_secs: f32,
+    pub(crate) segments: Vec<Segment>,
+    pub(crate) whole_secs: f32,
     /// Whether one actor stands alone: nothing lands on a target.
-    pub alone: bool,
+    pub(crate) alone: bool,
     /// What to say under the pane.
-    pub line: String,
+    pub(crate) line: String,
 }
 
 /// How long one kit's own loop is: long enough for a one-shot clip to end.
@@ -266,7 +266,7 @@ const KIT_LOOP_SECS: f32 = 2.5;
 
 impl Pushes {
     /// One kit on the caster, standing alone, every [`KIT_LOOP_SECS`].
-    pub fn kit(kit: u32) -> Pushes {
+    pub(crate) fn kit(kit: u32) -> Pushes {
         Pushes {
             of: ("SpellVisualKit", kit),
             pushes: vec![Push {
@@ -293,7 +293,7 @@ impl Pushes {
     ///
     /// The times are the spell timeline's floors, since no spell states a
     /// cast time here.
-    pub fn visual(session: &EditSession, visual: u32) -> Option<Pushes> {
+    pub(crate) fn visual(session: &EditSession, visual: u32) -> Option<Pushes> {
         use vale_assets::tables::spell::fields as v;
         let visuals = session.table("SpellVisual")?;
         let row = visuals.row_of(visual)?;
@@ -347,12 +347,12 @@ const PUSHED: u32 = u32::MAX;
 
 /// What the preview is showing, and where it has got to.
 #[derive(Resource)]
-pub struct Stage {
+pub(crate) struct Stage {
     /// The spell being previewed, and `None` when the pane is not open.
-    pub showing: Option<u32>,
+    pub(crate) showing: Option<u32>,
     /// A loop of pushed kits played instead, while no spell is showing. See
     /// [`Pushes`].
-    pub pushing: Option<Pushes>,
+    pub(crate) pushing: Option<Pushes>,
     /// Which loop is on the stage and how many of its pushes have been made
     /// since the loop last began.
     pushed_of: Option<(&'static str, u32)>,
@@ -362,21 +362,21 @@ pub struct Stage {
     staged: Option<u32>,
     /// Whether this spell lands on the caster itself — one actor rather than
     /// two. `SpellRange`'s maximum of zero is what says so.
-    pub self_cast: bool,
-    pub playing: bool,
-    pub looping: bool,
+    pub(crate) self_cast: bool,
+    pub(crate) playing: bool,
+    pub(crate) looping: bool,
     /// Whether the stage turns on its own, which is the reference tool's
     /// `spin`: a still model hides half its art behind itself.
-    pub spinning: bool,
+    pub(crate) spinning: bool,
     /// Seconds since the cast began.
-    pub at: f32,
-    pub cast_secs: f32,
-    pub channel_secs: f32,
-    pub flight_secs: f32,
-    pub whole_secs: f32,
-    pub missile_speed: f32,
+    pub(crate) at: f32,
+    pub(crate) cast_secs: f32,
+    pub(crate) channel_secs: f32,
+    pub(crate) flight_secs: f32,
+    pub(crate) whole_secs: f32,
+    pub(crate) missile_speed: f32,
     /// Whether the visual states a persistent area, and how wide.
-    pub area: Option<f32>,
+    pub(crate) area: Option<f32>,
     /// Where the timeline has got to, as a step already taken.
     done: Step,
     /// The stage has to be put back before the next step is taken — the
@@ -395,27 +395,27 @@ pub struct Stage {
     /// axes, while something is. The model view sets it to the hung model's
     /// own frame each frame, so the picture is of the model and not of the
     /// hidden body's chest; `None` is the actors, a little above the ground.
-    pub look_at: Option<Vec3>,
+    pub(crate) look_at: Option<Vec3>,
     /// The orbit: radians about the stage, radians above it, and yards from it.
-    pub yaw: f32,
-    pub pitch: f32,
-    pub distance: f32,
+    pub(crate) yaw: f32,
+    pub(crate) pitch: f32,
+    pub(crate) distance: f32,
     /// How big the pane is, in physical pixels — written by the panel every
     /// frame, and what the render target is sized to.
-    pub pane: Option<UVec2>,
+    pub(crate) pane: Option<UVec2>,
     /// What the stage is drawn into, and what egui draws that by.
-    pub target: Option<Handle<Image>>,
-    pub texture: Option<egui::TextureId>,
+    pub(crate) target: Option<Handle<Image>>,
+    pub(crate) texture: Option<egui::TextureId>,
     /// Where the pointer is over the picture, as a normalised device position
     /// (`-1..1`, y up) and the pane's aspect — written by the panel, read by
     /// [`aim_the_pick`]. `None` when the pointer is elsewhere.
-    pub pointer: Option<(Vec2, f32)>,
+    pub(crate) pointer: Option<(Vec2, f32)>,
     /// Whether the pane is showing the attachment lab rather than a spell
     /// — see `crate::preview::lab`. The lab stands its own mannequin on the stage and
     /// uses the stage's camera, target, orbit and pick; what it does not use
     /// is the timeline, which is why it is a flag beside [`Self::showing`]
     /// rather than a value of it.
-    pub lab: bool,
+    pub(crate) lab: bool,
     /// How many frames in a row every actor has had its model, and how long
     /// the timeline has waited for that. See [`Stage::actors_ready`].
     modelled_frames: u8,
@@ -440,10 +440,10 @@ enum Step {
 
 /// One segment of the timeline, for the bar under the picture.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Segment {
-    pub name: &'static str,
-    pub from: f32,
-    pub to: f32,
+pub(crate) struct Segment {
+    pub(crate) name: &'static str,
+    pub(crate) from: f32,
+    pub(crate) to: f32,
 }
 
 impl Default for Stage {
@@ -495,12 +495,12 @@ impl Default for Stage {
 impl Stage {
     /// Whether the pane is up at all: a spell playing, a loop of pushed
     /// kits, or the lab.
-    pub fn is_open(&self) -> bool {
+    pub(crate) fn is_open(&self) -> bool {
         self.showing.is_some() || self.pushing.is_some() || self.lab
     }
 
     /// Close the pane: no spell, no loop of pushed kits and no lab.
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.showing = None;
         self.pushing = None;
         self.lab = false;
@@ -540,7 +540,7 @@ impl Stage {
     }
 
     /// Start the timeline again from nothing.
-    pub fn restart(&mut self) {
+    pub(crate) fn restart(&mut self) {
         self.at = 0.0;
         self.done = Step::Nothing;
         self.reset = true;
@@ -552,7 +552,7 @@ impl Stage {
     /// Before the stage is up the ask is kept and applied once it is — which is
     /// what `--seek` needs, since the actors arrive frames after the flag is
     /// read.
-    pub fn seek(&mut self, secs: f32) {
+    pub(crate) fn seek(&mut self, secs: f32) {
         if self.staged.is_none() {
             self.pending_seek = Some(secs);
             return;
@@ -563,13 +563,8 @@ impl Stage {
         self.held = 0.0;
     }
 
-    /// When the impact lands: after the cast, the channel and the flight.
-    pub fn landed_secs(&self) -> f32 {
-        self.cast_secs + self.channel_secs + self.flight_secs
-    }
-
     /// The timeline as segments, in order and without gaps, for the bar.
-    pub fn segments(&self) -> Vec<Segment> {
+    pub(crate) fn segments(&self) -> Vec<Segment> {
         if let Some(pushes) = self.pushes() {
             return pushes.segments.clone();
         }
@@ -595,7 +590,8 @@ impl Stage {
     }
 
     /// The name of the segment the playhead is in.
-    pub fn phase(&self) -> &'static str {
+    #[cfg(test)]
+    pub(crate) fn phase(&self) -> &'static str {
         self.segments()
             .into_iter()
             .find(|segment| self.at < segment.to)
@@ -604,7 +600,7 @@ impl Stage {
     }
 
     /// What to say under the pane.
-    pub fn transport_line(&self) -> String {
+    pub(crate) fn transport_line(&self) -> String {
         if let Some(pushes) = self.pushes() {
             return format!("{:.2}s of {:.2}s · {}", self.at, self.whole_secs, pushes.line);
         }
@@ -635,20 +631,20 @@ impl Stage {
 ///
 /// Read from the edited tables, so a cast time changed on the form changes
 /// the preview.
-pub struct Timeline {
-    pub cast_secs: f32,
+pub(crate) struct Timeline {
+    pub(crate) cast_secs: f32,
     /// How long the channel is shown running, or zero for a spell that is not
     /// one — `AttributesEx`'s two channel bits, the same test the spellbook
     /// makes.
-    pub channel_secs: f32,
-    pub missile_speed: f32,
-    pub self_cast: bool,
+    pub(crate) channel_secs: f32,
+    pub(crate) missile_speed: f32,
+    pub(crate) self_cast: bool,
     /// The radius of the persistent area, for a visual that states one.
-    pub area: Option<f32>,
+    pub(crate) area: Option<f32>,
 }
 
 impl Timeline {
-    pub fn of(session: &EditSession, spell: u32) -> Timeline {
+    pub(crate) fn of(session: &EditSession, spell: u32) -> Timeline {
         use vale_assets::tables::spell::fields as v;
         use vale_assets::tables::spellbook::{spell_attributes, spell_fields as f};
         let table = session.table("Spell");
@@ -710,7 +706,7 @@ impl Timeline {
     }
 
     /// The flight, in seconds.
-    pub fn flight(&self) -> f32 {
+    pub(crate) fn flight(&self) -> f32 {
         match self.missile_speed > 0.0 && !self.self_cast {
             true => APART / self.missile_speed,
             false => 0.0,
@@ -718,18 +714,18 @@ impl Timeline {
     }
 
     /// When the impact lands.
-    pub fn landed(&self) -> f32 {
+    pub(crate) fn landed(&self) -> f32 {
         self.cast_secs + self.channel_secs + self.flight()
     }
 
     /// How long the whole loop takes: the cast, the channel, the flight, the
     /// impact, the state, and a rest.
-    pub fn whole(&self) -> f32 {
+    pub(crate) fn whole(&self) -> f32 {
         self.landed() + IMPACT_SECS + STATE_SECS + REST_SECS
     }
 }
 
-pub struct StagePlugin;
+pub(crate) struct StagePlugin;
 
 impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {

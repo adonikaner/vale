@@ -69,12 +69,12 @@ use bevy::window::{PresentMode, PrimaryWindow, WindowPosition, WindowRef, Window
 use crate::tools::Tool;
 
 /// How many windows can be open: one per [`Group`].
-pub const SLOTS: usize = 6;
+pub(crate) const SLOTS: usize = 6;
 
 /// The state a workspace edits, which no two windows may show at once. See
 /// the module comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Group {
+pub(crate) enum Group {
     /// The table browser: Spells, Item Sets, Zones, Tables and the three
     /// display tables, and the world tools with a table.
     Tables,
@@ -89,7 +89,7 @@ impl Group {
     /// The group of a tool, or `None` for one with no state a workspace holds.
     /// Every tool with a client table is in [`Group::Tables`]. See
     /// [`crate::tools::Spec::window`].
-    pub fn of(tool: Tool) -> Option<Group> {
+    pub(crate) fn of(tool: Tool) -> Option<Group> {
         tool.spec().window
     }
 }
@@ -97,19 +97,19 @@ impl Group {
 /// A window's egui pass, one per slot. Its system runs once per frame, with
 /// that window's own context. See `ui::shell::popout::draw`.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PopoutPass(pub usize);
+pub(crate) struct PopoutPass(pub(crate) usize);
 
 /// A window's camera, which carries its egui context, by slot.
 #[derive(Component)]
-pub struct PopoutCamera(pub usize);
+pub(crate) struct PopoutCamera(pub(crate) usize);
 
-/// A window, by slot.
+/// A window a workspace has been put in.
 #[derive(Component)]
-pub struct PopoutWindow(pub usize);
+pub(crate) struct PopoutWindow;
 
 /// What a panel asked of the windows, carried out by [`follow`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ask {
+pub(crate) enum Ask {
     /// Put this workspace in a window: the one holding its group, or a new
     /// one.
     Open(Tool),
@@ -124,60 +124,60 @@ pub enum Ask {
 
 /// One open window.
 #[derive(Debug, Clone)]
-pub struct Held {
-    pub tool: Tool,
+pub(crate) struct Held {
+    pub(crate) tool: Tool,
     window: Entity,
     camera: Entity,
     /// Whether the window has the keyboard, and whether the pointer is over
     /// it. See [`keep_input`].
-    pub focused: bool,
-    pub hovered: bool,
+    pub(crate) focused: bool,
+    pub(crate) hovered: bool,
 }
 
 /// The windows' state.
 #[derive(Resource, Default)]
-pub struct Popout {
+pub(crate) struct Popout {
     slots: [Option<Held>; SLOTS],
-    pub asks: Vec<Ask>,
+    pub(crate) asks: Vec<Ask>,
     /// Whether the editor is editing rather than playtesting, as of the last
     /// frame. A workspace is popped out only while editing.
-    pub editing: bool,
+    pub(crate) editing: bool,
     /// The window that last had the keyboard: a slot, or `None` for the main
     /// window. The windows that follow a subject are drawn in the last one
     /// used of those that could draw them.
-    pub last_focused: Option<usize>,
+    pub(crate) last_focused: Option<usize>,
     /// Where each group's window was and how large, so it opens there again.
     placed: HashMap<Group, (IVec2, UVec2)>,
 }
 
 impl Popout {
     /// The workspace in a slot's window, if it is open.
-    pub fn tool(&self, slot: usize) -> Option<Tool> {
+    pub(crate) fn tool(&self, slot: usize) -> Option<Tool> {
         self.slots.get(slot)?.as_ref().map(|held| held.tool)
     }
 
     /// The workspaces in the windows.
-    pub fn tools(&self) -> impl Iterator<Item = Tool> + '_ {
+    pub(crate) fn tools(&self) -> impl Iterator<Item = Tool> + '_ {
         self.slots.iter().flatten().map(|held| held.tool)
     }
 
     /// Whether any window is open.
-    pub fn is_open(&self) -> bool {
+    pub(crate) fn is_open(&self) -> bool {
         self.slots.iter().any(Option::is_some)
     }
 
     /// Whether `wanted` is in use in any window, the main one included.
-    pub fn shows(&self, main: Tool, wanted: Tool) -> bool {
+    pub(crate) fn shows(&self, main: Tool, wanted: Tool) -> bool {
         main == wanted || self.holds(wanted)
     }
 
     /// Whether `tool` is in a window of its own.
-    pub fn holds(&self, tool: Tool) -> bool {
+    pub(crate) fn holds(&self, tool: Tool) -> bool {
         self.tools().any(|held| held == tool)
     }
 
     /// The slot whose window holds `group`.
-    pub fn slot_of(&self, group: Group) -> Option<usize> {
+    pub(crate) fn slot_of(&self, group: Group) -> Option<usize> {
         self.slots
             .iter()
             .position(|held| held.as_ref().is_some_and(|held| Group::of(held.tool) == Some(group)))
@@ -187,7 +187,7 @@ impl Popout {
     /// it has one (Lights and the other world tools with a table, or a table
     /// workspace), else the table workspace in a window. See the module
     /// comment.
-    pub fn browser_tool(&self, main: Tool) -> Tool {
+    pub(crate) fn browser_tool(&self, main: Tool) -> Tool {
         if main.table().is_some() {
             return main;
         }
@@ -198,22 +198,22 @@ impl Popout {
 
     /// Whether the table workspace in `slot` cannot have the browser because
     /// the main window's tool has a table. See the module comment.
-    pub fn browser_lent(&self, slot: usize, main: Tool) -> bool {
+    pub(crate) fn browser_lent(&self, slot: usize, main: Tool) -> bool {
         self.tool(slot).is_some_and(|tool| tool.table().is_some()) && main.table().is_some()
     }
 
     /// Whether any window has the keyboard, or the pointer.
-    pub fn focused(&self) -> bool {
+    pub(crate) fn focused(&self) -> bool {
         self.slots.iter().flatten().any(|held| held.focused)
     }
-    pub fn hovered(&self) -> bool {
+    pub(crate) fn hovered(&self) -> bool {
         self.slots.iter().flatten().any(|held| held.hovered)
     }
 
     /// Send a workspace the main window was given to the window that holds
     /// its group, and put the main window back on `world`. Called after
     /// anything that may set the tool: [`follow`] and every window's panels.
-    pub fn redirect(&mut self, tool: &mut Tool, world: Tool) {
+    pub(crate) fn redirect(&mut self, tool: &mut Tool, world: Tool) {
         if !tool.covers_viewport() {
             return;
         }
@@ -252,7 +252,7 @@ impl Popout {
     /// Which window draws the windows that follow a creature, a game object
     /// or an item: of the windows that can draw them, the one last used.
     /// `None` is the main window.
-    pub fn subject_window(&self, main: Tool) -> Option<usize> {
+    pub(crate) fn subject_window(&self, main: Tool) -> Option<usize> {
         let windows: Vec<usize> = (0..SLOTS)
             .filter(|&slot| self.tool(slot).is_some_and(has_subject_windows))
             .collect();
@@ -269,7 +269,7 @@ impl Popout {
     /// table workspaces when a form field asked, else the one holding Assets,
     /// unless the main window's texture tool asked. `None` is the main
     /// window.
-    pub fn import_window(&self, main: Tool, asked_by_field: bool) -> Option<usize> {
+    pub(crate) fn import_window(&self, main: Tool, asked_by_field: bool) -> Option<usize> {
         match (asked_by_field, main) {
             (true, _) => self.slot_of(Group::Tables),
             (false, Tool::Textures) => None,
@@ -280,11 +280,11 @@ impl Popout {
 
 /// Whether a workspace has the windows that follow a subject (quests, loot,
 /// behaviour, vendor, trainer, gossip).
-pub fn has_subject_windows(tool: Tool) -> bool {
+pub(crate) fn has_subject_windows(tool: Tool) -> bool {
     matches!(tool, Tool::CreatureData | Tool::GameObjectData | Tool::Items)
 }
 
-pub struct PopoutPlugin;
+pub(crate) struct PopoutPlugin;
 
 impl Plugin for PopoutPlugin {
     fn build(&self, app: &mut App) {
@@ -438,7 +438,7 @@ fn open(commands: &mut Commands, popout: &mut Popout, workspace: Tool) {
                 present_mode: PresentMode::AutoNoVsync,
                 ..default()
             },
-            PopoutWindow(slot),
+            PopoutWindow,
             Name::new("pop-out window"),
         ))
         .id();
@@ -494,7 +494,7 @@ fn on_the_command_line(
 }
 
 /// The open windows, by slot, for a picture of each. See `crate::instruments::shot`.
-pub fn windows(popout: &Popout) -> Vec<(usize, Entity)> {
+pub(crate) fn windows(popout: &Popout) -> Vec<(usize, Entity)> {
     (0..SLOTS)
         .filter_map(|slot| popout.slots[slot].as_ref().map(|held| (slot, held.window)))
         .collect()

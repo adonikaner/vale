@@ -65,7 +65,7 @@ use vale_mangos::{condition, gossip, graveyard, map, trigger};
 
 /// One of the five subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Group {
+pub(crate) enum Group {
     /// The `conditions` table.
     Conditions,
     /// Gossip menus, their options and the `npc_text` rows they show.
@@ -83,10 +83,12 @@ impl Group {
     /// The five, in `super::stack`'s order. Conditions first, since every other
     /// group names them; maps before triggers, since a teleport's target map is
     /// checked against `map_template`.
-    pub const ALL: [Group; 5] = [Group::Conditions, Group::Gossip, Group::Maps, Group::Triggers, Group::Graveyards];
+    #[cfg(test)]
+    pub(crate) const ALL: [Group; 5] = [Group::Conditions, Group::Gossip, Group::Maps, Group::Triggers, Group::Graveyards];
 
     /// The group a table belongs to, or `None` for a table of no group.
-    pub fn of(table: &str) -> Option<Group> {
+    #[cfg(test)]
+    pub(crate) fn of(table: &str) -> Option<Group> {
         Group::ALL
             .into_iter()
             .find(|group| row::table_named(group.tables(), table).is_some())
@@ -94,7 +96,7 @@ impl Group {
 }
 
 /// The thirteen tables, by group. [`RowSubject::tables`] names each group's.
-pub const TABLES: &[row::Table] = &[
+pub(crate) const TABLES: &[row::Table] = &[
     condition::TABLES[0],
     gossip::TABLES[0],
     gossip::TABLES[1],
@@ -111,7 +113,7 @@ pub const TABLES: &[row::Table] = &[
 ];
 
 /// One of the thirteen tables, by name, or `None`.
-pub fn table_named(name: &str) -> Option<&'static row::Table> {
+pub(crate) fn table_named(name: &str) -> Option<&'static row::Table> {
     row::table_named(TABLES, name)
 }
 

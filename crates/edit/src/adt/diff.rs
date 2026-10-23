@@ -38,16 +38,16 @@ pub struct TileDiff {
     /// Chunks whose header flags differ, which is the impassable bit and the
     /// `MCCV` flag.
     pub flags: usize,
-    pub doodads_added: usize,
-    pub doodads_removed: usize,
-    pub doodads_moved: usize,
-    pub buildings_added: usize,
-    pub buildings_removed: usize,
-    pub buildings_moved: usize,
+    pub(crate) doodads_added: usize,
+    pub(crate) doodads_removed: usize,
+    pub(crate) doodads_moved: usize,
+    pub(crate) buildings_added: usize,
+    pub(crate) buildings_removed: usize,
+    pub(crate) buildings_moved: usize,
     /// Whether the two tiles have a different number of map chunks, which a
     /// shipped tile never does. The chunk counts above cover the chunks both
     /// have.
-    pub chunk_count_differs: bool,
+    pub(crate) chunk_count_differs: bool,
 }
 
 impl TileDiff {

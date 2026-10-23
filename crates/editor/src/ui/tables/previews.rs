@@ -17,7 +17,7 @@ use crate::ui::widgets::theme;
 /// which `session::republish::publish_for_the_preview` does a moment after an edit
 /// while a display workspace is open, so a new or changed row is drawn as it
 /// now is. See `ui::tables::appearance`.
-pub fn display_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+pub(crate) fn display_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let Some(table) = super::appearance::display_table(&work.browser.table) else {
         return;
     };

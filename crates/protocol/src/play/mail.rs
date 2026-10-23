@@ -140,10 +140,10 @@ impl MailFlags {
     pub const READ: u32 = 0x01;
     /// `MAIL_CHECK_MASK_RETURNED` — it has already come back once, so it
     /// cannot be returned again and the button says Delete.
-    pub const RETURNED: u32 = 0x02;
+    pub(crate) const RETURNED: u32 = 0x02;
     /// `MAIL_CHECK_MASK_COPIED` — the body has been made into an item, so the
     /// letter itself is spent.
-    pub const COPIED: u32 = 0x04;
+    pub(crate) const COPIED: u32 = 0x04;
     /// `MAIL_CHECK_MASK_COD_PAYMENT` — cash on delivery. The subject is
     /// rewritten through `COD_PAYMENT` before it is drawn.
     pub const COD_PAYMENT: u32 = 0x08;
@@ -161,9 +161,6 @@ impl MailFlags {
     }
     pub fn cod_payment(self) -> bool {
         self.0 & Self::COD_PAYMENT != 0
-    }
-    pub fn has_body(self) -> bool {
-        self.0 & Self::HAS_BODY != 0
     }
 }
 
@@ -430,7 +427,7 @@ const MAX_MAIL: usize = 254;
 /// **A short tail stops the walk rather than failing the packet**, which is
 /// this crate's rule for a damaged body: a mailbox that reads nine of its ten
 /// letters is a mailbox, and returning `None` would draw an empty one.
-pub fn parse_mail_list(body: &[u8]) -> Option<Vec<MailHeader>> {
+pub(crate) fn parse_mail_list(body: &[u8]) -> Option<Vec<MailHeader>> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -511,7 +508,7 @@ fn read_header(r: &mut Reader) -> Option<MailHeader> {
 
 /// `SMSG_SEND_MAIL_RESULT` — see [`MailResponse`] for why the tail is read
 /// conditionally.
-pub fn parse_mail_result(body: &[u8]) -> Option<MailResponse> {
+pub(crate) fn parse_mail_result(body: &[u8]) -> Option<MailResponse> {
     let mut r = Reader::new(body);
     if !r.has(4 * 3) {
         return None;
@@ -541,15 +538,6 @@ pub fn parse_mail_result(body: &[u8]) -> Option<MailResponse> {
     })
 }
 
-/// `SMSG_RECEIVED_MAIL` — one word, and vmangos always writes 0.
-///
-/// **The packet's arrival is the whole of its meaning.** It is what turns the
-/// envelope on the minimap on, by way of a fresh `MSG_QUERY_NEXT_MAIL_TIME`.
-pub fn parse_received_mail(body: &[u8]) -> Option<u32> {
-    let mut r = Reader::new(body);
-    r.has(4).then(|| r.u32())
-}
-
 /// `MSG_QUERY_NEXT_MAIL_TIME` — **seconds until the next letter is
 /// deliverable**, and the sign is the answer.
 ///
@@ -576,7 +564,7 @@ pub fn parse_item_text(body: &[u8]) -> Option<(u32, String)> {
 // --- what we send -----------------------------------------------------------
 
 /// `CMSG_GET_MAIL_LIST` — the mailbox, and nothing else.
-pub fn get_mail_list_body(mailbox: u64) -> Vec<u8> {
+pub(crate) fn get_mail_list_body(mailbox: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(mailbox);
     w.buf
@@ -585,7 +573,7 @@ pub fn get_mail_list_body(mailbox: u64) -> Vec<u8> {
 /// **The five verbs that name one letter**: mark as read, take the money, take
 /// the parcel, return it, delete it. Identical bodies, which is why they are
 /// one function.
-pub fn mail_id_body(mailbox: u64, mail_id: u32) -> Vec<u8> {
+pub(crate) fn mail_id_body(mailbox: u64, mail_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(mailbox);
     w.u32(mail_id);
@@ -598,7 +586,7 @@ pub fn mail_id_body(mailbox: u64, mail_id: u32) -> Vec<u8> {
 /// **throws away** (`read_skip<uint32>`, "Mail store own 100% correct value
 /// anyway"). It is sent because 1.12's client sends it; a body without it is
 /// four bytes short and the server's own read runs off the end.
-pub fn create_text_item_body(mailbox: u64, mail_id: u32, template_id: u32) -> Vec<u8> {
+pub(crate) fn create_text_item_body(mailbox: u64, mail_id: u32, template_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(mailbox);
     w.u32(mail_id);
@@ -614,7 +602,7 @@ const ITEM_TEXT_QUERY_TAIL: u32 = 0x7000_0000;
 ///
 /// The third word is a constant the client `or`s together and the server
 /// ignores. Sent as the client sends it.
-pub fn item_text_query_body(item_text_id: u32, mail_id: u32) -> Vec<u8> {
+pub(crate) fn item_text_query_body(item_text_id: u32, mail_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(item_text_id);
     w.u32(mail_id);
@@ -652,7 +640,7 @@ pub struct OutgoingMail {
 /// vmangos reads a `uint64` and a `uint8` after the COD for every build past
 /// 1.9.4, so a body that stopped at the COD leaves the server's own `>>`
 /// operators reading off the end.
-pub fn send_mail_body(mail: &OutgoingMail) -> Vec<u8> {
+pub(crate) fn send_mail_body(mail: &OutgoingMail) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(mail.mailbox);
     w.cstring(&mail.to);
@@ -669,7 +657,7 @@ pub fn send_mail_body(mail: &OutgoingMail) -> Vec<u8> {
 }
 
 /// `MSG_QUERY_NEXT_MAIL_TIME` — no body at all.
-pub fn next_mail_time_body() -> Vec<u8> {
+pub(crate) fn next_mail_time_body() -> Vec<u8> {
     Vec::new()
 }
 

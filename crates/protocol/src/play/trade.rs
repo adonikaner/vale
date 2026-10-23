@@ -67,13 +67,8 @@ use crate::opcodes::Opcode;
 
 /// Seven slots on each side: six traded and the one that is not.
 pub const TRADE_SLOT_COUNT: usize = 7;
-/// …of which the first six change hands.
-pub const TRADE_SLOT_TRADED_COUNT: usize = 6;
 /// The "Will not be traded" square, zero-based on the wire.
 pub const TRADE_SLOT_NONTRADED: u8 = 6;
-/// vmangos' `TRADE_DISTANCE` (`Player.h`): how far apart two players may stand
-/// at the initiate and at the accept, centre to centre.
-pub const TRADE_DISTANCE: f32 = 11.11;
 
 /// `SMSG_TRADE_STATUS`'s first field — vmangos' `TradeStatus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +182,7 @@ pub struct TradeStatusPacket {
 /// for `CLOSE_WINDOW` `{u32 result, u8, u32 limit category}` (dropped: the
 /// three say why a trade could not be stored and the panel reads none of
 /// them), for `ONLY_CONJURED` `{u8 slot}` (dropped likewise).
-pub fn parse_trade_status(body: &[u8]) -> Option<TradeStatusPacket> {
+pub(crate) fn parse_trade_status(body: &[u8]) -> Option<TradeStatusPacket> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -241,7 +236,7 @@ pub struct TradeOffer {
 /// u32 spell}` then seven records of `{u8 slot}` + 60 bytes. An empty slot is
 /// the same 60 bytes as zeros, so the records are fixed-size and the slot byte
 /// is read rather than trusted: a slot outside 0..7 ends the walk.
-pub fn parse_trade_status_extended(body: &[u8]) -> Option<TradeOffer> {
+pub(crate) fn parse_trade_status_extended(body: &[u8]) -> Option<TradeOffer> {
     let mut r = Reader::new(body);
     if !r.has(1 + 4 * 4) {
         return None;
@@ -283,7 +278,7 @@ pub fn parse_trade_status_extended(body: &[u8]) -> Option<TradeOffer> {
 }
 
 /// `CMSG_INITIATE_TRADE` — `{u64 guid}`.
-pub fn initiate_trade_body(guid: u64) -> Vec<u8> {
+pub(crate) fn initiate_trade_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -291,7 +286,7 @@ pub fn initiate_trade_body(guid: u64) -> Vec<u8> {
 
 /// `CMSG_ACCEPT_TRADE` — one `u32` the server skips ("set to 1 when the player
 /// got `OPEN_WINDOW` at least once this session").
-pub fn accept_trade_body() -> Vec<u8> {
+pub(crate) fn accept_trade_body() -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(1);
     w.buf
@@ -299,21 +294,21 @@ pub fn accept_trade_body() -> Vec<u8> {
 
 /// `CMSG_SET_TRADE_ITEM` — `{u8 trade slot, u8 bag, u8 slot}`, the bag and the
 /// slot in the **server's** numbering (see [`super::items::server_container_slot`]).
-pub fn set_trade_item_body(trade_slot: u8, bag: u8, slot: u8) -> Vec<u8> {
+pub(crate) fn set_trade_item_body(trade_slot: u8, bag: u8, slot: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(trade_slot).u8(bag).u8(slot);
     w.buf
 }
 
 /// `CMSG_CLEAR_TRADE_ITEM` — `{u8 trade slot}`.
-pub fn clear_trade_item_body(trade_slot: u8) -> Vec<u8> {
+pub(crate) fn clear_trade_item_body(trade_slot: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(trade_slot);
     w.buf
 }
 
 /// `CMSG_SET_TRADE_GOLD` — `{u32 copper}`.
-pub fn set_trade_gold_body(copper: u32) -> Vec<u8> {
+pub(crate) fn set_trade_gold_body(copper: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(copper);
     w.buf

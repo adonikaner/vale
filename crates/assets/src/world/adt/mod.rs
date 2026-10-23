@@ -468,7 +468,7 @@ pub struct Mcnk {
     /// a whole cell, and the file states it: on `Azeroth_34_51` all 16,384 cell
     /// entries name a layer the chunk actually has, which is what says the
     /// field is this and is packed this way.
-    pub detail_layer: [u16; 8],
+    pub(crate) detail_layer: [u16; 8],
     /// **…and which of those cells grow nothing at all** — `noEffectDoodad` at
     /// `0x50`, one bit per cell, `row * 8 + col`, set where the tools decided
     /// the ground is bare.
@@ -476,7 +476,7 @@ pub struct Mcnk {
     /// 6,560 of `Azeroth_34_51`'s 16,384 cells are suppressed, in contiguous
     /// runs — a path, a bare rock face, the ground under a building. Without it
     /// grass grows straight through the roads.
-    pub no_detail: u64,
+    pub(crate) no_detail: u64,
 }
 
 impl Mcnk {
@@ -484,7 +484,8 @@ impl Mcnk {
     ///
     /// The 145 samples alternate: 9 outer, 8 inner, 9 outer, ... so outer row
     /// `r` starts at `r * 17`.
-    pub fn outer_height(&self, row: usize, col: usize) -> f32 {
+    #[cfg(test)]
+    pub(crate) fn outer_height(&self, row: usize, col: usize) -> f32 {
         self.heights
             .get(row * (OUTER_SIDE + INNER_SIDE) + col)
             .copied()
@@ -493,7 +494,8 @@ impl Mcnk {
 
     /// Height at inner-grid `(row, col)`, both 0..=7. Inner row `r` starts at
     /// `r * 17 + 9`.
-    pub fn inner_height(&self, row: usize, col: usize) -> f32 {
+    #[cfg(test)]
+    pub(crate) fn inner_height(&self, row: usize, col: usize) -> f32 {
         self.heights
             .get(row * (OUTER_SIDE + INNER_SIDE) + OUTER_SIDE + col)
             .copied()
@@ -502,12 +504,13 @@ impl Mcnk {
 
     /// Normal at outer-grid `(row, col)`, indexed exactly like the heights.
     /// Straight up when the file had no `MCNR`.
-    pub fn outer_normal(&self, row: usize, col: usize) -> [f32; 3] {
+    #[cfg(test)]
+    pub(crate) fn outer_normal(&self, row: usize, col: usize) -> [f32; 3] {
         self.normals.get(outer_index(row, col)).copied().unwrap_or(UP)
     }
 
     /// Normal at inner-grid `(row, col)`.
-    pub fn inner_normal(&self, row: usize, col: usize) -> [f32; 3] {
+    pub(crate) fn inner_normal(&self, row: usize, col: usize) -> [f32; 3] {
         self.normals.get(inner_index(row, col)).copied().unwrap_or(UP)
     }
 
@@ -530,13 +533,14 @@ impl Mcnk {
     }
 
     /// Is the 4x4 sub-cell containing outer cell `(row, col)` a hole?
-    pub fn is_hole(&self, row: usize, col: usize) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_hole(&self, row: usize, col: usize) -> bool {
         // The 16-bit mask is a 4x4 grid; each bit covers a 2x2 block of cells.
         let bit = (row / 2) * 4 + (col / 2);
         self.holes & (1 << bit) != 0
     }
 
-    pub fn min_max_height(&self) -> (f32, f32) {
+    pub(crate) fn min_max_height(&self) -> (f32, f32) {
         self.heights.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &h| {
             (lo.min(h), hi.max(h))
         })
@@ -607,18 +611,6 @@ impl Mcnk {
     /// five times this. See [`chunk_mesh_vertices`].
     pub fn drawn_cells(&self) -> usize {
         drawn_cells(self.holes)
-    }
-
-    /// This chunk's vertices, in the order a tile mesh holds them.
-    pub fn mesh_vertices(&self, emit: impl FnMut(MeshVertex)) {
-        chunk_mesh_vertices(
-            self.position,
-            &self.heights,
-            &self.normals,
-            &self.colours,
-            self.holes,
-            emit,
-        )
     }
 
     pub fn ground(&self) -> ChunkGround {
@@ -860,7 +852,7 @@ const LATTICE_UNIT: f64 = 1600.0 / 3.0 / 128.0;
 /// A chunk origin's place on the vertex lattice, as whole vertex steps from
 /// the map's corner along x and y. The file's origins are within a millimetre
 /// of a lattice point; rounding takes them onto it.
-pub fn lattice_index(position: [f32; 3]) -> [f64; 2] {
+pub(crate) fn lattice_index(position: [f32; 3]) -> [f64; 2] {
     [
         ((LATTICE_ORIGIN - f64::from(position[0])) / LATTICE_UNIT).round(),
         ((LATTICE_ORIGIN - f64::from(position[1])) / LATTICE_UNIT).round(),
@@ -870,7 +862,7 @@ pub fn lattice_index(position: [f32; 3]) -> [f64; 2] {
 /// The world x and y of the vertex `r` rows and `c` columns (in cell units,
 /// halves for a cell's centre) from a chunk whose origin is at lattice
 /// `base`.
-pub fn lattice_xy(base: [f64; 2], r: f32, c: f32) -> [f32; 2] {
+pub(crate) fn lattice_xy(base: [f64; 2], r: f32, c: f32) -> [f32; 2] {
     [
         (LATTICE_ORIGIN - (base[0] + f64::from(r)) * LATTICE_UNIT) as f32,
         (LATTICE_ORIGIN - (base[1] + f64::from(c)) * LATTICE_UNIT) as f32,
@@ -978,7 +970,7 @@ impl ChunkGrid {
 /// cover the sub-centimetre height differences between two tiles' copies of
 /// their shared edge, which [`ChunkGrid::stitched`] cannot reach because the
 /// other tile is not in hand.
-pub const SKIRT_DEPTH: f32 = 0.25;
+pub(crate) const SKIRT_DEPTH: f32 = 0.25;
 
 /// **The `MCCV` byte that means "leave this vertex alone".**
 ///
@@ -990,7 +982,7 @@ pub const SKIRT_DEPTH: f32 = 0.25;
 pub const COLOUR_NEUTRAL: u8 = 0x7F;
 
 /// …and the multiplier that byte becomes.
-pub const COLOUR_SCALE: f32 = COLOUR_NEUTRAL as f32;
+pub(crate) const COLOUR_SCALE: f32 = COLOUR_NEUTRAL as f32;
 
 /// `MCCV`'s four bytes per vertex, as the multipliers the ground is shaded by.
 ///
@@ -1034,7 +1026,7 @@ pub fn decode_colours(mccv: &[u8]) -> Vec<[f32; 4]> {
 }
 
 /// What a vertex with no `MCCV` behind it is shaded by: nothing at all.
-pub const COLOUR_NONE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+pub(crate) const COLOUR_NONE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 
 /// `MCNR`'s three signed bytes per vertex, as unit normals in the world's own
 /// axes.
@@ -1745,7 +1737,7 @@ pub fn alpha_atlas_cell(alphas: &[Vec<u8>], shadow: &[u8]) -> Vec<u8> {
 ///
 /// Level 0 first, then [`ALPHA_ATLAS_MIPS`] levels below it. That layout is the
 /// one `Image::data` wants and the one [`write_alpha_atlas_cell`] indexes into.
-pub fn alpha_atlas_levels() -> Vec<(usize, usize)> {
+pub(crate) fn alpha_atlas_levels() -> Vec<(usize, usize)> {
     let mut levels = Vec::with_capacity(1 + ALPHA_ATLAS_MIPS);
     let mut at = 0usize;
     for level in 0..=ALPHA_ATLAS_MIPS {
@@ -1819,7 +1811,7 @@ fn halve(src: &[u8], side: usize) -> Vec<u8> {
 /// Below that a level is averaging whole *chunks* together rather than texels
 /// within one, which is the point at which the cell layout stops meaning
 /// anything.
-pub const ALPHA_ATLAS_MIPS: usize = ALPHA_SIDE.trailing_zeros() as usize;
+pub(crate) const ALPHA_ATLAS_MIPS: usize = ALPHA_SIDE.trailing_zeros() as usize;
 
 /// The alpha atlas minified, levels 1..=[`ALPHA_ATLAS_MIPS`], top excluded.
 ///
@@ -2785,7 +2777,7 @@ pub fn alpha_stride(layers: &[TextureLayer], mcal_len: usize) -> usize {
 /// The nibble is scaled by 17 rather than by 16 so that 0xF becomes 255 and not
 /// 240 — a layer meant to be fully opaque must actually reach opaque, or every
 /// blend leaves a ghost of the layer beneath it.
-pub fn expand_4bit_alpha(src: &[u8]) -> Vec<u8> {
+pub(crate) fn expand_4bit_alpha(src: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; ALPHA_LEN];
     for i in 0..ALPHA_LEN {
         let Some(byte) = src.get(i / 2) else { break };
@@ -2833,7 +2825,7 @@ pub fn decode_alpha_layer(index: usize, layer: &TextureLayer, mcal: &[u8], strid
 /// come back as 0xF and 254 must not come back as 0xE: `(a * 15 + 127) / 255` is
 /// the nearest nibble, and it is a fixed point of the pair — every value the
 /// decode can produce encodes back to the nibble it came from.
-pub fn pack_4bit_alpha(map: &[u8]) -> Vec<u8> {
+pub(crate) fn pack_4bit_alpha(map: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; ALPHA_LEN / 2];
     for i in 0..ALPHA_LEN {
         let value = map.get(i).copied().unwrap_or(0) as u32;

@@ -112,7 +112,7 @@ pub const SAVED_VARIABLES_NAME: &str = "SavedVariables.lua";
 /// so the path is the same whatever case the login was typed in. A blank
 /// account answers `None`: a client that has not logged in has no account
 /// folder.
-pub fn account_file_path(account: &str, name: &str) -> Option<String> {
+pub(crate) fn account_file_path(account: &str, name: &str) -> Option<String> {
     let account = account.trim();
     if account.is_empty() {
         return None;
@@ -140,14 +140,6 @@ pub enum SavedValue {
 }
 
 impl SavedValue {
-    /// The value as text: the string itself, or the number as Lua prints it
-    /// (`0.5`, `1`).
-    pub fn as_text(&self) -> String {
-        match self {
-            SavedValue::Text(text) => text.clone(),
-            SavedValue::Number(n) => lua_number(*n),
-        }
-    }
 }
 
 /// A number as `SavedVariables.lua` and Lua's `tostring` write it: an integer
@@ -308,7 +300,7 @@ pub fn render_camera_settings(distance: f32, pitch_degrees: f32) -> String {
 /// does not read their contents. A folder that still has this client's own
 /// file is read once, so a setting saved there is not lost, and the next write
 /// goes to `SavedVariables.lua`.
-pub const CONFIG_CACHE_NAME: &str = "config-cache.wtf";
+pub(crate) const CONFIG_CACHE_NAME: &str = "config-cache.wtf";
 
 /// Where [`CONFIG_CACHE_NAME`] is: `WTF\Account\<ACCOUNT>\config-cache.wtf`.
 /// See [`account_file_path`].
@@ -324,7 +316,7 @@ pub fn config_cache_path(account: &str) -> Option<String> {
 /// format is not this module's `SET` lines: it is `bind KEY COMMAND`, measured
 /// from real files, and is read by
 /// [`crate::interface::bindings::parse_bind_file`].
-pub const BINDINGS_CACHE_NAME: &str = "bindings-cache.wtf";
+pub(crate) const BINDINGS_CACHE_NAME: &str = "bindings-cache.wtf";
 
 /// Where the account's copy of [`BINDINGS_CACHE_NAME`] is:
 /// `WTF\Account\<ACCOUNT>\bindings-cache.wtf`. See [`account_file_path`].

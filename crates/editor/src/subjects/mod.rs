@@ -49,14 +49,14 @@
 //!                row's under its workspace
 //! ```
 
-pub mod behaviour;
-pub mod conditions;
-pub mod displays;
-pub mod gossip;
-pub mod items;
-pub mod listing;
-pub mod loot;
-pub mod quests;
-pub mod services;
-pub mod templates;
-pub mod windows;
+pub(crate) mod behaviour;
+pub(crate) mod conditions;
+pub(crate) mod displays;
+pub(crate) mod gossip;
+pub(crate) mod items;
+pub(crate) mod listing;
+pub(crate) mod loot;
+pub(crate) mod quests;
+pub(crate) mod services;
+pub(crate) mod templates;
+pub(crate) mod windows;

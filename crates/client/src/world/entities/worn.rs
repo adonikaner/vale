@@ -205,8 +205,8 @@ impl DisplayCache {
     /// A host whose entities are already standing has no next entity. Its
     /// effect and pose passes ask [`Self::tables`], which does not load, and
     /// are answered `None` from then on: a kit pushed onto a standing unit
-    /// hangs no model and plays no animation. This is for that host. The
-    /// client itself does not call it.
+    /// hangs no model and plays no animation. This is for that host, which
+    /// asks for it with a [`crate::assets::PathsChanged`] naming the tables.
     pub fn reread(&mut self, assets: &GameAssets) {
         let known: Vec<(bool, u32)> = self.resolved.keys().copied().collect();
         self.forget();

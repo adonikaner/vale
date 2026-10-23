@@ -251,7 +251,7 @@ pub struct PaintBrush {
 /// texture by [`PaintBrush::reuse_hidden`]: two hundredths. Below it the layer
 /// is a few texels at a border, and replacing it changes nothing a person
 /// would find.
-pub const REUSE_UNDER: f32 = 0.02;
+pub(crate) const REUSE_UNDER: f32 = 0.02;
 
 /// A value from 0 to 1 that depends on where a texel is and on nothing else,
 /// varying over `grain` yards: [`wobble`] moved into that range.
@@ -259,7 +259,7 @@ pub const REUSE_UNDER: f32 = 0.02;
 /// A stroke at a density under 1 paints the texels where this is under the
 /// density. It is a function of the place for the reason `wobble` is: a held
 /// stroke has to deepen the same patches and not paint new ones every frame.
-pub fn speckle(x: f32, y: f32, grain: f32) -> f32 {
+pub(crate) fn speckle(x: f32, y: f32, grain: f32) -> f32 {
     wobble(x, y, grain.max(0.25)) * 0.5 + 0.5
 }
 
@@ -327,7 +327,7 @@ impl PaintBrush {
     /// With `seconds` at 1 and a strength of 1, one call moves every texel
     /// all the way to its weight's share of the opacity, which is a footprint
     /// written once rather than rubbed in.
-    pub fn paint_where(
+    pub(crate) fn paint_where(
         &self,
         tile: &mut AdtFile,
         working: &mut Working,

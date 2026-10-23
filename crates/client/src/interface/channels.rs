@@ -70,7 +70,7 @@ use vale_protocol::play::channels::ChannelVerb;
 
 /// The two packets, as messages for [`apply_answers`].
 #[derive(Message, Debug, Clone)]
-pub enum ChannelAnswer {
+pub(crate) enum ChannelAnswer {
     Notify(Box<ChannelNotify>),
     List(Box<ChannelList>),
 }
@@ -79,7 +79,7 @@ pub enum ChannelAnswer {
 /// the name blank. A name query is one round trip.
 const NAME_PATIENCE: f32 = 3.0;
 
-pub struct ChannelsPlugin;
+pub(crate) struct ChannelsPlugin;
 
 impl Plugin for ChannelsPlugin {
     fn build(&self, app: &mut App) {
@@ -151,14 +151,9 @@ fn auto_join(
     // each time the area changes, which is the only time it is used.
     let in_guild = active
         .live
-        .world()
-        .lock()
-        .ok()
-        .and_then(|world| {
-            world
-                .player()
-                .and_then(|me| me.field(vale_protocol::state::fields::player::GUILDID))
-        })
+        .read()
+        .player()
+        .and_then(|me| me.field(vale_protocol::state::fields::player::GUILDID))
         .is_some_and(|guild| guild != 0);
     if *last_area == Some(place.area) && board.in_guild == in_guild {
         return;
@@ -278,7 +273,7 @@ impl Names<'_> {
         }
         let known = self
             .live
-            .and_then(|live| live.world().lock().ok())
+            .map(|live| live.read())
             .and_then(|world| world.players.get(&guid).map(|info| info.name.clone()));
         if known.is_none() {
             self.asked.push(guid);
@@ -483,7 +478,7 @@ fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<
 }
 
 /// The two packets this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<ChannelAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<ChannelAnswer> {
     Some(match event {
         PlayerEvent::ChannelNotify(notify) => ChannelAnswer::Notify(notify.clone()),
         PlayerEvent::ChannelList(list) => ChannelAnswer::List(list.clone()),

@@ -168,7 +168,8 @@ const UPLOAD_ITEMS: usize = 64;
 /// The two things that have to clear it — the camera's far plane and the ground
 /// pick — read [`TerrainReach::yards`] instead, because a host may have asked
 /// for more. This is what that answers with when nobody has.
-pub const LOADED_REACH: f32 = TerrainReach(RADIUS).yards();
+#[cfg(test)]
+pub(crate) const LOADED_REACH: f32 = TerrainReach(RADIUS).yards();
 
 /// One tile's worth of decoded terrain, ready to become Bevy assets.
 ///
@@ -455,7 +456,7 @@ fn light_sheen(
 /// on it is one query; the alternative is a second component that could be
 /// forgotten.
 #[derive(Component)]
-pub struct TerrainWater(pub Liquid);
+pub(crate) struct TerrainWater(pub(crate) Liquid);
 
 /// One tile part-way through becoming entities.
 ///
@@ -515,7 +516,7 @@ struct TileBuild {
 /// which is the alpha atlas, at 5.3 MiB with its mips, two and a half times the
 /// budget on its own.
 #[derive(Default, Clone, Copy)]
-pub struct Handed {
+pub(crate) struct Handed {
     pub bytes: usize,
     pub images: usize,
     pub meshes: usize,
@@ -552,7 +553,7 @@ pub struct LoadedTiles {
     map: Option<String>,
     /// Draw groups spawned since the process started — a running total for the
     /// log line and not a count of what is resident.
-    pub draw_groups: usize,
+    pub(crate) draw_groups: usize,
 }
 
 impl LoadedTiles {
@@ -688,16 +689,16 @@ pub struct TerrainMaterial {
     pub alpha: Handle<Image>,
     #[texture(3)]
     #[sampler(4)]
-    pub layer0: Handle<Image>,
+    pub(crate) layer0: Handle<Image>,
     #[texture(5)]
     #[sampler(6)]
-    pub layer1: Handle<Image>,
+    pub(crate) layer1: Handle<Image>,
     #[texture(7)]
     #[sampler(8)]
-    pub layer2: Handle<Image>,
+    pub(crate) layer2: Handle<Image>,
     #[texture(9)]
     #[sampler(10)]
-    pub layer3: Handle<Image>,
+    pub(crate) layer3: Handle<Image>,
     /// A colour per map chunk, over the ground.
     ///
     /// A 16x16 image, one texel per chunk, sampled with the same `uv_b` the
@@ -736,7 +737,7 @@ pub struct TileTint(pub Handle<Image>);
 #[derive(Clone, Copy, ShaderType)]
 pub struct TerrainParams {
     pub layer_count: u32,
-    pub repeat: f32,
+    pub(crate) repeat: f32,
     /// How much of [`TerrainMaterial::tint`] to show, 0 for none.
     ///
     /// Zero in every frame of the game. A host that wants the ground washed by
@@ -762,8 +763,8 @@ pub struct TerrainParams {
     /// Zero on every draw group of every tile but the handful that carry the
     /// bits, and a zero velocity is the identity, so the branch is arithmetic
     /// rather than a `if`.
-    pub scroll_a: Vec4,
-    pub scroll_b: Vec4,
+    pub(crate) scroll_a: Vec4,
+    pub(crate) scroll_b: Vec4,
     /// Two readings of the ground's shape, drawn on it: `x` is a slope limit
     /// as the cosine of an angle from level, and ground steeper than it is
     /// shaded; `y` is a contour interval in yards, and a line is drawn at
@@ -782,7 +783,7 @@ pub struct TerrainParams {
 impl TerrainParams {
     /// No grid, no slope shading and no contours, which is what every ground
     /// material is built with.
-    pub const NO_GUIDES: (f32, Vec4) = (0.0, Vec4::ZERO);
+    pub(crate) const NO_GUIDES: (f32, Vec4) = (0.0, Vec4::ZERO);
 }
 
 /// What `#[data]` extracts into the storage array — the whole of the
@@ -802,7 +803,7 @@ impl Material for TerrainMaterial {
     }
 }
 
-pub struct TerrainPlugin;
+pub(crate) struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
@@ -891,7 +892,7 @@ fn report(
 /// Tiles that have left the block and wait to be despawned, oldest first. See
 /// [`retire_tile`].
 #[derive(Resource, Default)]
-pub struct RetiringTiles(std::collections::VecDeque<Entity>);
+pub(crate) struct RetiringTiles(std::collections::VecDeque<Entity>);
 
 /// How many retired tiles are despawned a frame. See [`retire_tile`].
 const DESPAWNS_PER_FRAME: usize = 1;

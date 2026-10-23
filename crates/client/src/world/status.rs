@@ -30,18 +30,18 @@ pub struct WorldStatus {
     /// entity ahead of the simulation and leaves the character to the ordinary
     /// interpolation. It is separate from [`WorldEntity::farsight`], which says
     /// where the camera is: Eagle Eye moves the view and drives no unit.
-    pub mover: u64,
+    pub(crate) mover: u64,
     /// The current weather: the last `SMSG_WEATHER`; see
     /// [`vale_protocol::play::weather`]. Read by `render::weather` for the
     /// picture and by `sound::ambience` for the sound loop. `None` is a clear
     /// sky.
     pub weather: Option<vale_protocol::play::weather::Weather>,
-    pub packets: u64,
-    pub movement_sent: u64,
+    pub(crate) packets: u64,
+    pub(crate) movement_sent: u64,
     /// Forced flag changes and knockbacks acknowledged; see
     /// `vale_protocol::state::movement::FlagChange`.
-    pub flag_changes: u32,
-    pub latency_ms: u32,
+    pub(crate) flag_changes: u32,
+    pub(crate) latency_ms: u32,
     /// Session-thread steps that took longer than a quarter of a second, and
     /// the longest of them; see
     /// [`vale_protocol::socket::session::SessionStatus::stalls`], which says
@@ -51,25 +51,25 @@ pub struct WorldStatus {
     /// it is the other cause of the world arriving late, and the two can only
     /// be told apart when both are on screen. A steady 40 ms round trip with
     /// two hundred stalls behind it is not a network problem.
-    pub stalls: u32,
-    pub worst_stall_ms: u32,
+    pub(crate) stalls: u32,
+    pub(crate) worst_stall_ms: u32,
     /// Carries that moved the character further than a transport can travel;
     /// see [`vale_protocol::socket::session::SessionStatus::platform_jumps`],
     /// which says why this is counted.
-    pub platform_jumps: u32,
-    pub worst_platform_jump: f32,
+    pub(crate) platform_jumps: u32,
+    pub(crate) worst_platform_jump: f32,
     /// Whether the session thread is keeping up with the socket, against the
     /// ticks it has taken; see
     /// [`vale_protocol::socket::session::SessionStatus::read_slice_overruns`].
-    pub read_slice_overruns: u32,
+    pub(crate) read_slice_overruns: u32,
     pub ticks: u32,
-    pub entity_count: usize,
-    pub warnings: Vec<String>,
+    pub(crate) entity_count: usize,
+    pub(crate) warnings: Vec<String>,
     /// Traffic counts per opcode; see
     /// [`vale_protocol::socket::world::Traffic`]. The session thread swaps this
     /// `Arc` a few times a second, so copying it here every frame costs one
     /// atomic increment.
-    pub traffic: Arc<vale_protocol::socket::world::Traffic>,
+    pub(crate) traffic: Arc<vale_protocol::socket::world::Traffic>,
     /// The last few hundred packets in full, while the capture is armed; see
     /// [`vale_protocol::socket::world::Capture`]. An `Arc` swapped the same way
     /// as [`Self::traffic`].
@@ -89,20 +89,20 @@ pub struct WorldStatus {
 /// behind.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counters {
-    pub speed_changes: u32,
-    pub speed_broadcasts: u32,
+    pub(crate) speed_changes: u32,
+    pub(crate) speed_broadcasts: u32,
     /// Movement flags stated about a unit no player is moving: the twelve
     /// `SMSG_SPLINE_MOVE_*`. They are an order of magnitude rarer than the
     /// speeds, so a zero means something only in a session where a unit is
     /// known to have been rooted or told to walk.
-    pub spline_flag_changes: u32,
+    pub(crate) spline_flag_changes: u32,
     /// Sounds and visuals the server requested directly: the three
     /// `SMSG_PLAY_*` sound opcodes and the two `SMSG_PLAY_SPELL_*` ones. Two
     /// counters because they fail differently: a dropped sound is silence with
     /// no other trace, and a dropped visual is a character who sits down to eat
     /// and does nothing.
-    pub pushed_sounds: u32,
-    pub pushed_visuals: u32,
+    pub(crate) pushed_sounds: u32,
+    pub(crate) pushed_visuals: u32,
     /// `SMSG_COMPRESSED_MOVES` bags, and the packets unpacked from them.
     ///
     /// This one differs from the rest of the table. Every other counter here is
@@ -111,23 +111,23 @@ pub struct Counters {
     /// threshold, so a large number here means most of the world's movement
     /// arrived inside this one opcode. A client that did not read it showed
     /// every creature standing still.
-    pub bagged_moves: u32,
-    pub bagged_packets: u32,
-    pub area_triggers: u32,
-    pub rides: u32,
-    pub attacks: u32,
+    pub(crate) bagged_moves: u32,
+    pub(crate) bagged_packets: u32,
+    pub(crate) area_triggers: u32,
+    pub(crate) rides: u32,
+    pub(crate) attacks: u32,
     pub emotes: u32,
     pub casts: u32,
-    pub ai_reactions: u32,
-    pub cast_results: u32,
-    pub attack_refusals: u32,
-    pub spells_known: u32,
-    pub action_buttons: u32,
+    pub(crate) ai_reactions: u32,
+    pub(crate) cast_results: u32,
+    pub(crate) attack_refusals: u32,
+    pub(crate) spells_known: u32,
+    pub(crate) action_buttons: u32,
     /// Forced flag changes and knockbacks acknowledged. This family has a
     /// four-second deadline: a missed acknowledgement causes a kick some
     /// seconds later naming a cheat this client never attempted, and nothing
     /// else on screen would show why.
-    pub flag_changes: u32,
+    pub(crate) flag_changes: u32,
 }
 
 /// Every counter, as `(label, accessor)`, for the panel that tabulates them.
@@ -135,7 +135,8 @@ pub struct Counters {
 /// A list rather than twelve hand-written rows, for the same reason as
 /// `render::tuning::SWITCHES`: a counter added to [`Counters`] and not to this
 /// list is invisible, and the order belongs here, not in the panel.
-pub const COUNTERS: [(&str, fn(&Counters) -> u32); 17] = [
+#[cfg(feature = "diagnostics")]
+pub(crate) const COUNTERS: [(&str, fn(&Counters) -> u32); 17] = [
     ("attacks", |c| c.attacks),
     ("casts", |c| c.casts),
     ("cast results", |c| c.cast_results),

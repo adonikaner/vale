@@ -30,24 +30,24 @@ use bevy::prelude::*;
 
 /// One place the camera can be sent.
 #[derive(Debug, Clone)]
-pub struct Place {
-    pub name: String,
+pub(crate) struct Place {
+    pub(crate) name: String,
     /// The middle of the zone's world-map rectangle, in the world's own axes.
-    pub at: Vec2,
+    pub(crate) at: Vec2,
 }
 
 /// The zones of one map, sorted by name.
 #[derive(Resource, Debug, Default)]
-pub struct Places {
+pub(crate) struct Places {
     /// Which map these are for, so a map change is noticed.
-    pub map_id: u32,
-    pub zones: Vec<Place>,
+    pub(crate) map_id: u32,
+    pub(crate) zones: Vec<Place>,
 }
 
 impl Places {
     /// Read the zones of a map. Empty for a map with no world-map rows, which is
     /// every instance.
-    pub fn of(assets: &GameAssets, map_id: u32) -> Places {
+    pub(crate) fn of(assets: &GameAssets, map_id: u32) -> Places {
         let mut zones = Vec::new();
         if let Ok(tables) = assets.display_tables() {
             if let Some(world_map) = tables.world_map() {
@@ -90,7 +90,7 @@ impl Places {
 /// instead would be a second copy of the arrangement that decides which index
 /// counts along which axis, and the two would agree until one of them was
 /// corrected.
-pub fn middle_of_tile(x: u32, y: u32) -> Vec2 {
+pub(crate) fn middle_of_tile(x: u32, y: u32) -> Vec2 {
     let at = vale_assets::world::terrain::tile_centre(x, y);
     Vec2::new(at[0], at[1])
 }

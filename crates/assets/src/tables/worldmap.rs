@@ -158,27 +158,27 @@ mod area_fields {
     pub const AREA_ID: usize = 2;
     /// The **art directory**, not a name to show — see the module comment.
     pub const DIRECTORY: usize = 3;
-    pub const LOC_LEFT: usize = 4;
-    pub const LOC_RIGHT: usize = 5;
-    pub const LOC_TOP: usize = 6;
-    pub const LOC_BOTTOM: usize = 7;
+    pub(crate) const LOC_LEFT: usize = 4;
+    pub(crate) const LOC_RIGHT: usize = 5;
+    pub(crate) const LOC_TOP: usize = 6;
+    pub(crate) const LOC_BOTTOM: usize = 7;
 }
 
 mod overlay_fields {
-    pub const MAP_AREA_ID: usize = 1;
+    pub(crate) const MAP_AREA_ID: usize = 1;
     /// `areaId[4]` — fields 2..5, and **any** one explored shows the row.
-    pub const AREA_IDS: std::ops::Range<usize> = 2..6;
-    pub const MAP_POINT_X: usize = 6;
-    pub const MAP_POINT_Y: usize = 7;
+    pub(crate) const AREA_IDS: std::ops::Range<usize> = 2..6;
+    pub(crate) const MAP_POINT_X: usize = 6;
+    pub(crate) const MAP_POINT_Y: usize = 7;
     pub const TEXTURE: usize = 8;
-    pub const TEXTURE_WIDTH: usize = 9;
-    pub const TEXTURE_HEIGHT: usize = 10;
+    pub(crate) const TEXTURE_WIDTH: usize = 9;
+    pub(crate) const TEXTURE_HEIGHT: usize = 10;
     pub const OFFSET_X: usize = 11;
     pub const OFFSET_Y: usize = 12;
-    pub const HIT_TOP: usize = 13;
-    pub const HIT_LEFT: usize = 14;
-    pub const HIT_BOTTOM: usize = 15;
-    pub const HIT_RIGHT: usize = 16;
+    pub(crate) const HIT_TOP: usize = 13;
+    pub(crate) const HIT_LEFT: usize = 14;
+    pub(crate) const HIT_BOTTOM: usize = 15;
+    pub(crate) const HIT_RIGHT: usize = 16;
 }
 
 mod continent_fields {
@@ -426,7 +426,7 @@ impl Continent {
     /// here because
     /// getting it backwards flips the map north to south and still answers a
     /// zone.
-    pub fn zone_at_position(&self, x: f32, y: f32) -> Option<u32> {
+    pub(crate) fn zone_at_position(&self, x: f32, y: f32) -> Option<u32> {
         let grid = self.zone_grid.as_ref()?;
         let axis = |value: f32| {
             let normalised = 0.5 - value / MAP_YARDS;
@@ -446,7 +446,7 @@ impl Continent {
     /// Unlike [`MapArea::position`] this is not clamped to the parchment: the
     /// client's cosmic branch has no range test at all, because the whole world
     /// is on it by construction.
-    pub fn position_on_cosmic(&self, x: f32, y: f32) -> (f32, f32) {
+    pub(crate) fn position_on_cosmic(&self, x: f32, y: f32) -> (f32, f32) {
         let u = 0.5 + self.offset_x * COSMIC_U_PER_UNIT
             - (y / TILE_YARDS) * self.scale * COSMIC_U_PER_UNIT;
         let v = 0.5 + self.offset_y * COSMIC_V_PER_UNIT
@@ -664,7 +664,7 @@ impl WorldMap {
     /// The `WorldMapArea` row a view is drawn from — `None` for the cosmic map,
     /// which has none. That `None` is the whole reason `WorldMapFrame_Update`
     /// carries `if ( not mapFileName ) then mapFileName = "World"; end`.
-    pub fn area_for(&self, view: MapView) -> Option<&MapArea> {
+    pub(crate) fn area_for(&self, view: MapView) -> Option<&MapArea> {
         let id = match view {
             MapView::Cosmic => return None,
             MapView::Continent(c) => self.continent(c)?.whole,
@@ -944,7 +944,7 @@ impl WorldMap {
 /// neither of these two depends on. A trait here could not be implemented for it
 /// anywhere (the orphan rule), and a copy of the bitset in this crate would be
 /// the same 256 bytes with two owners.
-pub type ExplorationMask<'a> = dyn Fn(u32) -> bool + 'a;
+pub(crate) type ExplorationMask<'a> = dyn Fn(u32) -> bool + 'a;
 
 /// **The path `GetMapOverlayInfo` answers with**, without the piece number that
 /// `WorldMapFrame_Update` appends.

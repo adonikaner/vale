@@ -42,7 +42,7 @@ use crate::ui::widgets::theme;
 
 /// Draws the whole section: the *Apply on save* switch, then one block per
 /// subject.
-pub fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
+pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
     theme::heading(ui, "Server operations");
     let have_a_database = work.server.resolve().is_some();
 

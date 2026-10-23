@@ -41,7 +41,7 @@ pub struct Doodad {
 }
 
 /// Bytes in one `MDDF` record.
-pub const DOODAD_RECORD: usize = 36;
+pub(crate) const DOODAD_RECORD: usize = 36;
 
 /// One `MODF` record: a building standing on the tile.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -60,7 +60,7 @@ pub struct Building {
 }
 
 /// Bytes in one `MODF` record.
-pub const BUILDING_RECORD: usize = 64;
+pub(crate) const BUILDING_RECORD: usize = 64;
 
 /// The first `unique_id` a tool may mint for a placement it creates.
 ///
@@ -353,7 +353,7 @@ impl AdtFile {
     /// Write the list back. The order is the numbering `MCRF` refers to, so a
     /// caller that reorders it must renumber the references itself; the two
     /// functions below are the ones that do.
-    pub fn set_doodad_list(&mut self, list: &[Doodad]) {
+    pub(crate) fn set_doodad_list(&mut self, list: &[Doodad]) {
         let mut out = Vec::with_capacity(list.len() * DOODAD_RECORD);
         for doodad in list {
             doodad.write(&mut out);
@@ -369,7 +369,7 @@ impl AdtFile {
             .collect()
     }
 
-    pub fn set_building_list(&mut self, list: &[Building]) {
+    pub(crate) fn set_building_list(&mut self, list: &[Building]) {
         let mut out = Vec::with_capacity(list.len() * BUILDING_RECORD);
         for building in list {
             building.write(&mut out);
@@ -384,7 +384,8 @@ impl AdtFile {
     /// tile carries and counts up from there. Two tiles edited separately can
     /// therefore mint the same id, which is why it is **not** what a tool
     /// creating a placement should use — see [`MINTED_BASE`].
-    pub fn next_unique_id(&self) -> u32 {
+    #[cfg(test)]
+    pub(crate) fn next_unique_id(&self) -> u32 {
         let doodads = self.doodad_list().into_iter().map(|d| d.unique_id);
         let buildings = self.building_list().into_iter().map(|b| b.unique_id);
         doodads.chain(buildings).max().unwrap_or(0).saturating_add(1)
@@ -511,7 +512,7 @@ impl AdtFile {
     }
 
     /// Write both lists back, and the two counts with them.
-    pub fn set_refs(&mut self, chunk: usize, doodads: &[u32], buildings: &[u32]) {
+    pub(crate) fn set_refs(&mut self, chunk: usize, doodads: &[u32], buildings: &[u32]) {
         let Some(chunk) = self.chunk_mut(chunk) else {
             return;
         };

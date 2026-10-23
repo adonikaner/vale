@@ -112,7 +112,7 @@ const TURN: f32 = 15.0;
 
 /// Which list a placement is going into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Kind {
+pub(crate) enum Kind {
     #[default]
     Doodad = 0,
     Wmo = 1,
@@ -136,7 +136,7 @@ impl Kind {
 /// separate rail entry would add a click between placing each tree and
 /// adjusting it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// Pick what is there, move it, turn it.
     #[default]
     Select,
@@ -145,20 +145,20 @@ pub enum Mode {
 }
 
 /// The two modes, as a list for the panel.
-pub const MODES: [(&str, Mode); 2] = [("Select", Mode::Select), ("Place", Mode::Place)];
+pub(crate) const MODES: [(&str, Mode); 2] = [("Select", Mode::Select), ("Place", Mode::Place)];
 
 /// How the next drop is rolled. See the module comment.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Scatter {
+pub(crate) struct Scatter {
     /// Whether anything is rolled at all.
-    pub on: bool,
+    pub(crate) on: bool,
     /// A fresh turn about up, anywhere in the circle.
-    pub turn: bool,
+    pub(crate) turn: bool,
     /// The size, drawn between these two multipliers. Doodads only.
-    pub size: (f32, f32),
+    pub(crate) size: (f32, f32),
     /// The most a drop leans off the vertical, in degrees. Doodads only, and
     /// zero is upright.
-    pub tilt_max: f32,
+    pub(crate) tilt_max: f32,
 }
 
 impl Default for Scatter {
@@ -174,42 +174,42 @@ impl Default for Scatter {
 
 /// What is armed, and what it would look like.
 #[derive(Resource)]
-pub struct Placing {
-    pub mode: Mode,
+pub(crate) struct Placing {
+    pub(crate) mode: Mode,
     /// The model on the cursor, or `None` when the tool is disarmed, which is
     /// its usual state.
-    pub path: Option<String>,
-    pub kind: Kind,
+    pub(crate) path: Option<String>,
+    pub(crate) kind: Kind,
     /// Degrees about the world's up axis. This is the only axis set before a
     /// placement lands; the gizmo sets the other two afterwards.
-    pub turn: f32,
+    pub(crate) turn: f32,
     /// Degrees about the world's x and y axes: a lean off the vertical. Only
     /// [`Scatter`] writes it.
-    pub tilt: [f32; 2],
+    pub(crate) tilt: [f32; 2],
     /// Whether a drop leans onto the slope under the cursor instead of taking
     /// the roll's lean. Doodads only; a building is never leaned. See
     /// `vale_assets::world::adt::lean_to_normal`, and [`Self::lean`], where
     /// the answer for this frame is kept.
-    pub align: bool,
+    pub(crate) align: bool,
     /// The lean the ground under the cursor asks for this frame — the two
     /// world angles, at the current turn — written by [`ground_lean`] and
     /// read by the ghost and the drop, so the two cannot disagree.
-    pub lean: [f32; 2],
+    pub(crate) lean: [f32; 2],
     /// A multiplier, and doodads only — `MODF` carries no scale.
-    pub scale: f32,
+    pub(crate) scale: f32,
     /// How the next drop is rolled after each one.
-    pub scatter: Scatter,
+    pub(crate) scatter: Scatter,
     /// The roll's state; zero until first used.
     seed: u64,
     /// Every model path the archives and the project name, per kind, read
     /// lazily and again when the project's files change.
-    pub doodads: Vec<String>,
-    pub wmos: Vec<String>,
+    pub(crate) doodads: Vec<String>,
+    pub(crate) wmos: Vec<String>,
     /// The `EditSession::files_revision` the two lists were read at, by kind.
     catalogue_for: [Option<u64>; 2],
     /// What the panel's search box holds, kept per kind so switching between
     /// them does not lose it.
-    pub search: String,
+    pub(crate) search: String,
     /// Which folder the picker is showing, one per kind, as a lower-case path
     /// prefix ending in a separator.
     ///
@@ -223,7 +223,7 @@ pub struct Placing {
     /// The path of a model that failed to load, so the panel can report it.
     /// A missing preview looks the same as one still loading, and the two need
     /// different responses.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// The preview entity and what it is showing, so that changing the chosen
     /// model rebuilds it and re-choosing the same one does not.
     ghost: Option<Entity>,
@@ -267,7 +267,7 @@ impl Placing {
     ///
     /// Both picks check this and ignore the click while it is true, because a
     /// click that places must not also select. See the module comment.
-    pub fn armed(&self) -> bool {
+    pub(crate) fn armed(&self) -> bool {
         self.path.is_some()
     }
 
@@ -276,7 +276,7 @@ impl Placing {
     ///
     /// The one entry point, used by the picker and by "Duplicate". See the
     /// module comment on why duplicating arms the tool instead of copying.
-    pub fn arm(&mut self, kind: Kind, path: String, turn: f32, scale: f32) {
+    pub(crate) fn arm(&mut self, kind: Kind, path: String, turn: f32, scale: f32) {
         self.kind = kind;
         // The path is resolved here and nowhere else. The module comment
         // describes what an unresolved `.mdx` caused.
@@ -293,7 +293,7 @@ impl Placing {
 
     /// Draw the next turn, size and tilt inside [`Scatter`]'s bounds, if it
     /// is on. Called after every drop and by the "Roll now" button.
-    pub fn roll(&mut self) {
+    pub(crate) fn roll(&mut self) {
         if !self.scatter.on {
             return;
         }
@@ -323,13 +323,13 @@ impl Placing {
     }
 
     /// Clear the model on the cursor. `Escape` and a tool change call this.
-    pub fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.path = None;
         self.trouble = None;
     }
 
     /// The catalogue for a kind, which the panel lists.
-    pub fn catalogue(&self, kind: Kind) -> &[String] {
+    pub(crate) fn catalogue(&self, kind: Kind) -> &[String] {
         match kind {
             Kind::Doodad => &self.doodads,
             Kind::Wmo => &self.wmos,
@@ -337,14 +337,14 @@ impl Placing {
     }
 
     /// The folder the picker is showing for a kind, as a path prefix.
-    pub fn folder(&self, kind: Kind) -> &str {
+    pub(crate) fn folder(&self, kind: Kind) -> &str {
         &self.folders[kind as usize]
     }
 
     /// Set the folder the picker shows for a kind. A prefix with no trailing
     /// separator is given one, so that a folder cannot also match one whose
     /// name it is a prefix of.
-    pub fn open_folder(&mut self, kind: Kind, prefix: &str) {
+    pub(crate) fn open_folder(&mut self, kind: Kind, prefix: &str) {
         let mut prefix = prefix.to_ascii_lowercase();
         if !prefix.is_empty() && !prefix.ends_with(SEP) {
             prefix.push(SEP);
@@ -354,7 +354,7 @@ impl Placing {
 
     /// The folder a path is in, for opening the picker where the chosen model
     /// already is rather than at the top.
-    pub fn folder_of(path: &str) -> String {
+    pub(crate) fn folder_of(path: &str) -> String {
         match path.rfind(SEP) {
             Some(at) => path[..=at].to_ascii_lowercase(),
             None => ROOT.to_string(),
@@ -377,16 +377,16 @@ fn unit(seed: &mut u64) -> f32 {
 /// The archives' own path separator, which is the one the picker's folders are
 /// cut on. A backslash, given a name so that it reads as a separator and not as
 /// an escape inside a condition.
-pub const SEP: char = '\\';
+pub(crate) const SEP: char = '\\';
 
 /// Where the picker starts, and what its breadcrumb calls `World`.
 ///
 /// Everything either catalogue holds is under it, since both are read from
 /// `EditSession::listed` with the prefix `World\`, so a level above it would
 /// be one folder with everything in it.
-pub const ROOT: &str = "world\\";
+pub(crate) const ROOT: &str = "world\\";
 
-pub struct PlaceToolPlugin;
+pub(crate) struct PlaceToolPlugin;
 
 impl Plugin for PlaceToolPlugin {
     fn build(&self, app: &mut App) {
@@ -708,7 +708,7 @@ fn follow(
 impl Placing {
     /// The lean the next drop is written with: the ground's when
     /// [`Self::align`] is on, the roll's otherwise.
-    pub fn tilt_now(&self) -> [f32; 2] {
+    pub(crate) fn tilt_now(&self) -> [f32; 2] {
         match self.align && self.kind == Kind::Doodad {
             true => self.lean,
             false => self.tilt,
@@ -1039,7 +1039,7 @@ fn ghost_bounds(
 }
 
 /// The last component of a path: the file name.
-pub fn leaf(path: &str) -> &str {
+pub(crate) fn leaf(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
 

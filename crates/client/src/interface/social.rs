@@ -59,7 +59,7 @@ use vale_protocol::state::events::PlayerEvent;
 /// [`crate::world::incoming::drain_events`] on the same terms as every other
 /// subject's.
 #[derive(Message, Debug, Clone)]
-pub enum SocialAnswer {
+pub(crate) enum SocialAnswer {
     /// `SMSG_FRIEND_LIST`: the whole list.
     Friends(Vec<vale_protocol::play::social::Friend>),
     /// `SMSG_IGNORE_LIST`: the whole list, as guids.
@@ -71,7 +71,7 @@ pub enum SocialAnswer {
     Who(vale_protocol::play::social::WhoResults),
 }
 
-pub struct SocialPlugin;
+pub(crate) struct SocialPlugin;
 
 impl Plugin for SocialPlugin {
     fn build(&self, app: &mut App) {
@@ -243,9 +243,7 @@ fn learn_names(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res
     let Some(active) = session.active.as_ref() else {
         return;
     };
-    let Ok(world) = active.live.world().lock() else {
-        return;
-    };
+    let world = active.live.read();
     board.learn_names(|guid| world.players.get(&guid).map(|info| info.name.clone()));
 }
 
@@ -329,7 +327,7 @@ fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<
 
 /// The arm [`crate::world::incoming`] calls, kept in this file so the four
 /// packet types and the four board writes are in the same file.
-pub fn answer_of(event: &PlayerEvent) -> Option<SocialAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<SocialAnswer> {
     Some(match event {
         PlayerEvent::FriendList(list) => SocialAnswer::Friends(list.clone()),
         PlayerEvent::IgnoreList(list) => SocialAnswer::Ignores(list.clone()),

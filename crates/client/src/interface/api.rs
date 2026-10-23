@@ -135,7 +135,7 @@ const RAID_TOKENS: [&str; vale_protocol::play::group::MAX_RAID_MEMBERS] = [
 impl UnitId {
     /// The token as the game spells it: lower case with no separators, so
     /// `targettarget` is one word.
-    pub fn token(&self) -> &'static str {
+    pub(crate) fn token(&self) -> &'static str {
         match self {
             UnitId::Player => "player",
             UnitId::Target => "target",
@@ -234,7 +234,7 @@ impl UnitId {
 /// The distance between two units, split into the parts the server tests
 /// separately. [`Units::separation`] explains why.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Separation {
+pub(crate) struct Separation {
     /// Centre to centre in the horizontal plane.
     pub across: f32,
     /// The vertical distance, signed: positive when the second unit is above
@@ -272,7 +272,7 @@ pub struct Units<'w, 's> {
     npc: Res<'w, crate::interface::gossip::NpcUnit>,
     /// The group roster. It is the only source that says whether a
     /// `party<n>` token names anyone. See [`crate::interface::party`].
-    pub party: Res<'w, crate::interface::party::Party>,
+    pub(crate) party: Res<'w, crate::interface::party::Party>,
     /// The character's reputation standings, the part of friend-or-foe that
     /// no DBC file holds. See [`crate::interface::reputation::PlayerStanding`].
     /// A system that takes this param must not also take the resource as
@@ -291,7 +291,7 @@ pub struct Units<'w, 's> {
 ///
 /// The group flag is the only field that is not copied directly: a unit is in
 /// the local character's group when the roster contains its guid.
-pub fn faction_party(
+pub(crate) fn faction_party(
     unit: &WorldEntity,
     party: &crate::interface::party::Party,
 ) -> vale_assets::tables::faction::Party {
@@ -313,8 +313,8 @@ pub fn faction_party(
 /// harder to drop by mistake than a pair of `&Res` arguments. The type is
 /// `Copy`, so passing it is free.
 #[derive(Clone, Copy)]
-pub struct Friendship<'a> {
-    pub party: &'a crate::interface::party::Party,
+pub(crate) struct Friendship<'a> {
+    pub(crate) party: &'a crate::interface::party::Party,
     pub standing: &'a crate::interface::reputation::PlayerStanding,
 }
 
@@ -330,7 +330,7 @@ impl Friendship<'_> {
     }
 
     /// [`Self::rank`] reduced to the three-way reaction most consumers use.
-    pub fn reaction(
+    pub(crate) fn reaction(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
         a: &WorldEntity,
@@ -345,7 +345,7 @@ impl Friendship<'_> {
 /// A missing `FactionTemplate.dbc` reads Neutral, which is
 /// [`vale_assets::tables::faction::Factions::template_rank`]'s own answer for
 /// a template it does not have.
-pub fn rank_between(
+pub(crate) fn rank_between(
     tables: &vale_assets::tables::dbc::DisplayTables,
     party: &crate::interface::party::Party,
     standing: &crate::interface::reputation::PlayerStanding,
@@ -364,7 +364,7 @@ pub fn rank_between(
 
 /// Whether `a` may attack `b`. The reaction alone does not decide this; see
 /// [`vale_assets::tables::faction::Factions::can_attack`].
-pub fn can_attack_between(
+pub(crate) fn can_attack_between(
     tables: &vale_assets::tables::dbc::DisplayTables,
     party: &crate::interface::party::Party,
     standing: &crate::interface::reputation::PlayerStanding,
@@ -387,7 +387,7 @@ pub fn can_attack_between(
 /// May `a` assist `b`? The same construction as [`can_attack_between`], over
 /// [`vale_assets::tables::faction::Factions::can_assist`]. With no faction
 /// table nothing is assistable, which is the direction that sends nothing.
-pub fn can_assist_between(
+pub(crate) fn can_assist_between(
     tables: &vale_assets::tables::dbc::DisplayTables,
     party: &crate::interface::party::Party,
     standing: &crate::interface::reputation::PlayerStanding,
@@ -493,7 +493,7 @@ impl Units<'_, '_> {
     /// `"pet"` uses only the first source: it reads the local player's two
     /// fields and stops. There is no cache for the local player's pet, and the
     /// local player is always in the world.
-    pub fn pet_guid_for(&self, id: UnitId) -> Option<u64> {
+    pub(crate) fn pet_guid_for(&self, id: UnitId) -> Option<u64> {
         let owner = id.owner()?;
         if let Some(unit) = self.get(owner) {
             return unit.pet;
@@ -552,7 +552,7 @@ impl Units<'_, '_> {
     /// A unit's name by guid, for the trade request, whose other party has no
     /// token until the window opens; the request carries only the requester's
     /// guid. `None` for a guid not in view.
-    pub fn name_of_guid(&self, guid: u64) -> Option<String> {
+    pub(crate) fn name_of_guid(&self, guid: u64) -> Option<String> {
         self.all
             .iter()
             .find(|(_, unit, _)| unit.guid == guid)
@@ -570,7 +570,7 @@ impl Units<'_, '_> {
     /// spirit healer whose offer is open has no token, and the client checks
     /// range against the guid the confirm packet carried. Returns `None` in
     /// the same cases as `reach`.
-    pub fn reach_to_guid(&self, from: UnitId, guid: u64) -> Option<f32> {
+    pub(crate) fn reach_to_guid(&self, from: UnitId, guid: u64) -> Option<f32> {
         let (me, here) = self.placed(from)?;
         let (_, other, there) = self.all.iter().find(|(_, unit, _)| unit.guid == guid)?;
         let there = there?;
@@ -602,7 +602,7 @@ impl Units<'_, '_> {
     ///
     /// Returns `None` in the same cases as [`Units::reach`]: when either unit
     /// is absent or unplaced, never zero.
-    pub fn separation(&self, from: UnitId, to: UnitId) -> Option<Separation> {
+    pub(crate) fn separation(&self, from: UnitId, to: UnitId) -> Option<Separation> {
         let (me, here) = self.placed(from)?;
         let (other, there) = self.placed(to)?;
         // Bevy's Y axis is up. `render::axes::to_bevy` is `(-y, z, -x)`, so the
@@ -734,7 +734,7 @@ impl Units<'_, '_> {
     /// `FactionTemplate` every unit reads Neutral, and treating that as neutral
     /// here would disable the ten-level rule for the whole session. The boss
     /// rule needs no table and applies either way.
-    pub fn level_shown(
+    pub(crate) fn level_shown(
         &self,
         tables: Option<&vale_assets::tables::dbc::DisplayTables>,
         id: UnitId,
@@ -775,7 +775,7 @@ impl Units<'_, '_> {
 
     /// `GetXPExhaustion()`: the rested experience pool, `None` when there is
     /// none.
-    pub fn rested_experience(&self, id: UnitId) -> Option<u32> {
+    pub(crate) fn rested_experience(&self, id: UnitId) -> Option<u32> {
         self.get(id).and_then(|unit| unit.rested)
     }
 
@@ -785,7 +785,7 @@ impl Units<'_, '_> {
     /// health as a percentage of maximum, with `UnitHealthMax` reading 100 to
     /// match. The pair is always consistent, so a fraction is always correct,
     /// and an absolute number is meaningful only where the server sent one.
-    pub fn health(&self, id: UnitId) -> u32 {
+    pub(crate) fn health(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit.health_value.map_or(0, |(now, _)| now);
         }
@@ -798,7 +798,7 @@ impl Units<'_, '_> {
     }
 
     /// `UnitHealthMax`. See [`Units::health`] for what the value measures.
-    pub fn health_max(&self, id: UnitId) -> u32 {
+    pub(crate) fn health_max(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit.health_value.map_or(0, |(_, max)| max);
         }
@@ -813,7 +813,7 @@ impl Units<'_, '_> {
     /// As in the game, `UnitMana` also returns rage, energy and focus, which is
     /// why FrameXML has one power bar widget. Rage is stored in tenths and this
     /// divides by ten; see the module comment.
-    pub fn mana(&self, id: UnitId) -> u32 {
+    pub(crate) fn mana(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit
                 .power_value
@@ -824,7 +824,7 @@ impl Units<'_, '_> {
     }
 
     /// `UnitManaMax`.
-    pub fn mana_max(&self, id: UnitId) -> u32 {
+    pub(crate) fn mana_max(&self, id: UnitId) -> u32 {
         if let Some(unit) = self.get(id) {
             return unit
                 .power_value
@@ -835,7 +835,7 @@ impl Units<'_, '_> {
     }
 
     /// `UnitPowerType`: which of the five power types this unit uses.
-    pub fn power_type(&self, id: UnitId) -> Option<u8> {
+    pub(crate) fn power_type(&self, id: UnitId) -> Option<u8> {
         match self.get(id) {
             Some(unit) => unit.power_value.map(|(_, _, kind)| kind),
             None => self.party_power(id).map(|(_, _, kind)| kind),
@@ -865,7 +865,7 @@ impl Units<'_, '_> {
     /// `UnitIsDead`. Falls back to the roster's status byte, the only source
     /// that says a member elsewhere in the zone has died; the party frame greys
     /// out on it.
-    pub fn is_dead(&self, id: UnitId) -> bool {
+    pub(crate) fn is_dead(&self, id: UnitId) -> bool {
         match self.get(id) {
             Some(unit) => unit.dead,
             None => self.party_row(id).is_some_and(|member| member.dead()),
@@ -875,7 +875,7 @@ impl Units<'_, '_> {
     /// `UnitIsConnected`: false only for a party member the roster marks as
     /// offline. Every unit in the world is connected, which matches the 1.12.1
     /// client.
-    pub fn is_connected(&self, id: UnitId) -> bool {
+    pub(crate) fn is_connected(&self, id: UnitId) -> bool {
         // A pet has no roster row, so it is connected only while it is in the
         // world. The 1.12.1 `UnitIsConnected` behaves the same way: it is true
         // for any unit in the world and otherwise depends on the party and raid
@@ -896,7 +896,7 @@ impl Units<'_, '_> {
     /// This is separate from [`Self::is_dead`], and neither implies the other:
     /// a ghost's health is 1, so it reads as alive. See
     /// [`vale_protocol::play::death`].
-    pub fn is_ghost(&self, id: UnitId) -> bool {
+    pub(crate) fn is_ghost(&self, id: UnitId) -> bool {
         match self.get(id) {
             Some(unit) => unit.is_ghost,
             None => self.party_row(id).is_some_and(|member| member.ghost()),
@@ -904,7 +904,7 @@ impl Units<'_, '_> {
     }
 
     /// `UnitAffectingCombat`.
-    pub fn affecting_combat(&self, id: UnitId) -> bool {
+    pub(crate) fn affecting_combat(&self, id: UnitId) -> bool {
         self.get(id).is_some_and(|unit| unit.in_combat)
     }
 
@@ -921,14 +921,14 @@ impl Units<'_, '_> {
     /// This is the pair `UnitCharacterPoints` returns, and it is all the server
     /// sends about talents. The number of spent points is computed from the
     /// known spells. See [`crate::interface::talents`].
-    pub fn character_points(&self, id: UnitId) -> Option<(u32, u32)> {
+    pub(crate) fn character_points(&self, id: UnitId) -> Option<(u32, u32)> {
         self.get(id).and_then(|unit| unit.character_points)
     }
 
     /// The areas the character has explored, or `None` for a unit that carries
     /// no exploration mask, which is every unit but the player, as with
     /// [`Self::stats`]. See [`vale_protocol::play::explored`].
-    pub fn explored(&self, id: UnitId) -> Option<&vale_protocol::play::explored::Explored> {
+    pub(crate) fn explored(&self, id: UnitId) -> Option<&vale_protocol::play::explored::Explored> {
         self.get(id).and_then(|unit| unit.explored.as_deref())
     }
 
@@ -964,7 +964,7 @@ impl Units<'_, '_> {
     /// `None` for a unit that carries no such field, which is every unit but
     /// the player, as with [`Self::explored`]. See
     /// [`crate::interface::reputation`].
-    pub fn watched_faction(&self, id: UnitId) -> Option<i32> {
+    pub(crate) fn watched_faction(&self, id: UnitId) -> Option<i32> {
         self.get(id).and_then(|unit| unit.watched_faction)
     }
 
@@ -997,7 +997,7 @@ impl Units<'_, '_> {
     /// `AllowableRace` and `AllowableClass` are bit masks over these numbers.
     /// An item tooltip has to test whether bit `race - 1` is set, which needs
     /// the id rather than the name.
-    pub fn race_class_ids(&self, id: UnitId) -> Option<(u32, u32)> {
+    pub(crate) fn race_class_ids(&self, id: UnitId) -> Option<(u32, u32)> {
         let (race, class) = self.get(id)?.race_class?;
         Some((u32::from(race), u32::from(class)))
     }
@@ -1006,7 +1006,7 @@ impl Units<'_, '_> {
     /// (Exalted), from its reputation list. `None` for a faction with no
     /// reputation bar. An item plate's reputation requirement is measured
     /// against this.
-    pub fn standing_rank(&self, faction: u32) -> Option<u32> {
+    pub(crate) fn standing_rank(&self, faction: u32) -> Option<u32> {
         self.standing
             .standings
             .iter()
@@ -1021,7 +1021,7 @@ impl Units<'_, '_> {
     /// may get a new entity. Two tokens that both name nothing are not the same
     /// unit: the game returns nil in that case, and otherwise `TARGETSELF`'s
     /// body would target the pet whenever nothing was selected.
-    pub fn is_unit(&self, a: UnitId, b: UnitId) -> bool {
+    pub(crate) fn is_unit(&self, a: UnitId, b: UnitId) -> bool {
         match (self.get(a), self.get(b)) {
             (Some(a), Some(b)) => a.guid == b.guid,
             _ => false,
@@ -1031,7 +1031,7 @@ impl Units<'_, '_> {
     /// The two resources friend-or-foe needs besides the DBC tables, for a pass
     /// that holds this param and calls a function that does not. See
     /// [`Friendship`]; the cast path is the only caller.
-    pub fn friendship(&self) -> Friendship<'_> {
+    pub(crate) fn friendship(&self) -> Friendship<'_> {
         Friendship { party: &self.party, standing: &self.standing }
     }
 
@@ -1075,7 +1075,7 @@ impl Units<'_, '_> {
     }
 
     /// [`Self::rank`] reduced to the three reactions this client draws.
-    pub fn reaction(
+    pub(crate) fn reaction(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
         a: UnitId,
@@ -1092,7 +1092,7 @@ impl Units<'_, '_> {
     /// duel, the PvP flag and the free-for-all pair. The rule is implemented
     /// once, in the crate that owns it, and called from here and from the
     /// picker.
-    pub fn can_attack(
+    pub(crate) fn can_attack(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
         a: UnitId,
@@ -1113,7 +1113,7 @@ impl Units<'_, '_> {
     /// `UnitCanAssist(a, b)`; see
     /// [`vale_assets::tables::faction::Factions::can_assist`]. No answer
     /// without the faction table.
-    pub fn can_assist(
+    pub(crate) fn can_assist(
         &self,
         tables: &vale_assets::tables::dbc::DisplayTables,
         a: UnitId,
@@ -1134,7 +1134,7 @@ impl Units<'_, '_> {
     /// creature and a mind-controlled one. This function models none of those,
     /// so the two answers agree for players and creatures; it must be changed
     /// to read the flag once pets are handled here.
-    pub fn player_controlled(&self, id: UnitId) -> bool {
+    pub(crate) fn player_controlled(&self, id: UnitId) -> bool {
         self.get(id)
             .is_some_and(|unit| unit.kind == vale_protocol::state::update::ObjectType::Player)
     }
@@ -1148,14 +1148,14 @@ impl Units<'_, '_> {
     /// bit has not updated yet still shows it. This function does not read that
     /// second bit: this client parses `PLAYER_FLAGS` for one bit only (the
     /// release timer), and the meaning of bit 8 has not been verified.
-    pub fn is_pvp(&self, id: UnitId) -> bool {
+    pub(crate) fn is_pvp(&self, id: UnitId) -> bool {
         self.get(id)
             .is_some_and(|unit| unit.unit_flags & UNIT_FLAG_PVP != 0)
     }
 
     /// `UnitCreatureType`: `"Humanoid"`, `"Beast"` and so on, or `None` for a
     /// player, as in the game (`UnitCreatureType("player")` is nil).
-    pub fn creature_type(&self, id: UnitId) -> Option<&'static str> {
+    pub(crate) fn creature_type(&self, id: UnitId) -> Option<&'static str> {
         let unit = self.get(id)?;
         let name = vale_protocol::state::query::creature_type_name(unit.creature_type);
         (!name.is_empty()).then_some(name)
@@ -1167,7 +1167,7 @@ impl Units<'_, '_> {
     /// single `GameTooltip:SetUnit` and every line is about the same unit. See
     /// [`crate::lua::widgets::tooltip`] for how the lines are composed and
     /// [`UnitTip`] for each field.
-    pub fn unit_tip(
+    pub(crate) fn unit_tip(
         &self,
         tables: Option<&vale_assets::tables::dbc::DisplayTables>,
         id: UnitId,
@@ -1239,7 +1239,7 @@ impl Units<'_, '_> {
     ///
     /// `SMSG_PARTY_MEMBER_STATS` is the only packet that carries it, and a
     /// member elsewhere in the world is in no other list this client keeps.
-    pub fn party_zone(&self, id: UnitId) -> Option<u32> {
+    pub(crate) fn party_zone(&self, id: UnitId) -> Option<u32> {
         let zone = self.party_row(id)?.stats.as_ref()?.zone?;
         (zone != 0).then_some(u32::from(zone))
     }
@@ -1260,12 +1260,12 @@ impl Units<'_, '_> {
 /// `SMSG_CREATURE_QUERY_RESPONSE`, so a boss shows its real level for one
 /// round trip and then `??`. Every other tooltip line that comes from the
 /// creature template has the same delay.
-pub const BOSS_CLASSIFICATION: u32 = 3;
+pub(crate) const BOSS_CLASSIFICATION: u32 = 3;
 
 /// `UNIT_FLAG_PVP`, vmangos' `UNIT_FLAG_PVP = 0x00001000`. The client uses
 /// this bit to show the "PvP" tooltip line and to choose the selection ring's
 /// colour.
-pub const UNIT_FLAG_PVP: u32 = 0x0000_1000;
+pub(crate) const UNIT_FLAG_PVP: u32 = 0x0000_1000;
 
 /// What a unit's name text is built from, off its world snapshot: the honor
 /// rank and city title, the team, the guild, the subname and the owner line.
@@ -1275,7 +1275,7 @@ pub const UNIT_FLAG_PVP: u32 = 0x0000_1000;
 /// The team is the unit's faction template's group, which for a player is
 /// its race's side. Without the display tables there is no team and so no
 /// rank title.
-pub fn name_parts<'a>(
+pub(crate) fn name_parts<'a>(
     tables: Option<&vale_assets::tables::dbc::DisplayTables>,
     unit: &'a WorldEntity,
 ) -> vale_assets::look::unitname::NameParts<'a> {
@@ -1346,12 +1346,12 @@ pub struct UnitTip {
     pub creature_type: Option<&'static str>,
     /// The `GlobalStrings.lua` key for the classification cell, `""` for none.
     pub classification: &'static str,
-    pub player_controlled: bool,
+    pub(crate) player_controlled: bool,
     pub pvp: bool,
     pub dead: bool,
     /// `(current, maximum)` for the tooltip's status bar, `None` for a unit
     /// with no health values.
-    pub health: Option<(u32, u32)>,
+    pub(crate) health: Option<(u32, u32)>,
     /// A party member's zone when it differs from the local player's. The
     /// 1.12.1 client adds this zone line to a group member's tooltip; it is
     /// empty for every other unit.
@@ -1392,7 +1392,7 @@ fn unspaced(name: &'static str) -> &'static str {
 ///
 /// Bevy's `Time::elapsed` is already seconds since the app started, so this
 /// function only renames it. The name records which clock the interface uses.
-pub fn get_time(time: &Time) -> f64 {
+pub(crate) fn get_time(time: &Time) -> f64 {
     time.elapsed_secs_f64()
 }
 
@@ -1415,7 +1415,7 @@ pub fn get_time(time: &Time) -> f64 {
 ///
 /// With no player the result is `0`, as in the 1.12.1 client: there is no
 /// level to compare against, and green and grey coincide.
-pub fn quest_green_range(player_level: i32) -> i32 {
+pub(crate) fn quest_green_range(player_level: i32) -> i32 {
     if player_level <= 0 {
         return 0;
     }
@@ -1438,7 +1438,7 @@ const QUEST_GREEN_RANGE: [i32; 20] = [
 /// Slots are one-based here and everywhere the game uses them:
 /// `ActionButtonDown(1)` is the first button. `ACTIONBAR_SLOT_CHANGED` uses
 /// `arg1 == 0` to mean "all slots" because no real slot is 0.
-pub fn has_action(bar: &ActionBar, slot: u8) -> bool {
+pub(crate) fn has_action(bar: &ActionBar, slot: u8) -> bool {
     action(bar, slot).is_some()
 }
 
@@ -1455,7 +1455,7 @@ pub fn action(bar: &ActionBar, slot: u8) -> Option<&Slot> {
 /// button's Name font string. Returning the spell's name, a fallback left from
 /// before the bar drew icons, printed a label over every icon: twelve
 /// overlapping names along the bottom of the screen.
-pub fn get_action_text(bar: &ActionBar, slot: u8) -> Option<String> {
+pub(crate) fn get_action_text(bar: &ActionBar, slot: u8) -> Option<String> {
     action(bar, slot)
         .filter(|held| held.kind == vale_protocol::play::spells::action_kind::MACRO)
         .map(Slot::label)
@@ -1467,7 +1467,7 @@ pub fn get_action_text(bar: &ActionBar, slot: u8) -> Option<String> {
 /// the inventory as well as the bar, so it is resolved one layer up where both
 /// are available; see `lua::api`'s `Live::action_texture` and
 /// [`action_item`].
-pub fn get_action_texture(bar: &ActionBar, slot: u8) -> Option<&str> {
+pub(crate) fn get_action_texture(bar: &ActionBar, slot: u8) -> Option<&str> {
     action(bar, slot)
         .and_then(|slot| slot.spell.as_ref())
         .map(|info| info.icon.as_str())
@@ -1482,7 +1482,7 @@ pub fn get_action_texture(bar: &ActionBar, slot: u8) -> Option<&str> {
 /// [`super::items::UseCarriedItem`]). It is a function rather than inlined at
 /// four call sites because the test must use the kind byte, not the absence
 /// of a `SpellInfo`: a spell missing from `Spell.dbc` has no info either.
-pub fn action_item(bar: &ActionBar, slot: u8) -> Option<u32> {
+pub(crate) fn action_item(bar: &ActionBar, slot: u8) -> Option<u32> {
     action(bar, slot)
         .filter(|held| held.kind == vale_protocol::play::spells::action_kind::ITEM)
         .map(|held| held.action)
@@ -1493,7 +1493,7 @@ pub fn action_item(bar: &ActionBar, slot: u8) -> Option<u32> {
 ///
 /// `ActionButton.lua` uses it to decide whether the button flashes during
 /// combat, which is a melee player's only sign that auto-attack is on.
-pub fn is_attack_action(bar: &ActionBar, slot: u8) -> bool {
+pub(crate) fn is_attack_action(bar: &ActionBar, slot: u8) -> bool {
     action(bar, slot).is_some_and(Slot::is_auto_attack)
 }
 
@@ -1521,7 +1521,7 @@ pub fn is_attack_action(bar: &ActionBar, slot: u8) -> bool {
 /// as an enchant or an item proc, and this client has neither on a bar. If
 /// the value is wrong, drawing a cooldown is the visible error, which is the
 /// easier one to notice.
-pub fn get_action_cooldown(
+pub(crate) fn get_action_cooldown(
     bar: &ActionBar,
     cooldowns: &Cooldowns,
     slot: u8,
@@ -1550,7 +1550,7 @@ pub fn get_action_cooldown(
 /// Shared so that the arithmetic that turns the remaining time into a start
 /// time exists once. A second copy that differed would make the cooldown in
 /// the spellbook run at a different rate from the one on the bar.
-pub fn cooldown_of(
+pub(crate) fn cooldown_of(
     cooldowns: &Cooldowns,
     spell: &vale_assets::tables::spellbook::SpellInfo,
     now: f64,
@@ -1595,13 +1595,13 @@ pub struct SpellTip {
     /// `Rank` column for a talent's rank-5 spell is the string "Rank 5", so a
     /// plate that printed both showed "Rank 5" on the right and no maximum,
     /// which reads as a talent with no maximum.
-    pub talent_rank: Option<(u32, u32)>,
+    pub(crate) talent_rank: Option<(u32, u32)>,
     /// `enum Powers`: 0 mana, 1 rage, 3 energy. The cost is the displayed
     /// value, so a rage cost has already been divided by ten from the wire's
     /// tenths.
-    pub power_type: u32,
-    pub power_cost: u32,
-    pub range_yards: f32,
+    pub(crate) power_type: u32,
+    pub(crate) power_cost: u32,
+    pub(crate) range_yards: f32,
     pub cast_time_ms: u32,
     /// The spell's own recovery or its category's, whichever is longer. The
     /// tooltip's "cooldown" cell prints this number.
@@ -1680,7 +1680,7 @@ impl TipContext<'_> {
 /// nothing to show: an empty slot, or an item or unresolved action whose name
 /// this client does not know. `None` hides the plate, so the fallback is no
 /// tooltip and not a composed placeholder.
-pub fn action_tooltip(bar: &ActionBar, slot: u8, context: &TipContext) -> Option<SpellTip> {
+pub(crate) fn action_tooltip(bar: &ActionBar, slot: u8, context: &TipContext) -> Option<SpellTip> {
     Some(spell_tip(action(bar, slot)?.spell.as_ref()?, context))
 }
 
@@ -1691,7 +1691,7 @@ pub fn action_tooltip(bar: &ActionBar, slot: u8, context: &TipContext) -> Option
 /// in the book cannot print different numbers. It is a function and not four
 /// field copies because of the display conversion on the cost: rage arrives in
 /// tenths and is shown in points.
-pub fn spell_tip(
+pub(crate) fn spell_tip(
     info: &vale_assets::tables::spellbook::SpellInfo,
     context: &TipContext,
 ) -> SpellTip {
@@ -1736,7 +1736,7 @@ pub fn spell_tip(
 /// what the cast was aimed at. `None` for either skips that check, so the cast
 /// is sent. `world` is the three facts the caster's own snapshot does not
 /// carry; see [`CastWorld`].
-pub fn caster_conditions(
+pub(crate) fn caster_conditions(
     me: &WorldEntity,
     info: &vale_assets::tables::spellbook::SpellInfo,
     distance: Option<f32>,
@@ -1823,13 +1823,13 @@ const VIS_FLAG_CREEP: u8 = 0x02;
 /// when the caller has no answer, which skips the pair of refusals that value
 /// decides.
 #[derive(Clone, Copy)]
-pub struct CastWorld<'a> {
-    pub daytime: Option<bool>,
-    pub outdoors: Option<bool>,
+pub(crate) struct CastWorld<'a> {
+    pub(crate) daytime: Option<bool>,
+    pub(crate) outdoors: Option<bool>,
     pub standing: &'a crate::interface::reputation::PlayerStanding,
     /// The character's talent modifiers to the two numbers a refusal is
     /// decided on, the cost and the range. See [`crate::world::spellmods`].
-    pub mods: &'a crate::world::spellmods::SpellMods,
+    pub(crate) mods: &'a crate::world::spellmods::SpellMods,
 }
 
 /// The resources [`CastWorld`] is read from, as one [`SystemParam`].
@@ -1846,7 +1846,7 @@ pub struct CastWorld<'a> {
 /// reason. The systems that write the clock, the place and the settings do not
 /// take this param.
 #[derive(SystemParam)]
-pub struct Surroundings<'w> {
+pub(crate) struct Surroundings<'w> {
     clock: Res<'w, crate::render::sky::WorldClock>,
     place: Res<'w, crate::interface::worldmap::WorldMapState>,
     standing: Res<'w, crate::interface::reputation::PlayerStanding>,
@@ -1861,7 +1861,7 @@ impl Surroundings<'_> {
     /// clock and always knows whether the character is under a roof. The
     /// `Option` exists for a caller of the rule that has neither, such as a
     /// test or a CLI check.
-    pub fn cast_world(&self) -> CastWorld<'_> {
+    pub(crate) fn cast_world(&self) -> CastWorld<'_> {
         let (hour, minute) = self.clock.hour_minute();
         CastWorld {
             daytime: Some(vale_assets::tables::spellbook::is_daytime(hour * 60 + minute)),
@@ -1872,7 +1872,7 @@ impl Surroundings<'_> {
     }
 
     /// The settings, for the one flag `run_bindings` reads from them.
-    pub fn cvars(&self) -> &crate::settings::cvars::CVars {
+    pub(crate) fn cvars(&self) -> &crate::settings::cvars::CVars {
         &self.cvars
     }
 }
@@ -1920,7 +1920,7 @@ impl Surroundings<'_> {
 /// implemented here. The stance bar marks the active form through
 /// `GetShapeshiftFormInfo`'s `isActive` instead; see
 /// [`crate::lua::panels::shapeshift`].
-pub fn is_current_action(
+pub(crate) fn is_current_action(
     bar: &ActionBar,
     slot: u8,
     attacking: bool,
@@ -1962,7 +1962,7 @@ pub fn is_current_action(
 /// `ActionButton_UpdateState`'s checked border and the two flash cases. Each
 /// asks per button and is not handed a spell id, which is why the events that
 /// accompany it carry no arguments.
-pub fn is_auto_repeat_action(bar: &ActionBar, repeating: Option<u32>, slot: u8) -> bool {
+pub(crate) fn is_auto_repeat_action(bar: &ActionBar, repeating: Option<u32>, slot: u8) -> bool {
     let Some(spell) = repeating else { return false };
     action(bar, slot).is_some_and(|a| {
         a.kind == vale_protocol::play::spells::action_kind::SPELL && a.action == spell
@@ -1988,7 +1988,7 @@ pub fn is_auto_repeat_action(bar: &ActionBar, repeating: Option<u32>, slot: u8) 
 /// spell, and answers no when that is `None`. This is not the 1.12.1 client's
 /// behaviour. A thrown weapon or a bandage has a range in the item's own
 /// prototype, which this client does not read.
-pub fn action_has_range(
+pub(crate) fn action_has_range(
     bar: &ActionBar,
     slot: u8,
     // The item's own on-use spell, for an item slot. See `slot_spell`.
@@ -2037,7 +2037,7 @@ fn slot_spell<'a>(
 /// Only the maximum is tested. A spell with a minimum range, such as the
 /// hunter shots, reads as in range when the target is too close; 1.12's
 /// indicator does not report being too close either.
-pub fn is_action_in_range(
+pub(crate) fn is_action_in_range(
     bar: &ActionBar,
     units: &Units,
     slot: u8,
@@ -2062,7 +2062,7 @@ pub fn is_action_in_range(
 /// Range, line of sight, stance and reagents are also part of the real answer
 /// and are not modelled, so the answer errs towards usable: the player can
 /// press the button and the server gives the reason for a refusal.
-pub fn is_usable_action(
+pub(crate) fn is_usable_action(
     bar: &ActionBar,
     units: &Units,
     inventory: &crate::interface::items::Inventory,
@@ -2139,7 +2139,7 @@ fn worn_meets(
 /// question about a spell that is on no action-bar slot; see
 /// [`crate::lua::panels::shapeshift`]. Both bars must use this function, or a
 /// form could be drawn castable on one bar and not on the other.
-pub fn spell_is_usable(
+pub(crate) fn spell_is_usable(
     info: &vale_assets::tables::spellbook::SpellInfo,
     units: &Units,
     inventory: &crate::interface::items::Inventory,

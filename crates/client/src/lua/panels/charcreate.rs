@@ -66,7 +66,8 @@ use crate::lua::host::LuaHost;
 ///
 /// It lists every function, reads included: none is a scoped read, because
 /// none of them touches the world. See the module comment.
-pub const GLOBALS: [&str; 17] = [
+#[cfg(test)]
+pub(crate) const GLOBALS: [&str; 17] = [
     "CreateCharacter",
     "CycleCharCustomization",
     "GetAvailableRaces",
@@ -91,7 +92,8 @@ pub const GLOBALS: [&str; 17] = [
 
 /// The remaining three globals, kept in a second array so `GLOBALS` stays
 /// short and sorted. The test walks both.
-pub const MORE_GLOBALS: [&str; 3] = [
+#[cfg(test)]
+pub(crate) const MORE_GLOBALS: [&str; 3] = [
     "ResetCharCustomize",
     "SetSelectedSex",
     "UpdateCustomizationScene",
@@ -132,12 +134,12 @@ const AXES: usize = 5;
 impl Board {
     /// The `ChrRaces` id of the chosen race. This is the number sent in the
     /// packet; the interface never sees it.
-    pub fn race_id(&self) -> u8 {
+    pub(crate) fn race_id(&self) -> u8 {
         self.chosen_race().map_or(0, |r| r.id)
     }
 
     /// The `ChrClasses` id of the chosen class, sent in the packet the same way.
-    pub fn class_id(&self) -> u8 {
+    pub(crate) fn class_id(&self) -> u8 {
         self.tables
             .as_ref()
             .and_then(|t| t.classes_for(self.race_id()).get(self.class))
@@ -177,7 +179,7 @@ impl Board {
     /// screen shows a warrior in a Recruit's shirt with a Worn Shortsword in
     /// hand, not in underwear. When no row matches, the answer is empty and
     /// the model shows the underwear the composite paints under the outfit.
-    pub fn outfit(&self) -> Vec<vale_assets::tables::charcreate::OutfitPiece> {
+    pub(crate) fn outfit(&self) -> Vec<vale_assets::tables::charcreate::OutfitPiece> {
         self.tables.as_ref().map_or_else(Vec::new, |t| {
             t.outfit(self.race_id(), self.class_id(), self.gender).to_vec()
         })
@@ -266,14 +268,14 @@ pub type Held = Rc<RefCell<Board>>;
 /// The request from this screen that needs the socket. Drained by
 /// `crate::glue::charcreate`, in the same way as [`super::glue::GlueRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CreateRequest {
+pub(crate) enum CreateRequest {
     /// `CreateCharacter(name)`, the Accept button. Carries only the name: the
     /// rest of the character is in [`Board`], and the draining system reads it
     /// there so there is no second copy that could disagree.
     Create(String),
 }
 
-pub type Queue = Rc<RefCell<Vec<CreateRequest>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<CreateRequest>>>;
 
 /// Register every function in this file. Unscoped: see the module comment.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
@@ -566,7 +568,7 @@ pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
 /// interface uses different numbering; this module converts between the
 /// two.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CharCreateChoice {
+pub(crate) struct CharCreateChoice {
     pub race: u8,
     pub class: u8,
     pub gender: u8,
@@ -578,7 +580,7 @@ pub struct CharCreateChoice {
     pub look: vale_assets::look::character::Appearance,
     /// The items the model wears: on this screen, the class's starting outfit.
     /// See [`vale_assets::tables::charcreate::CharCreate::outfit`].
-    pub outfit: Vec<vale_assets::tables::charcreate::OutfitPiece>,
+    pub(crate) outfit: Vec<vale_assets::tables::charcreate::OutfitPiece>,
 }
 
 /// The board, from the state's app data. See [`super::stored`].
@@ -599,7 +601,7 @@ pub fn take(host: &LuaHost) -> Vec<CreateRequest> {
 /// is built before either. Until then every read on that screen returns an
 /// empty list, which draws a create screen with no buttons rather than one
 /// with wrong buttons.
-pub fn set_tables(
+pub(crate) fn set_tables(
     host: &LuaHost,
     tables: std::sync::Arc<vale_assets::tables::charcreate::CharCreate>,
 ) {

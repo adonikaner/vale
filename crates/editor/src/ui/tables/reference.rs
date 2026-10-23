@@ -15,7 +15,7 @@ use crate::ui::tables::{ICON, Workspace};
 use crate::ui::tools::places::lights::{light_params_to_copy, new_light_params};
 use crate::ui::widgets::theme;
 
-use vale_assets::tables::schema::{Column, Kind, Schema};
+use vale_assets::tables::schema::{Column, Kind};
 use vale_assets::tables::schema;
 
 /// A reference column: the id, what it resolves to, and the controls to pick
@@ -265,7 +265,7 @@ pub(super) fn reference(
 /// open until something asks for it, and the first thing to ask for it is the
 /// press on the link. When this function only looked the table up, the button
 /// did nothing.
-pub fn follow_reference(work: &mut Workspace<'_>, table: &str, id: u32) {
+pub(crate) fn follow_reference(work: &mut Workspace<'_>, table: &str, id: u32) {
     if !work.session.open_table(work.assets, table) {
         return;
     }
@@ -281,7 +281,7 @@ pub fn follow_reference(work: &mut Workspace<'_>, table: &str, id: u32) {
 /// It is in the inspector rather than in the middle because it describes the
 /// selection, and the shell's rule is that the inspector shows the selection.
 /// See [`crate::ui`].
-pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let Some(record) = work.browser.open else {
         theme::note(ui, "Select a row to see its references.");
@@ -395,9 +395,4 @@ pub fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .unwrap_or(0);
         follow_reference(work, &table, id);
     }
-}
-
-/// Whether a schema exists for a table, for a caller deciding what to draw.
-pub fn described(table: &str) -> Option<&'static Schema> {
-    schema::for_table(table)
 }

@@ -268,7 +268,7 @@ pub type Names<'a> = &'a dyn Fn(&str, u32) -> Option<String>;
 
 /// What a sentence calls a row of `table` when it has no name for it:
 /// `spell 999`, `creature 68`. A table with no word of its own is its name.
-pub fn ref_word(table: &str) -> &str {
+pub(crate) fn ref_word(table: &str) -> &str {
     match table {
         "Spell" => "spell",
         "Emotes" => "emote",
@@ -288,7 +288,8 @@ pub fn ref_word(table: &str) -> &str {
 }
 
 /// A lookup that knows no names, for a caller with no tables open.
-pub fn no_names(_: &str, _: u32) -> Option<String> {
+#[cfg(test)]
+pub(crate) fn no_names(_: &str, _: u32) -> Option<String> {
     None
 }
 
@@ -327,7 +328,7 @@ pub fn span_words(millis: u64) -> String {
 
 /// A range of two durations in milliseconds: one duration when the ends are
 /// equal or the second is 0, `5 s to 10 s` otherwise.
-pub fn span_range(least: u64, most: u64) -> String {
+pub(crate) fn span_range(least: u64, most: u64) -> String {
     match least == most || most == 0 {
         true => span_words(least),
         false => format!("{} to {}", span_words(least), span_words(most)),

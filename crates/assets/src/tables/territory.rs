@@ -31,17 +31,17 @@ use crate::tables::faction::Factions;
 
 /// `AreaTable` flag `0x10`: the zone has a stance on every realm, not only on
 /// a PvP one. The six capitals carry it.
-pub const AREA_FLAG_CAPITAL: u32 = 0x10;
+pub(crate) const AREA_FLAG_CAPITAL: u32 = 0x10;
 
 /// `AreaTable` flag `0x80`: the sub-area is a free-for-all arena, such as The
 /// Maul. Read on the sub-area, not the zone.
-pub const AREA_FLAG_ARENA: u32 = 0x80;
+pub(crate) const AREA_FLAG_ARENA: u32 = 0x80;
 
 mod config_fields {
     /// The realm type, as the realm list sends it.
-    pub const REALM_TYPE: usize = 1;
+    pub(crate) const REALM_TYPE: usize = 1;
     /// Non-zero when players may attack each other outside a duel.
-    pub const PLAYER_KILLING: usize = 2;
+    pub(crate) const PLAYER_KILLING: usize = 2;
 }
 
 /// `Cfg_Configs.dbc`: for each realm type, whether it is a PvP realm.
@@ -49,7 +49,7 @@ mod config_fields {
 /// Eleven rows in 1.12. Type 1 is the PvP realm and type 8 the role-playing
 /// PvP realm; type 0 is a normal realm and type 6 a role-playing one.
 #[derive(Debug, Clone, Default)]
-pub struct RealmConfigs(Vec<(u32, bool)>);
+pub(crate) struct RealmConfigs(Vec<(u32, bool)>);
 
 impl RealmConfigs {
     /// Empty for bytes that are not a DBC, which makes every realm a normal

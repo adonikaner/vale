@@ -34,21 +34,21 @@ use vale_edit::ops::grade::{End, Grade};
 
 /// What the grading tool is holding.
 #[derive(Resource, Debug, Clone)]
-pub struct Grading {
+pub(crate) struct Grading {
     /// The two ends, in the order they were picked. `None` until clicked.
-    pub from: Option<End>,
-    pub to: Option<End>,
+    pub(crate) from: Option<End>,
+    pub(crate) to: Option<End>,
     /// How wide the flat part is, and how far it blends past that.
-    pub width: f32,
-    pub falloff: f32,
+    pub(crate) width: f32,
+    pub(crate) falloff: f32,
     /// How far toward the grade the ground moves, 0 to 1.
-    pub strength: f32,
+    pub(crate) strength: f32,
     /// What the last apply said.
-    pub said: String,
+    pub(crate) said: String,
     /// Whether the doodads and buildings over the graded ground are moved by
     /// as much as it moves, in the grade's own undo entry. See
     /// `vale_edit::ops::follow`.
-    pub objects_follow: bool,
+    pub(crate) objects_follow: bool,
 }
 
 impl Default for Grading {
@@ -68,7 +68,7 @@ impl Default for Grading {
 
 impl Grading {
     /// The grade these two ends and these settings describe, if both are picked.
-    pub fn grade(&self) -> Option<Grade> {
+    pub(crate) fn grade(&self) -> Option<Grade> {
         Some(Grade {
             from: self.from?,
             to: self.to?,
@@ -81,7 +81,7 @@ impl Grading {
     /// **Take the next point.** The first click sets the start, the second the
     /// end, and the third starts again — which is what makes re-aiming one
     /// gesture rather than a reset button and two clicks.
-    pub fn pick(&mut self, at: [f32; 2], height: f32) {
+    pub(crate) fn pick(&mut self, at: [f32; 2], height: f32) {
         let end = End { at, height };
         match (self.from.is_some(), self.to.is_some()) {
             (false, _) => self.from = Some(end),
@@ -93,13 +93,14 @@ impl Grading {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.from = None;
         self.to = None;
     }
 
     /// How many ends are picked, for the panel to say what to do next.
-    pub fn picked(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn picked(&self) -> usize {
         usize::from(self.from.is_some()) + usize::from(self.to.is_some())
     }
 }
@@ -114,7 +115,7 @@ impl Grading {
 /// border is one action and not two. A tile that is not open is skipped: the
 /// streamer holds the 3x3 around the camera, and a grade drawn beyond that is
 /// one whose far end nobody can see anyway.
-pub fn apply(session: &mut EditSession, grading: &Grading) -> usize {
+pub(crate) fn apply(session: &mut EditSession, grading: &Grading) -> usize {
     let Some(grade) = grading.grade() else {
         return 0;
     };
@@ -175,7 +176,7 @@ pub fn apply(session: &mut EditSession, grading: &Grading) -> usize {
 }
 
 /// Take the point under the pointer, when the tool has the button.
-pub fn aim(
+pub(crate) fn aim(
     mut grading: ResMut<Grading>,
     tool: Res<crate::tools::Tool>,
     state: Res<crate::playtest::Playtest>,
@@ -205,7 +206,7 @@ pub fn aim(
 /// Ghosted: a grade is a statement about where the *ground* is, so the part
 /// of the line a hill hides is drawn faint rather than over the hill, which
 /// would say the ground is somewhere it is not. See `crate::marks`.
-pub fn draw(
+pub(crate) fn draw(
     mut marks: ResMut<crate::marks::Marks>,
     grading: Res<Grading>,
     tool: Res<crate::tools::Tool>,
@@ -244,7 +245,7 @@ pub fn draw(
     marks.line(a, b, Color::srgb(0.95, 0.85, 0.35), crate::marks::Look::Ghosted);
 }
 
-pub struct GradeToolPlugin;
+pub(crate) struct GradeToolPlugin;
 
 impl Plugin for GradeToolPlugin {
     fn build(&self, app: &mut App) {

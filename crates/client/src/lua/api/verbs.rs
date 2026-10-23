@@ -72,7 +72,7 @@ pub(in crate::lua) type Queue = Rc<RefCell<Vec<Binding>>>;
 /// that holds the socket for chat), and making the enum non-`Copy` would change
 /// every reader of `BindingPressed` for one variant.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Said {
+pub(crate) struct Said {
     pub kind: ChatType,
     /// The whisper's recipient or the channel's name, when the kind takes one.
     pub target: Option<String>,
@@ -86,8 +86,8 @@ pub(in crate::lua) type SaidQueue = Rc<RefCell<Vec<Said>>>;
 /// token from `EmotesText.dbc`. The name after the command, when present, is
 /// the emote's target. See `interface::emotetext`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Emoted {
-    pub token: String,
+pub(crate) struct Emoted {
+    pub(crate) token: String,
     pub target: Option<String>,
 }
 
@@ -129,7 +129,7 @@ type BarToggleArgs = (
 /// `TARGETSELF`'s body calls `TargetUnit`, so nothing would call a verb named
 /// `TargetSelf`. `ActionButtonDown` and `ActionButtonUp` are absent because the
 /// interface defines them in Lua; see the module comment.
-pub const REGISTERED: [&str; 84] = [
+pub(crate) const REGISTERED: [&str; 84] = [
     "AcceptResurrect",
     "AcceptXPLoss",
     "AssistUnit",

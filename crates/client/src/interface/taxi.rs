@@ -56,11 +56,11 @@ use crate::world::session::Session;
 /// One of the four taxi packets, handed on from
 /// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
-pub enum TaxiAnswer {
+pub(crate) enum TaxiAnswer {
     /// `SMSG_SHOWTAXINODES` — the map.
     Show(TaxiMenu),
     /// `SMSG_TAXINODE_STATUS` — whether a master's own node is known.
-    NodeStatus { guid: u64, known: bool },
+    NodeStatus,
     /// `SMSG_NEW_TAXI_PATH` — a flight point discovered.
     Discovered,
     /// `SMSG_ACTIVATETAXIREPLY`.
@@ -104,7 +104,8 @@ impl TaxiWindow {
 
     /// Which node's route the interface last asked to be current — one-based,
     /// 0 for none.
-    pub fn examining(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn examining(&self) -> usize {
         self.examining
     }
 
@@ -139,7 +140,7 @@ pub enum TaxiPress {
     Close,
 }
 
-pub struct TaxiPlugin;
+pub(crate) struct TaxiPlugin;
 
 impl Plugin for TaxiPlugin {
     fn build(&self, app: &mut App) {
@@ -209,8 +210,7 @@ fn ask_status(session: Res<Session>, units: Query<&WorldEntity>) {
         return;
     };
     let ask: Vec<u64> = {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         units
             .iter()
             .filter(|unit| is_flight_master(unit))
@@ -267,7 +267,7 @@ fn announce(
             // Nothing to do here: the answer is kept on the object manager by
             // the packet handler itself, because a mark is *state* that has to
             // outlive the event — see `render::questmarks`.
-            TaxiAnswer::NodeStatus { .. } => {}
+            TaxiAnswer::NodeStatus => {}
             // **A discovery has no body and no map with it.** The mask that
             // moved arrives on the next `SMSG_SHOWTAXINODES`, which the server
             // sends in the same breath, so there is nothing to fold in — what
@@ -432,7 +432,7 @@ fn send(session: &Session, verb: TaxiVerb) {
 /// same bit off the same field for the same reason; see
 /// `vale_protocol::state::movement::Restraint::on_taxi`, which is what stops that
 /// character walking around on the ground.
-pub fn on_taxi(unit: &WorldEntity) -> bool {
+pub(crate) fn on_taxi(unit: &WorldEntity) -> bool {
     unit.unit_flags & vale_protocol::state::objects::UNIT_FLAG_TAXI_FLIGHT != 0
 }
 
@@ -440,10 +440,10 @@ pub fn on_taxi(unit: &WorldEntity) -> bool {
 /// above**, which is the reason both are named here rather than left as
 /// literals: `UNIT_FIELD_FLAGS` says what a unit is *doing* and
 /// `UNIT_NPC_FLAGS` what it will *talk about*, and 0x8 means something in each.
-pub const UNIT_NPC_FLAG_FLIGHTMASTER: u32 = 0x0008;
+pub(crate) const UNIT_NPC_FLAG_FLIGHTMASTER: u32 = 0x0008;
 
 /// Will this unit sell a flight?
-pub fn is_flight_master(unit: &WorldEntity) -> bool {
+pub(crate) fn is_flight_master(unit: &WorldEntity) -> bool {
     unit.npc_flags & UNIT_NPC_FLAG_FLIGHTMASTER != 0
 }
 

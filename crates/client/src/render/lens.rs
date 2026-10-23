@@ -31,7 +31,7 @@
 /// angle. At 4:3 it is 66.2° vertical and at 16:9 54.1° (the unmodified `π/2`
 /// gives 54.0° and 44.1°). The vertical figure is the one to compare against a
 /// `PerspectiveProjection::fov`, whose Bevy default is 45°.
-pub const WORLD_FIELD_OF_VIEW: f32 = 1.925;
+pub(crate) const WORLD_FIELD_OF_VIEW: f32 = 1.925;
 
 /// The widest aspect the diagonal rule is applied at. This is a deviation from
 /// the client.
@@ -45,7 +45,7 @@ pub const WORLD_FIELD_OF_VIEW: f32 = 1.925;
 /// The 1.12.1 client's resolution list stops at 4:3, so it was never used at
 /// such an aspect. Past this aspect the vertical angle holds at the 16:9 value
 /// and the extra width widens the view. Up to 16:9 the rule is unchanged.
-pub const WIDEST_FRAMED_ASPECT: f32 = 16.0 / 9.0;
+pub(crate) const WIDEST_FRAMED_ASPECT: f32 = 16.0 / 9.0;
 
 /// The vertical angle for a diagonal one, at this aspect.
 ///
@@ -56,7 +56,7 @@ pub const WIDEST_FRAMED_ASPECT: f32 = 16.0 / 9.0;
 /// The login screen confirms it: read as a vertical angle, the scene's portal
 /// fills about half the frame where the reference fills the whole of it, and
 /// the ratio between the two is this factor.
-pub fn vertical_fov(diagonal: f32, aspect: f32) -> f32 {
+pub(crate) fn vertical_fov(diagonal: f32, aspect: f32) -> f32 {
     diagonal / (aspect * aspect + 1.0).sqrt()
 }
 
@@ -67,7 +67,7 @@ pub fn vertical_fov(diagonal: f32, aspect: f32) -> f32 {
 /// renders into its own target at an aspect it states. The portrait bake's
 /// extra 3:4 horizontal squeeze comes from rendering into a square target at a
 /// fixed 4/3 and has nothing to do with this function.
-pub fn framed_vertical_fov(diagonal: f32, aspect: f32) -> f32 {
+pub(crate) fn framed_vertical_fov(diagonal: f32, aspect: f32) -> f32 {
     vertical_fov(diagonal, aspect.min(WIDEST_FRAMED_ASPECT))
 }
 

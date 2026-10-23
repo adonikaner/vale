@@ -77,19 +77,6 @@ pub const READS: [&str; 7] = [
     "UnitPlayerOrPetInRaid",
 ];
 
-/// …and the **unscoped writes**, which record. Sorted, on the same terms.
-pub const WRITES: [&str; 9] = [
-    "ConfirmReadyCheck",
-    "ConvertToRaid",
-    "DemoteAssistant",
-    "DoReadyCheck",
-    "PromoteToAssistant",
-    "SetRaidRosterSelection",
-    "SetRaidSubgroup",
-    "SwapRaidSubgroup",
-    "UninviteFromRaid",
-];
-
 /// What the interface asked of the raid.
 ///
 /// Indices rather than names or guids wherever the interface passes one, and
@@ -118,7 +105,7 @@ pub enum RaidRequest {
     AnswerReadyCheck(bool),
 }
 
-pub type Queue = Rc<RefCell<Vec<RaidRequest>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<RaidRequest>>>;
 
 /// One row of the raid roster as `GetRaidRosterInfo` returns it.
 ///
@@ -132,7 +119,7 @@ pub struct RaidRow {
     /// 0, 1 or 2 — see [`vale_protocol::play::group::raid_rank`].
     pub rank: u32,
     /// **One-based**, 1..=8.
-    pub subgroup: usize,
+    pub(crate) subgroup: usize,
     /// `0` for a member nothing has said a level for, which the interface draws
     /// as an empty cell rather than as a zero.
     pub level: u32,
@@ -149,7 +136,7 @@ pub struct RaidRow {
     pub class: Option<(String, String)>,
     /// The zone's name, `"Offline"`, or empty when the archives are not open.
     pub zone: String,
-    pub online: bool,
+    pub(crate) online: bool,
     pub dead: bool,
 }
 

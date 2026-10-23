@@ -35,7 +35,7 @@ use crate::interface::target::UnitClicked;
 use crate::interface::gossip::NpcUnit;
 use crate::world::entity::{EntityIndex, WorldEntity};
 
-pub struct NpcSoundPlugin;
+pub(crate) struct NpcSoundPlugin;
 
 impl Plugin for NpcSoundPlugin {
     fn build(&self, app: &mut App) {

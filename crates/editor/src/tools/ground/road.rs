@@ -24,7 +24,7 @@ use vale_edit::ops::brush::Falloff;
 
 /// Which of the road's two textures the tileset list sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Slot {
+pub(crate) enum Slot {
     #[default]
     Surface,
     Verge,
@@ -32,38 +32,38 @@ pub enum Slot {
 
 /// The road tool's points and settings.
 #[derive(Resource, Debug, Clone)]
-pub struct RoadTool {
-    pub points: Vec<Point>,
+pub(crate) struct RoadTool {
+    pub(crate) points: Vec<Point>,
     /// A curve through the points rather than straight segments.
-    pub curved: bool,
+    pub(crate) curved: bool,
     /// The height along the road from the ground under it, averaged over
     /// [`Self::smoothing`] yards; otherwise from the points' own heights.
-    pub follow_ground: bool,
-    pub smoothing: f32,
+    pub(crate) follow_ground: bool,
+    pub(crate) smoothing: f32,
     /// Whether the apply moves the ground at all. Off paints only.
-    pub shape_ground: bool,
-    pub width: f32,
-    pub shoulder: f32,
-    pub falloff: Falloff,
-    pub strength: f32,
-    pub crown: f32,
-    pub offset: f32,
-    pub objects_follow: bool,
+    pub(crate) shape_ground: bool,
+    pub(crate) width: f32,
+    pub(crate) shoulder: f32,
+    pub(crate) falloff: Falloff,
+    pub(crate) strength: f32,
+    pub(crate) crown: f32,
+    pub(crate) offset: f32,
+    pub(crate) objects_follow: bool,
     /// Whether the apply paints the surface texture, and how.
-    pub paint_surface: bool,
-    pub surface: Surface,
-    pub paint_verge: bool,
-    pub verge: Verge,
-    pub ragged: f32,
-    pub grain: f32,
-    pub reuse_hidden: bool,
+    pub(crate) paint_surface: bool,
+    pub(crate) surface: Surface,
+    pub(crate) paint_verge: bool,
+    pub(crate) verge: Verge,
+    pub(crate) ragged: f32,
+    pub(crate) grain: f32,
+    pub(crate) reuse_hidden: bool,
     /// Which texture a click in the tileset list sets.
-    pub slot: Slot,
+    pub(crate) slot: Slot,
     /// What the last apply said.
-    pub said: String,
+    pub(crate) said: String,
     /// The point being dragged, and the point under the pointer.
-    pub dragging: Option<usize>,
-    pub hovered: Option<usize>,
+    pub(crate) dragging: Option<usize>,
+    pub(crate) hovered: Option<usize>,
 }
 
 impl Default for RoadTool {
@@ -116,7 +116,7 @@ impl Default for RoadTool {
 
 impl RoadTool {
     /// The shape these points and settings describe.
-    pub fn road(&self) -> Road {
+    pub(crate) fn road(&self) -> Road {
         Road {
             points: self.points.clone(),
             curved: self.curved,
@@ -136,7 +136,7 @@ impl RoadTool {
     }
 
     /// The textures these settings paint.
-    pub fn painting(&self) -> Painting {
+    pub(crate) fn painting(&self) -> Painting {
         Painting {
             surface: self.paint_surface.then(|| self.surface.clone()),
             verge: self.paint_verge.then(|| self.verge.clone()),
@@ -146,7 +146,7 @@ impl RoadTool {
         }
     }
 
-    pub fn is_ready(&self) -> bool {
+    pub(crate) fn is_ready(&self) -> bool {
         self.road().is_ready()
     }
 
@@ -156,7 +156,7 @@ impl RoadTool {
     }
 
     /// The point within reach of `(x, y)`, nearest first.
-    pub fn point_near(&self, x: f32, y: f32) -> Option<usize> {
+    pub(crate) fn point_near(&self, x: f32, y: f32) -> Option<usize> {
         let grab = self.grab();
         self.points
             .iter()
@@ -168,13 +168,13 @@ impl RoadTool {
     }
 
     /// Add a point at the end of the road.
-    pub fn push(&mut self, at: [f32; 2], height: f32) {
+    pub(crate) fn push(&mut self, at: [f32; 2], height: f32) {
         self.points.push(Point { at, height });
     }
 
     /// Put a point into the straight segment between two points that passes
     /// nearest `(x, y)`. With fewer than two points, add it at the end.
-    pub fn insert(&mut self, at: [f32; 2], height: f32) {
+    pub(crate) fn insert(&mut self, at: [f32; 2], height: f32) {
         let nearest = self
             .points
             .windows(2)
@@ -187,7 +187,7 @@ impl RoadTool {
         }
     }
 
-    pub fn remove(&mut self, index: usize) {
+    pub(crate) fn remove(&mut self, index: usize) {
         if index < self.points.len() {
             self.points.remove(index);
         }
@@ -195,14 +195,14 @@ impl RoadTool {
         self.hovered = None;
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.points.clear();
         self.dragging = None;
         self.hovered = None;
     }
 
     /// Set the chosen slot's texture, from the tileset list.
-    pub fn choose(&mut self, path: String, effect_id: u32) {
+    pub(crate) fn choose(&mut self, path: String, effect_id: u32) {
         match self.slot {
             Slot::Surface => {
                 self.surface.texture = path;
@@ -230,7 +230,7 @@ fn to_segment(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
 }
 
 /// The ground's height at a point, from the open tiles.
-pub fn ground(session: &EditSession) -> impl Fn(f32, f32) -> Option<f32> + '_ {
+pub(crate) fn ground(session: &EditSession) -> impl Fn(f32, f32) -> Option<f32> + '_ {
     move |x, y| {
         let coord = vale_assets::tile_for_position(x, y);
         session
@@ -241,26 +241,26 @@ pub fn ground(session: &EditSession) -> impl Fn(f32, f32) -> Option<f32> + '_ {
 }
 
 /// The road's path over the ground as it is now.
-pub fn path(session: &EditSession, tool: &RoadTool) -> Option<Path> {
+pub(crate) fn path(session: &EditSession, tool: &RoadTool) -> Option<Path> {
     tool.road().path(ground(session))
 }
 
 /// What an apply did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct Applied {
+pub(crate) struct Applied {
     /// Chunks whose heights moved.
-    pub shaped: usize,
+    pub(crate) shaped: usize,
     /// Chunks whose textures changed.
-    pub painted: usize,
+    pub(crate) painted: usize,
     /// Chunks that already carry four textures, none of them the road's.
-    pub full: usize,
+    pub(crate) full: usize,
     /// Tiles the road reaches that are not open, and were not changed.
-    pub closed: usize,
+    pub(crate) closed: usize,
 }
 
 impl Applied {
     /// One line for the status bar and the panel.
-    pub fn said(&self) -> String {
+    pub(crate) fn said(&self) -> String {
         let mut parts = vec![match (self.shaped, self.painted) {
             (0, 0) => "nothing changed".to_string(),
             (s, 0) => format!("road: {} shaped", chunks(s)),
@@ -295,7 +295,7 @@ fn chunks(n: usize) -> String {
 
 /// **Grade the ground along the road and paint it**, as one undo entry,
 /// over every open tile it reaches.
-pub fn apply(session: &mut EditSession, tool: &RoadTool) -> Result<Applied, String> {
+pub(crate) fn apply(session: &mut EditSession, tool: &RoadTool) -> Result<Applied, String> {
     let road = tool.road();
     let painting = tool.painting();
     if painting.surface.as_ref().is_some_and(|s| s.texture.is_empty()) {
@@ -411,7 +411,7 @@ pub fn apply(session: &mut EditSession, tool: &RoadTool) -> Result<Applied, Stri
 }
 
 /// Apply, and say what happened on the status line and in the panel.
-pub fn apply_and_report(session: &mut EditSession, tool: &mut RoadTool) {
+pub(crate) fn apply_and_report(session: &mut EditSession, tool: &mut RoadTool) {
     tool.said = match apply(session, tool) {
         Ok(applied) => applied.said(),
         Err(why) => why,
@@ -570,7 +570,7 @@ fn draw(
     }
 }
 
-pub struct RoadToolPlugin;
+pub(crate) struct RoadToolPlugin;
 
 impl Plugin for RoadToolPlugin {
     fn build(&self, app: &mut App) {

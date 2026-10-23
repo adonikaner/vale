@@ -147,29 +147,29 @@
 //! handshake to talk to it. The plan's section *What is deliberately not in
 //! this plan* gives the argument.
 
-pub mod behaviour;
-pub mod creatures;
-pub mod dbcs;
-pub mod datadir;
-pub mod follow;
-pub mod fresh;
-pub mod gameobjects;
-pub mod held;
-pub mod items;
-pub mod loot;
-pub mod places;
-pub mod publish;
-pub mod queue;
-pub mod quests;
-pub mod reconcile;
-pub mod reload;
-pub mod services;
-pub mod rows;
-pub mod settings;
-pub mod stack;
-pub mod store;
-pub mod subject;
-pub mod sync;
+pub(crate) mod behaviour;
+pub(crate) mod creatures;
+pub(crate) mod dbcs;
+pub(crate) mod datadir;
+pub(crate) mod follow;
+pub(crate) mod fresh;
+pub(crate) mod gameobjects;
+pub(crate) mod held;
+pub(crate) mod items;
+pub(crate) mod loot;
+pub(crate) mod places;
+pub(crate) mod publish;
+pub(crate) mod queue;
+pub(crate) mod quests;
+pub(crate) mod reconcile;
+pub(crate) mod reload;
+pub(crate) mod services;
+pub(crate) mod rows;
+pub(crate) mod settings;
+pub(crate) mod stack;
+pub(crate) mod store;
+pub(crate) mod subject;
+pub(crate) mod sync;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -204,7 +204,7 @@ use bevy::prelude::*;
 /// failure after that is a line on the status bar: the tiles, the tables and
 /// the SQL are what the person asked for, and a missing database is not a
 /// reason to lose them.
-pub fn save(
+pub(crate) fn save(
     session: &mut crate::session::EditSession,
     assets: &vale_client::assets::GameAssets,
     server: &settings::ServerSettings,
@@ -275,29 +275,26 @@ fn save_files(session: &mut crate::session::EditSession, server: &settings::Serv
 /// What a save and a playtest need to reach the server, as one system
 /// parameter.
 ///
-/// Four resources used together: where the database is, the queue a save's
-/// writes go on, whether the session a playtest starts keeps its query
-/// answers, and the tile regeneration's progress. They are bundled because the
+/// Three resources used together: where the database is, the queue a save's
+/// writes go on, and whether the session a playtest starts keeps its query
+/// answers. They are bundled because the
 /// system that holds them (`tools::shortcuts`, which is Ctrl+S and Ctrl+P) is
 /// at Bevy's limit of sixteen parameters; `ui::shell::topbar::Session` is bundled for
 /// the same reason.
 #[derive(SystemParam)]
-pub struct Reach<'w> {
+pub(crate) struct Reach<'w> {
     /// The queue a save's database writes go on; see [`queue`].
-    pub queue: ResMut<'w, queue::ServerQueue>,
+    pub(crate) queue: ResMut<'w, queue::ServerQueue>,
     /// Where this machine's server is, and the two switches; see [`settings`].
-    pub settings: Res<'w, settings::ServerSettings>,
+    pub(crate) settings: Res<'w, settings::ServerSettings>,
     /// Whether the next session keeps its `WDB\` answers; see
     /// `vale_client::world::session::QueryCaches` and
     /// [`settings::ServerSettings::disable_caching`].
-    pub caches: ResMut<'w, vale_client::world::session::QueryCaches>,
-    /// What the tile regeneration is doing now, for the toast; see
-    /// [`datadir::Step`].
-    pub step: Res<'w, datadir::Step>,
+    pub(crate) caches: ResMut<'w, vale_client::world::session::QueryCaches>,
 }
 
 /// Everything the editor's server half adds to the app.
-pub struct ServerPlugin;
+pub(crate) struct ServerPlugin;
 
 impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {

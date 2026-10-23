@@ -95,7 +95,7 @@ pub fn position(controls: &[[f32; 3]], index: usize, t: f32) -> Option<[f32; 3]>
 }
 
 /// …and which way it is going there — the tangent, unnormalised.
-pub fn derivative(controls: &[[f32; 3]], index: usize, t: f32) -> Option<[f32; 3]> {
+pub(crate) fn derivative(controls: &[[f32; 3]], index: usize, t: f32) -> Option<[f32; 3]> {
     let window = controls.get(index..index + 4)?;
     Some(combine(window, weights([3.0 * t * t, 2.0 * t, 1.0, 0.0])))
 }
@@ -104,7 +104,7 @@ pub fn derivative(controls: &[[f32; 3]], index: usize, t: f32) -> Option<[f32; 3
 ///
 /// **Not the straight line between its ends**, which is what makes a curved
 /// path longer than its polyline and is why this exists at all.
-pub fn segment_length(controls: &[[f32; 3]], index: usize) -> f32 {
+pub(crate) fn segment_length(controls: &[[f32; 3]], index: usize) -> f32 {
     let Some(start) = position(controls, index, 0.0) else {
         return 0.0;
     };

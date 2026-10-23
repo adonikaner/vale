@@ -96,7 +96,7 @@ const LOD_FLOOR: f32 = 0.25;
 
 /// One emitter definition and the material its quads draw through.
 pub struct ParticleEmitter {
-    pub def: M2Particle,
+    pub(crate) def: M2Particle,
     pub material: Handle<M2Material>,
 }
 
@@ -113,7 +113,7 @@ pub struct ParticleSet {
 /// property of the file, like the collision hull. A slot the archive lacks
 /// keeps the magenta placeholder, which under additive blend glows magenta,
 /// as a missing texture shows everywhere else.
-pub fn build_set(
+pub(crate) fn build_set(
     defs: &[M2Particle],
     clip: Option<ParticleClip>,
     kinds: &[u32],
@@ -225,7 +225,7 @@ pub enum Anchor {
 /// An emitter without the flag is not affected. Its particles keep the
 /// placement they were born at, as in the client: a torch leaves its smoke
 /// behind and a missile leaves its tail.
-pub const MODEL_SPACE_FOLLOW: f32 = 0.9;
+pub(crate) const MODEL_SPACE_FOLLOW: f32 = 0.9;
 
 /// One live particle. World space, Bevy axes.
 struct Particle {
@@ -358,16 +358,8 @@ impl Emitter {
     /// which turns an additive one into a light. It returns the definition
     /// rather than an answer because the rule about what glows belongs to that
     /// module, not to this one.
-    pub fn definition(&self) -> &M2Particle {
+    pub(crate) fn definition(&self) -> &M2Particle {
         self.def()
-    }
-
-    /// The entity this emitter's life is tied to. A host uses it to find every
-    /// root-level effect one of its units spawned: an emitter lives at the
-    /// world root, so walking the unit's children never reaches it, and this
-    /// is the only link back.
-    pub fn owner(&self) -> Entity {
-        self.owner
     }
 
     /// Where this emitter stood when [`simulate`] last ran.
@@ -400,13 +392,13 @@ impl Emitter {
     /// screen. It is smoothed because the count varies frame to frame, and an
     /// unsmoothed value would make every campfire in the world flicker at the
     /// rate its emission accumulator produces births.
-    pub fn output(&self) -> f32 {
+    pub(crate) fn output(&self) -> f32 {
         self.output
     }
 
     /// The placement scale its particle sizes take. This is the public name of
     /// [`Self::instance_scale`].
-    pub fn placement_scale(&self) -> f32 {
+    pub(crate) fn placement_scale(&self) -> f32 {
         self.instance_scale()
     }
 
@@ -445,7 +437,7 @@ fn merged(def: &M2Particle) -> bool {
 /// The emitters are root entities (see the module comment). A caller that
 /// despawns things itself keeps the returned ids (the doodad stream does);
 /// [`retire_emitters`] handles callers that do not.
-pub fn spawn_emitters(
+pub(crate) fn spawn_emitters(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     set: &Arc<ParticleSet>,
@@ -488,6 +480,7 @@ pub fn spawn_emitters(
             };
             let field_drawn = merged(&emitter.def);
             let mut spawned = commands.spawn((
+                crate::render::effect::EffectOf(owner),
                 Emitter {
                     set: Arc::clone(set),
                     index,
@@ -613,7 +606,7 @@ fn in_view(
     )
 }
 
-pub struct ParticlePlugin;
+pub(crate) struct ParticlePlugin;
 
 impl Plugin for ParticlePlugin {
     fn build(&self, app: &mut App) {
@@ -1249,7 +1242,7 @@ fn push_quad(
 /// The field pass uses it to address the entity's `Transform` and
 /// `Visibility` without matching an emitter.
 #[derive(Component)]
-pub struct ParticleField;
+pub(crate) struct ParticleField;
 
 /// Every merged field, keyed by the interned material the members share.
 ///

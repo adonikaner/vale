@@ -71,11 +71,11 @@ use crate::world::session::Session;
 /// player rather than over the victim, so the reader takes the position from
 /// the player it already has.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ExperienceGained {
+pub(crate) struct ExperienceGained {
     pub amount: u32,
 }
 
-pub struct CombatLogPlugin;
+pub(crate) struct CombatLogPlugin;
 
 impl Plugin for CombatLogPlugin {
     fn build(&self, app: &mut App) {
@@ -261,9 +261,7 @@ fn poll(
     let events = std::mem::take(&mut *held);
     let world = active
         .live
-        .world()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .read();
     let Some(player) = world.player_guid else {
         return;
     };

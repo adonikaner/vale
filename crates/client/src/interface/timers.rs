@@ -39,13 +39,13 @@ use bevy::prelude::*;
 /// [`super::logout::LogoutAnswer`] is one: the queue has exactly one reader and
 /// a second would steal half of it.
 #[derive(Message, Debug, Clone, Copy)]
-pub enum MirrorTimerAnswer {
+pub(crate) enum MirrorTimerAnswer {
     Started(Started),
     Stopped(MirrorTimer),
-    Paused { timer: MirrorTimer, paused: bool },
+    Paused { paused: bool },
 }
 
-pub struct TimersPlugin;
+pub(crate) struct TimersPlugin;
 
 impl Plugin for TimersPlugin {
     fn build(&self, app: &mut App) {
@@ -93,7 +93,7 @@ fn announce(
             // as the timer's name and then reads the same `arg1` as the flag, so
             // there is no argument list that satisfies both. The flag is what
             // the client passes.
-            MirrorTimerAnswer::Paused { timer: _, paused } => {
+            MirrorTimerAnswer::Paused { paused } => {
                 pause.write(MirrorTimerPause { paused });
             }
         }
@@ -205,10 +205,7 @@ mod tests {
         assert_eq!(
             run(
                 "",
-                MirrorTimerAnswer::Paused {
-                    timer: MirrorTimer::Breath,
-                    paused: true
-                }
+                MirrorTimerAnswer::Paused { paused: true }
             ),
             vec![("MIRROR_TIMER_PAUSE", vec![EventArg::Number(1.0)])]
         );

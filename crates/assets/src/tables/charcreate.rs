@@ -95,13 +95,13 @@ mod fields {
         pub const FACTION_TEMPLATE: usize = 2;
         /// `clientFileString` — `"Human"`, `"Scourge"`. The model directory, and
         /// the key `RACE_INFO_*` and `RACE_ICON_TCOORDS` are built from.
-        pub const FILE_STRING: usize = 15;
+        pub(crate) const FILE_STRING: usize = 15;
         /// `name_lang`, the enUS column of nine.
         pub const NAME: usize = 17;
         /// `facialHairCustomization[0]` and `[1]`; the gender indexes them.
-        pub const FACIAL_HAIR_WORD: usize = 26;
+        pub(crate) const FACIAL_HAIR_WORD: usize = 26;
         /// `hairCustomization`, one string for both genders.
-        pub const HAIR_WORD: usize = 28;
+        pub(crate) const HAIR_WORD: usize = 28;
     }
 
     /// `ChrClasses.dbc` — 17 fields, 9 records.
@@ -111,20 +111,20 @@ mod fields {
         pub const NAME: usize = 5;
         /// `filename` — already upper case, which is why
         /// `CLASS_ICON_TCOORDS[classFileName]` is looked up without `strupper`.
-        pub const FILE_NAME: usize = 14;
+        pub(crate) const FILE_NAME: usize = 14;
     }
 
     /// `FactionTemplate.dbc` — the `factionGroup` bit mask at field 3.
-    pub const FACTION_TEMPLATE_GROUP: usize = 3;
+    pub(crate) const FACTION_TEMPLATE_GROUP: usize = 3;
 
     /// `FactionGroup.dbc` — id, **MaskID** (a bit *index*, not a mask),
     /// internalName, then `name_lang`.
     pub mod group {
-        pub const MASK_ID: usize = 1;
+        pub(crate) const MASK_ID: usize = 1;
         /// `"Alliance"`, `"Horde"`, `"Player"`, `"Monster"` — compared against
         /// literally by the race walk, and the key `FACTION_INFO_*` is built
         /// from once `strupper`'d.
-        pub const INTERNAL_NAME: usize = 2;
+        pub(crate) const INTERNAL_NAME: usize = 2;
         pub const NAME: usize = 3;
     }
 
@@ -133,25 +133,25 @@ mod fields {
     /// two readers want different halves of the row.
     pub mod sections {
         pub const RACE: usize = 1;
-        pub const GENDER: usize = 2;
-        pub const BASE_SECTION: usize = 3;
-        pub const VARIATION: usize = 4;
-        pub const COLOUR: usize = 5;
+        pub(crate) const GENDER: usize = 2;
+        pub(crate) const BASE_SECTION: usize = 3;
+        pub(crate) const VARIATION: usize = 4;
+        pub(crate) const COLOUR: usize = 5;
     }
 
     /// `CharHairGeosets.dbc`: id, race, gender, variation, geoset, showScalp.
     pub mod hair {
         pub const RACE: usize = 1;
-        pub const GENDER: usize = 2;
-        pub const VARIATION: usize = 3;
+        pub(crate) const GENDER: usize = 2;
+        pub(crate) const VARIATION: usize = 3;
     }
 
     /// `CharacterFacialHairStyles.dbc` — **no id column**, the key is the first
     /// three fields.
     pub mod facial {
         pub const RACE: usize = 0;
-        pub const GENDER: usize = 1;
-        pub const VARIATION: usize = 2;
+        pub(crate) const GENDER: usize = 1;
+        pub(crate) const VARIATION: usize = 2;
     }
 
     /// `CharStartOutfit.dbc` — 82 rows, one per `(race, class, gender)`.
@@ -173,11 +173,11 @@ mod fields {
         /// `[14..26]` — an `ItemDisplayInfo` id per slot, `0` or `-1` for none.
         /// **Not `[2..14]`**, which is the *item* id and needs a template this
         /// screen cannot fetch.
-        pub const DISPLAY_ID: usize = 14;
+        pub(crate) const DISPLAY_ID: usize = 14;
         /// `[26..38]` — and its inventory type, 48 bytes further on.
         /// `0` is a non-equippable, which the outfits carry two
         /// of: rations and a hearthstone.
-        pub const INVENTORY_TYPE: usize = 26;
+        pub(crate) const INVENTORY_TYPE: usize = 26;
         pub const SLOTS: usize = 12;
     }
 }
@@ -186,9 +186,9 @@ mod fields {
 /// [`crate::look::character::section`] names, repeated so this module reads without
 /// a jump.
 mod section {
-    pub const SKIN: u32 = 0;
-    pub const FACE: u32 = 1;
-    pub const HAIR: u32 = 3;
+    pub(crate) const SKIN: u32 = 0;
+    pub(crate) const FACE: u32 = 1;
+    pub(crate) const HAIR: u32 = 3;
 }
 
 /// **The race is not playable.** `ChrRaces.flags` bit 0, and in 5875 the only

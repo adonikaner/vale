@@ -51,12 +51,12 @@ use vale_assets::world::blp::Encoding;
 use vale_edit::manifest::Kind;
 
 /// Everything the workspace draws from.
-pub struct Work<'a> {
-    pub session: &'a mut EditSession,
-    pub assets: &'a mut Assets,
-    pub game: &'a vale_client::assets::GameAssets,
-    pub thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
-    pub portraits: &'a mut crate::preview::portraits::Portraits,
+pub(crate) struct Work<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) assets: &'a mut Assets,
+    pub(crate) game: &'a vale_client::assets::GameAssets,
+    pub(crate) thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
+    pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
 }
 
 /// How large the inspector draws a texture, at most.
@@ -115,7 +115,7 @@ impl Sort {
 }
 
 /// Draw the workspace into the region the panels left.
-pub fn draw(ui: &mut egui::Ui, mut work: Work<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, mut work: Work<'_>) {
     listing::frame(ui, &mut work, "assets", list, details);
 }
 
@@ -568,7 +568,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
 
 /// The workspace's third part, in the shell's inspector: the chosen file,
 /// drawn.
-pub fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
+pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
     let work = &mut work;
     let Some(vpath) = work.assets.selected.clone() else {
         theme::note(ui, "Choose a file to see it.");
@@ -642,7 +642,7 @@ pub(in crate::ui) fn checker(ui: &egui::Ui, rect: egui::Rect) {
 /// The first choice is what the texture is for ([`Purpose`]); the folder, the
 /// size and the files written follow from it, and the rows under it are only
 /// the ones that purpose has.
-pub fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSession, game: &vale_client::assets::GameAssets) {
+pub(crate) fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSession, game: &vale_client::assets::GameAssets) {
     let Some(import) = assets.import.as_mut() else { return };
     let mut close = false;
     let mut write = false;

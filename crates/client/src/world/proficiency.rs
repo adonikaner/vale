@@ -37,7 +37,7 @@ use bevy::prelude::*;
 /// there ends in a write rather than a decision — see
 /// [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ProficiencyAnswer(pub Proficiency);
+pub(crate) struct ProficiencyAnswer(pub(crate) Proficiency);
 
 /// **Every class's mask, as this session has been told them.**
 ///
@@ -45,9 +45,9 @@ pub struct ProficiencyAnswer(pub Proficiency);
 /// terms as [`crate::interface::reputation::PlayerStanding`]: the rule is
 /// in a crate with no Bevy in it and can be unit-tested without one.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct Proficiencies(pub vale_protocol::play::skills::Proficiencies);
+pub(crate) struct Proficiencies(pub(crate) vale_protocol::play::skills::Proficiencies);
 
-pub struct ProficiencyPlugin;
+pub(crate) struct ProficiencyPlugin;
 
 impl Plugin for ProficiencyPlugin {
     fn build(&self, app: &mut App) {

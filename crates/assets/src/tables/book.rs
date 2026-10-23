@@ -64,7 +64,7 @@ use crate::tables::spellbook::{SpellInfo, Spells};
 
 /// The texture the General tab wears — a literal in the client
 /// rather than anything in a table.
-pub const GENERAL_ICON: &str = r"Interface\Icons\Ability_Kick";
+pub(crate) const GENERAL_ICON: &str = r"Interface\Icons\Ability_Kick";
 
 /// The `GlobalStrings.lua` key the General tab is named by. Looked
 /// up rather than spelled, because the game looks it up: a localised client
@@ -79,7 +79,7 @@ pub const SPELLS_PER_PAGE: usize = 12;
 /// The cap the client's own flat array has — `0x400` entries, and
 /// `MAX_SPELLS = 1024` in `SpellBookFrame.lua`. A book longer than this is
 /// truncated rather than grown, which is what the client does.
-pub const MAX_SPELLS: usize = 1024;
+pub(crate) const MAX_SPELLS: usize = 1024;
 
 /// One tab of the book.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -66,7 +66,7 @@ use crate::world::incoming::ChatArrived;
 use crate::world::session::Session;
 use vale_protocol::play::chat::ChatType;
 
-pub struct ChatPlugin;
+pub(crate) struct ChatPlugin;
 
 impl Plugin for ChatPlugin {
     fn build(&self, app: &mut App) {
@@ -98,7 +98,7 @@ pub use vale_assets::interface::chattype::TYPES as DEFAULT_COLOURS;
 /// comment. The one that is not a plain upper-casing is
 /// [`ChatType::TextEmote`] -> `CHAT_MSG_TEXT_EMOTE`, which is a separate event
 /// from `CHAT_MSG_EMOTE` and is in the same `SAY` group.
-pub fn event_name(kind: ChatType) -> &'static str {
+pub(crate) fn event_name(kind: ChatType) -> &'static str {
     match kind {
         ChatType::Say => "CHAT_MSG_SAY",
         ChatType::Party => "CHAT_MSG_PARTY",
@@ -138,7 +138,7 @@ pub fn event_name(kind: ChatType) -> &'static str {
 /// the four that need state it does not have (`BATTLEGROUND`, and the three
 /// channel forms). Refusing them is required: a `/bg` sent as a SAY would be
 /// broadcast to the zone.
-pub fn kind_of_word(word: &str) -> Option<ChatType> {
+pub(crate) fn kind_of_word(word: &str) -> Option<ChatType> {
     Some(match word {
         "SAY" => ChatType::Say,
         "PARTY" => ChatType::Party,
@@ -179,7 +179,7 @@ fn flag_of(tag: u8) -> &'static str {
 /// like server output: `ChatFrame_OnEvent`'s `type == "SYSTEM"` branch, which
 /// is three lines long. A client note therefore appears in the same frame, in
 /// the same colour and through the same code as the server's own notes.
-pub fn system_note(out: &mut MessageWriter<ChatMessageReceived>, text: impl Into<String>) {
+pub(crate) fn system_note(out: &mut MessageWriter<ChatMessageReceived>, text: impl Into<String>) {
     out.write(ChatMessageReceived {
         event: event_name(ChatType::System),
         text: text.into(),
@@ -238,9 +238,7 @@ fn poll(
     let mut resolved: Vec<(String, vale_protocol::play::chat::ChatMessage)> = Vec::new();
     let mut unnamed_senders = Vec::new();
     {
-        let Ok(world) = active.live.world().lock() else {
-            return;
-        };
+        let world = active.live.read();
         let me = status.character.clone();
         let held = std::mem::take(&mut *unnamed);
         for (since, message) in held {

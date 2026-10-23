@@ -80,33 +80,26 @@ use vale_mangos::row::{Edits, Key, Life};
 
 /// One row of a plan, as this module needs it: what it is called in the revert
 /// file, and the statements it becomes.
-pub struct Step {
-    pub table: String,
-    pub key: Key,
-    pub statements: Vec<String>,
+pub(crate) struct Step {
+    pub(crate) table: String,
+    pub(crate) key: Key,
+    pub(crate) statements: Vec<String>,
 }
 
 /// What one Apply did.
 #[derive(Debug, Default)]
-pub struct Reconciled {
+pub(crate) struct Reconciled {
     /// Rows the plan's own statements affected.
-    pub affected: u64,
+    pub(crate) affected: u64,
     /// How many rows the new revert file covers.
-    pub undoable: usize,
+    pub(crate) undoable: usize,
     /// **How many rows the project had applied and no longer claims**, which
     /// were put back and not written again: a discarded creation, a re-keyed
     /// one's old id, a removal that was undone.
-    pub taken_back: usize,
+    pub(crate) taken_back: usize,
 }
 
 impl Reconciled {
-    /// `" — 1 row(s) the project no longer claims put back"`, or nothing.
-    pub fn taken_back_words(&self) -> String {
-        match self.taken_back {
-            0 => String::new(),
-            n => format!(" — restored {n} row(s) the project no longer changes"),
-        }
-    }
 }
 
 /// **Run one subject's Apply**, in the module's order.
@@ -115,7 +108,7 @@ impl Reconciled {
 /// with the database as that step will meet it: it answers the statements that
 /// put the row back, `None` for a row with nothing to put back (an edit to a row
 /// that is not there), or an `Err` that stops the Apply.
-pub fn apply(
+pub(crate) fn apply(
     project: &Project,
     db: &mut Db,
     vpath: &str,
@@ -173,7 +166,7 @@ pub fn apply(
 
 /// **Put back**, which is steps 1 and 2 and nothing after them. Answers how
 /// many rows the file covered.
-pub fn put_back(project: &Project, db: &mut Db, vpath: &str) -> Result<usize, String> {
+pub(crate) fn put_back(project: &Project, db: &mut Db, vpath: &str) -> Result<usize, String> {
     let had = Undo::open_at(project, vpath)?;
     if had.entries.is_empty() {
         return Ok(0);
@@ -184,7 +177,7 @@ pub fn put_back(project: &Project, db: &mut Db, vpath: &str) -> Result<usize, St
 }
 
 /// Whether this project has anything in the database for that subject.
-pub fn has_applied(session: &EditSession, vpath: &str) -> bool {
+pub(crate) fn has_applied(session: &EditSession, vpath: &str) -> bool {
     Undo::open_at(&session.project, vpath).is_ok_and(|undo| !undo.entries.is_empty())
 }
 
@@ -211,7 +204,7 @@ pub fn has_applied(session: &EditSession, vpath: &str) -> bool {
 /// already names its new id. That row is the project's, and the item's own
 /// undo puts its column back after the quest's is run, so it is not a row the
 /// move could not be told from.
-pub fn refuse_a_taken_id(
+pub(crate) fn refuse_a_taken_id(
     db: &mut Db,
     table: &str,
     key: &Key,
@@ -265,7 +258,7 @@ pub fn refuse_a_taken_id(
 /// the row being there. With the row gone upstream, the others would still
 /// renumber every other patch of it and every reference to it, and Put back
 /// would have nothing to run for any of them.
-pub fn undo_of_an_update(
+pub(crate) fn undo_of_an_update(
     table: &str,
     at: &Key,
     key: &Key,
@@ -289,7 +282,7 @@ pub fn undo_of_an_update(
 /// **Refuse a spawn created past the guid space** — `creature::MAX_GUID` or
 /// `gameobject::MAX_GUID`. A guid above it stops the server: the guid
 /// generator refuses to hand out a counter past its range.
-pub fn refuse_a_guid_past_the_limit(table: &str, key: &Key, limit: u64) -> Result<(), String> {
+pub(crate) fn refuse_a_guid_past_the_limit(table: &str, key: &Key, limit: u64) -> Result<(), String> {
     match key.first() {
         Some(guid) if guid > limit => Err(format!(
             "{table} guid {guid} is above {limit}, the highest guid the server accepts."
@@ -323,13 +316,13 @@ pub fn refuse_a_guid_past_the_limit(table: &str, key: &Key, limit: u64) -> Resul
 /// several statements. Reading one line per marker restored a path as its
 /// `DELETE` and none of its nodes, so the undo emptied the path it was meant
 /// to put back.
-pub struct Undo {
+pub(crate) struct Undo {
     /// `(table, key, statements)`, oldest first.
     ///
     /// Several statements per entry, because a waypoint path's undo is a
     /// `DELETE` and an `INSERT` a node rather than one `UPDATE`. A row's entry
     /// holds exactly one and reads back as one.
-    pub entries: Vec<(String, Key, Vec<String>)>,
+    pub(crate) entries: Vec<(String, Key, Vec<String>)>,
 }
 
 impl Undo {
@@ -353,7 +346,7 @@ impl Undo {
     /// own because each is applied by its own gesture, and a second reading of
     /// `-- row <table> <key>` would be a place for the two to drift apart
     /// silently.
-    pub fn open_at(project: &Project, vpath: &str) -> Result<Undo, String> {
+    pub(crate) fn open_at(project: &Project, vpath: &str) -> Result<Undo, String> {
         let Some(text) = project.read(vpath) else {
             return Ok(Undo {
                 entries: Vec::new(),
@@ -372,7 +365,7 @@ impl Undo {
     /// `DELETE`s of a removed spawn's snapshot without the `INSERT`s that
     /// restore it) against a row that is still there. A file with no `END`
     /// line at all predates them and is read as it always was.
-    pub fn from_text(text: &str) -> Undo {
+    pub(crate) fn from_text(text: &str) -> Undo {
         let mut entries: Vec<(String, Key, Vec<String>)> = Vec::new();
         let mut ended: Vec<bool> = Vec::new();
         let mut any_end = false;
@@ -445,18 +438,18 @@ impl Undo {
     /// `creature` guid 68 are different rows, and `(68, patch 0)` and
     /// `(68, patch 3)` are two more; a check on the id alone would give the
     /// second of any pair the first's statement.
-    pub fn covers(&self, table: &str, key: &Key) -> bool {
+    pub(crate) fn covers(&self, table: &str, key: &Key) -> bool {
         self.entries
             .iter()
             .any(|(had_table, had_key, _)| had_table == table && had_key == key)
     }
 
-    pub fn add(&mut self, table: &str, key: &Key, statement: &str) {
+    pub(crate) fn add(&mut self, table: &str, key: &Key, statement: &str) {
         self.add_many(table, key, &[statement.to_string()]);
     }
 
     /// The same for the several statements a path's undo is.
-    pub fn add_many(&mut self, table: &str, key: &Key, statements: &[String]) {
+    pub(crate) fn add_many(&mut self, table: &str, key: &Key, statements: &[String]) {
         self.entries
             .push((table.to_string(), key.clone(), statements.to_vec()));
     }
@@ -469,7 +462,7 @@ impl Undo {
     /// each is the inverse of its own step given the steps before it; see
     /// [`super::reconcile`]. A row created at an id another row was moved away
     /// from has to go before that row can come back.
-    pub fn put_back(&self) -> Vec<String> {
+    pub(crate) fn put_back(&self) -> Vec<String> {
         self.entries
             .iter()
             .rev()
@@ -484,7 +477,7 @@ impl Undo {
     ///
     /// The file is the same text either way. The first entry writes the whole
     /// file, header included.
-    pub fn append_newest_at(
+    pub(crate) fn append_newest_at(
         &self,
         project: &Project,
         vpath: &str,
@@ -512,7 +505,7 @@ impl Undo {
     /// order [`Self::append_newest_at`] continues. It is the file as it stands
     /// while an apply is running; [`Self::write_finished_at`] is what replaces
     /// it when the apply is done.
-    pub fn write_at(
+    pub(crate) fn write_at(
         &self,
         project: &Project,
         vpath: &str,
@@ -541,7 +534,7 @@ impl Undo {
     /// running it top to bottom by hand is [`Self::put_back`]. The
     /// [`Self::NEWEST_FIRST`] line is what tells [`Self::from_text`] which way
     /// round it is.
-    pub fn write_finished_at(
+    pub(crate) fn write_finished_at(
         &self,
         project: &Project,
         vpath: &str,

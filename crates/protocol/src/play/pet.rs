@@ -96,15 +96,6 @@ pub mod command_state {
     pub const DISMISS: u8 = 3;
 }
 
-/// **The action ids the command and reaction slots carry**, which are the same
-/// numbers as [`command_state`] and [`react_state`] — the slot's *type* is what
-/// says which of the two tables to read it in.
-///
-/// This is worth stating because 0, 1 and 2 mean three different things
-/// depending on that byte: with `ACT_COMMAND` they are stay, follow and attack;
-/// with `ACT_REACTION` they are passive, defensive and aggressive.
-pub const PET_ACTION_DISMISS: u32 = command_state::DISMISS as u32;
-
 /// One slot of the bar, unpacked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PetAction {
@@ -148,7 +139,7 @@ impl PetAction {
 }
 
 /// One entry of the pet's own spellbook, which is the same packed word.
-pub type PetSpell = PetAction;
+pub(crate) type PetSpell = PetAction;
 
 /// One cooldown, as `WritePetSpellsCooldown` writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,12 +150,8 @@ pub struct PetCooldown {
     /// **The category's own cooldown, with `0x8000000` set for a permanent
     /// one** — vmangos ors the bit in rather than sending a duration, and a
     /// reader that treats it as milliseconds reports 37 hours.
-    pub category_ms: u32,
+    pub(crate) category_ms: u32,
 }
-
-/// The bit `WritePetSpellsCooldown` ors into `categoryCooldown` for a cooldown
-/// that never runs out.
-pub const COOLDOWN_PERMANENT: u32 = 0x0800_0000;
 
 /// `SMSG_PET_SPELLS` — everything the pet panel is drawn from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -185,7 +172,8 @@ pub struct PetSpells {
 
 impl PetSpells {
     /// Whether this packet is the dismissal rather than a bar.
-    pub fn is_dismissal(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_dismissal(&self) -> bool {
         self.pet == 0
     }
 }
@@ -196,7 +184,7 @@ impl PetSpells {
 /// stop where the body does. The three senders write different amounts after the
 /// header and the dismissal writes nothing at all, so "the packet ended" is a
 /// real shape rather than damage.
-pub fn parse_pet_spells(body: &[u8]) -> Option<PetSpells> {
+pub(crate) fn parse_pet_spells(body: &[u8]) -> Option<PetSpells> {
     let mut r = Reader::new(body);
     if !r.has(8) {
         return None;
@@ -254,14 +242,14 @@ pub fn parse_pet_spells(body: &[u8]) -> Option<PetSpells> {
 /// `SMSG_PET_MODE` — the same four state bytes on their own, for when only the
 /// mood changed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PetMode {
+pub(crate) struct PetMode {
     pub pet: u64,
     pub react: u8,
     pub command: u8,
     pub flags: u8,
 }
 
-pub fn parse_pet_mode(body: &[u8]) -> Option<PetMode> {
+pub(crate) fn parse_pet_mode(body: &[u8]) -> Option<PetMode> {
     let mut r = Reader::new(body);
     if !r.has(12) {
         return None;
@@ -319,13 +307,13 @@ pub fn parse_pet_name(body: &[u8]) -> Option<PetName> {
 /// whose content is a `GlobalStrings.lua` key.
 pub mod feedback {
     /// `FEEDBACK_PET_DEAD` — nothing to attack, said as "Your pet is dead."
-    pub const PET_DEAD: u8 = 1;
+    pub(crate) const PET_DEAD: u8 = 1;
     /// `FEEDBACK_NOTHING_TO_ATT`.
-    pub const NOTHING_TO_ATTACK: u8 = 2;
+    pub(crate) const NOTHING_TO_ATTACK: u8 = 2;
     /// `FEEDBACK_CANT_ATT_TARGET`.
-    pub const CANT_ATTACK_TARGET: u8 = 3;
+    pub(crate) const CANT_ATTACK_TARGET: u8 = 3;
     /// `FEEDBACK_NO_PATH_TO`.
-    pub const NO_PATH_TO: u8 = 4;
+    pub(crate) const NO_PATH_TO: u8 = 4;
 
     /// **What each of the four says** — the client's whole handler is: read
     /// the byte, and pick one of four error rows by it:
@@ -395,7 +383,7 @@ pub mod tame_failure {
     }
 }
 
-pub fn parse_pet_feedback(body: &[u8]) -> Option<u8> {
+pub(crate) fn parse_pet_feedback(body: &[u8]) -> Option<u8> {
     let mut r = Reader::new(body);
     r.has(1).then(|| r.u8())
 }
@@ -411,7 +399,7 @@ pub struct PetCastFailed {
     pub reason: u8,
 }
 
-pub fn parse_pet_cast_failed(body: &[u8]) -> Option<PetCastFailed> {
+pub(crate) fn parse_pet_cast_failed(body: &[u8]) -> Option<PetCastFailed> {
     let mut r = Reader::new(body);
     if !r.has(6) {
         return None;
@@ -424,7 +412,7 @@ pub fn parse_pet_cast_failed(body: &[u8]) -> Option<PetCastFailed> {
 }
 
 /// `SMSG_PET_TAME_FAILURE` — one byte, a `PetTameFailureReason`.
-pub fn parse_pet_tame_failure(body: &[u8]) -> Option<u8> {
+pub(crate) fn parse_pet_tame_failure(body: &[u8]) -> Option<u8> {
     let mut r = Reader::new(body);
     r.has(1).then(|| r.u8())
 }
@@ -451,7 +439,7 @@ pub mod pet_talk {
 
 /// `SMSG_PET_ACTION_SOUND` — the pet said something. The value is a
 /// [`pet_talk`] selector rather than a `SoundEntries.dbc` row.
-pub fn parse_pet_action_sound(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_pet_action_sound(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(12) {
         return None;
@@ -472,7 +460,7 @@ pub struct PetDismissSound {
     pub position: [f32; 3],
 }
 
-pub fn parse_pet_dismiss_sound(body: &[u8]) -> Option<PetDismissSound> {
+pub(crate) fn parse_pet_dismiss_sound(body: &[u8]) -> Option<PetDismissSound> {
     let mut r = Reader::new(body);
     if !r.has(16) {
         return None;
@@ -484,7 +472,7 @@ pub fn parse_pet_dismiss_sound(body: &[u8]) -> Option<PetDismissSound> {
 }
 
 /// `SMSG_PET_UNLEARN_CONFIRM` — the guid, and what resetting it costs in copper.
-pub fn parse_pet_unlearn_confirm(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_pet_unlearn_confirm(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(12) {
         return None;
@@ -499,7 +487,7 @@ pub fn parse_pet_unlearn_confirm(body: &[u8]) -> Option<(u64, u32)> {
 /// `data` is the slot's own packed word (see [`PetAction::packed`]), which is
 /// why the bar is kept as it arrived rather than as three parallel lists: the
 /// press sends the number back unchanged.
-pub fn pet_action_body(pet: u64, data: u32, target: u64) -> Vec<u8> {
+pub(crate) fn pet_action_body(pet: u64, data: u32, target: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet).u32(data).u64(target);
     w.buf
@@ -508,7 +496,7 @@ pub fn pet_action_body(pet: u64, data: u32, target: u64) -> Vec<u8> {
 /// `CMSG_PET_NAME_QUERY` — **the number first and the guid second**, which is
 /// the reverse of every other query in this protocol and is what a reader of
 /// the wrong order loses the name to.
-pub fn pet_name_query_body(pet_number: u32, pet: u64) -> Vec<u8> {
+pub(crate) fn pet_name_query_body(pet_number: u32, pet: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(pet_number).u64(pet);
     w.buf
@@ -522,7 +510,7 @@ pub fn pet_name_query_body(pet_number: u32, pet: u64) -> Vec<u8> {
 ///
 /// **The displaced slot comes first**, which is not a convention but the check's
 /// requirement — see [`place_on_pet_bar`].
-pub fn pet_set_action_body(pet: u64, moves: &[(u32, u32)]) -> Vec<u8> {
+pub(crate) fn pet_set_action_body(pet: u64, moves: &[(u32, u32)]) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet);
     for (position, data) in moves.iter().take(2) {
@@ -647,7 +635,7 @@ pub fn place_on_pet_bar(
 }
 
 /// `CMSG_PET_SPELL_AUTOCAST` — the little dot on a pet spell.
-pub fn pet_spell_autocast_body(pet: u64, spell_id: u32, on: bool) -> Vec<u8> {
+pub(crate) fn pet_spell_autocast_body(pet: u64, spell_id: u32, on: bool) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet).u32(spell_id).u8(u8::from(on));
     w.buf
@@ -655,21 +643,21 @@ pub fn pet_spell_autocast_body(pet: u64, spell_id: u32, on: bool) -> Vec<u8> {
 
 /// `CMSG_PET_STOP_ATTACK`, `CMSG_PET_ABANDON`, `CMSG_PET_UNLEARN` — a guid and
 /// nothing else, three opcodes sharing one body.
-pub fn pet_guid_body(pet: u64) -> Vec<u8> {
+pub(crate) fn pet_guid_body(pet: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet);
     w.buf
 }
 
 /// `CMSG_PET_RENAME`.
-pub fn pet_rename_body(pet: u64, name: &str) -> Vec<u8> {
+pub(crate) fn pet_rename_body(pet: u64, name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet).cstring(name);
     w.buf
 }
 
 /// `CMSG_PET_CANCEL_AURA` — cancel one of the pet's own buffs.
-pub fn pet_cancel_aura_body(pet: u64, spell_id: u32) -> Vec<u8> {
+pub(crate) fn pet_cancel_aura_body(pet: u64, spell_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(pet).u32(spell_id);
     w.buf

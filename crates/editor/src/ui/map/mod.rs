@@ -6,5 +6,5 @@
 //!               model or a building over every tile of a map
 //! ```
 
-pub mod mapview;
-pub mod sweep;
+pub(crate) mod mapview;
+pub(crate) mod sweep;

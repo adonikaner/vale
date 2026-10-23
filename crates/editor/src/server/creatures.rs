@@ -64,17 +64,17 @@ use vale_mangos::row::{self, Edits, Life};
 /// Where the project keeps the waypoint paths it changes. A store of their own,
 /// because a path's edit is a set of rows rather than a column. See
 /// [`vale_mangos::path`].
-pub const PATHS_VPATH: &str = "server\\paths.txt";
+pub(crate) const PATHS_VPATH: &str = "server\\paths.txt";
 
 /// The SQL the row store's creature rows and the paths come to.
-pub const SQL_VPATH: &str = "sql\\creatures.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\creatures.sql";
 
 /// The SQL that puts those rows back.
-pub const REVERT_VPATH: &str = "sql\\creatures-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\creatures-revert.sql";
 
 /// The creature subject: `creature_template`, `creature`, and the waypoint
 /// paths written whole into `creature_movement`.
-pub struct Creatures;
+pub(crate) struct Creatures;
 
 impl RowSubject for Creatures {
     fn subject(&self) -> Subject {
@@ -204,7 +204,7 @@ impl RowSubject for Creatures {
 /// single answer and has no reason to read the rest: the waypoint window is
 /// about one path, and "this project has applied something" is not an answer
 /// about the one being looked at.
-pub fn path_applied(session: &EditSession, path: &vale_mangos::path::Path) -> bool {
+pub(crate) fn path_applied(session: &EditSession, path: &vale_mangos::path::Path) -> bool {
     subject::apply::OnTheServer::read(session, &Creatures).covers(path.which.table(), &path.key())
 }
 

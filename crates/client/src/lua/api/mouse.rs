@@ -107,56 +107,6 @@ use super::super::widgets::widget;
 use crate::input::bindings::BindingPressed;
 use crate::interface::events::EventArg;
 
-/// The methods this module installs, sorted.
-///
-/// The directory configures the mouse in markup, not in script. Over the whole
-/// directory, `EnableMouse(` has 10 call sites against 84 `enableMouse`
-/// attributes, and `SetHitRectInsets(` has none against 44 `<HitRectInsets>`
-/// elements. The two setters exist for the loader and for addons; the
-/// tri-state read of the attribute is the part the directory depends on.
-pub const METHODS: [&str; 24] = [
-    "DisableDrawLayer",
-    "EnableDrawLayer",
-    "EnableMouse",
-    "EnableMouseWheel",
-    "GetHitRectInsets",
-    "IsClampedToScreen",
-    "IsMouseEnabled",
-    "IsMouseWheelEnabled",
-    "IsMouseOver",
-    "IsMovable",
-    "IsResizable",
-    "IsUserPlaced",
-    "RegisterForDrag",
-    "SetClampRectInsets",
-    "SetClampedToScreen",
-    "SetHitRectInsets",
-    "SetMaxResize",
-    "SetMinResize",
-    "SetMovable",
-    "SetResizable",
-    "SetUserPlaced",
-    "StartMoving",
-    "StartSizing",
-    "StopMovingOrSizing",
-];
-
-/// The globals this module installs.
-///
-/// `GetMouseFocus()` has no call sites in 5875's FrameXML and is registered
-/// anyway; it is the one name in this module the directory does not use. The
-/// reason is the rule [`super::verbs`] states: the 1.12.1 client implements it
-/// in C, so no script defines it, and addons call it. It does not change the
-/// API gap, because a name nothing calls is not in that count.
-///
-/// `MouseIsOver` is not registered. It is a 1.12 C function, so no addon
-/// defines it, but `UIParent.lua` does, and the directory loads after the host
-/// is built, so a registration here is overwritten at the first login.
-/// `vale framexml` counts such a name as a collision, and that count must be
-/// zero. The directory's own definition performs the same test through
-/// `frame:IsMouseOver()`, which this client answers.
-pub const GLOBALS: [&str; 2] = ["GetCursorPosition", "GetMouseFocus"];
-
 /// What a frame owns here. Underscored, as everything the C side owns is.
 const ENABLED_KEY: &str = "__mouseEnabled";
 /// The wheel's flag, separate from the mouse's because the wheel is a separate
@@ -227,7 +177,7 @@ pub struct MouseFocus {
     /// [`wheel_was_taken`]. `world::camera::orbit` refuses the zoom when one
     /// did, so scrolling a trainer's list or a quest log does not also move the
     /// camera.
-    pub wheel_taken: bool,
+    pub(crate) wheel_taken: bool,
 }
 
 /// Set while something other than the game's interface has the pointer. At
@@ -246,7 +196,7 @@ pub struct MouseFocus {
 /// the alternative is a `#[cfg]` on a system parameter in a file that is not
 /// about the panel.
 #[derive(Resource, Default)]
-pub struct ExternalPointer(pub bool);
+pub(crate) struct ExternalPointer(pub(crate) bool);
 
 /// What [`MouseFocus::name`] reads while the panel holds the pointer.
 ///
@@ -390,7 +340,7 @@ fn focus_edit_box(lua: &mlua::Lua, frame: &mlua::Table, errors: &mut Vec<String>
 ///
 /// Read by [`super::super::audit`], whose click probe presses only what a person could
 /// have pressed: a button the interface drives itself is not one of them.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(in crate::lua) fn is_enabled(frame: &mlua::Table) -> bool {
     frame
         .raw_get::<Option<bool>>(ENABLED_KEY)
@@ -415,7 +365,7 @@ pub(in crate::lua) fn set_over(frame: &mlua::Table, over: bool) -> mlua::Result<
 ///
 /// `None` for a point over nothing, which is the ordinary case and is what makes
 /// the world clickable.
-pub fn focus_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
+pub(crate) fn focus_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
     topmost(lua, x, y, ENABLED_KEY)
 }
 
@@ -427,7 +377,7 @@ pub fn focus_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
 /// the two answers are usually different frames: over a quest
 /// description the mouse focus is `QuestLogFrame` and the wheel's is
 /// `QuestLogDetailScrollFrame`, five levels inside it.
-pub fn wheel_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
+pub(crate) fn wheel_at(lua: &mlua::Lua, x: f64, y: f64) -> Option<mlua::Table> {
     topmost(lua, x, y, WHEEL_KEY)
 }
 
@@ -1044,7 +994,7 @@ fn call(
 /// is `OnClick`, and this covers the widgets that have no `OnClick`.
 ///
 /// Returns whatever the two handlers raised, in the order they ran.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(in crate::lua) fn press_and_release(
     lua: &mlua::Lua,
     frame: &mlua::Table,
@@ -1350,7 +1300,7 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     Ok(())
 }
 
-pub struct MousePlugin;
+pub(crate) struct MousePlugin;
 
 impl Plugin for MousePlugin {
     fn build(&self, app: &mut App) {

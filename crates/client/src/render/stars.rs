@@ -50,7 +50,7 @@ use bevy::shader::ShaderRef;
 const STAR_RADIUS: f32 = 900.0;
 
 /// The star pass: a model, a material and one system.
-pub struct StarPlugin;
+pub(crate) struct StarPlugin;
 
 impl Plugin for StarPlugin {
     fn build(&self, app: &mut App) {
@@ -75,7 +75,7 @@ impl Plugin for StarPlugin {
 /// The dome's root: the one entity that follows the camera, with a child per
 /// batch of the model.
 #[derive(Component)]
-pub struct StarDome;
+pub(crate) struct StarDome;
 
 /// Whether the model has been asked for yet, and what came back.
 ///
@@ -114,7 +114,7 @@ struct BatchOpacity(f32);
 
 /// One batch's material: the model's own texture, and one colour to scale it by.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct StarMaterial {
+pub(crate) struct StarMaterial {
     /// `rgb` is the star colour (white) and `a` is the batch's own constant
     /// opacity times the hour's fade and the weather's `1 - storm`; see
     /// [`fade`].

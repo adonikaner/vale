@@ -54,7 +54,7 @@ use super::AdtFile;
 use vale_assets::world::adt::{self as rules, TextureLayer, ALPHA_LEN, ALPHA_SIDE, CHUNK_SIZE};
 
 /// Bytes in one `MCLY` record.
-pub const LAYER_RECORD: usize = 16;
+pub(crate) const LAYER_RECORD: usize = 16;
 
 /// How many texture layers one map chunk may carry.
 ///
@@ -97,7 +97,7 @@ impl Paint {
     }
 
     /// Whether this chunk can take another texture — see [`MAX_LAYERS`].
-    pub fn has_room(&self) -> bool {
+    pub(crate) fn has_room(&self) -> bool {
         self.layers.len() < MAX_LAYERS
     }
 
@@ -402,7 +402,7 @@ fn put(chunk: &mut MapChunk, region: Region, data: Vec<u8>) {
 /// The chunk origin is its **maximum** x and y corner and the grid runs down from
 /// there, which is `vale_assets`' own convention and the reason both terms are
 /// subtracted.
-pub fn texel_position(origin: [f32; 3], tx: usize, ty: usize) -> [f32; 2] {
+pub(crate) fn texel_position(origin: [f32; 3], tx: usize, ty: usize) -> [f32; 2] {
     let span = (ALPHA_SIDE - 1) as f32;
     [
         origin[0] - ty as f32 / span * CHUNK_SIZE,

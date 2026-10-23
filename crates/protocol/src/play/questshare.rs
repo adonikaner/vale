@@ -124,7 +124,7 @@ pub struct ConfirmAccept {
 }
 
 /// `MSG_QUEST_PUSH_RESULT` from the server: a plain guid and one byte.
-pub fn parse_push_result(body: &[u8]) -> Option<PushOutcome> {
+pub(crate) fn parse_push_result(body: &[u8]) -> Option<PushOutcome> {
     if body.len() < 9 {
         return None;
     }
@@ -133,7 +133,7 @@ pub fn parse_push_result(body: &[u8]) -> Option<PushOutcome> {
 }
 
 /// `SMSG_QUEST_CONFIRM_ACCEPT`: the quest, its title, and who accepted it.
-pub fn parse_confirm_accept(body: &[u8]) -> Option<ConfirmAccept> {
+pub(crate) fn parse_confirm_accept(body: &[u8]) -> Option<ConfirmAccept> {
     // The id, at least the title's terminator, and the guid.
     if body.len() < 4 + 1 + 8 {
         return None;
@@ -148,12 +148,12 @@ pub fn parse_confirm_accept(body: &[u8]) -> Option<ConfirmAccept> {
 }
 
 /// `CMSG_PUSHQUESTTOPARTY`: the quest to share.
-pub fn push_quest_body(quest_id: u32) -> Vec<u8> {
+pub(crate) fn push_quest_body(quest_id: u32) -> Vec<u8> {
     quest_id.to_le_bytes().to_vec()
 }
 
 /// `CMSG_QUEST_CONFIRM_ACCEPT`: the quest the popup offered.
-pub fn confirm_accept_body(quest_id: u32) -> Vec<u8> {
+pub(crate) fn confirm_accept_body(quest_id: u32) -> Vec<u8> {
     quest_id.to_le_bytes().to_vec()
 }
 
@@ -161,7 +161,7 @@ pub fn confirm_accept_body(quest_id: u32) -> Vec<u8> {
 /// The 1.12.1 client sends it with [`PushResult::Declined`] when a quest page
 /// whose giver is a player is closed without accepting. vmangos reads the guid
 /// and ignores it, using the share it has stored for this player.
-pub fn push_result_body(sharer: u64, result: PushResult) -> Vec<u8> {
+pub(crate) fn push_result_body(sharer: u64, result: PushResult) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(sharer).u8(result.code());
     w.buf

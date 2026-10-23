@@ -83,7 +83,7 @@ use std::collections::HashMap;
 
 /// What a click on empty ground does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Armed {
+pub(crate) enum Armed {
     #[default]
     Nothing,
     /// Make a sphere trigger on the ground.
@@ -92,7 +92,7 @@ pub enum Armed {
 
 /// Which place a [`Pick`] sets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickFor {
+pub(crate) enum PickFor {
     /// The teleport's target.
     Teleport,
     /// The battleground entrance's exit.
@@ -100,7 +100,7 @@ pub enum PickFor {
 }
 
 impl PickFor {
-    pub fn noun(self) -> &'static str {
+    pub(crate) fn noun(self) -> &'static str {
         match self {
             PickFor::Teleport => "teleport target",
             PickFor::BgExit => "battleground exit",
@@ -110,23 +110,23 @@ impl PickFor {
 
 /// A place being picked for a trigger's row, possibly on another map.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Pick {
-    pub what: PickFor,
-    pub trigger: u32,
+pub(crate) struct Pick {
+    pub(crate) what: PickFor,
+    pub(crate) trigger: u32,
     /// The map the place is on.
-    pub map: u32,
+    pub(crate) map: u32,
     /// The map the trigger is on and where the camera stood, when the pick
     /// took the editor away from it.
-    pub home: Option<(String, u32, Vec3)>,
+    pub(crate) home: Option<(String, u32, Vec3)>,
     /// Where the button went down, while it is held to set the facing.
-    pub pressed: Option<Vec3>,
+    pub(crate) pressed: Option<Vec3>,
     /// The facing, in radians about up from north; starts at the row's own.
-    pub facing: f32,
+    pub(crate) facing: f32,
 }
 
 /// A map change a pick asks for, made by [`travel`], which has the camera.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Travel {
+pub(crate) enum Travel {
     /// Open this map and look at this place on it. The height is kept, since
     /// a map that is one building has no ground for the camera to drop to.
     To { name: String, id: u32, at: Vec3 },
@@ -136,44 +136,44 @@ pub enum Travel {
 
 /// The five server tables as the database holds them, one entry per trigger.
 #[derive(Debug, Clone, Default)]
-pub struct Held {
+pub(crate) struct Held {
     /// The template row the server uses for each trigger: its five server
     /// columns.
-    pub templates: HashMap<u32, trigger::Template>,
-    pub teleports: HashMap<u32, Teleport>,
-    pub entrances: HashMap<u32, BgEntrance>,
+    pub(crate) templates: HashMap<u32, trigger::Template>,
+    pub(crate) teleports: HashMap<u32, Teleport>,
+    pub(crate) entrances: HashMap<u32, BgEntrance>,
     /// The inns, by trigger id, with the row's `name` and `patch_min`.
-    pub taverns: HashMap<u32, (String, u32)>,
+    pub(crate) taverns: HashMap<u32, (String, u32)>,
     /// The quest each quest trigger completes.
-    pub quests: HashMap<u32, u32>,
+    pub(crate) quests: HashMap<u32, u32>,
 }
 
 /// What a trigger does on the server, with the project's edits over the
 /// database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Does {
-    pub teleport: bool,
-    pub inn: bool,
-    pub quest: bool,
-    pub entrance: bool,
-    pub script: bool,
+pub(crate) struct Does {
+    pub(crate) teleport: bool,
+    pub(crate) inn: bool,
+    pub(crate) quest: bool,
+    pub(crate) entrance: bool,
+    pub(crate) script: bool,
 }
 
 /// The trigger tool's state.
 #[derive(Resource, Debug)]
-pub struct Triggers {
+pub(crate) struct Triggers {
     /// The triggers on the open map, and what the pointer is doing with them.
-    pub points: Points<Trigger>,
+    pub(crate) points: Points<Trigger>,
     /// The maps whose rows are not one block of the file; see
     /// `vale_edit::dbc::places::trigger_blocks`. Empty for the shipped file.
-    pub blocks: Vec<u32>,
-    pub armed: Armed,
+    pub(crate) blocks: Vec<u32>,
+    pub(crate) armed: Armed,
     /// The radius a new trigger is made with, in yards.
-    pub radius: f32,
+    pub(crate) radius: f32,
     /// A place being picked; see [`Pick`].
-    pub pick: Option<Pick>,
+    pub(crate) pick: Option<Pick>,
     /// A map change [`travel`] is to make.
-    pub travel: Option<Travel>,
+    pub(crate) travel: Option<Travel>,
     /// The trigger to select once the list is rebuilt, after a pick returns.
     reselect: Option<u32>,
     /// The server's rows, read at once and kept until an apply moves
@@ -198,39 +198,39 @@ impl Default for Triggers {
 
 /// The radius a new trigger is made with, by default. The Deadmines entrance
 /// is 7 yards and most instance portals are between 5 and 10.
-pub const DEFAULT_RADIUS: f32 = 5.0;
+pub(crate) const DEFAULT_RADIUS: f32 = 5.0;
 
 /// The size a sphere turned into a box starts at, in yards on each side.
-pub const DEFAULT_BOX: f32 = 10.0;
+pub(crate) const DEFAULT_BOX: f32 = 10.0;
 
 /// How far from the camera a trigger is drawn and picked, in yards.
 const MARKER_RANGE: f32 = 2600.0;
 
 impl Triggers {
     /// The server's rows, once read.
-    pub fn held(&self) -> Option<&Held> {
+    pub(crate) fn held(&self) -> Option<&Held> {
         self.reads.value()
     }
 
     /// Why the last read of the server's rows answered nothing, when it
     /// answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.reads.trouble()
     }
 
-    pub fn trigger(&self, id: u32) -> Option<&Trigger> {
+    pub(crate) fn trigger(&self, id: u32) -> Option<&Trigger> {
         self.points.get(id)
     }
 
     /// Rebuild the list on the next frame, after an edit this frame.
-    pub fn stale(&mut self) {
+    pub(crate) fn stale(&mut self) {
         self.points.stale();
     }
 
     /// The trigger's teleport as the project leaves it, whether that row is
     /// the database's, and what the project says is to become of it. `None`
     /// when neither side has one.
-    pub fn teleport(&self, edits: &Edits, id: u32) -> Option<(Teleport, bool, Life)> {
+    pub(crate) fn teleport(&self, edits: &Edits, id: u32) -> Option<(Teleport, bool, Life)> {
         let held = self.held()?.teleports.get(&id);
         let key = teleport_key(held, id);
         let assignments = held.map(Teleport::assignments);
@@ -242,7 +242,7 @@ impl Triggers {
     /// unedited column of the form shows, and what its revert arrow takes the
     /// column back to. The row is empty for a teleport the database does not
     /// hold.
-    pub fn teleport_held(&self, id: u32) -> (Key, Row) {
+    pub(crate) fn teleport_held(&self, id: u32) -> (Key, Row) {
         let held = self.held().and_then(|held| held.teleports.get(&id));
         let key = teleport_key(held, id);
         let row = held
@@ -253,7 +253,7 @@ impl Triggers {
 
     /// The quest the trigger completes as the project leaves it, and whether
     /// the database holds the row.
-    pub fn quest(&self, edits: &Edits, id: u32) -> Option<(u32, bool, Life)> {
+    pub(crate) fn quest(&self, edits: &Edits, id: u32) -> Option<(u32, bool, Life)> {
         let held = self.held()?.quests.get(&id).copied();
         let assignments = held.map(quest_assignments);
         let (row, life) = shown(edits, trigger::QUEST, &trigger::quest_key(id), assignments.as_deref())?;
@@ -263,7 +263,7 @@ impl Triggers {
 
     /// Whether the trigger is an inn as the project leaves it, and whether the
     /// database holds the row.
-    pub fn inn(&self, edits: &Edits, id: u32) -> Option<(bool, bool)> {
+    pub(crate) fn inn(&self, edits: &Edits, id: u32) -> Option<(bool, bool)> {
         let held = self.held()?.taverns.get(&id);
         let assignments = held.map(|(name, patch)| tavern_assignments(name, *patch));
         let shown = shown(edits, trigger::TAVERN, &trigger::tavern_key(id), assignments.as_deref());
@@ -272,7 +272,7 @@ impl Triggers {
 
     /// The template row's server columns as the project leaves them, and
     /// whether the database holds a template row for the trigger at all.
-    pub fn template(&self, edits: &Edits, id: u32) -> Option<(trigger::Template, bool)> {
+    pub(crate) fn template(&self, edits: &Edits, id: u32) -> Option<(trigger::Template, bool)> {
         let held = self.held()?.templates.get(&id);
         let assignments = held.map(trigger::Template::assignments);
         let key = trigger::key(id);
@@ -297,7 +297,7 @@ impl Triggers {
 
     /// The battleground entrance as the project leaves it, whether the
     /// database holds the row, and what the project says is to become of it.
-    pub fn entrance(&self, edits: &Edits, id: u32) -> Option<(BgEntrance, bool, Life)> {
+    pub(crate) fn entrance(&self, edits: &Edits, id: u32) -> Option<(BgEntrance, bool, Life)> {
         let held = self.held()?.entrances.get(&id);
         let assignments = held.map(BgEntrance::assignments);
         let (row, life) = shown(edits, trigger::BG_ENTRANCE, &trigger::bg_entrance_key(id), assignments.as_deref())?;
@@ -306,7 +306,7 @@ impl Triggers {
 
     /// The C++ script names the database's template rows use, sorted, as
     /// suggestions for the script name field.
-    pub fn script_names(&self) -> Vec<String> {
+    pub(crate) fn script_names(&self) -> Vec<String> {
         let Some(held) = self.held() else {
             return Vec::new();
         };
@@ -322,7 +322,7 @@ impl Triggers {
     }
 
     /// What the trigger does, for the colour it is drawn in.
-    pub fn does(&self, edits: &Edits, id: u32) -> Does {
+    pub(crate) fn does(&self, edits: &Edits, id: u32) -> Does {
         let live = |found: Option<Life>| found.is_some_and(|life| life != Life::Delete);
         let script = self
             .template(edits, id)
@@ -339,7 +339,7 @@ impl Triggers {
     /// Start picking a place on `map` for one of the trigger's rows. `now_at`
     /// is the place the row names now, which the camera is put over when the
     /// pick changes map, and `facing` its facing. Answers why it cannot start.
-    pub fn start_pick(
+    pub(crate) fn start_pick(
         &mut self,
         session: &EditSession,
         what: PickFor,
@@ -376,7 +376,7 @@ impl Triggers {
     }
 
     /// Stop picking, and go back to the trigger's map when the pick left it.
-    pub fn end_pick(&mut self) {
+    pub(crate) fn end_pick(&mut self) {
         if let Some(pick) = self.pick.take() {
             if pick.home.is_some() {
                 self.travel = Some(Travel::Home);
@@ -466,7 +466,7 @@ fn columns_of(table: &str) -> &'static [vale_mangos::schema::Column] {
 
 /// The columns a row the project creates does not carry, which the plan
 /// refuses it for. Empty for a row that is not a creation.
-pub fn missing(edits: &Edits, table: &str, key: &Key) -> Vec<&'static str> {
+pub(crate) fn missing(edits: &Edits, table: &str, key: &Key) -> Vec<&'static str> {
     let Some(claim) = edits.row(table, key).filter(|claim| claim.life == Life::Insert) else {
         return Vec::new();
     };
@@ -524,7 +524,7 @@ pub(crate) fn remove_row(session: &mut EditSession, table: &str, key: &Key, held
 
 /// Give the trigger a teleport to a place, or keep the database's that was
 /// marked for removal.
-pub fn add_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: [f32; 3], now: f64) {
+pub(crate) fn add_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: [f32; 3], now: f64) {
     let held = triggers.held().and_then(|held| held.teleports.get(&id));
     let key = teleport_key(held, id);
     let label = format!("{} {}", trigger::TELEPORT, key.text());
@@ -533,7 +533,7 @@ pub fn add_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, map
     create_row(session, trigger::TELEPORT, &key, held.is_some(), &columns, gesture);
 }
 
-pub fn remove_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, now: f64) {
+pub(crate) fn remove_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, now: f64) {
     let held = triggers.held().and_then(|held| held.teleports.get(&id));
     let key = teleport_key(held, id);
     let label = format!("{} {}", trigger::TELEPORT, key.text());
@@ -542,7 +542,7 @@ pub fn remove_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, 
 }
 
 /// Set one column of the trigger's teleport. `value` is a SQL literal.
-pub fn set_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
+pub(crate) fn set_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
     let held = triggers.held().and_then(|held| held.teleports.get(&id));
     let key = teleport_key(held, id);
     let label = format!("{} {} {column}", trigger::TELEPORT, key.text());
@@ -552,7 +552,7 @@ pub fn set_teleport(session: &mut EditSession, triggers: &Triggers, id: u32, col
 }
 
 /// Send the trigger's teleport to a place with a facing, as one undo entry.
-pub fn set_target(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: Vec3, facing: f32, now: f64) {
+pub(crate) fn set_target(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: Vec3, facing: f32, now: f64) {
     let subject = format!("{} {id} target", trigger::TELEPORT);
     session.as_one("Edit teleport", &subject, |session| {
         let f = vale_mangos::sql::float;
@@ -566,7 +566,7 @@ pub fn set_target(session: &mut EditSession, triggers: &Triggers, id: u32, map: 
 
 /// Give the trigger a battleground entrance returning to a place, or keep the
 /// database's that was marked for removal.
-pub fn add_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: [f32; 3], now: f64) {
+pub(crate) fn add_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: [f32; 3], now: f64) {
     let held = triggers.held().and_then(|held| held.entrances.get(&id)).is_some();
     let key = trigger::bg_entrance_key(id);
     let label = format!("{} {}", trigger::BG_ENTRANCE, key.text());
@@ -574,7 +574,7 @@ pub fn add_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, map
     create_row(session, trigger::BG_ENTRANCE, &key, held, &BgEntrance::new(id, map, at).assignments(), gesture);
 }
 
-pub fn remove_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, now: f64) {
+pub(crate) fn remove_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, now: f64) {
     let held = triggers.held().and_then(|held| held.entrances.get(&id)).is_some();
     let key = trigger::bg_entrance_key(id);
     let label = format!("{} {}", trigger::BG_ENTRANCE, key.text());
@@ -584,7 +584,7 @@ pub fn remove_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, 
 
 /// Set one column of the trigger's battleground entrance. `value` is a SQL
 /// literal.
-pub fn set_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
+pub(crate) fn set_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
     let held = triggers.held().and_then(|held| held.entrances.get(&id));
     let key = trigger::bg_entrance_key(id);
     let label = format!("{} {} {column}", trigger::BG_ENTRANCE, key.text());
@@ -594,7 +594,7 @@ pub fn set_entrance(session: &mut EditSession, triggers: &Triggers, id: u32, col
 }
 
 /// Send the entrance's exit to a place with a facing, as one undo entry.
-pub fn set_exit(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: Vec3, facing: f32, now: f64) {
+pub(crate) fn set_exit(session: &mut EditSession, triggers: &Triggers, id: u32, map: u32, at: Vec3, facing: f32, now: f64) {
     let subject = format!("{} {id} exit", trigger::BG_ENTRANCE);
     session.as_one("Edit battleground entrance", &subject, |session| {
         let f = vale_mangos::sql::float;
@@ -608,7 +608,7 @@ pub fn set_exit(session: &mut EditSession, triggers: &Triggers, id: u32, map: u3
 
 /// Set one of the template row's five server columns. `value` is a SQL
 /// literal. A value typed back to the database's clears the edit.
-pub fn set_template(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
+pub(crate) fn set_template(session: &mut EditSession, triggers: &Triggers, id: u32, column: &'static str, value: String, now: f64) {
     let held = triggers.held().and_then(|held| held.templates.get(&id));
     let key = trigger::key(id);
     let label = format!("{} {} {column}", trigger::TEMPLATE, key.text());
@@ -623,7 +623,7 @@ pub fn set_template(session: &mut EditSession, triggers: &Triggers, id: u32, col
 }
 
 /// Write what a finished pick chose. Answers the status line.
-pub fn finish_pick(session: &mut EditSession, triggers: &Triggers, pick: &Pick, at: Vec3, now: f64) -> String {
+pub(crate) fn finish_pick(session: &mut EditSession, triggers: &Triggers, pick: &Pick, at: Vec3, now: f64) -> String {
     match pick.what {
         PickFor::Teleport => set_target(session, triggers, pick.trigger, pick.map, at, pick.facing, now),
         PickFor::BgExit => set_exit(session, triggers, pick.trigger, pick.map, at, pick.facing, now),
@@ -642,13 +642,13 @@ pub fn finish_pick(session: &mut EditSession, triggers: &Triggers, pick: &Pick, 
 
 /// The facing from one place toward another across the ground, in radians
 /// about up from north (+x toward +y), which is the server's convention.
-pub fn facing_toward(from: Vec3, to: Vec3) -> Option<f32> {
+pub(crate) fn facing_toward(from: Vec3, to: Vec3) -> Option<f32> {
     let d = (to - from).truncate();
     (d.length() > 0.5).then(|| d.y.atan2(d.x).rem_euclid(std::f32::consts::TAU))
 }
 
 /// Make the trigger an inn, or stop it being one.
-pub fn set_inn(session: &mut EditSession, triggers: &Triggers, id: u32, inn: bool, now: f64) {
+pub(crate) fn set_inn(session: &mut EditSession, triggers: &Triggers, id: u32, inn: bool, now: f64) {
     let held = triggers.held().and_then(|held| held.taverns.get(&id)).is_some();
     let key = trigger::tavern_key(id);
     let label = format!("{} {}", trigger::TAVERN, key.text());
@@ -666,7 +666,7 @@ pub fn set_inn(session: &mut EditSession, triggers: &Triggers, id: u32, inn: boo
 
 /// Make standing in the trigger complete `quest`'s exploration objective, or,
 /// with 0, nothing's.
-pub fn set_quest(session: &mut EditSession, triggers: &Triggers, id: u32, quest: u32, now: f64) {
+pub(crate) fn set_quest(session: &mut EditSession, triggers: &Triggers, id: u32, quest: u32, now: f64) {
     let held = triggers.held().and_then(|held| held.quests.get(&id)).copied();
     let key = trigger::quest_key(id);
     let label = format!("{} {}", trigger::QUEST, key.text());
@@ -696,7 +696,7 @@ pub fn set_quest(session: &mut EditSession, triggers: &Triggers, id: u32, quest:
 }
 
 /// Write the trigger's volume fields as one gesture.
-pub fn set_volume(session: &mut EditSession, trigger: &Trigger, fields: &[(usize, u32)], label: &str, now: f64) {
+pub(crate) fn set_volume(session: &mut EditSession, trigger: &Trigger, fields: &[(usize, u32)], label: &str, now: f64) {
     crate::tables::fields::set_fields(
         session,
         places::TRIGGERS,
@@ -710,7 +710,7 @@ pub fn set_volume(session: &mut EditSession, trigger: &Trigger, fields: &[(usize
 
 /// Turn a sphere into a box of [`DEFAULT_BOX`] yards, or a box into the
 /// sphere that holds its smallest side.
-pub fn set_sphere(session: &mut EditSession, trigger: &Trigger, sphere: bool, now: f64) {
+pub(crate) fn set_sphere(session: &mut EditSession, trigger: &Trigger, sphere: bool, now: f64) {
     use vale_assets::tables::areatrigger::fields as tf;
     let fields = match sphere {
         true => {
@@ -742,7 +742,7 @@ pub fn set_sphere(session: &mut EditSession, trigger: &Trigger, sphere: bool, no
 
 /// Make a sphere trigger standing on the ground at `ground`. Answers the
 /// status line.
-pub fn new_trigger(session: &mut EditSession, triggers: &mut Triggers, ground: Vec3) -> String {
+pub(crate) fn new_trigger(session: &mut EditSession, triggers: &mut Triggers, ground: Vec3) -> String {
     let radius = triggers.radius.max(0.5);
     let at = [ground.x, ground.y, ground.z + radius * 0.5];
     match places::new_trigger(&mut session.tables, triggers.points.map, at, radius) {
@@ -759,7 +759,7 @@ pub fn new_trigger(session: &mut EditSession, triggers: &mut Triggers, ground: V
 
 /// Remove a trigger, and the server rows that say what it does, as one undo
 /// entry. Answers the status line.
-pub fn remove_trigger(session: &mut EditSession, triggers: &mut Triggers, id: u32, now: f64) -> String {
+pub(crate) fn remove_trigger(session: &mut EditSession, triggers: &mut Triggers, id: u32, now: f64) -> String {
     let done = match places::remove_trigger(&mut session.tables, id) {
         Ok(done) => done,
         Err(e) => return e.to_string(),
@@ -801,7 +801,7 @@ pub fn remove_trigger(session: &mut EditSession, triggers: &mut Triggers, id: u3
     format!("trigger {id} removed")
 }
 
-pub struct TriggerToolPlugin;
+pub(crate) struct TriggerToolPlugin;
 
 impl Plugin for TriggerToolPlugin {
     fn build(&self, app: &mut App) {
@@ -1031,7 +1031,7 @@ fn read_the_rows(
 
 /// How far down the ray it first meets a trigger's volume, or `None` when it
 /// misses or the volume is behind the eye.
-pub fn ray_meets(trigger: &Trigger, origin: Vec3, direction: Vec3) -> Option<f32> {
+pub(crate) fn ray_meets(trigger: &Trigger, origin: Vec3, direction: Vec3) -> Option<f32> {
     let centre = Vec3::from(trigger.at);
     match trigger.is_sphere() {
         true => crate::pick::ray_meets_sphere(origin, direction, centre, trigger.radius),
@@ -1044,7 +1044,7 @@ pub fn ray_meets(trigger: &Trigger, origin: Vec3, direction: Vec3) -> Option<f32
 
 /// A box trigger's eight corners in the world's axes: the four of the bottom
 /// face, then the four of the top in the same order.
-pub fn corners(trigger: &Trigger) -> [Vec3; 8] {
+pub(crate) fn corners(trigger: &Trigger) -> [Vec3; 8] {
     let centre = Vec3::from(trigger.at);
     let half = Vec3::from(trigger.extent) * 0.5;
     let (s, c) = trigger.yaw.sin_cos();
@@ -1173,7 +1173,7 @@ fn keys(
 }
 
 /// The colour a trigger is drawn in: by what it does on the server.
-pub fn colour_of(does: Does) -> Color {
+pub(crate) fn colour_of(does: Does) -> Color {
     match does {
         Does { teleport: true, .. } => Color::srgb(0.75, 0.4, 1.0),
         Does { inn: true, .. } => Color::srgb(0.35, 0.9, 0.45),

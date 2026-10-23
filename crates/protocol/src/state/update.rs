@@ -31,7 +31,7 @@ use crate::bytes::Reader;
 /// `enum ObjectUpdateType` — what a block does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum UpdateType {
+pub(crate) enum UpdateType {
     Values = 0,
     Movement = 1,
     CreateObject = 2,
@@ -54,11 +54,6 @@ impl UpdateType {
         })
     }
 
-    /// Both create variants carry identical payloads; `CreateObject2` only
-    /// tells the client the object is brand new rather than newly visible.
-    pub fn is_create(self) -> bool {
-        matches!(self, UpdateType::CreateObject | UpdateType::CreateObject2)
-    }
 }
 
 /// `enum TypeID` — what kind of thing a created object is.
@@ -103,10 +98,10 @@ pub mod update_flags {
     pub const NONE: u8 = 0x00;
     pub const SELF: u8 = 0x01;
     pub const TRANSPORT: u8 = 0x02;
-    pub const MELEE_ATTACKING: u8 = 0x04;
-    pub const HIGHGUID: u8 = 0x08;
+    pub(crate) const MELEE_ATTACKING: u8 = 0x04;
+    pub(crate) const HIGHGUID: u8 = 0x08;
     pub const ALL: u8 = 0x10;
-    pub const LIVING: u8 = 0x20;
+    pub(crate) const LIVING: u8 = 0x20;
     pub const HAS_POSITION: u8 = 0x40;
 }
 
@@ -116,10 +111,10 @@ pub mod update_flags {
 pub use crate::state::movement::move_flags;
 
 /// `MoveSplineFlag` — only the bits that change the wire layout.
-pub mod spline_flags {
-    pub const FINAL_POINT: u32 = 0x0001_0000;
-    pub const FINAL_TARGET: u32 = 0x0002_0000;
-    pub const FINAL_ANGLE: u32 = 0x0004_0000;
+pub(crate) mod spline_flags {
+    pub(crate) const FINAL_POINT: u32 = 0x0001_0000;
+    pub(crate) const FINAL_TARGET: u32 = 0x0002_0000;
+    pub(crate) const FINAL_ANGLE: u32 = 0x0004_0000;
 }
 
 /// A position with facing.
@@ -139,7 +134,7 @@ impl Position {
     /// else outright, so a coordinate that fails here is a *client* mistake — a
     /// mis-read field, or a block parsed at the wrong offset — and the one thing
     /// worse than noticing is not noticing. See `Entity::set_server_position`.
-    pub fn is_plausible(&self) -> bool {
+    pub(crate) fn is_plausible(&self) -> bool {
         // 64 tiles of 1600/3 yards, halved: the same MAP_HALFSIZE the server uses.
         const HALF: f32 = 32.0 * 1600.0 / 3.0;
         let ok = |c: f32| c.is_finite() && c.abs() <= HALF - 0.5;
@@ -157,10 +152,10 @@ pub struct MovementUpdate {
     /// Walk, run, run-back, swim, swim-back, turn-rate.
     pub speeds: Option<[f32; 6]>,
     /// The object was moving along a spline path when this update was built.
-    pub has_spline: bool,
+    pub(crate) has_spline: bool,
     /// Whether that spline block was consumed cleanly. `false` means everything
     /// after it in the packet is untrustworthy.
-    pub spline_ok: bool,
+    pub(crate) spline_ok: bool,
     /// The spline itself — the path, how far through it the server is, and how
     /// long the whole thing takes.
     ///
@@ -195,7 +190,7 @@ pub struct MovementUpdate {
     /// transport, `HAS_POSITION` carries the *stationary* point
     /// (`GetStationaryX/Y/Z`) rather than where the platform is now, which is
     /// exactly the base an offset is added to.
-    pub path_progress: Option<u32>,
+    pub(crate) path_progress: Option<u32>,
 }
 
 /// The in-flight spline a create block carries.
@@ -238,9 +233,6 @@ impl ValuesUpdate {
         self.fields.iter().find(|(i, _)| *i == index).map(|(_, v)| *v)
     }
 
-    pub fn get_f32(&self, index: u16) -> Option<f32> {
-        self.get(index).map(f32::from_bits)
-    }
 }
 
 /// One block from the packet.
@@ -273,7 +265,7 @@ pub enum UpdateBlock {
 /// The result of parsing one `SMSG_UPDATE_OBJECT`.
 #[derive(Debug, Clone, Default)]
 pub struct ObjectUpdate {
-    pub has_transport: bool,
+    pub(crate) has_transport: bool,
     pub blocks: Vec<UpdateBlock>,
     /// Set when parsing stopped early. Non-empty means we do not fully
     /// understand some block; the session continues regardless.

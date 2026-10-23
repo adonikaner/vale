@@ -161,7 +161,7 @@ impl Metrics for AtHeight<'_> {
 /// measurements. It is in the game's units rather than in pixels so that a
 /// string folds at the same place at every window size, and so that the
 /// measurement, which knows no pixels, folds where the painter does.
-pub const FOLD_GRACE: f32 = 0.5;
+pub(crate) const FOLD_GRACE: f32 = 0.5;
 
 /// One glyph of a folded row: the character, its pen position from the row's
 /// start, and the index in the input of the character it takes its colour

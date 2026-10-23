@@ -73,12 +73,12 @@
 
 pub mod ambience;
 pub mod combat;
-pub mod cues;
-pub mod footsteps;
+pub(crate) mod cues;
+pub(crate) mod footsteps;
 pub mod interface;
 pub mod pushed;
 pub mod items;
-pub mod messages;
+pub(crate) mod messages;
 pub mod mixer;
 pub mod music;
 pub mod npc;
@@ -90,10 +90,10 @@ use bevy::prelude::*;
 /// Every sound system, in one set: they all read what `GameSet` and the session
 /// wrote this frame, so they run after both.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SoundSet;
+pub(crate) struct SoundSet;
 
 /// The directory's passes. One line in `lib.rs`, like its four siblings.
-pub struct SoundPlugins;
+pub(crate) struct SoundPlugins;
 
 impl Plugin for SoundPlugins {
     fn build(&self, app: &mut App) {

@@ -69,28 +69,28 @@ use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
 /// Where the patches go under the project.
-pub const DIR: &str = "publish";
+pub(crate) const DIR: &str = "publish";
 
 /// Where the staging folders go: beside the patches, under one name that
 /// begins with a dot, which a walk of the folder such as [`patches`] skips.
-pub const STAGE: &str = "publish\\.stage";
+pub(crate) const STAGE: &str = "publish\\.stage";
 
 /// The name of the last patch written, for the tiles the next one starts
 /// from.
-pub const LAST_VPATH: &str = "publish\\last-patch.txt";
+pub(crate) const LAST_VPATH: &str = "publish\\last-patch.txt";
 
 /// Whether text may name a patch: a folder name, not hidden.
-pub fn is_a_name(name: &str) -> bool {
+pub(crate) fn is_a_name(name: &str) -> bool {
     project::is_a_name(name) && !name.trim().starts_with('.')
 }
 
 /// The name a publish takes when none is typed: the UTC stamp.
-pub fn default_name() -> String {
+pub(crate) fn default_name() -> String {
     vale_mangos::migration::stamp(None)
 }
 
 /// Every patch folder the project holds, newest last by name.
-pub fn patches(project: &Project) -> Vec<String> {
+pub(crate) fn patches(project: &Project) -> Vec<String> {
     let Some(dir) = project.path_for(DIR) else {
         return Vec::new();
     };
@@ -108,7 +108,7 @@ pub fn patches(project: &Project) -> Vec<String> {
 }
 
 /// The last patch written, if its folder is still there.
-pub fn last(project: &Project) -> Option<String> {
+pub(crate) fn last(project: &Project) -> Option<String> {
     let name = String::from_utf8_lossy(&project.read(LAST_VPATH)?).trim().to_string();
     (is_a_name(&name) && project.path_for(&format!("{DIR}\\{name}"))?.is_dir()).then_some(name)
 }
@@ -116,18 +116,18 @@ pub fn last(project: &Project) -> Option<String> {
 /// What the synchronous half of a publish wrote, for the README and the
 /// status line.
 #[derive(Debug, Default, Clone)]
-pub struct Head {
-    pub name: String,
-    pub folder: PathBuf,
+pub(crate) struct Head {
+    pub(crate) name: String,
+    pub(crate) folder: PathBuf,
     /// The archive's file name, or `None` when the project has no game data.
-    pub archive: Option<String>,
-    pub archive_files: usize,
-    pub dbcs: Vec<String>,
-    pub migration: Option<String>,
-    pub migration_line: String,
+    pub(crate) archive: Option<String>,
+    pub(crate) archive_files: usize,
+    pub(crate) dbcs: Vec<String>,
+    pub(crate) migration: Option<String>,
+    pub(crate) migration_line: String,
     /// The patch the tiles were started from, when there was one.
-    pub from: Option<String>,
-    pub tiles_to_do: usize,
+    pub(crate) from: Option<String>,
+    pub(crate) tiles_to_do: usize,
 }
 
 /// Publishes a patch under `name`. The archive, the DBCs and the migration
@@ -135,7 +135,7 @@ pub struct Head {
 /// on the server queue, and the README and manifest are written when that
 /// work finishes; when no tile needs the tools, they are written during this
 /// call. Returns the text for the status line.
-pub fn publish(
+pub(crate) fn publish(
     session: &mut EditSession,
     assets: &GameAssets,
     server: &crate::server::settings::ServerSettings,
@@ -618,7 +618,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, u64, u64)>) -> Result<()
 /// `--publish [name]`: runs the bar's Publish button from the command line.
 /// Runs once, after every scripted edit has been applied, for the same reason
 /// `super::super::subject::flags::on_the_command_line` waits.
-pub fn on_the_command_line(
+pub(crate) fn on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,

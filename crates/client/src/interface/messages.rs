@@ -69,7 +69,7 @@ impl UiStrings {
 /// system that wanted to invent a sentence would have to take
 /// `MessageWriter<UiErrorMessage>` itself and say so in its signature.
 #[derive(SystemParam)]
-pub struct UiErrors<'w> {
+pub(crate) struct UiErrors<'w> {
     strings: Res<'w, UiStrings>,
     writer: MessageWriter<'w, UiErrorMessage>,
 }
@@ -86,7 +86,7 @@ impl UiErrors<'_> {
     }
 
     /// The same, with the one argument the dozen `%s` keys take filled in.
-    pub fn formatted(&mut self, key: &str, argument: &str) {
+    pub(crate) fn formatted(&mut self, key: &str, argument: &str) {
         let Some(text) = self.strings.get().and_then(|s| s.format(key, argument)) else {
             return;
         };
@@ -103,51 +103,13 @@ impl UiErrors<'_> {
     ///
     /// A missing *inner* key shows nothing at all, rather than a full stop on
     /// its own.
-    pub fn substituted(&mut self, key: &str, argument_key: &str) {
+    pub(crate) fn substituted(&mut self, key: &str, argument_key: &str) {
         let Some(argument) = self.strings.get().and_then(|s| s.get(argument_key)) else {
             return;
         };
         let argument = argument.to_string();
         self.formatted(key, &argument);
     }
-}
-
-/// **…and the yellow half of the same thing**, as a parameter of its own.
-///
-/// Not a second writer on [`UiErrors`], and the reason is a `SystemParam` one:
-/// every one of Bevy's message queues a param names has to be *initialised* in
-/// the world before that param will validate, so folding this in would have made
-/// `UiErrors` refuse to run in the two dozen test worlds and headless harnesses
-/// that only ever wanted the red one. Two params, two queues, one rule about
-/// keys — which is also the honest shape, since they are two event names the
-/// interface registers for separately.
-#[derive(SystemParam)]
-pub struct UiInfo<'w> {
-    strings: Res<'w, UiStrings>,
-    writer: MessageWriter<'w, UiInfoMessage>,
-}
-
-impl UiInfo<'_> {
-    /// **The same, in yellow** — `UI_INFO_MESSAGE` rather than
-    /// `UI_ERROR_MESSAGE`.
-    ///
-    /// **Which of the two a key takes is a column in the client's own message
-    /// table and not a judgement here**. The table's entries are `{key, type,
-    /// sound, …}`, and the type has four cases: a dialog, this, the red one and
-    /// a chat line. Cases 1 and 2 both raise an event — `UI_INFO_MESSAGE` (225)
-    /// for one and `UI_ERROR_MESSAGE` (224) for the other. So **type 1 is this
-    /// and type 2 is the red one**.
-    ///
-    /// `ERR_NEWTAXIPATH` — "New flight path discovered!" — has type 1, which is
-    /// the whole of why the flight-path message is yellow.
-    pub fn key(&mut self, key: &str) {
-        let Some(text) = self.strings.get().and_then(|s| s.get(key)) else {
-            return;
-        };
-        let text = text.to_string();
-        self.writer.write(UiInfoMessage(text));
-    }
-
 }
 
 /// **A sound a message asked for**, by `SoundEntries` name.
@@ -158,12 +120,12 @@ impl UiInfo<'_> {
 /// The name rather than the id, like [`crate::sound::player`]'s two — it is
 /// what the table holds and what survives a patch.
 #[derive(Message, Debug, Clone)]
-pub struct MessageSound(pub &'static str);
+pub(crate) struct MessageSound(pub(crate) &'static str);
 
 /// **Say one of the game's own 343 messages**, letting the client's own table
 /// decide everything about it except that it happened.
 ///
-/// [`UiErrors`] and [`UiInfo`] make the caller choose a surface. For the keys
+/// [`UiErrors`] makes the caller choose a surface. For the keys
 /// in [`vale_assets::interface::messages`] that choice is not the caller's
 /// to make and never was: it is the `+0x04` column of the record, beside the
 /// sound at `+0x08`, and this client was getting both wrong in the same two
@@ -187,7 +149,7 @@ pub struct MessageSound(pub &'static str);
 /// [`UiErrors`] and reaching here with one is this client's mistake, so that
 /// case says so.
 #[derive(SystemParam)]
-pub struct Announce<'w> {
+pub(crate) struct Announce<'w> {
     strings: Res<'w, UiStrings>,
     error: MessageWriter<'w, UiErrorMessage>,
     info: MessageWriter<'w, UiInfoMessage>,
@@ -200,8 +162,7 @@ impl Announce<'_> {
     ///
     /// Bevy validates a `SystemParam`'s message queues before the system runs
     /// and *panics* on one that is not initialised, so a world holding a system
-    /// that announces has to hold all four — which is the same trap
-    /// [`UiInfo`]'s note is about, one surface further along. Four test worlds
+    /// that announces has to hold all four. Four test worlds
     /// listed the red queue by hand and took the whole suite down the first
     /// time a system they run started using the table.
     ///
@@ -210,7 +171,7 @@ impl Announce<'_> {
     /// is wired up, and finding every world that needs it is not a search
     /// anybody should have to do twice. `add_message` is idempotent, so a world
     /// that already has some of them is unharmed.
-    pub fn register(app: &mut App) -> &mut App {
+    pub(crate) fn register(app: &mut App) -> &mut App {
         app.add_message::<UiErrorMessage>()
             .add_message::<UiInfoMessage>()
             .add_message::<crate::interface::events::ChatMessageReceived>()
@@ -226,7 +187,7 @@ impl Announce<'_> {
     }
 
     /// The same, with the one argument the `%s` and `%d` keys take filled in.
-    pub fn formatted(&mut self, key: &str, argument: &str) {
+    pub(crate) fn formatted(&mut self, key: &str, argument: &str) {
         let text = self.strings.get().and_then(|s| s.format(key, argument));
         self.say(key, text);
     }
@@ -245,7 +206,7 @@ impl Announce<'_> {
     /// The key is still looked up: the sound, and the choice of window, come
     /// off it. Passing a line whose key is not in the table falls back to the
     /// red frame and warns, exactly as [`Self::key`] does.
-    pub fn composed(&mut self, key: &str, line: String) {
+    pub(crate) fn composed(&mut self, key: &str, line: String) {
         self.say(key, Some(line));
     }
 
@@ -277,7 +238,7 @@ impl Announce<'_> {
     /// says the result through [`Self::loot`]. A key the archive does not carry
     /// answers `None` and the caller says nothing, which is the rule this whole
     /// module is written on.
-    pub fn string(&self, key: &str) -> Option<String> {
+    pub(crate) fn string(&self, key: &str) -> Option<String> {
         self.strings.get().and_then(|s| s.get(key)).map(str::to_string)
     }
 
@@ -361,7 +322,7 @@ impl Announce<'_> {
 /// which Bevy refuses at the first frame. The key is a `'static` string
 /// because every caller names a fixed key, and the lookup is [`Announce::key`]'s.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TableLine(pub &'static str);
+pub(crate) struct TableLine(pub(crate) &'static str);
 
 /// Say every [`TableLine`] written this frame.
 fn say_table_lines(mut lines: MessageReader<TableLine>, mut say: Announce) {
@@ -370,7 +331,7 @@ fn say_table_lines(mut lines: MessageReader<TableLine>, mut say: Announce) {
     }
 }
 
-pub struct MessagesPlugin;
+pub(crate) struct MessagesPlugin;
 
 impl Plugin for MessagesPlugin {
     fn build(&self, app: &mut App) {
@@ -403,7 +364,7 @@ fn load_strings(assets: Res<GameAssets>, session: Res<Session>, mut strings: Res
 /// One struct rather than four arguments because every caller has all four and
 /// the two `&str`s are easy to transpose.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Speaker<'a> {
+pub(crate) struct Speaker<'a> {
     pub name: &'a str,
     /// The game's own word — "Warrior", "Night Elf".
     pub class: &'a str,
@@ -436,7 +397,7 @@ pub struct Speaker<'a> {
 ///
 /// An empty substitution is left as the variable rather than as a hole — a name
 /// that has not arrived yet is a frame, not a fact.
-pub fn substitute(text: &str, who: Speaker<'_>) -> String {
+pub(crate) fn substitute(text: &str, who: Speaker<'_>) -> String {
     let mut out = text.replace("$B", "\n").replace("$b", "\n");
     for (upper, lower, value) in [
         ("$N", "$n", who.name),

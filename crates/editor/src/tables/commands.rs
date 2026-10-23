@@ -14,7 +14,7 @@ use super::zones::area;
 /// [`command_label`], so a command reads the same wherever it is pressed,
 /// and one that does not apply to a row is offered in none of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Command {
+pub(crate) enum Command {
     AddToSkillLine,
     CreateTeachingSpell,
     LookLike,
@@ -31,7 +31,7 @@ pub enum Command {
 
 /// The commands the rows of a table take, in the order a menu lists them:
 /// the table's own first, then the three every row has.
-pub fn commands(table: &str) -> Vec<Command> {
+pub(crate) fn commands(table: &str) -> Vec<Command> {
     let mut all = match table {
         "Spell" => vec![
             Command::AddToSkillLine,
@@ -50,7 +50,7 @@ pub fn commands(table: &str) -> Vec<Command> {
 /// What a command is called for one row, or `None` when it does not apply to
 /// that row. A command with a consequence states it in its name: a menu acts
 /// on a row that has not been opened, so there is no form to read it from.
-pub fn command_label(
+pub(crate) fn command_label(
     browser: &mut Browser,
     session: &EditSession,
     table: &str,
@@ -95,7 +95,7 @@ pub fn command_label(
 }
 
 /// What a command does, for the tooltip on its button and its menu entry.
-pub fn command_about(command: Command) -> &'static str {
+pub(crate) fn command_about(command: Command) -> &'static str {
     match command {
         Command::AddToSkillLine => {
             "Adds a SkillLineAbility row for this spell and opens the skill line picker. \

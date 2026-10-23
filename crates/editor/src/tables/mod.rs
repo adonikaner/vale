@@ -3,7 +3,8 @@
 //! ```text
 //! browser.rs   the browser's state: the open table and row, the search, the
 //!              text being typed, and the reverse references
-//! labels.rs    what a row is called, built per table from the rows around it
+//! labels.rs    what a row is called: `vale_assets::tables::labels`' rules,
+//!              read against the session and the browser's reverse index
 //! tabs.rs      the tables each workspace reaches, as tabs, and a table named
 //!              in any case
 //! fields.rs    writing a field of a row, as one undo entry
@@ -187,17 +188,17 @@ use open::open_tables;
 
 /// What a row is called in a list and at the head of its form.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct RowLabel {
+pub(crate) struct RowLabel {
     /// The name, or the sentence that stands in for one.
-    pub title: String,
+    pub(crate) title: String,
     /// A second, quieter line: a rank, a file name, an animation.
-    pub sub: String,
-    pub id: u32,
+    pub(crate) sub: String,
+    pub(crate) id: u32,
 }
 
 impl RowLabel {
     /// The label on one line, for a place with room for only one.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         match self.title.is_empty() {
             true => format!("{}", self.id),
             false => format!("{}  [{}]", self.title, self.id),
@@ -206,17 +207,12 @@ impl RowLabel {
 }
 
 /// One reference to a row: the table, record and field that hold it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Use {
-    pub table: String,
-    pub record: usize,
-    pub field: usize,
-}
+pub(crate) use vale_assets::tables::labels::Reference as Use;
 
 /// A dialog over the form. At most one is open, and `ui::tables` draws it once
 /// per frame regardless of which field opened it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Modal {
+pub(crate) enum Modal {
     /// Choose a row of `points_at` for the reference at `(record, field)` of
     /// `table`. The table is named because the record is not always a row of
     /// the open table: a spell's form edits the `SkillLineAbility` rows that
@@ -264,7 +260,7 @@ pub enum Modal {
 
 /// The folders the model browser can be narrowed to, as path prefixes; the
 /// first is everything.
-pub const MODEL_FOLDERS: [(&str, &str); 5] = [
+pub(crate) const MODEL_FOLDERS: [(&str, &str); 5] = [
     ("All", ""),
     ("Spells", "spells\\"),
     ("Particles", "particles\\"),
@@ -275,19 +271,19 @@ pub const MODEL_FOLDERS: [(&str, &str); 5] = [
 /// What a row of a display table looks like: the model it draws, dressed as
 /// the row dresses it, and an item's bag icon.
 #[derive(Debug, Clone, Default)]
-pub struct Shown {
+pub(crate) struct Shown {
     /// The model, or for an item that has none, a body wearing it.
-    pub worn: Option<crate::preview::portraits::Worn>,
+    pub(crate) worn: Option<crate::preview::portraits::Worn>,
     /// Whether [`Self::worn`] is a body wearing the row rather than the row's
     /// own model.
-    pub on_a_body: bool,
+    pub(crate) on_a_body: bool,
     /// An `ItemDisplayInfo` row's bag icon, as an archive path.
-    pub icon: Option<String>,
+    pub(crate) icon: Option<String>,
     /// Why nothing is drawn, when [`Self::worn`] is `None`.
-    pub why: &'static str,
+    pub(crate) why: &'static str,
 }
 
-pub struct TableToolPlugin;
+pub(crate) struct TableToolPlugin;
 
 impl Plugin for TableToolPlugin {
     fn build(&self, app: &mut App) {

@@ -84,7 +84,7 @@ impl Cue {
 /// its sound column left unset sends one; playing it would be a lookup miss
 /// once per event rather than an audible mistake, but refusing it here keeps
 /// the miss out of the log and out of the counter.
-pub fn parse_play_sound(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_play_sound(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -107,7 +107,7 @@ pub fn parse_play_sound(body: &[u8]) -> Option<u32> {
 /// visuals below. It is worth stating because the two shapes are otherwise
 /// identical in length: a reader that assumed one layout for all three would
 /// parse every packet successfully and place every sound wrong.
-pub fn parse_play_object_sound(body: &[u8]) -> Option<(u32, u64)> {
+pub(crate) fn parse_play_object_sound(body: &[u8]) -> Option<(u32, u64)> {
     let mut r = Reader::new(body);
     if !r.has(4 + 8) {
         return None;
@@ -132,7 +132,7 @@ pub fn parse_play_object_sound(body: &[u8]) -> Option<(u32, u64)> {
 ///
 /// Kit 0 is refused for the same reason sound 0 is: it is what an unset column
 /// sends, and `SpellVisualKit` has no row 0.
-pub fn parse_play_spell_visual(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_play_spell_visual(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;

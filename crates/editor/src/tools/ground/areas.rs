@@ -72,7 +72,7 @@ use bevy::prelude::*;
 /// can only reach tiles this session has open, which is the 3x3, and half of
 /// that is the cap. The lower bound is well under half a chunk, which is
 /// the radius at which a stroke is exactly the square under the pointer.
-pub const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
+pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
 
 /// The key that takes the area under the pointer as the one to paint with.
 ///
@@ -83,24 +83,24 @@ const EYEDROP: KeyCode = KeyCode::Space;
 
 /// The zone tool's settings, and what the pointer is over.
 #[derive(Resource, Debug, Default)]
-pub struct Areas {
-    pub brush: AreaBrush,
+pub(crate) struct Areas {
+    pub(crate) brush: AreaBrush,
     /// The chunk under the pointer, as `(tile, chunk)`.
-    pub at: Option<((u32, u32), usize)>,
+    pub(crate) at: Option<((u32, u32), usize)>,
     /// The area that chunk currently carries, which is what the panel names and
     /// what `Space` takes.
-    pub under: Option<u32>,
+    pub(crate) under: Option<u32>,
     /// The chunks a press would paint, in the tile they are in — drawn by
     /// [`draw`] before anything happens, because nothing about the result is
     /// visible afterwards.
-    pub covered: Vec<usize>,
+    pub(crate) covered: Vec<usize>,
     /// What the picker's search box holds, kept here so it survives the tool
     /// being switched away from and back.
-    pub search: String,
+    pub(crate) search: String,
     /// Which folder of the area tree the picker is showing — see
     /// [`crate::ui::tools::ground::areas`], which builds the tree out of `AreaTable`'s own
     /// parents.
-    pub folder: String,
+    pub(crate) folder: String,
     /// `AreaTable` as this session has edited it, while the session has the
     /// table open, and the table revision it was read at. The panel names and
     /// lists areas from it, so an area made or renamed in the Zones workspace
@@ -109,7 +109,7 @@ pub struct Areas {
     ///
     /// Behind an `Arc` so a panel can hold it while it writes the brush and
     /// the picker's folder, which are fields of the same struct.
-    pub table: Option<std::sync::Arc<vale_assets::tables::area::Areas>>,
+    pub(crate) table: Option<std::sync::Arc<vale_assets::tables::area::Areas>>,
     table_at: Option<u64>,
     /// Whether the press that began this stroke belonged to the world, and
     /// whether one is open — *a drag belongs to where it began*, the rule every
@@ -122,7 +122,7 @@ pub struct Areas {
 /// shell has the table browser and the tool, so the panel asks and the shell
 /// acts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ask {
+pub(crate) enum Ask {
     /// Open the Zones workspace on this area's row.
     Edit(u32),
     /// Make a zone on the open map and put it on the brush.
@@ -138,7 +138,7 @@ impl Ask {
     /// the brush. The table is opened here, since the panel has no archives
     /// to open it from. Answers the tool to switch to; what was made, or why
     /// nothing was, goes on the status line.
-    pub fn answer(
+    pub(crate) fn answer(
         self,
         areas: &mut Areas,
         session: &mut EditSession,
@@ -185,7 +185,7 @@ impl Areas {
     /// The whole table is parsed, 1,081 rows, on each table revision the
     /// panel is drawn at. The revision moves on an edit to any table, which
     /// is a keystroke at most.
-    pub fn follow_table(&mut self, session: &EditSession) {
+    pub(crate) fn follow_table(&mut self, session: &EditSession) {
         let Some(open) = session.table(crate::tables::zones::area::TABLE) else {
             self.table = None;
             self.table_at = None;
@@ -199,7 +199,7 @@ impl Areas {
     }
 }
 
-pub struct AreaToolPlugin;
+pub(crate) struct AreaToolPlugin;
 
 impl Plugin for AreaToolPlugin {
     fn build(&self, app: &mut App) {
@@ -693,7 +693,7 @@ const INSET: f32 = 0.05;
 /// are rebuilt from the edited files, and changes nothing on screen ever. See
 /// `vale_edit::adt::impass`, which carries the measurement that no shipped
 /// 1.12 tile sets it.
-pub fn set_impassable(
+pub(crate) fn set_impassable(
     session: &mut EditSession,
     coord: (u32, u32),
     chunk: usize,
@@ -730,7 +730,7 @@ pub fn set_impassable(
 }
 
 /// How many of a tile's chunks are marked, for the panel to report.
-pub fn impassable_count(session: &EditSession, coord: (u32, u32)) -> Option<usize> {
+pub(crate) fn impassable_count(session: &EditSession, coord: (u32, u32)) -> Option<usize> {
     session
         .tiles
         .get(&coord)

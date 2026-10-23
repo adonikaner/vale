@@ -78,8 +78,8 @@ pub const SKINNING: &str = "skinning_loot_template";
 pub const GAMEOBJECT: &str = "gameobject_loot_template";
 pub const ITEM: &str = "item_loot_template";
 pub const DISENCHANT: &str = "disenchant_loot_template";
-pub const FISHING: &str = "fishing_loot_template";
-pub const MAIL: &str = "mail_loot_template";
+pub(crate) const FISHING: &str = "fishing_loot_template";
+pub(crate) const MAIL: &str = "mail_loot_template";
 pub const REFERENCE: &str = "reference_loot_template";
 
 /// The nine tables, one schema under nine names. Every row of each may be
@@ -149,7 +149,7 @@ pub const MAX_GROUP: u32 = 127;
 pub const MAX_COUNT: u32 = 255;
 
 /// The patch band a row made here is written with: every patch.
-pub const EVERY_PATCH: (u32, u32) = (0, 10);
+pub(crate) const EVERY_PATCH: (u32, u32) = (0, 10);
 
 /// **The key of one row**: the five columns that name exactly one row on every
 /// loot table — see the module comment.
@@ -229,7 +229,7 @@ impl Entry {
     }
 
     /// `ChanceOrQuestChance` as the column holds it.
-    pub fn chance_column(&self) -> f32 {
+    pub(crate) fn chance_column(&self) -> f32 {
         match self.quest {
             true => -self.chance,
             false => self.chance,
@@ -237,7 +237,8 @@ impl Entry {
     }
 
     /// The count in words: `1`, `2–4`, or for a reference the set it names.
-    pub fn count_words(&self) -> String {
+    #[cfg(test)]
+    pub(crate) fn count_words(&self) -> String {
         match self.reference_to() {
             Some(reference) => format!("reference {reference}"),
             None if self.min() == self.max => self.min().to_string(),
@@ -247,7 +248,8 @@ impl Entry {
 
     /// The chance in words: `100%`, `0.5%`, `quest 100%`, or `group share`
     /// for a grouped row at zero.
-    pub fn chance_words(&self) -> String {
+    #[cfg(test)]
+    pub(crate) fn chance_words(&self) -> String {
         let percent = match self.chance == self.chance.trunc() {
             true => format!("{}%", self.chance as i64),
             false => format!("{}%", self.chance),
@@ -338,7 +340,8 @@ pub fn new_item(entry: u32, item: u32) -> Vec<Assignment> {
 }
 
 /// …and of one naming a reference set.
-pub fn new_reference(entry: u32, reference: u32) -> Vec<Assignment> {
+#[cfg(test)]
+pub(crate) fn new_reference(entry: u32, reference: u32) -> Vec<Assignment> {
     Entry::reference(entry, reference).assignments()
 }
 
@@ -352,16 +355,6 @@ pub fn rows_query(table: &str, entry: u32, wow_patch: u32) -> String {
     format!(
         "SELECT * FROM {} WHERE `entry` = {entry} AND {wow_patch} BETWEEN `patch_min` AND `patch_max` \
          ORDER BY `groupid`, `item`",
-        crate::sql::name(table)
-    )
-}
-
-/// **How many rows each entry of a table holds**, for a picker over the sets
-/// that exist — 644 references, 4,074 creature sets.
-pub fn entries_query(table: &str, wow_patch: u32) -> String {
-    format!(
-        "SELECT `entry`, COUNT(*) AS `n` FROM {} \
-         WHERE {wow_patch} BETWEEN `patch_min` AND `patch_max` GROUP BY `entry` ORDER BY `entry`",
         crate::sql::name(table)
     )
 }

@@ -49,7 +49,7 @@ type Walker = (
     Option<&'static mut Feet>,
 );
 
-pub struct FootstepsPlugin;
+pub(crate) struct FootstepsPlugin;
 
 impl Plugin for FootstepsPlugin {
     fn build(&self, app: &mut App) {

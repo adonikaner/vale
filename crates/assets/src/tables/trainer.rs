@@ -187,20 +187,20 @@ pub const EFFECT_LEARN_SPELL: u32 = 36;
 
 /// `SPELL_EFFECT_LEARN_PET_SPELL` — `0x39`, scanned in the same loop and the
 /// only difference between a hunter's own row and its pet's.
-pub const EFFECT_LEARN_PET_SPELL: u32 = 57;
+pub(crate) const EFFECT_LEARN_PET_SPELL: u32 = 57;
 
 /// `SPELL_EFFECT_SKILL_STEP` — `0x2c`, which is what tells a tradeskill
 /// trainer's *Step* rows from its *Learn* ones.
-pub const EFFECT_SKILL_STEP: u32 = 44;
+pub(crate) const EFFECT_SKILL_STEP: u32 = 44;
 
 /// The group a tradeskill trainer's rank-up rows go under.
-pub const TRADESKILL_STEP_GROUP: i32 = 1;
+pub(crate) const TRADESKILL_STEP_GROUP: i32 = 1;
 /// …and its recipe rows.
-pub const TRADESKILL_LEARN_GROUP: i32 = 2;
+pub(crate) const TRADESKILL_LEARN_GROUP: i32 = 2;
 /// The group a talent trainer folds everything already known into. Negative
 /// because the client uses the sign of that field for something else entirely —
 /// see [`Row::service`].
-pub const KNOWN_TALENTS_GROUP: i32 = -1;
+pub(crate) const KNOWN_TALENTS_GROUP: i32 = -1;
 
 /// The `GlobalStrings.lua` keys the three pseudo-groups are named by — see the
 /// module note. Indexed by [`Group::key`].
@@ -218,7 +218,7 @@ fn state_bit(state: State) -> u32 {
 /// Which word `SetTrainerServiceTypeFilter` was given, as a bit. `None` for a
 /// word the client would refuse — it answers 6 for anything it does not
 /// know and the caller prints *Bad service type*.
-pub fn filter_bit(word: &str) -> Option<u32> {
+pub(crate) fn filter_bit(word: &str) -> Option<u32> {
     Some(match word {
         "available" => 1,
         "unavailable" => 2,
@@ -229,13 +229,13 @@ pub fn filter_bit(word: &str) -> Option<u32> {
 
 /// **Every filter, all on** — `SetTrainerServiceTypeFilter("all", …)`'s own
 /// constant, `7`.
-pub const ALL_TYPES: u32 = 7;
+pub(crate) const ALL_TYPES: u32 = 7;
 
 /// The type filter a window opens with: available and unavailable, **not** used
 /// (3), or available and used at a talent trainer
 /// (5). The addon's three saved variables default to the
 /// same three values, so this is what a first visit shows either way.
-pub fn default_types(kind: Kind) -> u32 {
+pub(crate) fn default_types(kind: Kind) -> u32 {
     match kind {
         Kind::Talent => 5,
         _ => 3,

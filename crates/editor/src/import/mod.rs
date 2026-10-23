@@ -9,5 +9,5 @@
 //!                the 1.12.1 client reads
 //! ```
 
-pub mod assets;
-pub mod images;
+pub(crate) mod assets;
+pub(crate) mod images;

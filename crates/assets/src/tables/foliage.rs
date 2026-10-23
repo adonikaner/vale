@@ -47,13 +47,13 @@ use std::collections::HashMap;
 
 /// The directory the ground's own doodads are in. Found by listing the chain;
 /// the table carries only a bare file name.
-pub const DETAIL_DIR: &str = "World\\NoDXT\\Detail\\";
+pub(crate) const DETAIL_DIR: &str = "World\\NoDXT\\Detail\\";
 
 /// The columns each of the two tables answers from.
 pub mod fields {
     /// `GroundEffectTexture`: the four doodads a texture may plant, `-1` where
     /// the row names fewer than four.
-    pub const DOODAD: [usize; 4] = [1, 2, 3, 4];
+    pub(crate) const DOODAD: [usize; 4] = [1, 2, 3, 4];
     /// …how many of them one draw of a detail cell plants; see
     /// [`super::GroundEffect::density`].
     pub const DENSITY: usize = 5;
@@ -68,14 +68,14 @@ pub mod fields {
 }
 
 /// The most doodads one `GroundEffectTexture` row may name.
-pub const CHOICES: usize = 4;
+pub(crate) const CHOICES: usize = 4;
 
 /// The tuft count the 1.12.1 client uses for a row whose density column is 0.
-pub const DEFAULT_DENSITY: u8 = 8;
+pub(crate) const DEFAULT_DENSITY: u8 = 8;
 
 /// [`GroundEffect::slots`]' value for a slot the row leaves empty (`-1`) or
 /// fills with an id `GroundEffectDoodad` does not carry.
-pub const NO_SLOT: u16 = u16::MAX;
+pub(crate) const NO_SLOT: u16 = u16::MAX;
 
 /// One texture layer's ground effect: which models, and how many tufts per
 /// draw of a cell.

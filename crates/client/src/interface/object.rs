@@ -76,7 +76,7 @@ use vale_assets::look::object::{self as object, Kind};
 /// walk both this and `Hovered` are the answer to — see the module note for why
 /// they are two resources and not one.
 #[derive(Resource, Default)]
-pub struct HoveredObject {
+pub(crate) struct HoveredObject {
     pub guid: Option<u64>,
     pub entity: Option<Entity>,
     /// **Whether a click here would be sent at all**, which is
@@ -205,13 +205,13 @@ impl HoveredObject {
 /// of read exactly like one they could mine — which is the one thing the line
 /// exists to say.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct LockPlate {
+pub(crate) struct LockPlate {
     /// `GO_FLAG_LOCKED` — the word `LOCKED` out of `GlobalStrings.lua`, in
     /// [`Self::locked_colour`].
     pub locked: bool,
     /// Red when there is no way in, the gathering-difficulty colour when the
     /// way in is a spell, green when it is a key already in the bags.
-    pub locked_colour: [f32; 3],
+    pub(crate) locked_colour: [f32; 3],
     /// Which of `GlobalStrings.lua`'s three lock sentences the second line is,
     /// or `None` for no second line — which is the common answer.
     ///
@@ -219,13 +219,13 @@ pub struct LockPlate {
     /// which authority fills the `%s`. `LOCKED_WITH_SPELL_KNOWN` and
     /// `LOCKED_WITH_SPELL` take a `LockType.dbc` name, and `LOCKED_WITH_ITEM`
     /// takes an item's.
-    pub requires_key: Option<&'static str>,
+    pub(crate) requires_key: Option<&'static str>,
     /// …the `%s`. Empty is a line that is not drawn: an item key whose name has
     /// not come back from `CMSG_ITEM_QUERY_SINGLE` yet is skipped outright in
     /// the reference too.
     pub requires: String,
     /// …and its colour.
-    pub requires_colour: [f32; 3],
+    pub(crate) requires_colour: [f32; 3],
 }
 
 /// **A click landed on a game object**, and what kind it was.
@@ -235,13 +235,13 @@ pub struct LockPlate {
 /// `vale_protocol::play::mail`'s note on why `CMSG_GAMEOBJ_USE` reaches an
 /// empty arm there.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ObjectUsed {
+pub(crate) struct ObjectUsed {
     pub guid: u64,
     pub kind: Kind,
 }
 
 /// The systems this module owns.
-pub struct ObjectPlugin;
+pub(crate) struct ObjectPlugin;
 
 impl Plugin for ObjectPlugin {
     fn build(&self, app: &mut App) {
@@ -379,7 +379,7 @@ impl Character<'_, '_> {
         let Some(ActiveSession { live, .. }) = self.session.active.as_ref() else {
             return Vec::new();
         };
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         world.spellbook.known.iter().copied().collect()
     }
 

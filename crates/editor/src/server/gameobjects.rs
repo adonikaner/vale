@@ -39,13 +39,13 @@ use vale_mangos::gameobject;
 use vale_mangos::row::{self, Edits};
 
 /// The project path of the SQL file a save writes.
-pub const SQL_VPATH: &str = "sql\\gameobjects.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\gameobjects.sql";
 
 /// The project path of the revert file an apply writes.
-pub const REVERT_VPATH: &str = "sql\\gameobjects-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\gameobjects-revert.sql";
 
 /// The game object subject: `gameobject_template` and `gameobject`.
-pub struct GameObjects;
+pub(crate) struct GameObjects;
 
 impl RowSubject for GameObjects {
     fn subject(&self) -> Subject {

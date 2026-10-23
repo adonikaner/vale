@@ -54,7 +54,7 @@ pub mod layers {
     /// exists because the interface, not this client, chooses the tokens:
     /// without it, an addon asking for a portrait of `"party8"` would create
     /// a new camera each time.
-    pub const PORTRAITS: Range<usize> = 1..10;
+    pub(crate) const PORTRAITS: Range<usize> = 1..10;
     /// The paper dolls, one layer each. Its length is the number of frames
     /// that can hold one, not a performance budget.
     ///
@@ -63,13 +63,13 @@ pub mod layers {
     /// `PetModelFrame`, `DressUpModel` and `TabardModel`. The fifth,
     /// `PetStableModel`, is pointed by `SetPetStablePaperdoll(frame)`. A sixth
     /// would come from an addon, and gets no layer.
-    pub const DOLLS: Range<usize> = 10..15;
+    pub(crate) const DOLLS: Range<usize> = 10..15;
     /// Layers a host app takes for its own offscreen scenes. No pass in this
     /// crate draws on them.
     pub const HOST: Range<usize> = 15..31;
     /// The present pass, which must not see the world's layer; see
     /// [`crate::render::present::PRESENT_LAYER`].
-    pub const PRESENT: usize = 31;
+    pub(crate) const PRESENT: usize = 31;
 }
 
 /// The lowest layer in `range` that `in_use` does not claim.

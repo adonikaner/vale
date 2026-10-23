@@ -266,7 +266,7 @@ pub mod npc_flags {
 /// decision. Goldshire's trainers (`0x13`) and its innkeeper (`0x87`) all carry
 /// `GOSSIP` and were already covered; the bare quest giver is the case that is
 /// not.
-pub fn over_npc(npc_flags: u32) -> Option<Cursor> {
+pub(crate) fn over_npc(npc_flags: u32) -> Option<Cursor> {
     use npc_flags::*;
     let has = |bit: u32| npc_flags & bit != 0;
     // The speech bubble's whole family, folded into one test because the client

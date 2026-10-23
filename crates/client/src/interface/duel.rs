@@ -40,7 +40,7 @@ use crate::world::session::Session;
 /// What the session thread said about a duel. Written by
 /// [`crate::world::incoming`], read by [`answers`].
 #[derive(Message, Debug, Clone)]
-pub enum DuelAnswer {
+pub(crate) enum DuelAnswer {
     Requested { arbiter: u64, initiator: u64 },
     Countdown { ms: u32 },
     Bounds { out: bool },
@@ -63,7 +63,7 @@ pub enum DuelPress {
 
 /// **The flag, and the countdown clock.**
 #[derive(Resource, Default, Debug)]
-pub struct Duel {
+pub(crate) struct Duel {
     /// The arbiter's guid, held from the request to the completion. Both
     /// answers name it.
     arbiter: Option<u64>,
@@ -72,13 +72,9 @@ pub struct Duel {
 }
 
 impl Duel {
-    /// The flag of the duel in hand, if any.
-    pub fn arbiter(&self) -> Option<u64> {
-        self.arbiter
-    }
 }
 
-pub struct DuelPlugin;
+pub(crate) struct DuelPlugin;
 
 impl Plugin for DuelPlugin {
     fn build(&self, app: &mut App) {
@@ -130,10 +126,9 @@ fn answers(
                 }
                 let ignored = active
                     .live
-                    .world()
-                    .lock()
-                    .map(|world| world.ignore_guids.contains(&initiator))
-                    .unwrap_or(false);
+                    .read()
+                    .ignore_guids
+                    .contains(&initiator);
                 if ignored {
                     active.live.duel_answer(arbiter, false);
                     duel.arbiter = None;
@@ -178,7 +173,7 @@ fn answers(
 /// **The result line** — `DUEL_WINNER_KNOCKOUT` or `DUEL_WINNER_RETREAT`, with
 /// the winner as `%1$s` and the loser as `%2$s`. `None` when the key is
 /// missing, which says nothing rather than a sentence composed here.
-pub fn winner_line(
+pub(crate) fn winner_line(
     table: &vale_assets::interface::strings::Strings,
     winner: &DuelWinner,
 ) -> Option<String> {

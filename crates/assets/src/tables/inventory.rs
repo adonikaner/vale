@@ -215,13 +215,13 @@ mod class_fields {
 /// Consumable (0, 0), Miscellaneous armour (4, 0), Miscellaneous weapons
 /// (2, 14), Trade Goods (7, 0), every recipe row and Quest (12, 0).
 mod subclass_fields {
-    pub const CLASS: usize = 0;
-    pub const SUBCLASS: usize = 1;
-    pub const DISPLAY_FLAGS: usize = 5;
+    pub(crate) const CLASS: usize = 0;
+    pub(crate) const SUBCLASS: usize = 1;
+    pub(crate) const DISPLAY_FLAGS: usize = 5;
     pub const NAME: usize = 10;
-    pub const PLURAL: usize = 19;
+    pub(crate) const PLURAL: usize = 19;
     /// The display-flags bit that hides the subclass on the item plate.
-    pub const NO_PLATE_NAME: u32 = 0x1;
+    pub(crate) const NO_PLATE_NAME: u32 = 0x1;
 }
 
 impl ItemTables {
@@ -325,7 +325,8 @@ impl ItemTables {
     }
 
     /// How many slot rows were read. `vale` checks report this number.
-    pub fn slot_count(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn slot_count(&self) -> usize {
         self.slots.len()
     }
 
@@ -387,7 +388,8 @@ impl ItemTables {
     }
 
     /// How many class and subclass rows were read.
-    pub fn class_counts(&self) -> (usize, usize) {
+    #[cfg(test)]
+    pub(crate) fn class_counts(&self) -> (usize, usize) {
         (self.classes.len(), self.subclasses.len())
     }
 

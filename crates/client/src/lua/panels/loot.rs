@@ -55,19 +55,19 @@ pub struct LootRow {
     /// `"14 Silver, 3 Copper"` built out of `GlobalStrings`' own `GOLD_AMOUNT`
     /// family.
     pub name: String,
-    pub quantity: u32,
+    pub(crate) quantity: u32,
     /// `ITEM_QUALITY_*`, straight into `ITEM_QUALITY_COLORS[quality]`.
     pub quality: u32,
     /// Whether this row is the coins rather than an item — the two are told
     /// apart by `LootSlotIsCoin`, and only ever row 1.
-    pub is_coin: bool,
+    pub(crate) is_coin: bool,
 }
 
 /// **What a row with no template yet shows**, and it is the client's own.
 ///
 /// `INV_Misc_QuestionMark` is `GetLootSlotInfo`'s own fallback rather than a
 /// convention borrowed from somewhere else in the interface.
-pub const UNKNOWN_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
+pub(crate) const UNKNOWN_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
 /// **There is no coin-icon array, and believing there was one drew a heap of
 /// gold on seven copper.**
@@ -105,7 +105,7 @@ const COIN_KEYS: [&str; 3] = ["COPPER", "SILVER", "GOLD"];
 ///
 /// The words are the shipped file's, so a client with no `GlobalStrings` yet
 /// draws the amounts and no units rather than an English word this file made up.
-pub fn coins(copper: u32, strings: Option<&vale_assets::interface::strings::Strings>) -> LootRow {
+pub(crate) fn coins(copper: u32, strings: Option<&vale_assets::interface::strings::Strings>) -> LootRow {
     let parts = [copper % 100, (copper / 100) % 100, copper / 10_000];
     let mut pieces: Vec<String> = Vec::new();
     // Highest denomination first, which is the order it reads in.
@@ -272,7 +272,7 @@ pub fn take(host: &LuaHost) -> Vec<crate::interface::loot::TakeLoot> {
 }
 
 /// The queue the two writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::loot::TakeLoot>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::loot::TakeLoot>>>;
 
 /// The key a `LootButton` keeps its row under — written by `SetSlot`.
 pub(super) const SLOT_KEY: &str = "__lootSlot";

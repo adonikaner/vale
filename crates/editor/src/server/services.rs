@@ -38,13 +38,13 @@ use vale_mangos::row;
 use vale_mangos::{trainer, vendor};
 
 /// What this project does to the four tables, as SQL.
-pub const SQL_VPATH: &str = "sql\\services.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\services.sql";
 
 /// What puts it back.
-pub const REVERT_VPATH: &str = "sql\\services-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\services-revert.sql";
 
 /// The four tables, in the order a plan writes them.
-pub const TABLES: &[row::Table] = &[
+pub(crate) const TABLES: &[row::Table] = &[
     vendor::TEMPLATE_TABLE,
     vendor::VENDOR_TABLE,
     trainer::TEMPLATE_TABLE,
@@ -53,14 +53,14 @@ pub const TABLES: &[row::Table] = &[
 
 /// The two reload commands that re-read them, in the order they are sent.
 /// Each re-reads its template table first.
-pub const RELOADS: [&str; 2] = [vendor::VENDOR, trainer::TRAINER];
+pub(crate) const RELOADS: [&str; 2] = [vendor::VENDOR, trainer::TRAINER];
 
 /// What creatures sell and teach.
 ///
 /// A created row is refused when its key is already there, which is the
 /// module's default: the vendor tables' primary key is `(entry, item)`, so a
 /// second row of one item in one list is refused by MySQL too.
-pub struct Services;
+pub(crate) struct Services;
 
 impl RowSubject for Services {
     fn subject(&self) -> Subject {

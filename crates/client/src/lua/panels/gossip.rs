@@ -73,7 +73,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::gossip::GossipPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::gossip::GossipPress>>>;
 
 /// Register the four writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

@@ -14,7 +14,7 @@
 //! The 3D scenes behind these screens are drawn by `crate::render::glue`.
 
 pub mod autologin;
-pub mod charcreate;
+pub(crate) mod charcreate;
 pub mod glue;
 pub mod loading;
 
@@ -22,7 +22,7 @@ use bevy::prelude::*;
 
 /// Every plugin in this directory, as one group. See
 /// [`crate::render::RenderPlugins`] for why each directory registers its own.
-pub struct GluePlugins;
+pub(crate) struct GluePlugins;
 
 impl Plugin for GluePlugins {
     fn build(&self, app: &mut App) {

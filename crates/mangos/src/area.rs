@@ -57,7 +57,7 @@ const ENTRY: &str = "entry";
 /// The largest value a `mediumint unsigned` column holds: the entry, the map
 /// and the parent. MySQL clamps a larger value instead of refusing it, which
 /// would write another row's key.
-pub const MAX_MEDIUMINT: u32 = 0x00FF_FFFF;
+pub(crate) const MAX_MEDIUMINT: u32 = 0x00FF_FFFF;
 
 /// The largest value the two `tinyint unsigned` columns hold.
 pub const MAX_TINYINT: u32 = u8::MAX as u32;
@@ -94,13 +94,14 @@ const COLUMNS: [(&str, usize, Shape); 8] = [
 
 /// The `AreaTable.dbc` fields the server has a column for, the id included.
 /// An edit to any other field does not reach the server.
-pub fn mirrored_fields() -> impl Iterator<Item = usize> {
+#[cfg(test)]
+pub(crate) fn mirrored_fields() -> impl Iterator<Item = usize> {
     std::iter::once(0).chain(COLUMNS.iter().map(|&(_, field, _)| field))
 }
 
 /// Why the server's table cannot hold the row with this id as the file has
 /// it, or `None` when it can. A row the file does not have cannot be held.
-pub fn misfit(dbc: &DbcFile, id: u32) -> Option<String> {
+pub(crate) fn misfit(dbc: &DbcFile, id: u32) -> Option<String> {
     let Some(record) = dbc.row_of(id) else {
         return Some(format!("AreaTable has no row {id}"));
     };

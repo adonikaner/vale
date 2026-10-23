@@ -27,7 +27,7 @@ pub struct ClientVersion {
     /// Locale tag, already in wire order.
     pub locale: [u8; 4],
     /// `allowed_clients.integrity_hash` for this row.
-    pub integrity_hash: [u8; 20],
+    pub(crate) integrity_hash: [u8; 20],
 }
 
 /// Build the wire form of a 3-character `os` / `platform` tag.
@@ -36,7 +36,7 @@ pub struct ClientVersion {
 /// bytes, so `"Win"` must appear on the wire as `b"niW\0"`. Writing the
 /// reversal here — rather than as a magic literal — keeps the intent legible
 /// and makes new platforms trivial to add.
-pub const fn reversed_tag(tag: &[u8; 3]) -> [u8; 4] {
+pub(crate) const fn reversed_tag(tag: &[u8; 3]) -> [u8; 4] {
     [tag[2], tag[1], tag[0], 0]
 }
 
@@ -46,12 +46,12 @@ pub const fn reversed_tag(tag: &[u8; 3]) -> [u8; 4] {
 /// bytes of this field (`country[4 - i - 1]`), with no null forced in, so
 /// `"enUS"` becomes `b"SUne"`. Reusing the 3-byte helper here would silently
 /// send the wrong locale.
-pub const fn reversed_locale(tag: &[u8; 4]) -> [u8; 4] {
+pub(crate) const fn reversed_locale(tag: &[u8; 4]) -> [u8; 4] {
     [tag[3], tag[2], tag[1], tag[0]]
 }
 
 /// WoW 1.12.1 on Windows/x86 — the build this client targets.
-pub const WOW_1_12_1_WIN_X86: ClientVersion = ClientVersion {
+pub(crate) const WOW_1_12_1_WIN_X86: ClientVersion = ClientVersion {
     build: 5875,
     version: (1, 12, 1),
     platform: reversed_tag(b"x86"),
@@ -65,7 +65,7 @@ pub const WOW_1_12_1_WIN_X86: ClientVersion = ClientVersion {
 
 /// Every build/platform this client can impersonate. Extend by adding the
 /// matching `allowed_clients` row; nothing else needs to change.
-pub const KNOWN_VERSIONS: &[ClientVersion] = &[WOW_1_12_1_WIN_X86];
+pub(crate) const KNOWN_VERSIONS: &[ClientVersion] = &[WOW_1_12_1_WIN_X86];
 
 /// **The three strings the login screen prints**, and they are the client's own
 /// rather than a caption written here.

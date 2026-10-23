@@ -100,34 +100,34 @@ pub mod regions {
     use super::Region;
 
     pub const BASE: Region = Region::new(0, 0, 256, 256);
-    pub const ARM_UPPER: Region = Region::new(0, 0, 128, 64);
-    pub const ARM_LOWER: Region = Region::new(0, 64, 128, 64);
-    pub const HAND: Region = Region::new(0, 128, 128, 32);
-    pub const FACE_UPPER: Region = Region::new(0, 160, 128, 32);
+    pub(crate) const ARM_UPPER: Region = Region::new(0, 0, 128, 64);
+    pub(crate) const ARM_LOWER: Region = Region::new(0, 64, 128, 64);
+    pub(crate) const HAND: Region = Region::new(0, 128, 128, 32);
+    pub(crate) const FACE_UPPER: Region = Region::new(0, 160, 128, 32);
     pub const FACE_LOWER: Region = Region::new(0, 192, 128, 64);
-    pub const TORSO_UPPER: Region = Region::new(128, 0, 128, 64);
-    pub const TORSO_LOWER: Region = Region::new(128, 64, 128, 32);
-    pub const LEG_UPPER: Region = Region::new(128, 96, 128, 64);
-    pub const LEG_LOWER: Region = Region::new(128, 160, 128, 64);
-    pub const FOOT: Region = Region::new(128, 224, 128, 32);
+    pub(crate) const TORSO_UPPER: Region = Region::new(128, 0, 128, 64);
+    pub(crate) const TORSO_LOWER: Region = Region::new(128, 64, 128, 32);
+    pub(crate) const LEG_UPPER: Region = Region::new(128, 96, 128, 64);
+    pub(crate) const LEG_LOWER: Region = Region::new(128, 160, 128, 64);
+    pub(crate) const FOOT: Region = Region::new(128, 224, 128, 32);
 }
 
 /// `CharSections.baseSection`.
 pub mod section {
-    pub const SKIN: u32 = 0;
-    pub const FACE: u32 = 1;
-    pub const FACIAL_HAIR: u32 = 2;
-    pub const HAIR: u32 = 3;
-    pub const UNDERWEAR: u32 = 4;
+    pub(crate) const SKIN: u32 = 0;
+    pub(crate) const FACE: u32 = 1;
+    pub(crate) const FACIAL_HAIR: u32 = 2;
+    pub(crate) const HAIR: u32 = 3;
+    pub(crate) const UNDERWEAR: u32 = 4;
 }
 
 /// Field indices in `CharSections.dbc`. Measured — see the module docs.
 mod fields {
     pub const RACE: usize = 1;
-    pub const GENDER: usize = 2;
-    pub const BASE_SECTION: usize = 3;
-    pub const VARIATION_INDEX: usize = 4;
-    pub const COLOR_INDEX: usize = 5;
+    pub(crate) const GENDER: usize = 2;
+    pub(crate) const BASE_SECTION: usize = 3;
+    pub(crate) const VARIATION_INDEX: usize = 4;
+    pub(crate) const COLOR_INDEX: usize = 5;
     pub const TEXTURE: usize = 6;
 }
 
@@ -195,10 +195,10 @@ mod geoset_fields {
     /// and the scalp the composite paints is what is seen instead.
     pub mod hair {
         pub const RACE: usize = 1;
-        pub const GENDER: usize = 2;
-        pub const VARIATION: usize = 3;
-        pub const GEOSET: usize = 4;
-        pub const SHOW_SCALP: usize = 5;
+        pub(crate) const GENDER: usize = 2;
+        pub(crate) const VARIATION: usize = 3;
+        pub(crate) const GEOSET: usize = 4;
+        pub(crate) const SHOW_SCALP: usize = 5;
     }
 
     /// `CharacterFacialHairStyles.dbc`: race, gender, variation, three fields
@@ -220,10 +220,10 @@ mod geoset_fields {
     /// the 44 `CharSections` textures that are not in the archive.
     pub mod facial {
         pub const RACE: usize = 0;
-        pub const GENDER: usize = 1;
-        pub const VARIATION: usize = 2;
+        pub(crate) const GENDER: usize = 1;
+        pub(crate) const VARIATION: usize = 2;
         /// Groups 1, 3, 2 — not 1, 2, 3.
-        pub const GEOSETS: [usize; 3] = [6, 7, 8];
+        pub(crate) const GEOSETS: [usize; 3] = [6, 7, 8];
         pub const GROUPS: [usize; 3] = [1, 3, 2];
     }
 }
@@ -263,7 +263,7 @@ pub struct Hair {
     /// `showScalp`. A style that covers the head sets this to 0 — the composite
     /// paints the scalp textures regardless today, which is invisible under
     /// hair and correct without it.
-    pub show_scalp: bool,
+    pub(crate) show_scalp: bool,
 }
 
 impl CharGeosets {
@@ -696,7 +696,7 @@ pub fn generate_mips(width: u32, height: u32, top: &[u8]) -> Vec<Vec<u8>> {
 /// client has: three blend weights and, since shadows, `MCSH` in the alpha — and
 /// [`generate_mips`]' weighting would fade a chunk's *blend* out wherever its
 /// **shadow** does, which is a plausible-looking ground rather than a failure.
-pub fn box_mips(width: u32, height: u32, top: &[u8]) -> Vec<Vec<u8>> {
+pub(crate) fn box_mips(width: u32, height: u32, top: &[u8]) -> Vec<Vec<u8>> {
     mips(width, height, top, false)
 }
 

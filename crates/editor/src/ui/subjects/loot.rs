@@ -70,30 +70,30 @@ const GROUP: f32 = 76.0;
 const CELL: f32 = 18.0;
 
 /// Everything the window needs.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub loot: &'a mut Loot,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) loot: &'a mut Loot,
     /// The quest tool's state, for two things it already has: the batched
     /// item-name lookups, and the reference picker.
-    pub quests: &'a mut Quests,
+    pub(crate) quests: &'a mut Quests,
     /// The item workspace's state, for what a display id's icon is.
-    pub items: &'a mut Items,
-    pub assets: &'a GameAssets,
-    pub thumbnails: &'a mut Thumbnails,
+    pub(crate) items: &'a mut Items,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) thumbnails: &'a mut Thumbnails,
     /// The edit that would make the holder name a set, one per tab, where
     /// there is one: a creature's `loot_id` written as its own entry, an
     /// item's `LOOTABLE` flag set. `None` where nothing is offered.
-    pub fixes: Vec<Option<Fix>>,
-    pub now: f64,
+    pub(crate) fixes: Vec<Option<Fix>>,
+    pub(crate) now: f64,
     /// Where an item's name asks the shell to open the item workspace.
-    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+    pub(crate) asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 /// Draws the window, or nothing when it is shut or the selection names nothing.
 ///
 /// Returns its rectangle so the viewport can keep a click inside it from also
 /// being a click on the ground behind it.
-pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
+pub(crate) fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
     if !subject.loot.open {
         return None;
     }

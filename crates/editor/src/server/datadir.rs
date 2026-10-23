@@ -81,24 +81,24 @@ use std::sync::{Arc, Mutex};
 /// records under [`LIVE_RECORD`] the tiles the live `DataDir` holds. One record
 /// for both would let a dev regenerate hide a tile from the next patch, or the
 /// reverse.
-pub const PATCH_RECORD: &str = "publish\\server-tiles.txt";
-pub const LIVE_RECORD: &str = "server\\regenerated.txt";
+pub(crate) const PATCH_RECORD: &str = "publish\\server-tiles.txt";
+pub(crate) const LIVE_RECORD: &str = "server\\regenerated.txt";
 
 /// The record: `vpath -> FNV-1a of the ADT bytes`, sorted by path.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Record {
-    pub tiles: BTreeMap<String, u64>,
+pub(crate) struct Record {
+    pub(crate) tiles: BTreeMap<String, u64>,
 }
 
 impl Record {
-    pub fn read(project: &Project, vpath: &str) -> Record {
+    pub(crate) fn read(project: &Project, vpath: &str) -> Record {
         let Some(bytes) = project.read(vpath) else {
             return Record::default();
         };
         Record::from_text(&String::from_utf8_lossy(&bytes))
     }
 
-    pub fn from_text(text: &str) -> Record {
+    pub(crate) fn from_text(text: &str) -> Record {
         let mut out = Record::default();
         for line in text.lines() {
             let line = line.trim();
@@ -115,7 +115,7 @@ impl Record {
         out
     }
 
-    pub fn to_text(&self, project: &str) -> String {
+    pub(crate) fn to_text(&self, project: &str) -> String {
         let mut out = format!(
             "# {project} — the tiles the server's maps, vmaps and mmaps were last built\n\
              # from, as the FNV-1a 64 of each ADT's bytes. A publish regenerates every\n\
@@ -128,7 +128,7 @@ impl Record {
         out
     }
 
-    pub fn write(&self, project: &Project, vpath: &str) -> Result<(), String> {
+    pub(crate) fn write(&self, project: &Project, vpath: &str) -> Result<(), String> {
         project
             .write(vpath, self.to_text(&project.name).as_bytes())
             .map(|_| ())
@@ -155,11 +155,11 @@ impl Record {
 /// how far the change reaches, and the hash the record will hold. The hash is
 /// `None` for a tile that has left the project.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Dirty {
-    pub vpath: String,
-    pub tile: Tile,
-    pub reach: Reach,
-    pub hash: Option<u64>,
+pub(crate) struct Dirty {
+    pub(crate) vpath: String,
+    pub(crate) tile: Tile,
+    pub(crate) reach: Reach,
+    pub(crate) hash: Option<u64>,
 }
 
 /// What the comparison of tiles reads: the project folder, the archive chain,
@@ -170,7 +170,7 @@ pub struct Dirty {
 /// (`GameAssets::chains`), as the tile loaders read them, because a worker
 /// cannot hold `GameAssets`.
 #[derive(Clone)]
-pub struct TileReader {
+pub(crate) struct TileReader {
     project: Project,
     chains: Arc<ChainPool>,
     /// The folder the pool is keyed on: `GameAssets::gamedata_dir` as it is
@@ -182,7 +182,7 @@ pub struct TileReader {
 
 impl TileReader {
     /// Reads `Map.dbc` through `assets`, which is one small file.
-    pub fn new(project: &Project, assets: &GameAssets) -> TileReader {
+    pub(crate) fn new(project: &Project, assets: &GameAssets) -> TileReader {
         TileReader {
             project: project.clone(),
             chains: assets.chains(),
@@ -264,7 +264,7 @@ impl TileReader {
 /// hashed, so the cost grows with the number of tiles the project carries.
 /// `progress` is called before each tile with the number compared and the
 /// total.
-pub fn dirty(
+pub(crate) fn dirty(
     reader: &TileReader,
     record: &Record,
     progress: &mut dyn FnMut(usize, usize),
@@ -308,7 +308,7 @@ pub fn dirty(
 /// window's selection. A tile the project carries is regenerated from it, and
 /// one it does not from the archives, which puts back what a reverted tile
 /// had. Answers what was skipped and why beside the list.
-pub fn dirty_for(
+pub(crate) fn dirty_for(
     reader: &TileReader,
     map: &str,
     chosen: &[(u32, u32)],
@@ -334,7 +334,7 @@ pub fn dirty_for(
 
 /// Where the tools are, from the environment or the panel, or the sentence to
 /// show when neither says.
-pub fn tools(server: &super::settings::ServerSettings) -> Result<Tools, String> {
+pub(crate) fn tools(server: &super::settings::ServerSettings) -> Result<Tools, String> {
     if let Some(found) = Tools::from_env() {
         return found;
     }
@@ -350,7 +350,7 @@ pub fn tools(server: &super::settings::ServerSettings) -> Result<Tools, String> 
 
 /// Where the server's `DataDir` is, through the conf the panel or the
 /// environment names.
-pub fn data_dir(server: &super::settings::ServerSettings) -> Result<PathBuf, String> {
+pub(crate) fn data_dir(server: &super::settings::ServerSettings) -> Result<PathBuf, String> {
     let conf = server
         .conf_path()
         .ok_or_else(|| "no mangosd.conf: set it on the Server panel, or set VALE_MANGOSD".to_string())?;
@@ -383,29 +383,24 @@ fn client_root(assets: &GameAssets) -> Result<PathBuf, String> {
 /// spinner's hover show, and the fraction the bar fills to. Written by the
 /// worker and read by the panels. Empty between runs.
 #[derive(Resource, Default, Clone)]
-pub struct Step(pub Arc<Mutex<(String, f32)>>);
+pub(crate) struct Step(pub(crate) Arc<Mutex<(String, f32)>>);
 
 impl Step {
     /// The step's name, or empty when nothing is running.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         self.0.lock().map(|s| s.0.clone()).unwrap_or_default()
-    }
-
-    /// 0 to 1.
-    pub fn fraction(&self) -> f32 {
-        self.0.lock().map(|s| s.1).unwrap_or(0.0)
     }
 
     /// The line and the fraction together, for a bar, or `None` when nothing
     /// is running.
-    pub fn summary(&self) -> Option<(String, f32)> {
+    pub(crate) fn summary(&self) -> Option<(String, f32)> {
         let held = self.0.lock().ok()?;
         (!held.0.is_empty()).then(|| held.clone())
     }
 
     /// Say which step, and how many of how many are done. A total of zero is
     /// a bar at nothing, for the steps that report no count.
-    pub fn set(&self, line: &str, done: usize, total: usize) {
+    pub(crate) fn set(&self, line: &str, done: usize, total: usize) {
         if let Ok(mut held) = self.0.lock() {
             let fraction = match total {
                 0 => 0.0,
@@ -415,7 +410,7 @@ impl Step {
         }
     }
 
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         if let Ok(mut held) = self.0.lock() {
             *held = (String::new(), 0.0);
         }
@@ -734,7 +729,7 @@ fn finish(session: &mut EditSession, ran: Result<Ran, String>) {
 ///
 /// Everything whose cost grows with the number of tiles runs on the server
 /// queue's worker. See the module comment's *What runs on the main thread*.
-pub fn regenerate(
+pub(crate) fn regenerate(
     session: &mut EditSession,
     assets: &GameAssets,
     server: &super::settings::ServerSettings,
@@ -795,7 +790,7 @@ pub(super) fn repair_project_wdts(session: &mut EditSession) {
 
 /// `--regenerate`: the Server panel's *Regenerate changed tiles*, from a
 /// command line. Fires once, on the first frame there is a session.
-pub fn on_the_command_line(
+pub(crate) fn on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,

@@ -13,7 +13,7 @@ use super::labels::{KIT_MODELS, VISUAL_SLOTS, basename};
 /// own, a kit's first, and for a visual the first model of the first kit
 /// that has one, then its missile's and its area's. `None` for a row with no
 /// model and for a row of any other table.
-pub fn first_model(
+pub(crate) fn first_model(
     browser: &mut Browser,
     session: &EditSession,
     table: &str,
@@ -170,7 +170,7 @@ fn effect_words(browser: &mut Browser, session: &EditSession, words: &mut String
 /// Returns `None` when no kit names the effect, or when more than one does.
 /// In the second case a move would change several spells, and the choice of
 /// which is left to the user.
-pub fn effect_slot(
+pub(crate) fn effect_slot(
     browser: &mut Browser,
     session: &EditSession,
     effect: u32,
@@ -200,7 +200,7 @@ pub fn effect_slot(
 /// use.
 ///
 /// Returns `false` when the two columns are the same or the table is not open.
-pub fn move_effect_slot(
+pub(crate) fn move_effect_slot(
     session: &mut EditSession,
     record: usize,
     from: usize,
@@ -236,7 +236,7 @@ pub fn move_effect_slot(
 /// is the point the client hangs the model from. A missile model is aimed at
 /// the chest, and an area model stands at the feet. An effect that nothing
 /// names defaults to the chest, and the sentence says so.
-pub fn effect_anchor(
+pub(crate) fn effect_anchor(
     browser: &mut Browser,
     session: &EditSession,
     effect: u32,

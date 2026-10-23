@@ -13,7 +13,7 @@ impl EditSession {
     /// earlier session comes back edited. `false` for a name the archives do not
     /// answer — and for the four entries under `DBFilesClient\` that are zero
     /// bytes, which are not tables at all. See `vale dbc`.
-    pub fn open_table(&mut self, assets: &GameAssets, name: &str) -> bool {
+    pub(crate) fn open_table(&mut self, assets: &GameAssets, name: &str) -> bool {
         if self.tables.contains_key(name) {
             return true;
         }
@@ -37,11 +37,11 @@ impl EditSession {
         }
     }
 
-    pub fn table(&self, name: &str) -> Option<&DbcFile> {
+    pub(crate) fn table(&self, name: &str) -> Option<&DbcFile> {
         self.tables.get(name)
     }
 
-    pub fn table_mut(&mut self, name: &str) -> Option<&mut DbcFile> {
+    pub(crate) fn table_mut(&mut self, name: &str) -> Option<&mut DbcFile> {
         self.tables.get_mut(name)
     }
 
@@ -58,7 +58,7 @@ impl EditSession {
     /// parsed: nothing in a running session reads a table again. What a table
     /// edit has to reach is the project folder and the patch archive, and both
     /// of those are [`Self::save_table`].
-    pub fn table_edited(&mut self, name: &str) {
+    pub(crate) fn table_edited(&mut self, name: &str) {
         self.unsaved_tables.insert(name.to_string());
         self.table_revision += 1;
     }
@@ -69,7 +69,7 @@ impl EditSession {
     /// Called when a table is saved rather than when it is edited, for the
     /// reason on [`Self::table_edited`]. What it is for is the next thing to
     /// read a table: a playtest logging in, or a relaunch.
-    pub fn publish_table(&mut self, name: &str) {
+    pub(crate) fn publish_table(&mut self, name: &str) {
         let Some(table) = self.tables.get(name) else {
             return;
         };
@@ -83,7 +83,7 @@ impl EditSession {
     /// Take a table's bytes back out of the overlay, so the project folder
     /// or the archives answer for its path again, and have the client read
     /// its tables again. The counterpart of [`Self::publish_table`].
-    pub fn unpublish_table(&mut self, name: &str) {
+    pub(crate) fn unpublish_table(&mut self, name: &str) {
         let path = vale_assets::tables::dbc::dbc_path(name).to_ascii_lowercase();
         let had = match self.edited.write() {
             Ok(mut edited) => edited.remove(&path).is_some(),
@@ -105,7 +105,7 @@ impl EditSession {
     /// was, and after the re-read that is a different table. The readers
     /// holding record indices — the browser, the reverse index — rebuild off
     /// the revision, which this bumps.
-    pub fn discard_table(&mut self, assets: &GameAssets, name: &str) -> bool {
+    pub(crate) fn discard_table(&mut self, assets: &GameAssets, name: &str) -> bool {
         if !self.tables.contains_key(name) {
             return false;
         }
@@ -132,7 +132,7 @@ impl EditSession {
 
     /// Write every table whose bytes are ahead of the project folder; how
     /// many were written.
-    pub fn save_all_tables(&mut self) -> usize {
+    pub(crate) fn save_all_tables(&mut self) -> usize {
         let unsaved: Vec<String> = self.unsaved_tables.iter().cloned().collect();
         unsaved.iter().filter(|name| self.save_table(name)).count()
     }
@@ -145,7 +145,7 @@ impl EditSession {
     /// dialog. Rows rather than bytes, because [`DbcFile::set_string`] only
     /// appends to the string block and an undone string edit leaves the text
     /// behind it.
-    pub fn save_table(&mut self, name: &str) -> bool {
+    pub(crate) fn save_table(&mut self, name: &str) -> bool {
         let Some(table) = self.tables.get(name) else {
             return false;
         };

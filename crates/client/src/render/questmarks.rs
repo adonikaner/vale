@@ -50,18 +50,14 @@ struct QuestMark;
 
 /// Which guid has which mark up, and what it was built from.
 #[derive(Resource, Default)]
-pub struct QuestMarks {
+pub(crate) struct QuestMarks {
     up: HashMap<u64, (Entity, &'static str)>,
 }
 
 impl QuestMarks {
-    /// How many are on screen, for the HUD line.
-    pub fn count(&self) -> usize {
-        self.up.len()
-    }
 }
 
-pub struct QuestMarkPlugin;
+pub(crate) struct QuestMarkPlugin;
 
 impl Plugin for QuestMarkPlugin {
     fn build(&self, app: &mut App) {
@@ -107,8 +103,7 @@ fn reconcile(
     // **One lock, one pass.** The status maps are the object manager's, and a
     // lookup per unit under its own lock would be a lock per unit per frame.
     let statuses = {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         units
             .iter()
             .filter_map(|(unit, at, model)| {

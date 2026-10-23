@@ -64,21 +64,6 @@ const PING_KEY: &str = "__minimapPing";
 /// has not yet sent: yards east and north of the character.
 const PING_REQUEST_KEY: &str = "vale.minimap.pingRequest";
 
-/// The widget methods this file registers. Sorted, and counted by
-/// `vale framexml` as implemented rather than stubbed. `GetZoom` used to be in
-/// [`super::super::api::stubs::METHODS`], returning a constant `0`. That is a
-/// valid zoom level, so the stub could not be told apart from a working
-/// implementation.
-pub const METHODS: [&str; 7] = [
-    "GetPingPosition",
-    "GetZoom",
-    "GetZoomLevels",
-    "PingLocation",
-    "SetBlipTexture",
-    "SetMaskTexture",
-    "SetZoom",
-];
-
 /// What one minimap frame is showing, as plain data: everything the painter
 /// needs from the widget and nothing that borrows Lua.
 ///
@@ -91,7 +76,7 @@ pub struct MinimapWidget {
     /// radius table in [`vale_assets::tables::minimap`].
     pub zoom: usize,
     /// The indoor zoom level, an index into the indoor radius table.
-    pub inside_zoom: usize,
+    pub(crate) inside_zoom: usize,
 }
 
 impl MinimapWidget {
@@ -208,7 +193,7 @@ fn zoom_of(frame: &mlua::Table, key: &str) -> usize {
 /// and on every move between inside and outside a building, as the 1.12.1
 /// client does. Leaving the world forgets the last answer, so the next entry
 /// raises it again.
-pub fn announce_inside(
+pub(crate) fn announce_inside(
     host: Option<NonSendMut<super::super::host::LuaHost>>,
     world: super::super::api::LuaWorld,
     view: Res<crate::interface::minimap::MinimapView>,
@@ -236,7 +221,7 @@ pub fn announce_inside(
 
 /// A ping held in world coordinates: the place the last ping marked.
 #[derive(Default)]
-pub struct HeldPing(Option<(f32, f32)>);
+pub(crate) struct HeldPing(Option<(f32, f32)>);
 
 /// Send the player's pings, receive the group's, and keep the ping on the
 /// ground.
@@ -255,7 +240,7 @@ pub struct HeldPing(Option<(f32, f32)>);
 /// client does not. While a ping is held, the offset is recomputed every frame
 /// onto the `Minimap` frame, which is what `GetPingPosition` reads.
 #[allow(clippy::too_many_arguments)]
-pub fn follow_pings(
+pub(crate) fn follow_pings(
     host: Option<NonSendMut<super::super::host::LuaHost>>,
     world: super::super::api::LuaWorld,
     view: Res<crate::interface::minimap::MinimapView>,

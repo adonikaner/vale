@@ -71,7 +71,7 @@ impl Visit for NameField {
 }
 
 /// The layer. Added to the client's log layer by `super::log::layer`.
-pub struct CensusLayer;
+pub(crate) struct CensusLayer;
 
 impl<S: Subscriber> Layer<S> for CensusLayer {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, _ctx: Context<'_, S>) {

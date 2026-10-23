@@ -50,13 +50,13 @@
 //! session controls. Undo is also the control a person reaches for without
 //! looking, so it sits at the top of the panel they are already looking at.
 
-pub mod ground;
-pub mod history;
-pub mod measure;
-pub mod placements;
-pub mod places;
-pub mod spawns;
-pub mod tablet;
+pub(crate) mod ground;
+pub(crate) mod history;
+pub(crate) mod measure;
+pub(crate) mod placements;
+pub(crate) mod places;
+pub(crate) mod spawns;
+pub(crate) mod tablet;
 
 use bevy_egui::egui;
 
@@ -73,42 +73,42 @@ use crate::ui::widgets::theme;
 /// sixteen-parameter limit and this function took eight. `Editing` is the
 /// state the tools hold across frames; this struct is what is true in the
 /// current frame.
-pub struct Subject<'a> {
-    pub tool: Tool,
-    pub session: &'a mut EditSession,
+pub(crate) struct Subject<'a> {
+    pub(crate) tool: Tool,
+    pub(crate) session: &'a mut EditSession,
     /// The DBCs, for the panel that turns a row id into a name. `None` on a
     /// machine with no archives, where the zone tool shows bare numbers
     /// instead of refusing to open.
-    pub tables: Option<&'a vale_assets::tables::dbc::DisplayTables>,
+    pub(crate) tables: Option<&'a vale_assets::tables::dbc::DisplayTables>,
     /// The archives, for the panel that opens a table on demand: following a
     /// reference reads a DBC nothing has loaded yet. Without this field the
     /// button that follows a reference cannot open that table.
-    pub assets: &'a vale_client::assets::GameAssets,
+    pub(crate) assets: &'a vale_client::assets::GameAssets,
     /// Where the pointer is. The texture tool uses it to say what the chunk
     /// under the pointer carries; no other panel reads it yet.
-    pub cursor: &'a Cursor,
+    pub(crate) cursor: &'a Cursor,
     /// The frame clock used to fold a gesture into one history entry; see
     /// `vale_edit::undo::History::begin_gesture`.
-    pub now: f64,
+    pub(crate) now: f64,
     /// Where this machine's server is, for the panels whose subject is a row
     /// in vmangos' database rather than a file.
-    pub server: &'a crate::server::settings::ServerSettings,
+    pub(crate) server: &'a crate::server::settings::ServerSettings,
     /// The bar's Server… popover, which holds every server operation. The
     /// same panels link to it; see [`crate::ui::shell::sync`].
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where each server subject stands, held for half a second. The creature
     /// and object panels read their subject's line from it. See
     /// [`crate::server::sync::Standings`].
-    pub standings: &'a mut crate::server::sync::Standings,
+    pub(crate) standings: &'a mut crate::server::sync::Standings,
     /// The ground guides, for the one a tool's panel repeats: the texture
     /// brush shows the full chunks. See [`crate::tools::guides`].
-    pub guides: &'a mut crate::tools::guides::Guides,
+    pub(crate) guides: &'a mut crate::tools::guides::Guides,
 }
 
 /// Draw the panel for whichever tool is chosen: the header, the undo row
 /// for a tool that edits, and then the tool's own panel
 /// ([`crate::tools::Spec::inspector`]).
-pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editing<'_>) {
     let tool = subject.tool;
     ui.add_space(6.0);
     ui.horizontal(|ui| {

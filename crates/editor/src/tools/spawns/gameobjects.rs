@@ -51,27 +51,27 @@ use vale_mangos::gameobject::{self, RowValue};
 use vale_mangos::row::{Edits, Key, Life, RowEdit};
 
 /// What the pointer is doing with the game objects on the open map.
-pub type GameObjects = SpawnTool<GameObjectSubject>;
+pub(crate) type GameObjects = SpawnTool<GameObjectSubject>;
 
 /// The game object subject: `gameobject` and `gameobject_template`.
 #[derive(Debug)]
-pub struct GameObjectSubject;
+pub(crate) struct GameObjectSubject;
 
 /// What only the game object tool keeps.
 #[derive(Debug, Default)]
-pub struct GameObjectOwn {
+pub(crate) struct GameObjectOwn {
     /// The model path a display id resolves to, worked out once per id,
     /// because the picker asks for every row on every frame it draws. `None` is
     /// an id `GameObjectDisplayInfo` does not resolve.
-    pub models: HashMap<u32, Option<String>>,
+    pub(crate) models: HashMap<u32, Option<String>>,
     /// The `GameAssets::tables_generation` [`Self::models`] was resolved at.
     /// See `tools::spawns::creatures::CreatureOwn::worn_at`.
-    pub models_at: u64,
+    pub(crate) models_at: u64,
     /// `Lock.dbc` joined to `LockType.dbc`, read by the panel the first time a
     /// lock is drawn. See `crate::ui::tools::spawns::gameobjects`. It is what
     /// identifies a chest as a mining vein: the server's row holds the lock's
     /// id and the client's file holds what the lock needs.
-    pub locks: Option<vale_assets::tables::lock::Locks>,
+    pub(crate) locks: Option<vale_assets::tables::lock::Locks>,
 }
 
 /// A game-object entry: the part of its template that a marker, a model and a
@@ -80,46 +80,47 @@ pub struct GameObjectOwn {
 /// The map query carries these for every spawn, the picker's search for every
 /// match, and [`learn_the_created`] for an entry neither has met.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Known {
+pub(crate) struct Known {
     /// The entry the project says the template has, which the list shows and
     /// the store keys its claim under.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The entry the database has the row at, which differs from
     /// [`Self::entry`] while the project moves the template and has not
     /// applied it. A template the project creates has no row and the two are
     /// equal. See [`GameObjects::fold_template_moves`].
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// [`Life::Insert`] for a template this project creates, which is in no
     /// database; [`Life::Update`] for one the database holds.
-    pub claim: Life,
+    pub(crate) claim: Life,
     /// Which content patch of the template the server would load.
-    pub patch: u32,
-    pub name: String,
+    pub(crate) patch: u32,
+    pub(crate) name: String,
     /// `gameobject_template.type`, which decides what the `data` columns mean.
-    pub kind: u32,
-    pub display_id: u32,
+    pub(crate) kind: u32,
+    pub(crate) display_id: u32,
     /// `size`, the model's multiplier.
-    pub size: f32,
-    pub faction: u32,
-    pub flags: u32,
+    pub(crate) size: f32,
+    pub(crate) faction: u32,
+    pub(crate) flags: u32,
     /// `data0`, `data1` and `data4`: the three columns a lock can be in, the
     /// second of which is also a chest's loot. See [`Known::lock`].
-    pub data: [i64; 3],
+    pub(crate) data: [i64; 3],
 }
 
 impl Known {
     /// What to call it in a list.
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         format!("{} ({})", self.name, self.entry)
     }
 
     /// The key an edit to its template row is written under.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         gameobject::template_key(self.entry, self.patch)
     }
 
     /// Whether this project creates the template, so there is no row behind it.
-    pub fn is_new(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_new(&self) -> bool {
         self.claim == Life::Insert
     }
 
@@ -159,7 +160,7 @@ impl Known {
     }
 
     /// What the type is called.
-    pub fn type_word(&self) -> String {
+    pub(crate) fn type_word(&self) -> String {
         gameobject::value_word(&gameobject::TYPES, self.kind)
     }
 
@@ -178,7 +179,7 @@ impl Known {
     ///
     /// The column depends on the type: `data0` on a chest and a goober, `data1`
     /// on a door, `data4` on a fishing hole.
-    pub fn lock(&self) -> Option<u32> {
+    pub(crate) fn lock(&self) -> Option<u32> {
         let index = gameobject::lock_column(self.kind)?;
         self.data_at(index).filter(|lock| *lock > 0).map(|lock| lock as u32)
     }
@@ -187,7 +188,7 @@ impl Known {
     /// vein or a herb it is what is gathered from it. See
     /// `vale_mangos::gameobject::loot_column`, which is the server's own
     /// `GetLootId`.
-    pub fn loot(&self) -> Option<u32> {
+    pub(crate) fn loot(&self) -> Option<u32> {
         let column = gameobject::loot_column(self.kind)?;
         self.data_at(column)
             .filter(|loot| *loot > 0)
@@ -196,7 +197,7 @@ impl Known {
 
     /// Whether the server takes loot from this type at all, whether or not
     /// the column names a set yet.
-    pub fn is_looted(&self) -> bool {
+    pub(crate) fn is_looted(&self) -> bool {
         gameobject::loot_column(self.kind).is_some()
     }
 }
@@ -240,67 +241,67 @@ pub(crate) fn read_known(row: &gameobject::Row) -> Option<Known> {
 
 /// One `gameobject` row, as the viewport needs it.
 #[derive(Debug, Clone)]
-pub struct Spawn {
-    pub guid: u64,
+pub(crate) struct Spawn {
+    pub(crate) guid: u64,
     /// Where it is, in the world's own axes.
-    pub at: Vec3,
+    pub(crate) at: Vec3,
     /// Radians it faces, as the row states it.
-    pub orientation: f32,
+    pub(crate) orientation: f32,
     /// Whether `rotation0` or `rotation1` leans it off the vertical, so its
     /// quaternion is not a function of the facing. See
     /// `vale_mangos::gameobject::is_tilted`.
-    pub tilted: bool,
+    pub(crate) tilted: bool,
     /// `gameobject.state`: 1 is ready, which a door draws as shut.
-    pub state: u32,
+    pub(crate) state: u32,
     /// What stands here. `None` when the join found no template row, which is
     /// a spawn vmangos skips.
-    pub known: Option<Known>,
+    pub(crate) known: Option<Known>,
     /// `gameobject.id`, kept beside [`Self::known`] because a spawn with no
     /// template row still has one. It is the entry the project says the
     /// template has; see [`Self::read_entry`].
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The template entry the map query read for this spawn, which is where
     /// the database has the template's row until a move of it is applied. See
     /// [`GameObjects::fold_template_moves`].
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// What this project says is to become of the row. See
     /// `tools::spawns::creatures::Spawn::claim`.
-    pub claim: Life,
+    pub(crate) claim: Life,
 }
 
 impl Spawn {
     /// The key an edit to this spawn's `gameobject` row is written under.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         gameobject::spawn_key(self.guid)
     }
 
     /// The key an edit to this spawn's template is written under. The
     /// template is shared by every object of this kind.
-    pub fn template_key(&self) -> Key {
+    pub(crate) fn template_key(&self) -> Key {
         gameobject::template_key(self.entry, self.patch())
     }
 
-    pub fn patch(&self) -> u32 {
+    pub(crate) fn patch(&self) -> u32 {
         self.known.as_ref().map(|known| known.patch).unwrap_or(0)
     }
 
-    pub fn display_id(&self) -> u32 {
+    pub(crate) fn display_id(&self) -> u32 {
         self.known.as_ref().map(|known| known.display_id).unwrap_or(0)
     }
 
     /// What to call it in a list.
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         match &self.known {
             Some(known) => known.label(),
             None => format!("entry {} — no template row", self.entry),
         }
     }
 
-    pub fn is_new(&self) -> bool {
+    pub(crate) fn is_new(&self) -> bool {
         self.claim == Life::Insert
     }
 
-    pub fn is_removed(&self) -> bool {
+    pub(crate) fn is_removed(&self) -> bool {
         self.claim == Life::Delete
     }
 
@@ -589,7 +590,6 @@ impl SpawnSubject for GameObjectSubject {
     const WORKSPACE: Tool = Tool::GameObjectData;
     const SPAWN_TABLE: vale_mangos::row::Table = gameobject::SPAWN_TABLE;
     const TEMPLATE_TABLE: vale_mangos::row::Table = gameobject::TEMPLATE_TABLE;
-    const TABLES: &'static [vale_mangos::row::Table] = gameobject::TABLES;
     const NUMBERING: vale_mangos::row::Numbering = gameobject::NUMBERING;
     const RESERVED_GUID_BASE: u64 = gameobject::RESERVED_GUID_BASE;
     const MAX_SPAWN_GUID_QUERY: &'static str = gameobject::MAX_SPAWN_GUID_QUERY;
@@ -627,7 +627,6 @@ impl SpawnSubject for GameObjectSubject {
     // Shorter than the creature tool's 1200: the busiest tiles hold several
     // hundred objects each, and a marker a kilometre away is a pixel.
     const RANGE: f32 = 800.0;
-    const DISCARDS_PATHS: bool = false;
 
     fn spawn_key(guid: u64) -> Key {
         gameobject::spawn_key(guid)
@@ -797,7 +796,7 @@ impl GameObjects {
     /// sent both and `UpdateRotationFields` derives the pair only when both are
     /// zero. A tilted one gets the facing alone: its quaternion carries the
     /// lean, which is not a function of the facing.
-    pub fn turn(session: &mut EditSession, guid: u64, tilted: bool, orientation: f32, now: f64) {
+    pub(crate) fn turn(session: &mut EditSession, guid: u64, tilted: bool, orientation: f32, now: f64) {
         let key = gameobject::spawn_key(guid);
         let subject = format!("gameobject {guid} facing");
         let written = gameobject::facing(orientation);
@@ -817,7 +816,7 @@ impl GameObjects {
     }
 
     /// The model a display id names, memoised. See [`GameObjectOwn::models`].
-    pub fn model_of(&mut self, assets: &vale_client::assets::GameAssets, display_id: u32) -> Option<String> {
+    pub(crate) fn model_of(&mut self, assets: &vale_client::assets::GameAssets, display_id: u32) -> Option<String> {
         let generation = assets.tables_generation();
         let own = &mut self.own;
         if own.models_at != generation {
@@ -838,7 +837,7 @@ impl GameObjects {
 
 /// Registers the game object tool: the shared mechanism over
 /// [`GameObjectSubject`].
-pub struct GameObjectToolPlugin;
+pub(crate) struct GameObjectToolPlugin;
 
 impl Plugin for GameObjectToolPlugin {
     fn build(&self, app: &mut App) {

@@ -49,14 +49,14 @@ use bevy::prelude::*;
 
 /// How large the shading brush may be, in yards. It matches the height brush's
 /// range, because it is the same footprint over the same vertices.
-pub const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
+pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
 
 /// How fast the shading brush closes on its target, as a fraction of the
 /// remaining distance per second.
-pub const RATE: std::ops::RangeInclusive<f32> = 0.01..=4.0;
+pub(crate) const RATE: std::ops::RangeInclusive<f32> = 0.01..=4.0;
 
 /// The five modes, as a list a panel can offer.
-pub const MODES: [(&str, Shade); 5] = [
+pub(crate) const MODES: [(&str, Shade); 5] = [
     ("Paint", Shade::Paint),
     ("Lighten", Shade::Lighten),
     ("Darken", Shade::Darken),
@@ -66,17 +66,17 @@ pub const MODES: [(&str, Shade); 5] = [
 
 /// The tool's settings.
 #[derive(Resource, Debug, Clone)]
-pub struct Shading {
-    pub brush: Brush,
+pub(crate) struct Shading {
+    pub(crate) brush: Brush,
     /// The colour the panel is showing, as an ordinary 0..1 triple.
     ///
     /// Kept apart from [`Brush::colour`], which is the multiplier the stroke
     /// paints toward (see the module comment). [`Shading::aim`] converts one to
     /// the other, and is the only place the picker's units become the file's.
-    pub picked: [f32; 3],
+    pub(crate) picked: [f32; 3],
     /// How bright, as a multiplier on the picked colour: 1.0 leaves it alone,
     /// 2.0 is the brightest `MCCV` can state.
-    pub brightness: f32,
+    pub(crate) brightness: f32,
 }
 
 impl Default for Shading {
@@ -98,14 +98,14 @@ impl Shading {
     /// This is the only place the conversion happens. A picker's white is 1.0
     /// and `MCCV`'s neutral is 1.0, so white at brightness 1 is the identity and
     /// every other combination moves away from it in a known direction.
-    pub fn aim(&mut self) {
+    pub(crate) fn aim(&mut self) {
         for k in 0..3 {
             self.brush.colour[k] = (self.picked[k] * self.brightness).clamp(0.0, SHADE_MAX);
         }
     }
 
     /// What the brush is aimed at right now, for a panel that wants to show it.
-    pub fn target(&self) -> [f32; 3] {
+    pub(crate) fn target(&self) -> [f32; 3] {
         self.brush.colour
     }
 }
@@ -127,7 +127,7 @@ struct Held {
     working: std::collections::HashMap<(u32, u32), vale_edit::ops::paint::Working>,
 }
 
-pub struct ShadingToolPlugin;
+pub(crate) struct ShadingToolPlugin;
 
 impl Plugin for ShadingToolPlugin {
     fn build(&self, app: &mut App) {

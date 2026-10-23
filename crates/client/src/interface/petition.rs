@@ -67,7 +67,7 @@ const REGISTRAR_FLAGS: u32 = vale_assets::look::cursor::npc_flags::PETITIONER
 /// What the session thread said about a charter, forwarded by
 /// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
-pub enum PetitionAnswer {
+pub(crate) enum PetitionAnswer {
     ShowList(ShowList),
     Signatures(Signatures),
     Query(PetitionQuery),
@@ -82,7 +82,7 @@ pub enum PetitionAnswer {
 /// The guild registrar the registrar window is open at, or nothing. Read by
 /// [`super::gossip`] for the `"npc"` token.
 #[derive(Resource, Default)]
-pub struct RegistrarWindow(Option<u64>);
+pub(crate) struct RegistrarWindow(Option<u64>);
 
 impl RegistrarWindow {
     pub fn guid(&self) -> Option<u64> {
@@ -106,7 +106,7 @@ struct Waiting(Vec<(&'static str, u64)>);
 #[derive(Resource, Default)]
 struct Shown(bool);
 
-pub struct PetitionPlugin;
+pub(crate) struct PetitionPlugin;
 
 impl Plugin for PetitionPlugin {
     fn build(&self, app: &mut App) {
@@ -354,7 +354,7 @@ fn resolve(
         if let Some(world) = session
             .active
             .as_ref()
-            .and_then(|active| active.live.world().lock().ok())
+            .map(|active| active.live.read())
         {
             for guid in missing {
                 if let Some(info) = world.players.get(&guid) {
@@ -558,7 +558,7 @@ fn offer_to<'a>(
 }
 
 /// The arm [`crate::world::incoming`] calls for the seven charter events.
-pub fn answer_of(event: &PlayerEvent) -> Option<PetitionAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<PetitionAnswer> {
     Some(match event {
         PlayerEvent::PetitionShowList(list) => PetitionAnswer::ShowList(list.clone()),
         PlayerEvent::PetitionSignatures(list) => PetitionAnswer::Signatures(list.clone()),

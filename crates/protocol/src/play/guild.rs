@@ -72,15 +72,15 @@ use crate::opcodes::Opcode;
 
 /// How many rank names `SMSG_GUILD_QUERY_RESPONSE` carries. The server always
 /// writes ten and leaves the unused ones empty.
-pub const RANK_SLOTS: usize = 10;
+pub(crate) const RANK_SLOTS: usize = 10;
 
 /// The bits of a rank's rights word. Values follow vmangos' `Guild.h`, with
 /// the `0x40` bit the server sets on every rank removed: it states no right.
 pub mod rights {
-    pub const CHAT_LISTEN: u32 = 0x0000_0001;
-    pub const CHAT_SPEAK: u32 = 0x0000_0002;
-    pub const OFFICER_CHAT_LISTEN: u32 = 0x0000_0004;
-    pub const OFFICER_CHAT_SPEAK: u32 = 0x0000_0008;
+    pub(crate) const CHAT_LISTEN: u32 = 0x0000_0001;
+    pub(crate) const CHAT_SPEAK: u32 = 0x0000_0002;
+    pub(crate) const OFFICER_CHAT_LISTEN: u32 = 0x0000_0004;
+    pub(crate) const OFFICER_CHAT_SPEAK: u32 = 0x0000_0008;
     pub const INVITE: u32 = 0x0000_0010;
     pub const REMOVE: u32 = 0x0000_0020;
     /// Set on every rank, including one with no rights.
@@ -127,7 +127,7 @@ pub struct Emblem {
     pub style: i32,
     pub color: i32,
     pub border_style: i32,
-    pub border_color: i32,
+    pub(crate) border_color: i32,
     pub background: i32,
 }
 
@@ -193,7 +193,7 @@ pub struct GuildQuery {
 }
 
 /// `SMSG_GUILD_QUERY_RESPONSE` (85).
-pub fn parse_query(body: &[u8]) -> Option<GuildQuery> {
+pub(crate) fn parse_query(body: &[u8]) -> Option<GuildQuery> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -273,7 +273,7 @@ pub struct Roster {
 /// A body that ends inside a member keeps the members read before it. vmangos
 /// stops writing members when the packet would exceed its size limit, and
 /// still states the full count in the first word.
-pub fn parse_roster(body: &[u8]) -> Option<Roster> {
+pub(crate) fn parse_roster(body: &[u8]) -> Option<Roster> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -423,7 +423,7 @@ pub struct GuildEvent {
 }
 
 /// `SMSG_GUILD_EVENT` (146).
-pub fn parse_event(body: &[u8]) -> Option<GuildEvent> {
+pub(crate) fn parse_event(body: &[u8]) -> Option<GuildEvent> {
     let mut r = Reader::new(body);
     if !r.has(2) {
         return None;
@@ -444,10 +444,10 @@ pub fn parse_event(body: &[u8]) -> Option<GuildEvent> {
 /// `SMSG_GUILD_COMMAND_RESULT`'s command word. Values follow vmangos'
 /// `Typecommand`.
 pub mod command {
-    pub const CREATE: u32 = 0x00;
+    pub(crate) const CREATE: u32 = 0x00;
     pub const INVITE: u32 = 0x01;
     pub const QUIT: u32 = 0x03;
-    pub const FOUNDER: u32 = 0x0e;
+    pub(crate) const FOUNDER: u32 = 0x0e;
 }
 
 /// `SMSG_GUILD_COMMAND_RESULT` (147): the answer to a guild request, which is
@@ -503,7 +503,7 @@ impl CommandResult {
 }
 
 /// `SMSG_GUILD_COMMAND_RESULT` (147).
-pub fn parse_command_result(body: &[u8]) -> Option<CommandResult> {
+pub(crate) fn parse_command_result(body: &[u8]) -> Option<CommandResult> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -528,7 +528,7 @@ pub struct Invite {
 }
 
 /// `SMSG_GUILD_INVITE` (131).
-pub fn parse_invite(body: &[u8]) -> Option<Invite> {
+pub(crate) fn parse_invite(body: &[u8]) -> Option<Invite> {
     let mut r = Reader::new(body);
     if !r.has(2) {
         return None;
@@ -541,7 +541,7 @@ pub fn parse_invite(body: &[u8]) -> Option<Invite> {
 
 /// `SMSG_GUILD_DECLINE` (134): the name of the player who declined the
 /// character's invitation.
-pub fn parse_decline(body: &[u8]) -> Option<String> {
+pub(crate) fn parse_decline(body: &[u8]) -> Option<String> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -561,7 +561,7 @@ pub struct GuildInfo {
 }
 
 /// `SMSG_GUILD_INFO` (136).
-pub fn parse_info(body: &[u8]) -> Option<GuildInfo> {
+pub(crate) fn parse_info(body: &[u8]) -> Option<GuildInfo> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -584,10 +584,10 @@ pub fn parse_info(body: &[u8]) -> Option<GuildInfo> {
 /// `GuildEmblem`.
 pub mod emblem_result {
     pub const SUCCESS: u32 = 0;
-    pub const INVALID_TABARD_COLORS: u32 = 1;
-    pub const NO_GUILD: u32 = 2;
-    pub const NOT_GUILD_MASTER: u32 = 3;
-    pub const NOT_ENOUGH_MONEY: u32 = 4;
+    pub(crate) const INVALID_TABARD_COLORS: u32 = 1;
+    pub(crate) const NO_GUILD: u32 = 2;
+    pub(crate) const NOT_GUILD_MASTER: u32 = 3;
+    pub(crate) const NOT_ENOUGH_MONEY: u32 = 4;
     /// A refusal that prints nothing: the designer is out of reach.
     pub const FAIL_NO_MESSAGE: u32 = 5;
 
@@ -611,19 +611,19 @@ pub const EMBLEM_COST: u32 = 100_000;
 
 /// `MSG_SAVE_GUILD_EMBLEM` (497), from the server: one of
 /// [`emblem_result`].
-pub fn parse_emblem_result(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_emblem_result(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
 
 /// `MSG_TABARDVENDOR_ACTIVATE` (498), from the server: the designer's guid.
-pub fn parse_tabard_vendor(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_tabard_vendor(body: &[u8]) -> Option<u64> {
     let mut r = Reader::new(body);
     r.has(8).then(|| r.u64())
 }
 
 /// `MSG_TABARDVENDOR_ACTIVATE` (498), to the server.
-pub fn tabard_vendor_body(npc: u64) -> Vec<u8> {
+pub(crate) fn tabard_vendor_body(npc: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc);
     w.buf
@@ -631,7 +631,7 @@ pub fn tabard_vendor_body(npc: u64) -> Vec<u8> {
 
 /// `MSG_SAVE_GUILD_EMBLEM` (497), to the server: the designer and the five
 /// numbers of the design.
-pub fn emblem_body(npc: u64, emblem: Emblem) -> Vec<u8> {
+pub(crate) fn emblem_body(npc: u64, emblem: Emblem) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc)
         .u32(emblem.style as u32)
@@ -643,14 +643,14 @@ pub fn emblem_body(npc: u64, emblem: Emblem) -> Vec<u8> {
 }
 
 /// A body that is one string: the name of a player, a rank or a text.
-pub fn text_body(text: &str) -> Vec<u8> {
+pub(crate) fn text_body(text: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(text);
     w.buf
 }
 
 /// `CMSG_GUILD_QUERY` (84).
-pub fn query_body(guild: u32) -> Vec<u8> {
+pub(crate) fn query_body(guild: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(guild);
     w.buf
@@ -659,7 +659,7 @@ pub fn query_body(guild: u32) -> Vec<u8> {
 /// `CMSG_GUILD_RANK` (561): replace one rank's name and rights. `rights` is
 /// the bits of [`rights`]; the [`rights::EMPTY`] bit is added here, as the
 /// server stores it on every rank.
-pub fn rank_body(rank: u32, rights: u32, name: &str) -> Vec<u8> {
+pub(crate) fn rank_body(rank: u32, rights: u32, name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(rank).u32(rights | rights::EMPTY).cstring(name);
     w.buf
@@ -667,7 +667,7 @@ pub fn rank_body(rank: u32, rights: u32, name: &str) -> Vec<u8> {
 
 /// `CMSG_GUILD_SET_PUBLIC_NOTE` (564) and `CMSG_GUILD_SET_OFFICER_NOTE` (565),
 /// which share a layout.
-pub fn note_body(player: &str, note: &str) -> Vec<u8> {
+pub(crate) fn note_body(player: &str, note: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(player).cstring(note);
     w.buf

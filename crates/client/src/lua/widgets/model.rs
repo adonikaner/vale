@@ -121,7 +121,7 @@ impl UiModels {
     /// `None` for a model that is not loaded or a sequence it does not have,
     /// which [`tick`] takes to mean there is no end at which to raise
     /// `OnAnimFinished`.
-    pub fn sequence_length(&self, path: &str, index: u32) -> Option<f64> {
+    pub(crate) fn sequence_length(&self, path: &str, index: u32) -> Option<f64> {
         let model = self.get(path)?;
         let sequence = model.skeleton.as_ref()?.sequences.get(index as usize)?;
         Some(f64::from(sequence.end.saturating_sub(sequence.start)) / 1000.0)
@@ -214,29 +214,6 @@ const REG_MODEL_FRAMES: &str = "vale.modelFrames";
 /// On its own list the same walk is five entries.
 const REG_UNIT_FRAMES: &str = "vale.unitModelFrames";
 
-/// The widget methods this file registers. Sorted, and counted by
-/// `vale framexml` as implemented rather than stubbed. Two of them were
-/// previously in [`super::super::api::stubs::METHODS`]; see
-/// [`super::super::api::stubs`].
-pub const METHODS: [&str; 16] = [
-    "AdvanceTime",
-    "ClearFog",
-    "ClearModel",
-    "GetFacing",
-    "GetFogColor",
-    "GetFogFar",
-    "GetFogNear",
-    "GetModel",
-    "SetCamera",
-    "SetFacing",
-    "SetFogColor",
-    "SetFogFar",
-    "SetFogNear",
-    "SetModel",
-    "SetRotation",
-    "SetUnit",
-];
-
 /// What a model frame is holding, as plain data: everything `render/` needs,
 /// with nothing that borrows Lua.
 #[derive(Debug, Clone, PartialEq)]
@@ -280,7 +257,7 @@ pub struct Scene {
     /// `Model:SetRotation`, stored in [`Self::rotation`], is in radians, and
     /// `UIParent.lua`'s `Model_OnUpdate` wraps it at `2 * PI`. The two are
     /// different functions, and only `SetRotation` is a widget method.
-    pub character_facing: f32,
+    pub(crate) character_facing: f32,
     /// `SetModelScale`, defaulting to 1.
     pub scale: f32,
     /// The unit this frame is a paper doll of, from `SetUnit`: `"player"` for
@@ -810,7 +787,7 @@ pub(in crate::lua) fn fire(lua: &mlua::Lua, frame: &mlua::Table, name: &str, err
     }
 }
 
-pub struct ModelPlugin;
+pub(crate) struct ModelPlugin;
 
 impl Plugin for ModelPlugin {
     fn build(&self, app: &mut App) {
@@ -887,7 +864,7 @@ pub(in crate::lua) fn files(lua: &mlua::Lua) -> Vec<String> {
 /// the rectangle sits on the screen is for the painter, which reads it from
 /// the draw list like every other item.
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnitFrame {
+pub(crate) struct UnitFrame {
     /// The frame's own name, such as `CharacterModelFrame` or `PetModelFrame`.
     /// The painter looks the finished picture up by this key, so it must be
     /// the same string [`Scene::frame`] carries.

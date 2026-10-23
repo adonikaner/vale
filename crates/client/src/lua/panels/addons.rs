@@ -67,11 +67,11 @@ use crate::lua::host::LuaHost;
 
 /// A reader over the archive chain and the loose folder, kept for
 /// `LoadAddOn`. See `crate::assets::GameAssets::reader`.
-pub type Reader = Rc<dyn Fn(&str) -> Option<Vec<u8>>>;
+pub(crate) type Reader = Rc<dyn Fn(&str) -> Option<Vec<u8>>>;
 
 /// Which of an addon's two saved files a text is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
+pub(crate) enum Scope {
     /// `## SavedVariables` — `WTF\Account\<A>\SavedVariables\<addon>.lua`.
     Account,
     /// `## SavedVariablesPerCharacter` — the same name three directories down.
@@ -80,7 +80,7 @@ pub enum Scope {
 
 /// An addon's saved files, as text, until its load runs them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SavedFiles {
+pub(crate) struct SavedFiles {
     pub account: Option<String>,
     pub character: Option<String>,
 }
@@ -126,7 +126,7 @@ impl Board {
         self.list = Some(list);
     }
 
-    pub fn is_seeded(&self) -> bool {
+    pub(crate) fn is_seeded(&self) -> bool {
         self.list.is_some()
     }
 
@@ -151,33 +151,29 @@ impl Board {
         }
     }
 
-    pub fn set_reader(&mut self, reader: Reader) {
+    pub(crate) fn set_reader(&mut self, reader: Reader) {
         self.reader = Some(reader);
     }
 
     /// The characters a `nil` character means, in list order.
-    pub fn set_characters(&mut self, names: Vec<String>) {
+    pub(crate) fn set_characters(&mut self, names: Vec<String>) {
         self.characters = names;
-    }
-
-    pub fn characters(&self) -> &[String] {
-        &self.characters
     }
 
     /// **What one character's `AddOns.txt` said**, and the point the reset
     /// returns to.
-    pub fn seed_states(&mut self, character: &str, states: Vec<(String, bool)>) {
+    pub(crate) fn seed_states(&mut self, character: &str, states: Vec<(String, bool)>) {
         let map: BTreeMap<String, bool> = states.into_iter().map(|(n, e)| (key(&n), e)).collect();
         self.saved_states.insert(character.to_string(), map.clone());
         self.states.insert(character.to_string(), map);
     }
 
-    pub fn has_states_for(&self, character: &str) -> bool {
+    pub(crate) fn has_states_for(&self, character: &str) -> bool {
         self.states.contains_key(character)
     }
 
     /// Which character the world session is for. The load waits on this.
-    pub fn set_active(&mut self, character: Option<String>) {
+    pub(crate) fn set_active(&mut self, character: Option<String>) {
         self.active = character;
     }
 
@@ -186,7 +182,7 @@ impl Board {
     }
 
     /// The list is seeded and a character is named: enough to decide what loads.
-    pub fn ready_for_world(&self) -> bool {
+    pub(crate) fn ready_for_world(&self) -> bool {
         self.list.is_some() && self.active.is_some()
     }
 
@@ -210,7 +206,7 @@ impl Board {
     }
 
     /// Whether `character` has `addon` on. A shipped addon is always on.
-    pub fn enabled_for(&self, character: &str, addon: &Addon) -> bool {
+    pub(crate) fn enabled_for(&self, character: &str, addon: &Addon) -> bool {
         if addon.secure {
             return true;
         }
@@ -234,7 +230,7 @@ impl Board {
     }
 
     /// `GetAddOnEnableState`'s 0, 1 or 2.
-    pub fn enable_state(&self, character: Option<&str>, addon: &Addon) -> u8 {
+    pub(crate) fn enable_state(&self, character: Option<&str>, addon: &Addon) -> u8 {
         let over: Vec<&str> = match character {
             Some(one) => vec![one],
             None if self.characters.is_empty() => self.states.keys().map(String::as_str).collect(),
@@ -252,7 +248,7 @@ impl Board {
     }
 
     /// The four writes. `None` is every character the board knows.
-    pub fn set_enabled(&mut self, character: Option<&str>, addon: &str, enabled: bool) {
+    pub(crate) fn set_enabled(&mut self, character: Option<&str>, addon: &str, enabled: bool) {
         let targets: Vec<String> = match character {
             Some(one) => vec![one.to_string()],
             None if self.characters.is_empty() => self.states.keys().cloned().collect(),
@@ -263,16 +259,16 @@ impl Board {
         }
     }
 
-    pub fn version_check(&self) -> bool {
+    pub(crate) fn version_check(&self) -> bool {
         !self.version_check_off
     }
 
-    pub fn set_version_check(&mut self, on: bool) {
+    pub(crate) fn set_version_check(&mut self, on: bool) {
         self.version_check_off = !on;
     }
 
     /// Why `name` will not load now, or `Ok`.
-    pub fn loadable(&self, name: &str) -> Result<(), Reason> {
+    pub(crate) fn loadable(&self, name: &str) -> Result<(), Reason> {
         let Some(index) = addons::index_of(self.all(), name) else {
             return Err(Reason::Missing);
         };
@@ -282,7 +278,7 @@ impl Board {
     /// **The names to load at login, in order** — see
     /// `vale_assets::interface::addons::load_order`, which is also where
     /// the reason the shipped seven load despite `## LoadOnDemand: 1` is.
-    pub fn load_order(&self) -> Vec<String> {
+    pub(crate) fn load_order(&self) -> Vec<String> {
         addons::load_order(
             self.all(),
             &|n| self.enabled_now(n),
@@ -294,20 +290,20 @@ impl Board {
         .collect()
     }
 
-    pub fn is_loaded(&self, name: &str) -> bool {
+    pub(crate) fn is_loaded(&self, name: &str) -> bool {
         self.loaded.contains(&key(name))
     }
 
-    pub fn mark_loaded(&mut self, name: &str) {
+    pub(crate) fn mark_loaded(&mut self, name: &str) {
         self.loaded.insert(key(name));
     }
 
     /// The loaded ones, in list order.
-    pub fn loaded_addons(&self) -> Vec<&Addon> {
+    pub(crate) fn loaded_addons(&self) -> Vec<&Addon> {
         self.all().iter().filter(|a| self.is_loaded(&a.name)).collect()
     }
 
-    pub fn put_saved_file(&mut self, addon: &str, scope: Scope, text: &str) {
+    pub(crate) fn put_saved_file(&mut self, addon: &str, scope: Scope, text: &str) {
         let files = self.saved_files.entry(key(addon)).or_default();
         match scope {
             Scope::Account => files.account = Some(text.to_string()),
@@ -315,13 +311,13 @@ impl Board {
         }
     }
 
-    pub fn take_saved_files(&mut self, addon: &str) -> SavedFiles {
+    pub(crate) fn take_saved_files(&mut self, addon: &str) -> SavedFiles {
         self.saved_files.remove(&key(addon)).unwrap_or_default()
     }
 
     /// **One character's `AddOns.txt`**, in list order over the folder's
     /// addons: the file the reference writes at logout.
-    pub fn states_for(&self, character: &str) -> Vec<(String, bool)> {
+    pub(crate) fn states_for(&self, character: &str) -> Vec<(String, bool)> {
         self.listed()
             .iter()
             .map(|a| (a.name.clone(), self.enabled_for(character, a)))
@@ -329,7 +325,7 @@ impl Board {
     }
 
     /// Characters whose states differ from what their file said.
-    pub fn changed_characters(&self) -> Vec<String> {
+    pub(crate) fn changed_characters(&self) -> Vec<String> {
         self.states
             .iter()
             .filter(|(character, map)| {
@@ -346,7 +342,7 @@ impl Board {
     }
 
     /// The file for `character` has been written with the live states.
-    pub fn mark_saved(&mut self, character: &str) {
+    pub(crate) fn mark_saved(&mut self, character: &str) {
         if let Some(map) = self.states.get(character) {
             self.saved_states.insert(character.to_string(), map.clone());
         }
@@ -358,7 +354,7 @@ impl Board {
     }
 
     /// `SaveAddOns` was pressed; answered once.
-    pub fn take_save_request(&mut self) -> bool {
+    pub(crate) fn take_save_request(&mut self) -> bool {
         std::mem::take(&mut self.save_requested)
     }
 }

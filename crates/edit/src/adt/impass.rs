@@ -42,7 +42,7 @@ use super::header::at;
 /// nothing in the client reads it: that module is the flags the *renderer*
 /// keys on, and adding one it ignores would invite the next reader to look for
 /// where it is used.
-pub const IMPASSABLE: u32 = 0x02;
+pub(crate) const IMPASSABLE: u32 = 0x02;
 
 /// Is this chunk marked impassable?
 pub fn impassable(tile: &AdtFile, chunk_index: usize) -> bool {

@@ -18,19 +18,19 @@ use vale_mangos::graveyard::FACTIONS;
 use vale_mangos::row::Life;
 
 /// What the panel is drawn from.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub graveyards: &'a mut Graveyards,
-    pub assets: &'a vale_client::assets::GameAssets,
-    pub now: f64,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) graveyards: &'a mut Graveyards,
+    pub(crate) assets: &'a vale_client::assets::GameAssets,
+    pub(crate) now: f64,
     /// The top bar's Server… popover, which holds Apply and Put back.
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where the Fly to button sends its request. See
     /// [`crate::camera::FlyTo`].
-    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
-pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
     let Subject {
         session,
         graveyards,

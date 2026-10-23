@@ -27,7 +27,7 @@ use crate::world::session::Session;
 
 /// `MSG_INSPECT_HONOR_STATS` from the server, routed by `world::incoming`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct InspectAnswer(pub InspectHonor);
+pub(crate) struct InspectAnswer(pub(crate) InspectHonor);
 
 /// What the inspect window's C functions ask for, queued by
 /// [`crate::lua::panels::inspect`] and acted on here.
@@ -54,7 +54,7 @@ pub struct Inspect {
 
 impl Inspect {
     /// The inspected player's honor, once it has arrived.
-    pub fn honor(&self) -> Option<&InspectHonor> {
+    pub(crate) fn honor(&self) -> Option<&InspectHonor> {
         self.honor.as_ref()
     }
 
@@ -93,7 +93,7 @@ impl Inspect {
     }
 }
 
-pub struct InspectPlugin;
+pub(crate) struct InspectPlugin;
 
 impl Plugin for InspectPlugin {
     fn build(&self, app: &mut App) {

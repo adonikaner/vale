@@ -18,7 +18,7 @@ use bevy::prelude::*;
 /// Without the wait the Apply ran against an empty store and said so. Each
 /// `scripted_done` is set at once when its own flags are absent.
 #[derive(SystemParam)]
-pub struct Scripted<'w> {
+pub(crate) struct Scripted<'w> {
     waypoints: Res<'w, crate::tools::spawns::waypoints::Waypoints>,
     creatures: Res<'w, crate::tools::spawns::creatures::Creatures>,
     objects: Res<'w, crate::tools::spawns::gameobjects::GameObjects>,
@@ -53,7 +53,7 @@ impl Scripted<'_> {
 /// Each flag runs through [`stack`], as the Server panel's buttons do, so it
 /// also puts back and applies the later subjects with its own. The subjects are
 /// taken in [`Subject::ORDER`], each put back before it is applied.
-pub fn on_the_command_line(
+pub(crate) fn on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<ServerSettings>,

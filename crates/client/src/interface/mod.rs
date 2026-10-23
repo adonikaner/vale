@@ -132,63 +132,63 @@ pub mod action;
 pub mod api;
 pub mod auras;
 pub mod bank;
-pub mod binder;
+pub(crate) mod binder;
 pub mod channels;
 pub mod chat;
 pub mod cursor;
-pub mod death;
+pub(crate) mod death;
 pub mod duel;
-pub mod emotetext;
+pub(crate) mod emotetext;
 pub mod events;
 pub mod gossip;
 pub mod items;
 pub mod log;
-pub mod logout;
+pub(crate) mod logout;
 pub mod loot;
-pub mod lootroll;
+pub(crate) mod lootroll;
 pub mod mail;
-pub mod merchant;
-pub mod messages;
+pub(crate) mod merchant;
+pub(crate) mod messages;
 pub mod minimap;
-pub mod notices;
+pub(crate) mod notices;
 pub mod object;
-pub mod pagetext;
-pub mod party;
+pub(crate) mod pagetext;
+pub(crate) mod party;
 pub mod pet;
-pub mod petition;
+pub(crate) mod petition;
 pub mod plate;
 pub mod played;
 pub mod quest;
-pub mod questshare;
+pub(crate) mod questshare;
 pub mod raid;
-pub mod raidtarget;
-pub mod randomroll;
-pub mod received;
+pub(crate) mod raidtarget;
+pub(crate) mod randomroll;
+pub(crate) mod received;
 pub mod reputation;
-pub mod shapeshift;
+pub(crate) mod shapeshift;
 pub mod skills;
-pub mod guild;
-pub mod social;
+pub(crate) mod guild;
+pub(crate) mod social;
 pub mod spellbook;
-pub mod stable;
+pub(crate) mod stable;
 pub mod stats;
-pub mod summon;
-pub mod tabard;
-pub mod uioptions;
+pub(crate) mod summon;
+pub(crate) mod tabard;
+pub(crate) mod uioptions;
 pub mod inspect;
-pub mod supersede;
+pub(crate) mod supersede;
 pub mod talents;
 pub mod target;
 pub mod taxi;
 pub mod timers;
 pub mod trade;
-pub mod tradeskill;
+pub(crate) mod tradeskill;
 pub mod trainer;
-pub mod tutorial;
-pub mod untrainer;
-pub mod vitals;
-pub mod worldmap;
-pub mod worldstate;
+pub(crate) mod tutorial;
+pub(crate) mod untrainer;
+pub(crate) mod vitals;
+pub(crate) mod worldmap;
+pub(crate) mod worldstate;
 
 use bevy::prelude::*;
 
@@ -198,11 +198,11 @@ use bevy::prelude::*;
 /// and the interface's event dispatch order themselves after the whole set
 /// rather than after whichever system they read.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GameSet;
+pub(crate) struct GameSet;
 
 /// Every plugin in this directory, as one group. See
 /// [`crate::render::RenderPlugins`] for why each directory registers its own.
-pub struct InterfacePlugins;
+pub(crate) struct InterfacePlugins;
 
 impl Plugin for InterfacePlugins {
     fn build(&self, app: &mut App) {

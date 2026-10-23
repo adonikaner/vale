@@ -6,6 +6,7 @@
 use super::super::api::Answers;
 
 /// The reads this module registers, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 1] = ["GetRaidTargetIndex"];
 
 /// What the interface may ask about icons. The default is "none".

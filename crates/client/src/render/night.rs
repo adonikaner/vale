@@ -105,14 +105,14 @@ pub struct NightTuning {
     /// in shaders that were already running, and the lamps are twenty-four
     /// point lights that Bevy has to cluster. Turning this off and the grade
     /// on is how the second is priced.
-    pub lamps: bool,
+    pub(crate) lamps: bool,
     /// How bright a lamp **standing in the open** is, as a multiple of
     /// [`crate::render::lamps`]' own value. On the panel because a torch that
     /// is too bright and a torch that is too dim are both one slider away from
     /// right, and neither is worth a rebuild.
-    pub lamp_strength: f32,
+    pub(crate) lamp_strength: f32,
     /// …and how far it reaches, on the same terms.
-    pub lamp_reach: f32,
+    pub(crate) lamp_reach: f32,
     /// …and the same pair for a lamp **inside a building**, which wants
     /// different numbers rather than the same ones.
     ///
@@ -134,9 +134,9 @@ pub struct NightTuning {
     /// See [`crate::render::lamps::light_the_flames`], which does the test, and
     /// [`crate::render::wmos::Interior::holds`], which is the same one
     /// `world::entities::light_entities` already makes for every unit.
-    pub indoor_lamp_strength: f32,
+    pub(crate) indoor_lamp_strength: f32,
     /// …and how far an indoor lamp reaches.
-    pub indoor_lamp_reach: f32,
+    pub(crate) indoor_lamp_reach: f32,
     /// **How long a lamp takes to come up and to go out, in seconds** — see
     /// [`crate::render::lamps::Slot::level`], which is the curve it is spent
     /// along.
@@ -145,7 +145,7 @@ pub struct NightTuning {
     /// abrupt" is a question with a middle, it is answered by looking rather
     /// than by measuring, and rebuilding to try a number is the tax
     /// [`crate::render::tuning`] exists to retire.
-    pub lamp_fade: f32,
+    pub(crate) lamp_fade: f32,
     /// **How much a flame wavers**, as a multiplier on each lamp's own
     /// amplitude — see [`crate::render::lamps::LampLight::flicker`], which is
     /// where the per-source split lives.
@@ -155,7 +155,7 @@ pub struct NightTuning {
     /// cost at all: at 0 every lamp is as still as it was and the pass goes
     /// back to writing nothing for a settled slot, which is the A/B that prices
     /// it. See [`crate::render::lamps::flame`].
-    pub lamp_flicker: f32,
+    pub(crate) lamp_flicker: f32,
 }
 
 impl Default for NightTuning {
@@ -222,7 +222,7 @@ impl NightTuning {
     }
 
     /// The factor to grade by for an atmosphere, or zero when the option is off.
-    pub fn applied_to(&self, atmosphere: &Atmosphere) -> f32 {
+    pub(crate) fn applied_to(&self, atmosphere: &Atmosphere) -> f32 {
         if !self.enabled {
             return 0.0;
         }
@@ -240,7 +240,7 @@ impl NightTuning {
 #[derive(Resource, Default, Clone, Copy, PartialEq)]
 pub struct Night {
     /// [`NightTuning::applied_to`] for the atmosphere in force.
-    pub factor: f32,
+    pub(crate) factor: f32,
     /// The height the mist's density is quoted at, in the **world's** own Z —
     /// which is Bevy's Y unchanged, see [`crate::render::axes`]. See
     /// [`NightAir::deck`].
@@ -279,7 +279,7 @@ const NIGHT_LUMA: f32 = 0.72;
 /// middle: a linear ramp puts a visible seam at the hour the grade reaches
 /// zero, and the table's own band interpolation is already linear underneath
 /// this.
-pub fn factor(atmosphere: &Atmosphere) -> f32 {
+pub(crate) fn factor(atmosphere: &Atmosphere) -> f32 {
     let lit = luma([
         atmosphere.diffuse[0] + atmosphere.ambient[0],
         atmosphere.diffuse[1] + atmosphere.ambient[1],
@@ -373,7 +373,7 @@ const FOG_START_PULL: f32 = 0.30;
 /// `n` is [`NightTuning::applied_to`]'s result. At `n == 0` this is the identity
 /// — not approximately, exactly — which is the property that lets the option
 /// default to on without moving a single daylight measurement.
-pub fn deepen(atmosphere: &mut Atmosphere, n: f32) {
+pub(crate) fn deepen(atmosphere: &mut Atmosphere, n: f32) {
     if n <= 0.0 {
         return;
     }
@@ -409,7 +409,7 @@ pub fn deepen(atmosphere: &mut Atmosphere, n: f32) {
 /// night factor, which is a CPU quantity, and because the packing below is the
 /// half that can be tested.
 #[derive(Clone, Copy, PartialEq, Debug, ShaderType)]
-pub struct NightAir {
+pub(crate) struct NightAir {
     /// The night factor itself, and the shader's own early-out: at zero
     /// `night_air` returns its argument before touching anything else, which is
     /// one uniform-coherent compare per fragment in daylight.
@@ -487,7 +487,7 @@ impl NightAir {
     /// **If a later Bevy starts reading either field for something else, this
     /// is the one place to look** — the symptom would be a glow around the sun
     /// in daylight rather than an error.
-    pub fn pack(&self) -> (Color, f32) {
+    pub(crate) fn pack(&self) -> (Color, f32) {
         (
             Color::LinearRgba(LinearRgba::new(
                 self.night,
@@ -500,7 +500,7 @@ impl NightAir {
     }
 }
 
-pub struct NightPlugin;
+pub(crate) struct NightPlugin;
 
 impl Plugin for NightPlugin {
     /// **The shader half of this module is not registered here**, and that is

@@ -47,7 +47,7 @@ use vale_protocol::state::events::PlayerEvent;
 /// [`crate::world::incoming::drain_events`] on the same terms as every other
 /// subject's.
 #[derive(Message, Debug, Clone)]
-pub enum ReputationAnswer {
+pub(crate) enum ReputationAnswer {
     /// `SMSG_INITIALIZE_FACTIONS` — the whole table. Boxed for the same reason
     /// the `PlayerEvent` is: 64 pairs against a handful of bytes everywhere else.
     Initialized(Box<vale_protocol::play::reputation::FactionStates>),
@@ -64,7 +64,7 @@ pub enum ReputationAnswer {
     Forced(Vec<(u32, u32)>),
 }
 
-pub struct ReputationPlugin;
+pub(crate) struct ReputationPlugin;
 
 impl Plugin for ReputationPlugin {
     fn build(&self, app: &mut App) {
@@ -186,18 +186,18 @@ fn apply_answers(
 /// makes every reaction fall through to `FactionTemplate.dbc` alone — which is
 /// what this client did before any of this existed.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct PlayerStanding {
+pub(crate) struct PlayerStanding {
     /// `SMSG_SET_FORCED_REACTIONS`, whole. Replaced rather than merged, because
     /// the packet is the server's complete statement — see
     /// [`vale_protocol::play::reputation::parse_forced_reactions`].
-    pub forced: Vec<(u32, vale_assets::tables::faction::Rank)>,
+    pub(crate) forced: Vec<(u32, vale_assets::tables::faction::Rank)>,
     /// …and the reputation list, faction id first.
     pub standings: Vec<(u32, vale_assets::tables::faction::FactionState)>,
 }
 
 impl PlayerStanding {
     /// Lend both lists to the rule.
-    pub fn lend(&self) -> vale_assets::tables::faction::Standing<'_> {
+    pub(crate) fn lend(&self) -> vale_assets::tables::faction::Standing<'_> {
         vale_assets::tables::faction::Standing {
             forced: &self.forced,
             standings: &self.standings,
@@ -304,7 +304,7 @@ fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<
 
 /// The arm [`crate::world::incoming`] calls, kept here so the four packet kinds
 /// and the four board writes are one file apart rather than two.
-pub fn answer_of(event: &PlayerEvent) -> Option<ReputationAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<ReputationAnswer> {
     Some(match event {
         PlayerEvent::FactionsInitialized(states) => {
             ReputationAnswer::Initialized(states.clone())

@@ -69,26 +69,26 @@ pub struct InboxRow {
     /// `Package.dbc`'s icon, and **nil is the ordinary case**: vmangos writes 0
     /// in the package field for every letter it sends, so this is the wrapping
     /// on a parcel the interface would draw instead of the paper.
-    pub package_icon: Option<String>,
+    pub(crate) package_icon: Option<String>,
     /// `Stationery.dbc`'s row's own *item*'s icon — see
     /// [`vale_assets::tables::stationery`], where the two columns are told
     /// apart. `None` until that item's template answers.
-    pub stationery_icon: Option<String>,
+    pub(crate) stationery_icon: Option<String>,
     /// **`None` is what draws `UNKNOWN`** — see the module note.
-    pub sender: Option<String>,
+    pub(crate) sender: Option<String>,
     /// Already rewritten through `COD_PAYMENT` when the letter is one; see
     /// [`InboxRow::subject`]'s writer in the `Live` impl.
     pub subject: String,
     pub money: u32,
-    pub cod: u32,
+    pub(crate) cod: u32,
     /// **Days**, and the interface formats under one day as a countdown.
-    pub days_left: f32,
-    pub has_item: bool,
-    pub was_read: bool,
-    pub was_returned: bool,
-    pub text_created: bool,
-    pub can_reply: bool,
-    pub is_gm: bool,
+    pub(crate) days_left: f32,
+    pub(crate) has_item: bool,
+    pub(crate) was_read: bool,
+    pub(crate) was_returned: bool,
+    pub(crate) text_created: bool,
+    pub(crate) can_reply: bool,
+    pub(crate) is_gm: bool,
 }
 
 /// What `GetInboxText` answers.
@@ -101,7 +101,7 @@ pub struct InboxText {
     /// appends.
     pub texture: Option<String>,
     /// Whether the letter itself can be kept as an item.
-    pub takeable: bool,
+    pub(crate) takeable: bool,
 }
 
 /// One item line — the parcel in a letter, or the one attached to the draft.
@@ -390,7 +390,7 @@ fn copper_of(n: Option<i64>) -> u32 {
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::mail::MailPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::mail::MailPress>>>;
 
 /// Register the ten writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

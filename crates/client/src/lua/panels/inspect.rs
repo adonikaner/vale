@@ -26,7 +26,7 @@ use super::super::api::Answers;
 use crate::interface::inspect::InspectPress;
 use crate::lua::host::LuaHost;
 
-pub type Queue = Rc<RefCell<Vec<InspectPress>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<InspectPress>>>;
 
 /// The reads, for the interface census.
 pub const READS: [&str; 4] = [

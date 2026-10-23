@@ -135,7 +135,7 @@ impl GameAssets {
     }
 
     /// …with the install folder named, for the loose-file overlay.
-    pub fn with_root(mut self, root: String) -> Self {
+    pub(crate) fn with_root(mut self, root: String) -> Self {
         self.root = root;
         self
     }
@@ -156,7 +156,7 @@ impl GameAssets {
     /// own **and outlives the install**: the model loader's thread starts
     /// before a host has anything to install, so it reads this on every
     /// request rather than asking once. See [`Self::overlay`].
-    pub fn overlay_cell(&self) -> Arc<Mutex<Option<vale_assets::archive::Overlay>>> {
+    pub(crate) fn overlay_cell(&self) -> Arc<Mutex<Option<vale_assets::archive::Overlay>>> {
         Arc::clone(&self.overlay)
     }
 
@@ -425,7 +425,7 @@ impl GameAssets {
     /// it rather than one with wrong buttons — see
     /// [`vale_assets::tables::charcreate::CharCreate::load`], where each table's own
     /// degradation is.
-    pub fn char_create(&self) -> Arc<CharCreate> {
+    pub(crate) fn char_create(&self) -> Arc<CharCreate> {
         let mut guard = self.char_create.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
             let tables = self
@@ -516,7 +516,8 @@ impl GameAssets {
 
     /// Which archives mounted, so the HUD can say whether game data was found at
     /// all — the single most common setup failure.
-    pub fn archive_names(&self) -> Result<Vec<String>, String> {
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn archive_names(&self) -> Result<Vec<String>, String> {
         self.with_archive(|assets| {
             Ok(assets
                 .archive_names()
@@ -524,6 +525,61 @@ impl GameAssets {
                 .map(str::to_string)
                 .collect())
         })
+    }
+}
+
+/// The bytes behind some virtual paths changed, so what was read from them
+/// once has to be read again.
+///
+/// A host that answers paths with bytes of its own (see [`GameAssets`]'s
+/// overlay) sends this after changing them. The overlay is asked only when a
+/// path is read, and four banks read a path once and keep what they read. Each
+/// handles this message in its own module, in [`ForgetChanged`]:
+///
+/// ```text
+/// GameAssets    the tables and the banks parsed with them, when `tables`
+/// DisplayCache  its Arc of the display tables, read again at once, when `tables`
+/// ModelCache    every model, skin and texture read by one of `paths`, or all
+/// UiTextures    every minimap picture read by one of `paths`, or all
+/// ```
+///
+/// Nothing drawn is rebuilt. What is standing keeps its handles, and the next
+/// thing to ask reads the file.
+#[derive(Message, Debug, Clone, Default)]
+pub struct PathsChanged {
+    /// The paths whose bytes changed.
+    pub paths: Vec<String>,
+    /// Whether any path may have changed, more than the sender can name: the
+    /// source behind the overlay was replaced.
+    pub all: bool,
+    /// Whether the client tables changed. They are dozens of paths read and
+    /// parsed together, so they are named as one.
+    pub tables: bool,
+}
+
+/// The systems that handle [`PathsChanged`], one per bank. A host that
+/// changes a path and asks for it in the same frame sends the message before
+/// this set and asks after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ForgetChanged;
+
+/// [`PathsChanged`] and the [`GameAssets`] half of handling it.
+pub(crate) struct AssetsPlugin;
+
+impl Plugin for AssetsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_message::<PathsChanged>()
+            .add_systems(Update, forget_changed_tables.in_set(ForgetChanged));
+    }
+}
+
+/// Drop the parsed tables when a [`PathsChanged`] says they changed.
+///
+/// Public so that a bank derived from the tables can order its own re-read
+/// after it.
+pub(crate) fn forget_changed_tables(mut changed: MessageReader<PathsChanged>, assets: Res<GameAssets>) {
+    if changed.read().fold(false, |any, change| any | change.tables) {
+        assets.forget_tables();
     }
 }
 

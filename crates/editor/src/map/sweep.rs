@@ -63,7 +63,7 @@ const PER_FRAME: usize = 8;
 
 /// Which list of paths a sweep is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Subject {
+pub(crate) enum Subject {
     /// `MTEX`, the ground textures — the map-wide half of the Chunk list's
     /// **swap**, which does one chunk.
     #[default]
@@ -75,7 +75,7 @@ pub enum Subject {
 }
 
 impl Subject {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Subject::Texture => "texture",
             Subject::Model => "model",
@@ -85,7 +85,7 @@ impl Subject {
 
     /// The archive folder each one lives under, for a panel that wants to say
     /// what kind of path is wanted.
-    pub fn root(self) -> &'static str {
+    pub(crate) fn root(self) -> &'static str {
         match self {
             Subject::Texture => r"Tileset\",
             Subject::Model => r"World\",
@@ -103,7 +103,7 @@ impl Subject {
 }
 
 /// The three lists, as a panel needs them.
-pub const SUBJECTS: [(&str, Subject); 3] = [
+pub(crate) const SUBJECTS: [(&str, Subject); 3] = [
     ("Textures", Subject::Texture),
     ("Models", Subject::Model),
     ("WMOs", Subject::Building),
@@ -111,16 +111,16 @@ pub const SUBJECTS: [(&str, Subject); 3] = [
 
 /// What the last sweep came to.
 #[derive(Debug, Clone, Default)]
-pub struct Report {
-    pub scanned: usize,
-    pub tiles: usize,
-    pub names: usize,
+pub(crate) struct Report {
+    pub(crate) scanned: usize,
+    pub(crate) tiles: usize,
+    pub(crate) names: usize,
     /// What it was, in words, for the panel and the status line.
-    pub what: String,
+    pub(crate) what: String,
 }
 
 /// A sweep in progress.
-pub struct Run {
+pub(crate) struct Run {
     subject: Subject,
     from: String,
     to: String,
@@ -144,23 +144,23 @@ pub struct Run {
 }
 
 impl Run {
-    pub fn done(&self) -> usize {
+    pub(crate) fn done(&self) -> usize {
         self.total - self.queue.len()
     }
 
-    pub fn total(&self) -> usize {
+    pub(crate) fn total(&self) -> usize {
         self.total
     }
 }
 
 /// The tool's own state: the form, whatever is running, and the last answer.
 #[derive(Resource, Default)]
-pub struct Sweep {
-    pub subject: Subject,
-    pub from: String,
-    pub to: String,
-    pub running: Option<Run>,
-    pub last: Option<Report>,
+pub(crate) struct Sweep {
+    pub(crate) subject: Subject,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) running: Option<Run>,
+    pub(crate) last: Option<Report>,
 }
 
 impl Sweep {
@@ -172,12 +172,12 @@ impl Sweep {
     /// many and where*, which is the question a person asks before deciding to
     /// replace. It is also the only way to find out whether a path is spelled
     /// the way you think it is before changing 400 tiles.
-    pub fn find(&mut self, session: &EditSession, assets: &GameAssets) {
+    pub(crate) fn find(&mut self, session: &EditSession, assets: &GameAssets) {
         self.start(session, assets, false);
     }
 
     /// …and the same walk, writing.
-    pub fn replace(&mut self, session: &EditSession, assets: &GameAssets) {
+    pub(crate) fn replace(&mut self, session: &EditSession, assets: &GameAssets) {
         self.start(session, assets, true);
     }
 
@@ -219,7 +219,7 @@ impl Sweep {
 }
 
 /// Take [`PER_FRAME`] tiles off whatever is running.
-pub fn advance(
+pub(crate) fn advance(
     mut sweep: ResMut<Sweep>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
@@ -377,7 +377,7 @@ fn mentions(bytes: &[u8], path: &str) -> bool {
     })
 }
 
-pub struct SweepPlugin;
+pub(crate) struct SweepPlugin;
 
 impl Plugin for SweepPlugin {
     fn build(&self, app: &mut App) {

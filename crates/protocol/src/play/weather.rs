@@ -58,7 +58,7 @@ pub enum WeatherKind {
 
 impl WeatherKind {
     /// The wire's number, or `None` for one the reference refuses.
-    pub fn from_wire(kind: u32) -> Option<WeatherKind> {
+    pub(crate) fn from_wire(kind: u32) -> Option<WeatherKind> {
         Some(match kind {
             0 => WeatherKind::Fine,
             1 => WeatherKind::Rain,
@@ -99,13 +99,13 @@ impl Weather {
 /// The grade below which nothing falls.
 pub const DENSITY_FLOOR: f32 = 0.25;
 /// What is left of the range above it, stretched back to 0..1.
-pub const DENSITY_SCALE: f32 = 4.0 / 3.0;
+pub(crate) const DENSITY_SCALE: f32 = 4.0 / 3.0;
 /// Seconds of ramp per unit of grade.
 pub const RAMP_SECONDS_PER_UNIT: f32 = 10.0;
 
 /// Read one packet. `None` for a short body or a type the reference refuses,
 /// which the handler reports on the warnings channel rather than dropping.
-pub fn parse_weather(body: &[u8]) -> Option<Weather> {
+pub(crate) fn parse_weather(body: &[u8]) -> Option<Weather> {
     let mut r = Reader::new(body);
     if !r.has(13) {
         return None;

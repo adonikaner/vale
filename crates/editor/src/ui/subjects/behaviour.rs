@@ -73,19 +73,19 @@ use vale_mangos::scripts::{self, Script, ScriptRow};
 use bevy_egui::egui;
 
 /// Everything the windows need.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub behaviour: &'a mut Behaviour,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) behaviour: &'a mut Behaviour,
     /// The reference picker every form shares, and the name cache a
     /// reference resolves through.
-    pub quests: &'a mut Quests,
-    pub assets: &'a GameAssets,
+    pub(crate) quests: &'a mut Quests,
+    pub(crate) assets: &'a GameAssets,
     /// The icons the reference picker's spell and item rows draw. See
     /// `crate::ui::widgets::thumbnails`.
-    pub thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
-    pub now: f64,
+    pub(crate) thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
+    pub(crate) now: f64,
     /// Where a reference's name asks the shell to open its row.
-    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+    pub(crate) asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 impl Subject<'_> {
@@ -220,7 +220,7 @@ fn steps_of(namer: &Namer<'_>, table: &'static str, id: u32) -> Option<Vec<(u32,
 /// The three windows, whichever are open, the chooser, and the picker they
 /// share. Answers their rectangles, so a click inside one is not also a click
 /// on the ground behind it.
-pub fn windows(ctx: &egui::Context, mut subject: Subject<'_>) -> Vec<egui::Rect> {
+pub(crate) fn windows(ctx: &egui::Context, mut subject: Subject<'_>) -> Vec<egui::Rect> {
     let mut out = Vec::new();
     if let Some((table, id, row, column, value)) = subject.quests.script_pick.take() {
         write_cell(&mut subject, table, id, row, column, value);

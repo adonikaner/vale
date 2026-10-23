@@ -62,7 +62,7 @@ use super::*;
 /// hangs off [`Self::root`], which is a child of the rider so that a unit
 /// streaming out of the world takes its horse with it.
 #[derive(Component)]
-pub struct Mount {
+pub(crate) struct Mount {
     /// The `UNIT_FIELD_MOUNTDISPLAYID` this was built for. A change of mount is
     /// a rebuild, exactly as a change of `DISPLAYID` is for the rider.
     display_id: u32,
@@ -119,7 +119,7 @@ pub struct Mount {
     /// camera to bounce up and down" report, and nothing else was moving.
     ///
     /// Zero for a model with no point 0, which is a creature nobody rides.
-    pub seat: f32,
+    pub(crate) seat: f32,
     /// **The animal's own drawn triangles and its own header sphere**, for the
     /// mouse pick — see [`vale_assets::look::pick`] and
     /// [`crate::interface::target::hover`].
@@ -451,7 +451,7 @@ impl Mount {
     /// One accessor rather than four, because a caller that had three of them
     /// and the fourth from somewhere else would be composing a horse out of
     /// parts of two frames.
-    pub fn pick_target(
+    pub(crate) fn pick_target(
         &self,
     ) -> (
         vale_assets::look::pick::Sphere,
@@ -484,7 +484,7 @@ impl Mount {
     /// The two-footfalls-per-cycle approximation `sound/footsteps` is built on
     /// is *more* wrong here than on a biped and stated in that module: a horse
     /// has four feet and a gallop is not a symmetric two-beat.
-    pub fn footfall(&self, now: f32) -> Option<(u32, f32)> {
+    pub(crate) fn footfall(&self, now: f32) -> Option<(u32, f32)> {
         let (_, fraction) = self.play.stride(now)?;
         Some((self.display_id, fraction))
     }

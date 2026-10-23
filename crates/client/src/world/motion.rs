@@ -196,11 +196,11 @@ impl Motion {
     }
 
     /// Where to draw an entity this frame, or `None` if it is not tracked.
-    pub fn position_of(&self, guid: u64, now: f32) -> Option<Vec3> {
+    pub(crate) fn position_of(&self, guid: u64, now: f32) -> Option<Vec3> {
         self.at(guid, now).map(|(position, _)| position)
     }
 
-    pub fn facing_of(&self, guid: u64, now: f32) -> Option<f32> {
+    pub(crate) fn facing_of(&self, guid: u64, now: f32) -> Option<f32> {
         self.at(guid, now).map(|(_, facing)| facing)
     }
 

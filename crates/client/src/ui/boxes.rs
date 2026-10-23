@@ -42,7 +42,7 @@ const OVER: f32 = 1.4;
 /// whole use.
 const REACH: f32 = 80.0;
 
-pub struct ErrorBoxPlugin;
+pub(crate) struct ErrorBoxPlugin;
 
 impl Plugin for ErrorBoxPlugin {
     fn build(&self, app: &mut App) {

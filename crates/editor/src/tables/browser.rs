@@ -20,11 +20,11 @@ struct Backrefs {
 
 /// What table is open, at which row, and what has been typed into it.
 #[derive(Resource, Default)]
-pub struct Browser {
+pub(crate) struct Browser {
     /// The table's bare name, as [`schema::for_table`] spells it.
-    pub table: String,
+    pub(crate) table: String,
     /// What is in the search box.
-    pub query: String,
+    pub(crate) query: String,
     /// The rows that match the query, as record indices.
     matches: Vec<usize>,
     /// The table, query and revision `matches` was built for, so an unchanged
@@ -37,17 +37,17 @@ pub struct Browser {
     /// The reverse index, per target table. See the module comment.
     backrefs: HashMap<String, Backrefs>,
     /// The open row, as a record index.
-    pub open: Option<usize>,
+    pub(crate) open: Option<usize>,
     /// The table and row the list last brought into view, or was clicked on.
     /// The list scrolls to the open row when it is another. See
     /// `crate::ui::widgets::theme::list_area`.
-    pub revealed: Option<(String, usize)>,
+    pub(crate) revealed: Option<(String, usize)>,
     /// Which view of the open row is drawn; see `crate::ui::tables::View`.
-    pub view: crate::ui::tables::View,
+    pub(crate) view: crate::ui::tables::View,
     /// The table and record each follow started from, so the browser can go
     /// back. Following a reference column moves to another table, and this
     /// stack is the way back to the one it came from.
-    pub back: Vec<(String, usize)>,
+    pub(crate) back: Vec<(String, usize)>,
     /// The text of the open row's string fields while it is being typed.
     ///
     /// A `TextEdit` needs to hold partly typed text, and the file cannot hold
@@ -59,7 +59,7 @@ pub struct Browser {
     /// Which row the buffers belong to.
     buffered: Option<(String, usize, u64)>,
     /// What is typed into a reference picker's search box.
-    pub pick_query: String,
+    pub(crate) pick_query: String,
     /// The rows that match the picker's query, as record indices of the target
     /// table, and the table, query and revision they were built for; see
     /// [`Self::picks`].
@@ -68,41 +68,41 @@ pub struct Browser {
     /// Which page of the hits the picker shows. It is reset to zero when the
     /// hits are rebuilt, because a page number into a changed list may point
     /// past its end.
-    pub pick_page: usize,
+    pub(crate) pick_page: usize,
     /// The model browser's page, and the path it previews on the stage while
     /// it is open; see `crate::preview::lab::Lab::preview`.
-    pub model_page: usize,
-    pub model_preview: Option<String>,
+    pub(crate) model_page: usize,
+    pub(crate) model_preview: Option<String>,
     /// Whether the picker's box should take the keyboard on the next frame,
     /// which is the frame after it opens.
-    pub pick_focus: bool,
+    pub(crate) pick_focus: bool,
     /// The row a picker that plays its rows has selected, by its id. A
     /// press selects a row and plays it, and a second action chooses it;
     /// see `ui::tables`.
-    pub pick_selected: Option<u32>,
+    pub(crate) pick_selected: Option<u32>,
     /// The open dialog, if any; see [`Modal`].
-    pub modal: Option<Modal>,
+    pub(crate) modal: Option<Modal>,
     /// Every `.m2` the archives list, lower case, read once for the model
     /// browser; the text typed into the browser's search box; and the index of
     /// the folder it is narrowed to.
-    pub models: Option<Vec<String>>,
+    pub(crate) models: Option<Vec<String>>,
     /// The `EditSession::files_revision` [`Self::models`] was read at, so a
     /// model the project adds is listed. See `EditSession::listed`.
-    pub models_for: Option<u64>,
-    pub model_query: String,
-    pub model_folder: usize,
+    pub(crate) models_for: Option<u64>,
+    pub(crate) model_query: String,
+    pub(crate) model_folder: usize,
     /// The texture browser's folder, the `EditSession::files_revision` it
     /// was listed at, and the textures in it as each one's name and path.
-    pub textures: Option<(String, u64, Vec<(String, String)>)>,
+    pub(crate) textures: Option<(String, u64, Vec<(String, String)>)>,
     /// The texture the browser previews, by path, and its search and page.
-    pub texture_preview: Option<String>,
-    pub texture_query: String,
-    pub texture_page: usize,
+    pub(crate) texture_preview: Option<String>,
+    pub(crate) texture_query: String,
+    pub(crate) texture_page: usize,
     /// What rows of the display tables the client reads look like, by table
     /// and id, and the `GameAssets::tables_generation` they were resolved at.
     /// A picker draws a page of them every frame. See `ui::tables::appearance`.
-    pub shown: HashMap<(&'static str, u32), Shown>,
-    pub shown_at: u64,
+    pub(crate) shown: HashMap<(&'static str, u32), Shown>,
+    pub(crate) shown_at: u64,
     /// `SoundEntries` ids a panel has asked to play.
     ///
     /// A kit names a `SoundEntries` id, and outside a playtest the only way to
@@ -110,13 +110,13 @@ pub struct Browser {
     /// [`audition`] plays it through the client's own mixer on the next frame.
     /// The panel cannot play it directly because it draws inside one system and
     /// the mixer is a separate `SystemParam`.
-    pub audition: Vec<u32>,
+    pub(crate) audition: Vec<u32>,
     /// What a play or stop button beside a sound has asked for, carried out by
     /// [`listen`] on the next frame. See [`Heard`].
-    pub listen: Option<Listen>,
+    pub(crate) listen: Option<Listen>,
     /// The sound [`listen`] is playing, until it ends or is stopped, so the
     /// button that started it can be drawn as a stop button.
-    pub hearing: Option<Heard>,
+    pub(crate) hearing: Option<Heard>,
     /// Whether `--row` has been applied. It names a row of a table that is not
     /// yet open on the frame the flag is read, so it is applied when the table
     /// has been opened rather than at startup.
@@ -127,15 +127,15 @@ pub struct Browser {
     /// rail's table when the rail changes, which would move it back to `Spell`
     /// and lose the row. This flag tells it the change came with a
     /// destination.
-    pub followed_in: bool,
+    pub(crate) followed_in: bool,
     /// The table the Tables workspace last showed, which it returns to. Empty
     /// for the list of tables. See [`ANY`](super::tabs::ANY).
-    pub any: String,
+    pub(crate) any: String,
     /// What is typed into the Tables workspace's search over table names.
-    pub table_query: String,
+    pub(crate) table_query: String,
     /// Every file of `DBFilesClient\` the archives list, by its one name,
     /// sorted; read once for the Tables workspace's list.
-    pub table_names: Option<Vec<String>>,
+    pub(crate) table_names: Option<Vec<String>>,
     /// Each open table's records by id, and the revision it was built at. See
     /// [`Self::record_of`].
     ids: HashMap<String, (u64, HashMap<u32, usize>)>,
@@ -150,7 +150,7 @@ pub struct Browser {
 impl Browser {
     /// Point the browser at a table, leaving everything else alone if it is
     /// already there.
-    pub fn look_at(&mut self, table: &str) {
+    pub(crate) fn look_at(&mut self, table: &str) {
         if self.table != table {
             self.table = table.to_string();
             self.open = None;
@@ -165,7 +165,7 @@ impl Browser {
     /// Returns `false` when the table has no such row. That is a normal value
     /// for a reference column: a `SpellVisual` of 0 means a spell with no
     /// visual, not a dangling reference.
-    pub fn follow(&mut self, session: &EditSession, table: &str, id: u32) -> bool {
+    pub(crate) fn follow(&mut self, session: &EditSession, table: &str, id: u32) -> bool {
         let Some(at) = session.table(table).and_then(|open| open.row_of(id)) else {
             return false;
         };
@@ -181,7 +181,7 @@ impl Browser {
 
     /// Open a row of the current table by its index, and clear the search so
     /// the row is in the list. Used for a row that was just added or copied.
-    pub fn open_row(&mut self, record: usize) {
+    pub(crate) fn open_row(&mut self, record: usize) {
         self.open = Some(record);
         self.query.clear();
         self.built = None;
@@ -190,14 +190,14 @@ impl Browser {
 
     /// Close the open row. Used after a removal, because the removed row's
     /// index now names the row after it.
-    pub fn close_row(&mut self) {
+    pub(crate) fn close_row(&mut self) {
         self.open = None;
         self.built = None;
         self.forget_buffers();
     }
 
     /// Return to the table and row the last follow started from.
-    pub fn go_back(&mut self) -> bool {
+    pub(crate) fn go_back(&mut self) -> bool {
         let Some((table, record)) = self.back.pop() else {
             return false;
         };
@@ -214,7 +214,7 @@ impl Browser {
     /// label contains it. So `133` finds Fireball, and `fireball` finds all
     /// nine ranks of it and the visual they share, because a visual's label
     /// names the spells that use it.
-    pub fn matches(&mut self, session: &EditSession) -> &[usize] {
+    pub(crate) fn matches(&mut self, session: &EditSession) -> &[usize] {
         let asked = (
             self.table.clone(),
             self.query.clone(),
@@ -254,7 +254,7 @@ impl Browser {
     /// The result is cached until the query, the table or the revision
     /// changes, and the page is reset to the first when it is rebuilt. Returns
     /// `None` for a table that is not open.
-    pub fn picks(&mut self, session: &EditSession, table: &str) -> Option<&[usize]> {
+    pub(crate) fn picks(&mut self, session: &EditSession, table: &str) -> Option<&[usize]> {
         let query = self.pick_query.trim().to_ascii_lowercase();
         let asked = (table.to_string(), query.clone(), session.table_revision);
         if self.pick_built.as_ref() == Some(&asked) {
@@ -280,14 +280,8 @@ impl Browser {
         Some(&self.pick_hits)
     }
 
-    /// What to call one row in a list, on one line: its title and its id.
-    pub fn label(&mut self, session: &EditSession, record: usize) -> String {
-        let table = self.table.clone();
-        self.describe(session, &table, record).line()
-    }
-
     /// The label of a row of any open table; see the module comment.
-    pub fn describe(&mut self, session: &EditSession, table: &str, record: usize) -> RowLabel {
+    pub(crate) fn describe(&mut self, session: &EditSession, table: &str, record: usize) -> RowLabel {
         describe(self, session, table, record)
     }
 
@@ -296,7 +290,7 @@ impl Browser {
     /// each of the 5,072 abilities over `Spell`'s 22,360 rows it is 56 million
     /// comparisons for one rebuild of the abilities' labels. Where two records
     /// hold one id the first is answered, as `row_of` answers.
-    pub fn record_of(&mut self, session: &EditSession, table: &str, id: u32) -> Option<usize> {
+    pub(crate) fn record_of(&mut self, session: &EditSession, table: &str, id: u32) -> Option<usize> {
         let open = session.table(table)?;
         let fresh = self
             .ids
@@ -317,7 +311,7 @@ impl Browser {
 
     /// Which columns of a table with no schema hold strings, worked out once
     /// per revision, since the form asks once per field per frame.
-    pub fn text_fields(&mut self, session: &EditSession, table: &str) -> &[bool] {
+    pub(crate) fn text_fields(&mut self, session: &EditSession, table: &str) -> &[bool] {
         let fresh = self.text_columns.as_ref().is_some_and(|(had, revision, _)| {
             had == table && *revision == session.table_revision
         });
@@ -334,7 +328,7 @@ impl Browser {
     /// The column a table's rows are named by: the schema's first text column,
     /// or the guess for a table with no schema. `None` for a table that is
     /// not open and for one with no such column.
-    pub fn name_field(&mut self, session: &EditSession, table: &str) -> Option<usize> {
+    pub(crate) fn name_field(&mut self, session: &EditSession, table: &str) -> Option<usize> {
         if let Some(schema) = schema::for_table(table) {
             return schema.name_field();
         }
@@ -348,13 +342,13 @@ impl Browser {
 
     /// The label of a row by id rather than by record, for a reference column.
     /// Returns `None` when the table is not open or has no such row.
-    pub fn describe_id(&mut self, session: &EditSession, table: &str, id: u32) -> Option<RowLabel> {
+    pub(crate) fn describe_id(&mut self, session: &EditSession, table: &str, id: u32) -> Option<RowLabel> {
         let record = self.record_of(session, table, id)?;
         Some(self.describe(session, table, record))
     }
 
     /// The buffer for one string field of the open row, seeded from the file.
-    pub fn buffer(&mut self, session: &EditSession, record: usize, field: usize) -> &mut String {
+    pub(crate) fn buffer(&mut self, session: &EditSession, record: usize, field: usize) -> &mut String {
         // The buffers are also keyed by the table revision, so a table
         // restored by a discard or a project switch does not keep showing text
         // typed against the previous one. A commit also increments the
@@ -374,7 +368,7 @@ impl Browser {
     }
 
     /// Forget the buffers, for a caller that has just written them or moved on.
-    pub fn forget_buffers(&mut self) {
+    pub(crate) fn forget_buffers(&mut self) {
         self.buffers.clear();
         self.buffered = None;
     }
@@ -384,7 +378,7 @@ impl Browser {
     /// The index is rebuilt when a table is opened as well as when one is
     /// edited, because a visual's label names the spells that use it and the
     /// spell table may be opened a frame after the visual table.
-    pub fn index(&mut self, session: &EditSession, table_name: &str) {
+    pub(crate) fn index(&mut self, session: &EditSession, table_name: &str) {
         let open_tables = session.tables.len();
         if self
             .names
@@ -412,7 +406,7 @@ impl Browser {
     }
 
     /// Every reference to a row, over every open table.
-    pub fn used_by(&mut self, session: &EditSession, target: &str, id: u32) -> Vec<Use> {
+    pub(crate) fn used_by(&mut self, session: &EditSession, target: &str, id: u32) -> Vec<Use> {
         self.backrefs_for(session, target)
             .get(&id)
             .cloned()

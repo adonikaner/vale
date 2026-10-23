@@ -140,7 +140,7 @@ use std::sync::{mpsc, Arc, Mutex};
 /// The rest of the population is alpha-keyed art (foliage, hair cards, window
 /// lattices) whose alpha is near-binary, so a 0.5 cut and a 224/255 cut select
 /// the same texels. If a tree looks thin, check that assumption first.
-pub const M2_ALPHA_KEY: f32 = 224.0 / 255.0;
+pub(crate) const M2_ALPHA_KEY: f32 = 224.0 / 255.0;
 
 /// The alpha cut for every translucent blend mode: 1/255, not zero.
 ///
@@ -149,10 +149,10 @@ pub const M2_ALPHA_KEY: f32 = 224.0 / 255.0;
 /// particle whose over-life ramp has reached zero is still a quad in the
 /// depth-sorted transparent list, and discarding its fragments keeps the tail
 /// of every emitter in the world out of the blend.
-pub const M2_TRANSLUCENT_CUT: f32 = 1.0 / 255.0;
+pub(crate) const M2_TRANSLUCENT_CUT: f32 = 1.0 / 255.0;
 
 /// The cut for a material's blend mode, straight off the table above.
-pub fn alpha_cut(blend: u16, alpha_key: f32) -> f32 {
+pub(crate) fn alpha_cut(blend: u16, alpha_key: f32) -> f32 {
     match blend {
         0 => 0.0,
         1 => alpha_key,
@@ -175,7 +175,7 @@ pub struct ModelDraw {
     /// Which of the model's joints this batch's `SkinnedMesh` names; see
     /// [`super::models::loader::RawDraw::bones`]. Empty for scenery and for a
     /// building, which have no skeleton.
-    pub bones: Arc<[u16]>,
+    pub(crate) bones: Arc<[u16]>,
     /// How many of the model's batches this draw covers: 1 for every batch
     /// the file states, more for a merge; see
     /// [`super::models::loader::MergeSource`]. Used only by the scene tab, to
@@ -233,10 +233,10 @@ pub struct ModelAssets {
     /// All identity, one per joint. M2 vertices are already in model space and
     /// `M2Skeleton::pose` handles the pivot itself, so an inverse bindpose has
     /// nothing to undo; see the note in `entities.rs`.
-    pub inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
+    pub(crate) inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
     /// `bones + 1`. The extra one is the identity joint that weightless vertices
     /// are bound to; without it the skinning shader collapses them to the origin.
-    pub joint_count: usize,
+    pub(crate) joint_count: usize,
     /// The bounding box the model's file declares, in Bevy's axes.
     ///
     /// This is the client's culling volume, authored to cover every frame of
@@ -263,13 +263,13 @@ pub struct ModelAssets {
     /// header's `GlobalModelFlags`; see [`vale_assets::look::conform`] for the
     /// rule. `Level` for every character model in the game and for all of the
     /// scenery; the other modes are for mounts and quadrupeds.
-    pub conform: vale_assets::look::conform::Conform,
+    pub(crate) conform: vale_assets::look::conform::Conform,
     /// Where other models hang off this one: a bone and a point in its frame.
     /// Empty for scenery; every character model carries shoulders and a helm.
     pub attachments: Arc<Vec<M2Attachment>>,
     /// The sound cues its animations carry, such as a laugh at the laugh's
     /// keyframe. See `sound::cues`.
-    pub cues: Arc<vale_assets::world::m2::SoundCues>,
+    pub(crate) cues: Arc<vale_assets::world::m2::SoundCues>,
     /// The two points a weapon's trail runs between, `None` for every model
     /// that is not a melee weapon. See [`vale_assets::look::weapon_trail`].
     pub trail: Option<vale_assets::look::weapon_trail::TrailPoints>,
@@ -277,7 +277,7 @@ pub struct ModelAssets {
     /// flame. Empty for almost everything. See [`crate::render::lamps`], which
     /// turns one into a light, and `vale_assets::world::glow`, which decides
     /// whether a batch is one.
-    pub glows: Arc<Vec<crate::render::lamps::ModelGlow>>,
+    pub(crate) glows: Arc<Vec<crate::render::lamps::ModelGlow>>,
     /// The model's solid triangles, in model space: a different set from
     /// [`Self::draws`], and empty for most of the world. Shared by every
     /// placement of the model, as a building's hull is, and transformed
@@ -304,7 +304,7 @@ pub struct ModelAssets {
     /// The file's `boundingRadius`, not a value computed from
     /// [`Self::bounds`]: the two are different numbers, and the client uses
     /// `boundingRadius`.
-    pub model_sphere: vale_assets::look::pick::Sphere,
+    pub(crate) model_sphere: vale_assets::look::pick::Sphere,
     /// The particle emitters (a torch's flame, a wisp's dust) with their
     /// materials already interned, or `None` for a model with no emitters. A
     /// property of the file like the hull above: a particle's texture is the
@@ -327,7 +327,7 @@ pub struct ModelAssets {
     /// The model's colour and transparency tracks, or `None` when no batch of
     /// this build is tinted. Shared like the hull and the emitters: a fade is a
     /// property of the file, and what differs per instance is only the clock.
-    pub tints: Option<Arc<vale_assets::world::m2::M2Tints>>,
+    pub(crate) tints: Option<Arc<vale_assets::world::m2::M2Tints>>,
 }
 
 /// What the cache knows about a path.
@@ -428,8 +428,8 @@ pub(crate) struct DrawParams {
     pub texture: Option<usize>,
     pub blend: u16,
     pub unlit: bool,
-    pub two_sided: bool,
-    pub no_depth_write: bool,
+    pub(crate) two_sided: bool,
+    pub(crate) no_depth_write: bool,
     /// See [`super::loader::RawDraw::light`].
     pub light: BatchLight,
     /// See [`RawDraw::uv`].
@@ -450,7 +450,7 @@ pub(crate) struct DrawParams {
     pub ground: Option<vale_assets::world::m2::GroundQuad>,
     /// See [`super::loader::RawDraw::overlays`]: which of the model's texture
     /// slots the folded environment-map layers read, and with which blend.
-    pub overlays: [Option<(u32, u16)>; vale_assets::world::m2::MAX_OVERLAYS],
+    pub(crate) overlays: [Option<(u32, u16)>; vale_assets::world::m2::MAX_OVERLAYS],
 }
 
 /// A texture requested by name rather than through the model that uses it,
@@ -563,7 +563,7 @@ pub struct ModelCache {
 /// white under the cut-out corners. That is a modulate texture (blend mode 5,
 /// `dst * src`), and because the corners are white it needs no fixup:
 /// multiplying by them leaves the ground unchanged.
-pub const SHADOW_BLOB: &str = r"Textures\ShadowBlob.blp";
+pub(crate) const SHADOW_BLOB: &str = r"Textures\ShadowBlob.blp";
 
 /// How far above the feet the blob is drawn, in yards: the client's
 /// `shadowBias`.
@@ -581,7 +581,7 @@ pub const SHADOW_BLOB: &str = r"Textures\ShadowBlob.blp";
 const SHADOW_BIAS: f32 = 0.10;
 
 /// [`SHADOW_BIAS`], for the entity pass that places the quad.
-pub fn shadow_bias() -> f32 {
+pub(crate) fn shadow_bias() -> f32 {
     SHADOW_BIAS
 }
 
@@ -609,7 +609,7 @@ fn path_of(key: &str) -> &str {
 
 /// What one [`ModelCache::evict`] let go of.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Evicted {
+pub(crate) struct Evicted {
     /// Builds of a model's geometry, and with them their meshes.
     pub models: usize,
     /// Dressings: the material lists over that geometry.
@@ -685,15 +685,15 @@ impl RoomLight {
 /// (`atmosphere.wgsl::daylight_scaled`) and not clamped first, so the side of
 /// a unit facing away from the sun keeps the cool fill, and a warm low sun is
 /// not turned white by clamping `sun × 2.5` on its own.
-pub mod sun_scale {
+pub(crate) mod sun_scale {
     /// An entity on lit ground, or standing on a building outdoors.
-    pub const LIT_GROUND: f32 = 2.5;
+    pub(crate) const LIT_GROUND: f32 = 2.5;
     /// A doodad or an entity whose position is in the ground's baked `MCSH`
     /// shadow.
-    pub const SHADOWED_GROUND: f32 = 0.5;
+    pub(crate) const SHADOWED_GROUND: f32 = 0.5;
     /// A doodad on lit ground, WMO batches, an interior prop, and the
     /// encoding's absent value.
-    pub const NEUTRAL: f32 = 1.0;
+    pub(crate) const NEUTRAL: f32 = 1.0;
 }
 
 /// Pack a batch's sampled colour into the same `MeshTag` as [`instance_tag`],
@@ -711,7 +711,7 @@ pub mod sun_scale {
 /// the two payloads it holds: zero is a real opacity here, where it means
 /// "unspecified" for a sun scale. A batch that has faded out packs to
 /// `0x00000000`, which the sun-scale reading would treat as neutral.
-pub fn tint_tag(rgba: [f32; 4]) -> u32 {
+pub(crate) fn tint_tag(rgba: [f32; 4]) -> u32 {
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
     byte(rgba[3]) << 24 | byte(rgba[0]) << 16 | byte(rgba[1]) << 8 | byte(rgba[2])
 }
@@ -723,7 +723,7 @@ pub fn tint_tag(rgba: [f32; 4]) -> u32 {
 /// use, as fixed-point 1/32ths (2.5 → 80, 0.5 → 16). Zero means "unspecified",
 /// which the shader reads as [`sun_scale::NEUTRAL`], so every WMO batch and
 /// every other instance that never sets a tag is lit at a sun scale of 1.0.
-pub fn instance_tag(room: Option<RoomLight>, sun: f32) -> u32 {
+pub(crate) fn instance_tag(room: Option<RoomLight>, sun: f32) -> u32 {
     let scale = if sun == sun_scale::NEUTRAL {
         0
     } else {
@@ -862,7 +862,7 @@ impl ModelCache {
     /// in three skins.
     ///
     /// Needs the material store for that reason, where `lookup` does not.
-    pub fn lookup_in_room(
+    pub(crate) fn lookup_in_room(
         &mut self,
         path: &str,
         room: Option<RoomLight>,
@@ -887,7 +887,7 @@ impl ModelCache {
     /// entries and each is evicted according to its own use. See
     /// [`vale_assets::look::scenery`] for which models ask for this and how
     /// few they are.
-    pub fn lookup_scenery(
+    pub(crate) fn lookup_scenery(
         &mut self,
         path: &str,
         room: Option<RoomLight>,
@@ -924,7 +924,7 @@ impl ModelCache {
     /// The geometry, the meshes and the model's own textures are shared with
     /// every other use of the file; only the materials are rebuilt, as in
     /// [`Self::lookup_in_room`].
-    pub fn as_particle(
+    pub(crate) fn as_particle(
         &mut self,
         path: &str,
         meshes: &mut Assets<Mesh>,
@@ -955,7 +955,7 @@ impl ModelCache {
     ///
     /// `None` while the file is still loading; an empty list for one that
     /// carries none, which is everything in the world.
-    pub fn model_lights(&mut self, path: &str) -> Option<Arc<Vec<vale_assets::world::m2::M2Light>>> {
+    pub(crate) fn model_lights(&mut self, path: &str) -> Option<Arc<Vec<vale_assets::world::m2::M2Light>>> {
         let key = geometry_key(path, true);
         match self.geometry.get(&key) {
             Some(built) => Some(Arc::clone(&built.lights)),
@@ -988,7 +988,7 @@ impl ModelCache {
     /// function reading it from the model, because the same lights have to
     /// reach the character standing in the scene, which is a different model.
     /// See [`Self::model_lights`].
-    pub fn as_scene(
+    pub(crate) fn as_scene(
         &mut self,
         path: &str,
         scene: SceneLighting,
@@ -1313,7 +1313,7 @@ impl ModelCache {
     /// The failure list is kept: a model that would not read will not read
     /// the second time either, and re-requesting it on every sweep would keep
     /// the loader thread busy failing.
-    pub fn evict(&mut self, before: f32) -> Evicted {
+    pub(crate) fn evict(&mut self, before: f32) -> Evicted {
         let mut evicted = Evicted::default();
         self.variants.retain(|_, variant| {
             let keep = variant.used >= before;
@@ -1396,7 +1396,7 @@ impl ModelCache {
     ///
     /// Behaves as [`Self::forget`] in every other respect, including that
     /// what is already drawn keeps what it holds.
-    pub fn forget_all(&mut self) -> usize {
+    pub(crate) fn forget_all(&mut self) -> usize {
         let held = self.geometry.len() + self.textures.len() + self.failed.len();
         self.geometry.clear();
         self.variants.clear();
@@ -1447,7 +1447,7 @@ impl ModelCache {
     /// character that is not in the composite: the hairstyle is geometry, so
     /// its texture dresses a separate geoset and the M2 asks for it under its
     /// own type. Without it the hair draws magenta.
-    pub fn dressed_as_character(
+    pub(crate) fn dressed_as_character(
         &mut self,
         path: &str,
         look: &CharacterLook,
@@ -1705,7 +1705,7 @@ impl ModelCache {
     /// from 17.4 ms to 14.7 ms. [`crate::render::shadows`] therefore builds the
     /// quads into one mesh, and this function provides the material they
     /// share.
-    pub fn shadow_material(&mut self, materials: &mut Materials) -> Option<Handle<M2Material>> {
+    pub(crate) fn shadow_material(&mut self, materials: &mut Materials) -> Option<Handle<M2Material>> {
         if let Some(handle) = &self.blob {
             return Some(handle.clone());
         }
@@ -1772,7 +1772,7 @@ impl ModelCache {
     /// an `alpha-add` (4) does not. This is inferred from the textures, not
     /// measured: no table names a blend mode for these, because no `M2` render
     /// flag is involved.
-    pub fn beam_material(
+    pub(crate) fn beam_material(
         &mut self,
         path: &str,
         materials: &mut Materials,
@@ -1932,7 +1932,7 @@ fn parse_character_key(key: &str) -> Option<CharacterLook> {
 /// `every_skinned_mesh_is_built_through_skin_for` in this module's tests reads
 /// the call sites from the source and fails if a further spawner builds a
 /// skinned mesh without this function.
-pub fn skin_for(draw: &ModelDraw, joints: &[Entity]) -> Option<SkinnedMeshFor> {
+pub(crate) fn skin_for(draw: &ModelDraw, joints: &[Entity]) -> Option<SkinnedMeshFor> {
     let bones: Vec<Entity> = draw
         .bones
         .iter()
@@ -1959,7 +1959,7 @@ pub(crate) fn subsetting() -> bool {
 
 /// What [`skin_for`] returns: the joint entities one batch is bound to, in the
 /// order its vertex indices expect them.
-pub type SkinnedMeshFor = Vec<Entity>;
+pub(crate) type SkinnedMeshFor = Vec<Entity>;
 
 /// Concatenate a dressing's batches that share a material into one mesh.
 ///
@@ -2126,7 +2126,7 @@ fn merge_draws(
 /// composite: it dresses separate geometry, so it needs a separate slot
 /// rather than a region. `None` means the model supplies this texture itself
 /// (type 0) or the client has nothing for it.
-pub fn skin_slot(kind: u32) -> Option<usize> {
+pub(crate) fn skin_slot(kind: u32) -> Option<usize> {
     match kind {
         1 | 11 => Some(0),
         12 => Some(1),
@@ -2144,9 +2144,9 @@ pub fn skin_slot(kind: u32) -> Option<usize> {
 }
 
 /// How many client-supplied skin slots there are; see [`skin_slot`].
-pub const SKIN_SLOTS: usize = 5;
+pub(crate) const SKIN_SLOTS: usize = 5;
 
-pub struct ModelPlugin;
+pub(crate) struct ModelPlugin;
 
 impl Plugin for ModelPlugin {
     fn build(&self, app: &mut App) {
@@ -2183,7 +2183,29 @@ impl Plugin for ModelPlugin {
             // is never drawn before its matrix is written: for a scroll that
             // would be one frame of the texture at rest, and for a rotation a
             // jump.
-            .add_systems(Update, (receive_models, follow_uv_animations).chain());
+            .add_systems(Update, (receive_models, follow_uv_animations).chain())
+            .add_message::<crate::assets::PathsChanged>()
+            .add_systems(
+                Update,
+                forget_changed_models.in_set(crate::assets::ForgetChanged),
+            );
+    }
+}
+
+/// Forget what a [`crate::assets::PathsChanged`] names, so the next lookup of
+/// each path reads the file again.
+fn forget_changed_models(
+    mut changed: MessageReader<crate::assets::PathsChanged>,
+    mut cache: ResMut<ModelCache>,
+) {
+    for change in changed.read() {
+        if change.all {
+            cache.forget_all();
+            continue;
+        }
+        for path in &change.paths {
+            cache.forget(path);
+        }
     }
 }
 

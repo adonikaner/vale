@@ -25,26 +25,26 @@ use vale_edit::dbc::places::{self, Trigger};
 use vale_mangos::row::Life;
 
 /// What the panel is drawn from.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub triggers: &'a mut Triggers,
-    pub assets: &'a vale_client::assets::GameAssets,
-    pub now: f64,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) triggers: &'a mut Triggers,
+    pub(crate) assets: &'a vale_client::assets::GameAssets,
+    pub(crate) now: f64,
     /// The top bar's Server… popover, which holds Apply and Put back.
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// The script window's state, which a template's script id opens.
-    pub behaviour: &'a mut crate::subjects::behaviour::Behaviour,
+    pub(crate) behaviour: &'a mut crate::subjects::behaviour::Behaviour,
     /// The name cache and the reference picker the teleport's map column
     /// resolves through.
-    pub quests: &'a mut Quests,
+    pub(crate) quests: &'a mut Quests,
     /// Where the map's name asks the shell to open its row.
-    pub asks: &'a mut ShellAsks,
+    pub(crate) asks: &'a mut ShellAsks,
     /// Where the Fly to buttons send their requests. See
     /// [`crate::camera::FlyTo`].
-    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
-pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
     let Subject {
         session,
         triggers,

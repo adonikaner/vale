@@ -55,26 +55,6 @@ use vale_assets::tables::reputation::{Factions, Reputation};
 use vale_protocol::play::reputation::ReputationVerb;
 use crate::lua::host::LuaHost;
 
-/// The **unscoped reads and writes** this file registers, sorted — the same list
-/// [`super::super::api::READS`] is for the scoped ones.
-///
-/// All twelve are unscoped because none of them touches the world: the panel is
-/// 64 slots of server state joined to `Faction.dbc`, and both live on [`Held`].
-pub const VERBS: [&str; 12] = [
-    "CollapseFactionHeader",
-    "ExpandFactionHeader",
-    "FactionToggleAtWar",
-    "GetFactionInfo",
-    "GetNumFactions",
-    "GetSelectedFaction",
-    "GetWatchedFactionInfo",
-    "IsFactionInactive",
-    "SetFactionActive",
-    "SetFactionInactive",
-    "SetSelectedFaction",
-    "SetWatchedFactionIndex",
-];
-
 /// **The panel's whole state**, shared between the interpreter and the ECS.
 #[derive(Default)]
 pub struct Standing {
@@ -114,7 +94,7 @@ pub struct Standing {
     /// Whether the list has ever been built. A character who has met nobody
     /// still gets the packet, so this tells "no packet yet" from "no factions",
     /// which are drawn the same way and are not the same state.
-    pub initialized: bool,
+    pub(crate) initialized: bool,
 }
 
 impl Standing {
@@ -123,7 +103,7 @@ impl Standing {
     /// Recorded rather than applied: see [`Self::wire`] for the ordering that
     /// forces it. [`Self::rebuild_if_ready`] is what turns it into a list, on
     /// whichever later frame the character and the archives are both there.
-    pub fn initialize(&mut self, wire: &[(u8, i32); 64]) {
+    pub(crate) fn initialize(&mut self, wire: &[(u8, i32); 64]) {
         self.wire = Some(Box::new(*wire));
         self.built_for = None;
         self.version = self.version.wrapping_add(1);
@@ -134,7 +114,7 @@ impl Standing {
     ///
     /// Cheap enough to call per frame: three `Option` tests and an equality
     /// against the pair it was last built for.
-    pub fn rebuild_if_ready(&mut self, race: u8, class: u8) {
+    pub(crate) fn rebuild_if_ready(&mut self, race: u8, class: u8) {
         if self.built_for == Some((race, class)) || race == 0 {
             return;
         }
@@ -165,7 +145,7 @@ impl Standing {
 
     /// …and the crossed swords, `SMSG_SET_FACTION_ATWAR`. The packet carries the
     /// whole flag byte and bit 1 is the one that matters.
-    pub fn at_war(&mut self, rep: u32, flags: u8) {
+    pub(crate) fn at_war(&mut self, rep: u32, flags: u8) {
         use vale_assets::tables::reputation::flags;
         let on = flags & flags::AT_WAR != 0;
         if let Some(slot) = self.wire.as_mut().and_then(|w| w.get_mut(rep as usize)) {
@@ -211,7 +191,7 @@ impl Standing {
 }
 
 pub type Held = Rc<RefCell<Standing>>;
-pub type Queue = Rc<RefCell<Vec<ReputationVerb>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<ReputationVerb>>>;
 
 /// Register all twelve. Unscoped — see the module comment.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

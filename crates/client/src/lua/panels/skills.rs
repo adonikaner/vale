@@ -55,24 +55,6 @@ use std::sync::Arc;
 use vale_assets::tables::skills::{SkillEntry, SkillList, Skills};
 use crate::lua::host::LuaHost;
 
-/// The unscoped reads and writes this file registers, sorted.
-///
-/// They are unscoped because none of them touches the world: the panel is the
-/// character's own 128 slots joined to three DBCs, and both live on [`Held`].
-pub const VERBS: [&str; 11] = [
-    "AbandonSkill",
-    "AcceptSkillUps",
-    "AddSkillUp",
-    "CancelSkillUps",
-    "CollapseSkillHeader",
-    "ExpandSkillHeader",
-    "GetAdjustedSkillPoints",
-    "GetNumSkillLines",
-    "GetSkillLineInfo",
-    "RemoveSkillUp",
-    "SetSelectedSkill",
-];
-
 /// The panel's whole state, shared between the interpreter and the ECS.
 #[derive(Default)]
 pub struct Board {

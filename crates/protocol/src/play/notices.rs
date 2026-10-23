@@ -35,8 +35,9 @@ use crate::bytes::Reader;
 /// `ServerMessageType` (vmangos `World.h`): the `u32` that leads
 /// `SMSG_SERVER_MESSAGE`. Each value is a row of `ServerMessages.dbc`, whose
 /// text has one `%s` for the packet's own text.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServerMessageType {
+pub(crate) enum ServerMessageType {
     ShutdownTime,
     RestartTime,
     Custom,
@@ -44,7 +45,9 @@ pub enum ServerMessageType {
     RestartCancelled,
 }
 
+#[cfg(test)]
 impl ServerMessageType {
+    #[cfg(test)]
     pub fn from_code(code: u32) -> Option<Self> {
         Some(match code {
             1 => Self::ShutdownTime,
@@ -56,6 +59,7 @@ impl ServerMessageType {
         })
     }
 
+    #[cfg(test)]
     pub fn code(self) -> u32 {
         match self {
             Self::ShutdownTime => 1,
@@ -79,7 +83,8 @@ pub struct ServerMessage {
 }
 
 impl ServerMessage {
-    pub fn message_type(&self) -> Option<ServerMessageType> {
+    #[cfg(test)]
+    pub(crate) fn message_type(&self) -> Option<ServerMessageType> {
         ServerMessageType::from_code(self.kind)
     }
 }
@@ -97,7 +102,7 @@ pub struct DefenseMessage {
 /// The name is a string with its terminator; a body with no terminator is still
 /// read to its end, since a truncated name is still the best text available.
 /// An empty body is refused.
-pub fn parse_player_not_found(body: &[u8]) -> Option<String> {
+pub(crate) fn parse_player_not_found(body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return None;
     }
@@ -105,7 +110,7 @@ pub fn parse_player_not_found(body: &[u8]) -> Option<String> {
 }
 
 /// `SMSG_SERVER_MESSAGE`: a `u32` type, then the text.
-pub fn parse_server_message(body: &[u8]) -> Option<ServerMessage> {
+pub(crate) fn parse_server_message(body: &[u8]) -> Option<ServerMessage> {
     if body.len() < 4 {
         return None;
     }
@@ -116,7 +121,7 @@ pub fn parse_server_message(body: &[u8]) -> Option<ServerMessage> {
 }
 
 /// `SMSG_ZONE_UNDER_ATTACK`: one `AreaTable.dbc` id.
-pub fn parse_zone_under_attack(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_zone_under_attack(body: &[u8]) -> Option<u32> {
     if body.len() < 4 {
         return None;
     }
@@ -129,7 +134,7 @@ pub fn parse_zone_under_attack(body: &[u8]) -> Option<u32> {
 /// The text is read as a terminated string rather than by the length, which
 /// gives the same result for every body vmangos writes. A length that runs past
 /// the body is refused, because it says the body was cut short.
-pub fn parse_defense_message(body: &[u8]) -> Option<DefenseMessage> {
+pub(crate) fn parse_defense_message(body: &[u8]) -> Option<DefenseMessage> {
     if body.len() < 8 {
         return None;
     }

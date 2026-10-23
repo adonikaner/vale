@@ -62,10 +62,10 @@ use super::toc::{self, Toc};
 use super::wtf;
 
 /// The directory, as the archive chain spells it.
-pub const ADDONS_DIR: &str = r"Interface\AddOns";
+pub(crate) const ADDONS_DIR: &str = r"Interface\AddOns";
 
 /// The build this client is, which is what `## Interface` is compared with.
-pub const INTERFACE_VERSION: u32 = 11200;
+pub(crate) const INTERFACE_VERSION: u32 = 11200;
 
 /// The per-character file that says which addons are on.
 pub const ADDONS_TXT_NAME: &str = "AddOns.txt";
@@ -149,13 +149,13 @@ impl Addon {
     }
 
     /// Written against an older build than this one, or against none.
-    pub fn out_of_date(&self) -> bool {
+    pub(crate) fn out_of_date(&self) -> bool {
         self.interface.is_none_or(|v| v < INTERFACE_VERSION)
     }
 }
 
 /// A `.toc` list value: comma-separated, and whitespace also separates.
-pub fn list_directive(value: &str) -> Vec<String> {
+pub(crate) fn list_directive(value: &str) -> Vec<String> {
     value
         .split([',', ' ', '\t'])
         .map(str::trim)
@@ -196,7 +196,7 @@ pub fn scan(root: &Path) -> Vec<(String, Toc)> {
 
 /// `<dir>\<name>.toc`, matched without regard to case, since the folder may
 /// have been written on a file system that keeps one.
-pub fn find_toc(dir: &Path, name: &str) -> Option<PathBuf> {
+pub(crate) fn find_toc(dir: &Path, name: &str) -> Option<PathBuf> {
     let wanted = format!("{}.toc", name.to_ascii_lowercase());
     std::fs::read_dir(dir)
         .ok()?

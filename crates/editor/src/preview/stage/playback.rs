@@ -14,7 +14,7 @@ use super::scene::stage_area;
 /// aura, because that is what the client watches for it. The steps are taken
 /// whether or not the clock is running, so a seek while paused still lands
 /// where it was asked to.
-pub fn play(
+pub(crate) fn play(
     mut commands: Commands,
     time: Res<Time>,
     mut stage: ResMut<Stage>,

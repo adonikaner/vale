@@ -110,7 +110,7 @@ use bevy::prelude::*;
 
 /// Whether the editor is editing, logging in, or being played.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Playtest {
+pub(crate) enum Playtest {
     /// The free camera, the pointer and the tools are the editor's.
     #[default]
     Editing,
@@ -126,12 +126,12 @@ impl Playtest {
     /// `session.active.is_none()`, which is also true on the login screen, where
     /// the keyboard belongs to a password box and the `w` in a name would
     /// otherwise fly the editor's camera north.
-    pub fn editing(self) -> bool {
+    pub(crate) fn editing(self) -> bool {
         self == Playtest::Editing
     }
 
     /// Whether a playtest is running at all, in either of its two stages.
-    pub fn playing(self) -> bool {
+    pub(crate) fn playing(self) -> bool {
         !self.editing()
     }
 }
@@ -159,7 +159,7 @@ impl Playtest {
 /// part and leaves the viewport rectangle empty, so no tool can act on ground
 /// nobody is editing. See `crate::tools::Tool::survives_playtest`.
 #[derive(Resource, Debug, Default, Clone, Copy)]
-pub struct ShellOpen(pub bool);
+pub(crate) struct ShellOpen(pub(crate) bool);
 
 /// Who a playtest logs in as, and whether it skips the login screen.
 ///
@@ -168,22 +168,22 @@ pub struct ShellOpen(pub bool);
 /// account is already a CVar the interface writes when the game's own login
 /// screen remembers it, and the password is deliberately stored nowhere at all.
 #[derive(Resource, Debug, Default, Clone)]
-pub struct Login {
+pub(crate) struct Login {
     /// `realmlist.wtf`'s address, kept so a logon can be built without reading
     /// the config again. Not shown and not editable: which server to talk to is
     /// a property of the install.
     host: String,
     /// `WTF\Config.wtf`'s `accountName`, or `VALE_ACCOUNT`.
-    pub account: String,
+    pub(crate) account: String,
     /// `VALE_PASSWORD`. Empty is the ordinary case and means the login
     /// screen.
-    pub password: String,
+    pub(crate) password: String,
     /// `--character`, or `VALE_CHARACTER`. Empty falls back to
     /// `lastCharacterIndex` — see [`AutoLogin`].
-    pub character: String,
+    pub(crate) character: String,
     /// Whether the button goes straight into the world rather than to the login
     /// screen. Off when there is no password to go with.
-    pub straight_in: bool,
+    pub(crate) straight_in: bool,
 }
 
 impl Login {
@@ -192,7 +192,7 @@ impl Login {
     /// The character when one is named and the account when none is, because
     /// `lastCharacterIndex` is a row and a row is not a name — see
     /// [`AutoLogin`], which is where the fallback is.
-    pub fn who(&self) -> String {
+    pub(crate) fn who(&self) -> String {
         match self.character.trim() {
             "" => self.account.trim().to_string(),
             name => name.to_string(),
@@ -200,7 +200,7 @@ impl Login {
     }
 
     /// Whether a click could actually get in without a screen.
-    pub fn can_go_straight_in(&self) -> bool {
+    pub(crate) fn can_go_straight_in(&self) -> bool {
         !self.account.trim().is_empty() && !self.password.is_empty()
     }
 
@@ -211,7 +211,7 @@ impl Login {
     /// [`Credentials::from_config`]), because it is the one field of the four
     /// this panel does not ask for: which server to talk to is a property of the
     /// install and not of who is playing.
-    pub fn credentials(&self) -> Option<Credentials> {
+    pub(crate) fn credentials(&self) -> Option<Credentials> {
         if !self.straight_in || !self.can_go_straight_in() {
             return None;
         }
@@ -243,7 +243,7 @@ fn seed(mut login: ResMut<Login>, config: Res<ClientConfig>, args: Res<crate::ar
     login.straight_in = login.can_go_straight_in();
 }
 
-pub struct PlaytestPlugin;
+pub(crate) struct PlaytestPlugin;
 
 impl Plugin for PlaytestPlugin {
     fn build(&self, app: &mut App) {
@@ -472,7 +472,7 @@ struct ViewSet {
 /// playtest is, and the first crossing back restores whatever the editor had
 /// when it left.
 #[derive(Resource, Default)]
-pub struct ViewSettings {
+pub(crate) struct ViewSettings {
     editing: Option<ViewSet>,
     playing: Option<ViewSet>,
     /// Which side of the edge the last frame was on; `None` before the first.
@@ -484,7 +484,7 @@ pub struct ViewSettings {
 /// sets `interface` from this, and the view bar measures "moved from its
 /// default" and `reset` against it, so a switch the editor sets itself does not
 /// read as a change somebody made.
-pub fn world_baseline(editing: bool) -> WorldTuning {
+pub(crate) fn world_baseline(editing: bool) -> WorldTuning {
     WorldTuning {
         interface: !editing,
         ..WorldTuning::default()
@@ -605,7 +605,7 @@ fn stand_the_world_down(
 /// playtest that is the next cast, the next entity to come into view, and the
 /// next model to be hung — not the aura already worn or the channel already
 /// running.
-pub fn republish(session: &mut EditSession, assets: &GameAssets) {
+pub(crate) fn republish(session: &mut EditSession, assets: &GameAssets) {
     let tables: Vec<String> = session.tables.keys().cloned().collect();
     for name in &tables {
         session.publish_table(name);
@@ -635,7 +635,7 @@ pub fn republish(session: &mut EditSession, assets: &GameAssets) {
 /// overlay would serve the edit without a save; the save puts the work in the
 /// project folder, where a person looks for it afterwards, so the session
 /// cannot end with the work in memory alone.
-pub fn start(
+pub(crate) fn start(
     state: &mut Playtest,
     session: &mut EditSession,
     assets: &GameAssets,
@@ -707,7 +707,7 @@ pub fn start(
 /// and dropping the socket is what the character screen's own Back button does. `render::residency`'s
 /// `leave_world` sees the session go and tears the world down, so the editor
 /// streams its own ground again from its own camera.
-pub fn stop(
+pub(crate) fn stop(
     state: &mut Playtest,
     session: &mut Session,
     auto: &mut AutoLogin,

@@ -235,7 +235,7 @@ pub fn update(table: &str, key: &Key, changes: &[Assignment]) -> Option<String> 
 /// **The `UPDATE` a row whose id changes becomes**: the key columns that differ
 /// are set to where the project puts the row, the edited columns beside them,
 /// and the `WHERE` names where the database has it. See [`RowEdit::from`].
-pub fn update_moved(table: &str, from: &Key, to: &Key, changes: &[Assignment]) -> String {
+pub(crate) fn update_moved(table: &str, from: &Key, to: &Key, changes: &[Assignment]) -> String {
     let mut sets = key_sets(from, to);
     sets.extend(changes.iter().map(Assignment::sql));
     format!(
@@ -252,7 +252,7 @@ pub fn update_moved(table: &str, from: &Key, to: &Key, changes: &[Assignment]) -
 /// would match nothing once the move has run.
 ///
 /// `None` when the row is not in the database, on [`undo`]'s own rule.
-pub fn undo_moved(
+pub(crate) fn undo_moved(
     table: &str,
     from: &Key,
     to: &Key,
@@ -918,7 +918,8 @@ impl Edits {
 
     /// Where this project puts the row the database holds at `from`, if it
     /// moves it.
-    pub fn moved_to<'a>(&'a self, table: &'a str, from: &Key) -> Option<&'a Key> {
+    #[cfg(test)]
+    pub(crate) fn moved_to<'a>(&'a self, table: &'a str, from: &Key) -> Option<&'a Key> {
         self.moves(table)
             .find(|(had, _)| *had == from)
             .map(|(_, key)| key)
@@ -1028,7 +1029,8 @@ impl Edits {
     }
 
     /// How many rows are edited in the tables one subject owns.
-    pub fn count_where(&self, mut wanted: impl FnMut(&str) -> bool) -> usize {
+    #[cfg(test)]
+    pub(crate) fn count_where(&self, mut wanted: impl FnMut(&str) -> bool) -> usize {
         self.rows.keys().filter(|(table, _)| wanted(table)).count()
     }
 
@@ -1198,13 +1200,13 @@ impl Edits {
 // ---------------------------------------------------------------------------
 
 /// The lives a row may carry when it is only ever edited.
-pub const EDITED: &[Life] = &[Life::Update];
+pub(crate) const EDITED: &[Life] = &[Life::Update];
 
 /// …when it may be edited and created, and not removed.
-pub const EDITED_OR_CREATED: &[Life] = &[Life::Update, Life::Insert];
+pub(crate) const EDITED_OR_CREATED: &[Life] = &[Life::Update, Life::Insert];
 
 /// …and when it may be edited, created and removed.
-pub const ANY_LIFE: &[Life] = &[Life::Update, Life::Insert, Life::Delete];
+pub(crate) const ANY_LIFE: &[Life] = &[Life::Update, Life::Insert, Life::Delete];
 
 /// **One of the server's tables as this crate writes it**: its name, its
 /// columns, the columns elsewhere that name its rows, the lives a row of it
@@ -1224,11 +1226,11 @@ pub struct Table {
     /// They follow a row whose id changes; see [`move_statements`].
     pub references: &'static [Reference],
     /// The lives a row may carry. [`Life::Update`] is always among them.
-    pub lives: &'static [Life],
+    pub(crate) lives: &'static [Life],
     /// The statements a removal comes to when it is more than the row's own
     /// `DELETE`: a spawn with the tables keyed by its guid, an item with every
     /// version of it and the rows that hand it out.
-    pub cascade: Option<fn(&Key) -> Vec<String>>,
+    pub(crate) cascade: Option<fn(&Key) -> Vec<String>>,
 }
 
 impl Table {
@@ -1244,7 +1246,7 @@ impl Table {
     }
 
     /// Whether a row of this table may carry `life`.
-    pub fn can_live(&self, life: Life) -> bool {
+    pub(crate) fn can_live(&self, life: Life) -> bool {
         self.lives.contains(&life)
     }
 
@@ -1403,7 +1405,7 @@ pub struct Numbering {
     pub noun: &'static str,
     /// The first entry a row this project creates is numbered from, clear of
     /// anything upstream will reach.
-    pub reserved_base: u32,
+    pub(crate) reserved_base: u32,
     /// The highest entry the column holds.
     pub max_entry: u32,
 }

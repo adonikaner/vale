@@ -20,24 +20,24 @@ use crate::session::EditSession;
 
 /// The manifest with the server and publish records beside it.
 #[derive(Debug, Clone, Default)]
-pub struct Report {
-    pub manifest: Manifest,
+pub(crate) struct Report {
+    pub(crate) manifest: Manifest,
     /// One line per server subject the project changes or has applied, as
     /// `(subject, what)`.
-    pub server: Vec<(String, String)>,
+    pub(crate) server: Vec<(String, String)>,
     /// The patch archives the project has written into `Data\`, as
     /// `(name, bytes)`.
-    pub published: Vec<(String, u64)>,
+    pub(crate) published: Vec<(String, u64)>,
 }
 
 impl Report {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.manifest.is_empty() && self.server.is_empty() && self.published.is_empty()
     }
 }
 
 /// Read the open project's folder and compare it against the archives.
-pub fn build(session: &EditSession, assets: &GameAssets) -> Report {
+pub(crate) fn build(session: &EditSession, assets: &GameAssets) -> Report {
     let project = &session.project;
     let manifest = vale_edit::manifest::manifest(project, |vpath| {
         assets.read_past_overlay(vpath).ok()
@@ -144,7 +144,7 @@ fn plural(count: usize) -> &'static str {
 }
 
 /// `41 KB`, `1.2 MB`, `312 bytes`.
-pub fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     match bytes {
         0..=1023 => format!("{bytes} bytes"),
         1024..=1_048_575 => format!("{} KB", bytes / 1024),
@@ -174,7 +174,7 @@ const WHAT_WIDTH: f32 = 340.0;
 
 /// Draw the report as one grid of name, description and size, with a
 /// caption row at the head of each section.
-pub fn draw(ui: &mut egui::Ui, report: &Report, session: &EditSession) {
+pub(crate) fn draw(ui: &mut egui::Ui, report: &Report, session: &EditSession) {
     if report.is_empty() {
         theme::note(ui, "The project folder is empty. Saves are written into it.");
         return;

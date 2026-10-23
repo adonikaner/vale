@@ -65,7 +65,7 @@ impl HoverProbe {
     /// The probe still asks for the real pointer to be moved as well, so that
     /// when the window is focused the interface's own `Pointer`, which reads the
     /// window directly, agrees with the pick.
-    pub fn instead_of(&self, real: Option<Vec2>) -> Option<Vec2> {
+    pub(crate) fn instead_of(&self, real: Option<Vec2>) -> Option<Vec2> {
         self.0.or(real)
     }
 }

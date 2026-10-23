@@ -41,7 +41,7 @@ use crate::world::session::Session;
 /// **The pet trainer's pending question**, and the trainer to measure it
 /// against.
 #[derive(Resource, Default)]
-pub struct Untrainer {
+pub(crate) struct Untrainer {
     /// The pet whose skills would reset, and the cost, held between
     /// `SMSG_PET_UNLEARN_CONFIRM` and the person pressing Accept.
     pending: Option<(u64, u32)>,
@@ -52,15 +52,11 @@ pub struct Untrainer {
 }
 
 impl Untrainer {
-    /// Whoever is waiting on an answer — `(pet, cost)`.
-    pub fn pending(&self) -> Option<(u64, u32)> {
-        self.pending
-    }
 
     /// **Take the pending pet** — `ConfirmPetUnlearn()`'s own read, and it takes
     /// rather than borrows so a second press cannot send a second
     /// `CMSG_PET_UNLEARN`.
-    pub fn take_pending(&mut self) -> Option<u64> {
+    pub(crate) fn take_pending(&mut self) -> Option<u64> {
         self.pending.take().map(|(pet, _)| pet)
     }
 }
@@ -68,12 +64,12 @@ impl Untrainer {
 /// What the session thread said. Written by [`crate::world::incoming`], read by
 /// [`answer`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UntrainerAnswer {
+pub(crate) struct UntrainerAnswer {
     pub pet: u64,
     pub cost: u32,
 }
 
-pub struct UntrainerPlugin;
+pub(crate) struct UntrainerPlugin;
 
 impl Plugin for UntrainerPlugin {
     fn build(&self, app: &mut App) {
@@ -136,7 +132,7 @@ fn press(
 /// The popup's `OnAccept`, and the only caller of `CMSG_PET_UNLEARN`. Answers
 /// whether anything was sent, so a press with nothing pending is a no-op rather
 /// than a packet naming guid zero.
-pub fn confirm_pet_unlearn(untrainer: &mut Untrainer, session: &Session) -> bool {
+pub(crate) fn confirm_pet_unlearn(untrainer: &mut Untrainer, session: &Session) -> bool {
     let Some(pet) = untrainer.take_pending() else {
         return false;
     };
@@ -154,7 +150,7 @@ pub fn confirm_pet_unlearn(untrainer: &mut Untrainer, session: &Session) -> bool
 /// [`super::binder::binder_in_range`] gives: the box is only ever up while
 /// there is a question, and answering false for an absent one would race the
 /// frame between the event and the popup's first update.
-pub fn untrainer_in_range(untrainer: &Untrainer, units: &crate::interface::api::Units) -> bool {
+pub(crate) fn untrainer_in_range(untrainer: &Untrainer, units: &crate::interface::api::Units) -> bool {
     if untrainer.pending.is_none() {
         return true;
     }

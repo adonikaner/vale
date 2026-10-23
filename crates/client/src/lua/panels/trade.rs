@@ -58,7 +58,7 @@ pub struct TradeLine {
     /// -1 until the template lands, as `GetInventoryItemQuality` answers.
     pub quality: i32,
     /// The spell aimed at the non-traded square, in words, or `None`.
-    pub enchant: Option<String>,
+    pub(crate) enchant: Option<String>,
     /// **Whether the character may hold this**, which is what decides the red
     /// square — see [`crate::world::proficiency`], which is the only
     /// thing that can answer it and is one packet per item class.
@@ -200,7 +200,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
     Ok(())
 }
 
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trade::TradePress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::trade::TradePress>>>;
 
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
     let queue: &Queue = &super::stored(lua);

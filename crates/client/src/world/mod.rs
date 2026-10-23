@@ -50,23 +50,23 @@ pub mod areatrigger;
 pub mod camera;
 #[cfg(feature = "diagnostics")]
 pub mod crowd;
-pub mod desync;
+pub(crate) mod desync;
 pub mod entities;
 pub mod entity;
 pub mod facing;
 pub mod incoming;
 pub mod motion;
-pub mod predict;
-pub mod proficiency;
+pub(crate) mod predict;
+pub(crate) mod proficiency;
 pub mod session;
-pub mod spellmods;
+pub(crate) mod spellmods;
 pub mod standing;
 pub mod status;
 pub mod templates;
 
 /// The camera, the session and the entity passes, as one group. See
 /// [`crate::render::RenderPlugins`] for why each directory registers its own.
-pub struct WorldPlugins;
+pub(crate) struct WorldPlugins;
 
 impl bevy::app::Plugin for WorldPlugins {
     fn build(&self, app: &mut bevy::app::App) {
@@ -102,7 +102,7 @@ impl bevy::app::Plugin for WorldPlugins {
 ///
 /// `crate::interface::action`'s plugin registers `incoming::drain_events`;
 /// `incoming::IncomingPlugin` registers the drain of the other three queues.
-pub struct StatePlugins;
+pub(crate) struct StatePlugins;
 
 impl bevy::app::Plugin for StatePlugins {
     fn build(&self, app: &mut bevy::app::App) {

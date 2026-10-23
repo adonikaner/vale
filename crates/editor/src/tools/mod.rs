@@ -50,15 +50,15 @@
 //! the function is in `crate::map::open`, shared by both, and [`ToolPlugin`]
 //! runs it.
 
-pub mod ground;
-pub mod guides;
-pub mod measure;
+pub(crate) mod ground;
+pub(crate) mod guides;
+pub(crate) mod measure;
 pub(crate) mod modes;
-pub mod places;
-pub mod points;
-pub mod placements;
+pub(crate) mod places;
+pub(crate) mod points;
+pub(crate) mod placements;
 pub(crate) mod shortcuts;
-pub mod spawns;
+pub(crate) mod spawns;
 
 use crate::map::open::{close_tiles, open_tiles, Opening};
 use crate::session::EditSession;
@@ -72,7 +72,7 @@ use bevy_egui::egui;
 /// expected to grow; [`crate::ui::shell::rail`] names the tools
 /// that do not exist yet.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Tool {
+pub(crate) enum Tool {
     /// The pointer picks and reports and changes nothing.
     #[default]
     Select,
@@ -252,7 +252,7 @@ pub enum Tool {
 /// one of either sort. Two types would make each of those an enum over the
 /// two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Surface {
+pub(crate) enum Surface {
     /// The viewport is the document and the inspector describes what is
     /// selected in it. Every brush and every placement tool.
     World,
@@ -879,7 +879,7 @@ pub(crate) const SPECS: &[Spec] = &[
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
 /// until a new variant has an index, plus a test that [`SPECS`] is exactly
 /// those indices in order.
-pub const ALL: [Tool; SPECS.len()] = {
+pub(crate) const ALL: [Tool; SPECS.len()] = {
     let mut all = [Tool::Select; SPECS.len()];
     let mut i = 0;
     while i < SPECS.len() {
@@ -895,7 +895,7 @@ impl Tool {
     /// The `match` is exhaustive so that a new variant does not compile until
     /// it is given an index. That is the half of the check the compiler does;
     /// the other half is [`tests::the_list_holds_every_tool`].
-    pub fn at(self) -> usize {
+    pub(crate) fn at(self) -> usize {
         match self {
             Tool::Select => 0,
             Tool::Measure => 1,
@@ -947,7 +947,7 @@ impl Tool {
     /// tool that edits a chain of tables answers
     /// with the first: `Tool::Flightpaths` answers `TaxiNodes`, not
     /// `TaxiPath` or `TaxiPathNode`. See [`crate::tables`].
-    pub fn table(self) -> Option<&'static str> {
+    pub(crate) fn table(self) -> Option<&'static str> {
         self.spec().table
     }
 
@@ -958,7 +958,7 @@ impl Tool {
     ///
     /// The name is the one the row writers use, so it is also the name a
     /// `.reload` is sent for.
-    pub fn server_table(self) -> Option<&'static str> {
+    pub(crate) fn server_table(self) -> Option<&'static str> {
         self.spec().server_table
     }
 
@@ -994,7 +994,7 @@ impl Tool {
     /// The three display tables are client files like `Spell.dbc`, and the
     /// Assets workspace edits files, so the four survive for the spells'
     /// reason.
-    pub fn survives_playtest(self) -> bool {
+    pub(crate) fn survives_playtest(self) -> bool {
         self.spec().survives_playtest
     }
 
@@ -1012,18 +1012,18 @@ impl Tool {
     ///
     /// Only a [`Surface::Middle`] tool works while a playtest is running; see
     /// [`Tool::survives_playtest`].
-    pub fn surface(self) -> Surface {
+    pub(crate) fn surface(self) -> Surface {
         self.spec().surface
     }
 
     /// Whether this tool can change anything. Select and Measure only report,
     /// so the inspector draws no undo row for them; `Ctrl+Z` still works.
-    pub fn edits(self) -> bool {
+    pub(crate) fn edits(self) -> bool {
         self.spec().edits
     }
 
     /// Whether the workspace replaces the viewport. [`Surface::Middle`] alone.
-    pub fn covers_viewport(self) -> bool {
+    pub(crate) fn covers_viewport(self) -> bool {
         self.surface() == Surface::Middle
     }
 
@@ -1034,7 +1034,7 @@ impl Tool {
     /// chain: `Spell`, `Light` and `TaxiNodes` each start one. A table
     /// reached by following a reference, such as `SpellIcon` or `LightSkybox`,
     /// is not a tab and highlights none; the browser still navigates to it.
-    pub fn tabs(self) -> &'static [(&'static str, &'static str)] {
+    pub(crate) fn tabs(self) -> &'static [(&'static str, &'static str)] {
         self.spec().tabs
     }
 
@@ -1047,13 +1047,13 @@ impl Tool {
     /// DBC table, so each has its own list, form and save. The spell
     /// workspace's skill tables are tabs of one tool instead ([`Tool::tabs`]),
     /// since they are tables in the same browser.
-    pub fn parts(self) -> &'static [(&'static str, Tool)] {
+    pub(crate) fn parts(self) -> &'static [(&'static str, Tool)] {
         self.spec().parts
     }
 
     /// The tool the top bar's workspace control shows for this one: the
     /// first of its [`Tool::parts`], or itself.
-    pub fn workspace(self) -> Tool {
+    pub(crate) fn workspace(self) -> Tool {
         self.parts().first().map(|&(_, tool)| tool).unwrap_or(self)
     }
 
@@ -1064,7 +1064,7 @@ impl Tool {
     ///
     /// A workspace whose tabs name the table comes first, then one whose
     /// chain holds it ([`Spec::chain`]).
-    pub fn for_table(table: &str) -> Tool {
+    pub(crate) fn for_table(table: &str) -> Tool {
         let workspaces = || SPECS.iter().filter(|spec| spec.surface == Surface::Middle);
         let on_tabs = |spec: &&Spec| {
             spec.table == Some(table) || spec.tabs.iter().any(|&(_, name)| name == table)
@@ -1082,12 +1082,12 @@ impl Tool {
     }
 
     /// What to call it in an interface.
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         self.spec().name
     }
 }
 
-pub struct ToolPlugin;
+pub(crate) struct ToolPlugin;
 
 impl Plugin for ToolPlugin {
     fn build(&self, app: &mut App) {
@@ -1194,7 +1194,7 @@ pub(crate) fn open_on(tool: Tool) -> Tool {
 /// a setting. Without that, one notch both resized the brush and moved the
 /// camera. The tileset list had the same fault and has the same fix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Wheel {
+pub(crate) enum Wheel {
     /// How far the brush reaches.
     Radius,
     /// How strongly each application of the brush acts.
@@ -1210,7 +1210,7 @@ impl Wheel {
     /// Checked in the order a person reaches for them, and on both sides of
     /// the keyboard. When only the left-hand modifiers were checked, the same
     /// gesture worked or did not depending on which hand made it.
-    pub fn held(keys: &ButtonInput<KeyCode>) -> Option<Wheel> {
+    pub(crate) fn held(keys: &ButtonInput<KeyCode>) -> Option<Wheel> {
         let either = |a, b| keys.pressed(a) || keys.pressed(b);
         if either(KeyCode::ControlLeft, KeyCode::ControlRight) {
             return Some(Wheel::Radius);
@@ -1229,7 +1229,7 @@ impl Wheel {
 ///
 /// Below 1, because a core of the whole radius is the same as
 /// [`Falloff::Flat`] and leaves the falloff no distance to run over.
-pub const CORE: std::ops::RangeInclusive<f32> = 0.0..=0.9;
+pub(crate) const CORE: std::ops::RangeInclusive<f32> = 0.0..=0.9;
 
 #[cfg(test)]
 mod tests {

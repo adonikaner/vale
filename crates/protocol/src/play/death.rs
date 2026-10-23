@@ -86,10 +86,6 @@ pub const PLAYER_FLAGS_GHOST: u32 = 0x0000_0010;
 /// with no countdown on it.
 pub const RELEASE_TIMER: u32 = 0x08;
 
-/// `PLAYER_FIELD_BYTE_NO_RELEASE_WINDOW` (`Player.h:379`) — do not offer the
-/// release box at all.
-pub const NO_RELEASE_WINDOW: u32 = 0x10;
-
 /// Where the body is, as `MSG_CORPSE_QUERY` answers it.
 ///
 /// **`map_id` and `corpse_map_id` are different questions and both are sent.**
@@ -133,7 +129,7 @@ pub struct ResurrectOffer {
 ///
 /// Sent once, at release. The value is already in milliseconds
 /// (`delay * IN_MILLISECONDS`).
-pub fn parse_corpse_reclaim_delay(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_corpse_reclaim_delay(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
@@ -143,7 +139,7 @@ pub fn parse_corpse_reclaim_delay(body: &[u8]) -> Option<u32> {
 /// `Some(None)` is "the server looked and there is no corpse", which is a real
 /// and common answer (alive, or the bones have already been spawned);
 /// `None` is a body that would not parse.
-pub fn parse_corpse_query(body: &[u8]) -> Option<Option<CorpseLocation>> {
+pub(crate) fn parse_corpse_query(body: &[u8]) -> Option<Option<CorpseLocation>> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -171,7 +167,7 @@ pub fn parse_corpse_query(body: &[u8]) -> Option<Option<CorpseLocation>> {
 /// `strlen(name) + 1` and then the string through `WorldPacket::operator<<`,
 /// which appends its own NUL. The length is therefore redundant and is skipped
 /// rather than trusted — reading the string is what advances the cursor.
-pub fn parse_resurrect_request(body: &[u8]) -> Option<ResurrectOffer> {
+pub(crate) fn parse_resurrect_request(body: &[u8]) -> Option<ResurrectOffer> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -191,7 +187,7 @@ pub fn parse_resurrect_request(body: &[u8]) -> Option<ResurrectOffer> {
 }
 
 /// `SMSG_SPIRIT_HEALER_CONFIRM` — `{u64 healer}`.
-pub fn parse_spirit_healer_confirm(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_spirit_healer_confirm(body: &[u8]) -> Option<u64> {
     let mut r = Reader::new(body);
     r.has(8).then(|| r.u64())
 }
@@ -202,7 +198,7 @@ pub fn parse_spirit_healer_confirm(body: &[u8]) -> Option<u64> {
 /// check it makes is against `GetPlayer()`'s own corpse. It is still sent,
 /// because a body the server reads and this client does not write is a
 /// desynchronised stream rather than an ignored field.
-pub fn reclaim_corpse_body(guid: u64) -> Vec<u8> {
+pub(crate) fn reclaim_corpse_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -213,14 +209,14 @@ pub fn reclaim_corpse_body(guid: u64) -> Vec<u8> {
 /// The guid is the one the offer arrived with, not ours:
 /// `IsRessurectRequestedBy` compares it against the stored caster and a
 /// mismatch is silently dropped.
-pub fn resurrect_response_body(caster: u64, accept: bool) -> Vec<u8> {
+pub(crate) fn resurrect_response_body(caster: u64, accept: bool) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(caster).u8(u8::from(accept));
     w.buf
 }
 
 /// `CMSG_SPIRIT_HEALER_ACTIVATE` — `{u64 healer}`.
-pub fn spirit_healer_activate_body(healer: u64) -> Vec<u8> {
+pub(crate) fn spirit_healer_activate_body(healer: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(healer);
     w.buf

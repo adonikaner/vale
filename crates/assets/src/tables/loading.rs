@@ -130,8 +130,8 @@ pub struct BarPiece {
     /// border's is fixed.
     pub fills: bool,
     /// Centre and size, as fractions of the viewport, `y` up from the bottom.
-    pub centre_x: f32,
-    pub centre_y: f32,
+    pub(crate) centre_x: f32,
+    pub(crate) centre_y: f32,
     pub width: f32,
     pub height: f32,
 }
@@ -184,7 +184,7 @@ pub const BAR: [BarPiece; 2] = [
 /// It is *not* the art's own shape: every loading screen the game ships is
 /// 512x512 and is stretched to this. Which is the point — the picture looks the
 /// way it looked on the monitors it was drawn for, and the window gets bars.
-pub const TARGET_ASPECT: f32 = 4.0 / 3.0;
+pub(crate) const TARGET_ASPECT: f32 = 4.0 / 3.0;
 
 /// **The part of the window the loading screen is drawn into** — a centred
 /// [`TARGET_ASPECT`] box — as `[left, bottom, right, top]` in `0..=1` of the

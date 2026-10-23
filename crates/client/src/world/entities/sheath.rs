@@ -95,7 +95,7 @@ impl Sheath {
 /// for the same unit in one frame replaces the first, which is the client's
 /// last-call-wins.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SheathRequest {
+pub(crate) struct SheathRequest {
     pub entity: Entity,
     /// 0 stow, 1 melee, 2 ranged.
     pub state: u8,

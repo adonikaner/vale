@@ -44,19 +44,19 @@ use crate::look::character::{regions, SkinLayer};
 pub const COUNTS: [u32; 5] = [170, 17, 6, 17, 51];
 
 /// The inventory type of the pair that carries a wearer's guild emblem.
-pub const WORN: u32 = 0x4755_0001;
+pub(crate) const WORN: u32 = 0x4755_0001;
 
 /// The inventory type of the pair that carries the tabard designer's design.
 pub const PREVIEW: u32 = 0x4755_0002;
 
 /// The bit of `ItemDisplayInfo.dbc`'s flags field that marks a guild tabard.
-pub const DISPLAY_FLAG_GUILD_TABARD: u32 = 1;
+pub(crate) const DISPLAY_FLAG_GUILD_TABARD: u32 = 1;
 
 /// The geoset the designer's preview turns on: group 12, second variant.
 /// It is the geoset a guild tabard's own `ItemDisplayInfo.dbc` row selects,
 /// whose first geoset number is 1. The group's first variant, 1201, is the
 /// chest with no tabard over it.
-pub const TABARD_GEOSET: u16 = 1202;
+pub(crate) const TABARD_GEOSET: u16 = 1202;
 
 /// The five numbers as one, or `None` when any is outside its count. A guild
 /// that has saved no emblem has -1 in every field and packs to nothing.

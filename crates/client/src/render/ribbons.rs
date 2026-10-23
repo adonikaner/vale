@@ -58,7 +58,7 @@ const MAX_EDGES: usize = 256;
 
 /// One ribbon definition and the material its strip draws through.
 pub struct RibbonDraw {
-    pub def: M2Ribbon,
+    pub(crate) def: M2Ribbon,
     pub material: Handle<M2Material>,
 }
 
@@ -79,7 +79,7 @@ pub struct RibbonSet {
 /// placeholder emitter is a brief magenta spray that marks a missing texture,
 /// but a placeholder trail would be a magenta band attached to a weapon for as
 /// long as it is carried, and a ribbon with no texture has nothing to draw.
-pub fn build_set(
+pub(crate) fn build_set(
     defs: &[M2Ribbon],
     clip: Option<ParticleClip>,
     kinds: &[u32],
@@ -165,7 +165,7 @@ struct Edge {
 
 /// One placed trail's live state.
 #[derive(Component)]
-pub struct Ribbon {
+pub(crate) struct Ribbon {
     set: Arc<RibbonSet>,
     index: usize,
     /// The entity this trail's lifetime is tied to. When it no longer exists,
@@ -187,21 +187,12 @@ pub struct Ribbon {
     age: f32,
 }
 
-impl Ribbon {
-    /// The entity this trail's lifetime is tied to. Read-only, for the reason
-    /// `Emitter::owner` gives: a trail is at the world root, and this is the
-    /// only link back to the entity that emitted it.
-    pub fn owner(&self) -> Entity {
-        self.owner
-    }
-}
-
 /// Spawns one trail entity per ribbon of a model.
 ///
 /// `anchors` gives the source of each ribbon's node, as it does for the
 /// emitters: a joint of the model's own skeleton where it has one, the
 /// owner's frame otherwise.
-pub fn spawn_ribbons(
+pub(crate) fn spawn_ribbons(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     set: &Arc<RibbonSet>,
@@ -220,6 +211,7 @@ pub fn spawn_ribbons(
         .map(|(index, ribbon)| {
             commands
                 .spawn((
+                    crate::render::effect::EffectOf(owner),
                     Ribbon {
                         set: Arc::clone(set),
                         index,
@@ -507,7 +499,7 @@ fn simulate_ribbons(
     }
 }
 
-pub struct RibbonPlugin;
+pub(crate) struct RibbonPlugin;
 
 impl Plugin for RibbonPlugin {
     fn build(&self, app: &mut App) {

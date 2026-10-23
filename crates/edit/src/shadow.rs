@@ -304,7 +304,7 @@ pub struct Baked {
 /// `decode_shadow_map` copies 62 into 63 on the way in. Writing an honest value
 /// there costs nothing and means the file says what the geometry says rather
 /// than what one reader happens to do with it.
-pub fn bake_chunk(
+pub(crate) fn bake_chunk(
     tile: &AdtFile,
     chunk_index: usize,
     sun: [f32; 3],
@@ -399,7 +399,7 @@ pub const CHUNKS: usize = CHUNKS_PER_SIDE * CHUNKS_PER_SIDE;
 ///
 /// Returns whether anything moved, so a caller can skip writing a tile nothing
 /// changed on.
-pub fn set_shadow(tile: &mut AdtFile, chunk_index: usize, bits: Option<&[u8]>) -> bool {
+pub(crate) fn set_shadow(tile: &mut AdtFile, chunk_index: usize, bits: Option<&[u8]>) -> bool {
     let Some(chunk) = tile.chunks.get_mut(chunk_index) else {
         return false;
     };

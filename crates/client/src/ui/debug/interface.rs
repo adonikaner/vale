@@ -105,7 +105,7 @@ pub fn show(ui: &mut egui::Ui, params: &mut Readout, console: &mut Console) {
 /// `focus` gives the field the keyboard on this draw. The console tab passes
 /// it on the frame the backquote key opens the tab, so a chunk can be typed
 /// without clicking the field first.
-pub fn command_line(ui: &mut egui::Ui, params: &mut Readout, console: &mut Console, focus: bool) {
+pub(crate) fn command_line(ui: &mut egui::Ui, params: &mut Readout, console: &mut Console, focus: bool) {
     ui.strong("Lua console");
     ui.colored_label(
         DIM,

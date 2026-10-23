@@ -98,7 +98,7 @@ use crate::tables::spellbook::{SpellInfo, Spells};
 /// `SPELL_EFFECT_TRADE_SKILL` — the whole content of an opening spell.
 pub const TRADE_SKILL_EFFECT: u32 = 47;
 /// `SPELL_EFFECT_SKILL` — the slot whose misc value is the skill line.
-pub const SKILL_EFFECT: u32 = 118;
+pub(crate) const SKILL_EFFECT: u32 = 118;
 /// `SPELL_EFFECT_CREATE_ITEM` — the slot whose item type is what a recipe
 /// makes and whose rolled value is how many.
 pub const CREATE_ITEM_EFFECT: u32 = 24;
@@ -199,8 +199,8 @@ impl Difficulty {
 /// the two thresholds: it loads `max_value` at `+0x28` (field 10) and
 /// `min_value` at `+0x2c` (field 11) off the row it found.
 mod ability_fields {
-    pub const SKILL_ID: usize = 1;
-    pub const SPELL_ID: usize = 2;
+    pub(crate) const SKILL_ID: usize = 1;
+    pub(crate) const SPELL_ID: usize = 2;
     /// `req_skill_value`, field 7 — the rank a trainer wants before teaching
     /// it. Carried for the CLI's census; the window itself never reads it.
     pub const REQ_SKILL_VALUE: usize = 7;
@@ -216,12 +216,12 @@ mod ability_fields {
     /// `forward_spellid`, field 8 (`+0x20`) — the next rank. The client
     /// walks it from a pet spell to decide whether a later rank is already
     /// known, which greys the earlier one.
-    pub const FORWARD_SPELL: usize = 8;
+    pub(crate) const FORWARD_SPELL: usize = 8;
 }
 
 /// `SPELL_EFFECT_LEARN_SPELL` — what a Beast Training row's effect is; its
 /// trigger is the pet's own spell.
-pub const LEARN_SPELL_EFFECT: u32 = 36;
+pub(crate) const LEARN_SPELL_EFFECT: u32 = 36;
 /// `TARGET_PET` — the implicit target that says the learn effect is aimed at
 /// the pet rather than the caster.
 pub const TARGET_PET: u32 = 5;
@@ -331,7 +331,7 @@ impl TradeSkills {
     /// row under `lines`, follow `forward_spellid` and ask `knows` at each
     /// step, stopping at the first known rank or at a chain's end. A spell
     /// with no row, or whose row states no forward spell, answers `false`.
-    pub fn later_rank_known(
+    pub(crate) fn later_rank_known(
         &self,
         spell: u32,
         lines: &[u32],
@@ -356,7 +356,7 @@ impl TradeSkills {
 
     /// Every spell of one skill line that is in `known`, unordered — the
     /// build's intake.
-    pub fn known_of_line(&self, skill: u32, known: &[u32]) -> Vec<u32> {
+    pub(crate) fn known_of_line(&self, skill: u32, known: &[u32]) -> Vec<u32> {
         known
             .iter()
             .copied()
@@ -403,7 +403,7 @@ pub struct ItemHead {
 
 /// The inv-slot mask for one inventory type — the client's table with the
 /// build's own three overrides and its "other" fallback.
-pub fn inv_slot_mask(inventory_type: u32) -> u32 {
+pub(crate) fn inv_slot_mask(inventory_type: u32) -> u32 {
     let mask = match inventory_type {
         18 => 0x80000,          // a bag
         11 => 0x400,            // finger
@@ -432,7 +432,7 @@ pub fn training_trigger(info: &SpellInfo) -> Option<u32> {
 
 /// `SPELL_EFFECT_LEARN_PET_SPELL` — the other learn effect `GetCraftInfo`
 /// accepts, which no 5875 hunter spell carries.
-pub const LEARN_PET_SPELL_EFFECT: u32 = 57;
+pub(crate) const LEARN_PET_SPELL_EFFECT: u32 = 57;
 
 /// **`trainingPointCost`** — `reqtrainpoints` of the trigger spell's row under
 /// the pet family's skill lines (`[row + 0x38]`), or 0 for no pet,
@@ -499,7 +499,7 @@ pub struct Row {
     pub creates: u32,
     /// …and its level and inv-slot mask, for the sort and the filter.
     pub item_level: u32,
-    pub inv_slot_mask: u32,
+    pub(crate) inv_slot_mask: u32,
 }
 
 impl Row {

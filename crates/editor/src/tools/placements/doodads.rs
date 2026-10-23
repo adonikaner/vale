@@ -111,61 +111,61 @@ use bevy::prelude::*;
 /// on. `also` is the rest of the group, in the order they were added. See
 /// [`super::group`] for the rules and why the primary stays a single record.
 #[derive(Resource, Debug, Default, Clone)]
-pub struct Selection {
-    pub at: Option<Selected>,
+pub(crate) struct Selection {
+    pub(crate) at: Option<Selected>,
     /// The members beside the primary. Empty for a selection of one, which is
     /// every selection a plain click makes.
-    pub also: Vec<Selected>,
+    pub(crate) also: Vec<Selected>,
     /// Whether a ctrl-drag also leans the placement onto the slope it is
     /// dropped on. Off, it drops the origin onto the ground and keeps the
     /// record's turns; on, the two lean angles are rewritten from the ground's
     /// normal under the origin so the model stands square to a hillside. The
     /// turn about up is kept either way — see
     /// `vale_assets::world::adt::lean_to_normal`.
-    pub align: bool,
+    pub(crate) align: bool,
 }
 
 /// One selected placement, and everything a panel needs to say about it.
 #[derive(Debug, Clone)]
-pub struct Selected {
+pub(crate) struct Selected {
     /// Which tile's list it is in, and where in that list.
-    pub tile: (u32, u32),
-    pub index: usize,
+    pub(crate) tile: (u32, u32),
+    pub(crate) index: usize,
     /// The id the renderer knows it by — see the module comment.
-    pub unique_id: u32,
+    pub(crate) unique_id: u32,
     /// Its `MMDX` path, for the panel to name it.
-    pub path: String,
+    pub(crate) path: String,
     /// The record as it stands. Written by the tool and read by the panel; the
     /// panel writes it back through [`Selection::edited`].
-    pub record: Placement,
+    pub(crate) record: Placement,
 }
 
 impl Selection {
     /// Select one placement, or none, and drop the rest of the group.
-    pub fn only(&mut self, at: Option<Selected>) {
+    pub(crate) fn only(&mut self, at: Option<Selected>) {
         self.at = at;
         self.also.clear();
     }
 
     /// How many placements are selected.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         usize::from(self.at.is_some()) + self.also.len()
     }
 
     /// Every selected placement, the primary first.
-    pub fn members(&self) -> impl Iterator<Item = &Selected> {
+    pub(crate) fn members(&self) -> impl Iterator<Item = &Selected> {
         self.at.iter().chain(self.also.iter())
     }
 
     /// Whether a placement is selected, as the primary or as a member.
-    pub fn holds(&self, unique_id: u32) -> bool {
+    pub(crate) fn holds(&self, unique_id: u32) -> bool {
         self.members().any(|at| at.unique_id == unique_id)
     }
 
     /// Shift+click: take a selected placement out of the group, or add one and
     /// make it the primary. Taking the primary out promotes the member added
     /// last.
-    pub fn toggle(&mut self, found: Selected) {
+    pub(crate) fn toggle(&mut self, found: Selected) {
         if self.at.as_ref().is_some_and(|at| at.unique_id == found.unique_id) {
             self.at = self.also.pop();
             return;
@@ -180,7 +180,7 @@ impl Selection {
     }
 
     /// Make a member the primary, keeping the group.
-    pub fn promote(&mut self, unique_id: u32) {
+    pub(crate) fn promote(&mut self, unique_id: u32) {
         let Some(at) = self.also.iter().position(|m| m.unique_id == unique_id) else {
             return;
         };
@@ -194,7 +194,7 @@ impl Selection {
     ///
     /// `None` when nothing is selected or nothing moved, which is what a panel
     /// redrawn on a frame nobody touched it answers.
-    pub fn edited(&self, was: &Placement) -> Option<(usize, Placement)> {
+    pub(crate) fn edited(&self, was: &Placement) -> Option<(usize, Placement)> {
         let at = self.at.as_ref()?;
         (at.record != *was).then_some((at.index, at.record))
     }
@@ -224,9 +224,9 @@ const SCALE: std::ops::RangeInclusive<u16> = 1..=u16::MAX;
 
 /// …and the same as a multiplier, which is what a person means and what the
 /// panel edits.
-pub const SCALE_RANGE: std::ops::RangeInclusive<f32> = (1.0 / 1024.0)..=(u16::MAX as f32 / 1024.0);
+pub(crate) const SCALE_RANGE: std::ops::RangeInclusive<f32> = (1.0 / 1024.0)..=(u16::MAX as f32 / 1024.0);
 
-pub struct DoodadToolPlugin;
+pub(crate) struct DoodadToolPlugin;
 
 impl Plugin for DoodadToolPlugin {
     fn build(&self, app: &mut App) {

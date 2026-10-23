@@ -22,15 +22,15 @@
 //! the `#[global_allocator]` puts two relaxed atomics on every allocation the
 //! process makes, which is a hotter path than anything else this crate
 //! instruments and has not been priced. Build with it when a leak is reported
-//! and no count explains it; the module itself compiles either way, so its
-//! tests run in an ordinary `cargo test --workspace`.
+//! and no count explains it. The module and its tests compile only with the
+//! feature, because nothing else reads the census.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Size classes: `1 << i` bytes, up to 4 GiB.
-pub const CLASSES: usize = 33;
+pub(crate) const CLASSES: usize = 33;
 
 #[allow(clippy::declare_interior_mutable_const)]
 const ZERO: AtomicIsize = AtomicIsize::new(0);
@@ -76,14 +76,14 @@ thread_local! {
 }
 
 /// Start watching a class. Called once at startup from [`watch_from_env`].
-pub fn watch(size: usize) {
+pub(crate) fn watch(size: usize) {
     WATCHED.store(size, Ordering::Relaxed);
     let mut live = LIVE.lock().unwrap();
     *live = Some(std::collections::HashMap::new());
 }
 
 /// `VALE_HEAP_CLASS=65536` turns the sampler on for that block size.
-pub fn watch_from_env() {
+pub(crate) fn watch_from_env() {
     if let Some(size) = std::env::var("VALE_HEAP_CLASS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -141,7 +141,7 @@ fn forget(ptr: *mut u8, size: usize) {
 /// The rise and not the total is the answer: a cache holding a tile's meshes
 /// and a leak adding one block a second look the same in a census and nothing
 /// alike in a diff. Called once a stop, so "since the last ask" is one dwell.
-pub fn sampled_growth(top: usize) -> Vec<(isize, usize, String)> {
+pub(crate) fn sampled_growth(top: usize) -> Vec<(isize, usize, String)> {
     let Ok(live) = LIVE.lock() else {
         return Vec::new();
     };
@@ -192,7 +192,7 @@ fn interesting(trace: &str) -> String {
 }
 
 /// The system allocator with a counter on each side of it.
-pub struct Counted;
+pub(crate) struct Counted;
 
 // SAFETY: every method forwards to `System`, which is a sound allocator, and
 // adds only relaxed atomic bookkeeping around it. Nothing here allocates.
@@ -240,7 +240,7 @@ unsafe impl GlobalAlloc for Counted {
 
 /// One snapshot: `(class bytes, live blocks, live bytes)` for every class that
 /// holds anything.
-pub fn snapshot() -> Vec<(usize, isize, isize)> {
+pub(crate) fn snapshot() -> Vec<(usize, isize, isize)> {
     (0..CLASSES)
         .map(|i| {
             (
@@ -254,7 +254,7 @@ pub fn snapshot() -> Vec<(usize, isize, isize)> {
 }
 
 /// …and what it comes to, in bytes.
-pub fn live_bytes() -> isize {
+pub(crate) fn live_bytes() -> isize {
     (0..CLASSES).map(|i| BYTES[i].load(Ordering::Relaxed)).sum()
 }
 

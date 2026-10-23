@@ -196,6 +196,9 @@ pub struct Bolt {
 /// its clock and its guid list rather than being armed again next frame — which
 /// would restart the stagger every frame until the file landed.
 struct Pending {
+    /// The unit at the head of [`Self::points`], which the bolt is the effect
+    /// of.
+    caster: Entity,
     points: Vec<u64>,
     chain: vale_assets::tables::spell::ChainVisual,
     since: f32,
@@ -204,7 +207,7 @@ struct Pending {
 }
 
 #[derive(Resource, Default)]
-pub struct PendingBolts(Vec<Pending>);
+pub(crate) struct PendingBolts(Vec<Pending>);
 
 /// **How many casts this entity had released when the bolt pass last looked.**
 ///
@@ -214,7 +217,7 @@ pub struct PendingBolts(Vec<Pending>);
 #[derive(Component)]
 struct BoltsSeen(u32);
 
-pub struct LightningPlugin;
+pub(crate) struct LightningPlugin;
 
 impl Plugin for LightningPlugin {
     fn build(&self, app: &mut App) {
@@ -341,6 +344,7 @@ fn arm_bolts(
         // backstop for the channels no packet tells this client the end of.
         let until = now + if chain.held { HELD_CEILING } else { fired };
         pending.0.push(Pending {
+            caster: entity,
             points,
             since: now,
             until,
@@ -377,6 +381,7 @@ fn spawn_bolts(
             continue;
         };
         commands.spawn((
+            crate::render::effect::EffectOf(want.caster),
             Bolt {
                 points: want.points,
                 effect: want.chain.effect,
@@ -548,14 +553,6 @@ impl Bolt {
     /// [`Self::held_by`] carries, read as a question.
     fn held(&self) -> bool {
         self.held_by.is_some()
-    }
-
-    /// **The guids this bolt runs through, the caster first.** Read-only, for
-    /// a host that has to find the bolts its own units are strung between: a
-    /// bolt lives at the world root and names its units by guid, so this is
-    /// the only join back.
-    pub fn points(&self) -> &[u64] {
-        &self.points
     }
 }
 

@@ -17,7 +17,7 @@
 //!                zones it serves and give its facing
 //! ```
 
-pub mod flightpaths;
-pub mod graveyards;
-pub mod lights;
-pub mod triggers;
+pub(crate) mod flightpaths;
+pub(crate) mod graveyards;
+pub(crate) mod lights;
+pub(crate) mod triggers;

@@ -29,7 +29,7 @@ use vale_mangos::row::{Edits, Key, Reference, RowEdit};
 ///
 /// `at_base` is where the database has the row, for a claim that has not
 /// recorded it yet; a row the project creates records none.
-pub fn rekey(
+pub(crate) fn rekey(
     session: &mut EditSession,
     table: &str,
     from: &Key,
@@ -64,7 +64,7 @@ pub fn rekey(
 
 /// One claim of the store that names an id.
 #[derive(Debug, PartialEq)]
-pub enum Hit {
+pub(crate) enum Hit {
     /// A column of a claim holds it.
     Column {
         table: String,
@@ -112,7 +112,7 @@ fn follow(
 /// **Which claims of a store name `old` through one of `references`**, and what
 /// each becomes. The decision, apart from the writes, so it can be checked with
 /// no session.
-pub fn hits(edits: &Edits, references: &[Reference], old: u64, new: u64) -> Vec<Hit> {
+pub(crate) fn hits(edits: &Edits, references: &[Reference], old: u64, new: u64) -> Vec<Hit> {
     let mut hits: Vec<Hit> = Vec::new();
     for reference in references {
         let (was, will) = match reference.negated {

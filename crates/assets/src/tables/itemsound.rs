@@ -42,16 +42,16 @@ mod fields {
     /// The row id, which is what `ItemDisplayInfo`'s `groupSoundIndex` holds.
     pub const ID: usize = 0;
     /// Lifting the item — onto the cursor, or out of a corpse.
-    pub const PICK_UP: usize = 1;
+    pub(crate) const PICK_UP: usize = 1;
     /// …and letting go of it.
-    pub const PUT_DOWN: usize = 2;
+    pub(crate) const PUT_DOWN: usize = 2;
     /// A third sound, set on five of the twenty-four rows and on none of the
     /// eighteen that anything names. Unplayed here for that reason: there is no
     /// call site in the client that reads column 2, so what it is for is not
     /// established.
     pub const DROP: usize = 3;
     /// Zero in every row of the shipped table.
-    pub const UNUSED: usize = 4;
+    pub(crate) const UNUSED: usize = 4;
     pub const COUNT: usize = 5;
 }
 

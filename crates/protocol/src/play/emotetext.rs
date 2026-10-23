@@ -28,14 +28,14 @@ pub struct TextEmote {
     /// The `EmotesText.dbc` id.
     pub text_emote: u32,
     /// The `Emotes.dbc` id the sender put beside it.
-    pub emote_num: u32,
+    pub(crate) emote_num: u32,
     /// The target's name, empty for none.
     pub target: String,
 }
 
 /// `SMSG_TEXT_EMOTE` — see the module note. The counted name includes its
 /// NUL; a count past the body is refused.
-pub fn parse_text_emote(body: &[u8]) -> Option<TextEmote> {
+pub(crate) fn parse_text_emote(body: &[u8]) -> Option<TextEmote> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 4 + 4) {
         return None;
@@ -58,7 +58,7 @@ pub fn parse_text_emote(body: &[u8]) -> Option<TextEmote> {
 }
 
 /// `CMSG_TEXT_EMOTE`.
-pub fn text_emote_body(text_emote: u32, emote_num: u32, target: u64) -> Vec<u8> {
+pub(crate) fn text_emote_body(text_emote: u32, emote_num: u32, target: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(text_emote).u32(emote_num).u64(target);
     w.buf

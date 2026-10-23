@@ -30,7 +30,7 @@ use crate::world::status::WorldStatus;
 
 /// The path of this character's file, and which character it was read for.
 #[derive(Resource, Default)]
-pub struct CameraCache {
+pub(crate) struct CameraCache {
     path: Option<PathBuf>,
     /// `(account, realm, character)` the file was read for. The file is read
     /// again when any of the three changes, as for a second character in one
@@ -38,7 +38,7 @@ pub struct CameraCache {
     read_for: Option<(String, String, String)>,
 }
 
-pub struct CameraCachePlugin;
+pub(crate) struct CameraCachePlugin;
 
 impl Plugin for CameraCachePlugin {
     fn build(&self, app: &mut App) {

@@ -181,6 +181,8 @@ pub fn core(app: &mut App, gamedata_dir: String, config: vale_config::Config) {
     app
         .insert_resource(assets::GameAssets::new(gamedata_dir).with_root(config.root.clone()))
         .insert_resource(session::ClientConfig(config))
+        // What a host that changes paths under the overlay tells the banks.
+        .add_plugins(assets::AssetsPlugin)
         // One plugin per directory. Each directory's `mod.rs` lists what is in
         // it and states the orderings that matter, so adding a pass does not
         // edit this list. It replaced a fourteen-entry list with the ordering

@@ -60,7 +60,7 @@ impl MirrorTimer {
     /// (`ENVIRONMENTAL`, the lava tick) and stops sending at
     /// `NUM_CLIENT_TIMERS`, but a different server need not — and the client's
     /// own table is three entries long, so a fourth would index past it.
-    pub fn from_wire(kind: u32) -> Option<MirrorTimer> {
+    pub(crate) fn from_wire(kind: u32) -> Option<MirrorTimer> {
         match kind {
             0 => Some(MirrorTimer::Fatigue),
             1 => Some(MirrorTimer::Breath),
@@ -119,7 +119,7 @@ pub struct MirrorTimerStart {
 
 /// See [`MirrorTimerStart`]. `None` for a short body or a timer type this
 /// client has no bar for.
-pub fn parse_start_mirror_timer(body: &[u8]) -> Option<MirrorTimerStart> {
+pub(crate) fn parse_start_mirror_timer(body: &[u8]) -> Option<MirrorTimerStart> {
     let mut r = Reader::new(body);
     if !r.has(4 * 4 + 1 + 4) {
         return None;
@@ -136,7 +136,7 @@ pub fn parse_start_mirror_timer(body: &[u8]) -> Option<MirrorTimerStart> {
 }
 
 /// `SMSG_STOP_MIRROR_TIMER`: `u32 type` and nothing else. The bar is hidden.
-pub fn parse_stop_mirror_timer(body: &[u8]) -> Option<MirrorTimer> {
+pub(crate) fn parse_stop_mirror_timer(body: &[u8]) -> Option<MirrorTimer> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -146,7 +146,7 @@ pub fn parse_stop_mirror_timer(body: &[u8]) -> Option<MirrorTimer> {
 
 /// `SMSG_PAUSE_MIRROR_TIMER`: `u32 type, u8 state` — see the module comment for
 /// why the shipped handler cannot act on both.
-pub fn parse_pause_mirror_timer(body: &[u8]) -> Option<(MirrorTimer, bool)> {
+pub(crate) fn parse_pause_mirror_timer(body: &[u8]) -> Option<(MirrorTimer, bool)> {
     let mut r = Reader::new(body);
     if !r.has(4 + 1) {
         return None;

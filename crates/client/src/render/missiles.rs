@@ -4,7 +4,8 @@
 //! tile, a pauldron to a shoulder, a spell glow to a caster's hand. A missile
 //! belongs to neither end — it leaves the caster and arrives at the victim, and
 //! for the second or so in between it is a model in the world with a velocity
-//! and no owner. That is the whole reason this is a module rather than three
+//! and no parent; only its [`crate::render::effect::EffectOf`] names the
+//! caster. That is the whole reason this is a module rather than three
 //! more fields on `EntityModel`.
 //!
 //! **It is described one table earlier than the effects and it needs the
@@ -116,6 +117,8 @@ pub struct Missile {
 /// Everything about the launch is captured here rather than re-derived when the
 /// model lands: the caster may have moved, or died, in the meantime.
 struct Pending {
+    /// The unit that threw it, which the missile is the effect of.
+    caster: Entity,
     target: Entity,
     victim: u64,
     spell: u32,
@@ -129,7 +132,7 @@ struct Pending {
 
 /// The launches waiting on a model.
 #[derive(Resource, Default)]
-pub struct PendingMissiles(Vec<Pending>);
+pub(crate) struct PendingMissiles(Vec<Pending>);
 
 /// **How many casts this entity had released when the missile pass last
 /// looked**, and the latch that stops a missile per frame.
@@ -142,7 +145,7 @@ pub struct PendingMissiles(Vec<Pending>);
 #[derive(Component)]
 struct MissilesSeen(u32);
 
-pub struct MissilePlugin;
+pub(crate) struct MissilePlugin;
 
 impl Plugin for MissilePlugin {
     fn build(&self, app: &mut App) {
@@ -217,6 +220,7 @@ fn launch_missiles(
             continue;
         };
         pending.0.push(Pending {
+            caster: entity,
             target,
             victim: caster.last_spell_target,
             spell: caster.last_spell,
@@ -273,6 +277,7 @@ fn spawn_missiles(
                     .spawn((
                         Transform::from_translation(launch.from),
                         Visibility::default(),
+                        crate::render::effect::EffectOf(launch.caster),
                     ))
                     .id();
                 let model = crate::world::entities::hang_model(

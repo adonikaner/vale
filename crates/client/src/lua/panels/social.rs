@@ -94,7 +94,8 @@ use crate::lua::host::LuaHost;
 ///
 /// Checked against [`register`] by `every_verb_is_registered`, on this repo's
 /// own lesson about lists kept beside the thing they describe.
-pub const VERBS: [&str; 18] = [
+#[cfg(test)]
+pub(crate) const VERBS: [&str; 18] = [
     "AddFriend",
     "AddIgnore",
     "AddOrDelIgnore",
@@ -117,29 +118,29 @@ pub const VERBS: [&str; 18] = [
 
 /// One row of the friends list, as the panel wants it.
 #[derive(Debug, Clone, Default)]
-pub struct FriendRow {
-    pub wire: Friend,
+pub(crate) struct FriendRow {
+    pub(crate) wire: Friend,
     /// Whatever `CMSG_NAME_QUERY` has answered, or `None` while it has not.
     pub name: Option<String>,
 }
 
 /// **The panel's whole state**, shared between the interpreter and the ECS.
 #[derive(Default)]
-pub struct Social {
+pub(crate) struct Social {
     /// `SMSG_FRIEND_LIST`, in the order the server sent it.
-    pub friends: Vec<FriendRow>,
+    pub(crate) friends: Vec<FriendRow>,
     /// `SMSG_IGNORE_LIST` — a guid and whatever name has arrived for it.
     pub ignores: Vec<(u64, Option<String>)>,
     /// `SMSG_WHO`'s rows, and the online total behind them.
     pub who: Vec<WhoRow>,
-    pub who_online: u32,
+    pub(crate) who_online: u32,
     /// **Where the next `SMSG_WHO` goes**, which the interface decides —
     /// `SetWhoToUI(1)` before opening the panel, `SetWhoToUI(nil)` for a `/who`
     /// that should print into the chat frame instead. Nothing here reads it;
     /// [`crate::interface::social`] does, and it is held rather than queued
     /// so that the flag set *before* the search is the one in force when the
     /// answer lands.
-    pub who_to_ui: bool,
+    pub(crate) who_to_ui: bool,
     /// One-based, `0` for nothing selected — the interface's own convention and
     /// what `GetSelectedFriend` answers.
     selected_friend: usize,
@@ -156,9 +157,9 @@ pub struct Social {
     /// [`super::reputation::Standing::version`] is, and read the same way: it is
     /// what lets a Bevy system raise `FRIENDLIST_UPDATE` without diffing two
     /// lists. Separate counters, because the two tabs redraw independently.
-    pub friends_version: u32,
-    pub ignores_version: u32,
-    pub who_version: u32,
+    pub(crate) friends_version: u32,
+    pub(crate) ignores_version: u32,
+    pub(crate) who_version: u32,
 }
 
 impl Social {
@@ -167,7 +168,7 @@ impl Social {
     /// **Names are carried across by guid** rather than dropped, so a list
     /// re-read mid-session does not blank every row back to `UNKNOWN` until the
     /// queries come round again.
-    pub fn set_friends(&mut self, list: &[Friend]) {
+    pub(crate) fn set_friends(&mut self, list: &[Friend]) {
         let held: std::collections::HashMap<u64, String> = self
             .friends
             .iter()
@@ -185,7 +186,7 @@ impl Social {
     }
 
     /// `SMSG_IGNORE_LIST` — the same, one field narrower.
-    pub fn set_ignores(&mut self, list: &[u64]) {
+    pub(crate) fn set_ignores(&mut self, list: &[u64]) {
         let held: std::collections::HashMap<u64, String> = self
             .ignores
             .iter()
@@ -201,7 +202,7 @@ impl Social {
 
     /// `SMSG_FRIEND_STATUS` with one of the two "online" results: a row this
     /// client may not have had, with its level, zone and class attached.
-    pub fn note_friend(&mut self, friend: Friend) {
+    pub(crate) fn note_friend(&mut self, friend: Friend) {
         match self
             .friends
             .iter_mut()
@@ -219,7 +220,7 @@ impl Social {
     /// …and one that only says a guid is now on the list, which is what an
     /// *offline* add carries: no level, no zone, no class, and nothing but the
     /// name query to fill them in.
-    pub fn add_friend_guid(&mut self, guid: u64) {
+    pub(crate) fn add_friend_guid(&mut self, guid: u64) {
         if self.friends.iter().any(|row| row.wire.guid == guid) {
             return;
         }
@@ -233,7 +234,7 @@ impl Social {
         self.friends_version = self.friends_version.wrapping_add(1);
     }
 
-    pub fn remove_friend_guid(&mut self, guid: u64) {
+    pub(crate) fn remove_friend_guid(&mut self, guid: u64) {
         let before = self.friends.len();
         self.friends.retain(|row| row.wire.guid != guid);
         if self.friends.len() != before {
@@ -242,7 +243,7 @@ impl Social {
         }
     }
 
-    pub fn add_ignore_guid(&mut self, guid: u64) {
+    pub(crate) fn add_ignore_guid(&mut self, guid: u64) {
         if self.ignores.iter().any(|(g, _)| *g == guid) {
             return;
         }
@@ -250,7 +251,7 @@ impl Social {
         self.ignores_version = self.ignores_version.wrapping_add(1);
     }
 
-    pub fn remove_ignore_guid(&mut self, guid: u64) {
+    pub(crate) fn remove_ignore_guid(&mut self, guid: u64) {
         let before = self.ignores.len();
         self.ignores.retain(|(g, _)| *g != guid);
         if self.ignores.len() != before {
@@ -260,7 +261,7 @@ impl Social {
     }
 
     /// `SMSG_WHO`.
-    pub fn set_who(&mut self, rows: Vec<WhoRow>, online: u32) {
+    pub(crate) fn set_who(&mut self, rows: Vec<WhoRow>, online: u32) {
         self.who = rows;
         self.who_online = online;
         self.who_version = self.who_version.wrapping_add(1);
@@ -272,7 +273,7 @@ impl Social {
     /// The caller is a Bevy system with the world lock, so this takes a lookup
     /// rather than the map: it is called every frame while any row is unnamed,
     /// and the whole of the cost when they are all named is one `all`.
-    pub fn learn_names(&mut self, mut name_of: impl FnMut(u64) -> Option<String>) {
+    pub(crate) fn learn_names(&mut self, mut name_of: impl FnMut(u64) -> Option<String>) {
         let mut moved_friends = false;
         for row in &mut self.friends {
             if row.name.is_none() {
@@ -297,30 +298,30 @@ impl Social {
 
     /// Is anything on either list still waiting for a name? The guard on the
     /// world lock in [`Self::learn_names`]' caller.
-    pub fn wants_names(&self) -> bool {
+    pub(crate) fn wants_names(&self) -> bool {
         self.friends.iter().any(|row| row.name.is_none())
             || self.ignores.iter().any(|(_, name)| name.is_none())
     }
 
     /// Every guid on either list, which is what the session hands the object
     /// manager so the queries go out.
-    pub fn friend_guids(&self) -> Vec<u64> {
+    pub(crate) fn friend_guids(&self) -> Vec<u64> {
         self.friends.iter().map(|row| row.wire.guid).collect()
     }
 
-    pub fn ignore_guids(&self) -> Vec<u64> {
+    pub(crate) fn ignore_guids(&self) -> Vec<u64> {
         self.ignores.iter().map(|(guid, _)| *guid).collect()
     }
 
     /// The guid at a one-based row, for the two removals that take an index.
-    pub fn friend_guid_at(&self, index: usize) -> Option<u64> {
+    pub(crate) fn friend_guid_at(&self, index: usize) -> Option<u64> {
         Some(self.friends.get(index.checked_sub(1)?)?.wire.guid)
     }
 
     /// …and by name, for `RemoveFriend("Bram")` off the slash command.
     /// Case-insensitive, because a player types what they remember rather than
     /// what the server capitalised.
-    pub fn friend_guid_named(&self, name: &str) -> Option<u64> {
+    pub(crate) fn friend_guid_named(&self, name: &str) -> Option<u64> {
         self.friends
             .iter()
             .find(|row| {
@@ -331,7 +332,7 @@ impl Social {
             .map(|row| row.wire.guid)
     }
 
-    pub fn ignore_guid_named(&self, name: &str) -> Option<u64> {
+    pub(crate) fn ignore_guid_named(&self, name: &str) -> Option<u64> {
         self.ignores
             .iter()
             .find(|(_, held)| {
@@ -395,7 +396,7 @@ impl Social {
     /// Built per search rather than held, because a `/who` is a line somebody
     /// typed and the lists are short — see [`whoquery::Lookups`], which says the
     /// same thing from the other side.
-    pub fn parse_who(&self, line: &str) -> whoquery::WhoQuery {
+    pub(crate) fn parse_who(&self, line: &str) -> whoquery::WhoQuery {
         let tags = self
             .strings
             .as_ref()
@@ -433,7 +434,7 @@ impl Social {
 }
 
 pub type Held = Rc<RefCell<Social>>;
-pub type Queue = Rc<RefCell<Vec<SocialVerb>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<SocialVerb>>>;
 
 /// Register all eighteen. Unscoped — see the module comment.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

@@ -39,8 +39,7 @@
 //! corrected back down. Terrain edits are for looking at until the server's maps
 //! are rebuilt from the same files.
 
-use crate::adt::AdtFile;
-use crate::{EditError, TileKey};
+use crate::EditError;
 use std::path::{Path, PathBuf};
 
 /// A folder of edited files.
@@ -58,10 +57,10 @@ pub const PROJECTS_DIR: &str = "Edit";
 
 /// The folder under a project that holds its virtual paths — see the module
 /// comment.
-pub const FILES_DIR: &str = "project";
+pub(crate) const FILES_DIR: &str = "project";
 
 /// …and the one that holds what a publish wrote.
-pub const PUBLISH_DIR: &str = "publish";
+pub(crate) const PUBLISH_DIR: &str = "publish";
 
 /// …and the editor's own switches for the project, a file beside the two.
 /// Not a virtual path, so never packed into an archive.
@@ -70,7 +69,7 @@ pub const SETTINGS_FILE: &str = "settings.txt";
 /// The project the editor last opened, as a file under `Edit\` holding
 /// one name: `Edit\last-project.txt`. Read at startup when no project is
 /// named on the command line; written on every open and switch.
-pub const LAST_OPENED_FILE: &str = "last-project.txt";
+pub(crate) const LAST_OPENED_FILE: &str = "last-project.txt";
 
 /// The project last opened on this install, if its folder is still there.
 pub fn last_opened(install: impl AsRef<Path>) -> Option<String> {
@@ -419,16 +418,6 @@ impl Project {
         Ok(true)
     }
 
-    /// Save a tile.
-    pub fn save_tile(&self, key: &TileKey, tile: &AdtFile) -> Result<PathBuf, EditError> {
-        self.write(&key.vpath(), &tile.write())
-    }
-
-    /// Load a tile this project has edited.
-    pub fn load_tile(&self, key: &TileKey) -> Option<Result<AdtFile, EditError>> {
-        self.read(&key.vpath()).map(|bytes| AdtFile::parse(&bytes))
-    }
-
     /// The folders a project keeps that are not game data, and so are not
     /// packed into a patch archive.
     ///
@@ -664,7 +653,7 @@ impl Project {
 
 /// Where a project records the archives it published — see
 /// [`Project::published`]. Under `publish\`, which is not game data.
-pub const PUBLISHED_VPATH: &str = "publish\\archives.txt";
+pub(crate) const PUBLISHED_VPATH: &str = "publish\\archives.txt";
 
 /// One patch archive a project wrote: its file name in `Data\`, and what
 /// its bytes were, so a later publish can tell it from a file somebody else

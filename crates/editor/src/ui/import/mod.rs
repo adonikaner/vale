@@ -5,4 +5,4 @@
 //!               and the Import Texture dialog any form can open
 //! ```
 
-pub mod assets;
+pub(crate) mod assets;

@@ -54,7 +54,8 @@ use super::widget;
 /// [`install_measures`]. A `Button` answers `GetTextWidth` about its own
 /// `<ButtonText>`, and the six tabs that size themselves to their label are
 /// frames, not regions.
-pub const METHODS: [&str; 28] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 28] = [
     "GetBlendMode",
     "GetDrawLayer",
     "GetFontObject",
@@ -650,7 +651,7 @@ pub(super) fn install_measures(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::
 /// `<Layer level="ARTWORK">`. Defined here rather than in the draw pass
 /// because `GetDrawLayer` answers these names, and this list defines their
 /// order.
-pub const LAYERS: [&str; 5] = ["BACKGROUND", "BORDER", "ARTWORK", "OVERLAY", "HIGHLIGHT"];
+pub(crate) const LAYERS: [&str; 5] = ["BACKGROUND", "BORDER", "ARTWORK", "OVERLAY", "HIGHLIGHT"];
 
 /// The three values 1.12's `outline=` takes.
 ///
@@ -722,10 +723,10 @@ pub struct Paint {
     pub corners: Option<[f32; 8]>,
     /// The typeface file, and the height in the game's own units.
     pub font: Option<String>,
-    pub font_height: f32,
+    pub(crate) font_height: f32,
     /// `LEFT` | `CENTER` | `RIGHT`, and `TOP` | `MIDDLE` | `BOTTOM`.
-    pub justify_h: &'static str,
-    pub justify_v: &'static str,
+    pub(crate) justify_h: &'static str,
+    pub(crate) justify_v: &'static str,
     /// `<Shadow>`: the offset of the copy drawn under the glyphs, and its
     /// colour. `None` for a face that declares none, which is uncommon:
     /// `MasterFont` declares one and `GameFontNormal` inherits it.
@@ -753,7 +754,7 @@ pub struct Paint {
     /// Passed to the painter as well as used in the height, because the two
     /// are computed separately: without it here a four-row name would reserve
     /// three rows and draw four, overprinting whatever is beneath it.
-    pub max_rows: usize,
+    pub(crate) max_rows: usize,
     /// Whether this region is a `FontString`, which decides what an empty one
     /// means. A `Texture` with a colour and no path is a solid fill
     /// (`SetTexture(0, 0, 0, 0.5)` is how the directory writes one); a
@@ -761,7 +762,7 @@ pub struct Paint {
     /// rule, every empty `MessageFrame`'s font declaration (`UIErrorsFrame`,
     /// `RaidWarningFrame`, `RaidBossEmoteFrame`) drew as a solid gold 512-unit
     /// bar across the middle of the screen.
-    pub is_font: bool,
+    pub(crate) is_font: bool,
     /// The unit this region shows a portrait of, when `SetPortraitTexture` has
     /// been called on it; see [`PORTRAIT_KEY`].
     ///

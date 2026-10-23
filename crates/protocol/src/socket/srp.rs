@@ -39,7 +39,7 @@ fn sha1(chunks: &[&[u8]]) -> [u8; 20] {
 /// (build, os, platform). The retail client derives that hash from its own
 /// binaries; we send the published known-good value for our build so a server
 /// with `StrictVersionCheck = 1` accepts us.
-pub fn version_proof(a_pub: &[u8; 32], integrity_hash: &[u8; 20]) -> [u8; 20] {
+pub(crate) fn version_proof(a_pub: &[u8; 32], integrity_hash: &[u8; 20]) -> [u8; 20] {
     sha1(&[a_pub, integrity_hash])
 }
 
@@ -72,11 +72,11 @@ fn to_le_minimal(bytes: &[u8]) -> &[u8] {
     &bytes[..end]
 }
 
-pub struct SrpResult {
+pub(crate) struct SrpResult {
     /// Client public ephemeral A (32-byte LE), sent in the logon proof.
-    pub a_pub: [u8; 32],
+    pub(crate) a_pub: [u8; 32],
     /// Client proof M1 (20 bytes), sent in the logon proof.
-    pub m1: [u8; 20],
+    pub(crate) m1: [u8; 20],
     /// 40-byte session key K, shared with the world server.
     pub session_key: [u8; 40],
 }
@@ -193,7 +193,7 @@ fn interleave(s: &[u8]) -> [u8; 40] {
 ///
 /// `SRP6::Finalize` hashes `A` and `K` as BigNumbers, so they are trimmed for
 /// the same reason as in [`compute`].
-pub fn expected_m2(a_pub: &[u8], m1: &[u8], session_key: &[u8]) -> [u8; 20] {
+pub(crate) fn expected_m2(a_pub: &[u8], m1: &[u8], session_key: &[u8]) -> [u8; 20] {
     sha1(&[to_le_minimal(a_pub), m1, to_le_minimal(session_key)])
 }
 

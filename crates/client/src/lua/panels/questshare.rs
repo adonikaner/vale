@@ -6,6 +6,7 @@
 use super::super::api::Answers;
 
 /// The reads this module registers, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 1] = ["GetQuestLogPushable"];
 
 /// What the quest log may ask about sharing. The default is "no", which is
@@ -19,7 +20,7 @@ pub trait QuestShareAnswers {
 
 impl QuestShareAnswers for super::super::api::Live<'_, '_, '_> {
     fn quest_log_pushable(&self) -> bool {
-        crate::interface::questshare::pushable(self.quests)
+        crate::interface::questshare::pushable(&self.quests)
     }
 }
 

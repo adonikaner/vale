@@ -15,7 +15,7 @@ pub struct Chunk<'a> {
     pub data: &'a [u8],
     /// Byte offset of this chunk's *payload* within the buffer it came from.
     /// Needed because ADT sub-chunk offsets are expressed in those terms.
-    pub payload_offset: usize,
+    pub(crate) payload_offset: usize,
 }
 
 impl<'a> Chunk<'a> {
@@ -97,7 +97,7 @@ pub fn find<'a>(buf: &'a [u8], magic: &[u8; 4]) -> Option<Chunk<'a>> {
 ///
 /// Trailing padding after the final terminator is common, so empty entries are
 /// dropped rather than surfaced as blank filenames.
-pub fn split_strings(buf: &[u8]) -> Vec<String> {
+pub(crate) fn split_strings(buf: &[u8]) -> Vec<String> {
     buf.split(|&b| b == 0)
         .filter(|s| !s.is_empty())
         .map(|s| String::from_utf8_lossy(s).into_owned())

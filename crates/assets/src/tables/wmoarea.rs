@@ -65,13 +65,13 @@ use crate::tables::dbc::Dbc;
 use std::collections::HashMap;
 
 mod fields {
-    pub const ROOT_ID: usize = 1;
-    pub const NAME_SET: usize = 2;
-    pub const GROUP_ID: usize = 3;
-    pub const AMBIENCE: usize = 6;
+    pub(crate) const ROOT_ID: usize = 1;
+    pub(crate) const NAME_SET: usize = 2;
+    pub(crate) const GROUP_ID: usize = 3;
+    pub(crate) const AMBIENCE: usize = 6;
     pub const ZONE_MUSIC: usize = 7;
-    pub const INTRO_SOUND: usize = 8;
-    pub const AREA_TABLE_ID: usize = 10;
+    pub(crate) const INTRO_SOUND: usize = 8;
+    pub(crate) const AREA_TABLE_ID: usize = 10;
     pub const NAME: usize = 11;
 }
 

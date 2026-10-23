@@ -117,7 +117,7 @@ struct LabelField;
 
 /// The atlas, the one material over it, the merged fields and the typeface.
 #[derive(Resource, Default)]
-pub struct Labels {
+pub(crate) struct Labels {
     /// Name → its place in the atlas. `None` for a string that would not
     /// rasterise; it is stored so the attempt is not repeated every frame.
     art: HashMap<String, Option<Art>>,
@@ -151,11 +151,13 @@ pub struct Labels {
 
 impl Labels {
     /// How many names are on screen, for the HUD line.
+    #[cfg(feature = "diagnostics")]
     pub fn count(&self) -> usize {
         self.names
     }
 
     /// How many draws the names take: one per distinct tint.
+    #[cfg(feature = "diagnostics")]
     pub fn draws(&self) -> usize {
         self.fields.len()
     }
@@ -191,7 +193,7 @@ struct Art {
 /// repack. The atlas is 4 MB and replaces one texture per name.
 const ATLAS_SIDE: u32 = 1024;
 
-pub struct LabelPlugin;
+pub(crate) struct LabelPlugin;
 
 impl Plugin for LabelPlugin {
     fn build(&self, app: &mut App) {

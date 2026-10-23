@@ -74,15 +74,15 @@ use std::collections::HashMap;
 
 /// `SkillLineAbility.dbc` — see the module comment.
 mod ability_fields {
-    pub const SKILL_ID: usize = 1;
-    pub const SPELL_ID: usize = 2;
+    pub(crate) const SKILL_ID: usize = 1;
+    pub(crate) const SPELL_ID: usize = 2;
     pub const RACE_MASK: usize = 3;
     pub const CLASS_MASK: usize = 4;
 }
 
 /// `SkillLine.dbc`; see the module comment.
 mod line_fields {
-    pub const CATEGORY_ID: usize = 1;
+    pub(crate) const CATEGORY_ID: usize = 1;
     pub const NAME: usize = 3;
     /// Nine fields after the name: the name's eight locale columns and its flag
     /// word come between them. The skills panel's detail pane reads it.
@@ -97,7 +97,7 @@ pub const CATEGORY_CLASS: u32 = 7;
 
 /// `SkillRaceClassInfo.dbc`, the tab gate. See the module comment.
 mod race_class_fields {
-    pub const SKILL_ID: usize = 1;
+    pub(crate) const SKILL_ID: usize = 1;
     pub const RACE_MASK: usize = 2;
     pub const CLASS_MASK: usize = 3;
     pub const FLAGS: usize = 4;
@@ -108,7 +108,7 @@ mod race_class_fields {
 /// The `SkillRaceClassInfo` flag that keeps a skill line out of the spellbook:
 /// bit 7 of `flags`. A line carrying it, or one with no row for this character
 /// at all, sends its spells to [`GENERAL`] instead of opening a tab of its own.
-pub const NO_SPELLBOOK_TAB: u32 = 0x80;
+pub(crate) const NO_SPELLBOOK_TAB: u32 = 0x80;
 
 /// The three `SkillRaceClassInfo` flags the skills panel reads when it builds
 /// its list, and the proficiency flag.
@@ -117,19 +117,19 @@ pub const NO_SPELLBOOK_TAB: u32 = 0x80;
 /// bits. The book asks whether a line opens a tab; the panel asks whether the
 /// character is shown the line at all, and the answers differ. A warrior's
 /// `Defense` is not a spellbook tab and is on the skills panel.
-pub mod panel_flags {
+pub(crate) mod panel_flags {
     /// Bit 0: listed whether or not the character has any value in it.
-    pub const ALWAYS: u32 = 0x01;
+    pub(crate) const ALWAYS: u32 = 0x01;
     /// Bit 1: never listed, whatever the value. It is tested first, so it
     /// overrides [`Self::ALWAYS`].
     pub const NEVER: u32 = 0x02;
     /// Bit 2: listed once the character's level is at least the row's
     /// `minLevel`, even with no value.
-    pub const AT_LEVEL: u32 = 0x04;
+    pub(crate) const AT_LEVEL: u32 = 0x04;
     /// Bit 10: a proficiency. Rank and max are both clamped to 1, which makes
     /// `SkillFrame_SetStatusBar` draw a grey full bar with no number rather
     /// than `1/1`.
-    pub const PROFICIENCY: u32 = 0x400;
+    pub(crate) const PROFICIENCY: u32 = 0x400;
 }
 
 /// `SpellIcon.dbc` has two fields, id and path. This is the path, the same
@@ -225,7 +225,7 @@ impl RaceClass {
 mod category_fields {
     pub const NAME: usize = 1;
     /// The only sort key for the headings.
-    pub const SORT: usize = 10;
+    pub(crate) const SORT: usize = 10;
 }
 
 /// One heading.
@@ -410,7 +410,7 @@ impl Skills {
     /// book uses, and does not consult `SkillRaceClassInfo`. Applying the gate
     /// here would send every service to line 0, which `crate::tables::trainer`
     /// drops, and the trainer window would be empty.
-    pub fn ability_line(&self, spell: u32, race: u8, class: u8) -> u32 {
+    pub(crate) fn ability_line(&self, spell: u32, race: u8, class: u8) -> u32 {
         self.abilities
             .get(&spell)
             .and_then(|rows| rows.iter().find(|row| row.covers(race, class)))
@@ -817,7 +817,7 @@ impl SkillList {
 
 /// The `SkillRaceClassInfo` flag behind [`SkillRow::abandonable`]: bit 5,
 /// `flags & 0x20`.
-pub const CAN_UNLEARN: u32 = 0x20;
+pub(crate) const CAN_UNLEARN: u32 = 0x20;
 
 /// One slot of the character's own block, as [`SkillList::build`] takes it.
 ///

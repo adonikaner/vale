@@ -31,14 +31,14 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 
 /// The file's name under `Edit\`.
-pub const FILE: &str = "favourites.txt";
+pub(crate) const FILE: &str = "favourites.txt";
 
 /// How many recent models are kept per kind.
-pub const RECENT_MAX: usize = 12;
+pub(crate) const RECENT_MAX: usize = 12;
 
 /// Which picker a line belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     Doodad,
     Wmo,
     Effect,
@@ -66,7 +66,7 @@ impl Kind {
 
 /// The lists, and where they were read from.
 #[derive(Resource, Default)]
-pub struct Favourites {
+pub(crate) struct Favourites {
     /// The `Edit\` folder these were read from, so a project switch that
     /// stays in the same install does not re-read the file.
     loaded_from: Option<PathBuf>,
@@ -78,7 +78,7 @@ pub struct Favourites {
 
 impl Favourites {
     /// Read the file under `dir` once. Idempotent per directory.
-    pub fn load_from(&mut self, dir: &Path) {
+    pub(crate) fn load_from(&mut self, dir: &Path) {
         if self.loaded_from.as_deref() == Some(dir) {
             return;
         }
@@ -90,13 +90,13 @@ impl Favourites {
     }
 
     /// Whether a path is starred for a kind.
-    pub fn is_starred(&self, kind: Kind, path: &str) -> bool {
+    pub(crate) fn is_starred(&self, kind: Kind, path: &str) -> bool {
         let key = path.to_ascii_lowercase();
         self.starred.iter().any(|(k, p)| *k == kind && *p == key)
     }
 
     /// Star, or unstar, one path.
-    pub fn toggle(&mut self, kind: Kind, path: &str) {
+    pub(crate) fn toggle(&mut self, kind: Kind, path: &str) {
         let key = path.to_ascii_lowercase();
         match self
             .starred
@@ -112,7 +112,7 @@ impl Favourites {
     }
 
     /// Note that a path was used: it goes to the head of the recent list.
-    pub fn used(&mut self, kind: Kind, path: &str) {
+    pub(crate) fn used(&mut self, kind: Kind, path: &str) {
         let key = path.to_ascii_lowercase();
         self.recent.retain(|(k, p)| !(*k == kind && *p == key));
         self.recent.insert(0, (kind, key));
@@ -128,7 +128,7 @@ impl Favourites {
     }
 
     /// The starred paths of a kind, in the order they were starred.
-    pub fn starred(&self, kind: Kind) -> Vec<String> {
+    pub(crate) fn starred(&self, kind: Kind) -> Vec<String> {
         self.starred
             .iter()
             .filter(|(k, _)| *k == kind)
@@ -137,7 +137,7 @@ impl Favourites {
     }
 
     /// The recently used paths of a kind, newest first.
-    pub fn recent(&self, kind: Kind) -> Vec<String> {
+    pub(crate) fn recent(&self, kind: Kind) -> Vec<String> {
         self.recent
             .iter()
             .filter(|(k, _)| *k == kind)

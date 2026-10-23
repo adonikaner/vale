@@ -19,7 +19,7 @@
 //!
 //! ## The overlay in front of the chain
 //!
-//! [`Assets::with_overlay`] puts a function in front of the whole chain, for any
+//! [`Assets::set_overlay`] puts a function in front of the whole chain, for any
 //! path. It serves a caller that must answer with a tile being edited, before
 //! that tile has been saved anywhere. The reference client has no such
 //! mechanism: it reads world data from `Data\*.MPQ` only. The overlay is this
@@ -98,7 +98,7 @@ pub struct Assets {
     /// at open, or the pool merging its chains' lists on return. Neither is
     /// written; a host that reads this field without one of them reports only
     /// part of the damaged entries.
-    pub damaged: Vec<(String, String, u64)>,
+    pub(crate) damaged: Vec<(String, String, u64)>,
     /// Every listed path and the index of the archive that answers it, `None`
     /// where that archive deletes it.
     listing: Option<HashMap<String, Option<usize>>>,
@@ -117,13 +117,13 @@ pub struct Assets {
 pub type Overlay = std::sync::Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
 
 /// The one virtual prefix answered from disk. Compared case-insensitively.
-pub const LOOSE_PREFIX: &str = r"Interface\AddOns\";
+pub(crate) const LOOSE_PREFIX: &str = r"Interface\AddOns\";
 
 /// `<root>` joined with a virtual path, matched component by component without
 /// regard to case, since the addon's `.toc` and the disk may spell a name
 /// differently and the reference client runs on a case-insensitive file system.
 /// `None` when any component is missing.
-pub fn resolve_loose(root: &Path, vpath: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_loose(root: &Path, vpath: &str) -> Option<PathBuf> {
     let mut at = root.to_path_buf();
     for component in vpath.split('\\').filter(|c| !c.is_empty()) {
         if component == ".." {
@@ -236,25 +236,10 @@ impl Assets {
         self
     }
 
-    /// Answer any path from `overlay` before looking in the archives.
-    ///
-    /// The overlay decides for itself which paths it knows; returning `None`
-    /// falls through to the loose root and then to the chain, so installing one
-    /// changes nothing about a path it does not carry.
-    pub fn with_overlay(mut self, overlay: Overlay) -> Assets {
-        self.overlay = Some(overlay);
-        self
-    }
-
     /// The same on a chain that is already open, which is how a host installs
     /// one after the archives have been mounted.
     pub fn set_overlay(&mut self, overlay: Option<Overlay>) {
         self.overlay = overlay;
-    }
-
-    /// The root given to [`Self::with_loose_root`], if any.
-    pub fn loose_root(&self) -> Option<&Path> {
-        self.loose.as_deref()
     }
 
     /// Names of the opened archives, in lookup order.
@@ -355,7 +340,7 @@ impl Assets {
     }
 
     /// How many damaged entries [`Self::damaged`] keeps.
-    pub const DAMAGED_KEPT: usize = 16;
+    pub(crate) const DAMAGED_KEPT: usize = 16;
 
     /// Record one, once per path.
     fn note_damaged(&mut self, archive: String, path: String, size: u64) {

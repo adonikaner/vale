@@ -10,10 +10,9 @@ impl EditSession {
     /// in both directions.
     ///
     /// Separate from the tile loop rather than folded into it because the two
-    /// targets are different objects — see `vale_edit::undo::Change`, where
-    /// the argument for two lists on one stack is. What a person sees is one
-    /// stack: `Ctrl+Z` takes back the last thing done, whether that was a wall
-    /// or a spell's name.
+    /// targets are different objects — see `vale_edit::undo::Entry`. What a
+    /// person sees is one stack: `Ctrl+Z` takes back the last thing done,
+    /// whether that was a wall or a spell's name.
     fn step_tables(&mut self, change: &vale_edit::undo::Change, tables: &[String], forward: bool) {
         for name in tables {
             let Some(table) = self.tables.get_mut(name) else {
@@ -45,12 +44,12 @@ impl EditSession {
     /// whether or not the camera has been there since. Opening reads through
     /// the overlay, so what comes back is the edited tile, which is the one
     /// the change applies to.
-    pub fn undo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
+    pub(crate) fn undo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
         self.step(assets, false)
     }
 
     /// …and put it back, opening what it names on [`Self::undo`]'s own terms.
-    pub fn redo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
+    pub(crate) fn redo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
         self.step(assets, true)
     }
 

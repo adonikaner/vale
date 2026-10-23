@@ -225,7 +225,7 @@ impl Side {
 
 /// The longest side a dragged block may have, in chunks: the default 7x7
 /// block of tiles.
-pub const LONGEST: u32 = 7 * SIDE;
+pub(crate) const LONGEST: u32 = 7 * SIDE;
 
 /// Every cell of the rectangle whose opposite corners are `from` and `to`,
 /// row by row. A side longer than [`LONGEST`] is cut short at `from`'s end.
@@ -394,7 +394,7 @@ pub fn census(loaded: &impl Tiles, selected: &BTreeSet<Cell>) -> Census {
 }
 
 /// One cell's chunk's 145 world heights, when its tile is open.
-pub fn chunk_heights(tiles: &impl Tiles, cell: Cell) -> Option<Vec<f32>> {
+pub(crate) fn chunk_heights(tiles: &impl Tiles, cell: Cell) -> Option<Vec<f32>> {
     let tile = tiles.tile(cell.tile())?;
     let chunk = tile.chunk(cell.chunk_in(tile)?)?;
     let found = heights::heights(chunk);

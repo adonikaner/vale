@@ -60,20 +60,20 @@ pub mod offsets {
     /// `GlobalModelFlags` — the header word the client masks with `3` to decide
     /// whether the model **conforms to the ground it stands on**. See
     /// [`crate::look::conform`], which is the rule; this parser only reads the word.
-    pub const GLOBAL_FLAGS: usize = 0x10;
-    pub const GLOBAL_SEQUENCES: usize = 0x14;
-    pub const SEQUENCES: usize = 0x1C;
+    pub(crate) const GLOBAL_FLAGS: usize = 0x10;
+    pub(crate) const GLOBAL_SEQUENCES: usize = 0x14;
+    pub(crate) const SEQUENCES: usize = 0x1C;
     pub const BONES: usize = 0x34;
     pub const VERTICES: usize = 0x44;
-    pub const VIEWS: usize = 0x4C;
+    pub(crate) const VIEWS: usize = 0x4C;
     /// `M2Color` — the per-batch **colour** animation: a 3-float RGB track and
     /// a fixed-16 alpha track, back to back. See [`super::M2Tints`].
-    pub const COLORS: usize = 0x54;
+    pub(crate) const COLORS: usize = 0x54;
     pub const TEXTURES: usize = 0x5C;
     /// `M2TextureWeight` — the per-batch **transparency** animation, one
     /// fixed-16 track each. Separate from [`COLORS`] and reached through a
     /// different lookup, which is why an effect can fade without changing hue.
-    pub const TEXTURE_WEIGHTS: usize = 0x64;
+    pub(crate) const TEXTURE_WEIGHTS: usize = 0x64;
     /// `M2TextureTransform` — the per-batch **texture matrix**: a translation
     /// track, a rotation track and a scale track, back to back.
     ///
@@ -86,19 +86,19 @@ pub mod offsets {
     /// [`TEXTURE_LOOKUP`] at `0x94`, [`TEXTURE_WEIGHT_LOOKUP`] at `0xA4` — and
     /// the JavaScript parser this one was ported from states the same eight
     /// offsets in a row.
-    pub const TEXTURE_TRANSFORMS: usize = 0x74;
-    pub const RENDER_FLAGS: usize = 0x84;
-    pub const TEXTURE_LOOKUP: usize = 0x94;
+    pub(crate) const TEXTURE_TRANSFORMS: usize = 0x74;
+    pub(crate) const RENDER_FLAGS: usize = 0x84;
+    pub(crate) const TEXTURE_LOOKUP: usize = 0x94;
     /// The transparency **lookup**: a batch names a slot here and this names
     /// the [`TEXTURE_WEIGHTS`] track. The colour index has no such indirection
     /// and reads [`COLORS`] directly — the asymmetry is the file's, and reading
     /// either one the other's way lands on a track belonging to some other
     /// batch.
-    pub const TEXTURE_WEIGHT_LOOKUP: usize = 0xA4;
+    pub(crate) const TEXTURE_WEIGHT_LOOKUP: usize = 0xA4;
     /// The texture-transform **lookup**, the same indirection
     /// [`TEXTURE_WEIGHT_LOOKUP`] is: a batch names a slot here and this names
     /// the [`TEXTURE_TRANSFORMS`] record.
-    pub const TEXTURE_TRANSFORM_LOOKUP: usize = 0xAC;
+    pub(crate) const TEXTURE_TRANSFORM_LOOKUP: usize = 0xAC;
     pub const BOUNDING_BOX: usize = 0xB4;
     pub const BOUNDING_RADIUS: usize = 0xCC;
     /// The collision hull. `0xB4` starts `float floats[14]` — the bounding box
@@ -106,7 +106,7 @@ pub mod offsets {
     /// three arrays after it land at `0xB4 + 56`. Pinned by the fact that
     /// [`ATTACHMENTS`] then falls exactly on `0x104`, which this parser has been
     /// resolving items through since before any of these existed.
-    pub const COLLISION_INDICES: usize = 0xEC;
+    pub(crate) const COLLISION_INDICES: usize = 0xEC;
     pub const COLLISION_VERTICES: usize = 0xF4;
     /// Per-triangle face normals. Read by nothing here — [`crate::world::collision`]
     /// computes its own from the winding, so that a hull and a triangle can
@@ -120,7 +120,7 @@ pub mod offsets {
     /// measurement is. `0x11C`, immediately before [`CAMERAS`] at `0x124`, and
     /// that adjacency is what pins it: the camera array has been resolving
     /// since the glue round.
-    pub const LIGHTS: usize = 0x11C;
+    pub(crate) const LIGHTS: usize = 0x11C;
     /// The **ribbon** emitters — the weapon trails, wisp streamers and missile
     /// tails. `0x134`, immediately before [`PARTICLE_EMITTERS`], which is what
     /// pins it: the two arrays are adjacent and the second has been resolving
@@ -141,7 +141,7 @@ pub mod offsets {
     /// `<Model>` widget that cannot be drawn without one — `AccountLogin_OnLoad`
     /// says `this:SetCamera(0)` and the file is the only thing that knows what
     /// camera 0 is.
-    pub const CAMERAS: usize = 0x124;
+    pub(crate) const CAMERAS: usize = 0x124;
 }
 
 /// Bytes per vertex: position, bone weights and indices, normal, UV, padding.
@@ -214,7 +214,7 @@ pub mod layout {
     pub const PARTICLE_TRACKS: usize = 0x34;
     /// …and its over-life block: a mid point, three colours, then the three
     /// particle sizes as floats at `+16`.
-    pub const PARTICLE_OVER_LIFE: usize = 0x14C;
+    pub(crate) const PARTICLE_OVER_LIFE: usize = 0x14C;
     pub const PARTICLE_SIZES: usize = PARTICLE_OVER_LIFE + 16;
     /// A ribbon emitter's position, after its id and its bone.
     pub const RIBBON_POSITION: usize = 0x08;
@@ -280,7 +280,7 @@ impl SoundCues {
     /// sequence's window is dropped; one inside two (the windows of a
     /// vanilla model do not overlap, but the format does not forbid it)
     /// lands in both.
-    pub fn from_events(events: &[M2Event], sequences: &[M2Sequence]) -> SoundCues {
+    pub(crate) fn from_events(events: &[M2Event], sequences: &[M2Sequence]) -> SoundCues {
         let mut by_sequence: Vec<Vec<(u32, u32)>> = vec![Vec::new(); sequences.len()];
         for event in events {
             let Some(sound) = event.sound() else {
@@ -433,13 +433,13 @@ pub mod attach {
     /// from the client's own five-value table rather than from vmangos'
     /// seven-value enum, because the two disagree and the enum is the one that
     /// is wrong.
-    pub const SHEATH_MAIN: u32 = 26;
-    pub const SHEATH_OFF: u32 = 27;
-    pub const SHEATH_SHIELD: u32 = 28;
-    pub const LARGE_WEAPON_LEFT: u32 = 30;
-    pub const LARGE_WEAPON_RIGHT: u32 = 31;
-    pub const HIP_WEAPON_LEFT: u32 = 32;
-    pub const HIP_WEAPON_RIGHT: u32 = 33;
+    pub(crate) const SHEATH_MAIN: u32 = 26;
+    pub(crate) const SHEATH_OFF: u32 = 27;
+    pub(crate) const SHEATH_SHIELD: u32 = 28;
+    pub(crate) const LARGE_WEAPON_LEFT: u32 = 30;
+    pub(crate) const LARGE_WEAPON_RIGHT: u32 = 31;
+    pub(crate) const HIP_WEAPON_LEFT: u32 = 32;
+    pub(crate) const HIP_WEAPON_RIGHT: u32 = 33;
 
     /// Every sheath point, low id first — what `vale attach` surveys.
     pub const SHEATH_POINTS: [u32; 7] = [
@@ -1031,7 +1031,7 @@ pub type UvMatrix = [f32; 6];
 
 /// `u' = u`, `v' = v`: what a batch with no transform gets, and what every
 /// absent track contributes.
-pub const UV_IDENTITY: UvMatrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+pub(crate) const UV_IDENTITY: UvMatrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
 
 impl M2TextureAnims {
     /// Whether any batch could have a moving texture at all — the cheap test
@@ -1126,7 +1126,7 @@ impl M2TextureAnims {
     /// [`M2Tints::sample_in`] takes, and it exists for the same reason: every
     /// renderer clock is relative and doing the `start +` at each call site is
     /// the arithmetic that goes wrong once and reads as a texture stuck still.
-    pub fn matrix_in(
+    pub(crate) fn matrix_in(
         &self,
         index: u16,
         sequence: Option<&M2Sequence>,
@@ -1992,10 +1992,10 @@ pub mod anim {
     pub const ATTACK_2HL: u16 = 19;
     /// The parry, per family. A weapon is what is parried *with*, so these run
     /// alongside the attacks rather than with the flinch.
-    pub const PARRY_UNARMED: u16 = 20;
-    pub const PARRY_1H: u16 = 21;
+    pub(crate) const PARRY_UNARMED: u16 = 20;
+    pub(crate) const PARRY_1H: u16 = 21;
     pub const PARRY_2H: u16 = 22;
-    pub const PARRY_2HL: u16 = 23;
+    pub(crate) const PARRY_2HL: u16 = 23;
     /// The shield goes up. Chosen by `VICTIMSTATE_BLOCKS` rather than by what
     /// is in the hands: the server has already decided a block happened.
     pub const SHIELD_BLOCK: u16 = 24;
@@ -2034,8 +2034,8 @@ pub mod anim {
     pub const READY_UNARMED: u16 = 25;
     pub const READY_1H: u16 = 26;
     pub const READY_2H: u16 = 27;
-    pub const READY_2HL: u16 = 28;
-    pub const READY_BOW: u16 = 29;
+    pub(crate) const READY_2HL: u16 = 28;
+    pub(crate) const READY_BOW: u16 = 29;
     /// The whole-body sidestep. One sequence for every kind of dodge.
     pub const DODGE: u16 = 30;
     /// The cast, in two halves: [`SPELL_PRECAST`] is the wind-up held for as
@@ -2121,7 +2121,7 @@ pub mod anim {
     pub const SHUFFLE_LEFT: u16 = 11;
     pub const SHUFFLE_RIGHT: u16 = 12;
     pub const ATTACK_BOW: u16 = 46;
-    pub const READY_RIFLE: u16 = 48;
+    pub(crate) const READY_RIFLE: u16 = 48;
     pub const ATTACK_RIFLE: u16 = 49;
     /// **The two clips a stealthed body plays**, and the whole of what the
     /// client does about stealth in the art.
@@ -2186,8 +2186,8 @@ pub mod anim {
     pub const SIT_CHAIR_LOW: u16 = 102;
     pub const SIT_CHAIR_MED: u16 = 103;
     pub const SIT_CHAIR_HIGH: u16 = 104;
-    pub const READY_THROWN: u16 = 108;
-    pub const ATTACK_THROWN: u16 = 107;
+    pub(crate) const READY_THROWN: u16 = 108;
+    pub(crate) const ATTACK_THROWN: u16 = 107;
     /// **The dagger's main-hand blow**, which is a stab and not a swing:
     /// `AnimationData.dbc` row 85 is `Attack1HPierce`, a sequence of its own
     /// that `HumanMale.m2` carries at index 100. The client picks it off the
@@ -2795,7 +2795,7 @@ impl M2Skeleton {
 
     /// Key hints per bone that [`Self::pose_into`] keeps: three tracks on
     /// each of the base sequence, the fade and the overlay.
-    pub const HINTS_PER_BONE: usize = 9;
+    pub(crate) const HINTS_PER_BONE: usize = 9;
 
     /// The frozen per-skeleton facts — built on the first pose, shared after.
     fn plan(&self) -> &PosePlan {
@@ -4696,15 +4696,6 @@ fn parse_batches(buf: &[u8], view: usize, model: &M2, vertex_count: usize) -> Ve
         });
     }
     out
-}
-
-/// Does this model have a bone hierarchy at all? Static scenery mostly does
-/// not, and the distinction is worth having before animation exists.
-pub fn bone_count(buf: &[u8]) -> usize {
-    if buf.len() < MIN_HEADER {
-        return 0;
-    }
-    array(buf, offsets::BONES).count
 }
 
 /// `CreatureModelData.dbc` and `MDDF`-adjacent tables name models as `.mdx`,

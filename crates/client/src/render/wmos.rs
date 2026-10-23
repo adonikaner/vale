@@ -67,7 +67,7 @@ use std::sync::{mpsc, Arc, Mutex};
 /// names because the cutoff is a per-material uniform: `Models.applyBlend`
 /// takes it as a parameter and so does [`models::upload_prepared`]. They are
 /// not two policies.
-pub const WMO_ALPHA_KEY: f32 = 224.0 / 255.0;
+pub(crate) const WMO_ALPHA_KEY: f32 = 224.0 / 255.0;
 
 /// How much of a building to turn into GPU assets in one frame — one unit is
 /// one texture or one batch.
@@ -133,7 +133,7 @@ pub struct Interior {
     /// before walking three hundred rooms.
     pub bounds: [[f32; 3]; 2],
     /// One box per indoor group, WMO-local.
-    pub rooms: Vec<[[f32; 3]; 2]>,
+    pub(crate) rooms: Vec<[[f32; 3]; 2]>,
     /// The mean of this placement's own doodad set's baked lights — see
     /// [`wmo::mean_light`].
     pub light: RoomLight,
@@ -146,7 +146,7 @@ pub struct Interior {
     pub areas: Vec<([[f32; 3]; 2], u32)>,
     /// The two keys the area lookup needs beside the group: the building's own
     /// `MOHD` id and this placement's `MODF` name set.
-    pub wmo_id: u32,
+    pub(crate) wmo_id: u32,
     pub name_set: u16,
 }
 
@@ -175,7 +175,7 @@ impl Interior {
     /// centre test alone lets its sheet clip through the wall its centre is
     /// just outside of. A `MODF` placement's scale is uniform, so a local yard
     /// is a world yard.
-    pub fn holds_within(&self, world: [f32; 3], margin: f32) -> bool {
+    pub(crate) fn holds_within(&self, world: [f32; 3], margin: f32) -> bool {
         let local = self.inverse.transform_point3(Vec3::from(world)).to_array();
         let within = |bounds: &[[f32; 3]; 2]| {
             (0..3).all(|axis| {
@@ -192,7 +192,7 @@ impl Interior {
     /// First rather than smallest: a city's district boxes overlap and the file
     /// states no priority between them, so picking the tightest would be a rule
     /// this client made up. See [`wmo::WmoModel::area_bounds`].
-    pub fn group_at(&self, world: [f32; 3]) -> Option<u32> {
+    pub(crate) fn group_at(&self, world: [f32; 3]) -> Option<u32> {
         let local = self.inverse.transform_point3(Vec3::from(world)).to_array();
         if !wmo::box_contains(&self.bounds, local) {
             return None;
@@ -386,7 +386,7 @@ impl WmoCache {
     }
 
     /// Mark a building as wanted now — see [`WmoPlacement::path`].
-    pub fn touch(&mut self, path: &str) {
+    pub(crate) fn touch(&mut self, path: &str) {
         let now = self.now;
         if let Some(ready) = self.ready.get_mut(path) {
             ready.used = now;
@@ -402,7 +402,7 @@ impl WmoCache {
     /// this is why the sweep interval must be shorter than the idle window. A
     /// re-entry costs the same read as the first time: a background thread and
     /// a few frames of staging.
-    pub fn evict(&mut self, before: f32) -> usize {
+    pub(crate) fn evict(&mut self, before: f32) -> usize {
         let count = self.ready.len();
         self.ready.retain(|_, ready| ready.used >= before);
         count - self.ready.len()
@@ -425,14 +425,14 @@ impl WmoCache {
     ///
     /// Called by [`crate::render::residency::leave_world`]. Returns how many
     /// were forgotten, for the log line.
-    pub fn forget_failures(&mut self) -> usize {
+    pub(crate) fn forget_failures(&mut self) -> usize {
         let count = self.failed.len();
         self.failed.clear();
         count
     }
 }
 
-pub struct WmoPlugin;
+pub(crate) struct WmoPlugin;
 
 impl Plugin for WmoPlugin {
     fn build(&self, app: &mut App) {
@@ -887,7 +887,7 @@ fn receive_wmos(
 /// `MODD` furniture is handed over through the tile's `PendingDoodads`, and
 /// without an explicit order that hand-over is sequenced only by the two
 /// systems' conflicting access to that component. See `doodads::DoodadPlugin`.
-pub fn spawn_wmos(
+pub(crate) fn spawn_wmos(
     mut commands: Commands,
     mut cache: ResMut<WmoCache>,
     mut tiles: Query<(Entity, &TerrainTile, &mut PendingWmos, &mut PendingDoodads)>,

@@ -82,6 +82,7 @@ use crate::input::bindings::Binding;
 /// The scoped functions this module registers, counted against the calls in
 /// the interface directory. Serves the same purpose as
 /// [`super::super::api::READS`] and is checked the same way.
+#[cfg(test)]
 pub const READS: [&str; 28] = [
     "AutoEquipCursorItem",
     "CursorHasItem",
@@ -131,7 +132,7 @@ pub struct SlotContents {
     /// `-1` for an item whose template has not arrived; see the module comment.
     pub quality: i32,
     pub readable: bool,
-    pub broken: bool,
+    pub(crate) broken: bool,
     /// Whether the cursor is holding this slot's item. It is the third value of
     /// `GetContainerItemInfo`, passed directly to `SetItemButtonDesaturated`,
     /// so during a drag the item appears taken out of the bag rather than in
@@ -152,12 +153,12 @@ pub struct ItemDetails {
     /// returning; the tooltip's type line uses the singular. See
     /// [`vale_assets::tables::inventory::ItemTables::subclass_name`], which
     /// records this as a choice, not a measured fact.
-    pub class_name: String,
-    pub subclass_name: String,
-    pub stack_count: u32,
+    pub(crate) class_name: String,
+    pub(crate) subclass_name: String,
+    pub(crate) stack_count: u32,
     /// `"INVTYPE_HEAD"` and the other `INVTYPE_*` tokens: the token, not the
     /// display text, because the interface calls `getglobal(equipLoc)` on it.
-    pub equip_location: String,
+    pub(crate) equip_location: String,
     pub texture: Option<String>,
 }
 
@@ -178,14 +179,14 @@ pub fn quality_colour(quality: u32) -> &'static str {
 /// `item:<entry>:<enchant>:<randomProperty>:<seed>` has four numbers.
 /// `GetItemInfo` accepts the same format, so a link this client writes can be
 /// read back by the interface.
-pub fn item_link(entry: u32, quality: u32, name: &str) -> String {
+pub(crate) fn item_link(entry: u32, quality: u32, name: &str) -> String {
     item_link_with(entry, 0, 0, quality, name)
 }
 
 /// The same link for a copy that carries a permanent enchantment (slot 0) and
 /// a random property. `name` is the name with its suffix, as the plate draws
 /// it. The seed is written as 0.
-pub fn item_link_with(entry: u32, enchant: i32, random: i32, quality: u32, name: &str) -> String {
+pub(crate) fn item_link_with(entry: u32, enchant: i32, random: i32, quality: u32, name: &str) -> String {
     let colour = quality_colour(quality);
     let close = if colour.is_empty() { "" } else { "|r" };
     format!("{colour}|Hitem:{entry}:{enchant}:{random}:0|h[{name}]|h{close}")
@@ -194,7 +195,7 @@ pub fn item_link_with(entry: u32, enchant: i32, random: i32, quality: u32, name:
 /// The entry, the permanent enchantment and the random property an `item:`
 /// link names: `item:<entry>:<enchant>:<randomProperty>:<seed>`. The two
 /// numbers after the entry are 0 when the link leaves them out.
-pub fn link_fields(argument: &str) -> Option<(u32, i32, i32)> {
+pub(crate) fn link_fields(argument: &str) -> Option<(u32, i32, i32)> {
     let at = argument.find("item:")?;
     let mut numbers = argument[at + 5..]
         .split(|c: char| c == ':' || c == '|')

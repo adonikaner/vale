@@ -63,7 +63,7 @@ pub enum ObjectAnim {
 /// `SMSG_GAMEOBJECT_CUSTOM_ANIM` (179): `u64 guid, u32 anim`. `None` for a
 /// short body; the animation is `None` for an `anim` of 4 or more, which the
 /// 1.12.1 client ignores.
-pub fn parse_custom_anim(body: &[u8]) -> Option<(u64, Option<ObjectAnim>)> {
+pub(crate) fn parse_custom_anim(body: &[u8]) -> Option<(u64, Option<ObjectAnim>)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -74,7 +74,7 @@ pub fn parse_custom_anim(body: &[u8]) -> Option<(u64, Option<ObjectAnim>)> {
 }
 
 /// `SMSG_GAMEOBJECT_DESPAWN_ANIM` (533): the guid and nothing else.
-pub fn parse_despawn_anim(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_despawn_anim(body: &[u8]) -> Option<u64> {
     let mut r = Reader::new(body);
     if !r.has(8) {
         return None;
@@ -89,7 +89,7 @@ pub fn parse_despawn_anim(body: &[u8]) -> Option<u64> {
 /// which is the unpacked form; the packed encoding appears only in movement
 /// and update blocks. The short form is a guid the server cannot find, and the
 /// click does nothing, with no error, because a lookup miss returns silently.
-pub fn use_body(guid: u64) -> Vec<u8> {
+pub(crate) fn use_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf

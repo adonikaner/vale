@@ -68,7 +68,7 @@ use crate::world::templates::TemplatesArrived;
 /// read here for two reasons: an opener's release shows a window, and a
 /// recipe's release counts the repeat counter down.
 #[derive(Message, Debug, Clone, Copy)]
-pub enum ProfessionNews {
+pub(crate) enum ProfessionNews {
     Released { spell_id: u32 },
     Failed { spell_id: u32 },
 }
@@ -81,16 +81,16 @@ pub enum ProfessionNews {
 /// whole-window effect (a close, a redraw) sets one, and [`poll`] acts on
 /// it.
 #[derive(Resource, Default)]
-pub struct TradeSkillWindow {
+pub(crate) struct TradeSkillWindow {
     /// The open skill line, or `None`.
     open: Option<u32>,
     pub list: List,
     /// `GetTradeSkillLine`'s three answers, resolved at rebuild: the line's
     /// own `SkillLine.dbc` name, and the rank pair with the permanent bonus
     /// folded in (value + permanent, max + permanent).
-    pub line_name: String,
+    pub(crate) line_name: String,
     pub rank: u32,
-    pub max_rank: u32,
+    pub(crate) max_rank: u32,
     /// The raw skill value the difficulties were computed against. Part of
     /// the rebuild key, because a skill-up recolours the list.
     value: u32,
@@ -110,22 +110,22 @@ pub struct TradeSkillWindow {
     pending_show: bool,
     /// A panel write wants a redraw: `SetTradeSkillSubClassFilter` and the
     /// collapses end in the reference's own recount and `TRADE_SKILL_UPDATE`.
-    pub poked: AtomicBool,
+    pub(crate) poked: AtomicBool,
     /// `CloseTradeSkill()` was called. Acted on in [`poll`], because the
     /// close clears state a `&self` panel write cannot.
-    pub closing: AtomicBool,
+    pub(crate) closing: AtomicBool,
 }
 
 impl TradeSkillWindow {
     /// The open skill line, or `None`; what `GetTradeSkillLine` answers on.
-    pub fn open_line(&self) -> Option<u32> {
+    pub(crate) fn open_line(&self) -> Option<u32> {
         self.open
     }
 
     /// `GetTradeskillRepeatCount`, by the client's own rule: the count while
     /// it is for the selected recipe and above one, and 1 otherwise, which is
     /// what the input box shows.
-    pub fn repeat_count(&self) -> u32 {
+    pub(crate) fn repeat_count(&self) -> u32 {
         let (spell, count) = self.repeat;
         if spell != 0 && spell == self.list.selected_spell() && count > 1 {
             count
@@ -138,7 +138,7 @@ impl TradeSkillWindow {
 /// The craft window, or nothing: the same shape, for Enchanting and Beast
 /// Training.
 #[derive(Resource, Default)]
-pub struct CraftWindow {
+pub(crate) struct CraftWindow {
     /// `(kind, skill line, opening spell)`.
     open: Option<(u32, u32, u32)>,
     pub list: List,
@@ -147,9 +147,9 @@ pub struct CraftWindow {
     pub name: String,
     /// `GetCraftDisplaySkillLine`'s three answers. Filled only for
     /// Enchanting, the client's own `kind == 3` test.
-    pub line_name: String,
+    pub(crate) line_name: String,
     pub rank: u32,
-    pub max_rank: u32,
+    pub(crate) max_rank: u32,
     value: u32,
     /// The known-set version the list was built from, and the pet's: a
     /// Beast Training row is `used` or `none` by what the pet knows, and the
@@ -164,19 +164,19 @@ pub struct CraftWindow {
     /// creature template. Empty for no pet or no template yet, which reads as
     /// a cost of 0, the way `GetCraftInfo` answers when the pet does not
     /// resolve.
-    pub pet_lines: Vec<u32>,
+    pub(crate) pet_lines: Vec<u32>,
     pending_show: bool,
-    pub poked: AtomicBool,
-    pub closing: AtomicBool,
+    pub(crate) poked: AtomicBool,
+    pub(crate) closing: AtomicBool,
 }
 
 impl CraftWindow {
-    pub fn open_kind(&self) -> Option<u32> {
+    pub(crate) fn open_kind(&self) -> Option<u32> {
         self.open.map(|(kind, _, _)| kind)
     }
 
     /// `GetCraftButtonToken`: one token per craft kind.
-    pub fn button_token(&self) -> &'static str {
+    pub(crate) fn button_token(&self) -> &'static str {
         self.open
             .and_then(|(kind, _, _)| {
                 tradeskill::CRAFT_BUTTON_TOKENS.get(kind as usize).copied()
@@ -202,7 +202,7 @@ fn counts_key(list: &List, counts: &dyn Fn(u32) -> u32) -> u64 {
     key
 }
 
-pub struct TradeSkillPlugin;
+pub(crate) struct TradeSkillPlugin;
 
 impl Plugin for TradeSkillPlugin {
     fn build(&self, app: &mut App) {
@@ -374,9 +374,8 @@ fn rebuild(
     // map holds only the carried subset, so a reagent the character has none
     // of, or an item a recipe would make, is never in it, and a lookup
     // through it never resolves.
-    let world_arc = active.live.world();
     let (known, version, pet_version, pet_spells, pet_lines) = {
-        let world = world_arc.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         // The pet's half, for Beast Training: its own book from
         // `SMSG_PET_SPELLS`, and its family's skill lines from the creature
         // template. The template arrives a round trip after the pet does, so
@@ -414,7 +413,7 @@ fn rebuild(
     // latch moves, and holding the world across it would hold it across a
     // `Spell.dbc` walk.
     let head = |entry: u32| -> Option<ItemHead> {
-        let world = world_arc.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         world.items.get(&entry).map(|item| ItemHead {
             class: item.class,
             subclass: item.subclass,
@@ -484,7 +483,7 @@ fn rebuild(
             unresolved.sort_unstable();
             unresolved.dedup();
             {
-                let world = world_arc.lock().unwrap_or_else(|e| e.into_inner());
+                let world = active.live.read();
                 unresolved.retain(|entry| !world.items.contains_key(entry));
             }
             active.live.want_items(unresolved.iter().copied());
@@ -549,7 +548,7 @@ fn rebuild(
             unresolved.sort_unstable();
             unresolved.dedup();
             {
-                let world = world_arc.lock().unwrap_or_else(|e| e.into_inner());
+                let world = active.live.read();
                 unresolved.retain(|entry| !world.items.contains_key(entry));
             }
             active.live.want_items(unresolved.iter().copied());
@@ -622,7 +621,7 @@ fn poll(
 /// The created-item effect's rolled count, each end clamped to at least one:
 /// `GetTradeSkillNumMade`'s own clamp. Here rather than in the panel so the
 /// CLI and the panel print the same pair.
-pub fn num_made(info: &vale_assets::tables::spellbook::SpellInfo, level: u32) -> (i32, i32) {
+pub(crate) fn num_made(info: &vale_assets::tables::spellbook::SpellInfo, level: u32) -> (i32, i32) {
     let (low, high) = info
         .effects
         .iter()

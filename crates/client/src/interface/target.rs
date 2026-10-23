@@ -99,14 +99,14 @@ impl Selection {
 /// when it opens a conversation on one. A right click that starts a fight or
 /// loots a corpse is not a greeting and raises nothing.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnitClicked {
+pub(crate) struct UnitClicked {
     pub guid: u64,
 }
 
 /// The unit under the cursor this frame, for the mouseover highlight the UI
 /// draws and for the click that follows.
 #[derive(Resource, Default)]
-pub struct Hovered {
+pub(crate) struct Hovered {
     pub guid: Option<u64>,
     pub entity: Option<Entity>,
     /// Whether a right click here would start a fight. This is the same
@@ -117,7 +117,7 @@ pub struct Hovered {
     /// is a game rule that can be decided with no window open; the cursor
     /// module only turns the answer into a bitmap. Written by
     /// [`judge_the_hover`].
-    pub attackable: bool,
+    pub(crate) attackable: bool,
     /// Whether a right click here would open a loot window:
     /// `UNIT_DYNAMIC_FLAGS` bit 0. The bit is per-viewer, so it already answers
     /// for this player and not for the group.
@@ -183,7 +183,7 @@ pub struct Hovered {
 /// and the opposite order would open a shop over a menu the NPC was meant to
 /// show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Interact {
+pub(crate) enum Interact {
     Gossip,
     Questgiver,
     Vendor,
@@ -292,10 +292,10 @@ struct SeenSwings(u32);
 /// Bevy orders two systems that touch `Selection` only while both keep the
 /// conflicting access, so the order is declared explicitly.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TargetSet;
+pub(crate) struct TargetSet;
 
 /// Registers this module's resources, messages and ordered systems.
-pub struct TargetPlugin;
+pub(crate) struct TargetPlugin;
 
 impl Plugin for TargetPlugin {
     fn build(&self, app: &mut App) {

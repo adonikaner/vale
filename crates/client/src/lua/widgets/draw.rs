@@ -175,7 +175,7 @@ impl Item {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Order {
     /// An index into [`super::frames::STRATA`].
-    pub strata: usize,
+    pub(crate) strata: usize,
     pub level: i64,
     /// An index into [`super::regions::LAYERS`].
     pub layer: usize,

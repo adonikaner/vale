@@ -56,10 +56,11 @@ pub struct RollItem {
     /// **Whether the frame wears its gold border**, which is the one thing
     /// `GroupLootFrame_OnShow` branches on: `Bonding == 1`, and it swaps the
     /// backdrop, the corner texture and the `Decoration` overlay for it.
-    pub bind_on_pickup: bool,
+    pub(crate) bind_on_pickup: bool,
 }
 
 /// **The reads this module registers**, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 3] = [
     "GetLootRollItemInfo",
     "GetLootRollItemLink",
@@ -168,7 +169,7 @@ pub fn take(host: &LuaHost) -> Vec<crate::interface::lootroll::RollPress> {
 }
 
 /// The queue the two writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::lootroll::RollPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::lootroll::RollPress>>>;
 
 /// **What the interface may ask about a group roll.**
 ///

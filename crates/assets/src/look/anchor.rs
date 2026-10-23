@@ -58,7 +58,7 @@ use crate::world::m2::{M2Attachment, M2Skeleton, PoseLayers};
 pub const POINT: u32 = 17;
 
 /// Added to [`POINT`]'s own height before scaling.
-pub const RISE: f32 = 0.097_222_224;
+pub(crate) const RISE: f32 = 0.097_222_224;
 
 /// What fraction of a model's height a model with no [`POINT`] is orbited at.
 pub const BOX_FRACTION: f32 = 0.9;
@@ -147,7 +147,8 @@ pub fn point_in_clip(
 ///
 /// **Recorded and not yet acted on**: see the module doc for what is missing
 /// under it.
-pub fn stand_state_clip(stand_state: u8) -> Option<u16> {
+#[cfg(test)]
+pub(crate) fn stand_state_clip(stand_state: u8) -> Option<u16> {
     match stand_state {
         1 => Some(97),
         3 => Some(100),

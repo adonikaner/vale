@@ -49,7 +49,7 @@ const LEVEL_UP: &str = "LEVELUPSOUND";
 /// …and the quest chime's, entry 890. `vale sound QUESTADDED`.
 const QUEST_ADDED: &str = "QUESTADDED";
 
-pub struct PlayerPlugin;
+pub(crate) struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {

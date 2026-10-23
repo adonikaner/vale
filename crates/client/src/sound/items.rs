@@ -61,7 +61,7 @@ use vale_assets::tables::itemsound::ItemSound;
 /// of the two ids here would be choosing between duplicates for no reason.
 const COIN: &str = "LOOTWINDOWCOINSOUND";
 
-pub struct ItemSoundPlugin;
+pub(crate) struct ItemSoundPlugin;
 
 impl Plugin for ItemSoundPlugin {
     fn build(&self, app: &mut App) {

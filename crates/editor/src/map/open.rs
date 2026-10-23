@@ -14,7 +14,7 @@ const OPEN_IN_FLIGHT: usize = 2;
 /// The tiles being read and parsed off the main thread for the session. See
 /// [`open_tiles`].
 #[derive(Resource, Default)]
-pub struct Opening {
+pub(crate) struct Opening {
     tasks: Vec<OpeningTile>,
     /// Claimed tiles that could not be read or parsed, by map, so they are
     /// not asked for again every frame. The reason is in the status line.
@@ -33,7 +33,7 @@ struct OpeningTile {
 
 impl Opening {
     /// Whether a tile is being read.
-    pub fn is_opening(&self, coord: (u32, u32)) -> bool {
+    pub(crate) fn is_opening(&self, coord: (u32, u32)) -> bool {
         self.tasks.iter().any(|t| t.coord == coord)
     }
 }

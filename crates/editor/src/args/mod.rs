@@ -37,15 +37,15 @@ pub(crate) mod instruments;
 
 /// The command line, one field per group of flags.
 #[derive(Resource, Debug, Clone, Default)]
-pub struct Args {
-    pub view: view::View,
-    pub tools: tools::Tools,
-    pub spawns: spawns::Spawns,
-    pub subjects: subjects::Subjects,
-    pub tables: tables::Tables,
-    pub import: import::Import,
-    pub server: server::Server,
-    pub instruments: instruments::Instruments,
+pub(crate) struct Args {
+    pub(crate) view: view::View,
+    pub(crate) tools: tools::Tools,
+    pub(crate) spawns: spawns::Spawns,
+    pub(crate) subjects: subjects::Subjects,
+    pub(crate) tables: tables::Tables,
+    pub(crate) import: import::Import,
+    pub(crate) server: server::Server,
+    pub(crate) instruments: instruments::Instruments,
 }
 
 /// How many of the arguments after a flag are its value.
@@ -73,9 +73,9 @@ pub(crate) enum Arity {
 /// The setter is given the arguments [`Arity`] took, which may be fewer than
 /// the arity names when the line ends early.
 pub(crate) struct Flag {
-    pub name: &'static str,
-    pub arity: Arity,
-    pub set: fn(&mut Args, &[String]),
+    pub(crate) name: &'static str,
+    pub(crate) arity: Arity,
+    pub(crate) set: fn(&mut Args, &[String]),
 }
 
 impl Flag {

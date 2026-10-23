@@ -86,9 +86,9 @@ mod fields {
     pub const FLAGS: usize = 1;
     /// The name pattern's enUS string; the eight locales and their mask
     /// follow it.
-    pub const PATTERN: usize = 3;
+    pub(crate) const PATTERN: usize = 3;
     /// The shortcut's enUS string.
-    pub const SHORTCUT: usize = 12;
+    pub(crate) const SHORTCUT: usize = 12;
 }
 
 /// One row of the table.
@@ -108,12 +108,12 @@ impl ChatChannel {
     }
 
     /// Whether the pattern is zone-bound: it carries the `%s`.
-    pub fn takes_a_place(&self) -> bool {
+    pub(crate) fn takes_a_place(&self) -> bool {
         self.pattern.contains("%s")
     }
 
     /// The channel's name at a place: the pattern with its `%s` filled.
-    pub fn name_at(&self, place: &str) -> String {
+    pub(crate) fn name_at(&self, place: &str) -> String {
         self.pattern.replacen("%s", place, 1)
     }
 

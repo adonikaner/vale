@@ -128,13 +128,13 @@ pub const ANCHOR_ATTACHMENT: u32 = 18;
 /// size in the world: small across a valley, large at arm's length. Drawing it
 /// at a constant size on the screen, as the first version of this did, is
 /// wrong.
-pub const BASE_SIZE: f32 = 0.2;
+pub(crate) const BASE_SIZE: f32 = 0.2;
 
 /// Above this height, in yards, a unit's name is drawn larger.
-pub const TALL: f32 = 4.0;
+pub(crate) const TALL: f32 = 4.0;
 
 /// The multiplier applied to `height / TALL` for a unit above [`TALL`].
-pub const TALL_GAIN: f32 = 1.5;
+pub(crate) const TALL_GAIN: f32 = 1.5;
 
 /// The name's height in yards for a unit whose `PlayerName` point is `height`
 /// yards above its origin.
@@ -155,11 +155,11 @@ pub fn size_for(height: f32) -> f32 {
 
 /// The five switches, as the bits they occupy in the client's mask.
 pub mod switches {
-    pub const OWN: u32 = 0x01;
+    pub(crate) const OWN: u32 = 0x01;
     pub const NPC: u32 = 0x02;
     pub const PLAYER: u32 = 0x04;
     pub const GUILD: u32 = 0x10;
-    pub const PVP_TITLE: u32 = 0x20;
+    pub(crate) const PVP_TITLE: u32 = 0x20;
 }
 
 /// Which units this client names, with one field per bit of the 1.12.1 client's
@@ -186,7 +186,7 @@ pub struct Policy {
     /// `UnitNamePlayerGuild` — `<Guild Name>` on its own line under a player's.
     pub guild: bool,
     /// `UnitNamePlayerPVPTitle` — the rank prefix on a player's name.
-    pub pvp_title: bool,
+    pub(crate) pvp_title: bool,
 }
 
 impl Default for Policy {
@@ -205,7 +205,7 @@ impl Default for Policy {
 /// They are spelled as build 5875 registers them, which is the spelling a real
 /// `Config.wtf` carries and the spelling the interface passes to `GetCVar`. The
 /// lookup itself is case-insensitive. The file is not written from this array.
-pub const CVARS: [&str; 5] = [
+pub(crate) const CVARS: [&str; 5] = [
     "UnitNameOwn",
     "UnitNameNPC",
     "UnitNamePlayer",
@@ -263,7 +263,8 @@ impl Policy {
     }
 
     /// The inverse of [`Policy::mask`], for a CVar file that has been read.
-    pub fn from_mask(mask: u32) -> Policy {
+    #[cfg(test)]
+    pub(crate) fn from_mask(mask: u32) -> Policy {
         Policy {
             own: mask & switches::OWN != 0,
             npc: mask & switches::NPC != 0,
@@ -336,7 +337,7 @@ pub mod player_flags {
 
 /// `CreatureType.dbc`'s id for a beast, which is what makes an owned unit a
 /// pet and not a minion.
-pub const CREATURE_TYPE_BEAST: u32 = 1;
+pub(crate) const CREATURE_TYPE_BEAST: u32 = 1;
 
 /// The line that names a unit's owner: `Dolgrin's Pet`.
 ///

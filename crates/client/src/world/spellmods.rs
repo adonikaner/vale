@@ -48,14 +48,14 @@ use bevy::prelude::*;
 
 /// One modifier on its way from the socket to [`SpellMods`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellModAnswer(pub SpellModifier);
+pub(crate) struct SpellModAnswer(pub(crate) SpellModifier);
 
 /// **Every modifier this session has been told about**, by operation and bit.
 ///
 /// A flat list rather than a `[[i32; 64]; 32]` pair: a character has a handful
 /// of talents and the array would be 16 KB of zeros walked on every tooltip.
 #[derive(Resource, Default, Debug, Clone)]
-pub struct SpellMods {
+pub(crate) struct SpellMods {
     held: Vec<SpellModifier>,
 }
 
@@ -105,12 +105,12 @@ impl SpellMods {
 
     /// [`Self::apply`] over a `u32`, which is what the three time-and-cost
     /// values on a `SpellInfo` are.
-    pub fn apply_u32(&self, op: u8, bits: u64, base: u32) -> u32 {
+    pub(crate) fn apply_u32(&self, op: u8, bits: u64, base: u32) -> u32 {
         self.apply(op, bits, base.min(i32::MAX as u32) as i32).max(0) as u32
     }
 
     /// …and over the one that is yards.
-    pub fn apply_yards(&self, bits: u64, base: f32) -> f32 {
+    pub(crate) fn apply_yards(&self, bits: u64, base: f32) -> f32 {
         let (flat, percent) = self.of(spell_mod_op::RANGE, bits);
         ((base + flat as f32) * (100.0 + percent as f32) / 100.0).max(0.0)
     }
@@ -126,16 +126,17 @@ impl SpellMods {
     }
 
     /// …and the same for the one that is yards.
-    pub fn moved_yards(&self, bits: u64, base: f32) -> Option<f32> {
+    pub(crate) fn moved_yards(&self, bits: u64, base: f32) -> Option<f32> {
         (self.of(spell_mod_op::RANGE, bits) != (0, 0)).then(|| self.apply_yards(bits, base))
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.held.is_empty()
     }
 }
 
-pub struct SpellModPlugin;
+pub(crate) struct SpellModPlugin;
 
 impl Plugin for SpellModPlugin {
     fn build(&self, app: &mut App) {

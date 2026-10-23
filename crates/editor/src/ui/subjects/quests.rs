@@ -88,20 +88,20 @@ const COUNT: f32 = 64.0;
 
 /// What every part of the workspace reads: the project, the quests, and what a
 /// resolved id is drawn with.
-pub struct Workspace<'a> {
-    pub session: &'a mut EditSession,
-    pub quests: &'a mut Quests,
+pub(crate) struct Workspace<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) quests: &'a mut Quests,
     /// The item workspace's state, used only to look up a display id's icon,
     /// which it already memoises — see `crate::subjects::items::Items::look`.
-    pub items: &'a mut Items,
-    pub assets: &'a GameAssets,
-    pub thumbnails: &'a mut Thumbnails,
+    pub(crate) items: &'a mut Items,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) thumbnails: &'a mut Thumbnails,
     /// The frame clock the undo stack folds a gesture by.
-    pub now: f64,
+    pub(crate) now: f64,
     /// What a link on the form or the inspector asks of the shell: an item,
     /// a client table's row or another quest to open. See
     /// [`crate::ui::shell::asks`].
-    pub asks: &'a mut ShellAsks,
+    pub(crate) asks: &'a mut ShellAsks,
 }
 
 impl Workspace<'_> {
@@ -119,21 +119,21 @@ impl Workspace<'_> {
 
 /// What only the list and the head of the form need, which belongs to the
 /// shell. The inspector draws its part without any of it.
-pub struct Shell<'a> {
+pub(crate) struct Shell<'a> {
     /// The queue an apply's reloads go on, whose status the form shows.
-    pub reloads: &'a mut crate::server::reload::Reloads,
+    pub(crate) reloads: &'a mut crate::server::reload::Reloads,
     /// The bar's Server…, which is where every server operation is.
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where each server subject stands, held for half a second; the quests'
     /// line in the form is read from it. See [`crate::server::sync::Standings`].
-    pub standings: &'a mut crate::server::sync::Standings,
+    pub(crate) standings: &'a mut crate::server::sync::Standings,
     /// Which content patch the server is configured for — half the key a new
     /// row is written under.
-    pub patch: u32,
+    pub(crate) patch: u32,
     /// A tool to switch to, which the list's "back to Creatures" asks for.
     /// The shell switches after this returns; this does not write the tool
     /// itself, because the shell holds the tool while it draws this.
-    pub switch_to: &'a mut Option<Tool>,
+    pub(crate) switch_to: &'a mut Option<Tool>,
 }
 
 /// The open quest and its row, read once a frame and handed to everything that
@@ -215,7 +215,7 @@ fn commit(session: &mut EditSession, open: &Open, column: &Column, written: Stri
 }
 
 /// Draw the list and the form into the region the panels left.
-pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, mut shell: Shell<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, mut shell: Shell<'_>) {
     // The headings, named once both client tables are open.
     name_the_zones(&mut work);
 
@@ -1331,7 +1331,7 @@ fn emote_lines(
 
 /// The shell's inspector, while the quest workspace is up: the quest as the
 /// log would show it, who gives and takes it, and where it sits in a chain.
-pub fn inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
+pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     let open = open_now(&work);
     let work = &mut work;
     let Some(open) = open.as_ref() else {
@@ -1356,7 +1356,7 @@ pub fn inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
 /// and race, drawn as the word in angle brackets because a preview has no
 /// character; `$G male:female;` draws its first half. The codes are
 /// case-insensitive in the client, and both cases ship.
-pub fn preview_text(text: &str) -> String {
+pub(crate) fn preview_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -2180,22 +2180,22 @@ pub(in crate::ui) fn picker(
 // ---------------------------------------------------------------------------
 
 /// Everything the quest window of a selected creature or game object needs.
-pub struct HolderQuests<'a> {
-    pub session: &'a mut EditSession,
-    pub quests: &'a mut Quests,
-    pub assets: &'a GameAssets,
+pub(crate) struct HolderQuests<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) quests: &'a mut Quests,
+    pub(crate) assets: &'a GameAssets,
     /// What the selection is, as the one thing a relation needs of it — see
     /// [`HolderIs`].
-    pub is: HolderIs,
-    pub switch_to: &'a mut Option<Tool>,
+    pub(crate) is: HolderIs,
+    pub(crate) switch_to: &'a mut Option<Tool>,
     /// The icons the reference picker's spell and item rows draw.
-    pub thumbnails: &'a mut Thumbnails,
-    pub now: f64,
+    pub(crate) thumbnails: &'a mut Thumbnails,
+    pub(crate) now: f64,
 }
 
 /// What a relation needs of the thing that holds it, which is a different
 /// column for each kind of holder — see [`holder_window`].
-pub enum HolderIs {
+pub(crate) enum HolderIs {
     /// A creature's `npc_flags`, and its template's key for writing them.
     Creature { npc_flags: u32, template_key: vale_mangos::row::Key },
     /// A game object's `type`, and its template's key for writing it.
@@ -2227,7 +2227,7 @@ const QUESTGIVER: u32 = 0x2;
 /// (`ObjectMgr.cpp:8936`) and loads it anyway, and the client offers quests
 /// only from that type. The window says so, and offers the type — which
 /// renames the object's `data` columns, so it is a button and not a default.
-pub fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Option<egui::Rect> {
+pub(crate) fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) -> Option<egui::Rect> {
     let (holder, entry, name) = subject.quests.window_for.clone()?;
     let (template, noun) = match holder {
         Holder::Creature => (vale_mangos::creature::TEMPLATE, "creature"),

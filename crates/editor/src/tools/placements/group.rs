@@ -69,14 +69,14 @@ use crate::tools::Tool;
 /// between the press and the release of an ordinary click and the ground
 /// under it is a different point. Six is about the travel of an ordinary
 /// click, and well under the travel of an intended drag.
-pub const DRAG_PIXELS: f32 = 6.0;
+pub(crate) const DRAG_PIXELS: f32 = 6.0;
 
 /// Yards north a group copy made with `Ctrl+D` is put from the original, so
 /// the copy can be seen and clicked. The creature tool's duplicate distance.
-pub const APART: f32 = 2.0;
+pub(crate) const APART: f32 = 2.0;
 
 /// A group's ids, sorted, for [`holds`].
-pub fn sorted<T: Ord>(ids: impl Iterator<Item = T>) -> Vec<T> {
+pub(crate) fn sorted<T: Ord>(ids: impl Iterator<Item = T>) -> Vec<T> {
     let mut ids: Vec<T> = ids.collect();
     ids.sort_unstable();
     ids
@@ -85,16 +85,16 @@ pub fn sorted<T: Ord>(ids: impl Iterator<Item = T>) -> Vec<T> {
 /// Whether a sorted list of ids holds one. For the marker passes, which ask it
 /// of every drawn entity on every frame: an empty group answers without a
 /// search, and a full one in a handful of comparisons.
-pub fn holds<T: Ord>(sorted: &[T], id: T) -> bool {
+pub(crate) fn holds<T: Ord>(sorted: &[T], id: T) -> bool {
     !sorted.is_empty() && sorted.binary_search(&id).is_ok()
 }
 
 /// Whether either shift key is down.
-pub fn shift(keys: &ButtonInput<KeyCode>) -> bool {
+pub(crate) fn shift(keys: &ButtonInput<KeyCode>) -> bool {
     keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)
 }
 
-pub struct GroupPlugin;
+pub(crate) struct GroupPlugin;
 
 impl Plugin for GroupPlugin {
     fn build(&self, app: &mut App) {
@@ -410,7 +410,7 @@ fn pasted_status(written: usize, asked: usize, skipped: usize, noun: &str) -> St
 
 /// The rectangle a drag on empty ground is drawing.
 #[derive(Resource, Debug, Default)]
-pub struct Marquee {
+pub(crate) struct Marquee {
     /// Which tool began it, where the press was and where the pointer is, in
     /// logical window pixels. `None` when no press on empty ground is held.
     held: Option<Held>,
@@ -433,16 +433,16 @@ struct Held {
 
 /// A rectangle that has been released, as `(corner, corner, adding)`.
 #[derive(Debug, Clone, Copy)]
-pub struct Done {
-    pub tool: Tool,
-    pub rect: Rect,
-    pub adding: bool,
+pub(crate) struct Done {
+    pub(crate) tool: Tool,
+    pub(crate) rect: Rect,
+    pub(crate) adding: bool,
 }
 
 impl Marquee {
     /// Start a rectangle at `at`. Called by a tool's press when it hit
     /// nothing.
-    pub fn begin(&mut self, tool: Tool, at: Vec2, adding: bool) {
+    pub(crate) fn begin(&mut self, tool: Tool, at: Vec2, adding: bool) {
         self.held = Some(Held {
             tool,
             from: at,
@@ -455,23 +455,13 @@ impl Marquee {
 
     /// The rectangle `tool` began and the button released, if there is one.
     /// Taken, so it is acted on once.
-    pub fn finished(&mut self, tool: Tool) -> Option<Done> {
+    pub(crate) fn finished(&mut self, tool: Tool) -> Option<Done> {
         match self.done {
             Some(done) if done.tool == tool => self.done.take(),
             _ => None,
         }
     }
 
-    /// Whether a rectangle is being drawn, for anything that would otherwise
-    /// act on the same drag.
-    pub fn drawing(&self) -> bool {
-        self.held.is_some_and(|held| held.moving)
-    }
-
-    /// Whether a press on empty ground is held at all, drawn or not yet.
-    pub fn pressed(&self) -> bool {
-        self.held.is_some()
-    }
 }
 
 /// Follow the pointer while a rectangle is held, and finish it on release.
@@ -544,7 +534,7 @@ fn paint(mut contexts: EguiContexts, marquee: Res<Marquee>) -> Result {
 /// The projection answers in physical pixels, because the world camera draws
 /// into a target sized in physical pixels; the pointer and the rectangle are
 /// logical. The same division `vale_client::ui::boxes` makes.
-pub fn on_screen(
+pub(crate) fn on_screen(
     camera: &Camera,
     eye: &GlobalTransform,
     window: &Window,
@@ -562,7 +552,7 @@ pub fn on_screen(
 }
 
 /// The camera and window [`on_screen`] needs, from the queries a tool holds.
-pub fn view<'a>(
+pub(crate) fn view<'a>(
     camera: &'a Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     windows: &'a Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) -> Option<(&'a Camera, &'a GlobalTransform, &'a Window)> {
@@ -579,7 +569,7 @@ pub fn view<'a>(
 /// height above the terrain is what keeps a creature on an inn's upper floor on
 /// the upper floor, and one on a hillside on the hillside. Where either point
 /// has no open terrain the height is `to`'s, which is the primary's change.
-pub fn carried(session: &EditSession, from: Vec3, to: Vec3) -> Vec3 {
+pub(crate) fn carried(session: &EditSession, from: Vec3, to: Vec3) -> Vec3 {
     let terrain = |at: Vec3| super::doodads::ground_height(session, at.x, at.y);
     match (terrain(from), terrain(to)) {
         (Some(under_from), Some(under_to)) => Vec3::new(to.x, to.y, under_to + (from.z - under_from)),
@@ -588,12 +578,12 @@ pub fn carried(session: &EditSession, from: Vec3, to: Vec3) -> Vec3 {
 }
 
 /// A turn of `degrees` about `axis`, a unit vector in the world's own axes.
-pub fn turn_about(axis: Vec3, degrees: f32) -> Quat {
+pub(crate) fn turn_about(axis: Vec3, degrees: f32) -> Quat {
     Quat::from_axis_angle(axis.normalize_or(Vec3::Z), degrees.to_radians())
 }
 
 /// A point carried round `pivot` by `turn`.
-pub fn orbit(pivot: Vec3, point: Vec3, turn: Quat) -> Vec3 {
+pub(crate) fn orbit(pivot: Vec3, point: Vec3, turn: Quat) -> Vec3 {
     pivot + turn * (point - pivot)
 }
 
@@ -604,7 +594,7 @@ pub fn orbit(pivot: Vec3, point: Vec3, turn: Quat) -> Vec3 {
 /// which is glam's `EulerRot::ZYX`. The group's turn goes on the outside,
 /// because it is about a world axis, and the product is taken apart again the
 /// same way.
-pub fn turn_record(rotation: [f32; 3], turn: Quat) -> [f32; 3] {
+pub(crate) fn turn_record(rotation: [f32; 3], turn: Quat) -> [f32; 3] {
     let (z, y, x) = (turn * world_turn(rotation)).normalize().to_euler(EulerRot::ZYX);
     vale_assets::world::adt::placement_euler_from_world(
         [x, y, z].map(|radians| radians.to_degrees().rem_euclid(360.0)),
@@ -613,7 +603,7 @@ pub fn turn_record(rotation: [f32; 3], turn: Quat) -> [f32; 3] {
 
 /// A placement's three angles (the file's, in degrees) as the turn they
 /// make in the world. [`turn_record`]'s first step.
-pub fn world_turn(rotation: [f32; 3]) -> Quat {
+pub(crate) fn world_turn(rotation: [f32; 3]) -> Quat {
     let [x, y, z] =
         vale_assets::world::adt::placement_euler_to_world(rotation).map(f32::to_radians);
     Quat::from_euler(EulerRot::ZYX, z, y, x)
@@ -622,36 +612,36 @@ pub fn world_turn(rotation: [f32; 3]) -> Quat {
 /// The turn that takes a placement from the angles `was` to the angles `now`,
 /// about the world's axes. What the inspector's rotation fields did to the
 /// primary, for the members to be carried by.
-pub fn turn_between(was: [f32; 3], now: [f32; 3]) -> Quat {
+pub(crate) fn turn_between(was: [f32; 3], now: [f32; 3]) -> Quat {
     (world_turn(now) * world_turn(was).inverse()).normalize()
 }
 
 /// What `Ctrl+C` took: the placements, each relative to the primary's origin.
 #[derive(Resource, Debug, Default)]
-pub struct Clipboard {
-    pub doodads: Vec<ClipDoodad>,
-    pub buildings: Vec<ClipBuilding>,
+pub(crate) struct Clipboard {
+    pub(crate) doodads: Vec<ClipDoodad>,
+    pub(crate) buildings: Vec<ClipBuilding>,
 }
 
 /// One copied doodad.
 #[derive(Debug, Clone)]
-pub struct ClipDoodad {
+pub(crate) struct ClipDoodad {
     /// The model, resolved (`.m2`) as the selection holds it.
-    pub path: String,
+    pub(crate) path: String,
     /// Where it stood relative to the primary, in the world's own axes.
-    pub offset: Vec3,
-    pub record: Placement,
+    pub(crate) offset: Vec3,
+    pub(crate) record: Placement,
     /// How far its drawn footprint reaches, for the `MCRF` references a new
     /// row needs. See `vale_edit::adt::place::AdtFile::add_doodad`.
-    pub radius: f32,
+    pub(crate) radius: f32,
 }
 
 /// One copied building.
 #[derive(Debug, Clone)]
-pub struct ClipBuilding {
-    pub path: String,
-    pub offset: Vec3,
-    pub record: Building,
+pub(crate) struct ClipBuilding {
+    pub(crate) path: String,
+    pub(crate) offset: Vec3,
+    pub(crate) record: Building,
 }
 
 /// The id a new placement gets: the next one in the minted range, above every
@@ -669,9 +659,9 @@ fn next_minted(session: &EditSession) -> u32 {
 /// What a paste wrote: where each new row went, and how many were left out
 /// because the tile under them was not open.
 #[derive(Debug, Default)]
-pub struct Pasted {
-    pub rows: Vec<((u32, u32), usize, u32)>,
-    pub skipped: usize,
+pub(crate) struct Pasted {
+    pub(crate) rows: Vec<((u32, u32), usize, u32)>,
+    pub(crate) skipped: usize,
 }
 
 /// Put copies of `clip` into the tiles, with the primary's origin at `anchor`.
@@ -684,7 +674,7 @@ pub struct Pasted {
 /// One undo entry across every tile written. Each tile is published and asked
 /// for again, so what is drawn comes from the file, collision hulls and lamps
 /// included; since `terrain::swap` a re-read is not visible.
-pub fn paste_doodads(
+pub(crate) fn paste_doodads(
     session: &mut EditSession,
     clip: &[ClipDoodad],
     anchor: Vec3,
@@ -719,7 +709,7 @@ pub fn paste_doodads(
 
 /// …and the same for buildings. The box moves with the building, as a drag
 /// moves it — see `wmos::set_world_position`.
-pub fn paste_buildings(
+pub(crate) fn paste_buildings(
     session: &mut EditSession,
     clip: &[ClipBuilding],
     anchor: Vec3,
@@ -790,7 +780,7 @@ fn record_placements(
 /// drawn by this client, but the reference client draws a placement from any
 /// tile that lists it, so leaving them would leave the placement in the game.
 /// The count answered is of placements, not of rows.
-pub fn remove_rows(
+pub(crate) fn remove_rows(
     session: &mut EditSession,
     rows: &[((u32, u32), usize)],
     buildings: bool,

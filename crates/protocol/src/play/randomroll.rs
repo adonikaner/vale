@@ -20,7 +20,7 @@ use crate::bytes::{Reader, Writer};
 
 /// The largest `max` vmangos accepts; a request above it is dropped without a
 /// reply.
-pub const MAX_ROLL: u32 = 1_000_000;
+pub(crate) const MAX_ROLL: u32 = 1_000_000;
 
 /// `MSG_RANDOM_ROLL` from the server, read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +32,7 @@ pub struct RandomRoll {
 }
 
 /// `MSG_RANDOM_ROLL` from the server: twenty bytes.
-pub fn parse_random_roll(body: &[u8]) -> Option<RandomRoll> {
+pub(crate) fn parse_random_roll(body: &[u8]) -> Option<RandomRoll> {
     if body.len() < 20 {
         return None;
     }
@@ -46,7 +46,7 @@ pub fn parse_random_roll(body: &[u8]) -> Option<RandomRoll> {
 }
 
 /// `MSG_RANDOM_ROLL` to the server: the range.
-pub fn random_roll_body(min: u32, max: u32) -> Vec<u8> {
+pub(crate) fn random_roll_body(min: u32, max: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(min).u32(max);
     w.buf

@@ -50,7 +50,7 @@ use std::hash::Hash;
 /// [`EditSession::database_writes`] it was read at. [`Self::renew`] empties it
 /// when the database has been written since.
 #[derive(Debug, Default)]
-pub struct Fresh<T> {
+pub(crate) struct Fresh<T> {
     value: T,
     read_at: Option<u64>,
 }
@@ -58,7 +58,7 @@ pub struct Fresh<T> {
 impl<T: Default> Fresh<T> {
     /// Empty the value when `writes` is not what it was read at. `true` when
     /// it was emptied, which is when the caller reads again.
-    pub fn renew(&mut self, writes: u64) -> bool {
+    pub(crate) fn renew(&mut self, writes: u64) -> bool {
         if self.read_at == Some(writes) {
             return false;
         }
@@ -69,7 +69,8 @@ impl<T: Default> Fresh<T> {
 
     /// Whether a read started at `writes` still describes the database, for a
     /// task that answers after the counter may have moved.
-    pub fn is_current(&self, writes: u64) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_current(&self, writes: u64) -> bool {
         self.read_at == Some(writes)
     }
 }
@@ -88,7 +89,7 @@ impl<T> std::ops::DerefMut for Fresh<T> {
 }
 
 /// A database read that answers `Result<A, String>`, run on a task.
-pub type Read<A> = Task<Result<A, String>>;
+pub(crate) type Read<A> = Task<Result<A, String>>;
 
 /// One read of the world database at a time, and why the last one failed.
 ///
@@ -97,7 +98,7 @@ pub type Read<A> = Task<Result<A, String>>;
 /// answers when [`Self::renew`] says the counter moved. A read started at an
 /// earlier counter is let finish and its answer dropped, so one task is in
 /// flight at a time.
-pub struct FreshTask<A> {
+pub(crate) struct FreshTask<A> {
     read_at: Option<u64>,
     /// The read in flight and the counter it was started at.
     running: Option<(u64, Read<A>)>,
@@ -126,7 +127,7 @@ impl<A> FreshTask<A> {
     /// Note the counter. `true` when it moved since the last call, which is
     /// when the caller empties what it holds; a failure against the database
     /// as it was is forgotten, so the read is tried again.
-    pub fn renew(&mut self, writes: u64) -> bool {
+    pub(crate) fn renew(&mut self, writes: u64) -> bool {
         if self.read_at == Some(writes) {
             return false;
         }
@@ -138,7 +139,7 @@ impl<A> FreshTask<A> {
     /// The answer of the read in flight, once it has one. A failure is kept as
     /// [`Self::trouble`] as well as returned. An answer to a read started
     /// before the counter moved is dropped and gives `None`.
-    pub fn poll(&mut self) -> Option<Result<A, String>> {
+    pub(crate) fn poll(&mut self) -> Option<Result<A, String>> {
         let (started, task) = self.running.as_mut()?;
         let started = *started;
         let done = block_on(future::poll_once(task))?;
@@ -151,12 +152,12 @@ impl<A> FreshTask<A> {
     }
 
     /// Whether a read is in flight.
-    pub fn is_busy(&self) -> bool {
+    pub(crate) fn is_busy(&self) -> bool {
         self.running.is_some()
     }
 
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.trouble.as_ref()
     }
 
@@ -164,7 +165,7 @@ impl<A> FreshTask<A> {
     /// or [`Self::renew`] has not been given `writes`. `read` builds the task,
     /// or says why it cannot (no database is set); that reason becomes
     /// [`Self::trouble`]. `true` when a read was started.
-    pub fn start(&mut self, writes: u64, read: impl FnOnce() -> Result<Read<A>, String>) -> bool {
+    pub(crate) fn start(&mut self, writes: u64, read: impl FnOnce() -> Result<Read<A>, String>) -> bool {
         if self.running.is_some() || self.trouble.is_some() || self.read_at != Some(writes) {
             return false;
         }
@@ -185,7 +186,7 @@ impl<A> FreshTask<A> {
 /// and emptied when [`EditSession::database_writes`] moves. A [`FreshTask`]
 /// whose answers are kept in a map: a loot set by its table and entry, a
 /// vendor list, or one value under the key `()`.
-pub struct FreshReads<K, V> {
+pub(crate) struct FreshReads<K, V> {
     held: HashMap<K, V>,
     /// The key the read in flight is for.
     wanted: Option<K>,
@@ -211,7 +212,7 @@ impl<K: std::fmt::Debug, V> std::fmt::Debug for FreshReads<K, V> {
 impl<K: Eq + Hash + Clone, V> FreshReads<K, V> {
     /// Note the counter, and empty every answer when it moved. `true` when it
     /// did.
-    pub fn renew(&mut self, writes: u64) -> bool {
+    pub(crate) fn renew(&mut self, writes: u64) -> bool {
         if !self.task.renew(writes) {
             return false;
         }
@@ -222,7 +223,7 @@ impl<K: Eq + Hash + Clone, V> FreshReads<K, V> {
     /// Keep the answer of the read in flight, once it has one, and say which
     /// key it was for; a failure is returned as the reason. See
     /// [`FreshTask::poll`].
-    pub fn poll(&mut self) -> Option<Result<K, String>> {
+    pub(crate) fn poll(&mut self) -> Option<Result<K, String>> {
         let done = self.task.poll();
         if self.task.is_busy() {
             return None;
@@ -240,7 +241,7 @@ impl<K: Eq + Hash + Clone, V> FreshReads<K, V> {
 
     /// Start reading `key` at `writes`, unless it is held, a read is in
     /// flight, or the last one failed. See [`FreshTask::start`].
-    pub fn want(&mut self, writes: u64, key: K, read: impl FnOnce() -> Result<Read<V>, String>) {
+    pub(crate) fn want(&mut self, writes: u64, key: K, read: impl FnOnce() -> Result<Read<V>, String>) {
         if self.held.contains_key(&key) {
             return;
         }
@@ -250,40 +251,41 @@ impl<K: Eq + Hash + Clone, V> FreshReads<K, V> {
     }
 
     /// The answer held for `key`.
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub(crate) fn get(&self, key: &K) -> Option<&V> {
         self.held.get(key)
     }
 
     /// Whether `key` has been read.
-    pub fn is_read(&self, key: &K) -> bool {
+    pub(crate) fn is_read(&self, key: &K) -> bool {
         self.held.contains_key(key)
     }
 
     /// Whether `key` is being read now.
-    pub fn is_reading(&self, key: &K) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_reading(&self, key: &K) -> bool {
         self.task.is_busy() && self.wanted.as_ref() == Some(key)
     }
 
     /// Whether a read is in flight.
-    pub fn is_busy(&self) -> bool {
+    pub(crate) fn is_busy(&self) -> bool {
         self.task.is_busy()
     }
 
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.task.trouble()
     }
 
     /// Hold an answer without reading it, for a test.
     #[cfg(test)]
-    pub fn insert(&mut self, key: K, value: V) {
+    pub(crate) fn insert(&mut self, key: K, value: V) {
         self.held.insert(key, value);
     }
 }
 
 impl<V> FreshReads<(), V> {
     /// The one answer, for a reader that reads everything at once.
-    pub fn value(&self) -> Option<&V> {
+    pub(crate) fn value(&self) -> Option<&V> {
         self.held.get(&())
     }
 }
@@ -293,7 +295,7 @@ impl<V> FreshReads<(), V> {
 /// literal the store holds. A template can be claimed at several content
 /// patches; the highest is the one the server loads, so it is the one read. A
 /// row the project removes answers nothing.
-pub fn claimed(edits: &Edits, table: &str, entry: u32, column: &str) -> Option<String> {
+pub(crate) fn claimed(edits: &Edits, table: &str, entry: u32, column: &str) -> Option<String> {
     edits
         .rows()
         .filter(|(claimed, key, row)| {
@@ -312,7 +314,7 @@ pub fn claimed(edits: &Edits, table: &str, entry: u32, column: &str) -> Option<S
 /// ones the database answered, with the project's claims over them. A
 /// template the project points elsewhere is left out, and one it points here,
 /// created or edited, is added under the name the project gives it.
-pub fn naming(from_database: &[(u32, String)], edits: &Edits, column: &str, id: u32) -> Vec<(u32, String)> {
+pub(crate) fn naming(from_database: &[(u32, String)], edits: &Edits, column: &str, id: u32) -> Vec<(u32, String)> {
     let table = vale_mangos::creature::TEMPLATE;
     let mut out: Vec<(u32, String)> = from_database
         .iter()
@@ -349,7 +351,7 @@ pub fn naming(from_database: &[(u32, String)], edits: &Edits, column: &str, id: 
 /// Move the counter when the editor is pointed at a different database: the
 /// Server panel's `mangosd.conf`, or the environment it reads first. Every
 /// cache of the old database is then read again from the new one.
-pub fn watch_the_database(
+pub(crate) fn watch_the_database(
     settings: Res<super::settings::ServerSettings>,
     session: Option<ResMut<EditSession>>,
     mut last: Local<Option<Option<vale_mangos::conn::Where>>>,

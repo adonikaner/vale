@@ -42,13 +42,13 @@ use bevy::tasks::Task;
 /// Cloned into the worker and kept by whatever is drawing the bar, which is the
 /// whole reason it is an `Arc` rather than a field.
 #[derive(Debug, Clone)]
-pub struct Progress {
+pub(crate) struct Progress {
     done: Arc<AtomicUsize>,
     total: usize,
 }
 
 impl Progress {
-    pub fn new(total: usize) -> Progress {
+    pub(crate) fn new(total: usize) -> Progress {
         Progress {
             done: Arc::new(AtomicUsize::new(0)),
             total: total.max(1),
@@ -56,30 +56,31 @@ impl Progress {
     }
 
     /// Say that `done` units are finished. Called from the worker.
-    pub fn set(&self, done: usize) {
+    pub(crate) fn set(&self, done: usize) {
         self.done.store(done, Ordering::Relaxed);
     }
 
-    pub fn done(&self) -> usize {
+    pub(crate) fn done(&self) -> usize {
         self.done.load(Ordering::Relaxed)
     }
 
-    pub fn total(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn total(&self) -> usize {
         self.total
     }
 
     /// 0 to 1, for a bar.
-    pub fn fraction(&self) -> f32 {
+    pub(crate) fn fraction(&self) -> f32 {
         (self.done() as f32 / self.total as f32).clamp(0.0, 1.0)
     }
 }
 
 /// One piece of slow work, and what to call it.
-pub struct Job<T> {
+pub(crate) struct Job<T> {
     /// What a person sees: *"rebaking 32, 49"*.
-    pub label: String,
-    pub progress: Progress,
-    pub task: Task<T>,
+    pub(crate) label: String,
+    pub(crate) progress: Progress,
+    pub(crate) task: Task<T>,
 }
 
 /// **Everything running, for the status line to draw.**
@@ -87,8 +88,8 @@ pub struct Job<T> {
 /// Typed by what the jobs produce, so a second kind of slow work gets its own
 /// resource rather than a box and a downcast. There is one kind today.
 #[derive(Resource)]
-pub struct Running<T: Send + 'static> {
-    pub jobs: Vec<Job<T>>,
+pub(crate) struct Running<T: Send + 'static> {
+    pub(crate) jobs: Vec<Job<T>>,
 }
 
 impl<T: Send + 'static> Default for Running<T> {
@@ -98,12 +99,8 @@ impl<T: Send + 'static> Default for Running<T> {
 }
 
 impl<T: Send + 'static> Running<T> {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.jobs.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.jobs.len()
     }
 
     /// **What the status line says**: the first job's label and how far it has
@@ -111,7 +108,7 @@ impl<T: Send + 'static> Running<T> {
     ///
     /// The first rather than all of them, because the line has room for one
     /// sentence and a queue of eight tiles is eight of the same sentence.
-    pub fn summary(&self) -> Option<(String, f32)> {
+    pub(crate) fn summary(&self) -> Option<(String, f32)> {
         let first = self.jobs.first()?;
         let more = self.jobs.len() - 1;
         let label = match more {
@@ -122,7 +119,7 @@ impl<T: Send + 'static> Running<T> {
     }
 
     /// Take whatever has finished, leaving the rest running.
-    pub fn collect(&mut self) -> Vec<T> {
+    pub(crate) fn collect(&mut self) -> Vec<T> {
         use bevy::tasks::{block_on, futures_lite::future};
 
         let mut out = Vec::new();

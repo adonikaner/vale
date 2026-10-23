@@ -778,7 +778,7 @@ impl WorldEntity {
     /// Derived rather than stored as a field, because [`Self::unit_flags`] is
     /// already carried whole and this struct is rebuilt per entity per
     /// simulation step and compared field by field.
-    pub fn stunned(&self) -> bool {
+    pub(crate) fn stunned(&self) -> bool {
         self.unit_flags & vale_protocol::state::objects::UNIT_FLAG_STUNNED != 0
     }
 
@@ -792,7 +792,7 @@ impl WorldEntity {
     /// rogue's Stealth, a druid's Prowl, a night elf's Shadowmeld and every
     /// creature the server hides, because all of them are
     /// `SPELL_AURA_MOD_STEALTH` and all of them set this one bit.
-    pub fn creeping(&self) -> bool {
+    pub(crate) fn creeping(&self) -> bool {
         self.vis_flags & vale_protocol::state::objects::UNIT_VIS_FLAGS_CREEP != 0
     }
 
@@ -805,7 +805,7 @@ impl WorldEntity {
     /// player who has released; this bit is `SPELL_AURA_GHOST` on any unit. The
     /// two agree on a released player, and only this one applies to other
     /// units.
-    pub fn not_solid(&self) -> bool {
+    pub(crate) fn not_solid(&self) -> bool {
         use vale_protocol::state::objects::{UNIT_VIS_FLAGS_CREEP, UNIT_VIS_FLAGS_GHOST};
         self.vis_flags & (UNIT_VIS_FLAGS_GHOST | UNIT_VIS_FLAGS_CREEP) != 0
     }
@@ -813,7 +813,7 @@ impl WorldEntity {
 
 /// Marks the entity the session is driving.
 #[derive(Component)]
-pub struct LocalPlayer;
+pub(crate) struct LocalPlayer;
 
 /// GUID -> the ECS entity representing it.
 #[derive(Resource, Default)]
@@ -983,9 +983,7 @@ pub(super) fn poll_world(
 
     let world = active
         .live
-        .world()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+        .read();
 
     // The elevators' table, held for the loop below. `display_tables` parses
     // on the first call and returns an `Arc` afterwards, so this clones one

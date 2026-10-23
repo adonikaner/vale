@@ -93,18 +93,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Where the file lives under the project root.
-pub const VPATH: &str = "sql\\world.sql";
+pub(crate) const VPATH: &str = "sql\\world.sql";
 
 /// Where the file that puts the server back lives, beside [`VPATH`]. See
 /// [`super::reconcile::Undo`].
-pub const REVERT_VPATH: &str = "sql\\revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\revert.sql";
 
 /// The client tables whose rows the server reads from its own SQL table, as
 /// `(DBC name, the table it becomes)`.
 ///
 /// Every other DBC the server reads, it reads as a file in `DataDir\5875\dbc\`, and
 /// a publish copies it there; see `super::publish::release::copy_server_dbcs`.
-pub const MAPPED: [(&str, &str); 5] = [
+pub(crate) const MAPPED: [(&str, &str); 5] = [
     ("Spell", spell::TABLE),
     ("TaxiNodes", taxi::TABLE),
     ("SkillLineAbility", skills::TABLE),
@@ -115,12 +115,12 @@ pub const MAPPED: [(&str, &str); 5] = [
 /// Whether the server has a `.reload` for a mapped table. `spell_template` has
 /// one; `taxi_nodes`, `skill_line_ability`, `area_template` and
 /// `areatrigger_template` are read once at startup and have none.
-pub fn reloadable(table: &str) -> bool {
+pub(crate) fn reloadable(table: &str) -> bool {
     table == spell::TABLE
 }
 
 /// The sentence for a row the server's table cannot hold.
-pub fn refusal(dbc: &str, id: u32) -> String {
+pub(crate) fn refusal(dbc: &str, id: u32) -> String {
     match dbc {
         "TaxiNodes" => format!(
             "flight node {id} cannot be written to the server: the highest taxi_nodes id is {}",
@@ -154,34 +154,29 @@ pub fn refusal(dbc: &str, id: u32) -> String {
 /// The change to one server row: the columns it sets, and the statements that
 /// set them.
 #[derive(Debug)]
-pub struct Row {
+pub(crate) struct Row {
     /// The server table it lands in.
-    pub table: &'static str,
+    pub(crate) table: &'static str,
     /// Which row of that table: `(entry, build)` for a spell, `(id, build)` for
     /// a flight node and for a skill line ability, `entry` for an area. See
     /// `vale_mangos::row::Key`.
-    pub key: Key,
+    pub(crate) key: Key,
     /// The columns whose values this project sets.
-    pub changes: Vec<Assignment>,
+    pub(crate) changes: Vec<Assignment>,
     /// The statements that apply [`Row::changes`], in order.
-    pub statements: Vec<String>,
+    pub(crate) statements: Vec<String>,
 }
 
 impl Row {
-    /// One line naming the row, for a status line and for the undo file's
-    /// marker.
-    pub fn names(&self) -> String {
-        format!("{} {}", self.table, self.key.text())
-    }
 }
 
 /// Everything a project changes on the server.
 #[derive(Debug, Default)]
-pub struct Plan {
+pub(crate) struct Plan {
     /// The server tables with at least one row in them, in the order they were
     /// walked.
-    pub tables: Vec<&'static str>,
-    pub rows: Vec<Row>,
+    pub(crate) tables: Vec<&'static str>,
+    pub(crate) rows: Vec<Row>,
     /// Rows the server's table cannot hold, as `(DBC name, id)`; [`refusal`]
     /// words each one. For a spell see `vale_mangos::spell::MAX_ENTRY`:
     /// `spell_template.entry` is a `smallint unsigned` and `Spell.dbc`'s id is
@@ -190,20 +185,20 @@ pub struct Plan {
     /// Each one is reported rather than skipped, because leaving one out
     /// without a word hides the change in the same way the database clamping
     /// it would.
-    pub refused: Vec<(&'static str, u32)>,
+    pub(crate) refused: Vec<(&'static str, u32)>,
     /// Rows the archives ship that the project's copy of the DBC no longer
     /// has, as `(DBC name, id)`. Nothing is written for them: the server's
     /// table keeps the row, and removing it would remove a row this project
     /// does not own. Reported so the difference is known.
-    pub removed: Vec<(&'static str, u32)>,
+    pub(crate) removed: Vec<(&'static str, u32)>,
 }
 
 impl Plan {
-    pub fn nothing(&self) -> bool {
+    pub(crate) fn nothing(&self) -> bool {
         self.rows.is_empty()
     }
 
-    pub fn statements(&self) -> usize {
+    pub(crate) fn statements(&self) -> usize {
         self.rows.iter().map(|row| row.statements.len()).sum()
     }
 
@@ -214,20 +209,21 @@ impl Plan {
     /// the client. Every `taxi_nodes` and `skill_line_ability` change counts
     /// as reaching the server: a plan holds a row of either only when a
     /// column the server reads changed.
-    pub fn reaches_the_server(&self) -> bool {
+    pub(crate) fn reaches_the_server(&self) -> bool {
         self.rows
             .iter()
             .any(|row| row.table != spell::TABLE || spell::reaches_the_server(&row.changes))
     }
 
     /// Whether any row is in a table the server reads only at startup.
-    pub fn needs_a_restart(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn needs_a_restart(&self) -> bool {
         !self.read_at_startup().is_empty()
     }
 
     /// The tables with a row in this plan that the server reads only at
     /// startup, in [`MAPPED`]'s order.
-    pub fn read_at_startup(&self) -> Vec<&'static str> {
+    pub(crate) fn read_at_startup(&self) -> Vec<&'static str> {
         MAPPED
             .iter()
             .map(|(_, table)| *table)
@@ -246,7 +242,7 @@ impl Plan {
     /// The hash covers the statements, not the row count, because two
     /// different edits to the same row are one row but produce two different
     /// databases.
-    pub fn signature(&self) -> u64 {
+    pub(crate) fn signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for row in &self.rows {
@@ -258,7 +254,7 @@ impl Plan {
     }
 
     /// One line for the status bar.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         if self.nothing() {
             return "no server rows changed".to_string();
         }
@@ -280,14 +276,14 @@ impl Plan {
 
 /// What an apply did.
 #[derive(Debug, Default)]
-pub struct Applied {
-    pub rows: usize,
+pub(crate) struct Applied {
+    pub(crate) rows: usize,
     /// Rows the database reported as affected. Not the statement count: two of
     /// every three statements are `INSERT IGNORE` and most of them do nothing.
-    pub affected: u64,
+    pub(crate) affected: u64,
     /// How many entries the undo file learnt about on this apply.
-    pub newly_undoable: usize,
-    pub tables: Vec<&'static str>,
+    pub(crate) newly_undoable: usize,
+    pub(crate) tables: Vec<&'static str>,
 }
 
 /// The server half of a save, called from the three Save call sites. It works
@@ -304,7 +300,7 @@ pub struct Applied {
 /// the database. The write's own finish reports what happened and requests
 /// the reloads, so a reload is never sent for a change that did not reach the
 /// database.
-pub fn save(
+pub(crate) fn save(
     session: &mut EditSession,
     assets: &GameAssets,
     server: &crate::server::settings::ServerSettings,
@@ -427,7 +423,7 @@ fn line_for(plan: &Plan, applied: &Applied) -> String {
 /// against a chain that includes it compares the edit with itself. The diff
 /// was then empty, so a save removed the project's rows from the database
 /// while the client still shipped the edit. See `Project::published`.
-pub fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, String> {
+pub(crate) fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, String> {
     let mut out = Plan::default();
     let own: Vec<String> = session
         .project
@@ -581,7 +577,7 @@ pub fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, String> 
 
 /// Rewrites the project's `sql\world.sql`, or removes it when the plan is
 /// empty.
-pub fn write_file(session: &EditSession, plan: &Plan) -> Result<Option<PathBuf>, String> {
+pub(crate) fn write_file(session: &EditSession, plan: &Plan) -> Result<Option<PathBuf>, String> {
     let Some(disk) = session.project.path_for(VPATH) else {
         return Err(format!("{VPATH}: path is outside the project folder"));
     };
@@ -650,7 +646,7 @@ fn address(
 /// each other, since each is one spell's, one flight node's or one skill line
 /// ability's row at build 5875, so they
 /// are snapshotted together and run as one list.
-pub fn apply_at(
+pub(crate) fn apply_at(
     project: &vale_edit::project::Project,
     plan: &Plan,
     at: &vale_mangos::conn::Where,
@@ -721,7 +717,7 @@ pub fn apply_at(
 ///
 /// The file is removed only after the statements have run. A revert that fails
 /// part way keeps its file, so it can be run again or read by hand.
-pub fn revert_at(
+pub(crate) fn revert_at(
     project: &vale_edit::project::Project,
     at: &vale_mangos::conn::Where,
 ) -> Result<Reverted, String> {
@@ -771,19 +767,9 @@ fn forget_revert_file(project: &vale_edit::project::Project) -> Result<(), Strin
     }
 }
 
-/// [`apply_at`] with the session's project and the panel's address, run on the
-/// calling thread.
-pub fn apply(
-    session: &mut EditSession,
-    plan: &Plan,
-    server: &crate::server::settings::ServerSettings,
-) -> Result<Applied, String> {
-    apply_at(&session.project, plan, &address(server)?)
-}
-
 /// [`revert_at`] with the session's project and the panel's address, run on
 /// the calling thread. Used by the scripted `--revert`.
-pub fn revert(
+pub(crate) fn revert(
     session: &mut EditSession,
     server: &crate::server::settings::ServerSettings,
 ) -> Result<Reverted, String> {
@@ -796,7 +782,7 @@ pub fn revert(
 /// a reload sent for an edited tooltip would report as live a change that
 /// never reached the server. A table with no reload (`taxi_nodes`,
 /// `skill_line_ability`) gets a restart notice on the status line instead.
-pub fn apply_work(
+pub(crate) fn apply_work(
     session: &EditSession,
     plan: Plan,
     server: &crate::server::settings::ServerSettings,
@@ -833,7 +819,7 @@ pub fn apply_work(
 
 /// A Put back as a queued write. `None` when this project has applied no row
 /// to a mapped table.
-pub fn revert_work(
+pub(crate) fn revert_work(
     session: &EditSession,
     server: &crate::server::settings::ServerSettings,
 ) -> Result<Option<crate::server::queue::Work>, String> {
@@ -869,10 +855,10 @@ pub fn revert_work(
 
 /// What a revert did.
 #[derive(Debug, Default)]
-pub struct Reverted {
-    pub rows: usize,
-    pub affected: u64,
-    pub tables: Vec<&'static str>,
+pub(crate) struct Reverted {
+    pub(crate) rows: usize,
+    pub(crate) affected: u64,
+    pub(crate) tables: Vec<&'static str>,
     /// How many of the rows were removed rather than restored. The person is
     /// told this number.
     ///
@@ -885,13 +871,13 @@ pub struct Reverted {
     ///
     /// The count is reported and not worked around, because no GM command
     /// drops a spell from that map.
-    pub removals: usize,
+    pub(crate) removals: usize,
 }
 
 impl Reverted {
     /// One line for the status bar: what was put back, and which removals
     /// still need a server restart.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         let put_back = format!("restored {} row(s), {} affected", self.rows, self.affected);
         match self.removals {
             0 => put_back,
@@ -909,7 +895,7 @@ impl Reverted {
 /// Runs once, on the first frame that has a session to read the project from,
 /// and never again. A flag that ran on every frame would put the server back
 /// after every save that had just applied something.
-pub fn on_the_command_line(
+pub(crate) fn on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     server: Res<crate::server::settings::ServerSettings>,

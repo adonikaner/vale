@@ -56,7 +56,7 @@ use vale_protocol::play::guild::GuildVerb;
 /// One of the designer's two packets, forwarded by
 /// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone, Copy)]
-pub enum TabardAnswer {
+pub(crate) enum TabardAnswer {
     /// `MSG_TABARDVENDOR_ACTIVATE`: the designer's guid.
     Vendor(u64),
     /// `MSG_SAVE_GUILD_EMBLEM`: one of [`emblem_result`].
@@ -66,7 +66,7 @@ pub enum TabardAnswer {
 /// The tabard designer the window is open at, or nothing. Read by
 /// [`super::gossip`] for the `"npc"` token.
 #[derive(Resource, Default)]
-pub struct TabardWindow(Option<u64>);
+pub(crate) struct TabardWindow(Option<u64>);
 
 impl TabardWindow {
     pub fn guid(&self) -> Option<u64> {
@@ -82,9 +82,9 @@ impl TabardWindow {
 /// The design the open window holds, for the model that previews it. `None`
 /// while the window is shut.
 #[derive(Resource, Default, PartialEq, Eq)]
-pub struct TabardPreview(pub Option<Emblem>);
+pub(crate) struct TabardPreview(pub(crate) Option<Emblem>);
 
-pub struct TabardPlugin;
+pub(crate) struct TabardPlugin;
 
 impl Plugin for TabardPlugin {
     fn build(&self, app: &mut App) {
@@ -256,7 +256,7 @@ fn preview(
 }
 
 /// The arm [`crate::world::incoming`] calls for the designer's two events.
-pub fn answer_of(event: &PlayerEvent) -> Option<TabardAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<TabardAnswer> {
     Some(match event {
         PlayerEvent::TabardVendor(npc) => TabardAnswer::Vendor(*npc),
         PlayerEvent::GuildEmblemResult(result) => TabardAnswer::Result(*result),

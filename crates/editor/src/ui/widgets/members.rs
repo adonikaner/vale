@@ -17,18 +17,18 @@ use bevy_egui::egui;
 use super::theme;
 
 /// One row of the list.
-pub struct Member {
+pub(crate) struct Member {
     /// The tool's own id for it: a placement's unique id or a spawn's guid.
-    pub id: u64,
+    pub(crate) id: u64,
     /// What it is, such as a model's file name or a creature's name.
-    pub label: String,
+    pub(crate) label: String,
     /// Which one it is, drawn faint at the right: the id, as the panel
     /// below names it.
-    pub detail: String,
+    pub(crate) detail: String,
 }
 
 /// What a press on the list asked for.
-pub enum Pick {
+pub(crate) enum Pick {
     /// Make this member the primary, keeping the group.
     Primary(u64),
     /// Take this member out of the group.
@@ -47,7 +47,7 @@ const MOST: f32 = 210.0;
 /// asked only for the rows on screen, so a tool that has to look a member up
 /// to name it does so for a dozen rows a frame rather than for every member.
 /// `salt` keeps one tool's fold state from another's.
-pub fn list(
+pub(crate) fn list(
     ui: &mut egui::Ui,
     salt: &str,
     count: usize,

@@ -26,14 +26,14 @@ use vale_edit::project::Project;
 use std::path::Path;
 
 /// Where the server's own copies are kept, under the project.
-pub const BEFORE_DIR: &str = "server\\dbc-before";
+pub(crate) const BEFORE_DIR: &str = "server\\dbc-before";
 
 /// The names of files the server did not have before this project wrote them.
 const ABSENT: &str = "server\\dbc-before\\absent.txt";
 
 /// The DBCs the project carries that the server reads as files, as
 /// `(file name, virtual path)`: `("TaxiPath.dbc", "DBFilesClient\TaxiPath.dbc")`.
-pub fn carried(project: &Project) -> Vec<(String, String)> {
+pub(crate) fn carried(project: &Project) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = project
         .files()
         .into_iter()
@@ -56,7 +56,7 @@ pub fn carried(project: &Project) -> Vec<(String, String)> {
 
 /// The files whose server copies are saved in the project: those saved as a
 /// file and those listed as absent.
-pub fn saved(project: &Project) -> Vec<String> {
+pub(crate) fn saved(project: &Project) -> Vec<String> {
     let mut out: Vec<String> = project
         .path_for(BEFORE_DIR)
         .and_then(|dir| std::fs::read_dir(dir).ok())
@@ -111,27 +111,27 @@ fn write_absent(project: &Project, names: &[String]) -> Result<(), String> {
 
 /// Where each carried file stands against the live folder.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Standing {
+pub(crate) struct Standing {
     /// Every carried file, by name.
-    pub carried: Vec<String>,
+    pub(crate) carried: Vec<String>,
     /// The carried files whose bytes differ from the live folder's.
-    pub differ: Vec<String>,
+    pub(crate) differ: Vec<String>,
     /// How many files have a saved server copy, which is what Put back
     /// restores.
-    pub saved: usize,
+    pub(crate) saved: usize,
     /// Saved files the project no longer carries, which the next apply puts
     /// back.
-    pub stale: Vec<String>,
+    pub(crate) stale: Vec<String>,
 }
 
 impl Standing {
     /// Whether an apply would change the live folder.
-    pub fn outstanding(&self) -> bool {
+    pub(crate) fn outstanding(&self) -> bool {
         !self.differ.is_empty() || !self.stale.is_empty()
     }
 
     /// One line for the panel.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         if self.carried.is_empty() && self.saved == 0 {
             return "no server DBC file changed".to_string();
         }
@@ -152,7 +152,7 @@ impl Standing {
 
 /// Compare the project's files with the live folder. Reads no more than the
 /// files the project carries.
-pub fn standing(project: &Project, dbc_dir: &Path) -> Standing {
+pub(crate) fn standing(project: &Project, dbc_dir: &Path) -> Standing {
     let carried = carried(project);
     let saved = saved(project);
     let names: Vec<&str> = carried.iter().map(|(name, _)| name.as_str()).collect();
@@ -178,15 +178,15 @@ pub fn standing(project: &Project, dbc_dir: &Path) -> Standing {
 
 /// What an apply or a put back did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Synced {
+pub(crate) struct Synced {
     /// Files written into the live folder.
-    pub written: Vec<String>,
+    pub(crate) written: Vec<String>,
     /// Files returned to the server's own copy.
-    pub restored: Vec<String>,
+    pub(crate) restored: Vec<String>,
 }
 
 impl Synced {
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         let mut parts = Vec::new();
         if !self.written.is_empty() {
             parts.push(format!("{} copied into DataDir\\5875\\dbc", self.written.join(", ")));
@@ -206,7 +206,7 @@ impl Synced {
 ///
 /// Every server copy is saved before any file is written, so a failure half
 /// way leaves a put back that restores what was there.
-pub fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
+pub(crate) fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
     let carried = carried(project);
     let mut out = Synced::default();
 
@@ -253,7 +253,7 @@ pub fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
 }
 
 /// Return every saved file to the live folder and forget the saved copies.
-pub fn put_back_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
+pub(crate) fn put_back_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
     let mut out = Synced::default();
     for name in saved(project) {
         restore(project, dbc_dir, &name)?;

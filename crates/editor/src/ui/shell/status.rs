@@ -51,7 +51,7 @@ const TOAST_FADE: f32 = 0.25;
 /// waiting.
 ///
 /// `bottom` is the top of the two bottom bars, which the toast stands on.
-pub fn sync_toast(
+pub(crate) fn sync_toast(
     ctx: &egui::Context,
     queue: &crate::server::queue::ServerQueue,
     bottom: f32,
@@ -109,7 +109,7 @@ pub fn sync_toast(
         });
 }
 
-pub fn draw(
+pub(crate) fn draw(
     ui: &mut egui::Ui,
     session: &EditSession,
     cursor: &Cursor,

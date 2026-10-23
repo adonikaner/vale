@@ -19,7 +19,7 @@ use super::EditSession;
 /// starts can hold one on a worker. A pool chain has no overlay, so it answers
 /// the archives' bytes whatever the project holds.
 #[derive(Clone)]
-pub struct Shipped {
+pub(crate) struct Shipped {
     chains: Arc<vale_assets::archive::ChainPool>,
     /// The folder the pool is keyed on: `GameAssets::gamedata_dir` as it is
     /// written. A borrow under any other spelling empties the pool, and the
@@ -28,7 +28,7 @@ pub struct Shipped {
 }
 
 impl Shipped {
-    pub fn new(assets: &GameAssets) -> Shipped {
+    pub(crate) fn new(assets: &GameAssets) -> Shipped {
         Shipped {
             chains: assets.chains(),
             gamedata_dir: assets.gamedata_dir.clone(),
@@ -38,7 +38,7 @@ impl Shipped {
     /// The archives' own file at `vpath`, read past this project's own
     /// archives. `None` when the archives do not have it or cannot be read,
     /// so a file is taken out of a project only on a positive answer.
-    pub fn original(&self, project: &Project, vpath: &str) -> Option<Vec<u8>> {
+    pub(crate) fn original(&self, project: &Project, vpath: &str) -> Option<Vec<u8>> {
         let mut chain = self.chains.take(&self.gamedata_dir).ok()?;
         chain
             .read_past_overlay_skipping(vpath, &own_archives(project))

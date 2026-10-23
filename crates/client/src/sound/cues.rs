@@ -33,7 +33,7 @@ use super::mixer::{Place, Voices};
 use crate::world::entities::{EntityModel, Playback};
 use crate::world::entity::WorldEntity;
 
-pub struct CuesPlugin;
+pub(crate) struct CuesPlugin;
 
 impl Plugin for CuesPlugin {
     fn build(&self, app: &mut App) {

@@ -123,7 +123,7 @@ struct Generation(std::cell::Cell<i64>);
 ///
 /// 1024x768 is 1.12's default resolution, so the headless tests in this
 /// directory use the size the interface was authored for.
-pub const DEFAULT_SCREEN: (f64, f64) = (1024.0, 768.0);
+pub(crate) const DEFAULT_SCREEN: (f64, f64) = (1024.0, 768.0);
 
 /// The game's UI space is 768 virtual units tall at `uiScale` 1.0, and
 /// `768 / scale` units tall at any other scale. One uniform scale converts
@@ -144,18 +144,18 @@ pub const DEFAULT_SCREEN: (f64, f64) = (1024.0, 768.0);
 /// 768 units tall, as wide as the window's aspect ratio gives, divided by the
 /// scale. [`ui_height`] is the only place that division is done, and
 /// [`automatic_scale`] gives `s` when none has been chosen.
-pub const VIRTUAL_HEIGHT: f64 = 768.0;
+pub(crate) const VIRTUAL_HEIGHT: f64 = 768.0;
 
 /// The minimum of `UIParent`'s scale: the 1.12.1 client raises any lower value
 /// to 0.64 before applying it. It is also `OptionsFrame.lua`'s `minValue` for
 /// the UI Scale slider.
-pub const MIN_UI_SCALE: f64 = 0.64;
+pub(crate) const MIN_UI_SCALE: f64 = 0.64;
 
 /// The higher minimum the automatic scale rule applies on top of
 /// [`MIN_UI_SCALE`]. A player who wants the interface smaller than nine tenths
 /// has to tick "Use UI Scale" first: with the box unticked the client does not
 /// go below this at any resolution.
-pub const AUTO_MIN_UI_SCALE: f64 = 0.9;
+pub(crate) const AUTO_MIN_UI_SCALE: f64 = 0.9;
 
 /// The scale the 1.12.1 client uses for a window of this height when no scale
 /// has been chosen. It applies this rule on a resolution change: 1.0 up to a
@@ -173,7 +173,7 @@ pub const AUTO_MIN_UI_SCALE: f64 = 0.9;
 /// space's aspect ratio to at least 4:3, so a narrower window letterboxes
 /// rather than being rescaled. Implementing both would give two answers to one
 /// case.
-pub fn automatic_scale(window_height: f64) -> f64 {
+pub(crate) fn automatic_scale(window_height: f64) -> f64 {
     let scale = if window_height > VIRTUAL_HEIGHT {
         VIRTUAL_HEIGHT / window_height
     } else {
@@ -192,7 +192,7 @@ pub fn automatic_scale(window_height: f64) -> f64 {
 ///
 /// With the box unticked the value is ignored, as in the 1.12.1 client, which
 /// ignores a change to `uiScale` while `useUiScale` is 0.
-pub fn scale_in_force(use_ui_scale: bool, ui_scale: f64, window_height: f64) -> f64 {
+pub(crate) fn scale_in_force(use_ui_scale: bool, ui_scale: f64, window_height: f64) -> f64 {
     if use_ui_scale && ui_scale.is_finite() {
         ui_scale.max(MIN_UI_SCALE)
     } else {
@@ -207,7 +207,7 @@ pub fn scale_in_force(use_ui_scale: bool, ui_scale: f64, window_height: f64) -> 
 /// A scale of zero or below returns the unscaled height rather than an
 /// infinity, because the value comes from a CVar that a `/script` may have set
 /// to anything.
-pub fn ui_height(scale: f64) -> f64 {
+pub(crate) fn ui_height(scale: f64) -> f64 {
     if scale.is_finite() && scale > 0.0 {
         VIRTUAL_HEIGHT / scale
     } else {
@@ -246,7 +246,7 @@ pub fn ui_height(scale: f64) -> f64 {
 /// inside them: 43 pixels of world down each side of a maximised window, and
 /// more on an ultrawide monitor in fullscreen. For that reason the width in use
 /// is [`units_wide`]'s answer rather than this constant.
-pub const VIRTUAL_WIDTH: f64 = VIRTUAL_HEIGHT * 16.0 / 9.0;
+pub(crate) const VIRTUAL_WIDTH: f64 = VIRTUAL_HEIGHT * 16.0 / 9.0;
 
 /// How many units across the screen is, for a window of this shape.
 ///
@@ -275,7 +275,7 @@ pub const VIRTUAL_WIDTH: f64 = VIRTUAL_HEIGHT * 16.0 / 9.0;
 /// declared width in the directory assumes at least that (`MainMenuBar` is 1024
 /// wide and spans the screen exactly), so a narrower window letterboxes rather
 /// than cutting off both ends of the bar.
-pub fn units_wide(window_width: f64, window_height: f64, scale: f64) -> f64 {
+pub(crate) fn units_wide(window_width: f64, window_height: f64, scale: f64) -> f64 {
     let tall = ui_height(scale);
     if window_width <= 0.0 || window_height <= 0.0 {
         return tall * ASPECT;
@@ -292,7 +292,7 @@ pub fn units_wide(window_width: f64, window_height: f64, scale: f64) -> f64 {
 /// dragging the window changes only the scale. [`Viewport`] still fits the
 /// space into whatever window there is, for the frames and window modes where
 /// the ratio cannot be held.
-pub const ASPECT: f64 = VIRTUAL_WIDTH / VIRTUAL_HEIGHT;
+pub(crate) const ASPECT: f64 = VIRTUAL_WIDTH / VIRTUAL_HEIGHT;
 
 /// Where the interface's box lands inside the window, in pixels: one uniform
 /// scale and the top-left corner of the box.
@@ -347,7 +347,7 @@ impl Viewport {
 
     /// A point in the game's space (y-up from the bottom left of the box) to one
     /// in the window's (y-down from its top left).
-    pub fn to_pixels(&self, x: f64, y: f64) -> (f64, f64) {
+    pub(crate) fn to_pixels(&self, x: f64, y: f64) -> (f64, f64) {
         (
             self.left + x * self.scale,
             self.top + (self.tall - y) * self.scale,
@@ -359,7 +359,7 @@ impl Viewport {
     /// including the flip. A point outside the box returns coordinates outside
     /// the screen rather than being clamped, because a pointer in the
     /// pillarbox is over no widget.
-    pub fn to_units(&self, px: f64, py: f64) -> (f64, f64) {
+    pub(crate) fn to_units(&self, px: f64, py: f64) -> (f64, f64) {
         (
             (px - self.left) / self.scale,
             self.tall - (py - self.top) / self.scale,
@@ -379,7 +379,7 @@ impl Viewport {
 /// black rectangle in the bottom-left corner with the world showing past the
 /// right edge of the map. A constant size means the loader and the painter
 /// cannot use different sizes.
-pub const UI_SIZE: (f64, f64) = (VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+pub(crate) const UI_SIZE: (f64, f64) = (VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 
 /// The methods this module installs, sorted. Counted by `vale framexml`.
 ///
@@ -387,7 +387,8 @@ pub const UI_SIZE: (f64, f64) = (VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
 /// solved rectangle. They are installed by [`super::widget`], because a region
 /// has them too, and a list that a check counts against should have one entry
 /// per name rather than one per implementation.
-pub const METHODS: [&str; 5] = ["GetBottom", "GetCenter", "GetLeft", "GetRight", "GetTop"];
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 5] = ["GetBottom", "GetCenter", "GetLeft", "GetRight", "GetTop"];
 
 /// A solved rectangle, in the game's own space: origin bottom left, y up.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -448,7 +449,7 @@ fn fractions(name: &str) -> Option<(f64, f64)> {
 /// Called from the draw pass with the window's size. A resize moves every widget
 /// in the interface, which is why it bumps the generation rather than only
 /// writing the number.
-pub fn set_screen(lua: &mlua::Lua, width: f64, height: f64) -> mlua::Result<()> {
+pub(crate) fn set_screen(lua: &mlua::Lua, width: f64, height: f64) -> mlua::Result<()> {
     let previous = screen(lua);
     if (previous.width - width).abs() < f64::EPSILON
         && (previous.height - height).abs() < f64::EPSILON

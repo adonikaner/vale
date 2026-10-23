@@ -139,10 +139,10 @@ pub const TOOLS_ENV: &str = "VALE_VMANGOS_TOOLS";
 /// The paths of the four tools, once found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tools {
-    pub map_extractor: PathBuf,
-    pub vmap_extractor: PathBuf,
-    pub assembler: PathBuf,
-    pub mmap_generator: PathBuf,
+    pub(crate) map_extractor: PathBuf,
+    pub(crate) vmap_extractor: PathBuf,
+    pub(crate) assembler: PathBuf,
+    pub(crate) mmap_generator: PathBuf,
     /// `offmesh.txt` and `config.json`, the generator's two optional inputs,
     /// when found beside the tools or in the checkout's `contrib\mmap\`. The
     /// generator runs without them and reports that they are missing; the
@@ -269,17 +269,18 @@ impl Tile {
     }
 
     /// `maps\0004832.map` for Azeroth 32,48.
-    pub fn map_file(&self) -> String {
+    pub(crate) fn map_file(&self) -> String {
         format!("{:03}{:02}{:02}.map", self.map, self.y, self.x)
     }
 
     /// `vmaps\000_32_48.vmtile`.
-    pub fn vmtile_file(&self) -> String {
+    #[cfg(test)]
+    pub(crate) fn vmtile_file(&self) -> String {
         format!("{:03}_{:02}_{:02}.vmtile", self.map, self.x, self.y)
     }
 
     /// `mmaps\0004832.mmtile`.
-    pub fn mmtile_file(&self) -> String {
+    pub(crate) fn mmtile_file(&self) -> String {
         format!("{:03}{:02}{:02}.mmtile", self.map, self.y, self.x)
     }
 
@@ -299,7 +300,7 @@ impl Tile {
 }
 
 /// `vmaps\000.vmtree`.
-pub fn vmtree_file(map: u32) -> String {
+pub(crate) fn vmtree_file(map: u32) -> String {
     format!("{map:03}.vmtree")
 }
 
@@ -768,7 +769,7 @@ pub fn regenerate(
 
 /// How many navmesh builds run at once: half the machine's threads, at
 /// least one and at most [`PARALLEL`].
-pub const PARALLEL: usize = 6;
+pub(crate) const PARALLEL: usize = 6;
 
 fn parallel() -> usize {
     std::thread::available_parallelism()
@@ -951,7 +952,7 @@ fn link(from: &Path, to: &Path) -> Result<(), String> {
 
 /// The client build vmangos is built for. It names the folder under
 /// `DataDir` the server reads its DBC files from; see [`dbc_dir`].
-pub use crate::CLIENT_BUILD;
+pub(crate) use crate::CLIENT_BUILD;
 
 /// The folder the server reads its DBC files from: `DataDir\5875\dbc\`.
 ///

@@ -161,11 +161,11 @@ const SHADOW_DISTANCE: f32 = 150.0;
 /// which is also why `render::selection`'s highlight walk can no longer reach
 /// it and no longer has to say so.
 #[derive(Component)]
-pub struct ShadowBlob;
+pub(crate) struct ShadowBlob;
 
 /// The field: the entity, the mesh it draws, and how many blobs went into it.
 #[derive(Resource, Default)]
-pub struct ShadowField {
+pub(crate) struct ShadowField {
     /// `None` until the texture is off the loader thread — see
     /// [`ModelCache::shadow_material`].
     entity: Option<Entity>,
@@ -193,7 +193,7 @@ pub struct ShadowField {
     pub drawn: usize,
 }
 
-pub struct ShadowPlugin;
+pub(crate) struct ShadowPlugin;
 
 impl Plugin for ShadowPlugin {
     fn build(&self, app: &mut App) {

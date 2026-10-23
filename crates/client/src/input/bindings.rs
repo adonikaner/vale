@@ -619,7 +619,7 @@ impl Control {
     ///
     /// Defined here rather than at the registration so that the list and the
     /// enum cannot diverge; a test iterates over it.
-    pub fn verbs(&self) -> [&'static str; 2] {
+    pub(crate) fn verbs(&self) -> [&'static str; 2] {
         match self {
             Control::Forward => ["MoveForwardStart", "MoveForwardStop"],
             Control::Backward => ["MoveBackwardStart", "MoveBackwardStop"],
@@ -861,7 +861,7 @@ impl Binding {
 /// directly, as the movement code read `KeyW` before this module. A mouse
 /// binding is therefore stored and listed by the panel but never delivered.
 /// No substitute `KeyCode` stands in for it.
-pub fn key_name(key: KeyCode) -> Option<&'static str> {
+pub(crate) fn key_name(key: KeyCode) -> Option<&'static str> {
     Some(match key {
         // The letters, which the game names by the letter itself.
         KeyCode::KeyA => "A",
@@ -997,7 +997,7 @@ pub fn key_name(key: KeyCode) -> Option<&'static str> {
 /// The name never carries a modifier prefix. The panel builds
 /// `SHIFT-`/`CTRL-`/`ALT-` itself from `IsShiftKeyDown()` and the related
 /// functions, so a name that already carried one would become `SHIFT-SHIFT-A`.
-pub fn key_event_name(key: KeyCode) -> &'static str {
+pub(crate) fn key_event_name(key: KeyCode) -> &'static str {
     match key {
         KeyCode::ShiftLeft | KeyCode::ShiftRight => "SHIFT",
         KeyCode::ControlLeft | KeyCode::ControlRight => "CTRL",
@@ -1030,7 +1030,8 @@ pub struct KeyEdge {
 impl KeyEdge {
     /// Whether this is the press edge. A method so that it can be passed to a
     /// filter.
-    pub fn is_down(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_down(&self) -> bool {
         self.down
     }
 }
@@ -1099,9 +1100,9 @@ pub struct BindingPressed(pub Binding);
 /// The set this dispatch runs in, so every verb can order itself after all of
 /// it rather than after the one system it reads.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BindingSet;
+pub(crate) struct BindingSet;
 
-pub struct BindingsPlugin;
+pub(crate) struct BindingsPlugin;
 
 impl Plugin for BindingsPlugin {
     fn build(&self, app: &mut App) {

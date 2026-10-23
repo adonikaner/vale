@@ -107,7 +107,7 @@ impl Default for WorldClock {
 
 impl WorldClock {
     /// The clock as an hour and a minute, for the HUD.
-    pub fn hour_minute(&self) -> (u32, u32) {
+    pub(crate) fn hour_minute(&self) -> (u32, u32) {
         let minutes = (self.half_minutes % DAY) / 2;
         (minutes / 60, minutes % 60)
     }
@@ -126,7 +126,7 @@ pub struct Sky {
     /// Whether the camera is under a liquid surface. Kept beside the atmosphere
     /// it selected so the HUD and the report can say which of the two lights is
     /// in force without asking the terrain again.
-    pub submerged: bool,
+    pub(crate) submerged: bool,
     /// Every input the resolved atmosphere depends on — see `resolve`, which
     /// names each one where it builds it. The last is which parse of the DBCs
     /// the bands came from, so a table edit re-lights the world.
@@ -155,7 +155,7 @@ pub(crate) const RESOLVE_CELL: f32 = 1.0;
 /// model has loaded, so a light naming a model the archives lack leaves the sky
 /// as it was. See [`vale_assets::tables::light::SkyboxWeight`].
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SkyCover {
+pub(crate) struct SkyCover {
     pub opaque: bool,
 }
 
@@ -163,7 +163,7 @@ pub struct SkyCover {
 /// [`crate::render::tuning::WorldTuning`] switch is on and no opaque skybox is
 /// up. The same two-query shape as [`crate::render::tuning::switch`], which
 /// this extends with [`SkyCover`].
-pub fn under_skybox<M: Component>(
+pub(crate) fn under_skybox<M: Component>(
     on: fn(&crate::render::tuning::WorldTuning) -> bool,
 ) -> impl FnMut(
     Res<crate::render::tuning::WorldTuning>,
@@ -203,7 +203,7 @@ impl Default for Sky {
     }
 }
 
-pub struct SkyPlugin;
+pub(crate) struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
     fn build(&self, app: &mut App) {
@@ -371,7 +371,7 @@ const DOME_RADIUS: f32 = 950.0;
 /// for every pixel it covers rather than only the ones the terrain left. It is
 /// a six-stop mix with no texture fetch, and the star and sprite passes are one
 /// texture fetch each over a few hundred pixels.
-pub fn behind_the_world(descriptor: &mut RenderPipelineDescriptor) {
+pub(crate) fn behind_the_world(descriptor: &mut RenderPipelineDescriptor) {
     let Some(depth) = descriptor.depth_stencil.as_mut() else {
         return;
     };
@@ -405,23 +405,23 @@ pub fn behind_the_world(descriptor: &mut RenderPipelineDescriptor) {
 /// The value is a million rather than the smallest that works: the loaded
 /// world reaches about 1,500 yards, and an `f32` at 1e6 still resolves the
 /// one-yard steps below it exactly (its spacing there is 1/16 of a yard).
-pub const SKY_SORT: f32 = -1.0e6;
+pub(crate) const SKY_SORT: f32 = -1.0e6;
 
 /// The star field's place in that order: first, so the sun and the moons are
 /// drawn over it rather than speckled by it.
-pub const STARS_SORT: f32 = SKY_SORT;
+pub(crate) const STARS_SORT: f32 = SKY_SORT;
 
 /// The sun's and the moons' place in that order: after the star field.
-pub const CELESTIAL_SORT: f32 = SKY_SORT + 1.0;
+pub(crate) const CELESTIAL_SORT: f32 = SKY_SORT + 1.0;
 
 /// The cloud layer, drawn over the sun and the moons as the 1.12.1 client
 /// draws it.
-pub const CLOUDS_SORT: f32 = SKY_SORT + 2.0;
+pub(crate) const CLOUDS_SORT: f32 = SKY_SORT + 2.0;
 
 /// The skybox models, drawn over everything else in the sky. Each batch adds
 /// its own offset to this, so the batches of up to two models keep a fixed
 /// order; see [`crate::render::skybox`].
-pub const SKYBOX_SORT: f32 = SKY_SORT + 16.0;
+pub(crate) const SKYBOX_SORT: f32 = SKY_SORT + 16.0;
 
 /// The one directional light that represents the sun.
 ///
@@ -473,7 +473,7 @@ fn aim(toward: [f32; 3]) -> Transform {
 
 /// Marks the sun, so [`apply`] can find the one light rather than every light.
 #[derive(Component)]
-pub struct Sun;
+pub(crate) struct Sun;
 
 /// Whether the sun casts shadow maps, from [`crate::world::camera::RenderTuning`].
 ///
@@ -504,7 +504,7 @@ fn sun_shadows(
 /// stops plus positions, and keeping both in one array means the shader has no
 /// second copy of [`SKY_ALTITUDES`] to drift from.
 #[derive(Clone, Copy, ShaderType)]
-pub struct SkyStops {
+pub(crate) struct SkyStops {
     pub stops: [Vec4; SKY_STOPS],
 }
 
@@ -513,7 +513,7 @@ pub struct SkyStops {
 /// No texture, no light, no fog. The sky's appearance comes entirely from the
 /// table, and the material holds only the six colours taken from it.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct SkyMaterial {
+pub(crate) struct SkyMaterial {
     #[uniform(0)]
     pub stops: SkyStops,
 }
@@ -554,7 +554,7 @@ impl Material for SkyMaterial {
 
 /// The dome itself.
 #[derive(Component)]
-pub struct SkyDome;
+pub(crate) struct SkyDome;
 
 /// One sphere, centred wherever the camera is, drawn from the inside.
 ///
@@ -1057,7 +1057,7 @@ pub(crate) fn apply(
 /// light is composed on the GPU too, and a second copy of this transfer
 /// function would be the same kind of duplication `atmosphere.wgsl` exists to
 /// prevent in the shaders.
-pub fn linear(colour: [f32; 3]) -> Vec3 {
+pub(crate) fn linear(colour: [f32; 3]) -> Vec3 {
     let c: LinearRgba = Color::srgb(colour[0], colour[1], colour[2]).to_linear();
     Vec3::new(c.red, c.green, c.blue)
 }

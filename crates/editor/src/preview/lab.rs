@@ -73,7 +73,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
 /// The guid the mannequin answers to, beside the stage's three.
-pub const MANNEQUIN_GUID: u64 = 0xED17_0000_0000_0004;
+pub(crate) const MANNEQUIN_GUID: u64 = 0xED17_0000_0000_0004;
 
 /// How long a change is left to settle before it is baked and hung again.
 const SETTLE_SECS: f64 = 0.15;
@@ -83,32 +83,32 @@ const SETTLE_SECS: f64 = 0.15;
 const SCRATCH: &str = "custom\\lab\\";
 
 /// How long the drawn arrows are, in yards.
-pub const ARROW_YARDS: f32 = 0.6;
+pub(crate) const ARROW_YARDS: f32 = 0.6;
 
 /// Marks the lab's own body. The display id is what it was spawned as, so a
 /// change of body is a respawn.
 #[derive(Component)]
-pub struct Mannequin {
-    pub display_id: u32,
+pub(crate) struct Mannequin {
+    pub(crate) display_id: u32,
 }
 
 /// One body the effect can be stood on.
-pub struct Body {
-    pub name: &'static str,
-    pub race: u8,
-    pub gender: u8,
+pub(crate) struct Body {
+    pub(crate) name: &'static str,
+    pub(crate) race: u8,
+    pub(crate) gender: u8,
     /// `ChrRaces.dbc` fields 4 and 5 — `MaleDisplayId` and `FemaleDisplayId`
     /// — for the eight playable races. Checked against the table in the
     /// tests, so a wrong number here fails rather than standing a troll on a
     /// gnome's id.
-    pub display_id: u32,
+    pub(crate) display_id: u32,
     /// The model the display id resolves to, which is where the attachment
     /// points are read from.
-    pub model: &'static str,
+    pub(crate) model: &'static str,
 }
 
 /// The sixteen player bodies, in `ChrRaces` order.
-pub const BODIES: [Body; 16] = [
+pub(crate) const BODIES: [Body; 16] = [
     Body {
         name: "Human Male",
         race: 1,
@@ -244,7 +244,7 @@ struct Shown {
 
 /// Which handle a drag is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Drag {
+pub(crate) enum Drag {
     /// Along one of the model's axes: 0 forward, 1 left, 2 up.
     Axis(usize),
     /// Across the screen, in the camera's plane.
@@ -255,40 +255,40 @@ pub enum Drag {
 /// coordinates (`-1..1`, y up). Written by [`project_handles`], read by the
 /// pane.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Handles {
-    pub origin: Vec2,
-    pub tips: [Vec2; 3],
+pub(crate) struct Handles {
+    pub(crate) origin: Vec2,
+    pub(crate) tips: [Vec2; 3],
     /// How far one yard along each axis moves on the pane.
-    pub per_yard: [Vec2; 3],
+    pub(crate) per_yard: [Vec2; 3],
     /// How far one unit of pane x and pane y move the model, in the model's
     /// own axes at the effect's depth — for a free drag.
-    pub right_step: Vec3,
-    pub up_step: Vec3,
+    pub(crate) right_step: Vec3,
+    pub(crate) up_step: Vec3,
 }
 
 /// What the pane says about the model it is showing: the counts the
 /// reference tool prints under its picture, read off the file.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Facts {
+pub(crate) struct Facts {
     /// The path these are of.
-    pub source: String,
-    pub vertices: usize,
-    pub triangles: usize,
-    pub emitters: usize,
-    pub ribbons: usize,
-    pub textures: usize,
+    pub(crate) source: String,
+    pub(crate) vertices: usize,
+    pub(crate) triangles: usize,
+    pub(crate) emitters: usize,
+    pub(crate) ribbons: usize,
+    pub(crate) textures: usize,
     /// Every sequence: `AnimationData` id, variation, length in milliseconds,
     /// and whether it loops (bit 0 of its flags clear).
-    pub sequences: Vec<(u16, u16, u32, bool)>,
+    pub(crate) sequences: Vec<(u16, u16, u32, bool)>,
     /// Which of them the client plays on an attached model: its `Stand`, or
     /// the first that has any length — `hang_model`'s own rule.
-    pub plays: Option<usize>,
+    pub(crate) plays: Option<usize>,
     /// The model's declared radius, in yards.
-    pub radius: f32,
+    pub(crate) radius: f32,
 }
 
 impl Facts {
-    pub fn of(source: &str, model: &M2) -> Facts {
+    pub(crate) fn of(source: &str, model: &M2) -> Facts {
         let skeleton = model.skeleton.as_ref();
         Facts {
             source: source.to_string(),
@@ -319,7 +319,7 @@ impl Facts {
     }
 
     /// `8 verts / 4 tris / 2 emitters / 1 anim / 3 tex`.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         let mut parts = vec![format!("{} verts / {} tris", self.vertices, self.triangles)];
         if self.emitters > 0 {
             parts.push(format!(
@@ -355,56 +355,56 @@ fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
 
 /// The lab's state: which effect, on which body, at which point, moved how.
 #[derive(Resource)]
-pub struct Lab {
+pub(crate) struct Lab {
     /// The `SpellVisualEffectName` id the lab is open on; `None` when shut.
-    pub effect: Option<u32>,
-    pub effect_name: String,
+    pub(crate) effect: Option<u32>,
+    pub(crate) effect_name: String,
     /// **The model by itself**: the body is kept off the stage's layer, the
     /// arrows are not drawn, and the source is hung as it is with nothing
     /// baked. See the module comment. `false` is the lab proper.
-    pub alone: bool,
+    pub(crate) alone: bool,
     /// A path to show instead of the effect's own model, while the model
     /// browser is open on a row — cleared when it closes.
-    pub preview: Option<String>,
+    pub(crate) preview: Option<String>,
     /// What the pane says about the model on show, once its bytes have been
     /// read; `None` until then, and for a model that will not read.
-    pub facts: Option<Facts>,
+    pub(crate) facts: Option<Facts>,
     /// Index into [`BODIES`].
-    pub body: usize,
+    pub(crate) body: usize,
     /// The attachment id the model hangs from.
-    pub point: u32,
+    pub(crate) point: u32,
     /// The offset in the model's own axes: +X forward, +Y left, +Z up.
-    pub offset: [f32; 3],
+    pub(crate) offset: [f32; 3],
     /// The three angles, in degrees.
-    pub yaw: f32,
-    pub pitch: f32,
-    pub roll: f32,
-    pub scale: f32,
+    pub(crate) yaw: f32,
+    pub(crate) pitch: f32,
+    pub(crate) roll: f32,
+    pub(crate) scale: f32,
     /// Where the export goes, as a virtual path.
-    pub export_path: String,
+    pub(crate) export_path: String,
     /// The effect's model, through `model_path`, and its own scale.
     source: Option<String>,
     effect_scale: f32,
     /// What the effect's use in the tables suggests as its point: the
     /// sentence for the card, and the ids in order of preference.
-    pub anchor: String,
+    pub(crate) anchor: String,
     anchor_ids: Vec<u32>,
     /// The body's own attachment points, `(id, position)`, and which body
     /// they were read for.
-    pub points: Vec<(u32, [f32; 3])>,
+    pub(crate) points: Vec<(u32, [f32; 3])>,
     points_for: Option<usize>,
     shown: Option<Shown>,
     serial: u32,
     /// When the transform last changed, on the app clock.
     changed_at: f64,
-    pub handles: Option<Handles>,
-    pub dragging: Option<Drag>,
+    pub(crate) handles: Option<Handles>,
+    pub(crate) dragging: Option<Drag>,
     /// What the last bake or export had to say.
-    pub report: Option<String>,
+    pub(crate) report: Option<String>,
     /// How wide the form's panel was last frame, in points, so the card can
     /// bound itself to it — the panel's inner `Ui` reports more room than the
     /// panel shows. Zero until the panel has been drawn once.
-    pub panel_width: f32,
+    pub(crate) panel_width: f32,
 }
 
 impl Default for Lab {
@@ -443,7 +443,7 @@ impl Default for Lab {
 impl Lab {
     /// Open on an effect: its id and name, its model path as the table states
     /// it, its own scale, and the anchor its use suggests.
-    pub fn open(
+    pub(crate) fn open(
         &mut self,
         effect: u32,
         name: &str,
@@ -477,7 +477,7 @@ impl Lab {
 
     /// …and open on it by itself — the model view. The same as [`Self::open`]
     /// with the body hidden and nothing baked.
-    pub fn open_alone(
+    pub(crate) fn open_alone(
         &mut self,
         effect: u32,
         name: &str,
@@ -490,7 +490,7 @@ impl Lab {
         self.alone = true;
     }
 
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.effect = None;
         self.preview = None;
         self.dragging = None;
@@ -507,7 +507,7 @@ impl Lab {
     /// positioning who swaps the model wants the offset they had.
     ///
     /// Answers whether anything changed, so a caller can re-frame.
-    pub fn follow_row(&mut self, model: &str, scale: f32) -> bool {
+    pub(crate) fn follow_row(&mut self, model: &str, scale: f32) -> bool {
         let path = vale_assets::world::m2::model_path(model);
         let same = self.source.as_deref() == Some(path.as_str())
             && (self.effect_scale - scale).abs() < 1e-6;
@@ -522,23 +522,23 @@ impl Lab {
     }
 
     /// Whether the pane is on this effect, in either mode.
-    pub fn is_open_on(&self, effect: u32) -> bool {
+    pub(crate) fn is_open_on(&self, effect: u32) -> bool {
         self.effect == Some(effect)
     }
 
     /// …and in the lab proper: on a body, with the arrows and the bake.
-    pub fn on_character(&self, effect: u32) -> bool {
+    pub(crate) fn on_character(&self, effect: u32) -> bool {
         self.effect == Some(effect) && !self.alone
     }
 
     /// The path on show: the browser's preview while one is up, else the
     /// effect's own model.
-    pub fn showing(&self) -> Option<String> {
+    pub(crate) fn showing(&self) -> Option<String> {
         self.preview.clone().or_else(|| self.source.clone())
     }
 
     /// The transform as the bake takes it: radians, and the scale.
-    pub fn bake(&self) -> Bake {
+    pub(crate) fn bake(&self) -> Bake {
         Bake {
             offset: self.offset,
             yaw: self.yaw.to_radians(),
@@ -549,17 +549,17 @@ impl Lab {
     }
 
     /// The model path the lab was opened with.
-    pub fn source(&self) -> Option<&str> {
+    pub(crate) fn source(&self) -> Option<&str> {
         self.source.as_deref()
     }
 
     /// Note that a number changed, for the debounce.
-    pub fn touched(&mut self, now: f64) {
+    pub(crate) fn touched(&mut self, now: f64) {
         self.changed_at = now;
     }
 
     /// Whether the chosen body carries the chosen point.
-    pub fn point_exists(&self) -> bool {
+    pub(crate) fn point_exists(&self) -> bool {
         self.points.iter().any(|(id, _)| *id == self.point)
     }
 }
@@ -597,7 +597,7 @@ fn mannequin(body: &Body) -> WorldEntity {
 /// Stand the chosen body on the stage while the lab is open, and take it off
 /// when it shuts or the body changes; and read the body's attachment points
 /// off its own M2 once per body.
-pub fn arrange_mannequin(
+pub(crate) fn arrange_mannequin(
     mut commands: Commands,
     mut stage: ResMut<Stage>,
     mut lab: ResMut<Lab>,
@@ -675,7 +675,7 @@ pub fn arrange_mannequin(
 
 /// Bake the transform into a copy and hang it, whenever the transform, the
 /// point, the body or the effect has changed and settled.
-pub fn hang_the_effect(
+pub(crate) fn hang_the_effect(
     mut commands: Commands,
     time: Res<Time>,
     mut stage: ResMut<Stage>,
@@ -823,7 +823,7 @@ pub fn hang_the_effect(
 /// The frame is the hung model's root — the attachment point's own frame in
 /// the world, as the client posed it this frame — moved by the lab's offset
 /// in the model's axes, which is where the baked vertices are.
-pub fn project_handles(
+pub(crate) fn project_handles(
     mut stage: ResMut<Stage>,
     mut lab: ResMut<Lab>,
     camera: Query<(&Camera, &GlobalTransform), With<StageCamera>>,
@@ -898,7 +898,7 @@ pub fn project_handles(
     });
 }
 
-pub struct LabPlugin;
+pub(crate) struct LabPlugin;
 
 impl Plugin for LabPlugin {
     fn build(&self, app: &mut App) {

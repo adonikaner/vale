@@ -77,7 +77,7 @@ pub struct Justify<'a> {
 /// A height of zero is "unmeasured" and caps nothing. That is what an unsized
 /// font string has before the solve gives it its intrinsic size, and capping
 /// one at a row would silently cut every wrapping label in the directory.
-pub fn rows_fitting(max_rows: usize, height: f32, line_height: f32) -> usize {
+pub(crate) fn rows_fitting(max_rows: usize, height: f32, line_height: f32) -> usize {
     if max_rows > 0 {
         return max_rows;
     }

@@ -203,7 +203,7 @@ const SERVICE_BYTES: usize = 4 + 1 + 4 + 4 + 4 + 1 + 4 + 4 + 4 + 4 + 4;
 /// **The greeting is after the rows**, so a row-count that overruns the body
 /// loses the words too — which is why the count is clamped rather than trusted:
 /// a service list is at most a class's whole spellbook.
-pub fn parse_trainer_list(body: &[u8]) -> Option<TrainerList> {
+pub(crate) fn parse_trainer_list(body: &[u8]) -> Option<TrainerList> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 4) {
         return None;
@@ -244,7 +244,7 @@ pub fn parse_trainer_list(body: &[u8]) -> Option<TrainerList> {
 
 /// `SMSG_TRAINER_BUY_SUCCEEDED` — the trainer and the **service** spell, which
 /// is the id that was sent rather than the one that was learned.
-pub fn parse_trainer_bought(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_trainer_bought(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -253,7 +253,7 @@ pub fn parse_trainer_bought(body: &[u8]) -> Option<(u64, u32)> {
 }
 
 /// `SMSG_TRAINER_BUY_FAILED` — trainer, service spell, reason.
-pub fn parse_trainer_buy_failed(body: &[u8]) -> Option<(u64, u32, Option<TrainFailure>)> {
+pub(crate) fn parse_trainer_buy_failed(body: &[u8]) -> Option<(u64, u32, Option<TrainFailure>)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 4) {
         return None;
@@ -270,7 +270,7 @@ pub fn parse_trainer_buy_failed(body: &[u8]) -> Option<(u64, u32, Option<TrainFa
 ///
 /// `CMSG_TRAINER_LIST` is a bare guid and goes out through
 /// [`crate::play::gossip::guid_body`], which every hello in this family shares.
-pub fn buy_spell_body(guid: u64, spell: u32) -> Vec<u8> {
+pub(crate) fn buy_spell_body(guid: u64, spell: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(spell);

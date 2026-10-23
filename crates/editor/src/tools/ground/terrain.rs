@@ -125,7 +125,7 @@ use bevy::prelude::*;
 /// That is harmless: a brush past the open ground paints the open part of its
 /// circle and nothing else. Earlier values were 200, a guess that refused work
 /// the tool can do, and then 800, half the 3x3 the editor used to stream.
-pub const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
+pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
 
 /// How strong the height brush may be, in yards a second, for raise and lower.
 ///
@@ -134,7 +134,7 @@ pub const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0
 /// `strength * weight * seconds`, so a large number only moves the ground a long
 /// way in one frame, which is what a user who types a large number wants. The
 /// previous ceiling of 60 was a guess.
-pub const STRENGTH: std::ops::RangeInclusive<f32> = 0.0..=100_000.0;
+pub(crate) const STRENGTH: std::ops::RangeInclusive<f32> = 0.0..=100_000.0;
 
 /// How strong the height brush may be for flatten and smooth, the two modes
 /// that converge on a height rather than climb.
@@ -143,56 +143,56 @@ pub const STRENGTH: std::ops::RangeInclusive<f32> = 0.0..=100_000.0;
 /// `Brush::moved` clamps one step to 1.0 of it. At sixty frames a second any
 /// value above about 60 already covers the whole distance in one frame. The
 /// range is wide only so that no typed value is refused.
-pub const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
+pub(crate) const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 
 /// The terrain tool's settings.
 #[derive(Resource, Debug, Clone)]
-pub struct Terrain {
-    pub brush: Brush,
+pub(crate) struct Terrain {
+    pub(crate) brush: Brush,
     /// What [`Mode::Flatten`] flattens toward when the stroke begins: the height
     /// under the pointer at that moment, so a flatten is "make it like here".
-    pub flatten_to_cursor: bool,
+    pub(crate) flatten_to_cursor: bool,
     /// Whether the doodads and buildings over ground a stroke moves are moved
     /// by as much when the stroke ends, in the stroke's own undo entry. See
     /// `vale_edit::ops::follow`.
-    pub objects_follow: bool,
+    pub(crate) objects_follow: bool,
     /// The height a flatten goes to while [`Self::flatten_to_cursor`] is off.
-    pub flatten_height: f32,
+    pub(crate) flatten_height: f32,
     /// How steep the plane a flatten goes to is, in degrees from level. Zero
     /// is a level flatten.
-    pub tilt_angle: f32,
+    pub(crate) tilt_angle: f32,
     /// The compass bearing the tilted plane rises toward, in degrees: 0 is
     /// north and 90 east.
-    pub tilt_toward: f32,
+    pub(crate) tilt_toward: f32,
     /// Whether the left button selects vertices in place of sculpting. See
     /// [`Self::vertices`].
-    pub selecting: bool,
+    pub(crate) selecting: bool,
     /// The selected vertices, per open tile. Chosen by painting over them
     /// while [`Self::selecting`] is on, then changed from the panel, used to
     /// keep strokes inside them by [`Self::only_inside`], or added to the
     /// tile's locks. See `vale_edit::ops::vertices`.
-    pub vertices: bevy::platform::collections::HashMap<(u32, u32), Selected>,
+    pub(crate) vertices: bevy::platform::collections::HashMap<(u32, u32), Selected>,
     /// Whether a brush stroke moves only the selected vertices.
-    pub only_inside: bool,
+    pub(crate) only_inside: bool,
     /// How many locked vertex entries the open tiles hold, for the panel.
     /// Written by [`vertex_asks`] each frame the tool is chosen.
-    pub locked: usize,
+    pub(crate) locked: usize,
     /// What the panel asks to be done with the selection, taken by
     /// [`vertex_asks`]. The panel holds no session.
-    pub ask: Option<VertexAsk>,
+    pub(crate) ask: Option<VertexAsk>,
     /// How many entries the selection holds and their mean height, for the
     /// panel. Written by [`vertex_asks`] each frame the tool is chosen.
-    pub selected: usize,
-    pub selected_mean: f32,
+    pub(crate) selected: usize,
+    pub(crate) selected_mean: f32,
     /// The selection's centre, where a tilt pivots.
-    pub selected_centre: [f32; 2],
+    pub(crate) selected_centre: [f32; 2],
     /// The selection's own tilt: degrees from level and the bearing uphill,
     /// as the flatten's are. Back to level whenever the selection changes,
     /// so the sliders say how far this selection has been tilted.
-    pub vertex_tilt: [f32; 2],
+    pub(crate) vertex_tilt: [f32; 2],
     /// Whether a tilt puts the selection on a flat slope through its centre,
     /// in place of leaning it with its bumps kept.
-    pub tilt_flat: bool,
+    pub(crate) tilt_flat: bool,
     /// The slope this selection has been given so far, and the point it
     /// pivots on. A lean adds only the change, so the sliders can be dragged
     /// back and forth. See [`VertexAsk::Tilt`].
@@ -204,7 +204,7 @@ pub struct Terrain {
 
 /// What the panel asks to be done with the selected vertices.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum VertexAsk {
+pub(crate) enum VertexAsk {
     /// Move them all by one amount, so that their mean height is this.
     MoveTo(f32),
     /// Put every one at their mean height.
@@ -281,7 +281,7 @@ struct Held {
     sides: BTreeSet<Cell>,
 }
 
-pub struct TerrainToolPlugin;
+pub(crate) struct TerrainToolPlugin;
 
 impl Plugin for TerrainToolPlugin {
     fn build(&self, app: &mut App) {
@@ -1357,7 +1357,7 @@ fn publish(mut session: Option<ResMut<EditSession>>, buttons: Res<ButtonInput<Mo
 /// every replacement in its batch is whole. See [`remesh`] for why a tile is
 /// replaced at all and [`swap`] for why tiles are replaced in batches.
 #[derive(Component)]
-pub struct Replacing(pub u64);
+pub(crate) struct Replacing(pub(crate) u64);
 
 /// Hand a stale tile back to the streamer, keeping the old one on screen.
 ///
@@ -1765,10 +1765,10 @@ pub(crate) fn ring(
 /// The ceiling is about a chunk and a half, past which one brush sits inside a
 /// single feature and the stroke is a raise or a lower depending on where it
 /// landed.
-pub const SCALE: std::ops::RangeInclusive<f32> = 4.17..=200.0;
+pub(crate) const SCALE: std::ops::RangeInclusive<f32> = 4.17..=200.0;
 
 /// The five modes, as a list a panel can offer.
-pub const MODES: [(&str, Mode); 5] = [
+pub(crate) const MODES: [(&str, Mode); 5] = [
     ("Raise", Mode::Raise),
     ("Lower", Mode::Lower),
     ("Flatten", Mode::Flatten { to: 0.0 }),
@@ -1781,7 +1781,7 @@ pub const MODES: [(&str, Mode); 5] = [
 /// They are in order of how much of the radius keeps its strength, which is
 /// the choice a user makes: `Dome` holds nearly all of it and `Sharp` loses it
 /// at once. The other three are the original falloffs.
-pub const FALLOFFS: [(&str, Falloff); 5] = [
+pub(crate) const FALLOFFS: [(&str, Falloff); 5] = [
     ("Smooth", Falloff::Smooth),
     ("Linear", Falloff::Linear),
     ("Flat", Falloff::Flat),
@@ -1793,7 +1793,7 @@ pub const FALLOFFS: [(&str, Falloff); 5] = [
 /// explains why a shape is a distance rather than a mask. That design lets these
 /// three and the five falloffs above be two lists rather than fifteen
 /// combinations.
-pub const SHAPES: [(&str, Shape); 3] = [
+pub(crate) const SHAPES: [(&str, Shape); 3] = [
     ("Circle", Shape::Circle),
     ("Square", Shape::Square),
     ("Diamond", Shape::Diamond),

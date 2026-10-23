@@ -140,7 +140,7 @@ impl StableList {
 /// server's own and the strings are variable-length, so a body cut short mid-row
 /// would otherwise discard a window that is nine tenths there — the same
 /// tolerance every list packet in this crate takes.
-pub fn parse_stabled_pets(body: &[u8]) -> Option<StableList> {
+pub(crate) fn parse_stabled_pets(body: &[u8]) -> Option<StableList> {
     let mut r = Reader::new(body);
     if !r.has(10) {
         return None;
@@ -239,7 +239,7 @@ impl StableResult {
 }
 
 /// Parse `SMSG_STABLE_RESULT` — one byte, and an unknown one is data.
-pub fn parse_stable_result(body: &[u8]) -> Option<(u8, Option<StableResult>)> {
+pub(crate) fn parse_stable_result(body: &[u8]) -> Option<(u8, Option<StableResult>)> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -253,7 +253,7 @@ pub fn parse_stable_result(body: &[u8]) -> Option<(u8, Option<StableResult>)> {
 ///
 /// The client sends this to re-ask; the stable master's gossip option makes the
 /// server send the first one unprompted.
-pub fn list_stabled_pets_body(npc: u64) -> Vec<u8> {
+pub(crate) fn list_stabled_pets_body(npc: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc);
     w.buf
@@ -262,7 +262,7 @@ pub fn list_stabled_pets_body(npc: u64) -> Vec<u8> {
 /// Body for `CMSG_STABLE_PET` — put the pet that is out into the first free
 /// slot. **The client does not choose the slot**; the server takes the lowest
 /// free one.
-pub fn stable_pet_body(npc: u64) -> Vec<u8> {
+pub(crate) fn stable_pet_body(npc: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc);
     w.buf
@@ -272,7 +272,7 @@ pub fn stable_pet_body(npc: u64) -> Vec<u8> {
 ///
 /// Refused outright while a pet is summoned; the swap below is the verb for
 /// that case, and `ClickStablePet` picks between them.
-pub fn unstable_pet_body(npc: u64, pet_number: u32) -> Vec<u8> {
+pub(crate) fn unstable_pet_body(npc: u64, pet_number: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc);
     w.u32(pet_number);
@@ -281,7 +281,7 @@ pub fn unstable_pet_body(npc: u64, pet_number: u32) -> Vec<u8> {
 
 /// Body for `CMSG_STABLE_SWAP_PET` — exchange the pet that is out for a stabled
 /// one, named by pet number.
-pub fn swap_stable_pet_body(npc: u64, pet_number: u32) -> Vec<u8> {
+pub(crate) fn swap_stable_pet_body(npc: u64, pet_number: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc);
     w.u32(pet_number);
@@ -289,7 +289,7 @@ pub fn swap_stable_pet_body(npc: u64, pet_number: u32) -> Vec<u8> {
 }
 
 /// Body for `CMSG_BUY_STABLE_SLOT`.
-pub fn buy_stable_slot_body(npc: u64) -> Vec<u8> {
+pub(crate) fn buy_stable_slot_body(npc: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc);
     w.buf

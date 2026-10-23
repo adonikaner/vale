@@ -78,7 +78,7 @@ use std::time::{Duration, Instant};
 /// This is `EquipmentSlots` in vmangos, and the same order
 /// `PLAYER_VISIBLE_ITEM_n` uses, so [`crate::state::objects::Entity::equipment`]
 /// and this module agree slot for slot without either converting.
-pub const EQUIPMENT_SLOTS: usize = 19;
+pub(crate) const EQUIPMENT_SLOTS: usize = 19;
 
 /// The four bag slots that follow the worn slots in the same field block.
 pub const BAG_SLOTS: usize = 4;
@@ -86,7 +86,7 @@ pub const BAG_SLOTS: usize = 4;
 /// How many GUIDs `PLAYER_FIELD_INV_SLOT_HEAD` covers: the worn slots and the
 /// bag slots together. 23 guids = 46 fields, which is the gap to
 /// `PLAYER_FIELD_PACK_SLOT_1`.
-pub const INVENTORY_SLOTS: usize = EQUIPMENT_SLOTS + BAG_SLOTS;
+pub(crate) const INVENTORY_SLOTS: usize = EQUIPMENT_SLOTS + BAG_SLOTS;
 
 /// The backpack's sixteen slots. They live in the player's block rather than
 /// in a container object. There is no backpack item, so
@@ -108,7 +108,7 @@ pub const BANK_BAG_SLOTS: usize = 6;
 /// The key ring's slots: 32 fields = 16 guids. The interface shows fewer than
 /// exist: `GetKeyRingSize()` in `ContainerFrame.lua` is 4 under level 40 and
 /// grows to 16 past 60, so the extra slots exist and are not drawn.
-pub const KEYRING_SLOTS: usize = 16;
+pub(crate) const KEYRING_SLOTS: usize = 16;
 
 /// The largest a 1.12 bag can be: `MAX_CONTAINER_ITEMS` in
 /// `ContainerFrame.lua`, and the width of `CONTAINER_FIELD_SLOT_1`.
@@ -120,7 +120,7 @@ pub const CONTAINER_SLOTS: usize = 36;
 /// Both sides use twelve: `PLAYER_FIELD_VENDORBUYBACK_SLOT_1` is 24 fields =
 /// 12 guids, and `MerchantFrame.lua` lays out twelve buttons on its second
 /// tab.
-pub const BUYBACK_SLOTS: usize = 12;
+pub(crate) const BUYBACK_SLOTS: usize = 12;
 
 /// `BUYBACK_SLOT_START`: where the buyback run begins in the server's flat
 /// 118-entry slot numbering, and the number `CMSG_BUYBACK_ITEM` carries.
@@ -129,7 +129,7 @@ pub const BUYBACK_SLOTS: usize = 12;
 /// player's guid array. `PLAYER_FIELD_INV_SLOT_HEAD + 69 * 2` is 624, which is
 /// `PLAYER_FIELD_VENDORBUYBACK_SLOT_1`. The slot numbering and the field
 /// numbering agree at this point, which confirms both values.
-pub const BUYBACK_SLOT_START: u8 = 69;
+pub(crate) const BUYBACK_SLOT_START: u8 = 69;
 
 /// `KEYRING_CONTAINER`, declared in `MainMenuBarBagButtons.lua`. It is
 /// negative, so every bag id this client handles is an `i32` rather than a
@@ -267,7 +267,7 @@ pub fn server_inventory_slot(id: u32) -> Option<(u8, u8)> {
 /// The tail is the ordinary target block, [`crate::play::spells::CastTarget`]:
 /// the same shapes `CMSG_CAST_SPELL` sends, written by the same function,
 /// because the server reads both with `SpellCastTargets::ReadForCaster`.
-pub fn use_item_body(bag: u8, slot: u8, spell_index: u8, target: crate::play::spells::CastTarget) -> Vec<u8> {
+pub(crate) fn use_item_body(bag: u8, slot: u8, spell_index: u8, target: crate::play::spells::CastTarget) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot).u8(spell_index);
     crate::play::spells::write_cast_target(&mut w, target);
@@ -283,7 +283,7 @@ pub fn use_item_body(bag: u8, slot: u8, spell_index: u8, target: crate::play::sp
 /// equippable and send this packet instead. The server picks the slot itself
 /// (`CanEquipItem(NULL_SLOT, …)`), which is how a ring goes to whichever
 /// finger is free.
-pub fn auto_equip_body(bag: u8, slot: u8) -> Vec<u8> {
+pub(crate) fn auto_equip_body(bag: u8, slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot);
     w.buf
@@ -307,7 +307,7 @@ pub fn auto_equip_body(bag: u8, slot: u8) -> Vec<u8> {
 /// A wrapped item uses the same packet. The server reads `character_gifts`,
 /// puts the real entry back on the object and sends nothing else, so the
 /// unwrapping appears as an ordinary field change.
-pub fn open_item_body(bag: u8, slot: u8) -> Vec<u8> {
+pub(crate) fn open_item_body(bag: u8, slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot);
     w.buf
@@ -352,7 +352,7 @@ pub const SERVER_SLOT_ANY: u8 = 255;
 /// `srcslot >> dstslot`, while [`swap_item_body`] below puts the destination
 /// first. The two packets use opposite orders on the wire, and neither
 /// packet's layout indicates it.
-pub fn swap_inv_item_body(src_slot: u8, dst_slot: u8) -> Vec<u8> {
+pub(crate) fn swap_inv_item_body(src_slot: u8, dst_slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(src_slot).u8(dst_slot);
     w.buf
@@ -363,7 +363,7 @@ pub fn swap_inv_item_body(src_slot: u8, dst_slot: u8) -> Vec<u8> {
 ///
 /// The destination comes first, the opposite of [`swap_inv_item_body`]'s
 /// order; see `HandleSwapItem`.
-pub fn swap_item_body(dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) -> Vec<u8> {
+pub(crate) fn swap_item_body(dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(dst_bag).u8(dst_slot).u8(src_bag).u8(src_slot);
     w.buf
@@ -377,7 +377,7 @@ pub fn swap_item_body(dst_bag: u8, dst_slot: u8, src_bag: u8, src_slot: u8) -> V
 /// is what `PutItemInBag` and `PutItemInBackpack` send, because a click on a
 /// bag button names no square. [`SERVER_BAG_NONE`] as the destination is the
 /// backpack.
-pub fn autostore_bag_item_body(src_bag: u8, src_slot: u8, dst_bag: u8) -> Vec<u8> {
+pub(crate) fn autostore_bag_item_body(src_bag: u8, src_slot: u8, dst_bag: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(src_bag).u8(src_slot).u8(dst_bag);
     w.buf
@@ -390,7 +390,7 @@ pub fn autostore_bag_item_body(src_bag: u8, src_slot: u8, dst_bag: u8) -> Vec<u8
 /// [`swap_item_body`]; this is the third of the three byte orders in this
 /// family of packets. The server drops a count of zero as a forged packet, so
 /// the caller filters it out rather than sending it.
-pub fn split_item_body(
+pub(crate) fn split_item_body(
     src_bag: u8,
     src_slot: u8,
     dst_bag: u8,
@@ -408,7 +408,7 @@ pub fn split_item_body(
 /// are read and never referenced. They are written as zero because the packet
 /// has a fixed length, and a short one would leave the next opcode misaligned
 /// in the same buffer.
-pub fn destroy_item_body(bag: u8, slot: u8, count: u8) -> Vec<u8> {
+pub(crate) fn destroy_item_body(bag: u8, slot: u8, count: u8) -> Vec<u8> {
     let mut w = crate::bytes::Writer::new();
     w.u8(bag).u8(slot).u8(count).u8(0).u8(0).u8(0);
     w.buf
@@ -417,7 +417,7 @@ pub fn destroy_item_body(bag: u8, slot: u8, count: u8) -> Vec<u8> {
 /// The Lua inventory slot id of the first bag slot: `CharacterBag0Slot`'s own
 /// `GetID()`, from `PaperDollItemFrame.dbc`. The four bags are 20..23 and the
 /// worn slots are 1..19, so this is 20, not 19.
-pub const FIRST_BAG_INVENTORY_SLOT: u32 = 20;
+pub(crate) const FIRST_BAG_INVENTORY_SLOT: u32 = 20;
 
 /// The Lua inventory slot id of the first bank square:
 /// `BankButtonIDToInvSlotID(1)` is `BANK_SLOT_ITEM_START + 1`, one-based over
@@ -482,11 +482,11 @@ pub struct ItemSlot {
 
 /// How many enchantment slots an item has: vmangos' `MAX_ENCHANTMENT_SLOT`,
 /// and the 21 fields of `ITEM_FIELD_ENCHANTMENT` at three per slot.
-pub const ENCHANTMENT_SLOTS: usize = 7;
+pub(crate) const ENCHANTMENT_SLOTS: usize = 7;
 
 /// How many charge counters an item has: one per prototype spell, the five
 /// fields of `ITEM_FIELD_SPELL_CHARGES`.
-pub const SPELL_CHARGE_SLOTS: usize = 5;
+pub(crate) const SPELL_CHARGE_SLOTS: usize = 5;
 
 /// One enchantment slot of an item object.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -534,7 +534,7 @@ pub fn left_ms(expires: Option<Instant>, now: Instant) -> Option<u32> {
 /// objects are created, so the clocks are kept by guid rather than on the
 /// objects.
 #[derive(Debug, Clone, Default)]
-pub struct ItemTimers {
+pub(crate) struct ItemTimers {
     enchantments: HashMap<(u64, u8), Instant>,
     items: HashMap<u64, Instant>,
 }
@@ -542,7 +542,7 @@ pub struct ItemTimers {
 impl ItemTimers {
     /// Record an enchantment's time as `SMSG_ITEM_ENCHANT_TIME_UPDATE` states
     /// it. Zero seconds clears the clock.
-    pub fn note_enchantment(&mut self, time: EnchantTime, now: Instant) {
+    pub(crate) fn note_enchantment(&mut self, time: EnchantTime, now: Instant) {
         let key = (time.item, time.slot);
         if time.seconds == 0 {
             self.enchantments.remove(&key);
@@ -553,7 +553,7 @@ impl ItemTimers {
     }
 
     /// Record an item's own time, from `SMSG_ITEM_TIME_UPDATE`.
-    pub fn note_item(&mut self, time: ItemTime, now: Instant) {
+    pub(crate) fn note_item(&mut self, time: ItemTime, now: Instant) {
         if time.seconds == 0 {
             self.items.remove(&time.item);
         } else {
@@ -576,7 +576,7 @@ impl ItemTimers {
 /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`: `{u64 item, u32 slot, u32 seconds, u64
 /// player}`, as vmangos' `WorldSession::SendItemEnchantTimeUpdate` writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EnchantTime {
+pub(crate) struct EnchantTime {
     pub item: u64,
     pub slot: u8,
     pub seconds: u32,
@@ -585,7 +585,7 @@ pub struct EnchantTime {
 
 /// Read `SMSG_ITEM_ENCHANT_TIME_UPDATE`. `None` for a short body or a slot
 /// past [`ENCHANTMENT_SLOTS`].
-pub fn parse_item_enchant_time_update(body: &[u8]) -> Option<EnchantTime> {
+pub(crate) fn parse_item_enchant_time_update(body: &[u8]) -> Option<EnchantTime> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 4) {
         return None;
@@ -609,13 +609,13 @@ pub fn parse_item_enchant_time_update(body: &[u8]) -> Option<EnchantTime> {
 /// `SMSG_ITEM_TIME_UPDATE`: `{u64 item, u32 seconds}`, from vmangos'
 /// `Item::SendTimeUpdate`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ItemTime {
+pub(crate) struct ItemTime {
     pub item: u64,
     pub seconds: u32,
 }
 
 /// Read `SMSG_ITEM_TIME_UPDATE`. `None` for a short body.
-pub fn parse_item_time_update(body: &[u8]) -> Option<ItemTime> {
+pub(crate) fn parse_item_time_update(body: &[u8]) -> Option<ItemTime> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -632,17 +632,17 @@ pub fn parse_item_time_update(body: &[u8]) -> Option<ItemTime> {
 /// [`crate::state::query::item_flags`] is the per-prototype word, which does
 /// not change. The two are easy to confuse and a mix-up produces no error, so
 /// both modules state the distinction.
-pub mod item_dyn_flags {
+pub(crate) mod item_dyn_flags {
     /// Bound to this character now, as opposed to binding when picked up. The
     /// tooltip's first grey line.
-    pub const BOUND: u32 = 0x0000_0001;
+    pub(crate) const BOUND: u32 = 0x0000_0001;
     /// This copy's lock has been picked. `HandleOpenItemOpcode` refuses an
     /// item with a `proto->LockID` unless this bit is set, and the tooltip
     /// hides its `<Right Click to Open>` line for the same reason.
-    pub const UNLOCKED: u32 = 0x0000_0004;
+    pub(crate) const UNLOCKED: u32 = 0x0000_0004;
     /// This copy is inside wrapping paper: its entry and flags are the
     /// wrapper's, and opening it is what puts the real item back.
-    pub const WRAPPED: u32 = 0x0000_0008;
+    pub(crate) const WRAPPED: u32 = 0x0000_0008;
 }
 
 impl ItemSlot {
@@ -844,7 +844,8 @@ impl Inventory {
 
     /// How many squares a container has, or `None` for a bag id with nothing
     /// in it. This is `GetContainerNumSlots` before its `unwrap_or(0)`.
-    pub fn container_num(&self, bag: i32) -> Option<usize> {
+    #[cfg(test)]
+    pub(crate) fn container_num(&self, bag: i32) -> Option<usize> {
         self.container(bag).map(<[_]>::len)
     }
 
@@ -1155,7 +1156,7 @@ pub const EQUIP_ERR_CANT_EQUIP_LEVEL_I: u8 = 1;
 /// `GlobalStrings.lua` does not carry, so it displays nothing. That is
 /// correct: the server sends this code to release a grey item after a failed
 /// use, immediately before the real reason.
-pub const INVENTORY_FAILURE_KEYS: [&str; 67] = [
+pub(crate) const INVENTORY_FAILURE_KEYS: [&str; 67] = [
     "",                                // 0  EQUIP_ERR_OK, not a failure
     "ERR_CANT_EQUIP_LEVEL_I",          // 1  You must reach level %d to use that item.
     "ERR_CANT_EQUIP_SKILL",            // 2  You aren't skilled enough to use that item.
@@ -1290,8 +1291,8 @@ pub struct ItemPush {
     /// The server's "show this in the chat frame" switch. Quest rewards turn
     /// it off (`Player.cpp:14381` passes `showInChat = false`), which is why
     /// the quest-reward window does not also produce a loot line.
-    pub show_in_chat: bool,
-    pub bag_slot: u8,
+    pub(crate) show_in_chat: bool,
+    pub(crate) bag_slot: u8,
     /// The slot inside that bag, or `None` when the item went onto an existing
     /// stack (the wire's `0xFFFFFFFF`).
     pub slot: Option<u32>,
@@ -1302,7 +1303,7 @@ pub struct ItemPush {
     pub count: u32,
 }
 
-pub fn parse_item_push_result(body: &[u8]) -> Option<ItemPush> {
+pub(crate) fn parse_item_push_result(body: &[u8]) -> Option<ItemPush> {
     let mut r = crate::bytes::Reader::new(body);
     if !r.has(8 + 4 + 4 + 4 + 1 + 4 + 4 + 4 + 4 + 4) {
         return None;
@@ -1369,7 +1370,7 @@ impl ItemPush {
 /// [`InventoryFailure`] holding [`EQUIP_ERR_OK`], not to `None`. In this crate
 /// `None` means "the packet was malformed", and it is counted as a read
 /// failure on the HUD.
-pub fn parse_inventory_change_failure(body: &[u8]) -> Option<InventoryFailure> {
+pub(crate) fn parse_inventory_change_failure(body: &[u8]) -> Option<InventoryFailure> {
     let mut r = crate::bytes::Reader::new(body);
     let code = r.has(1).then(|| r.u8())?;
     let mut failure = InventoryFailure {
@@ -1420,7 +1421,7 @@ pub struct EnchantmentLog {
     /// The enchanting spell, whose name the line prints.
     pub spell_id: u32,
     /// Only meaningful when [`Self::caster`] is set.
-    pub show_affiliation: bool,
+    pub(crate) show_affiliation: bool,
 }
 
 impl EnchantmentLog {
@@ -1430,7 +1431,7 @@ impl EnchantmentLog {
     }
 }
 
-pub fn parse_enchantment_log(body: &[u8]) -> Option<EnchantmentLog> {
+pub(crate) fn parse_enchantment_log(body: &[u8]) -> Option<EnchantmentLog> {
     let mut r = Reader::new(body);
     if !r.has(8 + 8 + 4 + 4) {
         return None;

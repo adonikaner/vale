@@ -48,12 +48,12 @@ use vale_protocol::state::events::PlayerEvent;
 
 /// `SMSG_TEXT_EMOTE`, as a message for [`apply_answers`].
 #[derive(Message, Debug, Clone)]
-pub struct EmoteAnswer(pub Box<TextEmote>);
+pub(crate) struct EmoteAnswer(pub(crate) Box<TextEmote>);
 
 /// How long a line waits for the speaker's name.
 const NAME_PATIENCE: f32 = 3.0;
 
-pub struct EmoteTextPlugin;
+pub(crate) struct EmoteTextPlugin;
 
 impl Plugin for EmoteTextPlugin {
     fn build(&self, app: &mut App) {
@@ -93,7 +93,7 @@ fn send_emotes(
         // A name after the command, when it is somebody known; the
         // selection otherwise.
         let named = emote.target.as_deref().and_then(|name| {
-            let world = active.live.world().lock().ok()?;
+            let world = active.live.read();
             world
                 .players
                 .iter()
@@ -146,9 +146,7 @@ fn apply_answers(
         return;
     };
     let me = status.character.clone();
-    let Ok(world) = active.live.world().lock() else {
-        return;
-    };
+    let world = active.live.read();
     let mut unnamed = Vec::new();
     for item in queue {
         let patient = now - item.since < NAME_PATIENCE;
@@ -214,7 +212,7 @@ fn apply_answers(
 }
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<EmoteAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<EmoteAnswer> {
     match event {
         PlayerEvent::TextEmote(emote) => Some(EmoteAnswer(emote.clone())),
         _ => None,

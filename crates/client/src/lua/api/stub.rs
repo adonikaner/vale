@@ -4,15 +4,15 @@
 use super::*;
 
 /// One unit in a [`Stub`] world.
-pub struct StubUnit {
-    pub token: String,
+pub(crate) struct StubUnit {
+    pub(crate) token: String,
     pub name: String,
     /// The zone line on a party member's plate. Empty for every other
     /// unit. See [`crate::interface::api::UnitTip::zone`].
     pub zone: String,
     pub level: i32,
-    pub health: u32,
-    pub health_max: u32,
+    pub(crate) health: u32,
+    pub(crate) health_max: u32,
     pub dead: bool,
     /// `UnitIsGhost`: released, which is not the same as [`Self::dead`].
     pub ghost: bool,
@@ -37,45 +37,45 @@ pub struct StubUnit {
 }
 
 /// One slot of a [`Stub`]'s bar.
-pub struct StubAction {
+pub(crate) struct StubAction {
     pub slot: u8,
     pub text: String,
     pub texture: String,
     pub cooldown: (f64, f64, bool),
     pub usable: bool,
-    pub not_enough_mana: bool,
-    pub attack: bool,
+    pub(crate) not_enough_mana: bool,
+    pub(crate) attack: bool,
     pub current: bool,
     /// Whether this slot is the ranged attack currently repeating: the
     /// state `ActionButton_UpdateState` reads beside [`Self::current`].
-    pub auto_repeat: bool,
+    pub(crate) auto_repeat: bool,
     /// The item half of a slot: how many are carried, whether the stack
     /// count is drawn, and whether it is being worn. All three are `0`/false
     /// for a spell, which is what every slot a test builds through
     /// [`Stub::action`] is.
     pub count: u32,
-    pub consumable: bool,
-    pub equipped: bool,
+    pub(crate) consumable: bool,
+    pub(crate) equipped: bool,
     /// The range pair. It is two fields because the interface reads three
     /// states from them: no range at all, in range, and out of range.
     /// `in_range` is `None` for a slot that has a range and nothing to
     /// measure it against (no target). A single bool cannot express that,
     /// so the trait method returns an `Option`.
-    pub has_range: bool,
+    pub(crate) has_range: bool,
     pub in_range: Option<bool>,
 }
 
 /// One row of a [`Stub`]'s spellbook.
-pub struct StubSpell {
+pub(crate) struct StubSpell {
     pub name: String,
     pub rank: String,
-    pub passive: bool,
+    pub(crate) passive: bool,
 }
 
 /// A stub world. [`Answers`] being a trait is what makes it possible; see
 /// the module comment. Everything a test needs to set is a public field.
 #[derive(Default)]
-pub struct Stub {
+pub(crate) struct Stub {
     pub now: f64,
     pub units: Vec<StubUnit>,
     pub actions: Vec<StubAction>,
@@ -97,11 +97,11 @@ pub struct Stub {
     /// What every item answers for its cooldown. See
     /// [`Stub::container_item_cooldown`]. `(0, 0, false)` by `Default`,
     /// which is the "nothing there" triple with the swirl disabled.
-    pub item_cooldown: (f64, f64, bool),
+    pub(crate) item_cooldown: (f64, f64, bool),
     /// Which of the four extra action bars are on, as the `multi_bar`
     /// mask the wire carries. `0` by `Default`, which is a fresh account
     /// with all four bars off. See [`super::ActionAnswers::action_bar_toggles`].
-    pub bar_toggles: u8,
+    pub(crate) bar_toggles: u8,
     /// The rows of an open loot window, one-based when read, with the
     /// coins first if there are any. See [`super::loot`]. Empty by
     /// `Default`: nothing has been looted, and `GetNumLootItems` answers 0.
@@ -122,7 +122,7 @@ pub struct Stub {
     pub(super) highlight: Option<crate::lua::panels::worldmap::Highlight>,
     /// What `GetZonePVPInfo` answers. The default is no stance and no
     /// arena.
-    pub territory: vale_assets::tables::territory::Territory,
+    pub(crate) territory: vale_assets::tables::territory::Territory,
     /// The explored overlays on the map. Empty is the ordinary case: a
     /// client with no world, or a zone nobody has walked.
     pub(super) overlays: Vec<crate::lua::panels::worldmap::OverlayArt>,
@@ -163,7 +163,7 @@ pub struct Stub {
 
 /// One item template a [`Stub`] knows about.
 #[derive(Clone)]
-pub struct StubTemplate {
+pub(crate) struct StubTemplate {
     pub entry: u32,
     pub name: String,
     pub icon: String,
@@ -302,7 +302,7 @@ impl Stub {
 
     /// Sets the zone of the unit added last, for the plate line that only
     /// a party member gets.
-    pub fn in_zone(mut self, zone: &str) -> Stub {
+    pub(crate) fn in_zone(mut self, zone: &str) -> Stub {
         if let Some(unit) = self.units.last_mut() {
             unit.zone = zone.to_string();
         }
@@ -329,7 +329,7 @@ impl Stub {
 
     /// Makes the unit added last a player. A player's plate composes
     /// "Human Warrior" from a race and a class.
-    pub fn player_controlled(mut self) -> Stub {
+    pub(crate) fn player_controlled(mut self) -> Stub {
         if let Some(unit) = self.units.last_mut() {
             unit.player = true;
             unit.creature_type = 0;
@@ -373,13 +373,13 @@ impl Stub {
 
     /// Sets the explored overlays on the map, for the two reads
     /// `WorldMapFrame_Update` iterates them with.
-    pub fn overlays(mut self, overlays: Vec<crate::lua::panels::worldmap::OverlayArt>) -> Stub {
+    pub(crate) fn overlays(mut self, overlays: Vec<crate::lua::panels::worldmap::OverlayArt>) -> Stub {
         self.overlays = overlays;
         self
     }
 
     /// Sets the party the reads answer from, one entry per `party<n>`.
-    pub fn party(mut self, members: &[(&str, bool)], count: usize) -> Stub {
+    pub(crate) fn party(mut self, members: &[(&str, bool)], count: usize) -> Stub {
         let _ = count;
         self.party = members
             .iter()
@@ -405,7 +405,7 @@ impl Stub {
     /// Sets a highlight with a name and no art. This is a zone map's
     /// answer, the second of `UpdateMapHighlight`'s two shapes, and it
     /// hides `WorldMapHighlight`.
-    pub fn named_highlight(mut self, name: &str) -> Stub {
+    pub(crate) fn named_highlight(mut self, name: &str) -> Stub {
         self.highlight = Some(crate::lua::panels::worldmap::Highlight {
             name: name.to_string(),
             art: None,
@@ -462,7 +462,7 @@ impl Stub {
     /// red hotkey; `None` is a range the client cannot measure right now,
     /// which the interface draws differently. See
     /// [`crate::interface::api::is_action_in_range`].
-    pub fn ranged_action(mut self, slot: u8, text: &str, in_range: Option<bool>) -> Stub {
+    pub(crate) fn ranged_action(mut self, slot: u8, text: &str, in_range: Option<bool>) -> Stub {
         self = self.action(slot, text);
         if let Some(action) = self.actions.last_mut() {
             action.has_range = true;
@@ -509,7 +509,7 @@ impl Stub {
 
     /// An aura on a token: a spell, a name, which half, and whether it has
     /// a clock. The icon follows the name, as every other stub's does.
-    pub fn buff(
+    pub(crate) fn buff(
         mut self,
         token: &str,
         spell: u32,
@@ -1446,7 +1446,7 @@ impl super::UnitAnswers for Stub {
 
 /// Runs a chunk with the reads installed and returns its `return` value
 /// as a string, which lets a test assert on what Lua saw.
-pub fn eval(answers: &dyn Answers, chunk: &str) -> String {
+pub(crate) fn eval(answers: &dyn Answers, chunk: &str) -> String {
     let lua = mlua::Lua::new();
     // The five held reads are registered once on the state, as
     // `LuaHost::new` does. See [`Held`].

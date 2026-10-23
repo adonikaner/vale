@@ -65,13 +65,13 @@ use crate::row::Key;
 pub use crate::schema::{mask_words, value_word, Bit, Column, Group, Kind, Row, RowValue, Value};
 
 pub const CREATURE_AI: &str = "creature_ai_scripts";
-pub const CREATURE_MOVEMENT: &str = "creature_movement_scripts";
+pub(crate) const CREATURE_MOVEMENT: &str = "creature_movement_scripts";
 pub const CREATURE_SPELLS: &str = "creature_spells_scripts";
 pub const GOSSIP: &str = "gossip_scripts";
 pub const GENERIC: &str = "generic_scripts";
-pub const EVENT: &str = "event_scripts";
-pub const QUEST_START: &str = "quest_start_scripts";
-pub const QUEST_END: &str = "quest_end_scripts";
+pub(crate) const EVENT: &str = "event_scripts";
+pub(crate) const QUEST_START: &str = "quest_start_scripts";
+pub(crate) const QUEST_END: &str = "quest_end_scripts";
 pub const SPELL: &str = "spell_scripts";
 pub const GAMEOBJECT: &str = "gameobject_scripts";
 pub const AREATRIGGER: &str = "areatrigger_scripts";
@@ -145,21 +145,21 @@ pub const CHAT_TYPES: [Value; 8] = [
 ];
 
 /// `ReactStates`, from `UnitDefines.h:682`.
-pub const REACT_STATES: [Value; 3] = [
+pub(crate) const REACT_STATES: [Value; 3] = [
     Value { value: 0, name: "Passive" },
     Value { value: 1, name: "Defensive" },
     Value { value: 2, name: "Aggressive" },
 ];
 
 /// `SheathState`, from `UnitDefines.h:170`.
-pub const SHEATH_STATES: [Value; 3] = [
+pub(crate) const SHEATH_STATES: [Value; 3] = [
     Value { value: 0, name: "Unarmed" },
     Value { value: 1, name: "Melee" },
     Value { value: 2, name: "Ranged" },
 ];
 
 /// `eMoveToCoordinateTypes`, from `ScriptCommands.h:361`.
-pub const MOVE_TO_COORDINATES: [Value; 4] = [
+pub(crate) const MOVE_TO_COORDINATES: [Value; 4] = [
     Value { value: 0, name: "As given" },
     Value { value: 1, name: "Relative to the target" },
     Value { value: 2, name: "x is the distance from the target" },
@@ -167,7 +167,7 @@ pub const MOVE_TO_COORDINATES: [Value; 4] = [
 ];
 
 /// `TempSummonType`, from `ObjectDefines.h:61`.
-pub const SUMMON_DESPAWN: [Value; 10] = [
+pub(crate) const SUMMON_DESPAWN: [Value; 10] = [
     Value { value: 1, name: "After the time out of combat, or when it disappears" },
     Value { value: 2, name: "After the time out of combat, or when it dies" },
     Value { value: 3, name: "After the time" },
@@ -182,7 +182,7 @@ pub const SUMMON_DESPAWN: [Value; 10] = [
 
 /// `CastFlags`, from `ScriptCommands.h:388`: `SCRIPT_COMMAND_CAST_SPELL`'s
 /// `datalong2`, and `creature_spells.castFlags_n`.
-pub const CAST_FLAGS: [Bit; 9] = [
+pub(crate) const CAST_FLAGS: [Bit; 9] = [
     Bit { bit: 0x001, name: "Interrupt the previous cast", about: "" },
     Bit { bit: 0x002, name: "Triggered", about: "no cast time, no cost, no interruption" },
     Bit { bit: 0x004, name: "Force the cast", about: "bypasses the checks in Creature::TryToCast" },
@@ -216,7 +216,7 @@ pub struct Target {
 }
 
 /// The thirty, in the enum's order.
-pub const TARGETS: [Target; 30] = [
+pub(crate) const TARGETS: [Target; 30] = [
     Target { value: 0, name: "The provided target", param1: "", param2: "" },
     Target { value: 1, name: "Current victim", param1: "", param2: "" },
     Target { value: 2, name: "Second on the threat list", param1: "", param2: "" },
@@ -273,7 +273,7 @@ pub fn waits(table: &str) -> bool {
 
 /// A target as the object of a sentence: `the current victim`, `the provided
 /// target`, `target type 40` for one this list does not name.
-pub fn target_phrase(value: u32) -> String {
+pub(crate) fn target_phrase(value: u32) -> String {
     match target(value) {
         Some(target) => {
             let name = target.name.to_lowercase();

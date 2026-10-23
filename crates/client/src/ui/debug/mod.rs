@@ -122,7 +122,7 @@ pub mod frame;
 pub mod inspect;
 pub mod interface;
 pub mod log;
-pub mod net;
+pub(crate) mod net;
 pub mod render;
 pub mod scene;
 pub mod spans;
@@ -236,7 +236,7 @@ pub struct ArchiveStatus {
     pub error: Option<String>,
 }
 
-pub struct DebugPanelPlugin;
+pub(crate) struct DebugPanelPlugin;
 
 impl Plugin for DebugPanelPlugin {
     fn build(&self, app: &mut App) {
@@ -364,8 +364,8 @@ fn arm_capture(
 pub struct Sampled {
     pub counts: scene::Counts,
     pub frame: frame::FrameSample,
-    pub net: net::NetSample,
-    pub console: interface::Console,
+    pub(crate) net: net::NetSample,
+    pub(crate) console: interface::Console,
     pub log: log::ConsoleLog,
     /// Whether the console tab was drawn on the previous frame. The command
     /// line takes the keyboard on the frame the tab appears.
@@ -378,7 +378,7 @@ pub struct Sampled {
 /// scene walk is not part of every frame. A count that changes sixty times a
 /// second is also harder to read than one that changes five times. The
 /// session thread rebuilds `SessionStatus::traffic` on the same interval.
-pub const SAMPLE_INTERVAL: f32 = 0.2;
+pub(crate) const SAMPLE_INTERVAL: f32 = 0.2;
 
 /// Everything the panel needs that is not a switch, in one parameter.
 ///
@@ -415,17 +415,17 @@ pub struct Readout<'w, 's> {
     pub fields: Res<'w, crate::render::particles::ParticleFields>,
     /// Which GPU this is, for the frame tab. It changes what every other
     /// number there means, and nothing else in a running Bevy app states it.
-    pub adapter: Option<Res<'w, bevy::render::renderer::RenderAdapterInfo>>,
+    pub(crate) adapter: Option<Res<'w, bevy::render::renderer::RenderAdapterInfo>>,
     /// Whether that GPU can draw a wireframe; see
     /// [`crate::render::overlay::WireframeSupported`]. Without it the
     /// checkbox would tick and do nothing on a GPU that cannot.
-    pub wireframe_supported: Res<'w, crate::render::overlay::WireframeSupported>,
+    pub(crate) wireframe_supported: Res<'w, crate::render::overlay::WireframeSupported>,
     /// What the collision overlay last drew, so the cap it applies is shown.
-    pub collision_drawn: Res<'w, crate::render::overlay::CollisionDrawn>,
+    pub(crate) collision_drawn: Res<'w, crate::render::overlay::CollisionDrawn>,
     /// What the Lua console has run and what came back. Written by
     /// `lua::host::run_scripts` a frame after the chunk is queued.
-    pub script_log: ResMut<'w, crate::lua::load::ScriptLog>,
-    pub script_queue: ResMut<'w, crate::lua::load::StartupScript>,
+    pub(crate) script_log: ResMut<'w, crate::lua::load::ScriptLog>,
+    pub(crate) script_queue: ResMut<'w, crate::lua::load::StartupScript>,
 }
 
 /// The window.
@@ -610,7 +610,7 @@ pub const BAD: egui::Color32 = egui::Color32::from_rgb(220, 90, 90);
 /// zero is the answer and not an absence.
 pub const GOOD: egui::Color32 = egui::Color32::from_rgb(130, 200, 130);
 /// The colour of a value beside its label, so a row reads as one thing.
-pub const DIM: egui::Color32 = egui::Color32::from_rgb(150, 150, 155);
+pub(crate) const DIM: egui::Color32 = egui::Color32::from_rgb(150, 150, 155);
 
 /// Which build this is: the commit it came from.
 ///

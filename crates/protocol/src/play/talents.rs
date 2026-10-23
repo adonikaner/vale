@@ -45,7 +45,7 @@
 ///
 /// Which rank to ask for is `vale_assets::tables::talent::TalentTree::learn`'s
 /// decision, and the *only* gate either side of this packet applies locally.
-pub fn learn_talent_body(talent_id: u32, rank: u32) -> Vec<u8> {
+pub(crate) fn learn_talent_body(talent_id: u32, rank: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(8);
     body.extend_from_slice(&talent_id.to_le_bytes());
     body.extend_from_slice(&rank.to_le_bytes());

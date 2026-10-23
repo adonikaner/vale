@@ -93,7 +93,7 @@ use vale_client::world::camera::WorldCamera;
 const SHADER: &str = "embedded://vale_ide/marks.wgsl";
 
 /// The ghost pass's opacity, as a fraction of the mark's own.
-pub const GHOST: f32 = 0.35;
+pub(crate) const GHOST: f32 = 0.35;
 
 /// The thinnest a ghost may be, so a translucent volume's buried half is
 /// still seen.
@@ -143,7 +143,7 @@ impl Default for Scale {
 /// Whether the part of a mark behind something is drawn. See the module
 /// comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Look {
+pub(crate) enum Look {
     /// Hidden where something is in front of it.
     Solid,
     /// …and drawn faint there.
@@ -198,7 +198,7 @@ struct LineMark {
 
 /// What the tools want drawn this frame. See the module comment.
 #[derive(Resource, Default)]
-pub struct Marks {
+pub(crate) struct Marks {
     list: Vec<Mark>,
     lines: Vec<LineMark>,
     /// The world camera's position and the way it looks, read at the start
@@ -212,13 +212,9 @@ pub struct Marks {
 }
 
 impl Marks {
-    /// The world camera's position, for sizes that follow the distance.
-    pub fn eye(&self) -> Vec3 {
-        self.eye
-    }
 
     /// How many yards one pixel covers at `at`. See [`Scale`].
-    pub fn pixel(&self, at: Vec3) -> f32 {
+    pub(crate) fn pixel(&self, at: Vec3) -> f32 {
         match self.scale {
             // A point beside or behind the eye is given a yard of depth, so
             // nothing is drawn with no thickness at all.
@@ -229,7 +225,7 @@ impl Marks {
 
     /// The radius a line at `at` is drawn with: [`LINE_PIXELS`]. For a shape
     /// drawn to match the lines, such as an arrow's shaft.
-    pub fn line_radius(&self, at: Vec3) -> f32 {
+    pub(crate) fn line_radius(&self, at: Vec3) -> f32 {
         self.pixel(at) * LINE_PIXELS
     }
 
@@ -240,7 +236,7 @@ impl Marks {
     /// world at their true size rather than growing with distance; the floor
     /// keeps a far one as a dot rather than letting it vanish, which matters
     /// for flight-path nodes seen from across a zone and in the map view.
-    pub fn visible_radius(&self, at: Vec3, radius: f32) -> f32 {
+    pub(crate) fn visible_radius(&self, at: Vec3, radius: f32) -> f32 {
         radius.max(self.pixel(at) * MARKER_PIXELS)
     }
 
@@ -266,13 +262,13 @@ impl Marks {
         });
     }
 
-    pub fn sphere(&mut self, centre: Vec3, radius: f32, colour: Color, look: Look) {
+    pub(crate) fn sphere(&mut self, centre: Vec3, radius: f32, colour: Color, look: Look) {
         let pose = Transform::from_translation(centre).with_scale(Vec3::splat(radius));
         self.push(Shape::Sphere, pose, colour, look);
     }
 
     /// A half sphere standing on `base`, flat side down.
-    pub fn dome(&mut self, base: Vec3, radius: f32, colour: Color, look: Look) {
+    pub(crate) fn dome(&mut self, base: Vec3, radius: f32, colour: Color, look: Look) {
         let pose = Transform::from_translation(base).with_scale(Vec3::splat(radius));
         self.push(Shape::Dome, pose, colour, look);
     }
@@ -280,13 +276,13 @@ impl Marks {
     /// A low dome `radius` across and `height` tall standing on `base`: a mark
     /// on a point of the ground, such as a selected vertex. Coarser than
     /// [`Self::dome`], since the terrain tool draws up to twenty thousand.
-    pub fn cap(&mut self, base: Vec3, radius: f32, height: f32, colour: Color, look: Look) {
+    pub(crate) fn cap(&mut self, base: Vec3, radius: f32, height: f32, colour: Color, look: Look) {
         let pose = Transform::from_translation(base).with_scale(Vec3::new(radius, height, radius));
         self.push(Shape::Cap, pose, colour, look);
     }
 
     /// A round bar from `a` to `b`.
-    pub fn tube(&mut self, a: Vec3, b: Vec3, radius: f32, colour: Color, look: Look) {
+    pub(crate) fn tube(&mut self, a: Vec3, b: Vec3, radius: f32, colour: Color, look: Look) {
         let along = b - a;
         let length = along.length();
         if length < 1e-4 {
@@ -314,12 +310,12 @@ impl Marks {
 
     /// A line [`LINE_PIXELS`] pixels in radius wherever it is; see the module
     /// comment.
-    pub fn line(&mut self, a: Vec3, b: Vec3, colour: Color, look: Look) {
+    pub(crate) fn line(&mut self, a: Vec3, b: Vec3, colour: Color, look: Look) {
         self.wide_line(a, b, 1.0, colour, look);
     }
 
     /// [`Self::line`] with `width` times its radius.
-    pub fn wide_line(&mut self, a: Vec3, b: Vec3, width: f32, colour: Color, look: Look) {
+    pub(crate) fn wide_line(&mut self, a: Vec3, b: Vec3, width: f32, colour: Color, look: Look) {
         self.push_line(Line { a, b, width, lift: false }, colour, look);
     }
 
@@ -330,17 +326,17 @@ impl Marks {
     /// tool samples differs from the drawn mesh by more than that, all of it
     /// is, and that part is drawn as a ghost: an outline faint in some places
     /// and solid in others.
-    pub fn ground_line(&mut self, a: Vec3, b: Vec3, colour: Color, look: Look) {
+    pub(crate) fn ground_line(&mut self, a: Vec3, b: Vec3, colour: Color, look: Look) {
         self.wide_ground_line(a, b, 1.0, colour, look);
     }
 
     /// [`Self::ground_line`] with `width` times its radius.
-    pub fn wide_ground_line(&mut self, a: Vec3, b: Vec3, width: f32, colour: Color, look: Look) {
+    pub(crate) fn wide_ground_line(&mut self, a: Vec3, b: Vec3, width: f32, colour: Color, look: Look) {
         self.push_line(Line { a, b, width, lift: true }, colour, look);
     }
 
     /// [`Self::line`] through every point in turn.
-    pub fn line_strip(&mut self, points: impl IntoIterator<Item = Vec3>, colour: Color, look: Look) {
+    pub(crate) fn line_strip(&mut self, points: impl IntoIterator<Item = Vec3>, colour: Color, look: Look) {
         let mut last: Option<Vec3> = None;
         for point in points {
             if let Some(from) = last {
@@ -351,7 +347,7 @@ impl Marks {
     }
 
     /// A cone with its base on `base` and its point at `tip`.
-    pub fn cone(&mut self, base: Vec3, tip: Vec3, radius: f32, colour: Color, look: Look) {
+    pub(crate) fn cone(&mut self, base: Vec3, tip: Vec3, radius: f32, colour: Color, look: Look) {
         let along = tip - base;
         let length = along.length();
         if length < 1e-4 {
@@ -367,7 +363,7 @@ impl Marks {
 
     /// A shaft of `radius` with a head three times as wide, a fifth of the
     /// length long.
-    pub fn arrow(&mut self, from: Vec3, to: Vec3, radius: f32, colour: Color, look: Look) {
+    pub(crate) fn arrow(&mut self, from: Vec3, to: Vec3, radius: f32, colour: Color, look: Look) {
         let along = to - from;
         let length = along.length();
         if length < 1e-4 {
@@ -380,12 +376,12 @@ impl Marks {
     }
 
     /// A solid box: a unit cube posed by `pose`.
-    pub fn cuboid(&mut self, pose: Transform, colour: Color, look: Look) {
+    pub(crate) fn cuboid(&mut self, pose: Transform, colour: Color, look: Look) {
         self.push(Shape::Cube, pose, colour, look);
     }
 
     /// The twelve edges of a unit cube posed by `pose`, as lines.
-    pub fn box_edges(&mut self, pose: Transform, colour: Color, look: Look) {
+    pub(crate) fn box_edges(&mut self, pose: Transform, colour: Color, look: Look) {
         let corner = |i: usize| {
             pose.transform_point(Vec3::new(
                 if i & 1 == 0 { -0.5 } else { 0.5 },
@@ -399,7 +395,7 @@ impl Marks {
     }
 
     /// A circle of `segments` tubes about `normal`, of `thickness` radius.
-    pub fn ring(
+    pub(crate) fn ring(
         &mut self,
         centre: Vec3,
         normal: Vec3,
@@ -420,7 +416,7 @@ impl Marks {
     }
 
     /// A circle of [`Self::wide_line`]s about `normal`.
-    pub fn wide_ring(
+    pub(crate) fn wide_ring(
         &mut self,
         centre: Vec3,
         normal: Vec3,
@@ -440,7 +436,7 @@ impl Marks {
     }
 
     /// A flat circle of [`Self::line`]s about a vertical axis.
-    pub fn flat_ring(&mut self, centre: Vec3, radius: f32, colour: Color, look: Look) {
+    pub(crate) fn flat_ring(&mut self, centre: Vec3, radius: f32, colour: Color, look: Look) {
         self.wide_ring(centre, Vec3::Y, radius, 1.0, colour, look);
     }
 }
@@ -455,7 +451,7 @@ const CUBE_EDGES: [(usize, usize); 12] = [
 /// One mark material: a colour, and which pass.
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
 #[bind_group_data(MarkKey)]
-pub struct MarkMaterial {
+pub(crate) struct MarkMaterial {
     /// `Color::srgb`'s numbers and the opacity.
     #[uniform(0)]
     colour: Vec4,
@@ -464,7 +460,7 @@ pub struct MarkMaterial {
 
 /// What decides the pipeline: the pass, and whether the colour is opaque.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MarkKey {
+pub(crate) struct MarkKey {
     ghost: bool,
     translucent: bool,
 }
@@ -590,7 +586,7 @@ struct Pool {
 #[derive(Component)]
 struct Pooled;
 
-pub struct MarksPlugin;
+pub(crate) struct MarksPlugin;
 
 impl Plugin for MarksPlugin {
     fn build(&self, app: &mut App) {

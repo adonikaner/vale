@@ -96,7 +96,7 @@
 //! charcreate.rs  creating and deleting a character, and the character list
 //! ```
 
-pub mod accountdata;
+pub(crate) mod accountdata;
 pub mod action;
 pub mod areatrigger;
 pub mod bank;

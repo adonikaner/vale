@@ -62,7 +62,7 @@ use crate::bytes::{Reader, Writer};
 use crate::opcodes::Opcode;
 
 /// `TaxiMaskSize` — eight `u32`s, 256 bits, one per node, one-based.
-pub const TAXI_MASK_WORDS: usize = 8;
+pub(crate) const TAXI_MASK_WORDS: usize = 8;
 
 /// `SMSG_SHOWTAXINODES` — the whole flight map, as far as the wire is
 /// concerned.
@@ -150,7 +150,7 @@ impl TaxiReply {
 /// **The leading word is a constant 1** and not a count — `SendTaxiMenu` writes
 /// `uint32(1)` before the guid and nothing reads it back. It is skipped here
 /// rather than named, because naming it would invite somebody to loop on it.
-pub fn parse_show_taxi_nodes(body: &[u8]) -> Option<TaxiMenu> {
+pub(crate) fn parse_show_taxi_nodes(body: &[u8]) -> Option<TaxiMenu> {
     let mut r = Reader::new(body);
     if !r.has(4 + 8 + 4 + 4 * TAXI_MASK_WORDS) {
         return None;
@@ -174,7 +174,7 @@ pub fn parse_show_taxi_nodes(body: &[u8]) -> Option<TaxiMenu> {
 /// Sent both in answer to the query and unprompted, as the second half of a
 /// discovery: `SendLearnNewTaxiNode` writes `SMSG_NEW_TAXI_PATH` and then this,
 /// with the byte already 1.
-pub fn parse_taxi_node_status(body: &[u8]) -> Option<(u64, bool)> {
+pub(crate) fn parse_taxi_node_status(body: &[u8]) -> Option<(u64, bool)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 1) {
         return None;
@@ -183,7 +183,7 @@ pub fn parse_taxi_node_status(body: &[u8]) -> Option<(u64, bool)> {
 }
 
 /// `SMSG_ACTIVATETAXIREPLY` — one `u32`.
-pub fn parse_activate_taxi_reply(body: &[u8]) -> Option<TaxiReply> {
+pub(crate) fn parse_activate_taxi_reply(body: &[u8]) -> Option<TaxiReply> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -197,7 +197,7 @@ pub fn parse_activate_taxi_reply(body: &[u8]) -> Option<TaxiReply> {
 ///
 /// The source is the map's current node rather than anything the player picked:
 /// the client sends the map's own `curloc` beside the pressed button's node.
-pub fn activate_taxi_body(guid: u64, from: u32, to: u32) -> Vec<u8> {
+pub(crate) fn activate_taxi_body(guid: u64, from: u32, to: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(from);
@@ -212,7 +212,7 @@ pub fn activate_taxi_body(guid: u64, from: u32, to: u32) -> Vec<u8> {
 /// knowing and not worth acting on: it is what the reference sends
 /// (the accumulated cost) and a server that checked it would
 /// refuse a body that lied.
-pub fn activate_taxi_express_body(guid: u64, cost: u32, nodes: &[u32]) -> Vec<u8> {
+pub(crate) fn activate_taxi_express_body(guid: u64, cost: u32, nodes: &[u32]) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(cost);

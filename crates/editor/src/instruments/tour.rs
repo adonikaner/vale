@@ -25,10 +25,10 @@ use bevy::prelude::*;
 
 /// Where to go and how long to stay.
 #[derive(Resource, Debug, Clone)]
-pub struct Tour {
-    pub stops: Vec<(f32, f32)>,
+pub(crate) struct Tour {
+    pub(crate) stops: Vec<(f32, f32)>,
     /// Seconds at each stop.
-    pub dwell: f32,
+    pub(crate) dwell: f32,
     /// The next stop to jump to; `stops.len()` once the last has been made.
     next: usize,
     /// When the current dwell ends.
@@ -37,7 +37,7 @@ pub struct Tour {
 }
 
 impl Tour {
-    pub fn new(stops: Vec<(f32, f32)>, dwell: Option<f32>) -> Tour {
+    pub(crate) fn new(stops: Vec<(f32, f32)>, dwell: Option<f32>) -> Tour {
         Tour {
             stops,
             dwell: dwell.unwrap_or(12.0),
@@ -49,7 +49,7 @@ impl Tour {
 
     /// `"x,y;x,y;…"`, world axes. Whitespace is ignored; a stop that does not
     /// parse is dropped rather than failing the run.
-    pub fn parse(text: &str) -> Vec<(f32, f32)> {
+    pub(crate) fn parse(text: &str) -> Vec<(f32, f32)> {
         text.split(';')
             .filter_map(|stop| {
                 let (x, y) = stop.split_once(',')?;
@@ -59,7 +59,7 @@ impl Tour {
     }
 }
 
-pub struct TourPlugin;
+pub(crate) struct TourPlugin;
 
 impl Plugin for TourPlugin {
     fn build(&self, app: &mut App) {

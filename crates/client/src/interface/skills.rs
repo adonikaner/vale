@@ -31,7 +31,7 @@ use bevy::prelude::*;
 use super::api::{UnitId, Units};
 use super::events::SkillLinesChanged;
 
-pub struct SkillsPlugin;
+pub(crate) struct SkillsPlugin;
 
 impl Plugin for SkillsPlugin {
     fn build(&self, app: &mut App) {

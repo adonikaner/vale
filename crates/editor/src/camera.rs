@@ -67,24 +67,24 @@ use vale_client::render::focus::WorldFocus;
 
 /// Where the editor is looking, and how fast it moves.
 #[derive(Resource, Debug, Clone)]
-pub struct EditorCamera {
+pub(crate) struct EditorCamera {
     /// The point being orbited, in the world's own axes.
-    pub target: Vec3,
+    pub(crate) target: Vec3,
     /// Radians about +Z. Zero looks from the north, matching the rig's own.
-    pub yaw: f32,
+    pub(crate) yaw: f32,
     /// Radians above the horizon.
-    pub pitch: f32,
+    pub(crate) pitch: f32,
     /// Yards the eye is asked to sit from the focus, before collision.
     ///
     /// The rig's `distance` and not its `reach`: `reach` is what
     /// `world::camera::collide` leaves after shortening this by whatever is in
     /// the way, and it is an output.
-    pub distance: f32,
+    pub(crate) distance: f32,
     /// Yards a second at a walk. Held shift is [`SPRINT`] times this.
-    pub speed: f32,
+    pub(crate) speed: f32,
     /// Whether the editor is driving at all. False during a playtest, in both
     /// of its stages — see [`Playtest::editing`].
-    pub active: bool,
+    pub(crate) active: bool,
     /// Whether the focus should be put on the ground as soon as the ground under
     /// it is known.
     ///
@@ -94,10 +94,10 @@ pub struct EditorCamera {
     /// `crate::camera::drop_to_the_ground` the moment it can answer, so flying
     /// below the ground afterwards is allowed: a camera pinned to the terrain
     /// could not get under a bridge to look at its underside.
-    pub wants_the_ground: bool,
+    pub(crate) wants_the_ground: bool,
     /// Which way W and S move in the perspective view. Switched by the view
     /// bar's FLY button.
-    pub movement: Movement,
+    pub(crate) movement: Movement,
 }
 
 /// Which way W and S move the camera in the perspective view.
@@ -105,7 +105,7 @@ pub struct EditorCamera {
 /// In both modes A and D move sideways along the ground, and Q and E move
 /// straight down and up. The map view has its own movement and reads neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Movement {
+pub(crate) enum Movement {
     /// W and S move along the ground, in the direction the view faces. The
     /// height changes only with Q and E.
     #[default]
@@ -121,7 +121,7 @@ pub enum Movement {
 /// The eye sits at `yaw` and `pitch` from the focus (see
 /// `world::camera::CameraRig::at`), so the line of sight is the opposite of
 /// that offset. [`Movement::Level`] drops its vertical part.
-pub fn forward(yaw: f32, pitch: f32, movement: Movement) -> Vec3 {
+pub(crate) fn forward(yaw: f32, pitch: f32, movement: Movement) -> Vec3 {
     let (sin, cos) = yaw.sin_cos();
     match movement {
         Movement::Level => Vec3::new(-cos, -sin, 0.0),
@@ -155,7 +155,7 @@ impl EditorCamera {
     /// It keeps the yaw, the pitch and the distance, so a jump changes where
     /// the camera is looking and not how. A tool that names a height as well
     /// sends a [`FlyTo`] instead.
-    pub fn go_to(&mut self, at: Vec2) {
+    pub(crate) fn go_to(&mut self, at: Vec2) {
         self.target.x = at.x;
         self.target.y = at.y;
         self.wants_the_ground = true;
@@ -172,18 +172,18 @@ impl EditorCamera {
 /// dropping the focus to the ground would put the camera somewhere the row
 /// does not name. The yaw and the pitch are kept.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
-pub struct FlyTo {
+pub(crate) struct FlyTo {
     /// The new focus, in the world's own axes.
-    pub at: Vec3,
+    pub(crate) at: Vec3,
     /// Yards the eye is to stand from the focus, when the request frames
     /// something wider than a point (a whole flight path). `None` keeps the
     /// current distance.
-    pub distance: Option<f32>,
+    pub(crate) distance: Option<f32>,
 }
 
 impl FlyTo {
     /// Look at a point from the current distance.
-    pub fn at(at: Vec3) -> FlyTo {
+    pub(crate) fn at(at: Vec3) -> FlyTo {
         FlyTo { at, distance: None }
     }
 }
@@ -206,17 +206,17 @@ impl FlyTo {
 /// ground would remove every small doodad from the picture; an orthographic
 /// view does not need the eye to be far away to see a wide area.
 #[derive(Resource, Debug)]
-pub struct TopDown {
-    pub on: bool,
+pub(crate) struct TopDown {
+    pub(crate) on: bool,
     /// Yards from the top of the picture to the bottom.
-    pub span: f32,
+    pub(crate) span: f32,
     /// What the view replaced while it is on, restored when it is turned off.
     held: Option<Held>,
 }
 
 impl TopDown {
     /// The map view switched on, for `--map-view`.
-    pub fn shown() -> TopDown {
+    pub(crate) fn shown() -> TopDown {
         TopDown {
             on: true,
             ..TopDown::default()
@@ -255,7 +255,7 @@ const BELOW: f32 = 1500.0;
 /// The depth of the slab the map view draws. The pick follows its ray this far
 /// in an orthographic view, because the ray starts at the top of the slab; see
 /// `pick::range`.
-pub const MAP_DEPTH: f32 = ABOVE + BELOW;
+pub(crate) const MAP_DEPTH: f32 = ABOVE + BELOW;
 
 /// The narrowest and widest [`TopDown::span`]: from about five chunks to the
 /// whole open block.
@@ -269,7 +269,7 @@ const SPAN: std::ops::RangeInclusive<f32> = 20.0..=crate::OPEN_BLOCK;
 /// started with the map view on turns it off here first, so the settings
 /// stored for editing are the ones the person had before the map view, and
 /// the playtest starts in perspective.
-pub fn look_down(
+pub(crate) fn look_down(
     state: Res<Playtest>,
     mut top: ResMut<TopDown>,
     mut world: ResMut<vale_client::render::tuning::WorldTuning>,
@@ -328,7 +328,7 @@ pub fn look_down(
 /// grey the picture by distance from the focus. Weather is drawn in a volume
 /// around the eye. The view bar's echo uses this too, so that `--map-view`
 /// does not also print these five as `--without`.
-pub fn switch_off_for_map_view(world: &mut vale_client::render::tuning::WorldTuning) {
+pub(crate) fn switch_off_for_map_view(world: &mut vale_client::render::tuning::WorldTuning) {
     world.fog = false;
     world.sky_dome = false;
     world.stars = false;
@@ -347,7 +347,7 @@ fn orthographic(span: f32) -> Projection {
 }
 
 /// How much faster a held shift is.
-pub const SPRINT: f32 = 6.0;
+pub(crate) const SPRINT: f32 = 6.0;
 
 /// Radians of yaw or pitch per physical pixel of drag.
 const LOOK_RATE: f32 = 0.005;
@@ -364,7 +364,7 @@ const PITCH_LIMIT: f32 = 1.5;
 /// see the block being edited.
 const DISTANCE: std::ops::RangeInclusive<f32> = 5.0..=(crate::OPEN_BLOCK / 2.0);
 
-pub struct CameraPlugin;
+pub(crate) struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
@@ -410,7 +410,7 @@ fn fly_to(mut asked: MessageReader<FlyTo>, mut camera: ResMut<EditorCamera>) {
 /// `pub` so [`crate::playtest`] can order itself in front of it. The state this
 /// reads is written in the same schedule.
 #[allow(clippy::too_many_arguments)]
-pub fn fly(
+pub(crate) fn fly(
     mut camera: ResMut<EditorCamera>,
     state: Res<Playtest>,
     keys: Res<ButtonInput<KeyCode>>,

@@ -68,7 +68,7 @@ use bevy::prelude::*;
 /// its contents on every keystroke, so it cannot hold "-94" on the way to
 /// "-9450". The parse happens when the jump is requested.
 #[derive(Resource, Default)]
-pub struct GoTo {
+pub(crate) struct GoTo {
     pub(super) x: String,
     pub(super) y: String,
     pub(super) tile_x: String,
@@ -82,29 +82,29 @@ pub struct GoTo {
 /// They are bundled because the right-hand end of this bar is everything that
 /// starts and stops a playtest, and because bundling keeps [`draw`] under the
 /// argument count. `ui::Playing`, one layer out, exists for the same reason.
-pub struct Session<'a> {
-    pub state: &'a mut Playtest,
-    pub client: &'a mut vale_client::world::session::Session,
-    pub login: &'a Login,
-    pub auto: &'a mut AutoLogin,
-    pub open: &'a mut crate::playtest::ShellOpen,
+pub(crate) struct Session<'a> {
+    pub(crate) state: &'a mut Playtest,
+    pub(crate) client: &'a mut vale_client::world::session::Session,
+    pub(crate) login: &'a Login,
+    pub(crate) auto: &'a mut AutoLogin,
+    pub(crate) open: &'a mut crate::playtest::ShellOpen,
     /// The queue a save's database writes go on. See
     /// [`crate::server::queue`].
-    pub queue: &'a mut crate::server::queue::ServerQueue,
+    pub(crate) queue: &'a mut crate::server::queue::ServerQueue,
     /// Where this machine's server is. The Save button's apply needs it and
     /// the bar's Server… button opens it.
-    pub server: &'a mut crate::server::settings::ServerSettings,
+    pub(crate) server: &'a mut crate::server::settings::ServerSettings,
     /// Whether the session Playtest starts keeps the query answers the server
     /// gives it. See [`vale_client::world::session::QueryCaches`], and
     /// [`crate::server::settings::ServerSettings::disable_caching`], the
     /// switch it is written from.
-    pub caches: &'a mut vale_client::world::session::QueryCaches,
+    pub(crate) caches: &'a mut vale_client::world::session::QueryCaches,
     /// Which step of a tile regeneration is running. Publish starts one; see
     /// [`crate::server::datadir::Step`].
-    pub step: &'a crate::server::datadir::Step,
+    pub(crate) step: &'a crate::server::datadir::Step,
 }
 
-pub fn draw(
+pub(crate) fn draw(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     camera: &mut EditorCamera,
@@ -180,11 +180,11 @@ pub fn draw(
 
 /// What the workspace control changes: the tool in use, and the rail's memory
 /// of the last world tool. Passed into [`draw`] as one parameter.
-pub struct Subjects<'a> {
-    pub tool: &'a mut crate::tools::Tool,
-    pub rail: &'a mut super::rail::Rail,
+pub(crate) struct Subjects<'a> {
+    pub(crate) tool: &'a mut crate::tools::Tool,
+    pub(crate) rail: &'a mut super::rail::Rail,
     /// The workspaces in pop-out windows. See `crate::popout`.
-    pub popped: Vec<crate::tools::Tool>,
+    pub(crate) popped: Vec<crate::tools::Tool>,
 }
 
 /// The right-hand end of the bar while a playtest is running: the playtest's
@@ -464,20 +464,20 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 /// Beside [`GoTo`], for the same reason: a text field's contents are the
 /// panel's state, and the session does not hold them.
 #[derive(Resource, Default)]
-pub struct Projects {
-    pub new_name: String,
+pub(crate) struct Projects {
+    pub(crate) new_name: String,
     /// Whether `--projects` has been acted on.
-    pub shown_once: bool,
+    pub(crate) shown_once: bool,
     /// Whether `--guides-menu` has been acted on.
-    pub guides_shown_once: bool,
+    pub(crate) guides_shown_once: bool,
     /// Every project under `Edit\`, with what each holds. Read when the
     /// dialog opens and after it makes one, not every frame, because a summary
     /// walks the folder.
-    pub known: Vec<(String, vale_edit::project::Summary)>,
-    pub listed: bool,
+    pub(crate) known: Vec<(String, vale_edit::project::Summary)>,
+    pub(crate) listed: bool,
     /// The open project's manifest, built with [`Self::known`] and dropped
     /// with it. See `super::manifest`.
-    pub manifest: Option<super::manifest::Report>,
+    pub(crate) manifest: Option<super::manifest::Report>,
     /// The project a delete or clear is awaiting confirmation for, and `None`
     /// otherwise.
     ///
@@ -486,27 +486,27 @@ pub struct Projects {
     /// The dialog's own note gives the reason a switch is not confirmed: a
     /// confirmation nobody reads is how work gets lost, and a switch saves
     /// first. A delete does not save first, so that reason does not apply.
-    pub confirming: Option<Doomed>,
+    pub(crate) confirming: Option<Doomed>,
 }
 
 /// A project one of the two destroying buttons has been pressed on, and which
 /// button it was.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Doomed {
-    pub name: String,
+pub(crate) struct Doomed {
+    pub(crate) name: String,
     /// `true` for clear (delete the files and keep the folder), which is what
     /// the open project and the default project get in place of deletion.
-    pub clear: bool,
+    pub(crate) clear: bool,
     /// What the project has applied to the server, one line each, read once
     /// when the button was pressed. See `crate::server::held`. Empty for a
     /// project that has applied nothing.
-    pub held: Vec<String>,
+    pub(crate) held: Vec<String>,
     /// What has been typed into the confirmation's name field.
-    pub typed: String,
+    pub(crate) typed: String,
 }
 
 impl Doomed {
-    pub fn new(name: String, clear: bool, held: &crate::server::held::Held) -> Doomed {
+    pub(crate) fn new(name: String, clear: bool, held: &crate::server::held::Held) -> Doomed {
         Doomed {
             name,
             clear,
@@ -520,14 +520,14 @@ impl Doomed {
     /// been typed. The record of what to put back is in the folder being
     /// deleted or cleared, so proceeding leaves the applied rows in the
     /// database with no record of how to put them back.
-    pub fn may_proceed(&self) -> bool {
+    pub(crate) fn may_proceed(&self) -> bool {
         self.held.is_empty() || self.typed.trim() == self.name
     }
 }
 
 impl Projects {
     /// Read the folders again.
-    pub fn refresh(&mut self, install: &std::path::Path) {
+    pub(crate) fn refresh(&mut self, install: &std::path::Path) {
         self.known = vale_edit::project::projects(install)
             .into_iter()
             .map(|name| {

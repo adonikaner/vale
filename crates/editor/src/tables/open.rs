@@ -18,7 +18,7 @@ use super::fields::set_field;
 /// 16 MB, and parsing it on the frame the Spells tool is chosen causes a
 /// visible stall, so each table is requested once and the panel draws whatever
 /// is open.
-pub fn open_tables(
+pub(crate) fn open_tables(
     tool: Res<crate::tools::Tool>,
     // A table workspace in a pop-out window has the browser unless the main
     // window's tool has a table. See `crate::popout`.

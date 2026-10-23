@@ -95,7 +95,7 @@ use crate::world::templates::TemplatesArrived;
 /// to 254 headers of about 60 bytes each, and every other variant here is a
 /// word.
 #[derive(Message, Debug, Clone)]
-pub enum MailAnswer {
+pub(crate) enum MailAnswer {
     List(Box<Vec<MailHeader>>),
     Result(MailResponse),
     Received,
@@ -105,7 +105,7 @@ pub enum MailAnswer {
 
 /// The arm [`crate::world::incoming`] calls, kept here so the five packet kinds
 /// and the five window writes are one file apart rather than two.
-pub fn answer_of(
+pub(crate) fn answer_of(
     event: &vale_protocol::state::events::PlayerEvent,
 ) -> Option<MailAnswer> {
     use vale_protocol::state::events::PlayerEvent as E;
@@ -216,7 +216,7 @@ impl Mailbox {
 
     /// The inbox, in the order the server listed it. The interface's row
     /// numbers are positions in this, one-based.
-    pub fn inbox(&self) -> &[MailHeader] {
+    pub(crate) fn inbox(&self) -> &[MailHeader] {
         &self.inbox
     }
 
@@ -237,7 +237,7 @@ impl Mailbox {
 
     /// A sender's name, for the one kind of letter this client resolves; see
     /// the module note on the other three.
-    pub fn sender_name(&self, letter: &MailHeader) -> Option<&str> {
+    pub(crate) fn sender_name(&self, letter: &MailHeader) -> Option<&str> {
         if !letter.kind.from_a_player() {
             return None;
         }
@@ -252,12 +252,12 @@ impl Mailbox {
 
     /// `HasNewMail()`: true at exactly zero, the client's own
     /// `abs(x) <= epsilon` test, not "less than or equal".
-    pub fn has_new_mail(&self) -> bool {
+    pub(crate) fn has_new_mail(&self) -> bool {
         self.pending == 0.0
     }
 
     /// The draft's currently selected `Stationery.dbc` id, 0 for none.
-    pub fn stationery(&self) -> u32 {
+    pub(crate) fn stationery(&self) -> u32 {
         self.draft.stationery.load(Ordering::Relaxed)
     }
 
@@ -267,7 +267,7 @@ impl Mailbox {
         self.draft.money.load(Ordering::Relaxed)
     }
 
-    pub fn cod(&self) -> u32 {
+    pub(crate) fn cod(&self) -> u32 {
         self.draft.cod.load(Ordering::Relaxed)
     }
 
@@ -283,7 +283,7 @@ impl Mailbox {
     /// `purse` is the character's own copper. `false` is the refusal the
     /// reference reports with message 0x25 and returns nil for, which stops
     /// `StaticPopupDialogs["SEND_MONEY"]` from sending.
-    pub fn set_money(&self, amount: u32, purse: u32) -> bool {
+    pub(crate) fn set_money(&self, amount: u32, purse: u32) -> bool {
         if amount > purse {
             return false;
         }
@@ -293,7 +293,7 @@ impl Mailbox {
 
     /// `SetSendMailCOD(amount)`, which stores only when an item is attached
     /// and does nothing otherwise.
-    pub fn set_cod(&self, amount: u32) -> bool {
+    pub(crate) fn set_cod(&self, amount: u32) -> bool {
         if self.draft.item.is_none() {
             return false;
         }
@@ -305,18 +305,14 @@ impl Mailbox {
     /// than by its position in the offered list. The interface passes a
     /// position and the panel converts it, because the offered list changes
     /// when the bags do.
-    pub fn select_stationery(&self, id: u32) {
+    pub(crate) fn select_stationery(&self, id: u32) {
         self.draft.stationery.store(id, Ordering::Relaxed);
-    }
-
-    pub fn select_package(&self, id: u32) {
-        self.draft.package.store(id, Ordering::Relaxed);
     }
 
     /// Record that a letter's text was asked for. This is the one read in
     /// this subject with a side effect, as in the reference. See
     /// [`Mailbox::wanted_body`].
-    pub fn want_body(&self, mail_id: u32) {
+    pub(crate) fn want_body(&self, mail_id: u32) {
         self.wanted_body.store(mail_id, Ordering::Relaxed);
     }
 
@@ -408,7 +404,7 @@ pub enum MailPress {
     Delete(usize),
 }
 
-pub struct MailPlugin;
+pub(crate) struct MailPlugin;
 
 impl Plugin for MailPlugin {
     fn build(&self, app: &mut App) {
@@ -887,9 +883,7 @@ fn learn(
     let mut unnamed = Vec::new();
     let mut unknown = Vec::new();
     {
-        let Ok(world) = active.live.world().lock() else {
-            return;
-        };
+        let world = active.live.read();
         for guid in guids {
             match world.players.get(&guid) {
                 Some(info) => {
@@ -958,7 +952,7 @@ impl super::gossip::NpcWindow for Mailbox {
 /// 30 copper, plus the selected stationery's own item price unless the
 /// character is already carrying one. A free function so the rule can be
 /// tested with no session; see the test below.
-pub fn postage(item_price: Option<u32>) -> u32 {
+pub(crate) fn postage(item_price: Option<u32>) -> u32 {
     POSTAGE + item_price.unwrap_or(0)
 }
 

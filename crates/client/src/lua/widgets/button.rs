@@ -54,7 +54,8 @@ use super::super::api::one_or_nil;
 /// `SetChecked` 80, `GetText` 76, `GetChecked` 46, `RegisterForClicks` 41,
 /// `SetButtonState` 26, `SetNormalTexture` 22, `UnlockHighlight` 18,
 /// `LockHighlight` 17, `GetButtonState` 17, `Click` 5, `IsEnabled` 3.
-pub const METHODS: [&str; 20] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 20] = [
     "Click",
     "Disable",
     "Enable",

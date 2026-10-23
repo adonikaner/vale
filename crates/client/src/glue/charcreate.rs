@@ -48,9 +48,9 @@ use crate::world::session::Session;
 /// The frame name `SetGlueScreen("charcreate")` shows, and the one this module
 /// tests the current screen against — `GlueScreenInfo["charcreate"]` in
 /// `GlueParent.lua`.
-pub const CREATE_SCREEN: &str = "charcreate";
+pub(crate) const CREATE_SCREEN: &str = "charcreate";
 
-pub struct CharCreatePlugin;
+pub(crate) struct CharCreatePlugin;
 
 impl Plugin for CharCreatePlugin {
     fn build(&self, app: &mut App) {

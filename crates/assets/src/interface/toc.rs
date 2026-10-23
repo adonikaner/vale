@@ -62,11 +62,11 @@ pub const GLUEXML_TOC: &str = r"Interface\GlueXML\GlueXML.toc";
 /// This client loads it eagerly, beside `FrameXML`, which differs from 1.12:
 /// the 1.12.1 client loads it on demand to save memory, and nothing else about
 /// it differs. See `crate::game::trainer` in the client crate.
-pub const TRAINER_TOC: &str =
+pub(crate) const TRAINER_TOC: &str =
     r"Interface\AddOns\Blizzard_TrainerUI\Blizzard_TrainerUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const TRAINER_ADDON: &str = "Blizzard_TrainerUI";
+pub(crate) const TRAINER_ADDON: &str = "Blizzard_TrainerUI";
 
 /// The second load-on-demand addon: the scrolling combat text, which 1.12 also
 /// ships as an addon rather than in `FrameXML`.
@@ -82,11 +82,11 @@ pub const TRAINER_ADDON: &str = "Blizzard_TrainerUI";
 /// It is a different feature from the numbers over a unit's head. Those are
 /// world text strings drawn outside Lua, in `vale_assets::look::worldtext`;
 /// this is the strip beside the player frame. The two share no code here.
-pub const COMBAT_TEXT_TOC: &str =
+pub(crate) const COMBAT_TEXT_TOC: &str =
     r"Interface\AddOns\Blizzard_CombatText\Blizzard_CombatText.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const COMBAT_TEXT_ADDON: &str = "Blizzard_CombatText";
+pub(crate) const COMBAT_TEXT_ADDON: &str = "Blizzard_CombatText";
 
 /// The third load-on-demand addon: the talent tree, which 1.12 also ships as an
 /// addon.
@@ -103,10 +103,10 @@ pub const COMBAT_TEXT_ADDON: &str = "Blizzard_CombatText";
 /// before `TalentFrame_Toggle` is called. That box was the reported symptom
 /// that led to this entry. See `crate::game::character::talents` in the client
 /// crate for the six C functions behind it.
-pub const TALENT_TOC: &str = r"Interface\AddOns\Blizzard_TalentUI\Blizzard_TalentUI.toc";
+pub(crate) const TALENT_TOC: &str = r"Interface\AddOns\Blizzard_TalentUI\Blizzard_TalentUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const TALENT_ADDON: &str = "Blizzard_TalentUI";
+pub(crate) const TALENT_ADDON: &str = "Blizzard_TalentUI";
 
 /// The fourth load-on-demand addon: the key bindings panel, the last of 1.12's
 /// addons that covers a whole subject rather than a convenience.
@@ -126,11 +126,11 @@ pub const TALENT_ADDON: &str = "Blizzard_TalentUI";
 /// The nine C functions behind it are
 /// `vale_client::lua::panels::keybindings`, and the list they walk is
 /// [`crate::interface::bindings::Bindings::rows`].
-pub const BINDING_TOC: &str =
+pub(crate) const BINDING_TOC: &str =
     r"Interface\AddOns\Blizzard_BindingUI\Blizzard_BindingUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const BINDING_ADDON: &str = "Blizzard_BindingUI";
+pub(crate) const BINDING_ADDON: &str = "Blizzard_BindingUI";
 
 /// The fifth load-on-demand addon: the raid grid, the largest of them.
 ///
@@ -150,10 +150,10 @@ pub const BINDING_ADDON: &str = "Blizzard_BindingUI";
 /// The seventeen C functions behind it are
 /// `vale_client::lua::panels::raid`, and the roster they read is
 /// `vale_client::game::session::raid`.
-pub const RAID_TOC: &str = r"Interface\AddOns\Blizzard_RaidUI\Blizzard_RaidUI.toc";
+pub(crate) const RAID_TOC: &str = r"Interface\AddOns\Blizzard_RaidUI\Blizzard_RaidUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const RAID_ADDON: &str = "Blizzard_RaidUI";
+pub(crate) const RAID_ADDON: &str = "Blizzard_RaidUI";
 
 /// The sixth load-on-demand addon: the trade-skill window, which 1.12 uses for
 /// every profession except Enchanting.
@@ -165,11 +165,11 @@ pub const RAID_ADDON: &str = "Blizzard_RaidUI";
 /// when the player's own profession cast is released; see
 /// `vale_client::game::character::tradeskill`. The C functions behind it
 /// are `vale_client::lua::panels::tradeskill`.
-pub const TRADESKILL_TOC: &str =
+pub(crate) const TRADESKILL_TOC: &str =
     r"Interface\AddOns\Blizzard_TradeSkillUI\Blizzard_TradeSkillUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const TRADESKILL_ADDON: &str = "Blizzard_TradeSkillUI";
+pub(crate) const TRADESKILL_ADDON: &str = "Blizzard_TradeSkillUI";
 
 /// The seventh load-on-demand addon: the craft window, which in 5875 serves
 /// Enchanting and Beast Training.
@@ -179,10 +179,10 @@ pub const TRADESKILL_ADDON: &str = "Blizzard_TradeSkillUI";
 /// and with a training-point text that only a pet trainer fills.
 /// `UIParent.lua` loads it from `CraftFrame_LoadUI` on `CRAFT_SHOW`. The C
 /// functions behind it are `vale_client::lua::panels::craft`.
-pub const CRAFT_TOC: &str = r"Interface\AddOns\Blizzard_CraftUI\Blizzard_CraftUI.toc";
+pub(crate) const CRAFT_TOC: &str = r"Interface\AddOns\Blizzard_CraftUI\Blizzard_CraftUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const CRAFT_ADDON: &str = "Blizzard_CraftUI";
+pub(crate) const CRAFT_ADDON: &str = "Blizzard_CraftUI";
 
 /// The eighth load-on-demand addon: the inspect window.
 ///
@@ -191,17 +191,17 @@ pub const CRAFT_ADDON: &str = "Blizzard_CraftUI";
 /// `UIParent.lua` loads it from `InspectUnit`, which the unit menu's Inspect
 /// entry calls. The C functions behind it are
 /// `vale_client::lua::panels::inspect`.
-pub const INSPECT_TOC: &str = r"Interface\AddOns\Blizzard_InspectUI\Blizzard_InspectUI.toc";
+pub(crate) const INSPECT_TOC: &str = r"Interface\AddOns\Blizzard_InspectUI\Blizzard_InspectUI.toc";
 
 /// The addon name `LoadAddOn` is called with for the entry above.
-pub const INSPECT_ADDON: &str = "Blizzard_InspectUI";
+pub(crate) const INSPECT_ADDON: &str = "Blizzard_InspectUI";
 
 /// Every load-on-demand addon this client loads eagerly, with the name
 /// `LoadAddOn` is asked about for each. This is the only list of them: adding
 /// an addon is one entry here, where it used to be four edits in three crates.
 /// The talent panel, the key bindings panel and the raid grid were each added
 /// with one entry here and no change to `host.rs` or `stubs.rs`.
-pub const ADDONS: [(&str, &str); 8] = [
+pub(crate) const ADDONS: [(&str, &str); 8] = [
     (TRAINER_ADDON, TRAINER_TOC),
     (COMBAT_TEXT_ADDON, COMBAT_TEXT_TOC),
     (TALENT_ADDON, TALENT_TOC),
@@ -211,9 +211,6 @@ pub const ADDONS: [(&str, &str); 8] = [
     (CRAFT_ADDON, CRAFT_TOC),
     (INSPECT_ADDON, INSPECT_TOC),
 ];
-
-/// The directory [`GLUEXML_TOC`]'s entries are relative to.
-pub const GLUEXML_DIR: &str = r"Interface\GlueXML";
 
 /// A parsed `.toc`: its directives and its files, both in file order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -263,7 +260,7 @@ impl Toc {
     }
 
     /// A directive's value, or `None`.
-    pub fn directive(&self, key: &str) -> Option<&str> {
+    pub(crate) fn directive(&self, key: &str) -> Option<&str> {
         self.directives
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(key))

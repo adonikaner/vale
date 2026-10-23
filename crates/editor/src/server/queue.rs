@@ -45,10 +45,10 @@ use super::reload::Reloads;
 use crate::session::EditSession;
 
 /// What a finished write does on the main thread.
-pub type Finish = Box<dyn FnOnce(&mut EditSession, &mut Reloads) + Send>;
+pub(crate) type Finish = Box<dyn FnOnce(&mut EditSession, &mut Reloads) + Send>;
 
 /// The write itself, which runs on a worker and answers its [`Finish`].
-pub type Work = Box<dyn FnOnce() -> Finish + Send>;
+pub(crate) type Work = Box<dyn FnOnce() -> Finish + Send>;
 
 /// How many reads are running. Relaxed, for [`crate::jobs`]' reason: a
 /// person reads the number and nothing branches on its exact value.
@@ -76,7 +76,7 @@ impl Drop for Reading {
 /// `AsyncComputeTaskPool::spawn` with a counter around it, which is what every
 /// tool's read was already doing: nothing here changes where a read runs or
 /// how its answer is collected.
-pub fn read<T: Send + 'static>(work: impl Future<Output = T> + Send + 'static) -> Task<T> {
+pub(crate) fn read<T: Send + 'static>(work: impl Future<Output = T> + Send + 'static) -> Task<T> {
     let counted = Reading::start();
     AsyncComputeTaskPool::get().spawn(async move {
         let _counted = counted;
@@ -85,13 +85,13 @@ pub fn read<T: Send + 'static>(work: impl Future<Output = T> + Send + 'static) -
 }
 
 /// How many reads are running now.
-pub fn reads() -> usize {
+pub(crate) fn reads() -> usize {
     READS.load(Ordering::Relaxed)
 }
 
 /// Run a write here and now, for the scripted flags: nobody is looking at
 /// the window, and the flag's own log line wants the answer on this frame.
-pub fn now(work: Work, session: &mut EditSession, reloads: &mut Reloads) {
+pub(crate) fn now(work: Work, session: &mut EditSession, reloads: &mut Reloads) {
     (work())(session, reloads);
 }
 
@@ -109,7 +109,7 @@ struct Waiting {
 
 /// The writes, in the order they were asked for, and the one running.
 #[derive(Resource, Default)]
-pub struct ServerQueue {
+pub(crate) struct ServerQueue {
     waiting: VecDeque<Waiting>,
     running: Option<(String, bool, Task<Finish>)>,
     /// Whether the panels are open over a playtest now. Each write is stamped
@@ -125,7 +125,7 @@ pub struct ServerQueue {
 
 impl ServerQueue {
     /// Queue a write. `label` is what the toast's hover says: *applying items*.
-    pub fn push(&mut self, label: impl Into<String>, work: Work) {
+    pub(crate) fn push(&mut self, label: impl Into<String>, work: Work) {
         self.waiting.push_back(Waiting {
             label: label.into(),
             work: std::sync::Mutex::new(work),
@@ -134,7 +134,7 @@ impl ServerQueue {
     }
 
     /// Whether a write is running or waiting.
-    pub fn busy(&self) -> bool {
+    pub(crate) fn busy(&self) -> bool {
         self.running.is_some() || !self.waiting.is_empty()
     }
 
@@ -143,7 +143,7 @@ impl ServerQueue {
     /// catches is not usually a refused connection: it is a conf pointing at
     /// the *wrong* database, which connects perfectly and has no
     /// `spell_template` in it. A second press while one is running is ignored.
-    pub fn test(&mut self, at: vale_mangos::conn::Where) {
+    pub(crate) fn test(&mut self, at: vale_mangos::conn::Where) {
         if self.testing.is_some() {
             return;
         }
@@ -158,12 +158,12 @@ impl ServerQueue {
     }
 
     /// Whether the Test is running.
-    pub fn testing(&self) -> bool {
+    pub(crate) fn testing(&self) -> bool {
         self.testing.is_some()
     }
 
     /// The Test's answer, once, on the first call after it arrives.
-    pub fn tested(&mut self) -> Option<Result<String, String>> {
+    pub(crate) fn tested(&mut self) -> Option<Result<String, String>> {
         let task = self.testing.as_mut()?;
         let done = block_on(future::poll_once(task))?;
         self.testing = None;
@@ -172,7 +172,7 @@ impl ServerQueue {
 
     /// What is running and what is waiting, in order, for the toast's
     /// hover.
-    pub fn labels(&self) -> Vec<&str> {
+    pub(crate) fn labels(&self) -> Vec<&str> {
         self.running
             .iter()
             .map(|(label, _, _)| label.as_str())
@@ -219,7 +219,7 @@ fn run(
     }
 }
 
-pub struct QueuePlugin;
+pub(crate) struct QueuePlugin;
 
 impl Plugin for QueuePlugin {
     fn build(&self, app: &mut App) {

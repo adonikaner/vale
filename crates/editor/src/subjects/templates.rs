@@ -28,7 +28,7 @@ use vale_mangos::schema::RowValue;
 
 /// Reads one subject's list while its workspace is open, and applies the
 /// flag that opens a row in it.
-pub struct TemplatesPlugin<S>(PhantomData<fn() -> S>);
+pub(crate) struct TemplatesPlugin<S>(PhantomData<fn() -> S>);
 
 impl<S> Default for TemplatesPlugin<S> {
     fn default() -> TemplatesPlugin<S> {

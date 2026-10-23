@@ -50,7 +50,7 @@
 use crate::bytes::{Reader, Writer};
 
 /// `SMSG_GAMEOBJECT_PAGETEXT` (479) — the guid of the thing that has pages.
-pub fn parse_gameobject_pagetext(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_gameobject_pagetext(body: &[u8]) -> Option<u64> {
     if body.len() < 8 {
         return None;
     }
@@ -83,7 +83,7 @@ pub fn parse_page_text(body: &[u8]) -> Option<Page> {
 
 /// `CMSG_PAGE_TEXT_QUERY` (90) — `u32 pageId`, then the object's guid when
 /// there is one. See the module comment on why the guid is optional.
-pub fn page_text_query_body(page_id: u32, guid: Option<u64>) -> Vec<u8> {
+pub(crate) fn page_text_query_body(page_id: u32, guid: Option<u64>) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(page_id);
     if let Some(guid) = guid {

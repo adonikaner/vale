@@ -12,7 +12,7 @@ use super::{Stage, StageCamera};
 /// is: an image stretched from 300 points to 900 is a preview drawn at a third
 /// of the resolution it is shown at. A rebuild costs one texture allocation and
 /// happens only when the size actually changes.
-pub fn keep_the_target(
+pub(crate) fn keep_the_target(
     mut stage: ResMut<Stage>,
     mut images: ResMut<Assets<Image>>,
     mut contexts: bevy_egui::EguiContexts,
@@ -61,7 +61,7 @@ pub fn keep_the_target(
 /// particle, LOD and billboard passes all ask for the world camera and use it
 /// as the one point of view there is. See the module comment. Restored to where
 /// the person left it when the preview closes.
-pub fn park_the_world_camera(
+pub(crate) fn park_the_world_camera(
     stage: Res<Stage>,
     time: Res<Time>,
     playing: Res<crate::playtest::Playtest>,
@@ -127,7 +127,7 @@ pub fn park_the_world_camera(
 /// stage's orbit. The field of view is copied too, so the picture frames what
 /// the client would, and so the hover pick's arithmetic in [`aim_the_pick`]
 /// is a ratio of aspects and nothing else.
-pub fn follow_the_pane(
+pub(crate) fn follow_the_pane(
     mut commands: Commands,
     stage: Res<Stage>,
     playing: Res<crate::playtest::Playtest>,
@@ -246,7 +246,7 @@ fn own_view(stage: &Stage, spin: f32) -> Transform {
 /// planted-pointer seam, and comes out again the moment the pointer leaves the
 /// pane — so the pick lights the character the pointer is over, and nothing
 /// else in the editor sees a moved pointer.
-pub fn aim_the_pick(
+pub(crate) fn aim_the_pick(
     stage: Res<Stage>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut probe: ResMut<vale_client::HoverProbe>,
@@ -279,7 +279,7 @@ pub fn aim_the_pick(
 /// not the preview's. The shell's own chrome rule prevents the same fault one
 /// layer up.
 impl Stage {
-    pub fn turn(&mut self, by: egui::Vec2) {
+    pub(crate) fn turn(&mut self, by: egui::Vec2) {
         self.yaw -= by.x * 0.01;
         self.pitch = (self.pitch + by.y * 0.008).clamp(-1.2, 1.3);
     }
@@ -293,7 +293,7 @@ impl Stage {
     /// of the delta and multiplying by 0.12 a frame does not work: the delta
     /// lasts several frames, so one notch runs the whole range and any scroll
     /// goes all the way in or all the way out.
-    pub fn zoom(&mut self, by: f32) {
+    pub(crate) fn zoom(&mut self, by: f32) {
         let step = 1.0 - (by * 0.002).clamp(-0.2, 0.2);
         self.distance = (self.distance * step).clamp(2.5, 40.0);
     }

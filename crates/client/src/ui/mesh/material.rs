@@ -163,7 +163,7 @@ impl Blend {
 /// by [`super::rebuild`] so a bind group survives across rebuilds.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 #[bind_group_data(Blend)]
-pub struct InterfaceMaterial {
+pub(crate) struct InterfaceMaterial {
     #[texture(0)]
     #[sampler(1)]
     pub texture: Handle<Image>,

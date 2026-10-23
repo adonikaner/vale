@@ -38,18 +38,18 @@ use crate::server::fresh::FreshReads;
 
 /// One loot set: a loot table and one entry in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Set {
-    pub table: &'static str,
-    pub entry: u32,
+pub(crate) struct Set {
+    pub(crate) table: &'static str,
+    pub(crate) entry: u32,
 }
 
 impl Set {
-    pub fn new(table: &'static str, entry: u32) -> Set {
+    pub(crate) fn new(table: &'static str, entry: u32) -> Set {
         Set { table, entry }
     }
 
     /// What the table is, for its heading and what it is keyed to.
-    pub fn heading(&self) -> Heading {
+    pub(crate) fn heading(&self) -> Heading {
         loot::heading(self.table).unwrap_or(loot::HEADINGS[0])
     }
 }
@@ -62,28 +62,28 @@ impl Set {
 /// creature's template row with the project's edits over it, and a `loot_id`
 /// typed into the template form changes the tab on the next frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Window {
+pub(crate) struct Window {
     /// The creature, object or item, as its panel labels it.
-    pub title: String,
+    pub(crate) title: String,
     /// The template the sets hang off, for the sentence under the title.
-    pub about: String,
+    pub(crate) about: String,
     /// The sets, in the order the tabs are drawn. An entry of 0 is a tab that
     /// says the column names nothing.
-    pub sets: Vec<Set>,
+    pub(crate) sets: Vec<Set>,
 }
 
 /// One column edit offered from the window, on the holder's own row.
 #[derive(Debug, Clone)]
-pub struct Fix {
-    pub table: &'static str,
-    pub key: Key,
-    pub column: &'static str,
-    pub value: String,
+pub(crate) struct Fix {
+    pub(crate) table: &'static str,
+    pub(crate) key: Key,
+    pub(crate) column: &'static str,
+    pub(crate) value: String,
     /// The button's text, and what it says on hover.
-    pub label: String,
-    pub about: String,
+    pub(crate) label: String,
+    pub(crate) about: String,
     /// What it goes on the undo stack as.
-    pub gesture: &'static str,
+    pub(crate) gesture: &'static str,
 }
 
 /// `ITEM_FLAG_LOOTABLE`, the bit of `item_template.flags` that
@@ -100,7 +100,7 @@ impl Window {
     /// is being read, which draws no tabs. A column that names nothing is
     /// offered the convention the shipped rows follow: the creature's own
     /// entry.
-    pub fn for_creature(
+    pub(crate) fn for_creature(
         focus: &crate::subjects::windows::Focus,
         template: Option<&vale_mangos::schema::Row>,
         edits: &Edits,
@@ -150,7 +150,7 @@ impl Window {
     /// The loot window of a game object: one tab, for a type the server
     /// takes loot from, offered the object's own entry when `lootId` names
     /// nothing.
-    pub fn for_object(focus: &crate::subjects::windows::Focus) -> (Window, Vec<Option<Fix>>) {
+    pub(crate) fn for_object(focus: &crate::subjects::windows::Focus) -> (Window, Vec<Option<Fix>>) {
         let known = focus.object.as_ref();
         let looted = known.is_some_and(|known| known.is_looted());
         let entry = known.and_then(|known| known.loot()).unwrap_or(0);
@@ -196,7 +196,7 @@ impl Window {
     /// The loot window of an item: what opening it gives, offered the
     /// `LOOTABLE` flag the server needs to read it, and what disenchanting it
     /// gives once its row is read. `row` is the item's row as read.
-    pub fn for_item(
+    pub(crate) fn for_item(
         known: &crate::subjects::items::Known,
         row: Option<&vale_mangos::schema::Row>,
         edits: &Edits,
@@ -243,13 +243,13 @@ impl Window {
 /// One row as the window draws it: the database's reading with the project's
 /// edits over it, and what the project says is to become of it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Shown {
-    pub entry: Entry,
-    pub life: Life,
+pub(crate) struct Shown {
+    pub(crate) entry: Entry,
+    pub(crate) life: Life,
     /// The row as the database has it, for an edit to be cleared when it is
     /// typed back to what the database holds. `None` for a row this project
     /// creates.
-    pub in_database: Option<Entry>,
+    pub(crate) in_database: Option<Entry>,
 }
 
 /// The odds of one roll of a loot group, as `LootGroup::Roll`
@@ -261,22 +261,22 @@ pub struct Shown {
 /// means an equal share of what the stated chances leave, and a group whose
 /// rows all have chance 0 always drops exactly one of them.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Odds {
+pub(crate) struct Odds {
     /// The stated chances summed, quest drops left out, as
     /// `LootGroup::RawTotalChance` sums them.
-    pub stated: f32,
+    pub(crate) stated: f32,
     /// How many rows have a chance of 0.
-    pub equal: usize,
+    pub(crate) equal: usize,
     /// The chance that each row with a chance of 0 drops, per roll of the
     /// group.
-    pub share: f32,
+    pub(crate) share: f32,
     /// The chance a roll drops nothing: what the stated chances leave when
     /// there is no 0 row to take it.
-    pub nothing: f32,
+    pub(crate) nothing: f32,
 }
 
 /// The odds of one group among a set's rows, rows marked for removal left out.
-pub fn odds(rows: &[Shown], group: u32) -> Odds {
+pub(crate) fn odds(rows: &[Shown], group: u32) -> Odds {
     let members = rows
         .iter()
         .filter(|shown| shown.entry.group == group && shown.life != Life::Delete);
@@ -306,30 +306,30 @@ pub fn odds(rows: &[Shown], group: u32) -> Odds {
 
 /// What the loot window is holding.
 #[derive(Resource, Default)]
-pub struct Loot {
+pub(crate) struct Loot {
     /// Whether the window is shown. What it shows is [`Self::window`], which
     /// the shell fills from the selection each frame this is on.
-    pub open: bool,
-    pub window: Option<Window>,
+    pub(crate) open: bool,
+    pub(crate) window: Option<Window>,
     /// Which of the window's sets is shown.
-    pub tab: usize,
+    pub(crate) tab: usize,
     /// A reference set followed from a row. It is drawn in place of the tab's
     /// set until **Back** is pressed. The rows of a boss's set are mostly
     /// references, and the items are in the referenced sets.
-    pub reference: Option<u32>,
+    pub(crate) reference: Option<u32>,
     /// Every set read so far, as the database has it, kept until an apply
     /// moves `EditSession::database_writes`.
     rows: FreshReads<Set, Vec<Entry>>,
     /// What is typed into the reference box beside **+ reference**.
-    pub reference_box: String,
+    pub(crate) reference_box: String,
     /// Whether the scripted flags have been acted on — see
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
 }
 
 impl Loot {
     /// The set the window shows now: the followed reference, or the tab's set.
-    pub fn showing(&self) -> Option<Set> {
+    pub(crate) fn showing(&self) -> Option<Set> {
         if let Some(reference) = self.reference {
             return Some(Set::new(loot::REFERENCE, reference));
         }
@@ -338,24 +338,19 @@ impl Loot {
     }
 
     /// Whether a set's rows are in hand.
-    pub fn is_read(&self, set: Set) -> bool {
+    pub(crate) fn is_read(&self, set: Set) -> bool {
         self.rows.is_read(&set)
     }
 
-    /// Whether a set is being read now.
-    pub fn is_reading(&self, set: Set) -> bool {
-        self.rows.is_reading(&set)
-    }
-
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.rows.trouble()
     }
 
     /// Every row of one set: the database's rows with the project's edits over
     /// them. They are sorted as the server groups them: group 0 first, then
     /// each group in order, and by item inside a group.
-    pub fn rows_of(&self, set: Set, edits: &Edits) -> Vec<Shown> {
+    pub(crate) fn rows_of(&self, set: Set, edits: &Edits) -> Vec<Shown> {
         let mut out: Vec<Shown> = self
             .rows
             .get(&set)
@@ -391,13 +386,13 @@ impl Loot {
     /// Adds an item to a set: a count of one, at full chance, in no group. If
     /// the row is in the database and marked for removal, the mark is taken
     /// back instead. If the row is already there, nothing changes.
-    pub fn add_item(&mut self, session: &mut EditSession, set: Set, item: u32, now: f64) {
+    pub(crate) fn add_item(&mut self, session: &mut EditSession, set: Set, item: u32, now: f64) {
         self.add(session, set, Entry::item(set.entry, item), "Add loot item", now);
     }
 
     /// Adds a reference to another set, at full chance, by the same rules as
     /// [`Self::add_item`].
-    pub fn add_reference(&mut self, session: &mut EditSession, set: Set, reference: u32, now: f64) {
+    pub(crate) fn add_reference(&mut self, session: &mut EditSession, set: Set, reference: u32, now: f64) {
         self.add(session, set, Entry::reference(set.entry, reference), "Add loot reference", now);
     }
 
@@ -431,7 +426,7 @@ impl Loot {
 
     /// Removes a row. A row in the database gets a `Delete` claim; for a row
     /// this project added, the claim is taken back.
-    pub fn remove(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
+    pub(crate) fn remove(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
         let key = shown.entry.key();
         let subject = format!("{} {}", set.table, key.text());
         let gesture = crate::server::store::Gesture {
@@ -453,7 +448,7 @@ impl Loot {
 
     /// Keeps a row that was marked for removal. The claim is taken back, and
     /// with it any column edit made before the mark.
-    pub fn keep(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
+    pub(crate) fn keep(&mut self, session: &mut EditSession, set: Set, shown: &Shown, now: f64) {
         let key = shown.entry.key();
         let subject = format!("{} {}", set.table, key.text());
         session.set_server_row(
@@ -472,7 +467,7 @@ impl Loot {
     /// edit is cleared when its value equals the database's, so typing a value
     /// back leaves no claim. On a row this project creates, the column is
     /// written into the creation.
-    pub fn set_column(
+    pub(crate) fn set_column(
         &mut self,
         session: &mut EditSession,
         set: Set,
@@ -515,7 +510,7 @@ impl Loot {
     /// is removed and created again under the new key, with every column as it
     /// is drawn, as one entry on the undo stack. A row this project created is
     /// only re-keyed.
-    pub fn regroup(&mut self, session: &mut EditSession, set: Set, shown: &Shown, group: u32, now: f64) {
+    pub(crate) fn regroup(&mut self, session: &mut EditSession, set: Set, shown: &Shown, group: u32, now: f64) {
         if group == shown.entry.group || group > loot::MAX_GROUP {
             return;
         }
@@ -554,19 +549,19 @@ impl Loot {
     }
 
     /// Follows a reference row into the set it names.
-    pub fn follow(&mut self, reference: u32) {
+    pub(crate) fn follow(&mut self, reference: u32) {
         self.reference = Some(reference);
     }
 
     /// Stops following a reference and shows the tab's own set again.
-    pub fn back(&mut self) {
+    pub(crate) fn back(&mut self) {
         self.reference = None;
     }
 
     /// Opens the window, or closes it. Opening starts on the first tab with
     /// no reference followed, because the window's subject is whatever is
     /// selected.
-    pub fn toggle(&mut self) {
+    pub(crate) fn toggle(&mut self) {
         self.open = !self.open;
         self.tab = 0;
         self.reference = None;
@@ -679,7 +674,7 @@ fn on_the_command_line(
     loot.scripted_done = true;
 }
 
-pub struct LootToolPlugin;
+pub(crate) struct LootToolPlugin;
 
 impl Plugin for LootToolPlugin {
     fn build(&self, app: &mut App) {

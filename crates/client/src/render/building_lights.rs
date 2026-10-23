@@ -52,13 +52,13 @@ const RESTOCK_STEP: f32 = 4.0;
 
 /// One building light, placed in the world.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BuildingLight {
+pub(crate) struct BuildingLight {
     /// Where it hangs, in world space.
     pub at: Vec3,
     /// Its colour times its intensity, in the file's sRGB bytes over 255.
     pub colour: [f32; 3],
-    pub diffuse: bool,
-    pub ambient: bool,
+    pub(crate) diffuse: bool,
+    pub(crate) ambient: bool,
     /// How far from it a model is lit by it, in world yards.
     pub reach: f32,
 }
@@ -82,10 +82,10 @@ impl BuildingLight {
 /// The lights one placed building states. Inserted on the placement by
 /// [`crate::render::wmos`], and only when the building has an omni light.
 #[derive(Component, Clone, Debug)]
-pub struct BuildingLights(pub Vec<BuildingLight>);
+pub(crate) struct BuildingLights(pub(crate) Vec<BuildingLight>);
 
 impl BuildingLights {
-    pub fn of_building(
+    pub(crate) fn of_building(
         lights: &[vale_assets::world::wmo::WmoLight],
         placement: &Transform,
     ) -> Option<BuildingLights> {
@@ -109,7 +109,7 @@ impl BuildingLights {
 /// nearest first; 0 is no light. Written by
 /// [`crate::world::entities`]'s lighting pass from [`LampSlots::nearest`].
 #[derive(Component, Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct UnitLamps(pub [u8; 3]);
+pub(crate) struct UnitLamps(pub(crate) [u8; 3]);
 
 impl UnitLamps {
     /// The low 24 bits of the entity's parts' `MeshTag`.
@@ -120,7 +120,7 @@ impl UnitLamps {
 
 /// Which light holds which table slot.
 #[derive(Resource, Default)]
-pub struct LampSlots {
+pub(crate) struct LampSlots {
     /// Slot `n` is `slots[n - 1]`.
     slots: Vec<Option<((Entity, u16), BuildingLight)>>,
     by_light: HashMap<(Entity, u16), u8>,
@@ -235,7 +235,7 @@ fn stock_lamp_table(
     }
 }
 
-pub struct BuildingLightPlugin;
+pub(crate) struct BuildingLightPlugin;
 
 impl Plugin for BuildingLightPlugin {
     fn build(&self, app: &mut App) {

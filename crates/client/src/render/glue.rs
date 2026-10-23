@@ -114,7 +114,7 @@ const CREATE_FRAME: &str = "CharacterCreate";
 
 /// The scene on screen, and what it took to put it there.
 #[derive(Resource, Default)]
-pub struct GlueScene {
+pub(crate) struct GlueScene {
     /// What the interface last said it was holding; a change starts a new
     /// scene. `None` while nothing is showing, which includes all of the time
     /// spent in the world.
@@ -276,7 +276,7 @@ impl Default for GlueScenes {
     }
 }
 
-pub struct GluePlugin;
+pub(crate) struct GluePlugin;
 
 impl Plugin for GluePlugin {
     fn build(&self, app: &mut App) {

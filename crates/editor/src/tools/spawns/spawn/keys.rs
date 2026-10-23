@@ -47,21 +47,21 @@ use vale_mangos::row::Edits;
 
 /// Yards an arrow key or `PageUp`/`PageDown` moves a spawn. The doodad tool's
 /// step, because a creature is about the size of a doodad.
-pub const STEP: f32 = 0.5;
+pub(crate) const STEP: f32 = 0.5;
 
 /// Degrees `,` and `.` turn a spawn.
-pub const TURN: f32 = 5.0;
+pub(crate) const TURN: f32 = 5.0;
 
 /// Degrees `,` and `.` turn a spawn that is on the cursor, not yet placed,
 /// and the step a held `Ctrl` snaps its `Alt` turn to. The doodad placer's
 /// step: a new spawn is turned to roughly the right way and corrected after.
-pub const PLACE_TURN: f32 = 15.0;
+pub(crate) const PLACE_TURN: f32 = 15.0;
 
 /// A facing turned by `degrees`, in radians, wrapped into one turn.
 ///
 /// With `snap`, the result is the nearest multiple of [`PLACE_TURN`], which
 /// is what a held `Ctrl` asks of the `Alt` turn.
-pub fn turned(facing: f32, degrees: f32, snap: bool) -> f32 {
+pub(crate) fn turned(facing: f32, degrees: f32, snap: bool) -> f32 {
     let to = facing.to_degrees() + degrees;
     let to = match snap {
         true => (to / PLACE_TURN).round() * PLACE_TURN,
@@ -73,24 +73,24 @@ pub fn turned(facing: f32, degrees: f32, snap: bool) -> f32 {
 /// The selected spawn: which row, where it stands and which way it faces, as
 /// the project's edits leave it, and the subject that writes it.
 #[derive(Debug, Clone, Copy)]
-pub struct Standing {
+pub(crate) struct Standing {
     /// The subject's writes: which table the row is in and how a move and a
     /// turn are written.
-    pub writes: &'static dyn SpawnWrites,
-    pub guid: u64,
+    pub(crate) writes: &'static dyn SpawnWrites,
+    pub(crate) guid: u64,
     /// World position, in WoW axes: x north, y west, z up.
-    pub at: Vec3,
+    pub(crate) at: Vec3,
     /// Radians anticlockwise from north, as the `orientation` column stores it.
-    pub orientation: f32,
+    pub(crate) orientation: f32,
     /// Whether the row's turn is more than its facing. A tilted game object's
     /// facing is written without the quaternion; see
     /// `crate::tools::spawns::gameobjects::GameObjectSubject::face`.
-    pub tilted: bool,
+    pub(crate) tilted: bool,
 }
 
 /// The selected spawn of whichever of the two tools is chosen, or `None` for
 /// any other tool or when nothing is selected.
-pub fn chosen(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: Option<&Edits>) -> Option<Standing> {
+pub(crate) fn chosen(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: Option<&Edits>) -> Option<Standing> {
     match tool {
         Tool::Creatures => creatures.standing(edits),
         Tool::GameObjects => objects.standing(edits),
@@ -101,7 +101,7 @@ pub fn chosen(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: O
 /// The rest of the chosen tool's selection, beside the primary [`chosen`]
 /// answers, as the project's edits leave each. A member no longer on the map is
 /// left out.
-pub fn members(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: Option<&Edits>) -> Vec<Standing> {
+pub(crate) fn members(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: Option<&Edits>) -> Vec<Standing> {
     match tool {
         Tool::Creatures => creatures.member_standings(edits),
         Tool::GameObjects => objects.member_standings(edits),
@@ -116,7 +116,7 @@ pub fn members(tool: Tool, creatures: &Creatures, objects: &GameObjects, edits: 
 /// its own position. `what` is the undo entry's own word for it ("position",
 /// "facing"), which keeps a run of arrow presses one entry and a turn after it
 /// a second.
-pub fn move_group(
+pub(crate) fn move_group(
     session: &mut EditSession,
     members: &[Standing],
     pivot: Vec3,
@@ -150,7 +150,7 @@ pub fn move_group(
 
 impl Standing {
     /// A spawn of subject `S`, as it is drawn.
-    pub fn of<S: SpawnSubject>(spawn: &S::Spawn) -> Standing {
+    pub(crate) fn of<S: SpawnSubject>(spawn: &S::Spawn) -> Standing {
         Standing {
             writes: S::writes(),
             guid: spawn.guid(),
@@ -161,25 +161,25 @@ impl Standing {
     }
 
     /// The word for it in an undo label and a status line.
-    pub fn noun(&self) -> &'static str {
+    pub(crate) fn noun(&self) -> &'static str {
         self.writes.noun()
     }
 
     /// Write the three position columns, under the gesture subject the tool's
     /// own drag uses for the same row.
-    pub fn move_to(&self, session: &mut EditSession, to: Vec3, now: f64) {
+    pub(crate) fn move_to(&self, session: &mut EditSession, to: Vec3, now: f64) {
         self.writes.move_to(session, self.guid, to, now);
     }
 
     /// Write the facing, in radians, brought into `0..2π`.
-    pub fn face(&self, session: &mut EditSession, orientation: f32, now: f64) {
+    pub(crate) fn face(&self, session: &mut EditSession, orientation: f32, now: f64) {
         let orientation = orientation.rem_euclid(std::f32::consts::TAU);
         self.writes.face(session, self.guid, self.tilted, orientation, now);
     }
 }
 
 /// Registers [`keys`] for both tools.
-pub struct SpawnKeysPlugin;
+pub(crate) struct SpawnKeysPlugin;
 
 impl Plugin for SpawnKeysPlugin {
     fn build(&self, app: &mut App) {
@@ -192,7 +192,7 @@ impl Plugin for SpawnKeysPlugin {
 /// Move, turn, remove and duplicate the selected spawn from the keyboard.
 /// The keys are listed in the module comment and on both tools' panels.
 #[allow(clippy::too_many_arguments)]
-pub fn keys<S: SpawnSubject>(
+pub(crate) fn keys<S: SpawnSubject>(
     mut spawns: ResMut<SpawnTool<S>>,
     mut session: Option<ResMut<EditSession>>,
     tool: Res<Tool>,

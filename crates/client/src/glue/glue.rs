@@ -67,7 +67,7 @@ use crate::world::session::{
 /// Loaded when there is no session, which is when the login screen is up.
 /// `UiStrings` has the opposite condition: it waits for a session.
 #[derive(Resource, Default)]
-pub struct GlueStrings(pub Option<std::sync::Arc<vale_assets::interface::strings::Strings>>);
+pub(crate) struct GlueStrings(pub(crate) Option<std::sync::Arc<vale_assets::interface::strings::Strings>>);
 
 impl GlueStrings {
     /// The game's own sentence for a key, or `None`.
@@ -94,7 +94,7 @@ pub struct GlueState {
     /// `GetSavedAccountName()`. `""` when the box is unticked;
     /// `AccountLogin_OnShow` compares against `""` to decide which box gets the
     /// keyboard.
-    pub saved_account: String,
+    pub(crate) saved_account: String,
     /// The highlighted row of the character list, one-based; 0 for none. The
     /// interface's own `CharacterSelect.selectedIndex` mirrors this because
     /// this client answers `UPDATE_SELECTED_CHARACTER`.
@@ -106,7 +106,7 @@ pub struct GlueState {
     /// The character on the character-select plinth, derived from
     /// [`Self::selected`] and the held character list. `None` on the login
     /// screen and for an account with no characters.
-    pub plinth: Option<Plinth>,
+    pub(crate) plinth: Option<Plinth>,
     /// The character on the character-create screen's plinth, which is a
     /// different body on a different attachment point of the same backdrop.
     /// [`super::charcreate::stand_on_plinth`] writes it, and
@@ -117,7 +117,7 @@ pub struct GlueState {
     /// screens' values must survive the switch between them: going back to
     /// character select shows the highlighted character again without deriving
     /// it again.
-    pub create_plinth: Option<Plinth>,
+    pub(crate) create_plinth: Option<Plinth>,
 }
 
 /// What the character on the character-select plinth looks like.
@@ -128,7 +128,7 @@ pub struct GlueState {
 /// the renderer reads out of the session, because the highlighted row is
 /// interface state and the interface is answered here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Plinth {
+pub(crate) struct Plinth {
     /// Race, gender and the five appearance bytes: the model to load and the
     /// skin to compose, in one value.
     pub appearance: vale_assets::look::character::Appearance,
@@ -148,7 +148,7 @@ pub struct Plinth {
     pub weapons: [vale_assets::tables::item::Weapon; 3],
 }
 
-pub struct GluePlugin;
+pub(crate) struct GluePlugin;
 
 impl Plugin for GluePlugin {
     fn build(&self, app: &mut App) {

@@ -138,7 +138,7 @@ impl Conform {
 /// A contact steeper than this is not walked on and does not vote. With no
 /// votes at all the reference writes straight up, which is what stands a
 /// model back up when it leaves the ground.
-pub const WALKABLE_Z: f32 = 0.017_452_406;
+pub(crate) const WALKABLE_Z: f32 = 0.017_452_406;
 
 /// …and the shallower cutoff under which the stance is **frozen** rather than
 /// conformed: **0.3572124** — `cos 69.07°`.
@@ -148,7 +148,7 @@ pub const WALKABLE_Z: f32 = 0.017_452_406;
 /// stance it had. The band between the two — 69° to 89° — is therefore ground
 /// that is walkable and *not* leaned into, which is why running up a cliff face
 /// does not lay a horse on its back.
-pub const FREEZE_Z: f32 = 0.357_212_36;
+pub(crate) const FREEZE_Z: f32 = 0.357_212_36;
 
 /// How much of the gap to the target survives one second: **0.0018**, a
 /// double.
@@ -158,7 +158,7 @@ pub const FREEZE_Z: f32 = 0.357_212_36;
 /// `up = n + (up - n) * 0.0018^dt`. That is a time constant of about 158 ms —
 /// fast enough that a mount seats itself on a slope within a stride, slow
 /// enough that a cell boundary is a lean rather than a snap.
-pub const SETTLE_PER_SECOND: f64 = 0.0018;
+pub(crate) const SETTLE_PER_SECOND: f64 = 0.0018;
 
 /// The smoothed up-vector one unit is standing at — stage 2, and the only state
 /// this rule has.

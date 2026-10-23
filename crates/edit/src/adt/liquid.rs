@@ -82,7 +82,7 @@ pub const SIDE: usize = INNER_SIDE + 1;
 /// …and how many there are.
 const VERTS: usize = SIDE * SIDE;
 /// …and cells in the 8x8 one.
-pub const CELLS: usize = INNER_SIDE * INNER_SIDE;
+pub(crate) const CELLS: usize = INNER_SIDE * INNER_SIDE;
 
 /// Bytes per vertex — see the module comment on what they mean.
 const VERTEX: usize = 8;
@@ -91,10 +91,10 @@ const TILES_AT: usize = 8 + VERTS * VERTEX;
 /// …and where the flow tail does.
 const FLOW_AT: usize = TILES_AT + CELLS;
 /// One whole block.
-pub const BLOCK: usize = FLOW_AT + 4 + 2 * 40;
+pub(crate) const BLOCK: usize = FLOW_AT + 4 + 2 * 40;
 
 /// The low nibble of a tile flag that means **no liquid here**.
-pub const DRY: u8 = 0x0F;
+pub(crate) const DRY: u8 = 0x0F;
 
 /// **The high nibble's two bits**, which the format does not name and which
 /// were censused rather than read up — `vale water <Map> <x> <y>` prints
@@ -117,7 +117,7 @@ pub const FATIGUE: u8 = 0x80;
 /// …and the height a vertex with no surface over it carries: `f32::MAX`,
 /// `0x7F7FFFFF`. See the module comment, and [`Pool::reseat_range`], which is
 /// the thing that has to know.
-pub const NO_SURFACE: f32 = f32::MAX;
+pub(crate) const NO_SURFACE: f32 = f32::MAX;
 
 /// The four kinds and the header bit that declares each, **in the order the
 /// blocks appear**.
@@ -179,7 +179,7 @@ impl Pool {
     /// understand go with their vertex. The height range is the same set of
     /// heights and is left as it was. The flow vectors after the flags are
     /// not turned; they are zero for a pool that stands still.
-    pub fn rearranged(&self, source: &dyn Fn(usize, usize, usize) -> (usize, usize)) -> Pool {
+    pub(crate) fn rearranged(&self, source: &dyn Fn(usize, usize, usize) -> (usize, usize)) -> Pool {
         let mut bytes = self.bytes.clone();
         for row in 0..SIDE {
             for col in 0..SIDE {
@@ -230,7 +230,7 @@ impl Pool {
     /// own — see [`Self::cell_flags`]; drying writes the whole byte back to
     /// [`DRY`], since a dry cell is neither fishable nor deep and that is what
     /// a shipped dry cell reads.
-    pub fn set_wet(&mut self, row: usize, col: usize, wet: bool) {
+    pub(crate) fn set_wet(&mut self, row: usize, col: usize, wet: bool) {
         let Some(flag) = self.bytes.get_mut(TILES_AT + row * INNER_SIDE + col) else {
             return;
         };
@@ -250,7 +250,7 @@ impl Pool {
 
     /// …and set it, keeping the low nibble. Only the high four bits of
     /// `flags` are taken.
-    pub fn set_cell_flags(&mut self, row: usize, col: usize, flags: u8) {
+    pub(crate) fn set_cell_flags(&mut self, row: usize, col: usize, flags: u8) {
         let Some(flag) = self.bytes.get_mut(TILES_AT + row * INNER_SIDE + col) else {
             return;
         };
@@ -259,7 +259,7 @@ impl Pool {
 
     /// Whether any cell is wet. A pool with none is one nothing draws, and is
     /// what [`set_pools`] takes as "this liquid is gone".
-    pub fn any_wet(&self) -> bool {
+    pub(crate) fn any_wet(&self) -> bool {
         (0..INNER_SIDE).any(|row| (0..INNER_SIDE).any(|col| self.is_wet(row, col)))
     }
 
@@ -268,7 +268,8 @@ impl Pool {
     /// The four corners rather than one, because a cell's surface is the quad
     /// its corners make: writing one vertex tilts the quads of the three
     /// neighbours that share it.
-    pub fn fill_cell(&mut self, row: usize, col: usize, height: f32, depth: u8) {
+    #[cfg(test)]
+    pub(crate) fn fill_cell(&mut self, row: usize, col: usize, height: f32, depth: u8) {
         for (dr, dc) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
             let at = 8 + ((row + dr) * SIDE + col + dc) * VERTEX;
             if at + VERTEX > TILES_AT {
@@ -282,7 +283,7 @@ impl Pool {
     /// Set the surface height at one vertex of the 9x9 grid, and its depth
     /// byte when the kind has one. For magma and slime that byte is part of a
     /// texture coordinate and is left alone. See the module comment.
-    pub fn set_vertex(&mut self, row: usize, col: usize, height: f32, depth: u8) {
+    pub(crate) fn set_vertex(&mut self, row: usize, col: usize, height: f32, depth: u8) {
         let at = 8 + (row * SIDE + col) * VERTEX;
         if row >= SIDE || col >= SIDE {
             return;
@@ -301,7 +302,7 @@ impl Pool {
     }
 
     /// Whether byte 0 of a vertex is a depth: water and ocean.
-    pub fn has_depth(&self) -> bool {
+    pub(crate) fn has_depth(&self) -> bool {
         matches!(self.kind, Liquid::Water | Liquid::Ocean)
     }
 
@@ -314,7 +315,7 @@ impl Pool {
     /// over the first ten, which is what this is — and it matters because the
     /// byte is the *opacity's* parameter: a pool written with a flat 255 is a
     /// pool with no shallows, and the shore stops fading out.
-    pub fn depth_for(above: f32) -> u8 {
+    pub(crate) fn depth_for(above: f32) -> u8 {
         (above.max(0.0) * 8.0).round().clamp(0.0, 255.0) as u8
     }
 
@@ -385,7 +386,7 @@ pub fn pools(tile: &AdtFile, chunk: usize) -> Vec<Pool> {
 /// say the chunk has a liquid that draws nothing, which is a lie the file can
 /// hold and nothing can see. That is also how a tool removes water — it dries
 /// the cells and this notices.
-pub fn set_pools(chunk: &mut MapChunk, pools: &[Pool]) {
+pub(crate) fn set_pools(chunk: &mut MapChunk, pools: &[Pool]) {
     let mut data = Vec::with_capacity(pools.len() * BLOCK);
     let mut flags = chunk.head().flags() & !mcnk_flags::LQ_ANY;
     // **In `KINDS` order and not the caller's**, because that is the order the

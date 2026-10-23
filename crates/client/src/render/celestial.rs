@@ -76,7 +76,7 @@ use bevy::shader::ShaderRef;
 const SPRITE_QUAD: f32 = 1.0;
 
 /// The sun and the moons: three sprites, one material and two systems.
-pub struct CelestialPlugin;
+pub(crate) struct CelestialPlugin;
 
 impl Plugin for CelestialPlugin {
     fn build(&self, app: &mut App) {
@@ -161,7 +161,7 @@ fn report(
 /// A component rather than three marker types, because every one of them is
 /// moved by the same five lines.
 #[derive(Component)]
-pub struct CelestialBody {
+pub(crate) struct CelestialBody {
     body: &'static celestial::Body,
     /// Whether this body reads the day's clock or its own calendar. The blue
     /// moon uses its own; sampling it on the day's clock would put it exactly
@@ -186,7 +186,7 @@ enum CelestialState {
 
 /// One body's material: its sprite, and a colour to scale it by.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct CelestialMaterial {
+pub(crate) struct CelestialMaterial {
     /// White, and opaque at every hour in clear weather; the weather sets its
     /// alpha to `1 - storm` (see [`overcast`]). See the module note on why
     /// bands 8 and 9 are not applied here. It is a uniform rather than a

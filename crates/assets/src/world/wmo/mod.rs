@@ -60,7 +60,7 @@ use crate::world::chunk::{self, Chunk, ChunkReader};
 use crate::AssetError;
 
 /// WMO version in 1.12. Later expansions bump this and change `MOMT`.
-pub const WMO_VERSION: u32 = 17;
+pub(crate) const WMO_VERSION: u32 = 17;
 
 /// Bytes in the `MOGP` header that precedes a group's sub-chunks.
 const MOGP_HEADER_SIZE: usize = 68;
@@ -77,11 +77,11 @@ const DOODAD_DEF_SIZE: usize = 40;
 const BATCH_SIZE: usize = 24;
 
 /// `MOMT` flag bits this renderer acts on.
-pub mod material_flags {
+pub(crate) mod material_flags {
     /// Ignore lighting — the material is drawn at full brightness.
     pub const UNLIT: u32 = 0x01;
     /// Do not cull back faces. Set on fences, railings and window frames.
-    pub const UNCULLED: u32 = 0x04;
+    pub(crate) const UNCULLED: u32 = 0x04;
 }
 
 /// `MOHD` flag bits. Only the two the vertex-colour fixup consults are acted
@@ -91,10 +91,10 @@ pub mod root_flags {
     /// The root's ambient colour is applied by the renderer rather than baked
     /// out of the vertex colours — so [`WmoGroup::shaded_colours`] must not
     /// subtract it.
-    pub const UNIFIED_RENDER_PATH: u32 = 0x02;
-    pub const USE_LIQUID_TYPE_DBC_ID: u32 = 0x04;
+    pub(crate) const UNIFIED_RENDER_PATH: u32 = 0x02;
+    pub(crate) const USE_LIQUID_TYPE_DBC_ID: u32 = 0x04;
     /// The `MOCV` colours are already final; only their alpha needs forcing.
-    pub const DO_NOT_FIX_VERTEX_COLOUR_ALPHA: u32 = 0x08;
+    pub(crate) const DO_NOT_FIX_VERTEX_COLOUR_ALPHA: u32 = 0x08;
 }
 
 /// `MOPY` flag bits — one byte per *triangle*, saying what the surface is for.
@@ -125,7 +125,7 @@ pub mod mopy_flags {
 /// normally solid, *except* the decorative ones laid over a surface that is
 /// already solid. Dropping the term costs nothing visible and doubles the
 /// triangle count in exactly the places (floors, walls) that are queried most.
-pub fn collides(flags: u8) -> bool {
+pub(crate) fn collides(flags: u8) -> bool {
     let render_face = flags & mopy_flags::RENDER != 0 && flags & mopy_flags::DETAIL == 0;
     flags & mopy_flags::COLLISION != 0 || render_face
 }
@@ -165,9 +165,9 @@ pub mod group_flags {
     /// The group's `MLIQ` is sea water rather than fresh. **This is what
     /// separates ocean from water**, not the liquid type — see
     /// [`WmoGroup::liquid_kind`].
-    pub const LIQUID_IS_OCEAN: u32 = 0x0008_0000;
+    pub(crate) const LIQUID_IS_OCEAN: u32 = 0x0008_0000;
     /// Invisible geometry that only blocks visibility. Never drawn.
-    pub const ANTIPORTAL: u32 = 0x0400_0000;
+    pub(crate) const ANTIPORTAL: u32 = 0x0400_0000;
 }
 
 /// **How far below the probe the ground may be and still count as covering a
@@ -215,7 +215,7 @@ pub struct WmoMaterial {
     pub shader: u32,
     /// 0 opaque, 1 alpha-key, 2 alpha blend, 3 additive, 4 add-alpha,
     /// 5 modulate, 6 modulate2x — the same table M2 materials use.
-    pub blend_mode: u32,
+    pub(crate) blend_mode: u32,
     /// Index into [`WmoRoot::textures`], or `None` when the material names no
     /// texture (an offset past the end of `MOTX`, which does happen).
     pub texture: Option<u32>,
@@ -348,7 +348,7 @@ pub struct WmoRoot {
     /// Unique texture paths, in the order the materials first mention them.
     pub textures: Vec<String>,
     pub materials: Vec<WmoMaterial>,
-    pub group_info: Vec<WmoGroupInfo>,
+    pub(crate) group_info: Vec<WmoGroupInfo>,
     pub doodad_sets: Vec<WmoDoodadSet>,
     /// **The lights the building carries** — `MOLT`. Empty for a barn and ten
     /// for the Goldshire inn; see [`WmoLight`], which carries the layout and
@@ -385,7 +385,7 @@ pub struct WmoRoot {
 /// ambient colour, the material offsets — came out of the same bytes and are
 /// not worth trusting either. A refused root is a building that is not drawn and
 /// is reported once, which is this module's documented way to fail.
-pub const MAX_GROUPS: u32 = 1024;
+pub(crate) const MAX_GROUPS: u32 = 1024;
 
 impl WmoRoot {
     pub fn parse(buf: &[u8]) -> Result<WmoRoot, AssetError> {
@@ -493,7 +493,7 @@ pub struct WmoBatch {
     pub index_start: u32,
     pub index_count: u32,
     pub vertex_start: u16,
-    pub vertex_end: u16,
+    pub(crate) vertex_end: u16,
     /// Index into [`WmoRoot::materials`]. 0xFF means "none" and the batch is
     /// dropped — despite the field being called `texture` in most references,
     /// it is a *material* index (Noggit: `materials.at(batch.texture)`).
@@ -820,7 +820,7 @@ pub struct WmoGroup {
     /// `MOGP`'s bounding box, WMO-local.
     pub bounds: [[f32; 3]; 2],
     /// Byte offset of the group's name in the root's `MOGN`.
-    pub name_offset: i32,
+    pub(crate) name_offset: i32,
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
@@ -836,7 +836,7 @@ pub struct WmoGroup {
     pub triangle_flags: Vec<u8>,
     pub batches: Vec<WmoBatch>,
     /// `MODR` — which of the root's doodad spawns stand in this group.
-    pub doodad_refs: Vec<u16>,
+    pub(crate) doodad_refs: Vec<u16>,
     /// `MOCV` vertex colours, normalised RGBA and parallel to `positions`, or
     /// empty when the group has none.
     ///
@@ -849,7 +849,7 @@ pub struct WmoGroup {
     /// boundary is stated only as a batch count in the `MOGP` header — so it has
     /// to be resolved against the batch list before any batch is dropped, which
     /// is why it is a field rather than something the caller recomputes.
-    pub interior_start: u32,
+    pub(crate) interior_start: u32,
     /// `MOGP` 0x34 — which liquid the group's `MLIQ` holds, *before* the
     /// client's fixup. Meaningless without [`Self::liquid`].
     pub liquid_type: u32,
@@ -862,7 +862,7 @@ pub struct WmoGroup {
     /// `WMOAreaTable` carries for root 208 — the `wmo_id` `ironforge.wmo`'s own
     /// `MOHD` states. Reading it at 0x34 instead gets `liquid_type` (15 in all
     /// four), which resolves to nothing and would look like a WMO with no areas.
-    pub group_id: u32,
+    pub(crate) group_id: u32,
     /// `MLIQ` — the water, lava or slime standing in this group, if any.
     pub liquid: Option<WmoLiquid>,
 }
@@ -1015,7 +1015,7 @@ impl WmoGroup {
     }
 
     /// Is this group interior geometry the outdoor sun should not light?
-    pub fn is_indoor(&self) -> bool {
+    pub(crate) fn is_indoor(&self) -> bool {
         self.flags & group_flags::INDOOR != 0
     }
 
@@ -1030,7 +1030,7 @@ impl WmoGroup {
     ///
     /// Note it is still not the absence of `INDOOR` (0x2000): the bits are
     /// independent and a group can carry none of the three.
-    pub fn is_exterior(&self) -> bool {
+    pub(crate) fn is_exterior(&self) -> bool {
         self.flags & (group_flags::EXTERIOR | group_flags::EXTERIOR_LIT) != 0
     }
 
@@ -1128,7 +1128,7 @@ impl WmoGroup {
     }
 
     /// Geometry that exists only to block visibility, never to be drawn.
-    pub fn is_antiportal(&self) -> bool {
+    pub(crate) fn is_antiportal(&self) -> bool {
         self.flags & group_flags::ANTIPORTAL != 0
     }
 
@@ -1138,7 +1138,7 @@ impl WmoGroup {
     /// vmap: an antiportal (invisible, and solid would seal the building shut)
     /// and one flagged unreachable (0x0080 — scenery the player is never meant
     /// to get to, and making it solid turns decoration into an obstacle).
-    pub fn is_uncollidable(&self) -> bool {
+    pub(crate) fn is_uncollidable(&self) -> bool {
         self.is_antiportal() || self.flags & group_flags::UNREACHABLE != 0
     }
 
@@ -1195,7 +1195,7 @@ impl WmoGroup {
     /// Is triangle `index` solid? `false` for a group with no `MOPY`, and for
     /// an index past its end — a short `MOPY` is a damaged tail, and inventing
     /// solid geometry from one is worse than leaving a hole.
-    pub fn triangle_collides(&self, index: usize) -> bool {
+    pub(crate) fn triangle_collides(&self, index: usize) -> bool {
         self.triangle_flags.get(index).is_some_and(|&f| collides(f))
     }
 
@@ -1324,7 +1324,7 @@ pub struct WmoGroupDraw {
     /// rather than a cull. See [`WmoModel::interior_bounds`].
     pub bounds: [[f32; 3]; 2],
     /// `MOGP` 0x38 — see [`WmoGroup::group_id`] and [`WmoModel::area_bounds`].
-    pub group_id: u32,
+    pub(crate) group_id: u32,
 }
 
 impl WmoGroupDraw {
@@ -1960,9 +1960,9 @@ pub struct WmoGroupHeader {
     /// WMO-local, `[min, max]`.
     pub bounds: [[f32; 3]; 2],
     /// `MOGP` 0x24: the first of this group's `MOPR` records.
-    pub portal_start: u16,
+    pub(crate) portal_start: u16,
     /// `MOGP` 0x26: how many there are.
-    pub portal_count: u16,
+    pub(crate) portal_count: u16,
 }
 
 impl WmoGroupHeader {
@@ -2173,7 +2173,7 @@ pub struct WmoLight {
     /// measured so far is 0, and the renderer draws nothing else.
     pub kind: u8,
     /// Whether the two distances below are read at all.
-    pub use_atten: bool,
+    pub(crate) use_atten: bool,
     /// Whether the light lights a model's surfaces facing it: its colour
     /// times intensity, times the cosine. Set on all ten of the inn's.
     pub diffuse: bool,
@@ -2187,7 +2187,7 @@ pub struct WmoLight {
     pub position: [f32; 3],
     pub intensity: f32,
     /// Where the falloff begins and ends, in yards.
-    pub atten_start: f32,
+    pub(crate) atten_start: f32,
     pub atten_end: f32,
 }
 

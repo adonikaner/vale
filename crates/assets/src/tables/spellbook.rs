@@ -73,20 +73,20 @@ use std::collections::HashMap;
 
 /// `Spell.dbc` field indices — see the module comment for how each was pinned.
 pub mod spell_fields {
-    pub const CATEGORY: usize = 2;
+    pub(crate) const CATEGORY: usize = 2;
     /// `Dispel` -> `SpellDispelType.dbc`. **What colour a debuff's border is**,
     /// and the third answer `UnitDebuff` gives. Measured against the table:
     /// Polymorph (118) reads 1, Curse of Agony (980) and Curse of Weakness
     /// (702) read 2, Deadly Poison (2818) reads 4, and Fireball (133) and
     /// Battle Stance (2457) read 0.
-    pub const DISPEL: usize = 4;
+    pub(crate) const DISPEL: usize = 4;
     /// **`castUI`, field 3 — which craft window lists the spell.** Zero for
     /// every spell the book shows; 1 for the hunter's pet-training spells
     /// (Beast Training's rows) and 3 for every Enchanting recipe. The book's
     /// third filter reads it at `+0xc` and the craft window's
     /// per-kind lists are indexed by it. See
     /// [`SpellInfo::craft_kind`].
-    pub const CAST_UI: usize = 3;
+    pub(crate) const CAST_UI: usize = 3;
     pub const ATTRIBUTES: usize = 6;
     /// `AttributesEx`, read for one bit — [`spell_attributes::NO_AURA_ICON`].
     pub const ATTRIBUTES_EX: usize = 7;
@@ -102,7 +102,7 @@ pub mod spell_fields {
     /// filter reads it there) and the client's auto-repeat test is the pair
     /// `[SpellRec+0x18] & 0x2` / `[SpellRec+0x20] & 0x20`, always together.
     /// Four dwords apart is fields 6 and 8.
-    pub const ATTRIBUTES_EX2: usize = 8;
+    pub(crate) const ATTRIBUTES_EX2: usize = 8;
     /// **`AttributesEx3`, read for one bit** —
     /// [`spell_attributes::EX3_ONLY_ON_GHOSTS`], which is one of the three
     /// inputs to [`super::SpellInfo::death_only`].
@@ -116,14 +116,14 @@ pub mod spell_fields {
     /// else. That leaves exactly two columns between them, and the format names
     /// them `AttributesEx3, AttributesEx4` in that order. `TARGETS` at 13, two
     /// past `StancesNot`, closes the run.
-    pub const ATTRIBUTES_EX3: usize = 9;
+    pub(crate) const ATTRIBUTES_EX3: usize = 9;
     /// The aiming mask's seed. `SpellRec+0x34` in the client's own record.
     /// **`Stances` / `StancesNot`** — the shapeshift forms a spell may and may
     /// not be cast in, as masks of `1 << (form - 1)`. Between them they are why
     /// a druid's cat abilities grey out in bear form and why Ambush greys out
     /// of stealth.
-    pub const STANCES: usize = 11;
-    pub const STANCES_NOT: usize = 12;
+    pub(crate) const STANCES: usize = 11;
+    pub(crate) const STANCES_NOT: usize = 12;
     pub const TARGETS: usize = 13;
     /// **`CasterAuraState` / `TargetAuraState`** — the `AURA_STATE_*` the
     /// caster, or the target, must be in. Zero for "no condition", which is all
@@ -136,11 +136,11 @@ pub mod spell_fields {
     /// client never learns what a Seal is: the server sets a bit in
     /// `UNIT_FIELD_AURASTATE` and the button follows it. See
     /// [`vale_protocol::state::objects::Entity::aura_state`].
-    pub const CASTER_AURA_STATE: usize = 16;
-    pub const TARGET_AURA_STATE: usize = 17;
+    pub(crate) const CASTER_AURA_STATE: usize = 16;
+    pub(crate) const TARGET_AURA_STATE: usize = 17;
     pub const CASTING_TIME_INDEX: usize = 18;
-    pub const RECOVERY_TIME: usize = 19;
-    pub const CATEGORY_RECOVERY_TIME: usize = 20;
+    pub(crate) const RECOVERY_TIME: usize = 19;
+    pub(crate) const CATEGORY_RECOVERY_TIME: usize = 20;
     /// `spellLevel`. Read for one thing only: it is the client's own fallback
     /// sort key for a spell whose `Rank` string carries no digits — see
     /// [`super::SpellInfo::rank_order`].
@@ -162,21 +162,21 @@ pub mod spell_fields {
     /// is its columns four bytes apart from the id — so `0x54` is column 21 and
     /// its two neighbours are 22 and 23. That agrees with the six columns
     /// [`PROC_CHANCE`]'s note already boxed in between 20 and 27.
-    pub const INTERRUPT_FLAGS: usize = 21;
+    pub(crate) const INTERRUPT_FLAGS: usize = 21;
     /// `AuraInterruptFlags` — `SpellRec+0x58`.
-    pub const AURA_INTERRUPT_FLAGS: usize = 22;
+    pub(crate) const AURA_INTERRUPT_FLAGS: usize = 22;
     /// `ChannelInterruptFlags` — `SpellRec+0x5c`.
-    pub const CHANNEL_INTERRUPT_FLAGS: usize = 23;
-    pub const PROC_CHANCE: usize = 25;
-    pub const SPELL_LEVEL: usize = 29;
-    pub const POWER_TYPE: usize = 31;
+    pub(crate) const CHANNEL_INTERRUPT_FLAGS: usize = 23;
+    pub(crate) const PROC_CHANCE: usize = 25;
+    pub(crate) const SPELL_LEVEL: usize = 29;
+    pub(crate) const POWER_TYPE: usize = 31;
     pub const MANA_COST: usize = 32;
     pub const RANGE_INDEX: usize = 36;
     /// `EffectImplicitTargetA[0]`, the mask's adjustment. `SpellRec+0x148`.
-    pub const IMPLICIT_TARGET_A: usize = 82;
+    pub(crate) const IMPLICIT_TARGET_A: usize = 82;
     /// `EffectImplicitTargetB[3]`, fields 85..87 — read with the A column
     /// per effect by the craft window's `used` test.
-    pub const IMPLICIT_TARGET_B: usize = 85;
+    pub(crate) const IMPLICIT_TARGET_B: usize = 85;
     pub const ICON_ID: usize = 117;
     /// **`activeIconID`** — `SpellRec+0x1d8`, the picture a form button wears
     /// *while the form is on*. Zero for almost every spell in the game; the
@@ -185,8 +185,8 @@ pub mod spell_fields {
     pub const ACTIVE_ICON_ID: usize = 118;
     pub const NAME: usize = 120;
     pub const RANK: usize = 129;
-    pub const START_RECOVERY_CATEGORY: usize = 157;
-    pub const START_RECOVERY_TIME: usize = 158;
+    pub(crate) const START_RECOVERY_CATEGORY: usize = 157;
+    pub(crate) const START_RECOVERY_TIME: usize = 158;
     /// **Where a form sits on the stance bar** — `SpellRec+0x298`, and the only
     /// thing the shapeshift list is sorted by.
     ///
@@ -197,7 +197,7 @@ pub mod spell_fields {
     /// correlated with the row id could not produce it. **`-1` means "no
     /// position"** and sorts last; Stealth and Prowl are the two
     /// that carry it.
-    pub const SHAPESHIFT_ORDER: usize = 166;
+    pub(crate) const SHAPESHIFT_ORDER: usize = 166;
 
     /// `PreventionType` — **which of the two silencing words shuts this spell
     /// up**: 1 is silence, 2 is pacify, 0 is neither. Each is a plain compare
@@ -208,7 +208,7 @@ pub mod spell_fields {
     /// **Pinned against the shipped file**: the column holds only 0, 1 and 2,
     /// 4,811 rows carrying 1 and 1,052 carrying 2, which no neighbouring column
     /// does.
-    pub const PREVENTION_TYPE: usize = 165;
+    pub(crate) const PREVENTION_TYPE: usize = 165;
     /// **`SpellFamilyName` and `SpellFamilyFlags`** — which class's spell book a
     /// row belongs to, and which of that family's 64 bits it is.
     ///
@@ -221,9 +221,9 @@ pub mod spell_fields {
     /// bit 0, Corruption (172) family 5 and bit 1, Heroic Strike (78) family 4
     /// and bit 6, Eviscerate (2098) family 8. The flags are a `u64` across two
     /// columns, low first.
-    pub const SPELL_FAMILY_NAME: usize = 160;
-    pub const SPELL_FAMILY_FLAGS_LOW: usize = 161;
-    pub const SPELL_FAMILY_FLAGS_HIGH: usize = 162;
+    pub(crate) const SPELL_FAMILY_NAME: usize = 160;
+    pub(crate) const SPELL_FAMILY_FLAGS_LOW: usize = 161;
+    pub(crate) const SPELL_FAMILY_FLAGS_HIGH: usize = 162;
     /// `MinFactionId` and `MinReputation` — a faction and the standing rank
     /// (`0..7`, Hated to Exalted) the caster must have reached with it, read
     /// against [`crate::tables::reputation::RANK_FLOORS`]'s own table.
@@ -233,14 +233,14 @@ pub mod spell_fields {
     /// 1.12. It is read because the rule is three lines and a column that is
     /// zero everywhere is the cheapest kind to get wrong later.
     pub const MIN_FACTION_ID: usize = 170;
-    pub const MIN_REPUTATION: usize = 171;
+    pub(crate) const MIN_REPUTATION: usize = 171;
 
     // --- what the *tooltip* reads, which is a different half of the record ---
 
     /// `maxLevel` and `baseLevel`, the two ends of the clamp the effect value's
     /// level term is taken over. Zero `maxLevel` means "no cap".
     pub const MAX_LEVEL: usize = 27;
-    pub const BASE_LEVEL: usize = 28;
+    pub(crate) const BASE_LEVEL: usize = 28;
     /// `DurationIndex` -> `SpellDuration.dbc` [1] base ms. `$d`.
     pub const DURATION_INDEX: usize = 30;
     /// `Reagent[8]` and `ReagentCount[8]` — item entries, not names: `Item.dbc`
@@ -255,11 +255,11 @@ pub mod spell_fields {
     /// Their place is pinned by their neighbours rather than by memory:
     /// [`Self::REAGENT_COUNT`] is eight wide from 50 and [`Self::EFFECT`] is
     /// three wide from 61, which leaves exactly 58..60 for these.
-    pub const EQUIPPED_ITEM_CLASS: usize = 58;
-    pub const EQUIPPED_ITEM_SUBCLASS_MASK: usize = 59;
-    pub const EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 60;
-    pub const REAGENT: usize = 42;
-    pub const REAGENT_COUNT: usize = 50;
+    pub(crate) const EQUIPPED_ITEM_CLASS: usize = 58;
+    pub(crate) const EQUIPPED_ITEM_SUBCLASS_MASK: usize = 59;
+    pub(crate) const EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 60;
+    pub(crate) const REAGENT: usize = 42;
+    pub(crate) const REAGENT_COUNT: usize = 50;
     /// `RequiresSpellFocus` -> `SpellFocusObject.dbc` — the anvil, the fire.
     ///
     /// **This was 17 and 17 is [`Self::TARGET_AURA_STATE`].** The two columns
@@ -271,35 +271,35 @@ pub mod spell_fields {
     /// (2661) reads 1 (Anvil), every cooked-food recipe reads 4 (Fire) — where
     /// field 17 is non-zero on 16 rows with one distinct value between them,
     /// which is what a `TargetAuraState` column looks like.
-    pub const REQUIRES_SPELL_FOCUS: usize = 15;
+    pub(crate) const REQUIRES_SPELL_FOCUS: usize = 15;
     /// `Totem[2]` — the tool an enchant is worked with, as an item entry.
     /// Pinned on Enchant Bracer - Minor Health (7418), which reads 6218
     /// (Runed Copper Rod) at [40], and on Runed Copper Rod's own craft
     /// (7421), which reads 0 there and carries the plain rod among its
     /// reagents at [42] instead.
-    pub const TOTEM: usize = 40;
+    pub(crate) const TOTEM: usize = 40;
     /// `Effect[3]` and the six per-effect columns the description substitutes
     /// from. Pinned on Fireball (133): effect 0 is base 13, dice 1, sides 9 —
     /// "14 to 22 Fire damage" at level 1, exactly what the retail tooltip says.
     pub const EFFECT: usize = 61;
-    pub const EFFECT_DIE_SIDES: usize = 64;
-    pub const EFFECT_BASE_DICE: usize = 67;
-    pub const EFFECT_DICE_PER_LEVEL: usize = 70;
-    pub const EFFECT_REAL_POINTS_PER_LEVEL: usize = 73;
-    pub const EFFECT_BASE_POINTS: usize = 76;
+    pub(crate) const EFFECT_DIE_SIDES: usize = 64;
+    pub(crate) const EFFECT_BASE_DICE: usize = 67;
+    pub(crate) const EFFECT_DICE_PER_LEVEL: usize = 70;
+    pub(crate) const EFFECT_REAL_POINTS_PER_LEVEL: usize = 73;
+    pub(crate) const EFFECT_BASE_POINTS: usize = 76;
     /// `EffectRadiusIndex[3]` -> `SpellRadius.dbc` [1] yards. `$a`/`$A`.
     pub const EFFECT_RADIUS_INDEX: usize = 88;
     /// `EffectAmplitude[3]`, the tick interval in ms. `$t`, and the divisor
     /// that turns a per-tick value into `$o`'s total.
-    pub const EFFECT_AMPLITUDE: usize = 94;
+    pub(crate) const EFFECT_AMPLITUDE: usize = 94;
     /// `EffectChainTarget[3]`. `$n`.
-    pub const EFFECT_CHAIN_TARGET: usize = 100;
+    pub(crate) const EFFECT_CHAIN_TARGET: usize = 100;
     /// **`EffectItemType[3]` — what a `CREATE_ITEM` effect makes.** Pinned by
     /// measurement: Minor Mana Potion (2331) reads item 2455 at [103], and the
     /// client's own trade-skill build reads the created item at spell record
     /// `+0x19c`, which is 103 dwords in. See
     /// [`crate::tables::tradeskill`].
-    pub const EFFECT_ITEM_TYPE: usize = 103;
+    pub(crate) const EFFECT_ITEM_TYPE: usize = 103;
     /// **`EffectMiscValue[3]`**, which for an open-lock effect is the
     /// `EffectApplyAuraName[3]`, fields 91..93 — `SpellRec+0x16c`, which the
     /// stance-bar test walks three of looking for 36. Pinned by that use and by
@@ -309,7 +309,7 @@ pub mod spell_fields {
     /// `LockType.dbc` row it opens: Mining reads 3, Herb Gathering 2, Pick Lock
     /// 1 and Opening 5. Measured against the shipped file rather than counted
     /// off a header — see the test that pins all four.
-    pub const EFFECT_MISC_VALUE: usize = 106;
+    pub(crate) const EFFECT_MISC_VALUE: usize = 106;
     /// `EffectTriggerSpell[3]` — **what a teaching spell actually teaches**, and
     /// the only way from a trainer's service to the ability it grants. Pinned by
     /// the client rather than by a value: it reads `[SpellRec+0x1b4]` off the
@@ -335,9 +335,9 @@ pub mod spell_fields {
     /// is the next one, and 1243's two strings above confirm it. Both carry
     /// the same `$` variables and go through the same
     /// [`crate::tables::spelltext::describe`].
-    pub const AURA_DESCRIPTION: usize = 147;
+    pub(crate) const AURA_DESCRIPTION: usize = 147;
     /// `MaxAffectedTargets`. `$i`.
-    pub const MAX_AFFECTED_TARGETS: usize = 163;
+    pub(crate) const MAX_AFFECTED_TARGETS: usize = 163;
 }
 
 /// `SpellCastTimes.dbc`: id, **base ms**, per level, minimum.
@@ -425,7 +425,7 @@ pub mod spell_attributes {
 
     /// `SPELL_ATTR_ALLOW_CAST_WHILE_DEAD` — the handful a corpse may press.
     /// Read only so that the dead-caster refusal below does not swallow them.
-    pub const ALLOW_CAST_WHILE_DEAD: u32 = 0x0080_0000;
+    pub(crate) const ALLOW_CAST_WHILE_DEAD: u32 = 0x0080_0000;
 
     /// **The two bits that make a press an *auto-repeating ranged attack***,
     /// and both are needed: vmangos' `SpellEntry::IsAutoRepeatRangedSpell()` is
@@ -472,7 +472,7 @@ pub mod spell_attributes {
     /// empty" rather than the targeting cursor. vmangos names the same bit and
     /// comments it "Client automatically selects item from mainhand slot as a
     /// cast target", which is the two readings agreeing.
-    pub const HELD_ITEM_ONLY: u32 = 0x0000_0200;
+    pub(crate) const HELD_ITEM_ONLY: u32 = 0x0000_0200;
 
     /// **`SPELL_ATTR_TRADESPELL`: what a quest reward *says* it will teach.**
     ///
@@ -491,8 +491,8 @@ pub mod spell_attributes {
     /// the second is the commoner: Evocation reads `AttributesEx 0x00000040`,
     /// which is `IS_SELF_CHANNELED` alone, so a test against the first bit only
     /// would answer "not a channel" for the game's own example of one.
-    pub const IS_CHANNELED: u32 = 0x0000_0004;
-    pub const IS_SELF_CHANNELED: u32 = 0x0000_0040;
+    pub(crate) const IS_CHANNELED: u32 = 0x0000_0004;
+    pub(crate) const IS_SELF_CHANNELED: u32 = 0x0000_0040;
     /// The pair as one mask, which is how the client's cast check reads it:
     /// `[SpellRec+0x1c] & 0x44`, and the answer is then carried through five
     /// of the refusals below.
@@ -502,27 +502,27 @@ pub mod spell_attributes {
 
     /// `SPELL_ATTR_DAYTIME_ONLY`. Refuses with
     /// `SPELL_FAILED_ONLY_DAYTIME` outside the window at [`super::DAY_BEGINS`].
-    pub const DAYTIME_ONLY: u32 = 0x0000_1000;
+    pub(crate) const DAYTIME_ONLY: u32 = 0x0000_1000;
     /// `SPELL_ATTR_NIGHT_ONLY` — the same window, the other way up.
-    pub const NIGHT_ONLY: u32 = 0x0000_2000;
+    pub(crate) const NIGHT_ONLY: u32 = 0x0000_2000;
     /// `SPELL_ATTR_INDOOR_ONLY` and `SPELL_ATTR_OUTDOOR_ONLY`, tested together
     /// and then apart. The outdoor half has a
     /// second message — see [`SpellInfo::is_mount`].
-    pub const INDOOR_ONLY: u32 = 0x0000_4000;
-    pub const OUTDOOR_ONLY: u32 = 0x0000_8000;
+    pub(crate) const INDOOR_ONLY: u32 = 0x0000_4000;
+    pub(crate) const OUTDOOR_ONLY: u32 = 0x0000_8000;
     /// `SPELL_ATTR_ONLY_STEALTHED` — Pick Pocket, Ambush, Cheap
     /// Shot, Garrote.
-    pub const ONLY_STEALTHED: u32 = 0x0002_0000;
+    pub(crate) const ONLY_STEALTHED: u32 = 0x0002_0000;
     /// `SPELL_ATTR_CASTABLE_WHILE_MOUNTED`. Its **absence** is what
     /// refuses a cast on a mount, which is why nearly every spell in the game
     /// has to name it to be castable there and almost none do.
-    pub const CASTABLE_WHILE_MOUNTED: u32 = 0x0100_0000;
+    pub(crate) const CASTABLE_WHILE_MOUNTED: u32 = 0x0100_0000;
     /// `SPELL_ATTR_CASTABLE_WHILE_SITTING` — likewise for a
     /// character on a chair, a stool or the ground.
-    pub const CASTABLE_WHILE_SITTING: u32 = 0x0800_0000;
+    pub(crate) const CASTABLE_WHILE_SITTING: u32 = 0x0800_0000;
     /// `SPELL_ATTR_NOT_IN_COMBAT` — refuses with
     /// `SPELL_FAILED_AFFECTING_COMBAT` while `UNIT_FLAG_IN_COMBAT` stands.
-    pub const NOT_IN_COMBAT: u32 = 0x1000_0000;
+    pub(crate) const NOT_IN_COMBAT: u32 = 0x1000_0000;
 
     /// **`AttributesEx` bit 28: never draw this aura's icon**, on anybody.
     ///
@@ -825,15 +825,15 @@ pub struct SpellEffect {
     pub base_points: i32,
     pub die_sides: i32,
     pub base_dice: i32,
-    pub dice_per_level: f32,
-    pub real_points_per_level: f32,
+    pub(crate) dice_per_level: f32,
+    pub(crate) real_points_per_level: f32,
     /// Yards, off `SpellRadius.dbc` — `$a`/`$A`.
     pub radius_yards: f32,
     /// The tick interval in ms — `$t`, and what divides the duration into the
     /// tick count `$o` multiplies by.
-    pub amplitude_ms: u32,
+    pub(crate) amplitude_ms: u32,
     /// `$n`.
-    pub chain_targets: u32,
+    pub(crate) chain_targets: u32,
     /// `EffectTriggerSpell[i]` — the spell this effect casts, or **teaches**.
     /// Zero for the great majority of effects; read because a trainer's service
     /// is a teaching spell whose whole content is this field. See
@@ -848,7 +848,7 @@ pub struct SpellEffect {
     /// an open-lock effect, a skill line for a `SKILL` effect, and the craft
     /// kind for a `TRADE_SKILL` one. Signed because the file stores -1 in a
     /// few rows. See [`crate::tables::tradeskill::opens`].
-    pub misc_value: i32,
+    pub(crate) misc_value: i32,
     /// `EffectItemType[i]` — what a `CREATE_ITEM` effect makes, as an item
     /// entry. See [`crate::tables::tradeskill`].
     pub item_type: u32,
@@ -856,7 +856,7 @@ pub struct SpellEffect {
     /// for one test: a learn effect aimed at `TARGET_PET` (5) is a Beast
     /// Training row. See [`crate::tables::tradeskill::List::build_training`].
     pub target_a: u32,
-    pub target_b: u32,
+    pub(crate) target_b: u32,
 }
 
 impl SpellEffect {
@@ -909,7 +909,7 @@ impl SpellEffect {
 
 /// The widest the ground-target circle is ever drawn, in yards — the client's
 /// own clamp, against the literal 20.0.
-pub const GROUND_CIRCLE_MAX_YARDS: f32 = 20.0;
+pub(crate) const GROUND_CIRCLE_MAX_YARDS: f32 = 20.0;
 
 /// …and the width it falls back to when the spell states no radius at all, and
 /// the width the **red** circle always takes.
@@ -1223,7 +1223,8 @@ impl SpellInfo {
     /// it runs is `MSG_CHANNEL_START`, which arrives afterwards. So this bit is
     /// what lets the press be told apart from a genuine instant before either
     /// packet has been seen.
-    pub fn is_channelled(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_channelled(&self) -> bool {
         self.attributes_ex
             & (spell_attributes::IS_CHANNELED | spell_attributes::IS_SELF_CHANNELED)
             != 0
@@ -1274,7 +1275,7 @@ impl SpellInfo {
     /// A death-only spell wants a corpse and nothing else; everything else wants
     /// a living target unless it carries
     /// [`spell_attributes::EX2_ALLOW_DEAD_TARGET`].
-    pub fn can_target_alive_state(&self, alive: bool) -> bool {
+    pub(crate) fn can_target_alive_state(&self, alive: bool) -> bool {
         if self.death_only() {
             return !alive;
         }
@@ -1328,7 +1329,7 @@ impl SpellInfo {
 
     /// **Is this spell a channel?** — [`spell_attributes::CHANNELED`], which is
     /// both bits and not just the first.
-    pub fn channeled(&self) -> bool {
+    pub(crate) fn channeled(&self) -> bool {
         self.attributes_ex & spell_attributes::CHANNELED != 0
     }
 
@@ -1339,7 +1340,7 @@ impl SpellInfo {
     /// cast check makes at each of the four, reporting the same
     /// refusal from both. Reading the channel column unconditionally would
     /// refuse casts on words that apply to a channel this spell never runs.
-    pub fn interrupted_when(&self, word: u32) -> bool {
+    pub(crate) fn interrupted_when(&self, word: u32) -> bool {
         self.aura_interrupt_flags & word != 0
             || (self.channeled() && self.channel_interrupt_flags & word != 0)
     }
@@ -1351,7 +1352,7 @@ impl SpellInfo {
     /// spell refused indoors says `SPELL_FAILED_ONLY_OUTDOORS` unless it is a
     /// mount, and then it says `SPELL_FAILED_NO_MOUNTS_ALLOWED` — "You can't
     /// mount here", which is the sentence a player standing in an inn expects.
-    pub fn is_mount(&self) -> bool {
+    pub(crate) fn is_mount(&self) -> bool {
         self.effects
             .iter()
             .any(|effect| effect.kind == EFFECT_APPLY_AURA && effect.aura == AURA_MOUNTED)
@@ -1359,7 +1360,7 @@ impl SpellInfo {
 
     /// Whether a corpse may press it — read only so the dead-caster refusal in
     /// [`check_cast`] does not swallow the few that are legal.
-    pub fn castable_while_dead(&self) -> bool {
+    pub(crate) fn castable_while_dead(&self) -> bool {
         self.attributes & spell_attributes::ALLOW_CAST_WHILE_DEAD != 0
     }
 
@@ -1377,7 +1378,7 @@ impl SpellInfo {
     /// already share a page and a name, so the fallback is doing very little
     /// work — but it is the client's, and inventing a different one puts Rank 10
     /// between Rank 1 and Rank 2.
-    pub fn rank_order(&self) -> u32 {
+    pub(crate) fn rank_order(&self) -> u32 {
         let mut value: u32 = 0;
         let mut seen = false;
         for byte in self.rank.bytes() {
@@ -1895,18 +1896,18 @@ pub fn failure_override(reason_key: &str, power_type: u32) -> Option<&'static st
 /// The flag-word bits the binder consumes. `TARGET_FLAG_*`, as the client's own
 /// targeting word holds them.
 mod aim_bits {
-    pub const UNIT: u16 = 0x0002;
-    pub const UNIT_RAID: u16 = 0x0004;
-    pub const UNIT_PARTY: u16 = 0x0008;
-    pub const UNIT_ENEMY: u16 = 0x0080;
-    pub const UNIT_ASSIST: u16 = 0x0100;
-    pub const CORPSE_ENEMY: u16 = 0x0200;
+    pub(crate) const UNIT: u16 = 0x0002;
+    pub(crate) const UNIT_RAID: u16 = 0x0004;
+    pub(crate) const UNIT_PARTY: u16 = 0x0008;
+    pub(crate) const UNIT_ENEMY: u16 = 0x0080;
+    pub(crate) const UNIT_ASSIST: u16 = 0x0100;
+    pub(crate) const CORPSE_ENEMY: u16 = 0x0200;
     /// "there is an explicit selection", which carries no guid of its own and is
     /// discharged by any real candidate.
-    pub const EXPLICIT: u16 = 0x0400;
-    pub const CORPSE_ALLY: u16 = 0x8000;
-    pub const UNK_23: u16 = 0x0800;
-    pub const UNK_26: u16 = 0x4000;
+    pub(crate) const EXPLICIT: u16 = 0x0400;
+    pub(crate) const CORPSE_ALLY: u16 = 0x8000;
+    pub(crate) const UNK_23: u16 = 0x0800;
+    pub(crate) const UNK_26: u16 = 0x4000;
 
     /// **The bit that names a *place* rather than a thing** — the ground-target
     /// machine, which is Blizzard, Flamestrike, Rain of Fire, Volley, Hurricane
@@ -1928,7 +1929,7 @@ mod aim_bits {
     /// 13 are NPC and test rows (`Word of Recall Other`, `Area Death (TEST)`,
     /// `Firegut Fear Storm`), none of them in any class's book. Binding the bit
     /// would mean sending a block this client cannot fill, so it stays out.
-    pub const DEST_LOCATION: u16 = 0x0040;
+    pub(crate) const DEST_LOCATION: u16 = 0x0040;
 
     /// **`TARGET_FLAG_ITEM` — the cast is aimed at a thing you are carrying**,
     /// and it is the reason Rockbiter Weapon came back *"Invalid target"*.
@@ -2026,7 +2027,7 @@ pub const INVALID_TARGET: &str = "SPELL_FAILED_BAD_TARGETS";
 /// …and the third, which is `0x2d` — "Your weapon hand is empty", the answer to
 /// a poison or a sharpening stone pressed with nothing to put it on. See
 /// [`spell_attributes::HELD_ITEM_ONLY`].
-pub const MAINHAND_EMPTY: &str = "SPELL_FAILED_MAINHAND_EMPTY";
+pub(crate) const MAINHAND_EMPTY: &str = "SPELL_FAILED_MAINHAND_EMPTY";
 
 /// The spell's aiming word: `targets`, adjusted by the implicit-target arm.
 ///
@@ -2363,8 +2364,8 @@ pub struct CastConditions {
 
 /// **The two values [`SpellInfo::prevention_type`] takes**, each gating one of
 /// the [`caster_flags`] — plain compares against 1 and 2.
-pub const PREVENTION_SILENCE: u32 = 1;
-pub const PREVENTION_PACIFY: u32 = 2;
+pub(crate) const PREVENTION_SILENCE: u32 = 1;
+pub(crate) const PREVENTION_PACIFY: u32 = 2;
 
 /// **The `UNIT_FIELD_FLAGS` bits the client's cast check reads.**
 ///
@@ -2377,19 +2378,19 @@ pub const PREVENTION_PACIFY: u32 = 2;
 /// **A separate module from `faction::unit_flags`** on that module's own terms:
 /// it names the bits *it* reads, and these six are a different question asked of
 /// the same field.
-pub mod caster_flags {
+pub(crate) mod caster_flags {
     /// `UNIT_FLAG_SILENCED`.
-    pub const SILENCED: u32 = 0x0000_2000;
+    pub(crate) const SILENCED: u32 = 0x0000_2000;
     /// `UNIT_FLAG_PACIFIED`.
-    pub const PACIFIED: u32 = 0x0002_0000;
+    pub(crate) const PACIFIED: u32 = 0x0002_0000;
     /// `UNIT_FLAG_STUNNED`.
-    pub const STUNNED: u32 = 0x0004_0000;
+    pub(crate) const STUNNED: u32 = 0x0004_0000;
     /// `UNIT_FLAG_IN_COMBAT`.
     pub const IN_COMBAT: u32 = 0x0008_0000;
     /// `UNIT_FLAG_CONFUSED`.
-    pub const CONFUSED: u32 = 0x0040_0000;
+    pub(crate) const CONFUSED: u32 = 0x0040_0000;
     /// `UNIT_FLAG_FLEEING`.
-    pub const FLEEING: u32 = 0x0080_0000;
+    pub(crate) const FLEEING: u32 = 0x0080_0000;
 }
 
 /// **The four `AuraInterruptFlags` bits that are cast *requirements* rather than
@@ -2404,16 +2405,16 @@ pub mod caster_flags {
 /// The sense is inverted from the name, and that is the reference's: a spell
 /// whose aura is cancelled by *not* being mounted may only be cast **while**
 /// mounted.
-pub mod interrupt_when {
+pub(crate) mod interrupt_when {
     /// `AURA_INTERRUPT_FLAG_NOT_MOUNTED` -> `SPELL_FAILED_ONLY_MOUNTED`.
-    pub const NOT_MOUNTED: u32 = 0x0000_0040;
+    pub(crate) const NOT_MOUNTED: u32 = 0x0000_0040;
     /// `AURA_INTERRUPT_FLAG_NOT_ABOVEWATER` -> `SPELL_FAILED_ONLY_ABOVEWATER`,
     /// which is refused while [`SWIMMING`] stands.
-    pub const NOT_ABOVEWATER: u32 = 0x0000_0080;
+    pub(crate) const NOT_ABOVEWATER: u32 = 0x0000_0080;
     /// `AURA_INTERRUPT_FLAG_NOT_UNDERWATER` -> `SPELL_FAILED_ONLY_UNDERWATER`.
-    pub const NOT_UNDERWATER: u32 = 0x0000_0100;
+    pub(crate) const NOT_UNDERWATER: u32 = 0x0000_0100;
     /// `AURA_INTERRUPT_FLAG_NOT_SHEATHED` -> `SPELL_FAILED_NOT_UNSHEATHED`.
-    pub const NOT_SHEATHED: u32 = 0x0000_0200;
+    pub(crate) const NOT_SHEATHED: u32 = 0x0000_0200;
 }
 
 /// **`MOVEFLAG_SWIMMING`**, which is the whole of what the client means by
@@ -2433,8 +2434,8 @@ const AURA_MOUNTED: u32 = 78;
 /// The two are `05:30` and `21:00`. Everything either side of
 /// that window is night, which is what `SPELL_FAILED_ONLY_DAYTIME` and
 /// `SPELL_FAILED_ONLY_NIGHTTIME` are measured against.
-pub const DAY_BEGINS: u32 = 5 * 60 + 30;
-pub const DAY_ENDS: u32 = 21 * 60;
+pub(crate) const DAY_BEGINS: u32 = 5 * 60 + 30;
+pub(crate) const DAY_ENDS: u32 = 21 * 60;
 
 /// Is this minute-of-day inside the client's own daylight window?
 pub fn is_daytime(minute_of_day: u32) -> bool {
@@ -2449,7 +2450,7 @@ pub fn is_daytime(minute_of_day: u32) -> bool {
 /// a character spinning on the spot may still start a cast — which is the
 /// reference's behaviour and would be easy to get wrong by reaching for
 /// `MOVEFLAG_MASK_MOVING` instead.
-pub const REFUSES_A_CAST: u32 = 0x0000_200F;
+pub(crate) const REFUSES_A_CAST: u32 = 0x0000_200F;
 
 /// **The two aura-interrupt bits that make a spell refuse on the move even with
 /// no cast time** — `AURA_INTERRUPT_MOVING_CANCELS | AURA_INTERRUPT_TURNING_CANCELS`,

@@ -37,6 +37,7 @@ use super::super::api::Answers;
 use crate::lua::host::LuaHost;
 
 /// **The reads this module registers**, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 6] = [
     "ItemTextGetCreator",
     "ItemTextGetItem",
@@ -139,7 +140,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::pagetext::PagePress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::pagetext::PagePress>>>;
 
 /// Register the three writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

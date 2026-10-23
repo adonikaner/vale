@@ -191,7 +191,8 @@ impl Notice {
     /// name in `arg5` where there is one) rather than `CHAT_MSG_CHANNEL_NOTICE`.
     /// Transcribed from the `%s` count of each `CHAT_*_NOTICE` string: one
     /// `%s` is the channel alone.
-    pub fn names_a_user(self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn names_a_user(self) -> bool {
         use Notice::*;
         matches!(
             self,
@@ -281,7 +282,7 @@ pub struct ChannelNotify {
 ///
 /// A code the enum does not carry is `None` rather than a guess — *unknown
 /// values are data*; the caller reports it.
-pub fn parse_notify(body: &[u8]) -> Option<ChannelNotify> {
+pub(crate) fn parse_notify(body: &[u8]) -> Option<ChannelNotify> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -348,7 +349,7 @@ pub struct ChannelList {
 /// `SMSG_CHANNEL_LIST`: `cstring channel, u8 flags, u32 count, count x (u64
 /// guid, u8 flags)`. The count is `int32` on the server and written after
 /// the fact; a count past the body is a damaged packet and `None`.
-pub fn parse_list(body: &[u8]) -> Option<ChannelList> {
+pub(crate) fn parse_list(body: &[u8]) -> Option<ChannelList> {
     let mut r = Reader::new(body);
     let channel = r.cstring();
     if !r.has(5) {
@@ -388,45 +389,45 @@ fn two(name: &str, second: &str) -> Vec<u8> {
 /// `CMSG_JOIN_CHANNEL`: the name and the password, empty for none. The
 /// server refuses a name that does not begin with a letter
 /// (`HandleJoinChannelOpcode`) with an `INVALID_NAME` notice.
-pub fn join_body(name: &str, password: &str) -> Vec<u8> {
+pub(crate) fn join_body(name: &str, password: &str) -> Vec<u8> {
     two(name, password)
 }
 
 /// `CMSG_LEAVE_CHANNEL`.
-pub fn leave_body(name: &str) -> Vec<u8> {
+pub(crate) fn leave_body(name: &str) -> Vec<u8> {
     one(name)
 }
 
 /// `CMSG_CHANNEL_LIST`, answered by `SMSG_CHANNEL_LIST` or a `NOT_MEMBER`.
-pub fn list_body(name: &str) -> Vec<u8> {
+pub(crate) fn list_body(name: &str) -> Vec<u8> {
     one(name)
 }
 
 /// `CMSG_CHANNEL_PASSWORD`.
-pub fn password_body(name: &str, password: &str) -> Vec<u8> {
+pub(crate) fn password_body(name: &str, password: &str) -> Vec<u8> {
     two(name, password)
 }
 
 /// `CMSG_CHANNEL_SET_OWNER`.
-pub fn set_owner_body(name: &str, player: &str) -> Vec<u8> {
+pub(crate) fn set_owner_body(name: &str, player: &str) -> Vec<u8> {
     two(name, player)
 }
 
 /// `CMSG_CHANNEL_OWNER`: who owns it, answered by a `CHANNEL_OWNER` notice.
-pub fn owner_body(name: &str) -> Vec<u8> {
+pub(crate) fn owner_body(name: &str) -> Vec<u8> {
     one(name)
 }
 
 /// `CMSG_CHANNEL_MODERATOR` and the seven other name-and-player packets:
 /// `UNMODERATOR`, `MUTE`, `UNMUTE`, `INVITE`, `KICK`, `BAN`, `UNBAN`. One
 /// layout, so one body.
-pub fn player_body(name: &str, player: &str) -> Vec<u8> {
+pub(crate) fn player_body(name: &str, player: &str) -> Vec<u8> {
     two(name, player)
 }
 
 /// `CMSG_CHANNEL_ANNOUNCEMENTS` and `CMSG_CHANNEL_MODERATE`: toggles, the
 /// name alone.
-pub fn toggle_body(name: &str) -> Vec<u8> {
+pub(crate) fn toggle_body(name: &str) -> Vec<u8> {
     one(name)
 }
 

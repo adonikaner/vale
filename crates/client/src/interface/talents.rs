@@ -68,10 +68,10 @@ pub struct Talents {
     /// `PLAYER_CHARACTER_POINTS1` — unspent talent points, which is the *only*
     /// talent number that crosses the wire. See
     /// [`vale_protocol::state::objects::Entity::character_points`].
-    pub unspent: u32,
+    pub(crate) unspent: u32,
     /// …and its sibling, `2`: unspent profession points.
     /// `UnitCharacterPoints` answers the pair.
-    pub profession_points: u32,
+    pub(crate) profession_points: u32,
     /// **The last reading, or `None` before there has been one** — which is
     /// what stops a login raising the event.
     ///
@@ -94,7 +94,7 @@ pub struct Talents {
     built_with: u64,
 }
 
-pub struct TalentsPlugin;
+pub(crate) struct TalentsPlugin;
 
 impl Plugin for TalentsPlugin {
     fn build(&self, app: &mut App) {
@@ -180,7 +180,7 @@ fn rebuild(
         return;
     };
     let known = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         world.spellbook.known.clone()
     };
     let (race, class) = who.unwrap_or((0, 0));

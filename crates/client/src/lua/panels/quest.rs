@@ -111,7 +111,7 @@ pub struct RewardSpell {
     pub texture: Option<String>,
     pub name: String,
     /// `SPELL_ATTR_TRADESPELL` — "You will be able to craft:" instead.
-    pub tradeskill: bool,
+    pub(crate) tradeskill: bool,
 }
 
 /// One line of the log's objectives, as `GetQuestLogLeaderBoard` answers it.
@@ -135,10 +135,10 @@ pub struct LogRow {
     /// under "Elwynn Forest", and `ZoneOrSort`'s sign decides which of two
     /// tables answers. See [`vale_assets::tables::questsort`] and
     /// [`crate::interface::quest::Quests::rebuild_rows`].
-    pub is_header: bool,
+    pub(crate) is_header: bool,
     /// …and whether that header is folded up — `GetQuestLogTitle`'s fifth
     /// answer, which decides between the plus and minus button art.
-    pub collapsed: bool,
+    pub(crate) collapsed: bool,
     pub complete: bool,
 }
 
@@ -533,7 +533,7 @@ impl Which {
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::quest::QuestPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::quest::QuestPress>>>;
 
 /// Register the eight writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

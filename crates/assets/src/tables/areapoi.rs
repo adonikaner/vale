@@ -84,7 +84,7 @@ use crate::tables::worldmap::{MapView, WorldMap};
 use crate::AssetError;
 
 mod fields {
-    pub const IMPORTANCE: usize = 1;
+    pub(crate) const IMPORTANCE: usize = 1;
     pub const ICON: usize = 2;
     pub const X: usize = 4;
     pub const Y: usize = 5;
@@ -97,7 +97,7 @@ mod fields {
 
 /// `AreaPOI.dbc` field 8, bit 7 — **this row's icon is its own whatever map is
 /// open**.
-pub const ICON_IS_ABSOLUTE: u32 = 1 << 7;
+pub(crate) const ICON_IS_ABSOLUTE: u32 = 1 << 7;
 
 /// **Which zoom levels a row is drawn at**, as the client gates them — three
 /// bits of field 8, one per parchment, tested before the row is projected at
@@ -122,16 +122,16 @@ pub const ICON_IS_ABSOLUTE: u32 = 1 << 7;
 /// projection and never through the gate — so a guard's directions show on
 /// whichever parchment they land
 /// on, whatever the packet's flags word says.
-pub const ON_ZONE_MAP: u32 = 1 << 2;
-pub const ON_CONTINENT_MAP: u32 = 1 << 3;
-pub const ON_COSMIC_MAP: u32 = 1 << 4;
+pub(crate) const ON_ZONE_MAP: u32 = 1 << 2;
+pub(crate) const ON_CONTINENT_MAP: u32 = 1 << 3;
+pub(crate) const ON_COSMIC_MAP: u32 = 1 << 4;
 
 /// …and what a row without that bit answers on a continent map.
 ///
 /// A cell of `POIIcons.blp` like any other; the reference falls back to it
 /// because a continent is drawn small and most of the specific icons are
 /// unreadable at that size.
-pub const CONTINENT_ICON: u32 = 15;
+pub(crate) const CONTINENT_ICON: u32 = 15;
 
 /// **How near zero counts as "off the open map"** — `2^-22`, and the test is
 /// `|u| < e && |v| < e` rather than an
@@ -150,7 +150,7 @@ pub struct Poi {
     pub icon: u32,
     /// Field 1. Read and unused: nothing in `WorldMapFrame.lua` sorts on it and
     /// the fill walks the table in record order.
-    pub importance: u32,
+    pub(crate) importance: u32,
     pub flags: u32,
     /// World yards, and the map they are on.
     pub position: (f32, f32),

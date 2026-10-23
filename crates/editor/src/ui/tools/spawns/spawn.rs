@@ -26,98 +26,98 @@ use vale_mangos::row::{Key, Life};
 
 /// Everything a spawn panel needs, as one argument.
 pub(crate) struct Subject<'a, S: SpawnView> {
-    pub session: &'a mut EditSession,
+    pub(crate) session: &'a mut EditSession,
     /// The tool's state: the spawns on the map, the selection, the picker
     /// and the two whole rows the forms draw.
-    pub tool: &'a mut SpawnTool<S>,
+    pub(crate) tool: &'a mut SpawnTool<S>,
     /// The quest tool's state: which template's quests its window is showing
     /// (see `crate::ui::subjects::quests::holder_window`), the reference
     /// picker every form shares, and the name cache a reference column
     /// resolves through.
-    pub quests: &'a mut crate::subjects::quests::Quests,
+    pub(crate) quests: &'a mut crate::subjects::quests::Quests,
     /// The loot window's state, for the Loot button beside Quests. See
     /// `crate::ui::subjects::loot::window`.
-    pub loot: &'a mut crate::subjects::loot::Loot,
+    pub(crate) loot: &'a mut crate::subjects::loot::Loot,
     /// Where this machine's server is. The panel's sentences read it, and it
     /// decides whether there is anything to say.
-    pub server: &'a crate::server::settings::ServerSettings,
+    pub(crate) server: &'a crate::server::settings::ServerSettings,
     /// The top bar's Server… popover, which holds every server operation.
     /// A panel that reports an edit as not applied must be able to open the
     /// panel that applies it. See [`crate::ui::shell::sync`].
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where each server subject stands, held for half a second: the
     /// subject's line in [`edits_block`] and whether the selected spawn is
     /// applied are read from it rather than planned each frame. See
     /// [`crate::server::sync::Standings`].
-    pub standings: &'a mut crate::server::sync::Standings,
+    pub(crate) standings: &'a mut crate::server::sync::Standings,
     /// The archives, for what a display id looks like and for the client
     /// tables a reference resolves through.
-    pub assets: &'a GameAssets,
+    pub(crate) assets: &'a GameAssets,
     /// The pictures drawn in the picker's rows, the form's display cells and
     /// the preview panes. See `crate::preview::portraits`.
-    pub portraits: &'a mut crate::preview::portraits::Portraits,
+    pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
     /// The icons the reference picker's spell and item rows draw. See
     /// `crate::ui::widgets::thumbnails`.
-    pub thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
+    pub(crate) thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
     /// The frame clock the undo stack folds a gesture by. See
     /// `crate::server::store::Gesture`. Typing into a name box is one entry
     /// rather than one per keystroke because every keystroke names the same
     /// subject inside the fold window.
-    pub now: f64,
+    pub(crate) now: f64,
     /// The gizmo, for the Handles switch drawn under the Select/Place switch.
     /// `None` where the panel's parts are drawn without it, as in the
     /// template window.
-    pub gizmo: Option<&'a mut crate::tools::placements::gizmo::Gizmo>,
+    pub(crate) gizmo: Option<&'a mut crate::tools::placements::gizmo::Gizmo>,
     /// What a link on the panel asks of the shell: a row to open in another
     /// workspace, a tool to switch to. See [`crate::ui::shell::asks`].
-    pub asks: &'a mut ShellAsks,
+    pub(crate) asks: &'a mut ShellAsks,
     /// Where the Go to button sends its request. See
     /// [`crate::camera::FlyTo`].
-    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
     /// What only this subject's panel reaches.
-    pub own: S::Panel<'a>,
+    pub(crate) own: S::Panel<'a>,
 }
 
 /// The sentences a subject's panel says that are its own.
 pub(crate) struct Text {
     /// The subject in a heading: `Creature`, `Game object`.
-    pub heading: &'static str,
+    pub(crate) heading: &'static str,
     /// The subject's rows in a sentence's first word: `Creatures`.
-    pub title: &'static str,
+    pub(crate) title: &'static str,
     /// Its workspace on the top bar: `Creatures`, `Game Objects`.
-    pub workspace: &'static str,
+    pub(crate) workspace: &'static str,
     /// The panel's note while nothing is selected.
-    pub click: &'static str,
+    pub(crate) click: &'static str,
     /// The Models switch's hover.
-    pub models: &'static str,
+    pub(crate) models: &'static str,
     /// The model budget's hover, and its largest value.
-    pub budget: &'static str,
-    pub budget_max: usize,
+    pub(crate) budget: &'static str,
+    pub(crate) budget_max: usize,
     /// What Apply's removal of a spawn takes with it, before and after the
     /// apply.
-    pub removal: &'static str,
-    pub removed: &'static str,
+    pub(crate) removal: &'static str,
+    pub(crate) removed: &'static str,
     /// The + New button's hover, in the picker and in the workspace.
-    pub new_template: &'static str,
-    pub new_listed: &'static str,
+    pub(crate) new_template: &'static str,
+    pub(crate) new_listed: &'static str,
     /// The button that opens the template window, and its hover in the
     /// picker and under a selected spawn.
-    pub edit: &'static str,
-    pub edit_chosen: &'static str,
-    pub edit_selected: &'static str,
+    pub(crate) edit: &'static str,
+    pub(crate) edit_chosen: &'static str,
+    pub(crate) edit_selected: &'static str,
     /// The picker's note while nothing is chosen, and while the search is
     /// too short to send.
-    pub none_chosen: &'static str,
-    pub too_short: &'static str,
+    pub(crate) none_chosen: &'static str,
+    pub(crate) too_short: &'static str,
     /// The note under a chosen template with no model, if the subject says
     /// one.
-    pub no_model: Option<&'static str>,
+    pub(crate) no_model: Option<&'static str>,
     /// The workspace's search box hint.
-    pub list_search: &'static str,
+    pub(crate) list_search: &'static str,
     /// The workspace inspector's note for a template with no model.
-    pub no_display: &'static str,
+    pub(crate) no_display: &'static str,
     /// The workspace's Place in World hover.
-    pub place: &'static str,
+    pub(crate) place: &'static str,
 }
 
 /// What a subject's panel adds to the shared one.

@@ -124,7 +124,7 @@ const QUALITY_COLOURS: [egui::Color32; 7] = [
 
 /// The colour a quality is drawn in, or the ordinary ink for a value the game
 /// has no colour for.
-pub fn quality_colour(quality: u32) -> egui::Color32 {
+pub(crate) fn quality_colour(quality: u32) -> egui::Color32 {
     QUALITY_COLOURS
         .get(quality as usize)
         .copied()
@@ -132,43 +132,41 @@ pub fn quality_colour(quality: u32) -> egui::Color32 {
 }
 
 /// Everything the workspace needs, as one argument.
-pub struct Workspace<'a> {
-    pub session: &'a mut EditSession,
-    pub items: &'a mut Items,
-    pub assets: &'a GameAssets,
+pub(crate) struct Workspace<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) items: &'a mut Items,
+    pub(crate) assets: &'a GameAssets,
     /// The icons, which are BLP textures decoded like any other — see
     /// [`crate::ui::widgets::thumbnails`].
-    pub thumbnails: &'a mut Thumbnails,
+    pub(crate) thumbnails: &'a mut Thumbnails,
     /// …and the models, which are rendered — see [`crate::preview::portraits`].
-    pub portraits: &'a mut crate::preview::portraits::Portraits,
+    pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
     /// The quest workspace's state, for two things it already has: the
     /// reference picker, which is one dialog over every table a row names, and
     /// the quest list, which names `start_quest`. See [`field`].
-    pub quests: &'a mut crate::subjects::quests::Quests,
+    pub(crate) quests: &'a mut crate::subjects::quests::Quests,
     /// …and the loot window's, for the Loot toggle at the head of the
     /// form: what the item contains and what it disenchants into — see
     /// [`super::loot`].
-    pub loot: &'a mut crate::subjects::loot::Loot,
-    /// Where this machine's server is, which the form's own sentences read.
-    pub server: &'a crate::server::settings::ServerSettings,
+    pub(crate) loot: &'a mut crate::subjects::loot::Loot,
     /// …and the queue an apply's `.reload item_template` goes on, whose status
     /// this panel shows: an item change is the one here that goes live without
     /// a restart, so whether the reload landed is worth saying beside the item.
-    pub reloads: &'a mut crate::server::reload::Reloads,
+    pub(crate) reloads: &'a mut crate::server::reload::Reloads,
     /// …and the bar's Server…, which is where every server operation is.
     /// See [`crate::ui::shell::sync`].
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where each server subject stands, held for half a second; the items'
     /// line in the form is read from it. See [`crate::server::sync::Standings`].
-    pub standings: &'a mut crate::server::sync::Standings,
+    pub(crate) standings: &'a mut crate::server::sync::Standings,
     /// Which content patch the server is configured for — half the key a new
     /// row is written under.
-    pub patch: u32,
+    pub(crate) patch: u32,
     /// The frame clock the undo stack folds a gesture by.
-    pub now: f64,
+    pub(crate) now: f64,
     /// What a link on the form asks of the shell: a row to open in another
     /// workspace, a part to switch to. See [`crate::ui::shell::asks`].
-    pub asks: &'a mut ShellAsks,
+    pub(crate) asks: &'a mut ShellAsks,
 }
 
 impl Workspace<'_> {
@@ -181,14 +179,14 @@ impl Workspace<'_> {
 /// What the appearance part reads, which is less than the workspace does:
 /// the shell's inspector draws it, and has neither the reload queue nor the
 /// server's patch to hand.
-pub struct Looking<'a> {
-    pub session: &'a EditSession,
-    pub items: &'a mut Items,
-    pub assets: &'a GameAssets,
-    pub thumbnails: &'a mut Thumbnails,
-    pub portraits: &'a mut crate::preview::portraits::Portraits,
+pub(crate) struct Looking<'a> {
+    pub(crate) session: &'a EditSession,
+    pub(crate) items: &'a mut Items,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) thumbnails: &'a mut Thumbnails,
+    pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
     /// Where the display link asks the shell to open the display row.
-    pub asks: &'a mut ShellAsks,
+    pub(crate) asks: &'a mut ShellAsks,
 }
 
 impl Looking<'_> {
@@ -198,7 +196,7 @@ impl Looking<'_> {
 }
 
 /// Draw the whole workspace into the region the panels left.
-pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     super::listing::frame(ui, &mut work, "item-browser", list, form);
 
     if work.items.picking_display {
@@ -922,7 +920,7 @@ fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAss
 /// at the thing is the person's to say — see
 /// [`crate::ui::widgets::preview::preview_pane_at`], which takes the width as its cap
 /// rather than the 170 points the placement pickers use.
-pub fn inspector(ui: &mut egui::Ui, mut work: Looking<'_>) {
+pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Looking<'_>) {
     let work = &mut work;
     let Some(known) = work.open_item() else {
         theme::heading(ui, "Appearance");
@@ -1706,7 +1704,6 @@ pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::
             portraits: &mut editing.portraits,
             quests: &mut editing.quests,
             loot: &mut editing.loot,
-            server: &playing.server,
             server_panel: &mut popovers.server,
             standings: &mut playing.standings,
             reloads: &mut playing.reloads,

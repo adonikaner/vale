@@ -29,7 +29,7 @@ use super::mixer::{Place, Voices};
 use crate::interface::messages::MessageSound;
 use bevy::prelude::*;
 
-pub struct MessagesPlugin;
+pub(crate) struct MessagesPlugin;
 
 impl Plugin for MessagesPlugin {
     fn build(&self, app: &mut App) {

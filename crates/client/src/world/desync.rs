@@ -84,14 +84,15 @@ fn melee_reach(mine: f32, theirs: f32) -> f32 {
 /// frame the refusal arrives, because a sample taken a moment later is a sample
 /// of a character who has since walked.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct RangeRefused {
+pub(crate) struct RangeRefused {
     /// The spell the server refused, or `None` for an attack swing —
     /// `ERR_BADATTACKPOS`, which is the same verdict for the melee path.
+    #[cfg(feature = "diagnostics")]
     pub spell_id: Option<u32>,
     /// **The spell's own maximum range**, from the catalogue the packet arm
     /// already holds. `None` for a swing, whose limit is not a table lookup but
     /// [`melee_reach`] applied to both units' bulk.
-    pub range_yards: Option<f32>,
+    pub(crate) range_yards: Option<f32>,
 }
 
 /// How many samples to keep. Small on purpose: the first disagreement is the
@@ -100,18 +101,18 @@ const SAMPLES: usize = 5;
 
 /// What the refusals looked like from this side.
 #[derive(Resource, Default)]
-pub struct RangeDisagreement {
+pub(crate) struct RangeDisagreement {
     /// Every distance refusal this session, including the ordinary ones.
-    pub refusals: u32,
+    pub(crate) refusals: u32,
     /// …and the subset that is actually **news**: a refusal where this client's
     /// own measurement, against the server's own rule, said the target was in
     /// range. Everything else is the ordinary way to learn you are too far
     /// away, and a session has hundreds.
-    pub disagreements: u32,
+    pub(crate) disagreements: u32,
     /// …and the subset where **this client had no measurement to disagree
     /// with**, which is its own finding: a target the client cannot place is a
     /// target the range indicator on the button was guessing about too.
-    pub unmeasured: u32,
+    pub(crate) unmeasured: u32,
     /// The worst disagreement seen, in yards the client thought it had to
     /// spare when the server said otherwise. Zero while the two agree.
     pub worst: f32,
@@ -121,7 +122,7 @@ pub struct RangeDisagreement {
     pub samples: Vec<Sample>,
 }
 
-pub struct DesyncPlugin;
+pub(crate) struct DesyncPlugin;
 
 impl Plugin for DesyncPlugin {
     fn build(&self, app: &mut App) {
@@ -174,24 +175,27 @@ fn measure(
             None => (gap.across, melee_reach(gap.reaches.0, gap.reaches.1)),
         };
         let slack = limit - measured;
-        let what = event
-            .spell_id
-            .map_or_else(|| "a swing".to_string(), |id| format!("spell {id}"));
-        let name = units.name(UnitId::Target).unwrap_or("(no target)");
-        let verdict = if slack > 0.0 {
+        if slack > 0.0 {
             log.disagreements = log.disagreements.saturating_add(1);
             log.worst = log.worst.max(slack);
-            "DISAGREES"
-        } else {
-            "agrees"
-        };
-        log.samples.push(Sample {
-            slack,
-            line: format!(
+        }
+        #[cfg(feature = "diagnostics")]
+        let line = {
+            let what = event
+                .spell_id
+                .map_or_else(|| "a swing".to_string(), |id| format!("spell {id}"));
+            let name = units.name(UnitId::Target).unwrap_or("(no target)");
+            let verdict = if slack > 0.0 { "DISAGREES" } else { "agrees" };
+            format!(
                 "{what} refused at {measured:.1}y against a {limit:.1}y limit \
                  ({:+.1}y up) — {verdict} — {name}",
                 gap.up
-            ),
+            )
+        };
+        log.samples.push(Sample {
+            slack,
+            #[cfg(feature = "diagnostics")]
+            line,
         });
         // **Most surprising first, by the slack** — and this is the second
         // thing the first draft got wrong: it sorted the *formatted strings*,
@@ -205,10 +209,11 @@ fn measure(
 
 /// One refusal, with the number the ordering is by kept beside the words rather
 /// than parsed back out of them.
-pub struct Sample {
+pub(crate) struct Sample {
     /// How far inside the server's own limit this client believed it was.
     /// Positive is the disagreement.
-    pub slack: f32,
+    pub(crate) slack: f32,
+    #[cfg(feature = "diagnostics")]
     pub line: String,
 }
 

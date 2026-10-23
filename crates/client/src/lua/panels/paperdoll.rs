@@ -43,6 +43,7 @@ use super::super::api::{one_or_nil, Answers};
 
 /// **The reads this module registers**, for the count that measures the gap —
 /// the same list [`super::super::api::READS`] is, checked the same way.
+#[cfg(test)]
 pub const READS: [&str; 14] = [
     "HasWandEquipped",
     "UnitArmor",

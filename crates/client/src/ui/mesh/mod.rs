@@ -119,13 +119,18 @@ struct MeshState {
     reported: bool,
 }
 
-pub struct UiMeshPlugin;
+pub(crate) struct UiMeshPlugin;
 
 impl Plugin for UiMeshPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "shaders/interface.wgsl");
         app.add_plugins(Material2dPlugin::<InterfaceMaterial>::default())
             .init_resource::<textures::UiTextures>()
+            .add_message::<crate::assets::PathsChanged>()
+            .add_systems(
+                Update,
+                textures::forget_changed_minimaps.in_set(crate::assets::ForgetChanged),
+            )
             .init_resource::<fonts::UiFonts>()
             // `rebuild` after the walk (`framexml::walk`), so a tick's items
             // are drawn in the frame they are produced: the rebuild reads
@@ -391,7 +396,7 @@ fn rebuild(
 /// It builds nothing Bevy schedules: an `Assets<Image>` is a plain container
 /// and [`crate::assets::GameAssets`] opens the archives on first use, so this
 /// needs no window, no GPU and no login.
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 pub(crate) struct PaintProbe {
     assets: crate::assets::GameAssets,
     images: Assets<Image>,
@@ -401,7 +406,7 @@ pub(crate) struct PaintProbe {
     reported_models: HashSet<String>,
 }
 
-#[cfg(any(test, feature = "diagnostics"))]
+#[cfg(feature = "diagnostics")]
 impl PaintProbe {
     pub(crate) fn new(gamedata_dir: &str) -> PaintProbe {
         PaintProbe {

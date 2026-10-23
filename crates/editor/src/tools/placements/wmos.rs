@@ -57,47 +57,47 @@ use bevy::prelude::*;
 /// selected group. Same shape as [`super::doodads::Selection`], for the same
 /// reasons.
 #[derive(Resource, Debug, Default, Clone)]
-pub struct Selection {
-    pub at: Option<Selected>,
-    pub also: Vec<Selected>,
+pub(crate) struct Selection {
+    pub(crate) at: Option<Selected>,
+    pub(crate) also: Vec<Selected>,
 }
 
 /// One selected building, and everything a panel needs to say about it.
 #[derive(Debug, Clone)]
-pub struct Selected {
-    pub tile: (u32, u32),
-    pub index: usize,
+pub(crate) struct Selected {
+    pub(crate) tile: (u32, u32),
+    pub(crate) index: usize,
     /// The id the renderer knows it by.
-    pub unique_id: u32,
+    pub(crate) unique_id: u32,
     /// Its `MWMO` path.
-    pub path: String,
-    pub record: Building,
+    pub(crate) path: String,
+    pub(crate) record: Building,
 }
 
 impl Selection {
     /// Select one building, or none, and drop the rest of the group.
-    pub fn only(&mut self, at: Option<Selected>) {
+    pub(crate) fn only(&mut self, at: Option<Selected>) {
         self.at = at;
         self.also.clear();
     }
 
     /// How many buildings are selected.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         usize::from(self.at.is_some()) + self.also.len()
     }
 
     /// Every selected building, the primary first.
-    pub fn members(&self) -> impl Iterator<Item = &Selected> {
+    pub(crate) fn members(&self) -> impl Iterator<Item = &Selected> {
         self.at.iter().chain(self.also.iter())
     }
 
     /// Whether a building is selected, as the primary or as a member.
-    pub fn holds(&self, unique_id: u32) -> bool {
+    pub(crate) fn holds(&self, unique_id: u32) -> bool {
         self.members().any(|at| at.unique_id == unique_id)
     }
 
     /// Shift+click — see [`super::doodads::Selection::toggle`].
-    pub fn toggle(&mut self, found: Selected) {
+    pub(crate) fn toggle(&mut self, found: Selected) {
         if self.at.as_ref().is_some_and(|at| at.unique_id == found.unique_id) {
             self.at = self.also.pop();
             return;
@@ -112,7 +112,7 @@ impl Selection {
     }
 
     /// Make a member the primary, keeping the group.
-    pub fn promote(&mut self, unique_id: u32) {
+    pub(crate) fn promote(&mut self, unique_id: u32) {
         let Some(at) = self.also.iter().position(|m| m.unique_id == unique_id) else {
             return;
         };
@@ -123,7 +123,7 @@ impl Selection {
     }
 
     /// The record a panel has just edited, or `None` when nothing moved.
-    pub fn edited(&self, was: &Building) -> Option<Building> {
+    pub(crate) fn edited(&self, was: &Building) -> Option<Building> {
         let at = self.at.as_ref()?;
         (at.record != *was).then_some(at.record)
     }
@@ -136,7 +136,7 @@ impl Selection {
 const STEP: f32 = 5.0;
 const TURN: f32 = 5.0;
 
-pub struct WmoToolPlugin;
+pub(crate) struct WmoToolPlugin;
 
 impl Plugin for WmoToolPlugin {
     fn build(&self, app: &mut App) {

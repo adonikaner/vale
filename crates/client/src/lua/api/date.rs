@@ -47,16 +47,16 @@ fn now_seconds() -> i64 {
 /// A calendar date and time of day, UTC, for the `date` function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::lua) struct Civil {
-    pub year: i64,
-    pub month: i64,
+    pub(crate) year: i64,
+    pub(crate) month: i64,
     pub day: i64,
     pub hour: i64,
-    pub minute: i64,
+    pub(crate) minute: i64,
     pub second: i64,
     /// 0 Sunday .. 6 Saturday.
-    pub weekday: i64,
+    pub(crate) weekday: i64,
     /// 0-based day of the year.
-    pub yearday: i64,
+    pub(crate) yearday: i64,
 }
 
 impl Civil {

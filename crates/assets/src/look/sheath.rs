@@ -54,12 +54,6 @@ pub const UNARMED: u8 = 0;
 pub const MELEE: u8 = 1;
 pub const RANGED: u8 = 2;
 
-/// `MAX_SHEATH_STATE` — vmangos' own bound. `HandleSetSheathedOpcode` returns
-/// without doing anything for a value at or above it, so a request past the end
-/// is silently ignored rather than refused, and the server and the client would
-/// then disagree for the rest of the session.
-pub const MAX_STATE: u8 = 3;
-
 /// The `AnimationData.dbc` **WeaponFlags** bits (column 2), which are the whole
 /// input to [`reconcile`] besides the unit's own state.
 pub mod weapon_flags {

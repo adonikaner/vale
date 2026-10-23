@@ -37,7 +37,7 @@ use crate::bytes::{Reader, Writer};
 pub const ICON_COUNT: u8 = 8;
 
 /// The icon byte that turns a client packet into a request for the list.
-pub const LIST_REQUEST: u8 = 0xFF;
+pub(crate) const LIST_REQUEST: u8 = 0xFF;
 
 /// `MSG_RAID_TARGET_UPDATE` from the server, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub enum RaidTargetUpdate {
 /// A list whose length is not a whole number of nine-byte entries is refused,
 /// since the remainder says the body was cut. A form byte other than 0 or 1 is
 /// refused for the same reason.
-pub fn parse_raid_target_update(body: &[u8]) -> Option<RaidTargetUpdate> {
+pub(crate) fn parse_raid_target_update(body: &[u8]) -> Option<RaidTargetUpdate> {
     let (&form, rest) = body.split_first()?;
     let mut r = Reader::new(rest);
     match form {
@@ -80,14 +80,14 @@ pub fn parse_raid_target_update(body: &[u8]) -> Option<RaidTargetUpdate> {
 
 /// `MSG_RAID_TARGET_UPDATE` to the server: place `icon` (0..8) on `guid`, or
 /// clear it with a guid of 0.
-pub fn set_icon_body(icon: u8, guid: u64) -> Vec<u8> {
+pub(crate) fn set_icon_body(icon: u8, guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(icon).u64(guid);
     w.buf
 }
 
 /// `MSG_RAID_TARGET_UPDATE` to the server: ask for the whole list.
-pub fn list_request_body() -> Vec<u8> {
+pub(crate) fn list_request_body() -> Vec<u8> {
     vec![LIST_REQUEST]
 }
 

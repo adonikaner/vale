@@ -30,7 +30,7 @@ use crate::world::entity::WorldEntity;
 use crate::world::session::Session;
 use vale_assets::look::dress::{HIDE_CLOAK, HIDE_HELM};
 
-pub struct UiOptionsPlugin;
+pub(crate) struct UiOptionsPlugin;
 
 impl Plugin for UiOptionsPlugin {
     fn build(&self, app: &mut App) {
@@ -46,7 +46,7 @@ impl Plugin for UiOptionsPlugin {
 /// Which toggle, if any, a `ShowHelm`/`ShowCloak` call needs, given the
 /// character's `PLAYER_FLAGS`. `Some(true)` is the helm's packet and
 /// `Some(false)` the cloak's.
-pub fn toggle_for(binding: &Binding, player_flags: u32) -> Option<bool> {
+pub(crate) fn toggle_for(binding: &Binding, player_flags: u32) -> Option<bool> {
     let (helm, show) = match binding {
         Binding::ShowHelm(show) => (true, *show),
         Binding::ShowCloak(show) => (false, *show),

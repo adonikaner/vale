@@ -45,13 +45,13 @@ use vale_mangos::gossip::{self, MenuOption, MenuText, NpcText, Point};
 use vale_mangos::row::{Key, Life};
 
 /// What the window is drawn from.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub gossip: &'a mut Gossip,
-    pub behaviour: &'a mut Behaviour,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) gossip: &'a mut Gossip,
+    pub(crate) behaviour: &'a mut Behaviour,
     /// The reference picker, which chooses the menu an option leads to.
-    pub quests: &'a mut Quests,
-    pub now: f64,
+    pub(crate) quests: &'a mut Quests,
+    pub(crate) now: f64,
 }
 
 /// Where a chooser or the picker writes one gossip column.
@@ -80,7 +80,7 @@ fn card(life: Life) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(8, 6))
 }
 
-pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
+pub(crate) fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
     if !subject.gossip.open {
         return None;
     }
@@ -257,7 +257,7 @@ fn ask(session: &mut EditSession, gossip: &mut Gossip, asked: NewMenu) {
 /// Make the menu [`ask`] asked for once the highest menu entry, npc_text id
 /// and broadcast_text entry are read, and drop it when a read failed. Called
 /// every frame, with the gossip window open or shut.
-pub fn make_pending(session: &mut EditSession, gossip: &mut Gossip, behaviour: &mut Behaviour, now: f64) {
+pub(crate) fn make_pending(session: &mut EditSession, gossip: &mut Gossip, behaviour: &mut Behaviour, now: f64) {
     let Some(asked) = gossip.pending.clone() else {
         return;
     };
@@ -319,7 +319,7 @@ fn name_menu(session: &mut EditSession, template_key: &vale_mangos::row::Key, np
 /// `menu` is the column's value, `npc_flags` the template's and `label` the
 /// creature's name for the status line. Drawing the buttons has the highest
 /// menu and text ids read, so + new is ready by the time it is pressed.
-pub fn menu_buttons(
+pub(crate) fn menu_buttons(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     gossip: &mut Gossip,

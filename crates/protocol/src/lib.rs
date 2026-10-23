@@ -44,9 +44,5 @@ pub mod socket;
 pub mod state;
 
 pub use codes::{LogonResult, WorldResult};
-pub use opcodes::Opcode;
 pub use version::ClientVersion;
-
-/// The client build we identify as. The server matches this against its
-/// `allowed_clients` table, so it is not a cosmetic value.
-pub const CLIENT_BUILD: u16 = version::WOW_1_12_1_WIN_X86.build;
+

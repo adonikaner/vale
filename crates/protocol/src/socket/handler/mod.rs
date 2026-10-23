@@ -117,14 +117,14 @@ pub struct LocalState {
     /// Round-trip time of the last `CMSG_PING`.
     pub latency_ms: u32,
     /// When the outstanding ping went out.
-    pub ping_sent_at: Option<Instant>,
+    pub(crate) ping_sent_at: Option<Instant>,
     /// How many times a packet has relocated the player.
     ///
     /// A counter for the same reason `Entity::position_updates` is one. The
     /// caller re-baselines its own record of where the server has the player,
     /// and it cannot tell a relocation it made from one it did not by comparing
     /// positions, because the mover has already adopted the new position.
-    pub relocations: u32,
+    pub(crate) relocations: u32,
     /// The guid the movement packets are about: the mover, and the guid
     /// `CMSG_SET_ACTIVE_MOVER` last named.
     ///
@@ -139,11 +139,11 @@ pub struct LocalState {
     /// [`crate::socket::session::SessionLoop::tick_view`], which follows the
     /// client's per-frame view update. [`Self::mover`] simulates whatever unit
     /// this names.
-    pub mover_guid: u64,
+    pub(crate) mover_guid: u64,
     /// Whether the client has told the server it is looking through another
     /// object. The client's view update keeps this latch, and it stops
     /// `CMSG_FAR_SIGHT` being sent on every tick of a far sight.
-    pub looking_through: bool,
+    pub(crate) looking_through: bool,
     /// Whether the transfer in flight began on a transport, as the two extra
     /// dwords of `SMSG_TRANSFER_PENDING` say. vmangos'
     /// `Player::ExecuteTeleportFar` writes them only for a character standing
@@ -154,7 +154,7 @@ pub struct LocalState {
     /// meaningless. `Transport::TeleportTransport` moves the boat with the
     /// character on it, and afterwards the transport offset is the only part of
     /// the position still valid. See [`movement::Mover::transfer_aboard`].
-    pub transfer_on_transport: bool,
+    pub(crate) transfer_on_transport: bool,
 }
 
 impl LocalState {
@@ -178,7 +178,7 @@ impl LocalState {
     /// `CHEAT_TYPE_NULL_CLIENT_TIME` and any decrease is `CHEAT_TYPE_TIME_BACK`.
     /// It is therefore milliseconds since the session started, plus one so the
     /// first packet is not zero.
-    pub fn movement_info(&mut self) -> movement::MovementInfo {
+    pub(crate) fn movement_info(&mut self) -> movement::MovementInfo {
         self.mover.info.time = self.started.elapsed().as_millis() as u32 + 1;
         self.mover.info
     }
@@ -202,7 +202,7 @@ pub struct Incoming<'a> {
 /// snapshot pump and the live session loop call it, so a packet cannot be
 /// handled by one and not the other. Such a divergence would show as the
 /// renderer being stale while the CLI output is correct.
-pub fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
+pub(crate) fn apply_packet(ctx: &mut Incoming, pkt: &Packet) {
     ctx.stats.packets += 1;
     ctx.stats.saw(pkt);
 
@@ -684,23 +684,23 @@ pub struct PumpStats {
     pub bagged_packets: u32,
     pub creatures_resolved: u32,
     pub gameobjects_resolved: u32,
-    pub players_resolved: u32,
+    pub(crate) players_resolved: u32,
     /// Item templates resolved. These cover a player's equipment, which the
     /// game archives do not describe.
     pub items_resolved: u32,
     /// Queries answered from the on-disk cache instead of being sent; see
     /// [`crate::state::wdb`]. Each one saves a round trip. The answer still goes
     /// through this dispatch, so the `*_resolved` counters include them.
-    pub cache_answered: u32,
+    pub(crate) cache_answered: u32,
     pub monster_moves: u32,
     /// `MSG_MOVE_*` broadcasts applied: other players moving.
-    pub player_moves: u32,
+    pub(crate) player_moves: u32,
     /// `SMSG_ATTACKERSTATEUPDATE`: melee swings, by or against anyone.
     pub attacks: u32,
     /// Spell damage and heal logs. Counted apart from [`Self::attacks`]
     /// because a single total would hide the case where weapon swings arrive
     /// and spell logs do not, which this client once had for a long time.
-    pub spell_logs: u32,
+    pub(crate) spell_logs: u32,
     /// `SMSG_EMOTE`: one-shot emotes played by any visible unit.
     pub emotes: u32,
     /// `SMSG_AI_REACTION`: creatures noticing and engaging.
@@ -751,7 +751,7 @@ pub struct PumpStats {
     /// holds the world until the reply arrives. A 1 here in a session whose
     /// world is populated means the reply worked. A 1 in the unhandled list
     /// instead means the packet was dropped.
-    pub cinematics: u32,
+    pub(crate) cinematics: u32,
     /// `SMSG_WEATHER` packets received: one per zone change and one per
     /// weather grade the server rolls. A zero after a zone change means the
     /// packet is not arriving, which is a fault for a zone with a
@@ -762,7 +762,7 @@ pub struct PumpStats {
     /// a zero over a session in which anything was looted means the event is
     /// being dropped while the bag still fills. That failure has no other
     /// symptom.
-    pub items_received: u32,
+    pub(crate) items_received: u32,
     /// `CMSG_AREATRIGGER` packets sent. This is the only packet this client
     /// sends unprompted.
     ///

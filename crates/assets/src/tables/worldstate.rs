@@ -66,12 +66,12 @@ mod fields {
     /// The enUS text; the other locales and the mask follow.
     pub const TEXT: usize = 4;
     pub const TOOLTIP: usize = 13;
-    pub const STATE_VARIABLE: usize = 23;
+    pub(crate) const STATE_VARIABLE: usize = 23;
     pub const TYPE: usize = 24;
-    pub const DYNAMIC_ICON: usize = 25;
-    pub const DYNAMIC_TOOLTIP: usize = 26;
-    pub const EXTENDED_UI: usize = 35;
-    pub const EXTENDED_STATES: usize = 36;
+    pub(crate) const DYNAMIC_ICON: usize = 25;
+    pub(crate) const DYNAMIC_TOOLTIP: usize = 26;
+    pub(crate) const EXTENDED_UI: usize = 35;
+    pub(crate) const EXTENDED_STATES: usize = 36;
 }
 
 /// The `ChatChannels.dbc` flags that make a channel open the outdoor rows:
@@ -126,7 +126,7 @@ pub struct WorldStateRow {
 impl WorldStateRow {
     /// Whether the row is listed for this map and zone. `outdoor` is whether
     /// the character is in a channel with [`OUTDOOR_CHANNEL_FLAGS`].
-    pub fn is_listed(&self, map: u32, zone: u32, outdoor: bool) -> bool {
+    pub(crate) fn is_listed(&self, map: u32, zone: u32, outdoor: bool) -> bool {
         let map_matches = self.map == -1 || i64::from(self.map) == i64::from(map);
         let zone_matches = self.zone == 0 || self.zone == zone;
         let type_matches = match self.row_type {
@@ -235,7 +235,7 @@ impl WorldStateUi {
 /// character is `w` or `W`, the digits name a state and its value replaces the
 /// whole token. Otherwise a single `%` is written, the digits are dropped, and
 /// copying resumes at that character. No other substitution is made.
-pub fn format_text(text: &str, value: impl Fn(u32) -> i32) -> String {
+pub(crate) fn format_text(text: &str, value: impl Fn(u32) -> i32) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {

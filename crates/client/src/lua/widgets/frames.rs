@@ -63,6 +63,7 @@
 //! * There is one Lua state and no per-addon `setfenv`, which is how 1.12
 //!   isolates addons. There are no addons.
 
+#[cfg(any(test, feature = "diagnostics"))]
 use std::collections::BTreeSet;
 
 use super::super::api::one_or_nil;
@@ -71,7 +72,7 @@ use crate::interface::events::EventArg;
 
 /// The C function that makes a frame. Named as a constant because the XML loader
 /// calls it too, and because the check counts it.
-pub const CREATE_FRAME: &str = "CreateFrame";
+pub(crate) const CREATE_FRAME: &str = "CreateFrame";
 
 /// The methods a frame carries beyond the ones every UI object has.
 ///
@@ -81,7 +82,8 @@ pub const CREATE_FRAME: &str = "CreateFrame";
 ///
 /// Sorted. Every entry is a name the shipped FrameXML calls, the same rule
 /// [`super::super::api::verbs::REGISTERED`] follows.
-pub const METHODS: [&str; 18] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 18] = [
     "CreateFontString",
     "CreateTexture",
     "GetFrameLevel",
@@ -116,7 +118,7 @@ pub const METHODS: [&str; 18] = [
 /// `OnMouseUp`/`OnClick` and the drag's `OnDragStart`/`OnDragStop`/
 /// `OnReceiveDrag` by [`super::super::api::mouse`], and `OnTooltipCleared` by
 /// [`super::tooltip`]. Fifteen of thirty-six.
-pub use vale_assets::interface::widgets::HANDLERS as SCRIPTS;
+pub(crate) use vale_assets::interface::widgets::HANDLERS as SCRIPTS;
 
 /// Where the frame table keeps what this module owns, so a script setting
 /// `this.casting = 1` cannot collide with it.
@@ -654,7 +656,7 @@ pub(in crate::lua) fn set_script(
 /// a tooltip is above everything. Listed here rather than in the draw pass
 /// because it is the frame object's ordering: `GetFrameStrata` returns one of
 /// these strings, and this list defines their order.
-pub const STRATA: [&str; 9] = [
+pub(crate) const STRATA: [&str; 9] = [
     "WORLD",
     "BACKGROUND",
     "LOW",
@@ -695,7 +697,7 @@ pub(in crate::lua) fn set_level(lua: &mlua::Lua, frame: &mlua::Table, level: i64
 /// and not in `MEDIUM` with the panels. `frameStrata` appears on 59 of the
 /// directory's 1,812 frames, so 97% of them get their strata from the
 /// inheritance.
-pub fn strata(frame: &mlua::Table) -> String {
+pub(crate) fn strata(frame: &mlua::Table) -> String {
     let mut current = frame.clone();
     for _ in 0..MAX_ANCESTRY {
         if let Ok(Some(own)) = current.raw_get::<Option<String>>(STRATA_KEY) {
@@ -807,6 +809,7 @@ fn remove(list: &mlua::Table, frame: &mlua::Table) -> mlua::Result<()> {
 ///
 /// Compared against [`crate::interface::events::FIRED`], this gives the events
 /// the interface registers for that this client does not yet fire.
+#[cfg(any(test, feature = "diagnostics"))]
 pub(in crate::lua) fn registered_events(lua: &mlua::Lua) -> mlua::Result<BTreeSet<String>> {
     let frames = lua.named_registry_value::<mlua::Table>(REG_EVENT_FRAMES)?;
     let mut out = BTreeSet::new();

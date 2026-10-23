@@ -144,11 +144,11 @@ use vale_client::render::wmos::{self as wmo_render, WmoCache};
 ///
 /// 128, drawn at 40 to 56 points, so the sampler always downscales. The
 /// client's portrait pass notes that downscaling is the side of 1:1 to be on.
-pub const SIDE: u32 = 128;
+pub(crate) const SIDE: u32 = 128;
 
 /// How many pixels the large preview is on a side: twice the size it is drawn
 /// at, so a panel dragged wider does not show a soft picture.
-pub const LARGE_SIDE: u32 = 384;
+pub(crate) const LARGE_SIDE: u32 = 384;
 
 /// How many models are drawn at once. Each is a camera and a render layer.
 const SLOTS: usize = 4;
@@ -227,7 +227,7 @@ const LAMP: Vec3 = Vec3::new(-0.40, 0.80, -0.50);
 
 /// Marks a slot's camera.
 #[derive(Component)]
-pub struct PortraitCamera;
+pub(crate) struct PortraitCamera;
 
 /// What one slot is doing.
 struct Slot {
@@ -292,11 +292,11 @@ struct LargeShown {
 /// `vale_assets::look::dress::dress` answers for the same display row: the
 /// one texture no bake holds, and which geosets to draw.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Worn {
-    pub path: String,
-    pub skins: Vec<String>,
-    pub hair: Option<Appearance>,
-    pub dress: Dress,
+pub(crate) struct Worn {
+    pub(crate) path: String,
+    pub(crate) skins: Vec<String>,
+    pub(crate) hair: Option<Appearance>,
+    pub(crate) dress: Dress,
     /// Set when the body's skin is composed rather than read from a file.
     /// This is the only picture here whose subject is a player: a garment
     /// that paints the wearer and has no geometry of its own, shown on a body.
@@ -305,30 +305,30 @@ pub struct Worn {
     /// tables name. `Some` puts the lookup through
     /// `ModelCache::worn_as_character_unposed`, where [`Self::skins`] is
     /// ignored — the composite's key is built from this instead.
-    pub look: Option<CharacterLook>,
+    pub(crate) look: Option<CharacterLook>,
     /// The texture a cloak applies to the wearer's group-15 geoset. A cloak
     /// is the one piece of equipment whose geometry is the body's and whose
     /// skin is the item's. Only set together with [`Self::look`].
-    pub cloak: Option<String>,
+    pub(crate) cloak: Option<String>,
     /// The models hung on the body: a guard's helm and pauldrons, from
     /// `look::dress::Dressing::attachments`. Each stands at its point's place
     /// in the body's rest pose, which is the pose a portrait is drawn in.
-    pub hung: Vec<Hung>,
+    pub(crate) hung: Vec<Hung>,
 }
 
 /// A model hung on a [`Worn`] body at one of its attachment points.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Hung {
+pub(crate) struct Hung {
     /// The `vale_assets::world::m2::attach` id of the point.
-    pub point: u32,
-    pub path: String,
+    pub(crate) point: u32,
+    pub(crate) path: String,
     /// The skin the model wears in the object skin's slot, if any.
-    pub texture: Option<String>,
+    pub(crate) texture: Option<String>,
 }
 
 impl Hung {
     /// The models a dressing hangs on its wearer.
-    pub fn all(attached: Vec<vale_assets::tables::item::AttachedModel>) -> Vec<Hung> {
+    pub(crate) fn all(attached: Vec<vale_assets::tables::item::AttachedModel>) -> Vec<Hung> {
         attached
             .into_iter()
             .map(|attached| Hung {
@@ -346,7 +346,7 @@ impl Worn {
     /// The path followed by the skins, because two display ids of one model
     /// are two pictures. A model wearing nothing is keyed by its path alone,
     /// so a doodad's picture keeps the key it always had.
-    pub fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         // A composed body is keyed by its look, because its skins are empty:
         // two garments on one race are one model with the same empty skin
         // slots, so keying by those would show the second garment with the
@@ -479,7 +479,7 @@ fn worn_draws(
 
 /// The pictures, and what has been asked for.
 #[derive(Resource, Default)]
-pub struct Portraits {
+pub(crate) struct Portraits {
     ready: HashMap<String, egui::TextureId>,
     /// Asked for and not yet taken, with the frame it was last asked on.
     wanted: HashMap<String, u64>,
@@ -516,7 +516,7 @@ pub struct Portraits {
 
 /// What a picker's row can say about a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
+pub(crate) enum Status {
     Ready(egui::TextureId),
     /// Asked for, or being drawn.
     Pending,
@@ -527,7 +527,7 @@ pub enum Status {
 impl Portraits {
     /// Ask for a picture. Cheap and idempotent: a row calls this on every
     /// frame it is drawn, and that is what keeps its ask fresh.
-    pub fn want(&mut self, path: &str) {
+    pub(crate) fn want(&mut self, path: &str) {
         let key = key_of(path);
         if self.ready.contains_key(&key) || self.failed.contains(&key) {
             return;
@@ -541,7 +541,7 @@ impl Portraits {
     ///
     /// Cheap and idempotent, as [`Self::want`] is: a row calls it on every
     /// frame it is drawn.
-    pub fn want_worn(&mut self, worn: &Worn) -> String {
+    pub(crate) fn want_worn(&mut self, worn: &Worn) -> String {
         let key = worn.key();
         self.worn.entry(key.clone()).or_insert_with(|| worn.clone());
         self.want(&key);
@@ -549,7 +549,7 @@ impl Portraits {
     }
 
     /// [`Self::want_worn`] for the large preview.
-    pub fn want_large_worn(&mut self, worn: &Worn) -> String {
+    pub(crate) fn want_large_worn(&mut self, worn: &Worn) -> String {
         let key = worn.key();
         self.worn.entry(key.clone()).or_insert_with(|| worn.clone());
         self.want_large(&key);
@@ -557,13 +557,14 @@ impl Portraits {
     }
 
     /// The picture, if it has been taken.
-    pub fn get(&self, path: &str) -> Option<egui::TextureId> {
+    #[cfg(test)]
+    pub(crate) fn get(&self, path: &str) -> Option<egui::TextureId> {
         self.ready.get(&key_of(path)).copied()
     }
 
     /// What a row should show for a path, including before its picture is
     /// taken.
-    pub fn status(&self, path: &str) -> Status {
+    pub(crate) fn status(&self, path: &str) -> Status {
         let key = key_of(path);
         match self.ready.get(&key) {
             Some(id) => Status::Ready(*id),
@@ -572,18 +573,13 @@ impl Portraits {
         }
     }
 
-    /// How many pictures are being kept.
-    pub fn count(&self) -> usize {
-        self.ready.len()
-    }
-
     /// Ask for the large preview to show this model. The panel calls this on
     /// every frame it draws the pane, as rows call [`Self::want`].
     ///
     /// A model different from last frame's resets the turn: a drag applies to
     /// the model it was made on, and carrying it over would show the next
     /// model from behind without the user asking for that.
-    pub fn want_large(&mut self, path: &str) {
+    pub(crate) fn want_large(&mut self, path: &str) {
         let key = key_of(path);
         let changed = self.shown.as_ref().is_none_or(|shown| shown.path != key)
             && self.large_wanted.as_deref() != Some(key.as_str());
@@ -596,7 +592,7 @@ impl Portraits {
 
     /// What egui draws the big preview by, once it has been drawn at least
     /// once and is of the model asked for.
-    pub fn large_texture(&self, path: &str) -> Option<egui::TextureId> {
+    pub(crate) fn large_texture(&self, path: &str) -> Option<egui::TextureId> {
         let shown = self.shown.as_ref()?;
         if shown.path != key_of(path) || !shown.settled {
             return None;
@@ -605,7 +601,7 @@ impl Portraits {
     }
 
     /// Turn the big preview by a drag, in points.
-    pub fn turn_large(&mut self, by: egui::Vec2) {
+    pub(crate) fn turn_large(&mut self, by: egui::Vec2) {
         if by == egui::Vec2::ZERO {
             return;
         }
@@ -618,12 +614,12 @@ impl Portraits {
     }
 
     /// Whether the big preview has been turned off its resting view.
-    pub fn large_turned(&self) -> bool {
+    pub(crate) fn large_turned(&self) -> bool {
         self.large_yaw != 0.0 || self.large_pitch != 0.0
     }
 
     /// Put it back to the view the rows are drawn from.
-    pub fn reset_large_turn(&mut self) {
+    pub(crate) fn reset_large_turn(&mut self) {
         self.large_yaw = 0.0;
         self.large_pitch = 0.0;
         if let Some(shown) = self.shown.as_mut() {
@@ -664,7 +660,7 @@ fn key_of(path: &str) -> String {
     }
 }
 
-pub struct PortraitPlugin;
+pub(crate) struct PortraitPlugin;
 
 impl Plugin for PortraitPlugin {
     fn build(&self, app: &mut App) {
@@ -1225,7 +1221,7 @@ fn target_image(side: u32) -> Image {
 
 /// Draw a path's picture into `rect`, or what stands for one: a sunk square
 /// while it is on its way, and a faint cross for a model that will not open.
-pub fn paint(ui: &egui::Ui, portraits: &mut Portraits, path: &str, rect: egui::Rect) {
+pub(crate) fn paint(ui: &egui::Ui, portraits: &mut Portraits, path: &str, rect: egui::Rect) {
     portraits.want(path);
     let painter = ui.painter();
     painter.rect_filled(rect, egui::CornerRadius::same(3), crate::ui::widgets::theme::SUNK);
@@ -1253,7 +1249,7 @@ pub fn paint(ui: &egui::Ui, portraits: &mut Portraits, path: &str, rect: egui::R
 ///
 /// `side` is the box's width and height, in points. Returns the pane's
 /// response, so a caller can draw something over it.
-pub fn paint_large(
+pub(crate) fn paint_large(
     ui: &mut egui::Ui,
     portraits: &mut Portraits,
     path: &str,

@@ -104,16 +104,16 @@ pub(crate) struct CreaturePanel<'a> {
     /// Passed here rather than reached through the tool because the button
     /// that opens it is on this panel: a creature has to be selected before a
     /// path can be, and this panel is where a creature is selected.
-    pub waypoints: &'a mut crate::tools::spawns::waypoints::Waypoints,
+    pub(crate) waypoints: &'a mut crate::tools::spawns::waypoints::Waypoints,
     /// The behaviour windows' state, for the Events and Spells buttons. See
     /// `crate::ui::subjects::behaviour::windows`.
-    pub behaviour: &'a mut crate::subjects::behaviour::Behaviour,
+    pub(crate) behaviour: &'a mut crate::subjects::behaviour::Behaviour,
     /// The Vendor and Trainer windows' state, for their two buttons. See
     /// `crate::ui::subjects::services::windows`.
-    pub services: &'a mut crate::subjects::services::Services,
+    pub(crate) services: &'a mut crate::subjects::services::Services,
     /// The gossip window's state, for the Gossip button. See
     /// `crate::ui::subjects::gossip::window`.
-    pub gossip: &'a mut crate::subjects::gossip::Gossip,
+    pub(crate) gossip: &'a mut crate::subjects::gossip::Gossip,
 }
 
 impl<'a> Subject<'a> {

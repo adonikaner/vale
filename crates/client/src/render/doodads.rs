@@ -210,7 +210,7 @@ fn park_probe() -> Option<f32> {
 #[derive(Component, Default)]
 pub struct PendingDoodads {
     pub outdoor: Vec<PlacedDoodad>,
-    pub indoor: Vec<PlacedDoodad>,
+    pub(crate) indoor: Vec<PlacedDoodad>,
 }
 
 /// A placement and what lights it.
@@ -227,7 +227,7 @@ pub struct PlacedDoodad {
     /// The per-instance multiplier on the sun term: 0.5 when the `MCSH` bit
     /// under the origin is set, otherwise 1.0. An interior prop has a room
     /// light and is not scaled. See [`crate::render::models::sun_scale`].
-    pub sun_scale: f32,
+    pub(crate) sun_scale: f32,
 }
 
 impl PlacedDoodad {
@@ -246,7 +246,7 @@ impl PlacedDoodad {
 /// The sun scale of a doodad lit by the sun: a terrain doodad or a WMO prop in
 /// an exterior group. 0.5 in the ground's baked shadow, otherwise 1.0. The
 /// 2.5 that units take on lit ground does not apply to doodads.
-pub fn doodad_sun_scale(shadowed: bool) -> f32 {
+pub(crate) fn doodad_sun_scale(shadowed: bool) -> f32 {
     if shadowed {
         crate::render::models::sun_scale::SHADOWED_GROUND
     } else {
@@ -387,14 +387,6 @@ impl ResidentDoodads {
         true
     }
 
-    /// The resident's current transform, for a caller that moves a placement
-    /// relative to its last position.
-    pub fn placement_of(&self, unique_id: u32) -> Option<Transform> {
-        self.list
-            .iter()
-            .find(|resident| resident.unique_id == unique_id)
-            .map(|resident| resident.transform)
-    }
 }
 
 /// Counts of what a tile has drawn, used to check the seam rule.
@@ -405,7 +397,7 @@ impl ResidentDoodads {
 /// under the listed count and never over. A count of batches is nearly double
 /// and cannot be used for this check. (The HUD used to show the batch count.)
 #[derive(Component, Default)]
-pub struct TileDoodads {
+pub(crate) struct TileDoodads {
     /// `MDDF` placements this tile claimed; the number to compare.
     pub placements: usize,
     /// `MODD` furniture handed over by the WMO pass, which is in no `MDDF`.
@@ -427,11 +419,11 @@ pub struct TileDoodads {
     /// wrong or the player is not near any rigged placement. The first failure
     /// has occurred with no visible symptom and no failing test among 2,271;
     /// these counts show it.
-    pub rigged: usize,
+    pub(crate) rigged: usize,
     pub posed: usize,
 }
 
-pub struct DoodadPlugin;
+pub(crate) struct DoodadPlugin;
 
 impl Plugin for DoodadPlugin {
     fn build(&self, app: &mut App) {
@@ -695,7 +687,7 @@ fn resolve_doodads(
 /// The index is the joint's position in its rig's [`PosedDoodad::posed`]
 /// list: the bone index, or one past the last bone for the identity joint.
 #[derive(Component)]
-pub struct SceneryJoint(u32);
+pub(crate) struct SceneryJoint(u32);
 
 /// The root of one animated placement: the placement's transform, the joints
 /// under it, and what it is playing.

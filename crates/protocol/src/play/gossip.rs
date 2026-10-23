@@ -148,7 +148,7 @@ pub struct VendorList {
     pub items: Vec<VendorItem>,
     /// The byte after a zero count — an empty vendor's "why". Only ever 0 from
     /// vmangos.
-    pub empty_reason: Option<u8>,
+    pub(crate) empty_reason: Option<u8>,
 }
 
 /// Why a buy did not happen — `SMSG_BUY_FAILED`'s byte, vmangos' `BuyResult`.
@@ -226,7 +226,7 @@ impl SellFailure {
 /// **The packet carries no map.** The reference projects it against whichever
 /// map is open, from the character's own, which is what the server means: a
 /// guard in Stormwind is naming a place in Stormwind.
-pub fn parse_gossip_poi(body: &[u8]) -> Option<(u32, f32, f32, u32, u32, String)> {
+pub(crate) fn parse_gossip_poi(body: &[u8]) -> Option<(u32, f32, f32, u32, u32, String)> {
     let mut r = crate::bytes::Reader::new(body);
     // **The five words before the name are checked up front**, which is what
     // the `has` guard is for: the `Reader` answers zeroes past the end, and a
@@ -245,7 +245,7 @@ pub fn parse_gossip_poi(body: &[u8]) -> Option<(u32, f32, f32, u32, u32, String)
     Some((flags, x, y, icon, data, name))
 }
 
-pub fn parse_gossip_message(body: &[u8]) -> Option<GossipMenu> {
+pub(crate) fn parse_gossip_message(body: &[u8]) -> Option<GossipMenu> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 4) {
         return None;
@@ -334,7 +334,7 @@ pub fn parse_npc_text_update(body: &[u8]) -> Option<(u32, String)> {
 }
 
 /// `SMSG_LIST_INVENTORY`.
-pub fn parse_list_inventory(body: &[u8]) -> Option<VendorList> {
+pub(crate) fn parse_list_inventory(body: &[u8]) -> Option<VendorList> {
     let mut r = Reader::new(body);
     if !r.has(8 + 1) {
         return None;
@@ -380,7 +380,7 @@ pub fn parse_list_inventory(body: &[u8]) -> Option<VendorList> {
 
 /// `SMSG_BUY_ITEM` — a purchase went through: the vendor, the **one-based**
 /// slot, the stock left (`None` unlimited), and how many were bought.
-pub fn parse_buy_item(body: &[u8]) -> Option<(u64, u32, Option<u32>, u32)> {
+pub(crate) fn parse_buy_item(body: &[u8]) -> Option<(u64, u32, Option<u32>, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 4 + 4) {
         return None;
@@ -395,7 +395,7 @@ pub fn parse_buy_item(body: &[u8]) -> Option<(u64, u32, Option<u32>, u32)> {
 }
 
 /// `SMSG_BUY_FAILED` — guid, item entry, reason.
-pub fn parse_buy_failed(body: &[u8]) -> Option<(u64, u32, Option<BuyFailure>)> {
+pub(crate) fn parse_buy_failed(body: &[u8]) -> Option<(u64, u32, Option<BuyFailure>)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 1) {
         return None;
@@ -406,7 +406,7 @@ pub fn parse_buy_failed(body: &[u8]) -> Option<(u64, u32, Option<BuyFailure>)> {
 }
 
 /// `SMSG_SELL_ITEM` — the refusal; see [`SellFailure`].
-pub fn parse_sell_failed(body: &[u8]) -> Option<(u64, u64, Option<SellFailure>)> {
+pub(crate) fn parse_sell_failed(body: &[u8]) -> Option<(u64, u64, Option<SellFailure>)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 8 + 1) {
         return None;
@@ -419,7 +419,7 @@ pub fn parse_sell_failed(body: &[u8]) -> Option<(u64, u64, Option<SellFailure>)>
 // --- what we send -----------------------------------------------------------
 
 /// `CMSG_GOSSIP_HELLO` and `CMSG_LIST_INVENTORY` — a guid apiece.
-pub fn guid_body(guid: u64) -> Vec<u8> {
+pub(crate) fn guid_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -429,7 +429,7 @@ pub fn guid_body(guid: u64) -> Vec<u8> {
 ///
 /// A coded option would append its answer string here; coded options are not
 /// pressed by this client, so the field never exists.
-pub fn select_option_body(guid: u64, option: u32) -> Vec<u8> {
+pub(crate) fn select_option_body(guid: u64, option: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(option);
@@ -439,7 +439,7 @@ pub fn select_option_body(guid: u64, option: u32) -> Vec<u8> {
 /// `CMSG_NPC_TEXT_QUERY` — **the id first and then the guid**, which is
 /// backwards from every other query in the game and is the server's own read
 /// order (`recv_data >> textID; recv_data >> guid`).
-pub fn npc_text_query_body(text_id: u32, guid: u64) -> Vec<u8> {
+pub(crate) fn npc_text_query_body(text_id: u32, guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(text_id);
     w.u64(guid);
@@ -468,7 +468,7 @@ pub fn buy_item_body(vendor: u64, entry: u32, count: u8) -> Vec<u8> {
 
 /// `CMSG_SELL_ITEM` — vendor, the item object's **guid**, how many (0 for the
 /// whole stack, which is what a right-click sells).
-pub fn sell_item_body(vendor: u64, item: u64, count: u8) -> Vec<u8> {
+pub(crate) fn sell_item_body(vendor: u64, item: u64, count: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(vendor);
     w.u64(item);
@@ -478,7 +478,7 @@ pub fn sell_item_body(vendor: u64, item: u64, count: u8) -> Vec<u8> {
 
 /// `CMSG_BUYBACK_ITEM` — vendor and the **wire's** buyback slot, which starts
 /// at 69 (`BUYBACK_SLOT_START`): the interface's slot 1 is 69 on the wire.
-pub fn buyback_body(vendor: u64, wire_slot: u32) -> Vec<u8> {
+pub(crate) fn buyback_body(vendor: u64, wire_slot: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(vendor);
     w.u32(wire_slot);
@@ -501,7 +501,7 @@ pub fn buyback_body(vendor: u64, wire_slot: u32) -> Vec<u8> {
 /// why nothing here waits for a reply. A repair that is refused (out of money,
 /// out of range, an NPC without `UNIT_NPC_FLAG_REPAIR`) is refused in **silence**
 /// too: the handler returns, and the item simply does not change.
-pub fn repair_item_body(vendor: u64, item: u64) -> Vec<u8> {
+pub(crate) fn repair_item_body(vendor: u64, item: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(vendor);
     w.u64(item);

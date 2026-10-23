@@ -129,7 +129,7 @@ use vale_protocol::state::update::ObjectType;
 ///
 /// `facing` is the server's orientation in radians, the same one
 /// [`vale_assets::world::collision::object_matrix`] takes.
-pub fn offset_of(entity: &Entity, facing: f32, transports: &Transports) -> Option<Vec3> {
+pub(crate) fn offset_of(entity: &Entity, facing: f32, transports: &Transports) -> Option<Vec3> {
     if entity.object_type != Some(ObjectType::GameObject) {
         return None;
     }
@@ -195,7 +195,7 @@ impl ShipRoutes {
 /// `facing` is the direction of travel and nothing else —
 /// `ShipTransport::Update` ends in `atan2(dir.y, dir.x) + PI` off the spline's
 /// own derivative, with no pitch and no roll.
-pub fn ship_placement(entity: &Entity, route: &Route) -> Option<Placement> {
+pub(crate) fn ship_placement(entity: &Entity, route: &Route) -> Option<Placement> {
     if entity.object_type != Some(ObjectType::GameObject) {
         return None;
     }

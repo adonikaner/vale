@@ -117,10 +117,10 @@ mod band {
     /// [`AMBIENT`] never turns warm, and the sky bands stay blue. The saturated
     /// orange is correct: it is multiplied by `N·L` and added to a cool fill,
     /// which produces the game's blue shadows.
-    pub const DIFFUSE: u32 = 0;
+    pub(crate) const DIFFUSE: u32 = 0;
     /// The fill: the light on every surface facing away from the sun. It is
     /// cool where the sun is warm, and darker than band 0 in 19 of 19 lights.
-    pub const AMBIENT: u32 = 1;
+    pub(crate) const AMBIENT: u32 = 1;
     /// The sky dome, zenith first. The zenith is identified as the darkest of
     /// the five: map 0 at noon runs `0/31/73` at the top, then `58/162/207`,
     /// `153/220/245`, `175/218/224` and `180/180/180`. That is deep blue
@@ -133,19 +133,19 @@ mod band {
     /// [`SKY_SMOG`] is darker than the band above it in 18 and [`SKY_FOG`] in
     /// 17. Those two are haze below the sky, not part of the gradient.
     pub const SKY_TOP: u32 = 2;
-    pub const SKY_MIDDLE: u32 = 3;
-    pub const SKY_BAND_1: u32 = 4;
-    pub const SKY_BAND_2: u32 = 5;
-    pub const SKY_SMOG: u32 = 6;
+    pub(crate) const SKY_MIDDLE: u32 = 3;
+    pub(crate) const SKY_BAND_1: u32 = 4;
+    pub(crate) const SKY_BAND_2: u32 = 5;
+    pub(crate) const SKY_SMOG: u32 = 6;
     /// The bottom of the dome and the colour the world fades into: one band
     /// used for both. Distant terrain disappears because it is fogged to the
     /// same colour the sky is drawn with at the horizon behind it; any other
     /// value leaves a visible line where the ground ends.
-    pub const SKY_FOG: u32 = 7;
-    pub const OCEAN_CLOSE: u32 = 13;
-    pub const OCEAN_FAR: u32 = 14;
-    pub const RIVER_CLOSE: u32 = 15;
-    pub const RIVER_FAR: u32 = 16;
+    pub(crate) const SKY_FOG: u32 = 7;
+    pub(crate) const OCEAN_CLOSE: u32 = 13;
+    pub(crate) const OCEAN_FAR: u32 = 14;
+    pub(crate) const RIVER_CLOSE: u32 = 15;
+    pub(crate) const RIVER_FAR: u32 = 16;
     /// The four water bands the shipped minimaps were rendered with. They are
     /// one row above the four bands above, and are read as a shallow and a
     /// deep colour mixed by `MCLQ`'s depth byte.
@@ -175,10 +175,10 @@ mod band {
     /// bands above, because moving them is a renderer change that needs a
     /// screen to check against; these exist so the minimap can be drawn from
     /// the measured rows. [`LightTables::liquid_by_depth_at`] reads them.
-    pub const OCEAN_SHALLOW: u32 = 14;
-    pub const OCEAN_DEEP: u32 = 15;
-    pub const RIVER_SHALLOW: u32 = 16;
-    pub const RIVER_DEEP: u32 = 17;
+    pub(crate) const OCEAN_SHALLOW: u32 = 14;
+    pub(crate) const OCEAN_DEEP: u32 = 15;
+    pub(crate) const RIVER_SHALLOW: u32 = 16;
+    pub(crate) const RIVER_DEEP: u32 = 17;
     /// Unidentified. Read only so that `vale light` can print it; the renderer
     /// does not use this band.
     ///
@@ -212,21 +212,21 @@ mod band {
     /// defaults. Read and carried, not yet drawn: it colours the sprite
     /// `Textures\sunCenter.blp`, which needs a position over the day that this
     /// chain does not state. See [`celestial`].
-    pub const SUN_DISC: u32 = 8;
+    pub(crate) const SUN_DISC: u32 = 8;
     /// Its halo — 255/247/222 on map 0 at noon, 228/217/179 over the defaults:
     /// the warm glow around the disc, `Textures\sunGlare.blp`. Carried on the
     /// same terms as [`SUN_DISC`].
-    pub const SUN_HALO: u32 = 9;
+    pub(crate) const SUN_HALO: u32 = 9;
     /// The cloud layer's three colours; see [`super::clouds`]. Map 0 at noon
     /// holds 255/199/138, 43/105/132 and 0/0/0.
     ///
     /// Band 10 is added where a cloud's surface faces the sun or the moon.
-    pub const CLOUD_HIGHLIGHT: u32 = 10;
+    pub(crate) const CLOUD_HIGHLIGHT: u32 = 10;
     /// Band 11 is scaled by how thin the cloud is: fully for the thinnest,
     /// a third for the thickest.
-    pub const CLOUD_SHADE: u32 = 11;
+    pub(crate) const CLOUD_SHADE: u32 = 11;
     /// Band 12 is added to every cloud texel.
-    pub const CLOUD_BASE: u32 = 12;
+    pub(crate) const CLOUD_BASE: u32 = 12;
 }
 
 /// The six float bands. Same row arithmetic as the int bands against
@@ -234,7 +234,7 @@ mod band {
 mod float_band {
     /// The distance at which the world is fully fogged. Not in yards; see
     /// [`YARDS_PER_UNIT`].
-    pub const FOG_END: u32 = 0;
+    pub(crate) const FOG_END: u32 = 0;
     /// Where the fog starts, as a fraction of [`FOG_END`], so the two together
     /// form a ramp.
     ///
@@ -243,14 +243,14 @@ mod float_band {
     /// Valley is negative all day. A start behind the camera means fog from the
     /// first yard: a morning mist, and the snowbound battleground. Clamped at
     /// zero on output, since nothing is nearer than the camera.
-    pub const FOG_START_SCALER: u32 = 1;
+    pub(crate) const FOG_START_SCALER: u32 = 1;
     /// How much of the sky the cloud layer covers, 0 to 1. The 19 default
     /// lights hold 0.50 to 0.65; map 0's storm row holds 0.95. See
     /// [`super::clouds::CloudLight::density`].
-    pub const CLOUD_DENSITY: u32 = 3;
+    pub(crate) const CLOUD_DENSITY: u32 = 3;
     /// Bands 2, 4 and 5 hold 1.00, 0.95 and 1.00 in all 19 default lights and
     /// are not read.
-    pub const _UNUSED: [u32; 3] = [2, 4, 5];
+    pub(crate) const _UNUSED: [u32; 3] = [2, 4, 5];
 }
 
 /// The name of each of the eighteen int bands, by position, for a caller that
@@ -369,7 +369,7 @@ pub fn float_band_row(params: u32, band: u32) -> Option<u32> {
 /// The inverse of [`int_band_row`]: which `(params, band)` a row id is.
 ///
 /// For a caller that has a row in hand and has to say what it is.
-pub fn int_band_of(row: u32) -> Option<(u32, u32)> {
+pub(crate) fn int_band_of(row: u32) -> Option<(u32, u32)> {
     if row == 0 {
         return None;
     }
@@ -377,7 +377,7 @@ pub fn int_band_of(row: u32) -> Option<(u32, u32)> {
 }
 
 /// The inverse of [`float_band_row`].
-pub fn float_band_of(row: u32) -> Option<(u32, u32)> {
+pub(crate) fn float_band_of(row: u32) -> Option<(u32, u32)> {
     if row == 0 {
         return None;
     }
@@ -418,7 +418,7 @@ pub const YARDS_PER_UNIT: f32 = 1.0 / 36.0;
 
 /// `LightParams` fields. 0..4 are the id, the sky flags and the glow; 5..8 are
 /// the four water alphas.
-pub mod params_field {
+pub(crate) mod params_field {
     /// The glow: the strength of the full-screen death effect under this
     /// light. The ordinary glow's strength is fixed and does not read it.
     pub const GLOW: usize = 4;
@@ -426,10 +426,10 @@ pub mod params_field {
     /// this light is in force; 0 for none. Five of the 426 shipped rows name
     /// one, all of them row 3, `DeathClouds`.
     pub const SKYBOX: usize = 2;
-    pub const WATER_SHALLOW_ALPHA: usize = 5;
-    pub const WATER_DEEP_ALPHA: usize = 6;
-    pub const OCEAN_SHALLOW_ALPHA: usize = 7;
-    pub const OCEAN_DEEP_ALPHA: usize = 8;
+    pub(crate) const WATER_SHALLOW_ALPHA: usize = 5;
+    pub(crate) const WATER_DEEP_ALPHA: usize = 6;
+    pub(crate) const OCEAN_SHALLOW_ALPHA: usize = 7;
+    pub(crate) const OCEAN_DEEP_ALPHA: usize = 8;
 }
 
 /// `Light` fields: id, map, three coordinates, two falloff radii, then the five
@@ -469,7 +469,7 @@ pub mod light_field {
     ///
     /// The last of the five, death, is the ghost world, which this client
     /// does not have. The two between are read: see [`PARAMS_STORM`].
-    pub const PARAMS_CLEAR_UNDERWATER: usize = 8;
+    pub(crate) const PARAMS_CLEAR_UNDERWATER: usize = 8;
     /// The same light in bad weather. This is all the sky does when
     /// `SMSG_WEATHER` reports rain.
     ///
@@ -478,15 +478,15 @@ pub mod light_field {
     /// both rows of every map side by side with the numbers. Nothing else
     /// changes: there is no darkening pass and no grey quad over the frame, as
     /// there is none underwater.
-    pub const PARAMS_STORM: usize = 9;
+    pub(crate) const PARAMS_STORM: usize = 9;
     /// The storm row seen from under the water; a lake in a downpour needs
     /// both switches. Falls back to the clear-underwater row and then to the
     /// clear one; see [`super::Weather::of`].
-    pub const PARAMS_STORM_UNDERWATER: usize = 10;
+    pub(crate) const PARAMS_STORM_UNDERWATER: usize = 10;
     /// The light while the player is a ghost. The 1.12.1 client lights the
     /// whole map with the map default light's death row and lays no
     /// positional light over it; see [`super::LightTables::atmosphere_dead`].
-    pub const PARAMS_DEATH: usize = 11;
+    pub(crate) const PARAMS_DEATH: usize = 11;
 }
 
 /// Which of the five weather columns a light is being asked for.
@@ -682,7 +682,7 @@ pub mod celestial {
         /// on a [`BLUE_MOON_PERIOD_DAYS`]-day cycle, so its tracks are sampled
         /// at a fraction that has already been through that division and
         /// cannot be expressed as half-minutes past midnight.
-        pub fn at_fraction(&self, t: f32) -> f32 {
+        pub(crate) fn at_fraction(&self, t: f32) -> f32 {
             if self.keys.is_empty() {
                 return 0.0;
             }
@@ -756,7 +756,7 @@ pub mod celestial {
     ///
     /// Kept so that a dome at zero opacity is skipped rather than drawn
     /// invisibly; at noon that is every frame.
-    pub const MIN_STAR_BYTE: u32 = 2;
+    pub(crate) const MIN_STAR_BYTE: u32 = 2;
 
     /// The star dome's opacity as the quantised byte, or `None` when it is
     /// under [`MIN_STAR_BYTE`] and the dome is skipped.
@@ -782,7 +782,7 @@ pub mod celestial {
         /// The polar angle from straight up, in radians: 0 is the zenith and
         /// π/2 the horizon, so anything over π/2 is below it. This is the
         /// client's convention, not an elevation; see [`Body::direction`].
-        pub polar: DayTrack,
+        pub(crate) polar: DayTrack,
         /// The azimuth, in radians, measured from world +X (north) toward +Y
         /// (west). Two of the three bodies never move in it.
         pub azimuth: DayTrack,
@@ -791,7 +791,7 @@ pub mod celestial {
         pub scale: DayTrack,
         /// A constant multiplier on top of `scale`; it makes the moon larger
         /// than the sun.
-        pub base_scale: f32,
+        pub(crate) base_scale: f32,
         /// The sprite.
         pub texture: &'static str,
     }
@@ -952,7 +952,7 @@ pub mod celestial {
     };
 
     /// The length of [`BLUE_MOON`]'s cycle, in days: 1.7.
-    pub const BLUE_MOON_PERIOD_DAYS: f32 = 1.7;
+    pub(crate) const BLUE_MOON_PERIOD_DAYS: f32 = 1.7;
 
     /// [`BLUE_MOON`]'s clock: its position in its own cycle, given how many
     /// whole days have passed and how far through the current day it is.
@@ -1051,7 +1051,7 @@ pub const SKY_ALTITUDES: [f32; SKY_STOPS] = [1.00, 0.50, 0.22, 0.09, 0.03, 0.00]
 /// dome's order can be read against the table. One copy, because two functions
 /// build a dome, and two lists that disagreed would put a zone's smog where
 /// its zenith should be.
-pub const SKY_BANDS: [u32; SKY_STOPS] = [
+pub(crate) const SKY_BANDS: [u32; SKY_STOPS] = [
     band::SKY_TOP,
     band::SKY_MIDDLE,
     band::SKY_BAND_1,
@@ -1139,11 +1139,11 @@ impl Atmosphere {
     /// a round number, so that a missing value takes the game's typical one.
     /// The rows run from 111 yards (Scarlet Monastery) to 888 (Alterac
     /// Valley).
-    pub const DEFAULT_FOG_END: f32 = 361.0;
+    pub(crate) const DEFAULT_FOG_END: f32 = 361.0;
     /// Where the fog starts, as a fraction of the end: the same median, 0.10.
     /// The game's scalers run −0.30 to 0.40; see
     /// [`float_band::FOG_START_SCALER`] for what a negative one means.
-    pub const DEFAULT_FOG_START_SCALER: f32 = 0.10;
+    pub(crate) const DEFAULT_FOG_START_SCALER: f32 = 0.10;
 
     /// What the world is lit by when the light chain states nothing: no
     /// `Light.dbc`, or a chain naming no default for any map.
@@ -1228,7 +1228,7 @@ impl Atmosphere {
     /// Add a light's skybox at the light's weight, by the rule on
     /// [`SkyboxWeight`]: onto the slot holding the same model, capped at 1, or
     /// into the first empty slot, or nowhere when both hold other models.
-    pub fn add_skybox(&mut self, id: u32, weight: f32) {
+    pub(crate) fn add_skybox(&mut self, id: u32, weight: f32) {
         if id == 0 || weight <= 0.0 {
             return;
         }
@@ -1247,7 +1247,8 @@ impl Atmosphere {
     /// Whether a skybox is at a weight that hides the rest of the sky. The
     /// caller still has to check that the model loaded; the client only hides
     /// the sky behind a model it is drawing.
-    pub fn skybox_opaque(&self) -> Option<u32> {
+    #[cfg(test)]
+    pub(crate) fn skybox_opaque(&self) -> Option<u32> {
         self.skyboxes
             .iter()
             .find(|slot| slot.id != 0 && slot.weight >= SKYBOX_OPAQUE)
@@ -1350,17 +1351,17 @@ pub struct PositionalLight {
     /// its own eighteen bands; see [`light_field::PARAMS_CLEAR_UNDERWATER`].
     /// Zero for a row that states none, which [`Weather::of`] reads as "use
     /// the clear one".
-    pub params_underwater: u32,
+    pub(crate) params_underwater: u32,
     /// The two rows the storm weather names, on the same terms; see
     /// [`light_field::PARAMS_STORM`].
-    pub params_storm: u32,
-    pub params_storm_underwater: u32,
+    pub(crate) params_storm: u32,
+    pub(crate) params_storm_underwater: u32,
 }
 
 impl PositionalLight {
     /// The row's four `LightParams` ids in `Light.dbc`'s own column order, which
     /// is what [`Weather::of`] indexes.
-    pub fn params_of(&self, weather: Weather) -> u32 {
+    pub(crate) fn params_of(&self, weather: Weather) -> u32 {
         weather.of([
             self.params,
             self.params_underwater,
@@ -1640,7 +1641,7 @@ impl LightTables {
     }
 
     /// The `LightSkybox` row a `LightParams` row names, or 0.
-    pub fn skybox_of(&self, params_id: u32) -> u32 {
+    pub(crate) fn skybox_of(&self, params_id: u32) -> u32 {
         self.skyboxes.get(&params_id).copied().unwrap_or(0)
     }
 
@@ -1702,7 +1703,7 @@ impl LightTables {
     /// This is what the shipped minimaps were rendered with, not what the
     /// client draws its surfaces with; the two read the same chain one row
     /// apart.
-    pub fn liquid_by_depth_at(
+    pub(crate) fn liquid_by_depth_at(
         &self,
         map: u32,
         at: [f32; 3],
@@ -1994,7 +1995,7 @@ impl LightTables {
     /// centre's distance from `at`, farthest first, so the light whose centre
     /// is nearest is laid last and wins. Two at the same distance keep the
     /// stored order, widest first.
-    pub fn lights_in(&self, map: u32, at: [f32; 3], weather: Weather) -> Vec<(u32, f32)> {
+    pub(crate) fn lights_in(&self, map: u32, at: [f32; 3], weather: Weather) -> Vec<(u32, f32)> {
         let mut covering: Vec<(f32, u32, f32)> = self
             .positional
             .iter()

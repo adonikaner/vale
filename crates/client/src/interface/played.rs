@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use crate::input::bindings::{Binding, BindingPressed};
 use crate::world::session::Session;
 
-pub struct PlayedPlugin;
+pub(crate) struct PlayedPlugin;
 
 impl Plugin for PlayedPlugin {
     fn build(&self, app: &mut App) {

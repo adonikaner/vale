@@ -141,14 +141,14 @@ pub const REGION_ELEMENTS: [(&str, Region); 15] = [
 ];
 
 /// `<Font>` and the three slots that name one.
-pub const FONT_ELEMENTS: [&str; 4] = ["DisabledFont", "Font", "HighlightFont", "NormalFont"];
+pub(crate) const FONT_ELEMENTS: [&str; 4] = ["DisabledFont", "Font", "HighlightFont", "NormalFont"];
 
 /// The structural elements: descend into them, create nothing.
 ///
 /// Listed rather than derived, so that a name this directory does not contain
 /// comes back [`Class::Unknown`] instead of being silently treated as structure —
 /// which is the failure that loses a widget with no message anywhere.
-pub const STRUCTURE: [&str; 30] = [
+pub(crate) const STRUCTURE: [&str; 30] = [
     "AbsDimension",
     "AbsInset",
     "AbsValue",

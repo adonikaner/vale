@@ -69,7 +69,7 @@ pub struct AttackUpdate {
     /// The ability this swing was, or 0 for a plain one. Read for completeness:
     /// nothing in this client uses it yet, and the reference logs an ability's
     /// swing through the spell family rather than this one.
-    pub melee_spell_id: u32,
+    pub(crate) melee_spell_id: u32,
 }
 
 /// `HitInfo`, the post-1.9.4 table — which is this client's.
@@ -125,7 +125,7 @@ pub mod victim_state {
 impl AttackUpdate {
     /// Did the blow land? A miss still swings the weapon; it just does not make
     /// the victim flinch.
-    pub fn hit_the_victim(&self) -> bool {
+    pub(crate) fn hit_the_victim(&self) -> bool {
         self.hit_info & hit_info::MISS == 0 && self.hit_info & hit_info::AFFECTS_VICTIM != 0
     }
 }
@@ -204,7 +204,7 @@ pub mod spell_hit {
 /// A body that stops early is reported with whatever it carried: the tail from
 /// `absorbed` on is bookkeeping the number does not need, and a truncated packet
 /// that still names a victim and an amount is worth drawing.
-pub fn parse_spell_damage(body: &[u8]) -> Option<SpellDamage> {
+pub(crate) fn parse_spell_damage(body: &[u8]) -> Option<SpellDamage> {
     let mut r = Reader::new(body);
     let victim = r.packed_guid();
     let caster = r.packed_guid();
@@ -257,7 +257,7 @@ pub struct SpellHeal {
     pub critical: bool,
 }
 
-pub fn parse_spell_heal(body: &[u8]) -> Option<SpellHeal> {
+pub(crate) fn parse_spell_heal(body: &[u8]) -> Option<SpellHeal> {
     let mut r = Reader::new(body);
     let victim = r.packed_guid();
     let healer = r.packed_guid();
@@ -275,7 +275,7 @@ pub fn parse_spell_heal(body: &[u8]) -> Option<SpellHeal> {
     })
 }
 
-pub fn parse_attack_update(body: &[u8]) -> Option<AttackUpdate> {
+pub(crate) fn parse_attack_update(body: &[u8]) -> Option<AttackUpdate> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -367,10 +367,10 @@ pub fn parse_attack_update(body: &[u8]) -> Option<AttackUpdate> {
 pub struct Emote {
     pub guid: u64,
     /// An `Emotes.dbc` id, not an animation id.
-    pub emote_id: u32,
+    pub(crate) emote_id: u32,
 }
 
-pub fn parse_emote(body: &[u8]) -> Option<Emote> {
+pub(crate) fn parse_emote(body: &[u8]) -> Option<Emote> {
     let mut r = Reader::new(body);
     if !r.has(4 + 8) {
         return None;
@@ -401,7 +401,7 @@ pub fn parse_emote(body: &[u8]) -> Option<Emote> {
 /// twelve bytes. Broadcast to everyone in sight (`SendObjectMessageToSet`), so
 /// the yell belongs to the creature and not to whoever it is yelling at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AiReaction {
+pub(crate) struct AiReaction {
     pub guid: u64,
     /// One of [`ai_reaction`]'s five; the client voices two of them.
     pub reaction: u32,
@@ -422,7 +422,7 @@ pub mod ai_reaction {
     pub const DESTROY: u32 = 4;
 }
 
-pub fn parse_ai_reaction(body: &[u8]) -> Option<AiReaction> {
+pub(crate) fn parse_ai_reaction(body: &[u8]) -> Option<AiReaction> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -506,7 +506,7 @@ impl SpellCast {
 /// One function for two opcodes because they share a header; the caller says
 /// which, since the only part past the flags this client reads is the timer and
 /// only one of them has it.
-pub fn parse_spell_cast(body: &[u8], with_timer: bool) -> Option<SpellCast> {
+pub(crate) fn parse_spell_cast(body: &[u8], with_timer: bool) -> Option<SpellCast> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;

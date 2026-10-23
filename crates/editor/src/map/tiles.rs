@@ -46,30 +46,30 @@ use vale_edit::{minimap, shadow, wdt};
 
 /// What the tile panel is holding.
 #[derive(Resource)]
-pub struct Tiles {
+pub(crate) struct Tiles {
     /// The texture a new tile is painted with.
     ///
     /// One layer, since that is the shipped shape for a chunk with a single
     /// texture — see `vale_edit::adt::blank`. The texture tool is how it
     /// becomes more than one.
-    pub texture: String,
+    pub(crate) texture: String,
     /// …and how high its ground is, flat.
-    pub height: f32,
+    pub(crate) height: f32,
     /// …and the `AreaTable` id every chunk gets. Zero is no area, which is
     /// what an unassigned chunk of a real tile reads.
-    pub area: u32,
+    pub(crate) area: u32,
     /// Whether a rebake casts from the terrain as well as from the hulls.
     ///
     /// Off, because the shipped bakes do not appear to carry it. See
     /// `vale_edit::shadow::Ground`, where the measurement is: hull-cast
     /// shadow lands at 1.2–1.4x the base rate of shadow in a shipped file and
     /// terrain-cast shadow at 0.4–0.9x, which is chance or worse.
-    pub cast_from_ground: bool,
+    pub(crate) cast_from_ground: bool,
     /// Whether an imported height map carries what stands on the ground it
     /// moves. See `crate::import::images`.
-    pub objects_follow: bool,
+    pub(crate) objects_follow: bool,
     /// What the last operation said, for the panel to print.
-    pub said: String,
+    pub(crate) said: String,
     /// What the map window asked for, taken by [`run_asked`] next frame.
     ///
     /// A field rather than a call, because none of these can be done from inside
@@ -77,30 +77,30 @@ pub struct Tiles {
     /// mutably, plus the archives, which no panel holds at all. The same shape
     /// the rest of this editor uses — a resource says what is wanted and a
     /// system does it.
-    pub asked: Option<crate::ui::map::mapview::Asked>,
+    pub(crate) asked: Option<crate::ui::map::mapview::Asked>,
     /// The building the map is, when it is one, read from its WDT for the
     /// map named in `building_for`. See [`read_building`]. Map properties
     /// changes it; see `super::maps`.
-    pub building: Option<String>,
-    pub building_for: String,
+    pub(crate) building: Option<String>,
+    pub(crate) building_for: String,
     /// A picture chosen for import and waiting on the map window's dialog,
     /// and the folder the last file dialog was left in.
-    pub pending: Option<crate::import::images::Pending>,
-    pub image_dir: Option<std::path::PathBuf>,
+    pub(crate) pending: Option<crate::import::images::Pending>,
+    pub(crate) image_dir: Option<std::path::PathBuf>,
     /// The map window's New map form, while it is open. See `super::maps`.
-    pub new_map: Option<super::maps::Form>,
+    pub(crate) new_map: Option<super::maps::Form>,
     /// Whether a minimap run is going, and the switch that stops it between
     /// tiles. See [`start_minimaps`].
-    pub drawing: bool,
-    pub stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) drawing: bool,
+    pub(crate) stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// …and the same for the two derived pictures, which are asked for from the
     /// inspector rather than from the map.
-    pub derive: Option<Derived>,
+    pub(crate) derive: Option<Derived>,
 }
 
 /// One of the two pictures a tile has that nothing else keeps in step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Derived {
+pub(crate) enum Derived {
     Shadows,
     /// The selection's minimaps.
     Minimap,
@@ -139,7 +139,7 @@ impl Default for Tiles {
 ///
 /// The WDT is read through the project's own overlay first, so making a second
 /// tile does not lose the first.
-pub fn create(
+pub(crate) fn create(
     session: &mut EditSession,
     assets: &GameAssets,
     tiles: &Tiles,
@@ -175,7 +175,7 @@ pub fn create(
 /// the claim is instantly reversible and deleting the file is not, and a tile
 /// nothing asks for costs a file on disk and nothing else. The project folder is
 /// loose files, so removing it is a `del` away for anyone who means it.
-pub fn remove(
+pub(crate) fn remove(
     session: &mut EditSession,
     assets: &GameAssets,
     at: (u32, u32),
@@ -213,7 +213,7 @@ pub fn remove(
 /// the rest of the editor go on editing it. If it was edited while the bake ran,
 /// the bake's copy is stale and is dropped on arrival rather than overwriting
 /// the newer one — see [`collect_bakes`].
-pub fn start_rebake(
+pub(crate) fn start_rebake(
     session: &EditSession,
     assets: &GameAssets,
     tiles: &Tiles,
@@ -281,12 +281,12 @@ pub fn start_rebake(
 }
 
 /// A finished bake, on its way back to the main thread.
-pub struct Baked {
-    pub at: (u32, u32),
+pub(crate) struct Baked {
+    pub(crate) at: (u32, u32),
     /// The whole tile, since the bake owns a copy of it.
-    pub tile: AdtFile,
-    pub shadowed: usize,
-    pub changed: usize,
+    pub(crate) tile: AdtFile,
+    pub(crate) shadowed: usize,
+    pub(crate) changed: usize,
 }
 
 /// Put finished bakes back into the session.
@@ -294,7 +294,7 @@ pub struct Baked {
 /// A bake that finishes for a tile the session no longer holds — the camera
 /// moved and the streamer dropped it — is discarded, which is the right answer:
 /// the file on disk is unchanged and the work is simply wasted.
-pub fn collect_bakes(
+pub(crate) fn collect_bakes(
     mut running: ResMut<crate::jobs::Running<Baked>>,
     mut tiles: ResMut<Tiles>,
     session: Option<ResMut<EditSession>>,
@@ -460,7 +460,7 @@ fn draw_picture(
 
 /// How long one minimap picture takes, in seconds, for the estimate the map
 /// window gives before a run. Nine tiles round Goldshire took 17.4 s.
-pub const MINIMAP_SECONDS: f32 = 2.0;
+pub(crate) const MINIMAP_SECONDS: f32 = 2.0;
 
 /// Start drawing the minimaps of `chosen`, one after another, on the task
 /// pool. [`collect_minimaps`] writes what comes back.
@@ -469,7 +469,7 @@ pub const MINIMAP_SECONDS: f32 = 2.0;
 /// one job with a bar and can be stopped between tiles through `stop`. Each
 /// tile is read as the session has it: an open tile with its edits, any
 /// other through the project and then the archives.
-pub fn start_minimaps(
+pub(crate) fn start_minimaps(
     session: &EditSession,
     assets: &GameAssets,
     chosen: Vec<(u32, u32)>,
@@ -541,13 +541,13 @@ pub fn start_minimaps(
 }
 
 /// Minimap pictures, drawn and on their way back to the main thread.
-pub struct Drawn {
+pub(crate) struct Drawn {
     /// Each tile drawn, with its picture as BLP bytes.
-    pub pictures: Vec<((u32, u32), Vec<u8>)>,
+    pub(crate) pictures: Vec<((u32, u32), Vec<u8>)>,
     /// …and each that could not be, with why.
-    pub failed: Vec<((u32, u32), String)>,
+    pub(crate) failed: Vec<((u32, u32), String)>,
     /// Whether Stop ended the run before the last tile.
-    pub stopped: bool,
+    pub(crate) stopped: bool,
 }
 
 /// Write finished minimap pictures into the project.
@@ -556,7 +556,7 @@ pub struct Drawn {
 /// tile it does not name gets one, the MD5 of its picture as the shipped
 /// names are, and the index is written into the project with an entry for
 /// each. Both are published, so a playtest's minimap reads them.
-pub fn collect_minimaps(
+pub(crate) fn collect_minimaps(
     mut running: ResMut<crate::jobs::Running<Drawn>>,
     mut tiles: ResMut<Tiles>,
     session: Option<ResMut<EditSession>>,
@@ -681,7 +681,7 @@ fn neighbours(
 /// runs. One parameter, since the panel system that draws the line has no
 /// room for two.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct Background<'w> {
+pub(crate) struct Background<'w> {
     shadows: Res<'w, crate::jobs::Running<Baked>>,
     minimaps: Res<'w, crate::jobs::Running<Drawn>>,
 }
@@ -689,7 +689,7 @@ pub struct Background<'w> {
 impl Background<'_> {
     /// Each kind that is running: its name on the map window, what the first
     /// job says, and how far it has got.
-    pub fn summaries(&self) -> Vec<(&'static str, String, f32)> {
+    pub(crate) fn summaries(&self) -> Vec<(&'static str, String, f32)> {
         let mut out = Vec::new();
         if let Some((label, fraction)) = self.shadows.summary() {
             out.push(("Shadows", label, fraction));
@@ -816,35 +816,12 @@ impl shadow::Occluder for Hulls {
 
 /// How long a rebake is expected to take, for the panel to say before it is
 /// pressed. Measured by `vale bake` at 52–64 seconds a tile.
-pub const REBAKE_SECONDS: u32 = 60;
+pub(crate) const REBAKE_SECONDS: u32 = 60;
 
 /// Whether this tile has been opened for editing at all, which both derived
 /// operations need and neither can do without.
-pub fn is_open(session: &EditSession, at: (u32, u32)) -> bool {
+pub(crate) fn is_open(session: &EditSession, at: (u32, u32)) -> bool {
     session.tiles.contains_key(&at)
-}
-
-/// The blank a new tile is made from, exposed for the panel's own summary.
-pub fn describe_new(tiles: &Tiles) -> String {
-    format!(
-        "256 chunks, height {:.0}, base texture {}",
-        tiles.height,
-        tiles
-            .texture
-            .rsplit(['\\', '/'])
-            .next()
-            .unwrap_or(&tiles.texture)
-    )
-}
-
-/// A tile that exists but is not open cannot be baked or drawn — the panel says
-/// so rather than offering a button that fails.
-pub fn why_not(session: &EditSession, at: (u32, u32)) -> Option<&'static str> {
-    match (session.wdt_claims(at), is_open(session, at)) {
-        (false, _) => Some("this tile does not exist yet"),
-        (true, false) => Some("fly to this tile to open it"),
-        (true, true) => None,
-    }
 }
 
 /// Do whatever the map window asked for.
@@ -858,7 +835,7 @@ pub fn why_not(session: &EditSession, at: (u32, u32)) -> Option<&'static str> {
 /// The work is done here rather than in the window because the window holds
 /// the session shared, every one of these wants it mutably, and most want the
 /// archives, which the window does not hold.
-pub fn run_asked(
+pub(crate) fn run_asked(
     mut view: ResMut<crate::ui::map::mapview::MapView>,
     mut tiles: ResMut<Tiles>,
     session: Option<ResMut<EditSession>>,
@@ -1134,7 +1111,7 @@ pub fn run_asked(
 }
 
 /// …and the two derived pictures, which are asked for from the inspector.
-pub fn run_derive(
+pub(crate) fn run_derive(
     mut tiles: ResMut<Tiles>,
     view: Res<crate::ui::map::mapview::MapView>,
     session: Option<ResMut<EditSession>>,
@@ -1215,7 +1192,10 @@ pub fn run_derive(
     session.status = tiles.said.clone();
 }
 
-/// Copy one tile's whole contents into another slot.
+/// Copy one tile onto every slot in a list, as one pass over the WDT and one
+/// parse of the source.
+///
+/// Returns how many landed and, if one did not, why the run stopped.
 ///
 /// The bytes are read through the session's own chain, so a tile edited and not
 /// yet saved copies as it is rather than as it was on disk. Then
@@ -1234,7 +1214,7 @@ pub fn run_derive(
 /// * the WDT is the caller's. It is one 32 KB file for the whole map and it
 ///   is read, parsed, bit-set and written back whole. Doing that per tile is
 ///   that work times the size of the selection, for a file every one of them
-///   sets a different bit of — so [`paste_into`] loads it once, sets every
+///   sets a different bit of — so this loads it once, sets every
 ///   bit, and writes it once;
 /// * so is the source. Every paste in a run copies the same tile, so
 ///   reading, parsing and relocating it per destination is the same few
@@ -1244,28 +1224,7 @@ pub fn run_derive(
 /// Neither is a micro-optimisation. A paste runs on the frame that asked for it,
 /// so its whole cost is a window that has stopped answering, and the multi-tile
 /// case was reported as exactly that.
-pub fn paste(
-    session: &mut EditSession,
-    assets: &GameAssets,
-    from: (u32, u32),
-    to: (u32, u32),
-) -> Result<String, String> {
-    let mut wdt = load_wdt(session, assets)?;
-    let raw = session
-        .tile_bytes(assets, from)
-        .ok_or_else(|| format!("tile {}, {} has no ADT to copy", from.0, from.1))?;
-    let source = AdtFile::parse(&raw).map_err(|e| e.to_string())?;
-    let said = paste_one(session, &source, from, to, &mut wdt)?;
-    save_wdt(session, &wdt)?;
-    Ok(said)
-}
-
-/// Copy one tile onto every slot in a list, as one pass over the WDT and one
-/// parse of the source.
-///
-/// Returns how many landed and, if one did not, why the run stopped. See
-/// [`paste`] for why the two shared things are shared.
-pub fn paste_into(
+pub(crate) fn paste_into(
     session: &mut EditSession,
     assets: &GameAssets,
     moves: &[((u32, u32), (u32, u32))],
@@ -1359,7 +1318,7 @@ fn paste_one(
 /// that has changed the bytes a tile's path reads back as". Its pairing rule
 /// is why the despawn is here too: forgetting a tile without despawning it
 /// draws the tile twice.
-pub fn restream(
+pub(crate) fn restream(
     mut session: Option<ResMut<EditSession>>,
     mut loaded: ResMut<vale_client::render::terrain::LoadedTiles>,
     tiles: Query<(Entity, &vale_client::render::terrain::TerrainTile)>,
@@ -1456,7 +1415,7 @@ fn minimaps_on_the_command_line(
     tiles.drawing = true;
 }
 
-pub struct TilePlugin;
+pub(crate) struct TilePlugin;
 
 impl Plugin for TilePlugin {
     fn build(&self, app: &mut App) {
@@ -1484,17 +1443,6 @@ impl Plugin for TilePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_new_tile_is_described_by_its_leaf_name() {
-        let tiles = Tiles::default();
-        let said = describe_new(&tiles);
-        assert!(said.contains("ElwynnGrassBase.blp"), "{said}");
-        assert!(
-            !said.contains('\\'),
-            "the whole path is too long for a panel"
-        );
-    }
 
     /// The ground is not cast from by default, which is the measurement in
     /// `shadow::Ground` turned into a default rather than left as prose.

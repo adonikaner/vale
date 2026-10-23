@@ -80,7 +80,7 @@ use crate::world::entity::{LocalPlayer, WorldEntity};
 
 /// One piece of floating text, alive until its style says otherwise.
 #[derive(Debug, Clone)]
-pub struct Floater {
+pub(crate) struct Floater {
     /// The line, already resolved — a number, or a word out of
     /// `GlobalStrings.lua`.
     pub text: String,
@@ -92,7 +92,7 @@ pub struct Floater {
     /// 1.12.1 client.
     pub from: Vec3,
     /// When it was raised, on `Time::elapsed_secs`.
-    pub born: f32,
+    pub(crate) born: f32,
     /// Which unit it belongs to, so a burst on one mob does not push a burst on
     /// the mob beside it out of the way.
     pub over: u64,
@@ -104,14 +104,14 @@ pub struct Floater {
 
 /// Every floater in flight.
 #[derive(Resource, Default)]
-pub struct WorldText {
+pub(crate) struct WorldText {
     pub live: Vec<Floater>,
     /// `damage_taken` the last time this unit was looked at. See the module
     /// comment for why it is per guid.
     seen: bevy::platform::collections::HashMap<u64, u32>,
 }
 
-pub struct WorldTextPlugin;
+pub(crate) struct WorldTextPlugin;
 
 impl Plugin for WorldTextPlugin {
     fn build(&self, app: &mut App) {

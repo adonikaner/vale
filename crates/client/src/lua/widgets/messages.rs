@@ -116,7 +116,8 @@ use super::regions::Paint;
 
 /// The methods a message frame carries. Sorted. The directory calls each of
 /// them except `SetFading`, `SetTimeVisible` and `SetFadeDuration`.
-pub const METHODS: [&str; 16] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 16] = [
     "AddMessage",
     "AtBottom",
     "AtTop",
@@ -163,13 +164,13 @@ const MAX_LINES: usize = 128;
 
 /// How long a line is fully visible when the markup declares no
 /// `displayDuration`; the scrolling message frame's default.
-pub const TIME_VISIBLE_SECS: f64 = 10.0;
+pub(crate) const TIME_VISIBLE_SECS: f64 = 10.0;
 
 /// How long a line takes to fade out after [`TIME_VISIBLE_SECS`].
 ///
 /// No file in either directory declares a `fadeDuration`, so every faded line
 /// in the game uses this, including the chat's lines after their 120 seconds.
-pub const FADE_SECS: f64 = 3.0;
+pub(crate) const FADE_SECS: f64 = 3.0;
 
 /// One line, ready to draw.
 #[derive(Debug, Clone, PartialEq)]
@@ -191,6 +192,7 @@ pub struct Line {
 /// the frame is scrolled, as in the 1.12.1 client (see the module comment).
 /// Returns an empty list, after reading one table key, for the 3,743 frames
 /// that are not message frames.
+#[cfg(any(test, feature = "diagnostics"))]
 pub fn lines(frame: &mlua::Table, now: f64) -> Vec<Line> {
     lines_and_change(frame, now).0
 }
@@ -327,7 +329,7 @@ pub struct Shown {
     pub lines: Vec<Row>,
     /// `insertMode="TOP"`: the block is aligned to the frame's top edge rather
     /// than its bottom edge.
-    pub from_top: bool,
+    pub(crate) from_top: bool,
     /// How many rows the block occupies in total, from which bottom-inserting
     /// frames position their stack.
     pub rows: usize,
@@ -340,6 +342,7 @@ pub struct Shown {
 /// history the window has been moved, and is clamped here rather than trusted.
 /// The buffer is bounded, so an offset that was valid when it was set may be
 /// past the end when it is read.
+#[cfg(test)]
 pub fn view(lua: &mlua::Lua, frame: &mlua::Table, now: f64) -> Option<Shown> {
     window(lua, drawn_lines(lua, frame, now), frame)
 }
@@ -689,7 +692,7 @@ const REG_NOW: &str = "vale.now";
 /// that this module has no separate notion of time, the frame's `GetTime`
 /// value is written here at the start of each draw and read back by whatever
 /// needs it.
-pub fn set_now(lua: &mlua::Lua, now: f64) {
+pub(crate) fn set_now(lua: &mlua::Lua, now: f64) {
     let _ = lua.set_named_registry_value(REG_NOW, now);
 }
 

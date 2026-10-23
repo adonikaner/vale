@@ -168,10 +168,10 @@ pub const CLASSES: [Value; 16] = [
 ];
 
 /// `ItemSubclassConsumable` — one value in 1.12; the rest arrive in 2.0.
-pub const SUBCLASS_CONSUMABLE: [Value; 1] = [Value { value: 0, name: "Consumable" }];
+pub(crate) const SUBCLASS_CONSUMABLE: [Value; 1] = [Value { value: 0, name: "Consumable" }];
 
 /// `ItemSubclassContainer`, from `ItemPrototype.h:174`.
-pub const SUBCLASS_CONTAINER: [Value; 4] = [
+pub(crate) const SUBCLASS_CONTAINER: [Value; 4] = [
     Value { value: 0, name: "Bag" },
     Value { value: 1, name: "Soul Bag" },
     Value { value: 2, name: "Herb Bag" },
@@ -181,7 +181,7 @@ pub const SUBCLASS_CONTAINER: [Value; 4] = [
 /// `ItemSubclassWeapon`, from `ItemPrototype.h:190`. 9, 11 and 12 are the
 /// table's own `obsolete` and `exotic` entries and are kept, because a row
 /// holding one is a row worth being able to see as itself.
-pub const SUBCLASS_WEAPON: [Value; 21] = [
+pub(crate) const SUBCLASS_WEAPON: [Value; 21] = [
     Value { value: 0, name: "Axe (one-hand)" },
     Value { value: 1, name: "Axe (two-hand)" },
     Value { value: 2, name: "Bow" },
@@ -206,10 +206,10 @@ pub const SUBCLASS_WEAPON: [Value; 21] = [
 ];
 
 /// `ItemSubclassGem` is a single value in 1.12; the colours arrive in 2.0.
-pub const SUBCLASS_GEM: [Value; 1] = [Value { value: 0, name: "Gem" }];
+pub(crate) const SUBCLASS_GEM: [Value; 1] = [Value { value: 0, name: "Gem" }];
 
 /// `ItemSubclassArmor`, from `ItemPrototype.h:233`.
-pub const SUBCLASS_ARMOR: [Value; 10] = [
+pub(crate) const SUBCLASS_ARMOR: [Value; 10] = [
     Value { value: 0, name: "Miscellaneous" },
     Value { value: 1, name: "Cloth" },
     Value { value: 2, name: "Leather" },
@@ -223,11 +223,11 @@ pub const SUBCLASS_ARMOR: [Value; 10] = [
 ];
 
 /// `ItemSubclassReagent`.
-pub const SUBCLASS_REAGENT: [Value; 1] = [Value { value: 0, name: "Reagent" }];
+pub(crate) const SUBCLASS_REAGENT: [Value; 1] = [Value { value: 0, name: "Reagent" }];
 
 /// `ItemSubclassProjectile`, from `ItemPrototype.h:256`. 0, 1 and 4 are marked
 /// `ABS` — obsolete — in the header.
-pub const SUBCLASS_PROJECTILE: [Value; 5] = [
+pub(crate) const SUBCLASS_PROJECTILE: [Value; 5] = [
     Value { value: 0, name: "Wand (obsolete)" },
     Value { value: 1, name: "Bolt (obsolete)" },
     Value { value: 2, name: "Arrow" },
@@ -236,7 +236,7 @@ pub const SUBCLASS_PROJECTILE: [Value; 5] = [
 ];
 
 /// `ItemSubclassTradeGoods`, from `ItemPrototype.h:267`.
-pub const SUBCLASS_TRADE_GOODS: [Value; 4] = [
+pub(crate) const SUBCLASS_TRADE_GOODS: [Value; 4] = [
     Value { value: 0, name: "Trade Goods" },
     Value { value: 1, name: "Parts" },
     Value { value: 2, name: "Explosives" },
@@ -244,10 +244,10 @@ pub const SUBCLASS_TRADE_GOODS: [Value; 4] = [
 ];
 
 /// `ItemSubclassGeneric`.
-pub const SUBCLASS_GENERIC: [Value; 1] = [Value { value: 0, name: "Generic" }];
+pub(crate) const SUBCLASS_GENERIC: [Value; 1] = [Value { value: 0, name: "Generic" }];
 
 /// `ItemSubclassRecipe`, from `ItemPrototype.h:295`.
-pub const SUBCLASS_RECIPE: [Value; 10] = [
+pub(crate) const SUBCLASS_RECIPE: [Value; 10] = [
     Value { value: 0, name: "Book" },
     Value { value: 1, name: "Leatherworking Pattern" },
     Value { value: 2, name: "Tailoring Pattern" },
@@ -261,10 +261,10 @@ pub const SUBCLASS_RECIPE: [Value; 10] = [
 ];
 
 /// `ItemSubclassMoney`.
-pub const SUBCLASS_MONEY: [Value; 1] = [Value { value: 0, name: "Money" }];
+pub(crate) const SUBCLASS_MONEY: [Value; 1] = [Value { value: 0, name: "Money" }];
 
 /// `ItemSubclassQuiver`, from `ItemPrototype.h:318`.
-pub const SUBCLASS_QUIVER: [Value; 4] = [
+pub(crate) const SUBCLASS_QUIVER: [Value; 4] = [
     Value { value: 0, name: "Quiver (obsolete)" },
     Value { value: 1, name: "Quiver (obsolete)" },
     Value { value: 2, name: "Quiver" },
@@ -272,19 +272,19 @@ pub const SUBCLASS_QUIVER: [Value; 4] = [
 ];
 
 /// `ItemSubclassQuest`.
-pub const SUBCLASS_QUEST: [Value; 1] = [Value { value: 0, name: "Quest" }];
+pub(crate) const SUBCLASS_QUEST: [Value; 1] = [Value { value: 0, name: "Quest" }];
 
 /// `ItemSubclassKey`, from `ItemPrototype.h:335`.
-pub const SUBCLASS_KEY: [Value; 2] = [
+pub(crate) const SUBCLASS_KEY: [Value; 2] = [
     Value { value: 0, name: "Key" },
     Value { value: 1, name: "Lockpick" },
 ];
 
 /// `ItemSubclassPermanent`.
-pub const SUBCLASS_PERMANENT: [Value; 1] = [Value { value: 0, name: "Permanent" }];
+pub(crate) const SUBCLASS_PERMANENT: [Value; 1] = [Value { value: 0, name: "Permanent" }];
 
 /// `ItemSubclassJunk`.
-pub const SUBCLASS_JUNK: [Value; 1] = [Value { value: 0, name: "Junk" }];
+pub(crate) const SUBCLASS_JUNK: [Value; 1] = [Value { value: 0, name: "Junk" }];
 
 /// Which subclass list applies to a class — see [`Kind::Subclass`].
 ///
@@ -452,7 +452,7 @@ pub const FLAGS: [Bit; 19] = [
 
 /// `ItemExtraFlags`, from `ItemPrototype.h:394`. vmangos' own, above the
 /// client's.
-pub const EXTRA_FLAGS: [Bit; 3] = [
+pub(crate) const EXTRA_FLAGS: [Bit; 3] = [
     Bit { bit: 0x01, name: "MAIL_STATIONERY", about: "used as mail art" },
     Bit { bit: 0x02, name: "IGNORE_QUEST_STATUS", about: "drops whatever the quest state is" },
     Bit { bit: 0x04, name: "NOT_OBTAINABLE", about: "never obtainable in vanilla" },
@@ -959,14 +959,6 @@ pub fn all_items_query(wow_patch: u32) -> String {
     )
 }
 
-/// …and the same for one entry, for a row a list has not got.
-pub fn brief_query(entry: u32, wow_patch: u32) -> String {
-    format!(
-        "SELECT {BRIEF} {} WHERE t.`entry` = {entry}",
-        winning_join(wow_patch)
-    )
-}
-
 /// The whole row the server would load for one entry, with its `patch`.
 ///
 /// The `patch` is selected rather than assumed, because it is half the key an
@@ -1000,19 +992,6 @@ pub fn sub_line(class: u32, subclass: u32, inventory_type: u32, item_level: u32)
         0 => format!("{class_word} \u{b7} {subclass_word}{worn}"),
         level => format!("{class_word} \u{b7} {subclass_word}{worn} \u{b7} ilvl {level}"),
     }
-}
-
-/// Which items point at a display id, for the picker's own question: is
-/// this appearance already in use, and by what.
-///
-/// Capped, because a common appearance is worn by hundreds of rows and the
-/// answer a person wants is "these, and how many more".
-pub fn users_of_display_query(display_id: u32, wow_patch: u32, limit: usize) -> String {
-    format!(
-        "SELECT {BRIEF} {} WHERE t.`display_id` = {display_id} \
-         ORDER BY t.`quality` DESC, t.`item_level` DESC LIMIT {limit}",
-        winning_join(wow_patch)
-    )
 }
 
 #[cfg(test)]

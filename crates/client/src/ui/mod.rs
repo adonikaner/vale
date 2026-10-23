@@ -70,10 +70,10 @@ pub mod boxes;
 pub mod cursor;
 #[cfg(feature = "diagnostics")]
 pub mod debug;
-pub mod framexml;
+pub(crate) mod framexml;
 pub mod mesh;
 pub mod scale;
-pub mod worldtext;
+pub(crate) mod worldtext;
 #[cfg(feature = "diagnostics")]
 pub mod report;
 
@@ -82,7 +82,7 @@ use bevy::prelude::*;
 /// Every pass in this directory, as one plugin. See
 /// [`crate::render::RenderPlugins`] for why the registration is here and not
 /// in `lib.rs`.
-pub struct UiPlugins;
+pub(crate) struct UiPlugins;
 
 impl bevy::app::Plugin for UiPlugins {
     fn build(&self, app: &mut bevy::app::App) {

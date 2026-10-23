@@ -91,7 +91,7 @@ use vale_client::assets::GameAssets;
 /// item, quest, creature and object workspaces, and the creature and object
 /// tools in the inspector. Each draws a line of the same numbers every frame.
 #[derive(Resource, Default)]
-pub struct Standings {
+pub(crate) struct Standings {
     /// `(taken at, what it said)` per subject, in [`Half::ALL`]'s order.
     held: [Option<(f64, Standing)>; HALVES],
     /// The number of server tiles changed since the last regeneration. It is
@@ -121,7 +121,7 @@ impl Standings {
     ///
     /// The count is taken on a worker. A stale count is shown until the next
     /// one arrives.
-    pub fn changed_tiles(
+    pub(crate) fn changed_tiles(
         &mut self,
         session: &EditSession,
         assets: &GameAssets,
@@ -169,7 +169,7 @@ impl Standings {
     /// Where the project's server DBC files stand against the live folder,
     /// recomputed if the held answer is stale. It reads each carried file and
     /// its live copy, so it is held as long as the tile count.
-    pub fn files(
+    pub(crate) fn files(
         &mut self,
         session: &EditSession,
         server: &ServerSettings,
@@ -193,7 +193,7 @@ impl Standings {
     /// The tile count is marked stale rather than dropped, so the button shows
     /// the last count until the next one arrives. A count still running was
     /// started before the change and is dropped, which cancels it.
-    pub fn forget(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.held = Default::default();
         self.tiles = self.tiles.map(|(_, count)| (f64::NEG_INFINITY, count));
         self.counting = None;
@@ -202,21 +202,21 @@ impl Standings {
 }
 
 /// Everything the panel reads and writes, as one argument.
-pub struct Work<'a> {
-    pub session: &'a mut EditSession,
+pub(crate) struct Work<'a> {
+    pub(crate) session: &'a mut EditSession,
     /// The archives, for the one subject whose plan is a diff of two files
     /// rather than a store of typed values. See [`rows`].
-    pub assets: &'a GameAssets,
-    pub server: &'a mut ServerSettings,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) server: &'a mut ServerSettings,
     /// The queue an Apply or a Put back is pushed onto. See
     /// [`crate::server::queue`]. Each write requests its own `.reload` when it
     /// completes; the request is deferred while no playtest is running.
-    pub queue: &'a mut ServerQueue,
+    pub(crate) queue: &'a mut ServerQueue,
     /// The cached standing of each subject. See [`Standings`]; the cache stops
     /// this panel reading a 22,360-row table sixty times a second.
-    pub standings: &'a mut Standings,
+    pub(crate) standings: &'a mut Standings,
     /// The app's clock, which the [`Standings`] cache is aged against.
-    pub now: f64,
+    pub(crate) now: f64,
 }
 
 /// One subject whose edits are rows in the server's database, and one block
@@ -226,7 +226,7 @@ pub struct Work<'a> {
 /// the database; the test
 /// `the_panel_lists_the_row_subjects_in_the_stacks_order` checks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Half {
+pub(crate) enum Half {
     /// The rows the server keeps of the client tables, `Spell.dbc` and
     /// `TaxiNodes.dbc` among them, written from the project's copies of those
     /// files.
@@ -237,11 +237,11 @@ pub enum Half {
 }
 
 /// The number of subjects. [`Standings`] holds one answer for each.
-pub const HALVES: usize = 1 + Subject::COUNT;
+pub(crate) const HALVES: usize = 1 + Subject::COUNT;
 
 impl Half {
     /// The client-table block, then every row subject in the stack's order.
-    pub const ALL: [Half; HALVES] = {
+    pub(crate) const ALL: [Half; HALVES] = {
         let mut out = [Half::Tables; HALVES];
         let mut at = 0;
         while at < Subject::COUNT {
@@ -252,7 +252,7 @@ impl Half {
     };
 
     /// Its place in [`Self::ALL`], which indexes [`Standings`].
-    pub fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         match self {
             Half::Tables => 0,
             Half::Row(subject) => 1 + subject.index(),
@@ -260,7 +260,7 @@ impl Half {
     }
 
     /// The subject's name, in the rail's wording.
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Half::Tables => "Client tables",
             Half::Row(subject) => subject.row_subject().label(),
@@ -269,7 +269,7 @@ impl Half {
 
     /// The database tables the subject writes. The name is the editor's word;
     /// the table names are what the database shows.
-    pub fn tables(self) -> &'static str {
+    pub(crate) fn tables(self) -> &'static str {
         match self {
             Half::Tables => "spell_template, taxi_nodes, skill_line_ability, area_template, areatrigger_template",
             Half::Row(subject) => subject.row_subject().table_list(),
@@ -277,7 +277,7 @@ impl Half {
     }
 
     /// Where a save writes the statements, as a virtual path in the project.
-    pub fn file(self) -> &'static str {
+    pub(crate) fn file(self) -> &'static str {
         match self {
             Half::Tables => rows::VPATH,
             Half::Row(subject) => subject.row_subject().sql_vpath(),
@@ -286,7 +286,7 @@ impl Half {
 
     /// Where the statements that put the rows back are kept, as a virtual
     /// path in the project.
-    pub fn revert_file(self) -> &'static str {
+    pub(crate) fn revert_file(self) -> &'static str {
         match self {
             Half::Tables => rows::REVERT_VPATH,
             Half::Row(subject) => subject.row_subject().revert_vpath(),
@@ -295,7 +295,7 @@ impl Half {
 
     /// What it takes for an applied row to become live. The module comment
     /// lists how this differs between subjects.
-    pub fn going_live(self) -> &'static str {
+    pub(crate) fn going_live(self) -> &'static str {
         match self {
             Half::Tables => {
                 "A spell is live on `.reload spell_template`, which an apply sends when it \
@@ -316,7 +316,7 @@ impl Half {
     /// operations also do to the blocks below this one. See
     /// `crate::server::stack`. Empty for the client-table block and for the
     /// last subject in the stack, which has nothing below it.
-    pub fn order_note(self) -> &'static str {
+    pub(crate) fn order_note(self) -> &'static str {
         match self.subject() {
             None => "",
             Some(subject) if subject.index() + 1 == Subject::COUNT => "",
@@ -329,7 +329,7 @@ impl Half {
 
     /// The row subject this block is. `None` for the client-table block,
     /// which is not in the stack.
-    pub fn subject(self) -> Option<Subject> {
+    pub(crate) fn subject(self) -> Option<Subject> {
         match self {
             Half::Tables => None,
             Half::Row(subject) => Some(subject),
@@ -344,14 +344,14 @@ impl Half {
     /// files against the archives', so giving up the claim means editing the
     /// table back. For spells that is the spell workspace's own Undo and
     /// Discard, which are not server operations.
-    pub fn discardable(self) -> bool {
+    pub(crate) fn discardable(self) -> bool {
         !matches!(self, Half::Tables)
     }
 
     /// Whether a table read out of the project's store belongs to this
     /// subject: [`Subject::owns`], which the writers use. The client-table
     /// block owns none, because its edits are files.
-    pub fn owns(self, table: &str) -> bool {
+    pub(crate) fn owns(self, table: &str) -> bool {
         self.subject().is_some_and(|subject| subject.owns(table))
     }
 }
@@ -359,44 +359,44 @@ impl Half {
 /// The state of one subject: what the project changes, and how much of that
 /// the database already holds.
 #[derive(Default, Clone)]
-pub struct Standing {
+pub(crate) struct Standing {
     /// Rows (and, for the creatures, paths) this project changes.
-    pub changed: usize,
+    pub(crate) changed: usize,
     /// How many of the changed rows have not been applied to the database.
-    pub outstanding: usize,
+    pub(crate) outstanding: usize,
     /// How many rows this project has applied and can take back. This is the
     /// revert file's own count.
-    pub applied: usize,
+    pub(crate) applied: usize,
     /// Whether what the project says now is what was applied. It only adds a
     /// caveat to [`Standing::line`]. See `subject::apply::OnTheServer::current`.
-    pub current: bool,
+    pub(crate) current: bool,
     /// What the writer refused to write, each as a sentence.
-    pub refused: Vec<String>,
+    pub(crate) refused: Vec<String>,
     /// The error that stopped the plan being built. Only the client-table
     /// block can set it, because only its plan reads files.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// Whether a table is edited and not yet written to the project folder.
     /// Only the client-table block can set it: its plan is a diff of the
     /// project's own table files against the archives', so a table edited in
     /// this session and not saved is in no plan, and the numbers above are
     /// from the last save. Apply writes the tables first; this flag tells the
     /// person so before Apply is pressed.
-    pub unsaved: bool,
+    pub(crate) unsaved: bool,
     /// The plan's own line of what it creates, edits and removes, as
     /// `subject::Plan::line` words it. Empty for the client tables. The
     /// creature and object tool panels print it.
-    pub summary: String,
+    pub(crate) summary: String,
     /// The rows the revert file holds, by table and key: the rows this project
     /// has applied. Empty for the client tables. The creature and object tool
     /// panels say of the selected spawn whether it is applied. Shared, so a
     /// panel's copy of a [`Standing`] does not copy the list.
-    pub written: std::sync::Arc<Vec<(String, vale_mangos::row::Key)>>,
+    pub(crate) written: std::sync::Arc<Vec<(String, vale_mangos::row::Key)>>,
 }
 
 impl Standing {
     /// Whether this project has applied that row. Answers only for the
     /// subjects that fill [`Self::written`].
-    pub fn covers(&self, table: &str, key: &vale_mangos::row::Key) -> bool {
+    pub(crate) fn covers(&self, table: &str, key: &vale_mangos::row::Key) -> bool {
         self.written
             .iter()
             .any(|(had_table, had_key)| had_table == table && had_key == key)
@@ -404,7 +404,7 @@ impl Standing {
 
     /// Whether there is nothing to say about this subject: no change, no
     /// applied row, no unsaved table, no refusal and no error.
-    pub fn quiet(&self) -> bool {
+    pub(crate) fn quiet(&self) -> bool {
         self.changed == 0
             && self.applied == 0
             && !self.unsaved
@@ -418,13 +418,13 @@ impl Standing {
     /// the database what it was plus what the project says now, so a project
     /// that changes nothing but has applied rows in the database has those
     /// rows to take back. See `crate::server::reconcile`.
-    pub fn appliable(&self) -> bool {
+    pub(crate) fn appliable(&self) -> bool {
         self.changed > 0 || self.unsaved || self.applied > 0
     }
 
     /// One line stating what the project changes and how much of it has been
     /// applied.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         match (self.changed, self.applied) {
             (0, 0) => "nothing changed".to_string(),
             (changed, 0) => format!("{changed} row(s) changed, none applied"),
@@ -451,7 +451,7 @@ impl Standing {
 /// Reads no database. Every number comes from the project folder, so the
 /// panel can be drawn with no server to reach. See `OnTheServer`, whose
 /// record is the revert file.
-pub fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Standing {
+pub(crate) fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Standing {
     match half {
         Half::Tables => {
             let plan = match rows::plan(session, assets) {
@@ -522,7 +522,7 @@ pub fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Stand
 /// caller a person triggers. Apply also calls it, so that Apply writes before
 /// it runs. Without that, Apply would run what the last save held rather than
 /// what the project says now.
-pub fn save(half: Half, work: &mut Work<'_>) {
+pub(crate) fn save(half: Half, work: &mut Work<'_>) {
     match half {
         // Writes the client tables into the project folder. The client-table
         // plan is a diff of the project's own table files (`Spell.dbc`,
@@ -551,7 +551,7 @@ pub fn save(half: Half, work: &mut Work<'_>) {
 /// a write on [`crate::server::queue`], which reports what it did on the
 /// status line when it completes. Returns the status-bar line for now: that
 /// the write is queued, or why there is nothing to queue.
-pub fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
+pub(crate) fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
     save(half, work);
     let work_for = match half {
         Half::Tables => {
@@ -604,7 +604,7 @@ pub fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
 
 /// Queues a write that returns every row this project has applied to what it
 /// held before, and then forgets the undo.
-pub fn put_back(half: Half, work: &mut Work<'_>) -> Result<String, String> {
+pub(crate) fn put_back(half: Half, work: &mut Work<'_>) -> Result<String, String> {
     let work_for = match (half, half.subject()) {
         (Half::Tables, _) => {
             let files = put_back_files(work);
@@ -677,7 +677,7 @@ fn put_back_files(work: &mut Work<'_>) -> Option<String> {
 
 /// Gives up this project's claim on the subject's rows. The database is not
 /// touched.
-pub fn discard(half: Half, session: &mut EditSession) -> String {
+pub(crate) fn discard(half: Half, session: &mut EditSession) -> String {
     let (rows, paths) =
         session.forget_server_edits(|table| half.owns(table), half == Half::Row(Subject::Creatures));
     match (rows, paths) {

@@ -36,7 +36,7 @@ pub const LISTS: Table = Table::new(TABLE, &COLUMNS);
 pub const SLOTS: usize = 8;
 
 /// The eleven columns of one slot, without the `_n` suffix.
-pub const SLOT_FIELDS: [&str; 11] = [
+pub(crate) const SLOT_FIELDS: [&str; 11] = [
     "spellId",
     "probability",
     "castTarget",
@@ -51,7 +51,7 @@ pub const SLOT_FIELDS: [&str; 11] = [
 ];
 
 /// What each of a slot's eleven columns is drawn as.
-pub const SLOT_KINDS: [Kind; 11] = [
+pub(crate) const SLOT_KINDS: [Kind; 11] = [
     Kind::Ref("Spell"),
     Kind::Unsigned,
     Kind::Choice(&crate::scripts::TARGET_VALUES),
@@ -66,7 +66,7 @@ pub const SLOT_KINDS: [Kind; 11] = [
 ];
 
 /// What each of a slot's eleven columns means.
-pub const SLOT_ABOUT: [&str; 11] = [
+pub(crate) const SLOT_ABOUT: [&str; 11] = [
     "the spell, or 0 for an empty slot",
     "percent chance to cast when its timer is up",
     "the cast target type",
@@ -142,8 +142,8 @@ pub struct Slot {
     pub spell: u32,
     pub probability: u32,
     pub cast_target: u32,
-    pub target_params: [u32; 2],
-    pub cast_flags: u32,
+    pub(crate) target_params: [u32; 2],
+    pub(crate) cast_flags: u32,
     pub initial: (u32, u32),
     pub repeat: (u32, u32),
     pub script: u32,

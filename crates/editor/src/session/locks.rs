@@ -12,14 +12,14 @@ use super::EditSession;
 /// Stored in the project as `editor\locks\<Map>.placements.txt`, one line per
 /// placement: `doodad <uniqueId>` or `wmo <uniqueId>`.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct PlacementLocks {
-    pub doodads: std::collections::BTreeSet<u32>,
-    pub wmos: std::collections::BTreeSet<u32>,
+pub(crate) struct PlacementLocks {
+    pub(crate) doodads: std::collections::BTreeSet<u32>,
+    pub(crate) wmos: std::collections::BTreeSet<u32>,
 }
 
 impl PlacementLocks {
     /// The set for one kind of placement.
-    pub fn of(&self, kind: crate::tools::placements::place::Kind) -> &std::collections::BTreeSet<u32> {
+    pub(crate) fn of(&self, kind: crate::tools::placements::place::Kind) -> &std::collections::BTreeSet<u32> {
         match kind {
             crate::tools::placements::place::Kind::Doodad => &self.doodads,
             crate::tools::placements::place::Kind::Wmo => &self.wmos,
@@ -33,12 +33,12 @@ impl PlacementLocks {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.doodads.is_empty() && self.wmos.is_empty()
     }
 
     /// The stored form. See [`Self::from_text`].
-    pub fn to_text(&self) -> String {
+    pub(crate) fn to_text(&self) -> String {
         let mut text = String::from(
             "# Locked doodads and WMOs of one map, by uniqueId, written by the world editor.\n",
         );
@@ -53,7 +53,7 @@ impl PlacementLocks {
 
     /// Read [`Self::to_text`]'s form. Blank lines and `#` lines are skipped; a
     /// line that is neither `doodad <id>` nor `wmo <id>` is an error naming it.
-    pub fn from_text(text: &str) -> Result<PlacementLocks, String> {
+    pub(crate) fn from_text(text: &str) -> Result<PlacementLocks, String> {
         let mut locks = PlacementLocks::default();
         for (number, line) in text.lines().enumerate() {
             let line = line.trim();
@@ -86,7 +86,7 @@ impl EditSession {
     /// from the project the first time a tile is asked about. A file that
     /// cannot be read as locks is reported in the status line and treated as
     /// no locks.
-    pub fn locked(&mut self, coord: (u32, u32)) -> &vale_edit::ops::vertices::Selected {
+    pub(crate) fn locked(&mut self, coord: (u32, u32)) -> &vale_edit::ops::vertices::Selected {
         if !self.locks.contains_key(&coord) {
             let vpath = self.locks_vpath(coord);
             let set = match self.project.read(&vpath) {
@@ -132,7 +132,7 @@ impl EditSession {
     }
 
     /// The open map's locked placements. Empty before the first tile is open.
-    pub fn placement_locks(&self) -> &PlacementLocks {
+    pub(crate) fn placement_locks(&self) -> &PlacementLocks {
         static NONE: std::sync::OnceLock<PlacementLocks> = std::sync::OnceLock::new();
         self.placement_locks
             .as_ref()
@@ -140,14 +140,14 @@ impl EditSession {
     }
 
     /// Whether one placement is locked.
-    pub fn placement_locked(&self, kind: crate::tools::placements::place::Kind, unique_id: u32) -> bool {
+    pub(crate) fn placement_locked(&self, kind: crate::tools::placements::place::Kind, unique_id: u32) -> bool {
         self.placement_locks().of(kind).contains(&unique_id)
     }
 
     /// Lock or unlock placements, and write the map's locks to the project at
     /// once. Returns how many changed. Like the vertex locks, these are not on
     /// the undo history.
-    pub fn set_placements_locked(
+    pub(crate) fn set_placements_locked(
         &mut self,
         kind: crate::tools::placements::place::Kind,
         ids: impl IntoIterator<Item = u32>,
@@ -182,14 +182,14 @@ impl EditSession {
     /// A tile's locked vertices if they have been read, for a reader that
     /// cannot take the session mutably. The terrain tool reads every open
     /// tile's locks through [`Self::locked`] each frame it is chosen.
-    pub fn locks_if_read(&self, coord: (u32, u32)) -> Option<&vale_edit::ops::vertices::Selected> {
+    pub(crate) fn locks_if_read(&self, coord: (u32, u32)) -> Option<&vale_edit::ops::vertices::Selected> {
         self.locks.get(&coord)
     }
 
     /// Replace a tile's locked vertices, and write them to the project at once.
     /// An empty set removes the file. Locks are not on the undo history: a
     /// lock changes no file the game reads.
-    pub fn set_locked(&mut self, coord: (u32, u32), set: vale_edit::ops::vertices::Selected) {
+    pub(crate) fn set_locked(&mut self, coord: (u32, u32), set: vale_edit::ops::vertices::Selected) {
         let vpath = self.locks_vpath(coord);
         let written = match set.is_empty() {
             true => self.project.revert(&vpath).map(|_| ()),
@@ -206,7 +206,7 @@ impl EditSession {
     /// before recording the edits, so a lock holds against all of them. See
     /// `vale_edit::ops::vertices::Selected::hold`. Returns how many entries
     /// were held.
-    pub fn hold_locked(&mut self, coord: (u32, u32), edits: &mut Vec<vale_edit::ops::Edit>) -> usize {
+    pub(crate) fn hold_locked(&mut self, coord: (u32, u32), edits: &mut Vec<vale_edit::ops::Edit>) -> usize {
         if !edits.iter().any(|edit| matches!(edit, vale_edit::ops::Edit::Heights { .. })) {
             return 0;
         }

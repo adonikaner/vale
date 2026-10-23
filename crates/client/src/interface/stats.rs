@@ -76,7 +76,7 @@ impl Reading {
     }
 }
 
-pub struct StatsPlugin;
+pub(crate) struct StatsPlugin;
 
 impl Plugin for StatsPlugin {
     fn build(&self, app: &mut App) {

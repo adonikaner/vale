@@ -113,7 +113,7 @@ impl GamePointer {
     }
 }
 
-pub struct CursorPlugin;
+pub(crate) struct CursorPlugin;
 
 impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {

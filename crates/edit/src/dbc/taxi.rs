@@ -193,7 +193,7 @@ pub fn points_by_path(table: &DbcFile) -> HashMap<u32, Vec<Point>> {
 }
 
 /// One path's points, in `NodeIndex` order.
-pub fn points_of(table: &DbcFile, path: u32) -> Vec<Point> {
+pub(crate) fn points_of(table: &DbcFile, path: u32) -> Vec<Point> {
     let mut out: Vec<Point> = (0..table.record_count())
         .filter(|&record| table.u32_at(record, wf::PATH) == Some(path))
         .filter_map(|record| point_at(table, record))
@@ -203,7 +203,7 @@ pub fn points_of(table: &DbcFile, path: u32) -> Vec<Point> {
 }
 
 /// The point at one record.
-pub fn point_at(table: &DbcFile, record: usize) -> Option<Point> {
+pub(crate) fn point_at(table: &DbcFile, record: usize) -> Option<Point> {
     let float = |field: usize| table.f32_at(record, field).unwrap_or(0.0);
     Some(Point {
         id: table.u32_at(record, wf::ID)?,
@@ -218,7 +218,7 @@ pub fn point_at(table: &DbcFile, record: usize) -> Option<Point> {
 }
 
 /// The path from one node to another, if the table has one.
-pub fn path_between(table: &DbcFile, from: u32, to: u32) -> Option<Path> {
+pub(crate) fn path_between(table: &DbcFile, from: u32, to: u32) -> Option<Path> {
     paths(table)
         .into_iter()
         .find(|path| path.from == from && path.to == to)
@@ -533,7 +533,8 @@ pub fn remove_node(tables: &mut HashMap<String, DbcFile>, node: u32) -> Result<E
 
 /// Renumber a path's points 0, 1, 2 in their current order. `None` when they
 /// already are, which is every shipped path.
-pub fn compact(tables: &mut HashMap<String, DbcFile>, path: u32) -> Result<Option<Edits>, Refused> {
+#[cfg(test)]
+pub(crate) fn compact(tables: &mut HashMap<String, DbcFile>, path: u32) -> Result<Option<Edits>, Refused> {
     let table = open(tables, POINTS)?;
     let mut out = Edits::default();
     for (want, point) in points_of(table, path).iter().enumerate() {

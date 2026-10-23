@@ -150,7 +150,7 @@ pub fn has_npc_flag(npc_flags: u32, name: &str) -> bool {
 
 /// `CreatureType`, from `CreatureDefines.h:41`. The same values as
 /// `CreatureType.dbc`.
-pub const CREATURE_TYPES: [Value; 11] = [
+pub(crate) const CREATURE_TYPES: [Value; 11] = [
     Value { value: 1, name: "Beast" },
     Value { value: 2, name: "Dragonkin" },
     Value { value: 3, name: "Demon" },
@@ -175,7 +175,7 @@ pub const RANKS: [Value; 5] = [
 
 /// `unit_class`, which is the four values a creature's power type and combat
 /// rating table are chosen by (`ObjectMgr.cpp:1467`, and `CreatureClassLevelStats`).
-pub const UNIT_CLASSES: [Value; 4] = [
+pub(crate) const UNIT_CLASSES: [Value; 4] = [
     Value { value: 1, name: "Warrior" },
     Value { value: 2, name: "Paladin" },
     Value { value: 4, name: "Rogue" },
@@ -184,7 +184,7 @@ pub const UNIT_CLASSES: [Value; 4] = [
 
 /// `MovementGeneratorType`, from `MotionMaster.h:38`. The three a spawn or a
 /// template may declare; the rest are chosen by the server at run time.
-pub const MOVEMENT_TYPES: [Value; 3] = [
+pub(crate) const MOVEMENT_TYPES: [Value; 3] = [
     Value { value: 0, name: "Idle" },
     Value { value: 1, name: "Random" },
     Value { value: 2, name: "Waypoint" },
@@ -192,14 +192,14 @@ pub const MOVEMENT_TYPES: [Value; 3] = [
 
 /// `InhabitTypeValues`, from `CreatureDefines.h:491`. A mask, not a choice:
 /// 3 is ground and water, 7 is anywhere.
-pub const INHABIT_TYPES: [Bit; 3] = [
+pub(crate) const INHABIT_TYPES: [Bit; 3] = [
     Bit { bit: 1, name: "GROUND", about: "walks" },
     Bit { bit: 2, name: "WATER", about: "swims" },
     Bit { bit: 4, name: "AIR", about: "flies" },
 ];
 
 /// `CreatureStaticFlags`, from `CreatureDefines.h:96`: the first word.
-pub const STATIC_FLAGS1: [Bit; 32] = [
+pub(crate) const STATIC_FLAGS1: [Bit; 32] = [
     Bit { bit: 0x00000001, name: "MOUNTABLE", about: "not used by the core" },
     Bit { bit: 0x00000002, name: "NO_XP", about: "killing it gives no experience" },
     Bit { bit: 0x00000004, name: "NO_LOOT", about: "not used by the core" },
@@ -235,7 +235,7 @@ pub const STATIC_FLAGS1: [Bit; 32] = [
 ];
 
 /// `CreatureStaticFlags2`, from `CreatureDefines.h:132`: the second word.
-pub const STATIC_FLAGS2: [Bit; 7] = [
+pub(crate) const STATIC_FLAGS2: [Bit; 7] = [
     Bit { bit: 0x01, name: "NO_PET_SCALING", about: "not used by the core" },
     Bit { bit: 0x02, name: "FORCE_RAID_COMBAT", about: "puts the whole zone in combat on aggro" },
     Bit { bit: 0x04, name: "LOCK_TAPPERS_TO_RAID_ON_DEATH", about: "killing it binds the players to the raid" },
@@ -246,7 +246,7 @@ pub const STATIC_FLAGS2: [Bit; 7] = [
 ];
 
 /// `CreatureFlagsExtra`, from `CreatureDefines.h:155`: vmangos' own flags.
-pub const FLAGS_EXTRA: [Bit; 20] = [
+pub(crate) const FLAGS_EXTRA: [Bit; 20] = [
     Bit { bit: 0x00000001, name: "NO_LEASH_EVADE", about: "does not evade when its target runs away" },
     Bit { bit: 0x00000002, name: "NO_AGGRO", about: "defensive: does not attack hostiles that come near" },
     Bit { bit: 0x00000004, name: "NO_PARRY", about: "cannot parry" },
@@ -270,7 +270,7 @@ pub const FLAGS_EXTRA: [Bit; 20] = [
 ];
 
 /// `CreatureImmunityFlags`, from `CreatureDefines.h:179`.
-pub const IMMUNITY_FLAGS: [Bit; 7] = [
+pub(crate) const IMMUNITY_FLAGS: [Bit; 7] = [
     Bit { bit: 0x01, name: "AOE", about: "area spells" },
     Bit { bit: 0x02, name: "TAUNT", about: "taunts" },
     Bit { bit: 0x04, name: "MOD_STAT", about: "stat changes" },
@@ -283,7 +283,7 @@ pub const IMMUNITY_FLAGS: [Bit; 7] = [
 /// `Mechanics`, from `SpellDefines.h:659`, as the mask
 /// `mechanic_immune_mask` is: mechanic `m` is bit `1 << (m - 1)`
 /// (`Creature::IsImmuneToSpell`, `Creature.cpp:2445`).
-pub const MECHANIC_MASK: [Bit; 31] = [
+pub(crate) const MECHANIC_MASK: [Bit; 31] = [
     Bit { bit: 1 << 0, name: "CHARM", about: "mechanic 1" },
     Bit { bit: 1 << 1, name: "DISORIENTED", about: "mechanic 2" },
     Bit { bit: 1 << 2, name: "DISARM", about: "mechanic 3" },
@@ -320,7 +320,7 @@ pub const MECHANIC_MASK: [Bit; 31] = [
 /// `SpellSchools`, from `SpellDefines.h:758`, as the mask
 /// `school_immune_mask` is: school `s` is bit `1 << s`
 /// (`Creature.cpp:2448`).
-pub const SCHOOL_MASK: [Bit; 7] = [
+pub(crate) const SCHOOL_MASK: [Bit; 7] = [
     Bit { bit: 0x01, name: "PHYSICAL", about: "school 0: melee and physical spells" },
     Bit { bit: 0x02, name: "HOLY", about: "school 1" },
     Bit { bit: 0x04, name: "FIRE", about: "school 2" },
@@ -331,7 +331,7 @@ pub const SCHOOL_MASK: [Bit; 7] = [
 ];
 
 /// `TrainerType`, from `CreatureDefines.h:29`.
-pub const TRAINER_TYPES: [Value; 4] = [
+pub(crate) const TRAINER_TYPES: [Value; 4] = [
     Value { value: 0, name: "Class" },
     Value { value: 1, name: "Mounts" },
     Value { value: 2, name: "Tradeskills" },
@@ -340,7 +340,7 @@ pub const TRAINER_TYPES: [Value; 4] = [
 
 /// `Classes`, from `SharedDefines.h:87`, with 0 for none: what
 /// `trainer_class` holds.
-pub const TRAINER_CLASSES: [Value; 10] = [
+pub(crate) const TRAINER_CLASSES: [Value; 10] = [
     Value { value: 0, name: "None" },
     Value { value: 1, name: "Warrior" },
     Value { value: 2, name: "Paladin" },
@@ -356,7 +356,7 @@ pub const TRAINER_CLASSES: [Value; 10] = [
 /// `Races`, from `SharedDefines.h:56`, with 0 for any: what `trainer_race`
 /// holds. A mount trainer with a race trains only that race
 /// (`Creature.cpp:1429`).
-pub const TRAINER_RACES: [Value; 9] = [
+pub(crate) const TRAINER_RACES: [Value; 9] = [
     Value { value: 0, name: "Any" },
     Value { value: 1, name: "Human" },
     Value { value: 2, name: "Orc" },
@@ -370,7 +370,7 @@ pub const TRAINER_RACES: [Value; 9] = [
 
 /// `WowPatch`, from `Progression.h:64`: the content patches a spawn's
 /// `patch_min` and `patch_max` count in.
-pub const PATCHES: [Value; 11] = [
+pub(crate) const PATCHES: [Value; 11] = [
     Value { value: 0, name: "1.2" },
     Value { value: 1, name: "1.3" },
     Value { value: 2, name: "1.4" },
@@ -385,7 +385,7 @@ pub const PATCHES: [Value; 11] = [
 ];
 
 /// `SpawnFlags`, from `ObjectDefines.h:127`. A spawn's own, not the template's.
-pub const SPAWN_FLAGS: [Bit; 8] = [
+pub(crate) const SPAWN_FLAGS: [Bit; 8] = [
     Bit { bit: 0x01, name: "ACTIVE", about: "kept loaded whether or not a player is near" },
     Bit { bit: 0x02, name: "DISABLED", about: "not spawned at all" },
     Bit { bit: 0x04, name: "RANDOM_RESPAWN_TIME", about: "respawns at a random time between the two respawn times" },
@@ -487,7 +487,7 @@ pub const TEMPLATE_COLUMNS: [Column; 75] = [
 /// chooses between at spawn time. They are kept in the list because a spawn
 /// that uses them may be drawn with a model other than `id`'s, and a form that
 /// did not show them would misstate what is standing there.
-pub const SPAWN_COLUMNS: [Column; 21] = [
+pub(crate) const SPAWN_COLUMNS: [Column; 21] = [
     Column { name: "guid", kind: Kind::Key, group: Group::Identity, about: "the spawn's guid" },
     Column { name: "id", kind: Kind::Ref(TEMPLATE), group: Group::Identity, about: "the creature_template entry spawned here" },
     Column { name: "id2", kind: Kind::Ref(TEMPLATE), group: Group::Identity, about: "a second creature_template entry it may spawn as, or 0" },
@@ -748,7 +748,7 @@ pub const TEMPLATE_REFERENCES: [crate::row::Reference; 26] = {
 /// Every column that names a spawn by its guid: [`DEPENDENTS`], which a
 /// removal takes, and the six that mention a spawn from a row about something
 /// else.
-pub const SPAWN_REFERENCES: [crate::row::Reference; 11] = {
+pub(crate) const SPAWN_REFERENCES: [crate::row::Reference; 11] = {
     use crate::row::Reference as R;
     [
         R::new("creature_addon", "guid"),

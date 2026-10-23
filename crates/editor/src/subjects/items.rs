@@ -64,26 +64,26 @@ use std::collections::{HashMap, HashSet};
 /// Read into numbers once, so drawing a list of twenty-four thousand does not
 /// parse text per frame.
 #[derive(Debug, Clone)]
-pub struct Known {
+pub(crate) struct Known {
     /// The entry the project says the item has, which is the one the list
     /// shows, the panel opens by and the store keys its claim under.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The entry the last read of the table found it at, which differs
     /// while the project changes the item's entry and has not applied it. It
     /// is where the whole row is read from. See [`fold_the_store_in`].
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// Which content patch of the row the server would load — the other half of
     /// the key an edit is written under.
-    pub patch: u32,
-    pub name: String,
-    pub class: u32,
-    pub subclass: u32,
-    pub quality: u32,
-    pub display_id: u32,
-    pub inventory_type: u32,
-    pub item_level: u32,
-    pub required_level: u32,
-    pub flags: u32,
+    pub(crate) patch: u32,
+    pub(crate) name: String,
+    pub(crate) class: u32,
+    pub(crate) subclass: u32,
+    pub(crate) quality: u32,
+    pub(crate) display_id: u32,
+    pub(crate) inventory_type: u32,
+    pub(crate) item_level: u32,
+    pub(crate) required_level: u32,
+    pub(crate) flags: u32,
     /// What this project does to the row.
     ///
     /// [`Life::Update`] for a row as the database has it, whether or not this
@@ -91,22 +91,22 @@ pub struct Known {
     /// creates, which has no row in the database at all, and [`Life::Delete`]
     /// for one it removes — see `vale_mangos::item`'s module comment on why
     /// a removal needs a restart.
-    pub claim: Life,
+    pub(crate) claim: Life,
 }
 
 impl Known {
     /// Its key, which is the entry and the patch together.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         item::template_key(self.entry, self.patch)
     }
 
     /// What to call it in a list.
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         format!("{} ({})", self.name, self.entry)
     }
 
     /// The dimmer second line of a list row. See [`item::sub_line`].
-    pub fn sub(&self) -> String {
+    pub(crate) fn sub(&self) -> String {
         item::sub_line(self.class, self.subclass, self.inventory_type, self.item_level)
     }
 
@@ -126,7 +126,7 @@ impl Known {
     ///
     /// `None` when the project says nothing about it, which is the ordinary
     /// case and is why this answers an `Option` rather than always cloning.
-    pub fn with_edits(&self, edits: &vale_mangos::row::Edits) -> Option<Known> {
+    pub(crate) fn with_edits(&self, edits: &vale_mangos::row::Edits) -> Option<Known> {
         // Look the row up once and read its columns from it. Asking the store
         // for each of the 129 columns in turn built a key per question: 2.3
         // million allocations for one pass over the list, which cost 2.6 s per
@@ -186,10 +186,10 @@ fn read_known(row: &item::Row) -> Option<Known> {
 
 /// One row of `item_template`, whole.
 #[derive(Debug, Clone)]
-pub struct ItemRow {
-    pub entry: u32,
-    pub patch: u32,
-    pub row: item::Row,
+pub(crate) struct ItemRow {
+    pub(crate) entry: u32,
+    pub(crate) patch: u32,
+    pub(crate) row: item::Row,
 }
 
 /// What one display id looks like, resolved against the archives.
@@ -199,30 +199,30 @@ pub struct ItemRow {
 /// textures are neither. The component textures are painted into the wearer's
 /// own skin and have no picture of their own outside a dressed character.
 #[derive(Debug, Clone, Default)]
-pub struct Look {
+pub(crate) struct Look {
     /// The full path of the bag icon, composed through `ItemTables::icon_path`.
-    pub icon: Option<String>,
+    pub(crate) icon: Option<String>,
     /// The bare icon name the row carries, for searching.
-    pub icon_name: String,
+    pub(crate) icon_name: String,
     /// The attached models, with the skin each names — what a preview draws.
     /// Empty for a garment, which is the ordinary case.
-    pub models: Vec<crate::preview::portraits::Worn>,
+    pub(crate) models: Vec<crate::preview::portraits::Worn>,
     /// The eight body-component textures, empty where the row names none.
-    pub textures: [String; 8],
+    pub(crate) textures: [String; 8],
     /// `geosetGroup[3]` — which geometry variants the wearer switches to.
-    pub geoset_groups: [u32; 3],
+    pub(crate) geoset_groups: [u32; 3],
     /// Which of the wearer's own geosets a helmet hides, as the row's ids.
-    pub helmet_hides: [u32; 2],
+    pub(crate) helmet_hides: [u32; 2],
 }
 
 impl Look {
     /// Whether the row names geometry of its own, as against painting the body.
-    pub fn has_models(&self) -> bool {
+    pub(crate) fn has_models(&self) -> bool {
         !self.models.is_empty()
     }
 
     /// How many of the eight components it paints.
-    pub fn painted(&self) -> usize {
+    pub(crate) fn painted(&self) -> usize {
         self.textures.iter().filter(|path| !path.is_empty()).count()
     }
 }
@@ -235,13 +235,13 @@ impl Look {
 /// eight string builds for each of twenty-nine thousand rows on the frame a
 /// letter is typed, which is too slow for a search box.
 #[derive(Debug, Clone)]
-pub struct DisplayFacts {
-    pub id: u32,
+pub(crate) struct DisplayFacts {
+    pub(crate) id: u32,
     /// The bare icon name, lower case, which is the only text a display row
     /// carries and so the only word one can be searched by.
-    pub icon: String,
+    pub(crate) icon: String,
     /// Whether it hangs geometry on the wearer, as against painting its skin.
-    pub has_model: bool,
+    pub(crate) has_model: bool,
     /// Which `Item\ObjectComponents\` directory that model is in, or `None`
     /// for a row that names none.
     ///
@@ -250,7 +250,7 @@ pub struct DisplayFacts {
     /// `Helm_Plate_D_04.mdx` is a helm is that `Item\ObjectComponents\Head\`
     /// holds it, which the archives' file listing answers. See
     /// [`build_display_facts`], where the listing is read once.
-    pub directory: Option<&'static str>,
+    pub(crate) directory: Option<&'static str>,
     /// Whether it names a skin for the wearer's own cape geoset. The back is
     /// the one slot whose geometry the character already has and whose
     /// texture the item names.
@@ -259,10 +259,10 @@ pub struct DisplayFacts {
     /// against Head's 1,801), so a cloak carries `modelTexture[0]` and no
     /// model, and a slot filter that asks for geometry offers nothing for the
     /// back. See `vale_assets::tables::item::Slot::is_cloak`.
-    pub cloak_texture: bool,
+    pub(crate) cloak_texture: bool,
     /// Which body components it paints, a bit per [`Component`] in that enum's
     /// own order.
-    pub paints: u8,
+    pub(crate) paints: u8,
 }
 
 /// Which appearances the picker offers.
@@ -271,7 +271,7 @@ pub struct DisplayFacts {
 /// pages, too many to scroll through. These are the two narrowings that depend
 /// on the item rather than on what was typed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Filter {
+pub(crate) enum Filter {
     /// Everything the table holds.
     All,
     /// The ones that could be worn in this item's slot. This is the default
@@ -283,7 +283,7 @@ pub enum Filter {
 }
 
 impl Filter {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Filter::All => "everything",
             Filter::Slot => "fits this slot",
@@ -291,7 +291,7 @@ impl Filter {
         }
     }
 
-    pub const ALL: [Filter; 3] = [Filter::Slot, Filter::Models, Filter::All];
+    pub(crate) const ALL: [Filter; 3] = [Filter::Slot, Filter::Models, Filter::All];
 }
 
 /// Whether an appearance could be worn in a slot.
@@ -315,7 +315,7 @@ impl Filter {
 /// A slot that is neither — a ring, a trinket, a bag, an ammo pouch — has no
 /// appearance of its own at all, so everything is offered and the search box
 /// does all the narrowing.
-pub fn fits_slot(facts: &DisplayFacts, slot: vale_assets::tables::item::Slot) -> bool {
+pub(crate) fn fits_slot(facts: &DisplayFacts, slot: vale_assets::tables::item::Slot) -> bool {
     // A cloak is the exception to both rules: it is the wearer's own
     // group-15 geoset with a texture the item names, so it has no model and
     // paints no body component — see [`DisplayFacts::cloak_texture`].
@@ -348,7 +348,7 @@ pub fn fits_slot(facts: &DisplayFacts, slot: vale_assets::tables::item::Slot) ->
 /// `Slot::from_inventory_type` with the weapons filled in, which it leaves out
 /// on purpose: which hand a weapon goes in depends on the equipment slot rather
 /// than the item's type, and a picker has to choose one to show.
-pub fn slot_of(inventory_type: u32) -> vale_assets::tables::item::Slot {
+pub(crate) fn slot_of(inventory_type: u32) -> vale_assets::tables::item::Slot {
     use vale_assets::tables::item::Slot;
     match inventory_type {
         13 | 15 | 17 | 21 | 25 | 26 => Slot::MainHand,
@@ -363,22 +363,22 @@ pub fn slot_of(inventory_type: u32) -> vale_assets::tables::item::Slot {
 /// `ItemDisplayInfo` is tens of thousands of rows, too many for one grid. It
 /// is paged for the same reason as [`crate::ui::tables`]: paging keeps every row
 /// reachable instead of cutting the list off after the first few hundred.
-pub const DISPLAY_PAGE: usize = 96;
+pub(crate) const DISPLAY_PAGE: usize = 96;
 
 /// What the item workspace is holding.
 #[derive(Resource, Debug)]
-pub struct Items {
+pub(crate) struct Items {
     /// Every item the server would load, as the database has it.
-    pub all: Vec<Known>,
+    pub(crate) all: Vec<Known>,
     /// The items this project creates, which are in no database and are
     /// rebuilt from the store whenever it moves.
-    pub created: Vec<Known>,
+    pub(crate) created: Vec<Known>,
     /// Which `ServerRows::revision` [`Self::created`] was built
     /// for.
     created_for: Option<u64>,
     /// The highest entry the table holds, read with the list. It is one of the
     /// inputs to a new item's entry; see [`Items::next_entry`].
-    pub max_entry: Option<u32>,
+    pub(crate) max_entry: Option<u32>,
     /// The read, while it is running.
     task: Option<Task<Result<TableRead, String>>>,
     /// What [`Self::all`] was read for: `EditSession::database_writes`, which
@@ -389,9 +389,9 @@ pub struct Items {
     /// row the database no longer held.
     loaded: Option<u64>,
     /// Why there is nothing, when there is nothing.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// What is in the search box.
-    pub query: String,
+    pub(crate) query: String,
     /// The rows that match it, as indices over [`Items::at`]'s numbering.
     matches: Vec<usize>,
     /// The query, revision and list lengths [`Self::matches`] was built for, so
@@ -406,13 +406,13 @@ pub struct Items {
     /// How many times a read has replaced [`Self::all`].
     all_generation: u64,
     /// The open item, by entry.
-    pub open: Option<u32>,
+    pub(crate) open: Option<u32>,
     /// The item the list last brought into view, or was clicked on. The list
     /// scrolls to the open item when it is another. See
     /// `crate::ui::widgets::theme::list_area`.
-    pub revealed: Option<u32>,
+    pub(crate) revealed: Option<u32>,
     /// The open item's whole row, read on demand.
-    pub row: Option<ItemRow>,
+    pub(crate) row: Option<ItemRow>,
     row_task: Option<Task<Result<ItemRow, String>>>,
     /// What [`Self::row`] was made at: `EditSession::database_writes`, and
     /// whether the project created the item, in which case it is an empty
@@ -430,12 +430,12 @@ pub struct Items {
     /// Which body a preview is drawn on. A helm is cut per race and gender,
     /// and a garment is painted on a body, so both kinds of preview have
     /// one to stand on.
-    pub race: u8,
-    pub gender: u8,
+    pub(crate) race: u8,
+    pub(crate) gender: u8,
     /// Whether the display picker is open, and what is typed into it.
-    pub picking_display: bool,
-    pub display_query: String,
-    pub display_page: usize,
+    pub(crate) picking_display: bool,
+    pub(crate) display_query: String,
+    pub(crate) display_page: usize,
     /// The ids that match the picker's query, and what they were built for.
     display_hits: Vec<u32>,
     display_built: Option<(String, u32, Filter, u32)>,
@@ -447,17 +447,17 @@ pub struct Items {
     /// generation: a new row is offered and an edited one is drawn again.
     display_facts_at: u64,
     /// Which narrowing the picker is offering — see [`Filter`].
-    pub filter: Filter,
+    pub(crate) filter: Filter,
     /// Which id the picker's preview pane is showing — the one under the
     /// pointer, or the one chosen.
-    pub display_preview: Option<u32>,
+    pub(crate) display_preview: Option<u32>,
     /// Whether the picker's box should take the keyboard on the next frame.
-    pub display_focus: bool,
+    pub(crate) display_focus: bool,
     /// Whether the scripted flags have been acted on. They name a row that
     /// is not read on the frame the flag is read, so they are applied once the
     /// table arrives rather than at startup. See
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
     seeded: bool,
 }
 
@@ -506,14 +506,14 @@ impl Default for Items {
 
 /// What one read of the table answered.
 #[derive(Debug)]
-pub struct TableRead {
-    pub items: Vec<Known>,
-    pub highest: Option<u32>,
+pub(crate) struct TableRead {
+    pub(crate) items: Vec<Known>,
+    pub(crate) highest: Option<u32>,
 }
 
 impl Items {
     /// How many items there are: the database's and this project's own.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.all.len() + self.created.len()
     }
 
@@ -523,7 +523,7 @@ impl Items {
     /// through [`Self::all`], which is only what the last read answered. An
     /// item this project created that could be listed but not found would be a
     /// row nobody can get back to.
-    pub fn at(&self, index: usize) -> Option<&Known> {
+    pub(crate) fn at(&self, index: usize) -> Option<&Known> {
         match self.all.get(index) {
             Some(known) => Some(known),
             None => self.created.get(index - self.all.len()),
@@ -531,7 +531,7 @@ impl Items {
     }
 
     /// One item by entry, from either list.
-    pub fn by_entry(&self, entry: u32) -> Option<&Known> {
+    pub(crate) fn by_entry(&self, entry: u32) -> Option<&Known> {
         self.all
             .iter()
             .chain(self.created.iter())
@@ -540,13 +540,13 @@ impl Items {
 
     /// One item as it should be drawn: the database's reading with the
     /// project's edits over it.
-    pub fn shown(&self, index: usize, edits: &vale_mangos::row::Edits) -> Option<Known> {
+    pub(crate) fn shown(&self, index: usize, edits: &vale_mangos::row::Edits) -> Option<Known> {
         let base = self.at(index)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
     }
 
     /// The open item, with the project's edits over it.
-    pub fn open_item(&self, edits: &vale_mangos::row::Edits) -> Option<Known> {
+    pub(crate) fn open_item(&self, edits: &vale_mangos::row::Edits) -> Option<Known> {
         let entry = self.open?;
         let base = self.by_entry(entry)?;
         Some(base.with_edits(edits).unwrap_or_else(|| base.clone()))
@@ -558,7 +558,7 @@ impl Items {
     /// [`crate::tables::browser::Browser::matches`]: a number matches the row
     /// with that entry, and any text matches a row whose name or kind contains
     /// it. So `2589` finds Linen Cloth and `linen` finds every linen item.
-    pub fn matches(&mut self, edits: &vale_mangos::row::Edits, revision: u64) -> &[usize] {
+    pub(crate) fn matches(&mut self, edits: &vale_mangos::row::Edits, revision: u64) -> &[usize] {
         let asked = (
             self.query.trim().to_ascii_lowercase(),
             revision,
@@ -616,7 +616,7 @@ impl Items {
 
     /// Forget the cached search, for a caller that has changed what is in the
     /// lists rather than what is in the box.
-    pub fn forget_matches(&mut self) {
+    pub(crate) fn forget_matches(&mut self) {
         self.built = None;
     }
 
@@ -626,7 +626,7 @@ impl Items {
     /// and one past the highest this project has already claimed. The creature
     /// tool uses the same arithmetic for the same reasons. See
     /// `vale_mangos::item::RESERVED_ENTRY_BASE`.
-    pub fn next_entry(&self, edits: &vale_mangos::row::Edits) -> u32 {
+    pub(crate) fn next_entry(&self, edits: &vale_mangos::row::Edits) -> u32 {
         item::NUMBERING.next_entry(self.max_entry, edits)
     }
 
@@ -638,7 +638,7 @@ impl Items {
     /// written at 0 would be overridden by any later content-patch row of the
     /// same entry. A new entry has no such row today, but would as soon as
     /// somebody imports one.
-    pub fn create(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
+    pub(crate) fn create(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
         let entry = self.next_entry(&session.rows.edits);
         let key = item::template_key(entry, patch);
         let mut row = RowEdit {
@@ -675,7 +675,7 @@ impl Items {
     /// `None` when the whole row has not been read yet, which is the frame or
     /// two after an item is clicked. Copying from a half-read row would take
     /// the table's defaults for the columns that had not arrived.
-    pub fn duplicate(&mut self, session: &mut EditSession, patch: u32, now: f64) -> Option<u32> {
+    pub(crate) fn duplicate(&mut self, session: &mut EditSession, patch: u32, now: f64) -> Option<u32> {
         let from = self
             .row
             .as_ref()
@@ -742,7 +742,7 @@ impl Items {
     ///
     /// An entry that exists only at a patch the server does not load is not
     /// seen here and is caught at the apply, which asks the database itself.
-    pub fn entry_taken(&self, entry: u32) -> bool {
+    pub(crate) fn entry_taken(&self, entry: u32) -> bool {
         self.all
             .iter()
             .chain(self.created.iter())
@@ -763,7 +763,7 @@ impl Items {
     /// project edits to reward entry 852 says the new entry afterwards. The
     /// database's rows follow at the apply — see
     /// `vale_mangos::item::REFERENCES`.
-    pub fn rekey(
+    pub(crate) fn rekey(
         &mut self,
         session: &mut EditSession,
         known: &Known,
@@ -814,7 +814,7 @@ impl Items {
     /// keyed by the new entry and the database has it at the old one, so a
     /// `Delete` under the claim's key would remove nothing. Taking the move
     /// back first leaves one entry to name.
-    pub fn remove(
+    pub(crate) fn remove(
         &mut self,
         session: &mut EditSession,
         known: &Known,
@@ -852,7 +852,7 @@ impl Items {
     /// Keep an item that was marked for removal: the claim is taken back,
     /// and with it any column edit made before the mark, which a `Delete` row
     /// does not carry.
-    pub fn keep(&mut self, session: &mut EditSession, known: &Known, now: f64) {
+    pub(crate) fn keep(&mut self, session: &mut EditSession, known: &Known, now: f64) {
         if known.claim != Life::Delete {
             return;
         }
@@ -872,7 +872,7 @@ impl Items {
 
     /// Give up a row this project created, which is in no database, so
     /// giving it up removes nothing there.
-    pub fn discard_created(&mut self, session: &mut EditSession, entry: u32, now: f64) {
+    pub(crate) fn discard_created(&mut self, session: &mut EditSession, entry: u32, now: f64) {
         let Some(known) = self.by_entry(entry).cloned() else {
             return;
         };
@@ -898,7 +898,7 @@ impl Items {
     }
 
     /// What a display id looks like on the chosen body, memoised.
-    pub fn look(
+    pub(crate) fn look(
         &mut self,
         assets: &GameAssets,
         display_id: u32,
@@ -931,7 +931,7 @@ impl Items {
     /// `None` where the race and gender resolve to no model, which is the same
     /// answer the creature picker gives for a display id the tables do not
     /// know.
-    pub fn body(
+    pub(crate) fn body(
         &mut self,
         assets: &GameAssets,
         display_id: u32,
@@ -965,7 +965,7 @@ impl Items {
     /// from one pass of `ItemDisplays::appearance`. Done lazily rather than at
     /// startup, because a session that never opens the picker should not pay
     /// for it at all.
-    pub fn display_facts(&mut self, assets: &GameAssets) -> &[DisplayFacts] {
+    pub(crate) fn display_facts(&mut self, assets: &GameAssets) -> &[DisplayFacts] {
         self.follow_generation(assets);
         if self.display_facts.is_none() {
             self.display_facts = Some(build_display_facts(assets));
@@ -980,7 +980,7 @@ impl Items {
     /// which is the only text a display row carries — `INV_Sword_39` for a
     /// sword, `INV_Chest_Cloth_17` for a robe. It is what the archives call the
     /// appearance and so the only word anybody can search one by.
-    pub fn display_matches(&mut self, assets: &GameAssets, inventory_type: u32) -> &[u32] {
+    pub(crate) fn display_matches(&mut self, assets: &GameAssets, inventory_type: u32) -> &[u32] {
         let query = self.display_query.trim().to_ascii_lowercase();
         let asked = (
             query.clone(),
@@ -1020,12 +1020,12 @@ impl Items {
 
     /// Forget the picker's cached hits, for a caller that has changed what it
     /// is filtering by rather than what is typed in it.
-    pub fn forget_display_matches(&mut self) {
+    pub(crate) fn forget_display_matches(&mut self) {
         self.display_built = None;
     }
 
     /// Open the picker, on the id the row already names.
-    pub fn pick_display(&mut self, showing: u32) {
+    pub(crate) fn pick_display(&mut self, showing: u32) {
         self.picking_display = true;
         self.display_focus = true;
         self.display_preview = Some(showing);
@@ -1033,7 +1033,7 @@ impl Items {
     }
 
     /// Close the picker.
-    pub fn close_picker(&mut self) {
+    pub(crate) fn close_picker(&mut self) {
         self.picking_display = false;
         self.display_preview = None;
     }
@@ -1048,7 +1048,7 @@ impl Items {
 /// names no file in the archives. Used as is, every row of the list drew an
 /// empty square. `ui::tables` appends `.blp` to a spell icon path for the same
 /// reason.
-pub fn icon_of(assets: &GameAssets, display_id: u32) -> Option<String> {
+pub(crate) fn icon_of(assets: &GameAssets, display_id: u32) -> Option<String> {
     if display_id == 0 {
         return None;
     }
@@ -1190,7 +1190,7 @@ fn directory_of(held: &[(&'static str, HashSet<String>)], model: &str) -> Option
 /// written rather than reported afterwards: an `INSERT` onto an occupied key
 /// fails the apply, and an `UPDATE` onto one fails on the primary key with the
 /// database's own words.
-pub fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key)>, String> {
+pub(crate) fn plan_move(known: &Known, to: u32, taken: bool) -> Result<Option<(Key, Key)>, String> {
     let row = vale_mangos::row::Numbered {
         entry: known.entry,
         read_entry: known.read_entry,
@@ -1326,7 +1326,7 @@ pub(crate) fn resolve_body(
 /// `HandleItemQuerySingleOpcode`); the names differ only in spelling. A column
 /// that is absent or not a number reads as zero, which is the table's own
 /// default for every numeric column.
-pub fn item_info(value: &dyn Fn(&str) -> Option<String>) -> vale_protocol::state::query::ItemInfo {
+pub(crate) fn item_info(value: &dyn Fn(&str) -> Option<String>) -> vale_protocol::state::query::ItemInfo {
     use vale_protocol::state::query::{ItemDamage, ItemInfo, ItemSpell, ItemStat};
     let integer = |column: &str| -> i64 {
         value(column)
@@ -1418,7 +1418,7 @@ impl Items {
     /// One column of the open item as the form shows it: the project's
     /// literal where it has one and the database's otherwise. `None` while the
     /// row is being read, which is a frame or two after an item is opened.
-    pub fn shown_value(
+    pub(crate) fn shown_value(
         &self,
         edits: &vale_mangos::row::Edits,
         known: &Known,
@@ -1438,7 +1438,7 @@ impl Items {
 
     /// The open item's whole prototype on the same terms, for the tooltip.
     /// `None` while the row is being read.
-    pub fn open_info(
+    pub(crate) fn open_info(
         &self,
         edits: &vale_mangos::row::Edits,
         known: &Known,
@@ -1642,7 +1642,7 @@ fn read_the_row(
 ///
 /// Every row is reset first, so a move that was taken back returns the row to
 /// the entry it was read at.
-pub fn fold_the_store_in(all: &mut [Known], edits: &vale_mangos::row::Edits) {
+pub(crate) fn fold_the_store_in(all: &mut [Known], edits: &vale_mangos::row::Edits) {
     let moves: Vec<(u32, u32, u32)> = edits
         .moves(item::TEMPLATE)
         .filter_map(|(from, to)| {
@@ -1910,7 +1910,7 @@ fn scripted_display(
     info!("--item-display {display_id}: written to item {entry}");
 }
 
-pub struct ItemToolPlugin;
+pub(crate) struct ItemToolPlugin;
 
 impl Plugin for ItemToolPlugin {
     fn build(&self, app: &mut App) {

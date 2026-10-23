@@ -68,7 +68,7 @@ use crate::session::EditSession;
 
 /// One of the twelve row subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Subject {
+pub(crate) enum Subject {
     Creatures,
     GameObjects,
     Items,
@@ -98,13 +98,13 @@ pub enum Subject {
 
 /// One write of one subject, ready to run on a worker: its label, and the run,
 /// which returns whether it succeeded and what the main thread does about it.
-pub struct Step {
-    pub label: String,
+pub(crate) struct Step {
+    pub(crate) label: String,
     pub run: Box<dyn FnOnce() -> (bool, Finish) + Send>,
 }
 
 impl Step {
-    pub fn new(label: impl Into<String>, run: impl FnOnce() -> (bool, Finish) + Send + 'static) -> Step {
+    pub(crate) fn new(label: impl Into<String>, run: impl FnOnce() -> (bool, Finish) + Send + 'static) -> Step {
         Step {
             label: label.into(),
             run: Box::new(run),
@@ -114,7 +114,7 @@ impl Step {
 
 /// What a person, a save or a flag asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Wanted {
+pub(crate) enum Wanted {
     /// The Server panel's Apply on one subject.
     Apply(Subject),
     /// The Server panel's Put back on one subject.
@@ -127,7 +127,7 @@ pub enum Wanted {
 impl Subject {
     /// The order the subjects are applied in. The module comment gives the
     /// reason for it.
-    pub const ORDER: [Subject; 12] = [
+    pub(crate) const ORDER: [Subject; 12] = [
         Subject::Creatures,
         Subject::GameObjects,
         Subject::Items,
@@ -143,11 +143,11 @@ impl Subject {
     ];
 
     /// The number of row subjects, which sizes every per-subject array.
-    pub const COUNT: usize = Self::ORDER.len();
+    pub(crate) const COUNT: usize = Self::ORDER.len();
 
     /// The writer that holds everything about the subject. The one place a
     /// subject is matched to its module.
-    pub fn row_subject(self) -> &'static dyn RowSubject {
+    pub(crate) fn row_subject(self) -> &'static dyn RowSubject {
         match self {
             Subject::Creatures => &creatures::Creatures,
             Subject::GameObjects => &gameobjects::GameObjects,
@@ -165,34 +165,34 @@ impl Subject {
     }
 
     /// Its place in [`Self::ORDER`], which indexes every per-subject array.
-    pub fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         Self::ORDER.iter().position(|s| *s == self).unwrap_or(0)
     }
 
     /// The subject `--apply` and `--revert` name by `word`, or `None`.
-    pub fn named(word: &str) -> Option<Subject> {
+    pub(crate) fn named(word: &str) -> Option<Subject> {
         Self::ORDER.into_iter().find(|subject| subject.row_subject().word() == word)
     }
 
     /// The word a label and a status line use.
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         self.row_subject().name()
     }
 
     /// Where the subject's revert file is, under the project. Public because
     /// `super::held` reads the revert files to say what a project has applied.
-    pub fn revert_vpath(self) -> &'static str {
+    pub(crate) fn revert_vpath(self) -> &'static str {
         self.row_subject().revert_vpath()
     }
 
     /// Whether a table read out of the project's row store is this subject's
     /// to write.
-    pub fn owns(self, table: &str) -> bool {
+    pub(crate) fn owns(self, table: &str) -> bool {
         self.row_subject().owns(table)
     }
 
     /// Whether the project has rows of this subject in the database.
-    pub fn applied(self, session: &EditSession) -> bool {
+    pub(crate) fn applied(self, session: &EditSession) -> bool {
         super::reconcile::has_applied(session, self.revert_vpath())
     }
 
@@ -214,13 +214,13 @@ impl Subject {
 
 /// What each subject is, for [`order`].
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Stands {
+pub(crate) struct Stands {
     /// The project has rows of it in the database.
-    pub applied: bool,
+    pub(crate) applied: bool,
     /// The project claims rows of it.
-    pub claims: bool,
+    pub(crate) claims: bool,
     /// The database holds exactly what the project claims.
-    pub current: bool,
+    pub(crate) current: bool,
 }
 
 /// Which subjects are put back and which applied, in the order they run, for
@@ -228,7 +228,7 @@ pub struct Stands {
 ///
 /// Returns `(put back, apply)`: the first list newest first, the second in
 /// order. Both are empty when there is nothing to do.
-pub fn order(wanted: Wanted, stands: &[Stands; Subject::COUNT]) -> (Vec<Subject>, Vec<Subject>) {
+pub(crate) fn order(wanted: Wanted, stands: &[Stands; Subject::COUNT]) -> (Vec<Subject>, Vec<Subject>) {
     let from = match wanted {
         Wanted::Apply(subject) | Wanted::PutBack(subject) => subject.index(),
         Wanted::Save => {
@@ -273,7 +273,7 @@ pub fn order(wanted: Wanted, stands: &[Stands; Subject::COUNT]) -> (Vec<Subject>
 /// stands. The steps run one after another on the worker and stop at the first
 /// that fails. The finish runs every step's own finish and joins what each
 /// said into one status line.
-pub fn work(
+pub(crate) fn work(
     wanted: Wanted,
     session: &EditSession,
     server: &ServerSettings,
@@ -337,7 +337,7 @@ pub fn work(
 
 /// [`work`], run on the calling thread. For the scripted flags, where nobody
 /// is looking at the window. Returns the status line it left.
-pub fn now(
+pub(crate) fn now(
     wanted: Wanted,
     session: &mut EditSession,
     server: &ServerSettings,

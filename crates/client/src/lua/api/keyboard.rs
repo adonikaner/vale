@@ -96,7 +96,7 @@ pub struct KeyboardFocus {
 #[derive(Resource, Default)]
 pub struct ExternalKeyboard(pub bool);
 
-pub struct KeyboardPlugin;
+pub(crate) struct KeyboardPlugin;
 
 impl Plugin for KeyboardPlugin {
     fn build(&self, app: &mut App) {

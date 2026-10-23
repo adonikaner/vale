@@ -32,21 +32,21 @@ use crate::tools::spawns::waypoints::Waypoints;
 use vale_mangos::path::{self, Node, Path, Walk, Which};
 
 /// Everything the window needs, as one argument.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub waypoints: &'a mut Waypoints,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) waypoints: &'a mut Waypoints,
     /// The frame clock the undo stack folds a gesture by.
-    pub now: f64,
+    pub(crate) now: f64,
     /// Where the Fly here button and a double-click on a point send its request. See
     /// [`crate::camera::FlyTo`].
-    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
 /// **The window**, or nothing when no creature's path is open.
 ///
 /// Returns its rectangle so the viewport can keep a click inside it from also
 /// being a click on the ground behind it.
-pub fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect> {
+pub(crate) fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect> {
     if !subject.waypoints.showing {
         return None;
     }

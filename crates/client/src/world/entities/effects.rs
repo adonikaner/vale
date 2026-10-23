@@ -269,7 +269,7 @@ pub(super) struct CastCounters {
     pub begun: u32,
     pub released: u32,
     pub cancelled: u32,
-    pub delayed: u32,
+    pub(crate) delayed: u32,
     /// How many of the begins were a channel starting, the one begin that
     /// arrives after the release it belongs to.
     pub channelled: u32,
@@ -829,13 +829,13 @@ pub(super) fn loot_art(
 /// a pauldron and a missile use, so it poses, fades and emits particles with no
 /// duplicated code. A Blizzard is almost entirely emitters, so this matters.
 #[derive(Component)]
-pub struct AreaArt(pub(super) AttachedPart);
+pub(crate) struct AreaArt(pub(super) AttachedPart);
 
 /// A `DynamicObject` whose spell names no ground model, or whose model will not
 /// read. Marked so the lookup is not retried every frame, as with
 /// [`super::NoModel`].
 #[derive(Component)]
-pub struct NoAreaArt;
+pub(crate) struct NoAreaArt;
 
 /// Draw the persistent areas: a Blizzard, a Flamestrike, a Consecration, a
 /// Rain of Fire.
@@ -926,7 +926,7 @@ pub(super) fn persistent_areas(
 /// The falling-impact procedural (`charProc == 9`), held on the
 /// `DynamicObject` it belongs to; see [`vale_assets::tables::spell::AreaRain`].
 #[derive(Component)]
-pub struct AreaRain {
+pub(crate) struct AreaRain {
     path: String,
     /// Impacts per second, the kit's own `charParamOne`.
     rate: f32,
@@ -946,7 +946,7 @@ pub struct AreaRain {
 /// there. It carries [`AreaArt`], so [`animate_areas`] poses it and runs its
 /// emitters with no duplicated code.
 #[derive(Component)]
-pub struct AreaImpact {
+pub(crate) struct AreaImpact {
     /// When it is taken off, in `Time::elapsed_secs`.
     until: f32,
 }
@@ -1200,7 +1200,7 @@ pub(crate) fn animate_areas(
 /// between launch and arrival (new gear, a change of room), and the impact
 /// belongs to the unit, not to the model it had at launch.
 #[derive(Resource, Default)]
-pub struct PendingImpacts(Vec<(u64, u32)>);
+pub(crate) struct PendingImpacts(Vec<(u64, u32)>);
 
 impl PendingImpacts {
     /// A spell arrived: show its impact on `victim`.

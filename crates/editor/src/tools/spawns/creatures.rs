@@ -54,15 +54,15 @@ use vale_mangos::row::{Edits, Key, Life, RowEdit};
 use vale_mangos::sql::unquote;
 
 /// What the pointer is doing with the creatures on the open map.
-pub type Creatures = SpawnTool<CreatureSubject>;
+pub(crate) type Creatures = SpawnTool<CreatureSubject>;
 
 /// The creature subject: `creature` and `creature_template`.
 #[derive(Debug)]
-pub struct CreatureSubject;
+pub(crate) struct CreatureSubject;
 
 /// What only the creature tool keeps.
 #[derive(Debug)]
-pub struct CreatureOwn {
+pub(crate) struct CreatureOwn {
     /// What a display id looks like, resolved once per id.
     ///
     /// The join behind a picture (`DisplayTables::creature` and
@@ -73,14 +73,14 @@ pub struct CreatureOwn {
     ///
     /// `None` is a display id the tables do not resolve, kept so it is not
     /// asked again.
-    pub worn: HashMap<u32, Option<crate::preview::portraits::Worn>>,
+    pub(crate) worn: HashMap<u32, Option<crate::preview::portraits::Worn>>,
     /// The `GameAssets::tables_generation` [`Self::worn`] was resolved at. A
     /// published display table is a new generation, and an edited or new
     /// display is resolved again.
-    pub worn_at: u64,
+    pub(crate) worn_at: u64,
     /// Draw a row of service icons over each near creature that offers one.
     /// See [`mark_services`].
-    pub show_services: bool,
+    pub(crate) show_services: bool,
 }
 
 impl Default for CreatureOwn {
@@ -94,43 +94,43 @@ impl Default for CreatureOwn {
 /// The columns of the join in [`vale_mangos::creature::spawns_on_map_query`],
 /// read into numbers once so the drawing does not parse text every frame.
 #[derive(Debug, Clone)]
-pub struct Spawn {
-    pub guid: u64,
+pub(crate) struct Spawn {
+    pub(crate) guid: u64,
     /// `creature.id`: which template stands here, as the project says it.
     ///
     /// Differs from [`Self::read_entry`] while the project changes the
     /// template's entry and has not applied it; see
     /// [`SpawnTool::fold_template_moves`].
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The template entry the map query read for this spawn, which is where
     /// the database has the template's row until a move of it is applied.
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// Where it is, in the world's own axes.
-    pub at: Vec3,
+    pub(crate) at: Vec3,
     /// Radians it faces, as the row states it.
-    pub orientation: f32,
-    pub wander: f32,
+    pub(crate) orientation: f32,
+    pub(crate) wander: f32,
     /// `creature.movement_type`: what this spawn does with a waypoint path.
     ///
     /// Read here rather than from the whole row, because the Waypoints
     /// button needs it before the path has been read: a path on a creature
     /// whose movement type walks none is an edit that applies, reloads and has
     /// no effect, and the window states this on the frame it opens.
-    pub movement_type: u32,
+    pub(crate) movement_type: u32,
     /// The template's name, or `None` when the join found no row. vmangos
     /// refuses to load a spawn with no template row.
-    pub name: Option<String>,
-    pub subname: Option<String>,
-    pub display_id: u32,
+    pub(crate) name: Option<String>,
+    pub(crate) subname: Option<String>,
+    pub(crate) display_id: u32,
     /// `display_scale1`, which is 0 in most rows and means "the model's own".
-    pub display_scale: f32,
-    pub level: (u32, u32),
-    pub faction: u32,
-    pub npc_flags: u32,
-    pub rank: u32,
+    pub(crate) display_scale: f32,
+    pub(crate) level: (u32, u32),
+    pub(crate) faction: u32,
+    pub(crate) npc_flags: u32,
+    pub(crate) rank: u32,
     /// Which content patch of the template the server would load. It is the
     /// other half of the key an edit to the template is written under.
-    pub patch: u32,
+    pub(crate) patch: u32,
     /// What this project does to the row.
     ///
     /// [`Life::Update`] for a spawn as the database has it, whether or not this
@@ -138,23 +138,23 @@ pub struct Spawn {
     /// creates, which has no row in the database at all. [`Life::Delete`] for
     /// one it removes. A removed spawn is still drawn, so it can be selected
     /// and restored; nothing reaches the database until Apply.
-    pub claim: Life,
+    pub(crate) claim: Life,
 }
 
 impl Spawn {
     /// The key an edit to this spawn is written under.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         creature::spawn_key(self.guid)
     }
 
     /// The key an edit to its template is written under. The template is a
     /// different row, and an edit to it affects every spawn of the entry.
-    pub fn template_key(&self) -> Key {
+    pub(crate) fn template_key(&self) -> Key {
         creature::template_key(self.entry, self.patch)
     }
 
     /// What to call it in a list.
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         match &self.name {
             Some(name) => format!("{name} ({})", self.entry),
             None => format!("entry {} — no template row", self.entry),
@@ -162,12 +162,12 @@ impl Spawn {
     }
 
     /// Whether this project creates this spawn, so there is no row behind it.
-    pub fn is_new(&self) -> bool {
+    pub(crate) fn is_new(&self) -> bool {
         self.claim == Life::Insert
     }
 
     /// Whether this project removes this spawn.
-    pub fn is_removed(&self) -> bool {
+    pub(crate) fn is_removed(&self) -> bool {
         self.claim == Life::Delete
     }
 
@@ -307,33 +307,33 @@ impl Spawned for Spawn {
 /// creates a spawn of after the map was read. All three fill the same table;
 /// see [`SpawnTool::known`].
 #[derive(Debug, Clone, PartialEq)]
-pub struct Known {
+pub(crate) struct Known {
     /// The entry the project says the template has, which the list shows and
     /// the store keys its claim under.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The entry the database has the row at, which differs from
     /// [`Self::entry`] while the project moves the template and has not
     /// applied it. A template the project creates has no row and the two are
     /// equal.
-    pub read_entry: u32,
+    pub(crate) read_entry: u32,
     /// Which content patch of the template the server would load.
-    pub patch: u32,
-    pub name: String,
-    pub subname: Option<String>,
-    pub display_id: u32,
-    pub display_scale: f32,
-    pub level: (u32, u32),
-    pub faction: u32,
-    pub npc_flags: u32,
-    pub rank: u32,
+    pub(crate) patch: u32,
+    pub(crate) name: String,
+    pub(crate) subname: Option<String>,
+    pub(crate) display_id: u32,
+    pub(crate) display_scale: f32,
+    pub(crate) level: (u32, u32),
+    pub(crate) faction: u32,
+    pub(crate) npc_flags: u32,
+    pub(crate) rank: u32,
     /// [`Life::Insert`] for a template this project creates, which is in no
     /// database; [`Life::Update`] for one the database holds.
-    pub claim: Life,
+    pub(crate) claim: Life,
 }
 
 impl Known {
     /// What to call it in a list.
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         match self.subname.as_deref().filter(|text| !text.is_empty()) {
             Some(subname) => format!("{} <{subname}> ({})", self.name, self.entry),
             None => format!("{} ({})", self.name, self.entry),
@@ -341,12 +341,13 @@ impl Known {
     }
 
     /// The key an edit to its template row is written under.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         creature::template_key(self.entry, self.patch)
     }
 
     /// Whether this project creates the template, so there is no row behind it.
-    pub fn is_new(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_new(&self) -> bool {
         self.claim == Life::Insert
     }
 
@@ -582,7 +583,6 @@ impl SpawnSubject for CreatureSubject {
     const WORKSPACE: Tool = Tool::CreatureData;
     const SPAWN_TABLE: vale_mangos::row::Table = creature::SPAWN_TABLE;
     const TEMPLATE_TABLE: vale_mangos::row::Table = creature::TEMPLATE_TABLE;
-    const TABLES: &'static [vale_mangos::row::Table] = creature::TABLES;
     const NUMBERING: vale_mangos::row::Numbering = creature::NUMBERING;
     const RESERVED_GUID_BASE: u64 = creature::RESERVED_GUID_BASE;
     const MAX_SPAWN_GUID_QUERY: &'static str = creature::MAX_SPAWN_GUID_QUERY;
@@ -620,7 +620,6 @@ impl SpawnSubject for CreatureSubject {
     // A little past the 7x7 block the editor streams at its default reach, so
     // a marker appears as its ground does.
     const RANGE: f32 = 1200.0;
-    const DISCARDS_PATHS: bool = true;
 
     fn spawn_key(guid: u64) -> Key {
         creature::spawn_key(guid)
@@ -851,7 +850,7 @@ impl SpawnSubject for CreatureSubject {
 
 /// Registers the creature tool: the shared mechanism over
 /// [`CreatureSubject`], and the service marks.
-pub struct CreatureToolPlugin;
+pub(crate) struct CreatureToolPlugin;
 
 impl Plugin for CreatureToolPlugin {
     fn build(&self, app: &mut App) {
@@ -893,15 +892,15 @@ fn transform_for(spawn: &Spawn) -> Transform {
 
 /// Where one creature's service icons are drawn this frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ServiceMark {
+pub(crate) struct ServiceMark {
     /// The point over the creature's head, in physical pixels: the world
     /// camera draws into a target sized in physical pixels, and that is what
     /// its projection answers in.
-    pub at: Vec2,
+    pub(crate) at: Vec2,
     /// The creature's `npc_flags`, with this project's edits applied.
-    pub npc_flags: u32,
+    pub(crate) npc_flags: u32,
     /// Yards from the camera, which the painter fades the far ones by.
-    pub away: f32,
+    pub(crate) away: f32,
 }
 
 /// The service marks to draw this frame, nearest last so a near creature's
@@ -912,13 +911,13 @@ pub struct ServiceMark {
 /// every frame, and [`Creatures`] is read by passes that would then see it as
 /// changed every frame.
 #[derive(Resource, Default)]
-pub struct ServiceMarks(pub Vec<ServiceMark>);
+pub(crate) struct ServiceMarks(pub(crate) Vec<ServiceMark>);
 
 /// How far from the camera a creature's services are still marked, in yards.
 ///
 /// The icons are a fixed size on screen, so past this distance they are
 /// larger than the creature they mark and a town reads as a block of icons.
-pub const SERVICE_MARK_RANGE: f32 = 150.0;
+pub(crate) const SERVICE_MARK_RANGE: f32 = 150.0;
 
 /// How far above the name point, or above a marker's top, the icons sit, in
 /// yards.
@@ -926,7 +925,7 @@ const SERVICE_MARK_LIFT: f32 = 0.35;
 
 /// The `npc_flags` bits that are services. `GOSSIP` (0x1) is left out: nearly
 /// every flagged creature carries it and it names no service.
-pub const SERVICE_BITS: u32 = 0x0000_7FFE;
+pub(crate) const SERVICE_BITS: u32 = 0x0000_7FFE;
 
 /// Project a point over the head of every near creature that offers a service.
 ///

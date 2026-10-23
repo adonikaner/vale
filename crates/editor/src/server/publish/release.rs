@@ -56,7 +56,7 @@ use std::path::{Path, PathBuf};
 /// order a migration runs them. Each carries its put-back when the subject's
 /// revert file has one. Client-table rows are labelled "spells" or "flight
 /// nodes" by their table.
-pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>, String> {
+pub(crate) fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>, String> {
     let project = &session.project;
     let mut out: Vec<Entry> = Vec::new();
     for subject in Subject::ORDER {
@@ -116,7 +116,7 @@ pub fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<Entry>,
 }
 
 /// The record of the last migration — see `vale_mangos::migration`.
-pub fn released(project: &Project) -> Released {
+pub(crate) fn released(project: &Project) -> Released {
     match project.read(migration::RELEASED_VPATH) {
         Some(bytes) => Released::from_text(&String::from_utf8_lossy(&bytes)),
         None => Released::default(),
@@ -125,15 +125,14 @@ pub fn released(project: &Project) -> Released {
 
 /// What writing a migration did.
 #[derive(Debug, Default)]
-pub struct Written {
+pub(crate) struct Written {
     /// The file, or `None` when the project changes no row and never has.
-    pub file: Option<PathBuf>,
-    pub id: Option<String>,
-    pub contents: Contents,
+    pub(crate) file: Option<PathBuf>,
+    pub(crate) contents: Contents,
 }
 
 impl Written {
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         match &self.file {
             Some(file) => format!(
                 "migration {} ({})",
@@ -147,7 +146,7 @@ impl Written {
 
 /// Writes the migration into `into`, then the record of it. Nothing is written
 /// when the project changes no row and no earlier patch did.
-pub fn write_migration(session: &EditSession, assets: &GameAssets, into: &Path) -> Result<Written, String> {
+pub(crate) fn write_migration(session: &EditSession, assets: &GameAssets, into: &Path) -> Result<Written, String> {
     let project = &session.project;
     let now = entries(session, assets)?;
     let before = released(project);
@@ -166,7 +165,6 @@ pub fn write_migration(session: &EditSession, assets: &GameAssets, into: &Path) 
         .map_err(|e| format!("{}: {e}", migration::RELEASED_VPATH))?;
     Ok(Written {
         file: Some(file),
-        id: Some(id),
         contents,
     })
 }
@@ -176,7 +174,7 @@ pub fn write_migration(session: &EditSession, assets: &GameAssets, into: &Path) 
 /// A DBC the project carries that the server reads as a SQL table — `Spell`,
 /// `AreaTable`, `TaxiNodes` — is not a file to it and is left out. Returns
 /// the names copied.
-pub fn copy_server_dbcs(project: &Project, data_dir: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn copy_server_dbcs(project: &Project, data_dir: &Path) -> Result<Vec<String>, String> {
     let dbc_dir = vale_mangos::datadir::dbc_dir(data_dir);
     let mut copied = Vec::new();
     for (file, vpath) in crate::server::dbcs::carried(project) {
@@ -196,7 +194,7 @@ pub fn copy_server_dbcs(project: &Project, data_dir: &Path) -> Result<Vec<String
 /// `--migration`, into `publish\migrations\` under the project rather than
 /// into a patch folder. The store and every subject's SQL are saved first, so
 /// the migration reads what the panel shows. Returns the status line.
-pub fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
+pub(crate) fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
     session.save_all_tables();
     crate::server::subject::save_all(session);
     let Some(into) = session.project.path_for(migration::MIGRATIONS_DIR) else {
@@ -212,7 +210,7 @@ pub fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
 }
 
 /// Logs every dropped row whose put-back is not known.
-pub fn report_unknown(contents: &Contents) {
+pub(crate) fn report_unknown(contents: &Contents) {
     for entry in &contents.unknown {
         warn!(
             "migration: {} {} {} was in an earlier patch and is no longer changed, and its \
@@ -226,7 +224,7 @@ pub fn report_unknown(contents: &Contents) {
 
 /// `--migration`: runs [`migrate`] from the command line once, after every
 /// scripted edit (waypoints, creatures, flight paths) has been made.
-pub fn migration_on_the_command_line(
+pub(crate) fn migration_on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,

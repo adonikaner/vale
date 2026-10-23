@@ -47,11 +47,11 @@ use crate::world::session::ClientConfig;
 
 /// Which handshake the character screen's per-character states were read for.
 #[derive(Resource, Default)]
-pub struct AddonFiles {
+pub(crate) struct AddonFiles {
     glue_seeded: Option<(String, String, Vec<String>)>,
 }
 
-pub struct AddonsPlugin;
+pub(crate) struct AddonsPlugin;
 
 impl Plugin for AddonsPlugin {
     fn build(&self, app: &mut App) {

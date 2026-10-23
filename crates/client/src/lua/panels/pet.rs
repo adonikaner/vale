@@ -352,8 +352,8 @@ const HUNTER: u32 = 3;
 
 /// `UNIT_FLAG_PET_RENAME` / `UNIT_FLAG_PET_ABANDON`, tested at
 /// `[unitFields + 0xa0]` — which is `UNIT_FIELD_FLAGS`, index 6 + 40 = 46.
-pub const UNIT_FLAG_PET_RENAME: u32 = 0x0000_0010;
-pub const UNIT_FLAG_PET_ABANDON: u32 = 0x0000_0020;
+pub(crate) const UNIT_FLAG_PET_RENAME: u32 = 0x0000_0010;
+pub(crate) const UNIT_FLAG_PET_ABANDON: u32 = 0x0000_0020;
 
 impl super::super::api::Live<'_, '_, '_> {
     /// **The pet, if it is one we summoned** — the shared first half of the two

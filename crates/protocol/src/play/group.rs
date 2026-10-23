@@ -187,7 +187,7 @@ pub struct PartyCommandResult {
     pub result: PartyResult,
 }
 
-pub fn parse_party_command_result(body: &[u8]) -> Option<PartyCommandResult> {
+pub(crate) fn parse_party_command_result(body: &[u8]) -> Option<PartyCommandResult> {
     let mut r = Reader::new(body);
     if r.remaining() < 4 {
         return None;
@@ -214,10 +214,6 @@ pub mod member_status {
     pub const AFK: u8 = 0x40;
     pub const DND: u8 = 0x80;
 }
-
-/// **The most members a 1.12 party holds.** Five including the leader, so four
-/// `party1..4` tokens — which is why `GetNumPartyMembers` never exceeds 4.
-pub const MAX_PARTY_MEMBERS: usize = 4;
 
 /// One row of `SMSG_GROUP_LIST`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -247,7 +243,8 @@ impl GroupMember {
     pub fn afk(&self) -> bool {
         self.status & member_status::AFK != 0
     }
-    pub fn dnd(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn dnd(&self) -> bool {
         self.status & member_status::DND != 0
     }
     pub fn subgroup(&self) -> u8 {
@@ -314,7 +311,7 @@ impl GroupList {
     }
 }
 
-pub fn parse_group_list(body: &[u8]) -> Option<GroupList> {
+pub(crate) fn parse_group_list(body: &[u8]) -> Option<GroupList> {
     let mut r = Reader::new(body);
     if r.remaining() < 6 {
         return None;
@@ -361,7 +358,7 @@ pub fn parse_group_list(body: &[u8]) -> Option<GroupList> {
 
 /// `SMSG_GROUP_INVITE` / `SMSG_GROUP_DECLINE` / `SMSG_GROUP_SET_LEADER` — three
 /// packets whose whole body is one name.
-pub fn parse_name(body: &[u8]) -> Option<String> {
+pub(crate) fn parse_name(body: &[u8]) -> Option<String> {
     let name = Reader::new(body).cstring();
     (!name.is_empty()).then_some(name)
 }
@@ -495,27 +492,27 @@ impl PartyMemberStats {
 
 /// The mask bits, in the order the body writes them.
 mod update_flag {
-    pub const STATUS: u32 = 0x0000_0001;
-    pub const CUR_HP: u32 = 0x0000_0002;
-    pub const MAX_HP: u32 = 0x0000_0004;
-    pub const POWER_TYPE: u32 = 0x0000_0008;
-    pub const CUR_POWER: u32 = 0x0000_0010;
-    pub const MAX_POWER: u32 = 0x0000_0020;
+    pub(crate) const STATUS: u32 = 0x0000_0001;
+    pub(crate) const CUR_HP: u32 = 0x0000_0002;
+    pub(crate) const MAX_HP: u32 = 0x0000_0004;
+    pub(crate) const POWER_TYPE: u32 = 0x0000_0008;
+    pub(crate) const CUR_POWER: u32 = 0x0000_0010;
+    pub(crate) const MAX_POWER: u32 = 0x0000_0020;
     pub const LEVEL: u32 = 0x0000_0040;
     pub const ZONE: u32 = 0x0000_0080;
     pub const POSITION: u32 = 0x0000_0100;
-    pub const AURAS: u32 = 0x0000_0200;
-    pub const AURAS_NEGATIVE: u32 = 0x0000_0400;
-    pub const PET_GUID: u32 = 0x0000_0800;
-    pub const PET_NAME: u32 = 0x0000_1000;
-    pub const PET_MODEL_ID: u32 = 0x0000_2000;
-    pub const PET_CUR_HP: u32 = 0x0000_4000;
-    pub const PET_MAX_HP: u32 = 0x0000_8000;
-    pub const PET_POWER_TYPE: u32 = 0x0001_0000;
-    pub const PET_CUR_POWER: u32 = 0x0002_0000;
-    pub const PET_MAX_POWER: u32 = 0x0004_0000;
-    pub const PET_AURAS: u32 = 0x0008_0000;
-    pub const PET_AURAS_NEGATIVE: u32 = 0x0010_0000;
+    pub(crate) const AURAS: u32 = 0x0000_0200;
+    pub(crate) const AURAS_NEGATIVE: u32 = 0x0000_0400;
+    pub(crate) const PET_GUID: u32 = 0x0000_0800;
+    pub(crate) const PET_NAME: u32 = 0x0000_1000;
+    pub(crate) const PET_MODEL_ID: u32 = 0x0000_2000;
+    pub(crate) const PET_CUR_HP: u32 = 0x0000_4000;
+    pub(crate) const PET_MAX_HP: u32 = 0x0000_8000;
+    pub(crate) const PET_POWER_TYPE: u32 = 0x0001_0000;
+    pub(crate) const PET_CUR_POWER: u32 = 0x0002_0000;
+    pub(crate) const PET_MAX_POWER: u32 = 0x0004_0000;
+    pub(crate) const PET_AURAS: u32 = 0x0008_0000;
+    pub(crate) const PET_AURAS_NEGATIVE: u32 = 0x0010_0000;
 }
 
 /// `SMSG_PARTY_MEMBER_STATS` and `SMSG_PARTY_MEMBER_STATS_FULL` — the same body.
@@ -529,7 +526,7 @@ mod update_flag {
 /// of them would otherwise be read from the wrong offset. A body that runs out
 /// mid-walk answers what it has rather than nothing: the fields are written in
 /// mask order, so a truncated tail costs only the fields after the cut.
-pub fn parse_party_member_stats(body: &[u8]) -> Option<PartyMemberStats> {
+pub(crate) fn parse_party_member_stats(body: &[u8]) -> Option<PartyMemberStats> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if r.remaining() < 4 {
@@ -666,10 +663,6 @@ pub const MAX_RAID_MEMBERS: usize = 40;
 /// anything higher.
 pub const MAX_RAID_SUBGROUPS: usize = 8;
 
-/// …and how many fit in one of them, which is what makes a full subgroup refuse
-/// a drop.
-pub const MEMBERS_PER_RAID_GROUP: usize = 5;
-
 /// **What a raid member may be**, as `GetRaidRosterInfo`'s second return.
 ///
 /// A number rather than a name because that is what the interface compares
@@ -727,7 +720,7 @@ pub enum ReadyCheck {
 ///
 /// **A zero-length body is not a parse failure here**, which is the one thing to
 /// get right: it is the commonest form of the packet.
-pub fn parse_ready_check(body: &[u8]) -> Option<ReadyCheck> {
+pub(crate) fn parse_ready_check(body: &[u8]) -> Option<ReadyCheck> {
     if body.is_empty() {
         return Some(ReadyCheck::Started);
     }
@@ -762,7 +755,7 @@ pub fn change_sub_group_body(name: &str, subgroup: u8) -> Vec<u8> {
 /// A separate opcode rather than two of the above, because two moves cannot be
 /// made atomically when both subgroups are full: `HasFreeSlotSubGroup` would
 /// refuse the first one.
-pub fn swap_sub_group_body(name: &str, swap_with: &str) -> Vec<u8> {
+pub(crate) fn swap_sub_group_body(name: &str, swap_with: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(name).cstring(swap_with);
     w.buf
@@ -783,7 +776,7 @@ pub fn assistant_leader_body(guid: u64, assistant: bool) -> Vec<u8> {
 ///
 /// The *start* has no body at all and goes out as [`EMPTY`], which is what makes
 /// the two directions one opcode. See [`ReadyCheck`].
-pub fn ready_check_answer_body(ready: bool) -> Vec<u8> {
+pub(crate) fn ready_check_answer_body(ready: bool) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(u8::from(ready));
     w.buf
@@ -792,21 +785,21 @@ pub fn ready_check_answer_body(ready: bool) -> Vec<u8> {
 
 
 /// `CMSG_GROUP_INVITE` — a name and nothing else.
-pub fn invite_body(name: &str) -> Vec<u8> {
+pub(crate) fn invite_body(name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(name);
     w.buf
 }
 
 /// `CMSG_GROUP_UNINVITE` — likewise, and the by-name half of a kick.
-pub fn uninvite_body(name: &str) -> Vec<u8> {
+pub(crate) fn uninvite_body(name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.cstring(name);
     w.buf
 }
 
 /// `CMSG_GROUP_UNINVITE_GUID` and `CMSG_GROUP_SET_LEADER` — eight bytes of guid.
-pub fn guid_body(guid: u64) -> Vec<u8> {
+pub(crate) fn guid_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -814,7 +807,7 @@ pub fn guid_body(guid: u64) -> Vec<u8> {
 
 /// `CMSG_REQUEST_PARTY_MEMBER_STATS` — the same shape, and the one poll this
 /// subject has.
-pub fn request_stats_body(guid: u64) -> Vec<u8> {
+pub(crate) fn request_stats_body(guid: u64) -> Vec<u8> {
     guid_body(guid)
 }
 

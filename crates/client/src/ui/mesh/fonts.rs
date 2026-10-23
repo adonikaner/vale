@@ -44,15 +44,6 @@ pub struct Sprite {
     pub bearing: [f32; 2],
 }
 
-/// The line metrics of one face at one size, in pixels — what the layout in
-/// [`super::text`] spaces lines by.
-#[derive(Clone, Copy, Debug)]
-pub struct LineMetrics {
-    pub ascent: f32,
-    pub descent: f32,
-    pub line_gap: f32,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Key {
     face: usize,
@@ -110,7 +101,7 @@ impl UiFonts {
 
     /// Which face a `font=` path draws in — the file's own resolution rule,
     /// then the fallback to the standard face for one that did not load.
-    pub fn face_index(&mut self, assets: &crate::assets::GameAssets, path: Option<&str>) -> Option<usize> {
+    pub(crate) fn face_index(&mut self, assets: &crate::assets::GameAssets, path: Option<&str>) -> Option<usize> {
         self.load(assets);
         let name = vale_assets::interface::font::face_of(path);
         let wanted = vale_assets::interface::font::FACES
@@ -134,7 +125,7 @@ impl UiFonts {
     /// One glyph, rasterised on first sight. `None` is a real answer — a
     /// space, or a codepoint the face has no contours for — and it is cached
     /// so the question costs a map hit thereafter.
-    pub fn glyph(
+    pub(crate) fn glyph(
         &mut self,
         images: &mut Assets<Image>,
         face: usize,
@@ -232,7 +223,7 @@ impl UiFonts {
     }
 
     /// The page a sprite's quad binds.
-    pub fn page_image(&self, page: usize) -> Option<Handle<Image>> {
+    pub(crate) fn page_image(&self, page: usize) -> Option<Handle<Image>> {
         Some(self.pages.get(page)?.image.clone())
     }
 
@@ -249,7 +240,7 @@ impl UiFonts {
     }
 
     /// Push every page a rasterisation touched this rebuild back to the GPU.
-    pub fn flush(&mut self, images: &mut Assets<Image>) {
+    pub(crate) fn flush(&mut self, images: &mut Assets<Image>) {
         for page in &mut self.pages {
             if !page.dirty {
                 continue;
@@ -283,7 +274,7 @@ impl UiFonts {
 /// stretch lands on a different phase of the device grid. That is what
 /// "hazy, bold and blocky" was, and it is why the atlas is keyed by the
 /// device size rather than the interface one.
-pub fn quad(sprite: &Sprite, pen: [f32; 2], dpi: f32) -> [f32; 4] {
+pub(crate) fn quad(sprite: &Sprite, pen: [f32; 2], dpi: f32) -> [f32; 4] {
     // A window that reports nothing sensible draws at 1:1 rather than
     // dividing by zero — the same degradation everything here takes.
     let dpi = if dpi.is_finite() && dpi > 0.0 { dpi } else { 1.0 };

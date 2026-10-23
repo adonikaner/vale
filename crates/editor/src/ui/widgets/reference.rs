@@ -46,25 +46,25 @@ use crate::subjects::quests::{ColumnTarget, Holder, PickFor, Picker, Quests, Tar
 use vale_client::assets::GameAssets;
 
 /// What resolving a name needs.
-pub struct Resolver<'a> {
-    pub session: &'a mut EditSession,
-    pub assets: &'a GameAssets,
-    pub quests: &'a mut Quests,
+pub(crate) struct Resolver<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) quests: &'a mut Quests,
     /// Where a clicked name asks the shell to open its row.
-    pub asks: &'a mut ShellAsks,
+    pub(crate) asks: &'a mut ShellAsks,
 }
 
 /// The `choose…` button that opens a dialog of rows to choose one from by
 /// looking at them or searching them. `about` says what the dialog lists.
 /// `true` when it was pressed.
-pub fn choose_button(ui: &mut egui::Ui, about: &str) -> bool {
+pub(crate) fn choose_button(ui: &mut egui::Ui, about: &str) -> bool {
     ui.small_button("choose\u{2026}").on_hover_text(about).clicked()
 }
 
 /// The `…` button after a reference's number, which opens the reference
 /// picker to choose the row by name. `about` is its hover text. `true` when
 /// it was pressed.
-pub fn by_name_button(ui: &mut egui::Ui, about: &str) -> bool {
+pub(crate) fn by_name_button(ui: &mut egui::Ui, about: &str) -> bool {
     ui.add(
         egui::Button::new(egui::RichText::new("\u{2026}").size(13.0))
             .min_size(egui::vec2(24.0, FORM_ROW)),
@@ -80,7 +80,7 @@ pub fn by_name_button(ui: &mut egui::Ui, about: &str) -> bool {
 /// The name goes beside the number when the row has room for it. When it
 /// does not, which is the 300-point inspector's case, the id is answered
 /// instead and the caller draws it on a row of its own through [`name`].
-pub fn cell(
+pub(crate) fn cell(
     ui: &mut egui::Ui,
     resolver: &mut Resolver<'_>,
     table: &'static str,
@@ -106,10 +106,10 @@ pub fn cell(
 
 /// How much of a row a name needs beside the number, in points. Below this
 /// the name goes on the next row.
-pub const NAME_ROOM: f32 = 140.0;
+pub(crate) const NAME_ROOM: f32 = 140.0;
 
 /// The name a reference resolves to, with its link.
-pub fn name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str, id: u32) {
+pub(crate) fn name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str, id: u32) {
     match target_of(table) {
         Some(Target::Item) => item_name(ui, resolver, id),
         Some(Target::Creature) => holder_name(ui, resolver, Holder::Creature, id),
@@ -247,7 +247,7 @@ fn dbc_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
 /// the row in its display workspace through a [`ShellAsk::ShowRow`]. A
 /// display row has no name of its own, so the caller chooses the text.
 /// `Tool::for_table` decides the workspace.
-pub fn display_link(
+pub(crate) fn display_link(
     ui: &mut egui::Ui,
     text: egui::RichText,
     asks: &mut ShellAsks,
@@ -262,7 +262,7 @@ pub fn display_link(
 
 /// A name that opens something: drawn in `colour`, underlined while the
 /// pointer is over it. `true` when it was clicked.
-pub fn link(ui: &mut egui::Ui, text: &str, colour: egui::Color32, hover: &str) -> bool {
+pub(crate) fn link(ui: &mut egui::Ui, text: &str, colour: egui::Color32, hover: &str) -> bool {
     link_text(ui, egui::RichText::new(text), colour, hover)
 }
 

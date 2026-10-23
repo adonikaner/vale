@@ -19,18 +19,18 @@
 //! and file writes in `vale_config`. This directory decides when each file is
 //! read and written.
 
-pub mod addons;
-pub mod cameracache;
+pub(crate) mod addons;
+pub(crate) mod cameracache;
 pub mod channels;
-pub mod cvars;
-pub mod keybindings;
-pub mod savedvars;
+pub(crate) mod cvars;
+pub(crate) mod keybindings;
+pub(crate) mod savedvars;
 
 use bevy::prelude::*;
 
 /// Every plugin in this directory, as one group. See
 /// [`crate::render::RenderPlugins`] for why each directory registers its own.
-pub struct SettingsPlugins;
+pub(crate) struct SettingsPlugins;
 
 impl Plugin for SettingsPlugins {
     fn build(&self, app: &mut App) {

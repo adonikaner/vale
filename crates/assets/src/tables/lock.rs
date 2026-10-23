@@ -55,7 +55,7 @@ use std::collections::HashMap;
 /// and swapping them puts a mining pick over a peacebloom.
 pub mod lock_type {
     /// A rogue's `Pick Lock`, and a skeleton key.
-    pub const PICK_LOCK: u32 = 1;
+    pub(crate) const PICK_LOCK: u32 = 1;
     pub const HERBALISM: u32 = 2;
     pub const MINING: u32 = 3;
     pub const DISARM_TRAP: u32 = 4;
@@ -132,7 +132,7 @@ const KEY_SKILL: u32 = 2;
 ///
 /// A lock **on an item** has no state and no flag of its own; see
 /// [`crate::look::object`], which is the only caller.
-pub fn action_applies(action: u32, state: u8, locked: bool) -> bool {
+pub(crate) fn action_applies(action: u32, state: u8, locked: bool) -> bool {
     /// `GO_STATE_ACTIVE` — open, used, not reset.
     const ACTIVE: u8 = 0;
     /// `GO_STATE_READY` — shut, reset.

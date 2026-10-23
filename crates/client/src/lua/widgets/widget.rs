@@ -357,7 +357,7 @@ pub(in crate::lua) const HEIGHT_KEY: &str = "__height";
 /// `GetWidth` and `GetHeight` are listed here and installed by
 /// [`super::layout`]: each name has one entry, whichever file writes the
 /// closure. [`super::layout::METHODS`] lists the five that exist only there.
-pub const METHODS: [&str; 24] = [
+pub(crate) const METHODS: [&str; 24] = [
     "ClearAllPoints",
     "GetAlpha",
     "GetChildren",

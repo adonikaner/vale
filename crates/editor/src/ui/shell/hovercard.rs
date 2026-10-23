@@ -36,7 +36,7 @@ struct Card {
 }
 
 /// Draw the card for whatever the active tool's pick reports, if anything.
-pub fn draw(
+pub(crate) fn draw(
     ctx: &egui::Context,
     tool: Tool,
     creatures: &crate::tools::spawns::creatures::Creatures,

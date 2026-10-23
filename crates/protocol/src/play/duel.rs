@@ -42,7 +42,7 @@
 use crate::bytes::{Reader, Writer};
 
 /// `SMSG_DUEL_REQUESTED` — `(arbiter, initiator)`.
-pub fn parse_duel_requested(body: &[u8]) -> Option<(u64, u64)> {
+pub(crate) fn parse_duel_requested(body: &[u8]) -> Option<(u64, u64)> {
     if body.len() < 16 {
         return None;
     }
@@ -52,7 +52,7 @@ pub fn parse_duel_requested(body: &[u8]) -> Option<(u64, u64)> {
 
 /// `SMSG_DUEL_COUNTDOWN` — milliseconds until the duel starts. vmangos always
 /// sends 3000; the reference divides by 1,000 and counts down whole seconds.
-pub fn parse_duel_countdown(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_duel_countdown(body: &[u8]) -> Option<u32> {
     if body.len() < 4 {
         return None;
     }
@@ -61,7 +61,7 @@ pub fn parse_duel_countdown(body: &[u8]) -> Option<u32> {
 
 /// `SMSG_DUEL_COMPLETE` — whether the duel had started. `false` is a duel
 /// declined or abandoned during the countdown.
-pub fn parse_duel_complete(body: &[u8]) -> Option<bool> {
+pub(crate) fn parse_duel_complete(body: &[u8]) -> Option<bool> {
     body.first().map(|&started| started != 0)
 }
 
@@ -78,7 +78,7 @@ pub struct DuelWinner {
 ///
 /// **Both names must be terminated.** A body cut inside the second name would
 /// otherwise read as a shorter name, which prints a plausible wrong sentence.
-pub fn parse_duel_winner(body: &[u8]) -> Option<DuelWinner> {
+pub(crate) fn parse_duel_winner(body: &[u8]) -> Option<DuelWinner> {
     let (&fled, rest) = body.split_first()?;
     if rest.iter().filter(|&&b| b == 0).count() < 2 {
         return None;
@@ -94,7 +94,7 @@ pub fn parse_duel_winner(body: &[u8]) -> Option<DuelWinner> {
 /// `CMSG_DUEL_ACCEPTED` and `CMSG_DUEL_CANCELLED` — the arbiter's guid, the
 /// same body for both. vmangos reads the guid and uses neither: it answers off
 /// the player's own `m_duel`. The reference sends the stored arbiter anyway.
-pub fn duel_answer_body(arbiter: u64) -> Vec<u8> {
+pub(crate) fn duel_answer_body(arbiter: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(arbiter);
     w.buf

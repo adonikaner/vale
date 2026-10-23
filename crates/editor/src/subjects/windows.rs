@@ -18,25 +18,25 @@ use vale_mangos::row::{Edits, Key};
 /// row. The windows' subjects are built from this, so each window works the
 /// same from either.
 #[derive(Clone)]
-pub struct Focus {
-    pub entry: u32,
-    pub label: String,
-    pub template_key: Key,
+pub(crate) struct Focus {
+    pub(crate) entry: u32,
+    pub(crate) label: String,
+    pub(crate) template_key: Key,
     /// `npc_flags`, for the creature's quest and service windows.
-    pub npc_flags: u32,
+    pub(crate) npc_flags: u32,
     /// Where the spawn stands, for the gossip window. `None` for a template
     /// opened in the workspace.
-    pub at: Option<[f32; 2]>,
+    pub(crate) at: Option<[f32; 2]>,
     /// The game object's brief row, for the quest window's type check and the
     /// loot window's loot column. `None` for a creature, and for a spawn
     /// whose template row is missing.
-    pub object: Option<Known>,
+    pub(crate) object: Option<Known>,
 }
 
 impl Focus {
     /// The creature the windows are about under `tool`, with this project's
     /// edits over it, or `None` under any other tool.
-    pub fn creature(tool: Tool, creatures: &Creatures, edits: &Edits) -> Option<Focus> {
+    pub(crate) fn creature(tool: Tool, creatures: &Creatures, edits: &Edits) -> Option<Focus> {
         match tool {
             Tool::Creatures => creatures.chosen_edited(Some(edits)).map(|spawn| Focus {
                 entry: spawn.entry,
@@ -60,7 +60,7 @@ impl Focus {
 
     /// The game object the windows are about under `tool`, or `None` under
     /// any other tool.
-    pub fn object(tool: Tool, objects: &GameObjects, edits: &Edits) -> Option<Focus> {
+    pub(crate) fn object(tool: Tool, objects: &GameObjects, edits: &Edits) -> Option<Focus> {
         match tool {
             Tool::GameObjects => objects.chosen_edited(Some(edits)).map(|spawn| Focus {
                 entry: spawn.entry,

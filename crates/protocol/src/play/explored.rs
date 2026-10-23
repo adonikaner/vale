@@ -40,7 +40,7 @@ use crate::state::fields::player::EXPLORED_ZONES_1;
 
 /// How many dwords the field is — vmangos's `PLAYER_EXPLORED_ZONES_SIZE`, and
 /// the `size 64` beside the constant in [`crate::state::fields`].
-pub const DWORDS: usize = 64;
+pub(crate) const DWORDS: usize = 64;
 
 /// …and how many bits that comes to. The client's 256-byte bound is this over 8.
 pub const BITS: u32 = (DWORDS * 32) as u32;

@@ -10,7 +10,7 @@
 //!               locked against editing
 //! ```
 
-pub mod doodads;
-pub mod group;
-pub mod place;
-pub mod wmos;
+pub(crate) mod doodads;
+pub(crate) mod group;
+pub(crate) mod place;
+pub(crate) mod wmos;

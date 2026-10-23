@@ -103,7 +103,7 @@ use crate::world::session::Session;
 /// [`super::loot::LootAnswer`] takes, for the same reason: the session queue
 /// has one reader.
 #[derive(Message, Debug, Clone, Copy)]
-pub enum RollAnswer {
+pub(crate) enum RollAnswer {
     Started(RollStart),
     Cast(RollCast),
     Won(RollWon),
@@ -127,11 +127,11 @@ pub struct PendingRoll {
     pub entry: u32,
     /// The countdown the start packet gave, kept because the promotion of a
     /// deferred roll sends it rather than the remainder; see the module note.
-    pub countdown_ms: u32,
+    pub(crate) countdown_ms: u32,
     /// When the roll runs out, on [`Time`]'s clock. `GetLootRollTimeLeft` is
     /// this minus now, in milliseconds, and may be negative: the shipped
     /// `OnUpdate` clamps.
-    pub deadline: f64,
+    pub(crate) deadline: f64,
     /// When the start arrived, on [`Time`]'s clock. [`NAME_LIMIT`] is measured
     /// from it.
     opened_at: f64,
@@ -195,7 +195,7 @@ impl LootRolls {
     /// is done by `GroupLootFrame_OnUpdate`, against the bar's min and max.
     /// `None` for an id nothing holds, for which the 1.12.1 client returns no
     /// values.
-    pub fn time_left_ms(&self, id: u32, now: f64) -> Option<f64> {
+    pub(crate) fn time_left_ms(&self, id: u32, now: f64) -> Option<f64> {
         Some((self.get(id)?.deadline - now) * 1000.0)
     }
 
@@ -321,7 +321,7 @@ impl LootRolls {
 /// a packet arriving up to a quarter of a minute late still finds its roll.
 const EXPIRY_GRACE: f64 = 15.0;
 
-pub struct LootRollPlugin;
+pub(crate) struct LootRollPlugin;
 
 impl Plugin for LootRollPlugin {
     fn build(&self, app: &mut App) {
@@ -344,12 +344,12 @@ impl Plugin for LootRollPlugin {
 /// A message rather than a direct send, as every other interface write in this
 /// client is; see [`crate::lua::api::verbs`].
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RollPress {
+pub(crate) struct RollPress {
     pub id: u32,
-    pub vote: RollVote,
+    pub(crate) vote: RollVote,
     /// The bind-on-pickup confirmation has already been shown. False for
     /// `RollOnLoot`, true for `ConfirmLootRoll`; see the module note.
-    pub confirmed: bool,
+    pub(crate) confirmed: bool,
 }
 
 /// Apply the server's packets to the list, raise the interface events, and
@@ -615,8 +615,7 @@ const NAME_LIMIT: f64 = 3.0;
 /// for.
 fn settled(session: &Session, waiting: &[(u32, u32, f64)], now: f64) -> Vec<u32> {
     let named: Option<Vec<u32>> = session.active.as_ref().map(|active| {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         waiting
             .iter()
             .filter(|(_, entry, _)| {
@@ -651,8 +650,7 @@ fn binds_on_pickup(session: &Session, entry: u32) -> bool {
     let Some(active) = session.active.as_ref() else {
         return false;
     };
-    let world = active.live.world();
-    let world = world.lock().unwrap_or_else(|e| e.into_inner());
+    let world = active.live.read();
     world.items.get(&entry).is_some_and(|item| item.bonding == 1)
 }
 
@@ -706,8 +704,7 @@ fn compose(
     key: impl FnOnce(bool) -> &'static str,
 ) -> Option<String> {
     let active = session.active.as_ref()?;
-    let world = active.live.world();
-    let world = world.lock().unwrap_or_else(|e| e.into_inner());
+    let world = active.live.read();
     let is_self = world.player_guid == Some(who);
     let name = world.players.get(&who)?.name.clone();
     let item = world.items.get(&entry)?;
@@ -739,8 +736,7 @@ fn item_line(
     key: &str,
 ) -> Option<String> {
     let active = session.active.as_ref()?;
-    let world = active.live.world();
-    let world = world.lock().unwrap_or_else(|e| e.into_inner());
+    let world = active.live.read();
     let item = world.items.get(&entry)?;
     let pieces = link_pieces(item.entry, item.quality, &item.name);
     drop(world);

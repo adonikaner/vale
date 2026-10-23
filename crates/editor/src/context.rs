@@ -36,11 +36,11 @@ use bevy::prelude::*;
 
 /// How far the pointer may move between a right press and its release, in
 /// logical pixels, for the two to be a click rather than a drag.
-pub const CLICK_SLOP: f32 = 4.0;
+pub(crate) const CLICK_SLOP: f32 = 4.0;
 
 /// What a right click landed on.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Target {
+pub(crate) enum Target {
     /// Ground, or nothing the tool picks. The ground's position, tile and
     /// chunk where the pointer's ray met it, each `None` off the open tiles.
     Ground {
@@ -60,34 +60,34 @@ pub enum Target {
 
 /// A menu on screen.
 #[derive(Debug, Clone, Copy)]
-pub struct Open {
+pub(crate) struct Open {
     /// Where it was asked for, in logical pixels: the menu's top-left corner.
-    pub at: Vec2,
+    pub(crate) at: Vec2,
     /// The tool that was chosen; a change of tool closes the menu.
-    pub tool: Tool,
-    pub target: Target,
+    pub(crate) tool: Tool,
+    pub(crate) target: Target,
 }
 
 /// The right-click menu's state.
 #[derive(Resource, Debug, Default)]
-pub struct ContextMenu {
+pub(crate) struct ContextMenu {
     /// A right click waiting to be answered, at this pointer position in
     /// logical pixels. Written by `crate::camera::fly`, taken by [`open`].
-    pub pending: Option<Vec2>,
+    pub(crate) pending: Option<Vec2>,
     /// What a tool that picks objects found under the click, written on the
     /// click's frame before [`open`] runs. `None` there means nothing was hit.
-    pub object: Option<Target>,
+    pub(crate) object: Option<Target>,
     /// The menu on screen, if any.
-    pub open: Option<Open>,
+    pub(crate) open: Option<Open>,
     /// An operation a menu item asked for that a keyboard system carries out,
     /// so the item and the key go through the same code. Taken by the system
     /// that answers the key; see [`Request`].
-    pub request: Option<Request>,
+    pub(crate) request: Option<Request>,
 }
 
 /// An operation a menu item hands to the system that answers its key.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Request {
+pub(crate) enum Request {
     /// `Ctrl+C` for the doodad or WMO selection (`tools::placements::group::clipboard`).
     Copy,
     /// `Ctrl+V` at a point in the world, which is where the menu was opened
@@ -104,17 +104,17 @@ pub enum Request {
 
 impl ContextMenu {
     /// Whether a right click is waiting to be answered.
-    pub fn asked(&self) -> bool {
+    pub(crate) fn asked(&self) -> bool {
         self.pending.is_some()
     }
 
     /// Close the menu.
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.open = None;
     }
 
     /// Take the waiting request if it is one `wanted` accepts.
-    pub fn take_request(&mut self, wanted: impl Fn(&Request) -> bool) -> Option<Request> {
+    pub(crate) fn take_request(&mut self, wanted: impl Fn(&Request) -> bool) -> Option<Request> {
         match &self.request {
             Some(request) if wanted(request) => self.request.take(),
             _ => None,
@@ -122,7 +122,7 @@ impl ContextMenu {
     }
 }
 
-pub struct ContextMenuPlugin;
+pub(crate) struct ContextMenuPlugin;
 
 impl Plugin for ContextMenuPlugin {
     fn build(&self, app: &mut App) {

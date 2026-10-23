@@ -154,7 +154,7 @@ impl ChatType {
     /// for a channel, and reads the message *immediately* for everything else —
     /// so an extra string here consumes the message and an absent one makes the
     /// message the target.
-    pub fn needs_target(self) -> bool {
+    pub(crate) fn needs_target(self) -> bool {
         matches!(self, ChatType::Whisper | ChatType::Channel)
     }
 
@@ -209,7 +209,7 @@ impl Language {
     /// 7 gnome, 8 troll. An unknown race is treated as Alliance rather than
     /// refused, because a message in the wrong language is recoverable and no
     /// message at all is not.
-    pub fn for_race(race: u8) -> Language {
+    pub(crate) fn for_race(race: u8) -> Language {
         match race {
             2 | 5 | 6 | 8 => Language::Orcish,
             _ => Language::Common,
@@ -272,7 +272,7 @@ impl ChatMessage {
 ///
 /// The text is `u32 length` then a NUL-terminated string, where the length
 /// **includes the NUL** (`strlen(message) + 1`).
-pub fn parse_message(body: &[u8]) -> Option<ChatMessage> {
+pub(crate) fn parse_message(body: &[u8]) -> Option<ChatMessage> {
     let mut r = Reader::new(body);
     if !r.has(5) {
         return None;
@@ -334,7 +334,7 @@ pub fn parse_message(body: &[u8]) -> Option<ChatMessage> {
 /// server explains a rejection: "you have not learned that language", the
 /// anticheat's own warnings, and `SendNotification`'s output generally. Dropped,
 /// those failures are indistinguishable from the packet never having been sent.
-pub fn parse_notification(body: &[u8]) -> Option<String> {
+pub(crate) fn parse_notification(body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return None;
     }
@@ -347,7 +347,7 @@ pub fn parse_notification(body: &[u8]) -> Option<String> {
 /// The target is the whisper's recipient or the channel's name, and it is
 /// present for exactly the types [`ChatType::needs_target`] names — the server
 /// reads the message straight after the language for everything else.
-pub fn message_body(kind: ChatType, language: Language, target: Option<&str>, text: &str) -> Vec<u8> {
+pub(crate) fn message_body(kind: ChatType, language: Language, target: Option<&str>, text: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(u32::from(kind.code()));
     w.u32(language.code());

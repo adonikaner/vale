@@ -46,8 +46,8 @@ pub struct CraftLine {
     pub kind: String,
     pub name: String,
     /// The spell's rank string — the sub-text in parentheses.
-    pub sub_text: String,
-    pub num_available: u32,
+    pub(crate) sub_text: String,
+    pub(crate) num_available: u32,
     /// `Some` for a header only — see the module comment.
     pub expanded: Option<bool>,
     pub header: bool,
@@ -56,11 +56,12 @@ pub struct CraftLine {
     /// time rather than at build, because the pet can
     /// change while the window is open. See
     /// `vale_assets::tables::tradeskill::training_cost`.
-    pub train_points: u32,
+    pub(crate) train_points: u32,
     pub required_level: u32,
 }
 
 /// **The reads this module registers**, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 18] = [
     "CloseCraft",
     "CollapseCraftSkillLine",

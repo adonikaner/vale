@@ -3,11 +3,11 @@
 use crate::EditError;
 
 /// Bytes in an `MCNK` header.
-pub const MCNK_HEADER: usize = 128;
+pub(crate) const MCNK_HEADER: usize = 128;
 
 /// Where the first region of a map chunk begins, measured from the start of the
 /// `MCNK` chunk header: eight bytes of magic and size, then the header.
-pub const FIRST_REGION: u32 = 8 + MCNK_HEADER as u32;
+pub(crate) const FIRST_REGION: u32 = 8 + MCNK_HEADER as u32;
 
 /// One of the nine regions a map chunk is made of.
 ///
@@ -45,7 +45,7 @@ pub enum Region {
 }
 
 /// Every region, in the order they are written.
-pub const REGIONS: [Region; 9] = [
+pub(crate) const REGIONS: [Region; 9] = [
     Region::Heights,
     Region::Normals,
     Region::Layers,
@@ -63,7 +63,7 @@ pub const REGIONS: [Region; 9] = [
 /// depends on this — it is written because every later client and every other
 /// tool reads it, and a file that carries the chunk and denies it in the header
 /// is a file that lies. Cleared again when the region goes.
-pub const FLAG_HAS_COLOURS: u32 = 0x40;
+pub(crate) const FLAG_HAS_COLOURS: u32 = 0x40;
 
 impl Region {
     /// The four-byte magic, in reading order.
@@ -82,7 +82,7 @@ impl Region {
     }
 
     /// Where the header keeps this region's offset.
-    pub fn offset_field(self) -> usize {
+    pub(crate) fn offset_field(self) -> usize {
         match self {
             Region::Heights => 0x14,
             Region::Normals => 0x18,
@@ -106,7 +106,7 @@ impl Region {
     /// what 1,280 chunks measure. A writer that has it the other way round
     /// produces a file whose regions still parse and whose shadow starts eight
     /// bytes inside the alpha map.
-    pub fn size_field(self) -> Option<(usize, bool)> {
+    pub(crate) fn size_field(self) -> Option<(usize, bool)> {
         match self {
             Region::Alpha => Some((0x28, true)),
             Region::Shadow => Some((0x30, false)),
@@ -156,7 +156,7 @@ impl SubChunk {
     /// real length there would be writing a number the shipped files never
     /// carry, which is the kind of difference nothing reports until some other
     /// reader trusts it.
-    pub fn set_keeping_size(&mut self, data: Vec<u8>) {
+    pub(crate) fn set_keeping_size(&mut self, data: Vec<u8>) {
         self.data = data;
     }
 
@@ -179,7 +179,7 @@ pub struct MapChunk {
     /// The two fields of this chunk's `MCIN` entry that are not its offset and
     /// size. Both are zero in every 1.12 tile measured; they are carried rather
     /// than assumed, so a tile that uses them survives a round trip.
-    pub index_extra: [u32; 2],
+    pub(crate) index_extra: [u32; 2],
 }
 
 impl MapChunk {
@@ -187,7 +187,7 @@ impl MapChunk {
         self.regions[region as usize].as_ref()
     }
 
-    pub fn region_mut(&mut self, region: Region) -> Option<&mut SubChunk> {
+    pub(crate) fn region_mut(&mut self, region: Region) -> Option<&mut SubChunk> {
         self.regions[region as usize].as_mut()
     }
 
@@ -197,7 +197,7 @@ impl MapChunk {
     }
 
     /// The header, writably.
-    pub fn head_mut(&mut self) -> crate::adt::header::McnkHeaderMut<'_> {
+    pub(crate) fn head_mut(&mut self) -> crate::adt::header::McnkHeaderMut<'_> {
         crate::adt::header::McnkHeaderMut::new(&mut self.header)
     }
 
@@ -225,10 +225,10 @@ pub struct AdtFile {
     pub textures: Vec<u8>,
     /// `MMDX`, the model paths, and `MMID`, the offsets into it.
     pub models: Vec<u8>,
-    pub model_offsets: Vec<u8>,
+    pub(crate) model_offsets: Vec<u8>,
     /// `MWMO`, the building paths, and `MWID`.
     pub buildings: Vec<u8>,
-    pub building_offsets: Vec<u8>,
+    pub(crate) building_offsets: Vec<u8>,
     /// `MDDF`: 36 bytes per placed model. See [`crate::adt::Doodad`].
     pub doodads: Vec<u8>,
     /// `MODF`: 64 bytes per placed building. See [`crate::adt::Building`].
@@ -238,7 +238,7 @@ pub struct AdtFile {
 }
 
 /// The top-level chunks this writer knows how to place, in file order.
-pub const TOP_LEVEL: [&[u8; 4]; 10] = [
+pub(crate) const TOP_LEVEL: [&[u8; 4]; 10] = [
     b"MVER", b"MHDR", b"MCIN", b"MTEX", b"MMDX", b"MMID", b"MWMO", b"MWID", b"MDDF", b"MODF",
 ];
 

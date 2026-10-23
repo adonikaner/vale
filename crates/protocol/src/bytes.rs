@@ -85,7 +85,7 @@ impl<'a> Reader<'a> {
     /// Used for most object references from 1.9 onwards — but note that
     /// `UPDATETYPE_MOVEMENT` blocks still carry a plain u64, so do not assume
     /// every GUID on the wire is packed.
-    pub fn packed_guid(&mut self) -> u64 {
+    pub(crate) fn packed_guid(&mut self) -> u64 {
         if !self.has(1) {
             return 0;
         }
@@ -103,7 +103,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Null-terminated ASCII string (WoW CString).
-    pub fn cstring(&mut self) -> String {
+    pub(crate) fn cstring(&mut self) -> String {
         let start = self.pos;
         while self.pos < self.buf.len() && self.buf[self.pos] != 0 {
             self.pos += 1;
@@ -162,7 +162,7 @@ impl Writer {
     /// Note that this is *not* interchangeable with a plain u64 on the wire:
     /// `CMSG_SET_ACTIVE_MOVER` takes the raw form while most other references
     /// take the packed one, and the server reads exactly what it declared.
-    pub fn packed_guid(&mut self, guid: u64) -> &mut Self {
+    pub(crate) fn packed_guid(&mut self, guid: u64) -> &mut Self {
         let bytes = guid.to_le_bytes();
         let mut mask = 0u8;
         for (i, b) in bytes.iter().enumerate() {
@@ -180,7 +180,7 @@ impl Writer {
     }
 
     /// Null-terminated ASCII string.
-    pub fn cstring(&mut self, s: &str) -> &mut Self {
+    pub(crate) fn cstring(&mut self, s: &str) -> &mut Self {
         self.buf.extend_from_slice(s.as_bytes());
         self.buf.push(0);
         self
@@ -188,7 +188,7 @@ impl Writer {
 }
 
 /// Read exactly `n` bytes from a stream (blocking), or error on EOF.
-pub fn read_exact(stream: &mut TcpStream, n: usize) -> io::Result<Vec<u8>> {
+pub(crate) fn read_exact(stream: &mut TcpStream, n: usize) -> io::Result<Vec<u8>> {
     let mut buf = vec![0u8; n];
     stream.read_exact(&mut buf)?;
     Ok(buf)

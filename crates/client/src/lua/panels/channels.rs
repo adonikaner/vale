@@ -44,37 +44,6 @@ use vale_assets::tables::channels::{flags, joined_bit, ChatChannels, ZoneChannel
 use vale_protocol::play::channels::ChannelVerb;
 use crate::lua::host::LuaHost;
 
-/// The globals this panel answers — the chat frame's own list, from
-/// `ChatFrame.lua`'s slash commands and `ChatEdit_*`.
-pub const VERBS: [&str; 26] = [
-    "AddChatWindowChannel",
-    "ChannelBan",
-    "ChannelInvite",
-    "ChannelKick",
-    "ChannelModerate",
-    "ChannelModerator",
-    "ChannelMute",
-    "ChannelToggleAnnouncements",
-    "ChannelUnban",
-    "ChannelUnmoderator",
-    "ChannelUnmute",
-    "DisplayChannelOwner",
-    "EnumerateServerChannels",
-    "GetChannelList",
-    "GetChannelName",
-    "GetChatWindowChannels",
-    "JoinChannelByName",
-    "LeaveChannelByName",
-    "ListChannelByName",
-    "ListChannels",
-    "RemoveChatWindowChannel",
-    "SetChannelOwner",
-    "SetChannelPassword",
-    "ChannelSilence",
-    "ChannelUnSilence",
-    "ChannelVoiceOff",
-];
-
 /// How many numbered channels the interface has colours for.
 pub const SLOTS: usize = 10;
 
@@ -85,7 +54,7 @@ pub struct Slot {
     pub name: String,
     /// The `ChatChannels.dbc` id for a zone channel — the chat frame's
     /// `arg7` — and 0 for a custom one.
-    pub zone_id: u32,
+    pub(crate) zone_id: u32,
     /// `YOU_JOINED`'s second word, the number appended to a name when the
     /// server splits a channel; vmangos sends 0.
     pub instance: u32,
@@ -106,24 +75,24 @@ pub struct Channels {
     /// The reference's `ZONECHANNELS` mask — bit `id - 1` for each zone
     /// channel the character has not left. `None` until the file or the
     /// table defaults it.
-    pub joined_mask: Option<u32>,
+    pub(crate) joined_mask: Option<u32>,
     /// Window 1's own `ZONECHANNELS` from the file, `None` when unset.
-    pub window_mask: Option<u32>,
+    pub(crate) window_mask: Option<u32>,
     /// The custom channels the file says to rejoin at login, and whether
     /// they have been.
-    pub rejoin: Vec<String>,
-    pub rejoined: bool,
+    pub(crate) rejoin: Vec<String>,
+    pub(crate) rejoined: bool,
     /// `OPTION_GUILD_RECRUITMENT_CHANNEL AUTO`: join the recruitment channel
     /// in a city while the character has no guild. `true` until a file
     /// says otherwise, which is the reference's default.
-    pub recruit_automatically: bool,
+    pub(crate) recruit_automatically: bool,
     /// Whether the character is in a guild — `PLAYER_GUILDID` non-zero,
     /// read by the session.
-    pub in_guild: bool,
+    pub(crate) in_guild: bool,
     /// Custom channels a window added this session — see the module note.
-    pub window_added: Vec<String>,
+    pub(crate) window_added: Vec<String>,
     /// `ListChannels()` was called: the session composes the line.
-    pub list_wanted: bool,
+    pub(crate) list_wanted: bool,
     /// Bumped on every change to the slots, for the session's own bookkeeping.
     pub version: u32,
 }
@@ -160,7 +129,7 @@ impl Channels {
     }
 
     /// The table row a channel name belongs to, or 0 for a custom channel.
-    pub fn zone_id_of(&self, name: &str) -> u32 {
+    pub(crate) fn zone_id_of(&self, name: &str) -> u32 {
         self.table
             .as_ref()
             .and_then(|table| table.row_of(name))
@@ -170,7 +139,7 @@ impl Channels {
     /// **`YOU_JOINED` landed**: the slot the channel takes, and whether it
     /// replaced a zone channel of the same row — which the interface calls a
     /// change rather than a join. Returns `(number, changed)`.
-    pub fn joined_channel(&mut self, name: &str, instance: u32) -> (u32, bool) {
+    pub(crate) fn joined_channel(&mut self, name: &str, instance: u32) -> (u32, bool) {
         let zone_id = self.zone_id_of(name);
         // **The three `INITIAL` rows have their numbers whether or not they
         // are joined** — General 1, Trade 2, LocalDefense 3 — and a custom
@@ -206,7 +175,7 @@ impl Channels {
 
     /// **`YOU_LEFT` landed**: `Some((number, was_switching))` for a slot that
     /// held the channel. A switching slot is kept for the join that follows.
-    pub fn left_channel(&mut self, name: &str) -> Option<(u32, bool)> {
+    pub(crate) fn left_channel(&mut self, name: &str) -> Option<(u32, bool)> {
         let at = self
             .slots
             .iter()
@@ -230,7 +199,7 @@ impl Channels {
     }
 
     /// The zone channels currently held, as `(id, name)`.
-    pub fn zone_slots(&self) -> Vec<(u32, String)> {
+    pub(crate) fn zone_slots(&self) -> Vec<(u32, String)> {
         self.joined()
             .filter(|(_, slot)| slot.zone_id != 0)
             .map(|(_, slot)| (slot.zone_id, slot.name.clone()))
@@ -239,7 +208,7 @@ impl Channels {
 
     /// The custom channels currently held — what the file's `CHANNELS` block
     /// is written from.
-    pub fn custom_channels(&self) -> Vec<String> {
+    pub(crate) fn custom_channels(&self) -> Vec<String> {
         self.joined()
             .filter(|(_, slot)| slot.zone_id == 0)
             .map(|(_, slot)| slot.name.clone())
@@ -258,20 +227,20 @@ impl Channels {
 
     /// A zone channel left by hand stays left across zones — the
     /// `ZONECHANNELS` rule.
-    pub fn leave_zone_channel(&mut self, id: u32) {
+    pub(crate) fn leave_zone_channel(&mut self, id: u32) {
         let mask = self.mask();
         self.joined_mask = Some(mask & !joined_bit(id));
     }
 
     /// …and joining one by hand puts it back.
-    pub fn rejoin_zone_channel(&mut self, id: u32) {
+    pub(crate) fn rejoin_zone_channel(&mut self, id: u32) {
         let mask = self.mask();
         self.joined_mask = Some(mask | joined_bit(id));
     }
 
     /// Whether the guild recruitment channel is wanted: the option is `AUTO`
     /// and the character has no guild.
-    pub fn recruits(&self) -> bool {
+    pub(crate) fn recruits(&self) -> bool {
         self.recruit_automatically && !self.in_guild
     }
 
@@ -286,7 +255,7 @@ impl Channels {
     }
 
     /// What `GetChatWindowChannels` answers — see the module note.
-    pub fn window_channels(&self) -> Vec<(String, u32)> {
+    pub(crate) fn window_channels(&self) -> Vec<(String, u32)> {
         let mut out: Vec<(String, u32)> = match (&self.table, self.window_mask) {
             (Some(table), Some(mask)) if mask != 0 => table
                 .rows()
@@ -320,7 +289,7 @@ impl Channels {
 }
 
 pub type Held = Rc<RefCell<Channels>>;
-pub type Queue = Rc<RefCell<Vec<ChannelVerb>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<ChannelVerb>>>;
 
 /// The channel a verb names, as typed: a number is a slot, anything else a
 /// name. Answers the name on the wire, or the text itself for a channel the

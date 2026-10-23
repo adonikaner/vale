@@ -76,7 +76,7 @@ pub struct CameraRig {
     /// so one notch takes 120 ms), and [`glide`] runs it a frame at a time.
     /// A further notch the same way lengthens the movement; a notch the other
     /// way cancels what is left and starts its own. See [`zoom`].
-    pub glide: f32,
+    pub(crate) glide: f32,
     /// The distance actually used this frame, after collision. Held on the rig
     /// rather than recomputed by each reader for the same reason [`Self::eye`]
     /// is shared: the billboard bones and the view matrix must come from one
@@ -162,7 +162,7 @@ pub struct MouseLook {
     /// Where the press landed. Held across the release, so the click that
     /// follows is judged by where it started rather than by where the pointer
     /// is when the button comes up.
-    pub on_world: bool,
+    pub(crate) on_world: bool,
     /// The pointer has travelled past [`LOOK_SLOP`] since the press, so the
     /// release is a look and never a click. Held across the release for the same
     /// reason `on_world` is.
@@ -199,7 +199,7 @@ pub struct PointerTaken(pub bool);
 /// same separation in the world. It is a small screen-space slop chosen by
 /// this client, not a value of the 1.12.1 client. With it, a release is a
 /// click or a look and never both.
-pub const LOOK_SLOP: f32 = 4.0;
+pub(crate) const LOOK_SLOP: f32 = 4.0;
 
 /// Decide what the current mouse gesture is, once, before anything acts on it.
 ///
@@ -207,7 +207,7 @@ pub const LOOK_SLOP: f32 = 4.0;
 /// before [`crate::ui::cursor`]'s hide. All three are stated with `.after`,
 /// because each of them reads a resource this writes and Bevy will not
 /// otherwise sequence them.
-pub fn arm_look(
+pub(crate) fn arm_look(
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     interface: Res<crate::lua::api::mouse::MouseFocus>,
@@ -363,7 +363,7 @@ pub struct RenderTuning {
     /// A/B comparison against a world with sun shadows. It is the most expensive
     /// switch on this list, since a cascade re-draws every caster in the view.
     /// Off, on F10.
-    pub sun_shadows: bool,
+    pub(crate) sun_shadows: bool,
 }
 
 /// Every setting on [`RenderTuning`], once, as `(key, label, accessor)`.
@@ -912,7 +912,7 @@ const REFERENCE_VIEWPORT: Vec2 = Vec2::new(800.0, 600.0);
 /// Here rather than in `input/controls.rs` because the `+ π` is a fact about this rig
 /// and nothing else, and because this half of the rule can be pinned by a test
 /// without a server: see `a_mouse_looking_character_walks_the_way_the_camera_looks`.
-pub fn mouse_look_heading(rig: &CameraRig) -> f32 {
+pub(crate) fn mouse_look_heading(rig: &CameraRig) -> f32 {
     vale_protocol::state::movement::wrap_angle(rig.yaw + std::f32::consts::PI)
 }
 
@@ -1153,7 +1153,7 @@ const STEER_SETTLE: f32 = 0.25;
 // is sitting on. That is one element past clippy's limit and too small to
 // justify a type alias.
 #[allow(clippy::type_complexity)]
-pub fn follow_player(
+pub(crate) fn follow_player(
     motion: Res<Motion>,
     predicted: Res<crate::world::predict::Predicted>,
     time: Res<Time>,

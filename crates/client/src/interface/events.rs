@@ -88,7 +88,7 @@ use bevy::prelude::*;
 /// string, so no reader of this message needs the archives open. Write it
 /// through [`super::messages::UiErrors`], which turns a key into one of these.
 #[derive(Message, Debug, Clone)]
-pub struct UiErrorMessage(pub String);
+pub(crate) struct UiErrorMessage(pub(crate) String);
 
 /// `UI_INFO_MESSAGE`: the same line in the same frame, in yellow, already
 /// resolved to text.
@@ -100,10 +100,10 @@ pub struct UiErrorMessage(pub String);
 /// the other by name, so merging them would leave a name unmatched.
 ///
 /// Which of the two a given message uses is fixed per message by the 1.12.1
-/// client, not chosen here; see [`super::messages::UiInfo`]. "New
+/// client, not chosen here; see [`super::messages::Announce`]. "New
 /// flight path discovered!" is one of these.
 #[derive(Message, Debug, Clone)]
-pub struct UiInfoMessage(pub String);
+pub(crate) struct UiInfoMessage(pub(crate) String);
 
 /// `PLAYER_TARGET_CHANGED`: the selection is now something else, including
 /// nothing.
@@ -113,7 +113,7 @@ pub struct UiInfoMessage(pub String);
 /// target is out of range. A spurious write costs a whole bar's update; a
 /// missed one leaves the bar stale.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerTargetChanged;
+pub(crate) struct PlayerTargetChanged;
 
 /// `UPDATE_MOUSEOVER_UNIT`: the `mouseover` token now names something else.
 ///
@@ -131,7 +131,7 @@ pub struct PlayerTargetChanged;
 /// [`crate::lua::widgets::tooltip::show_world_tooltip`] fills the tooltip and is
 /// ordered before the dispatch that delivers this.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MouseoverUnitChanged;
+pub(crate) struct MouseoverUnitChanged;
 
 /// `ACTIONBAR_SLOT_CHANGED`: one slot's contents are different.
 ///
@@ -143,10 +143,10 @@ pub struct MouseoverUnitChanged;
 ///
 /// so a whole-bar rebuild is one message rather than twelve.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarSlotChanged(pub u8);
+pub(crate) struct ActionbarSlotChanged(pub(crate) u8);
 
 /// The slot number meaning "all of them"; see [`ActionbarSlotChanged`].
-pub const ALL_SLOTS: u8 = 0;
+pub(crate) const ALL_SLOTS: u8 = 0;
 
 /// `ACTIONBAR_PAGE_CHANGED`: the bar is showing a different twelve slots.
 ///
@@ -160,7 +160,7 @@ pub const ALL_SLOTS: u8 = 0;
 /// Without it, `ActionBarUpButton` and its partner, the arrows either side of
 /// the bar, fail on the missing call; `--audit --clicks` found this.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarPageChanged;
+pub(crate) struct ActionbarPageChanged;
 
 /// `UPDATE_BONUS_ACTIONBAR`: the character changed form, so a different twelve
 /// of the 120 slots is the bar.
@@ -180,7 +180,7 @@ pub struct ActionbarPageChanged;
 /// character is blank; the actions are at slots 73..108, which are reached only
 /// through the bonus bar.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarBonusChanged;
+pub(crate) struct ActionbarBonusChanged;
 
 /// `ACTIONBAR_SHOWGRID`: the cursor is carrying something that could go on a
 /// button, so show the empty buttons.
@@ -197,12 +197,12 @@ pub struct ActionbarBonusChanged;
 /// visible for the rest of the session, so [`super::cursor`] raises them on the
 /// cursor's transition rather than per call.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarShowGrid;
+pub(crate) struct ActionbarShowGrid;
 
 /// `ACTIONBAR_HIDEGRID`, the other edge. See [`ActionbarShowGrid`] for why the
 /// pair must be balanced.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarHideGrid;
+pub(crate) struct ActionbarHideGrid;
 
 /// `DELETE_ITEM_CONFIRM`: an item was dropped on the world, and the client is
 /// asking whether to destroy it.
@@ -216,7 +216,7 @@ pub struct ActionbarHideGrid;
 /// The two answers come back as API calls: Accept is `DeleteCursorItem()` and
 /// Cancel is `ClearCursor()`.
 #[derive(Message, Debug, Clone)]
-pub struct DeleteItemConfirm {
+pub(crate) struct DeleteItemConfirm {
     pub name: String,
     pub quality: u32,
 }
@@ -229,7 +229,7 @@ pub struct DeleteItemConfirm {
 /// name. A reader re-asks [`super::api::get_action_cooldown`] for each slot it
 /// owns.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarUpdateCooldown;
+pub(crate) struct ActionbarUpdateCooldown;
 
 /// `SPELLS_CHANGED`: the spellbook is different: a spell learned, unlearned, or
 /// the whole book restated at login.
@@ -239,7 +239,7 @@ pub struct ActionbarUpdateCooldown;
 /// rather than a rebuild pushed to the panel. The 1.12.1 client raises it after
 /// the book is sorted, so the book is already in order when a reader runs.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellsChanged;
+pub(crate) struct SpellsChanged;
 
 /// `PET_BAR_UPDATE`: the pet's bar was restated.
 ///
@@ -253,7 +253,7 @@ pub struct SpellsChanged;
 /// guid. `PetActionBar_OnEvent` hides the bar when `PetHasActionBar()` returns
 /// nil, so it needs the event to hide the bar.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetBarChanged;
+pub(crate) struct PetBarChanged;
 
 /// `PET_BAR_UPDATE_COOLDOWN`, which the same packet also implies.
 ///
@@ -261,7 +261,7 @@ pub struct PetBarChanged;
 /// registers for both and runs a different handler for the cooldown. This is
 /// the same split as `ACTIONBAR_UPDATE_COOLDOWN` and `ACTIONBAR_SLOT_CHANGED`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetBarCooldownChanged;
+pub(crate) struct PetBarCooldownChanged;
 
 /// `PET_BAR_SHOWGRID` / `PET_BAR_HIDEGRID`: a pet action is on the cursor.
 ///
@@ -270,10 +270,10 @@ pub struct PetBarCooldownChanged;
 /// hidden empty button takes no mouse input, so without the show there is
 /// nowhere on the bar to drop the carried action.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetBarShowGrid;
+pub(crate) struct PetBarShowGrid;
 
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetBarHideGrid;
+pub(crate) struct PetBarHideGrid;
 
 /// `CONFIRM_PET_UNLEARN`: a pet trainer is asking whether to reset the pet's
 /// skills. `arg1` is the cost in copper. `UIParent.lua:540` answers with
@@ -282,7 +282,7 @@ pub struct PetBarHideGrid;
 /// `ConfirmPetUnlearn()`. The pet's guid is kept outside Lua; see
 /// [`super::untrainer`], which uses the same arrangement as [`ConfirmBinder`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ConfirmPetUnlearn {
+pub(crate) struct ConfirmPetUnlearn {
     /// What resetting the skills costs, in copper.
     pub cost: u32,
 }
@@ -295,14 +295,14 @@ pub struct ConfirmPetUnlearn {
 /// version and raises the event when the list differs, which produces the same
 /// states and the same event.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateShapeshiftForms;
+pub(crate) struct UpdateShapeshiftForms;
 
 /// The pet played a sound: `SMSG_PET_ACTION_SOUND`, an internal message with no
 /// FrameXML name. `talk` is a [`vale_protocol::play::pet::pet_talk`] selector;
 /// the only reader is `sound::combat`, which plays it on the unit's bark
 /// channel.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetTalkHeard {
+pub(crate) struct PetTalkHeard {
     pub pet: u64,
     pub talk: u32,
 }
@@ -310,7 +310,7 @@ pub struct PetTalkHeard {
 /// The pet's dismissal sound: `SMSG_PET_DISMISS_SOUND`, also internal. The
 /// packet names a model and a position because the pet itself is already gone.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetDismissHeard(pub vale_protocol::play::pet::PetDismissSound);
+pub(crate) struct PetDismissHeard(pub(crate) vale_protocol::play::pet::PetDismissSound);
 
 /// `UNIT_PET_EXPERIENCE`: the pet's experience changed.
 ///
@@ -319,7 +319,7 @@ pub struct PetDismissHeard(pub vale_protocol::play::pet::PetDismissSound);
 /// when `UNIT_FIELD_PETEXPERIENCE` or `PETNEXTLEVELEXP` changes; no packet
 /// announces it apart from the field update itself.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitPetExperience;
+pub(crate) struct UnitPetExperience;
 
 /// `UNIT_PET_TRAINING_POINTS`: the pet's training points or loyalty changed.
 ///
@@ -328,7 +328,7 @@ pub struct UnitPetExperience;
 /// the full redraw, which also re-reads `GetPetLoyalty`. A loyalty-level change
 /// therefore raises this too; the panel has no loyalty event of its own.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitPetTrainingPoints;
+pub(crate) struct UnitPetTrainingPoints;
 
 /// `SPELL_UPDATE_COOLDOWN`: the spellbook's counterpart of
 /// [`ActionbarUpdateCooldown`].
@@ -338,7 +338,7 @@ pub struct UnitPetTrainingPoints;
 /// first leaves the spellbook's cooldown swirls stopped. This is written beside
 /// its sibling at every call, so the two stay in step.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellUpdateCooldown;
+pub(crate) struct SpellUpdateCooldown;
 
 /// `CURRENT_SPELL_CAST_CHANGED`: the spell being cast is now a different one.
 ///
@@ -346,12 +346,12 @@ pub struct SpellUpdateCooldown;
 /// puts the pressed border on the spell currently being cast. Carries nothing,
 /// because the reader re-asks `IsCurrentCast` per button.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CurrentSpellCastChanged;
+pub(crate) struct CurrentSpellCastChanged;
 
 /// `ACTIONBAR_UPDATE_STATE`: a button's checked state changed: auto-attack
 /// turned on or off.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarUpdateState;
+pub(crate) struct ActionbarUpdateState;
 
 /// `ACTIONBAR_UPDATE_USABLE`: whether the buttons can be pressed may have
 /// changed, which for this client means the player's power changed.
@@ -369,7 +369,7 @@ pub struct ActionbarUpdateState;
 /// unaffordable at once, so there is no single button to name and every button
 /// re-asks for itself.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ActionbarUpdateUsable;
+pub(crate) struct ActionbarUpdateUsable;
 
 /// `START_AUTOREPEAT_SPELL` / `STOP_AUTOREPEAT_SPELL`: the ranged auto-repeat
 /// started or stopped.
@@ -389,18 +389,18 @@ pub struct ActionbarUpdateUsable;
 /// start (the server does not acknowledge the cast as special), and the stop is
 /// `SMSG_CANCEL_AUTO_REPEAT`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct StartAutorepeatSpell;
+pub(crate) struct StartAutorepeatSpell;
 
 /// See [`StartAutorepeatSpell`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct StopAutorepeatSpell;
+pub(crate) struct StopAutorepeatSpell;
 
 /// `SPELLCAST_START`: arg1 is the spell's name, arg2 its duration in
 /// milliseconds, in FrameXML's order.
 #[derive(Message, Debug, Clone)]
-pub struct SpellcastStart {
+pub(crate) struct SpellcastStart {
     pub name: String,
-    pub duration_ms: u32,
+    pub(crate) duration_ms: u32,
 }
 
 /// `SPELLCAST_STOP`: the cast finished, one way or another.
@@ -410,16 +410,16 @@ pub struct SpellcastStart {
 /// not complete. `CastingBarFrame_OnEvent` branches on which, to colour the bar
 /// before it fades. All three end the bar.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellcastStop;
+pub(crate) struct SpellcastStop;
 
 /// `SPELLCAST_FAILED`: refused, by the server or by the client before the send.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellcastFailed;
+pub(crate) struct SpellcastFailed;
 
 /// `SPELLCAST_INTERRUPTED`: a cast that had started was stopped by something
 /// that happened to the caster.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellcastInterrupted;
+pub(crate) struct SpellcastInterrupted;
 
 /// `SPELLCAST_DELAYED`: arg1 is how much longer the cast will take, in
 /// milliseconds. It is a difference, not a new length.
@@ -433,8 +433,8 @@ pub struct SpellcastInterrupted;
 /// states how much was added to a cast. The two numbers are not
 /// interchangeable.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellcastDelayed {
-    pub delay_ms: u32,
+pub(crate) struct SpellcastDelayed {
+    pub(crate) delay_ms: u32,
 }
 
 /// `SPELLCAST_CHANNEL_START`: arg1 is the duration and arg2 the name, the
@@ -445,8 +445,8 @@ pub struct SpellcastDelayed {
 /// branches above it, in the same file. Raising the arguments in
 /// [`SpellcastStart`]'s order puts a number where the spell's name goes.
 #[derive(Message, Debug, Clone)]
-pub struct SpellcastChannelStart {
-    pub duration_ms: u32,
+pub(crate) struct SpellcastChannelStart {
+    pub(crate) duration_ms: u32,
     pub name: String,
 }
 
@@ -456,13 +456,13 @@ pub struct SpellcastChannelStart {
 /// `CastingBarFrame_OnEvent`'s arithmetic. A channel that is pushed back does
 /// not get a longer bar; its bar shows less elapsed.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellcastChannelUpdate {
-    pub remaining_ms: u32,
+pub(crate) struct SpellcastChannelUpdate {
+    pub(crate) remaining_ms: u32,
 }
 
 /// `SPELLCAST_CHANNEL_STOP`: no args. The channel is over, however it ended.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellcastChannelStop;
+pub(crate) struct SpellcastChannelStop;
 
 /// `MIRROR_TIMER_START`: a bar the server counts down, with the six arguments
 /// `MirrorTimer_Show` takes.
@@ -474,13 +474,13 @@ pub struct SpellcastChannelStop;
 /// which key `MirrorTimerColors`. See [`vale_protocol::play::timers`] and
 /// [`super::timers`], which fills this.
 #[derive(Message, Debug, Clone)]
-pub struct MirrorTimerStart {
-    pub timer: String,
-    pub remaining_ms: u32,
-    pub duration_ms: u32,
+pub(crate) struct MirrorTimerStart {
+    pub(crate) timer: String,
+    pub(crate) remaining_ms: u32,
+    pub(crate) duration_ms: u32,
     /// Seconds of bar per second, signed: negative drains.
     pub scale: i32,
-    pub paused: bool,
+    pub(crate) paused: bool,
     /// Already resolved from `GlobalStrings.lua`; empty for a key the file does
     /// not carry, as in the 1.12.1 client.
     pub label: String,
@@ -494,30 +494,30 @@ pub struct MirrorTimerStart {
 /// through `GetTitleText`, `GetQuestText` and the rest. The packet's contents
 /// reach the panel through those calls, not through `arg1`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestGreetingEvent;
+pub(crate) struct QuestGreetingEvent;
 
 /// `QUEST_DETAIL`: the page shown before accepting.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestDetail;
+pub(crate) struct QuestDetail;
 
 /// `QUEST_PROGRESS`: a quest in the log that is not finished.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestProgressEvent;
+pub(crate) struct QuestProgressEvent;
 
 /// `QUEST_COMPLETE`: a quest in the log that is finished, with its rewards.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestCompleteEvent;
+pub(crate) struct QuestCompleteEvent;
 
 /// `QUEST_FINISHED`: the quest dialog is over. This is the only event that
 /// closes the panel: `QuestFrame_OnEvent`'s handler for it is
 /// `HideUIPanel(this)`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestFinished;
+pub(crate) struct QuestFinished;
 
 /// `QUEST_ITEM_UPDATE`: an objective changed while a page is open, so the item
 /// counts on it are stale.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestItemUpdate;
+pub(crate) struct QuestItemUpdate;
 
 /// `QUEST_LOG_UPDATE`: the log changed, or the text behind it arrived.
 ///
@@ -525,17 +525,17 @@ pub struct QuestItemUpdate;
 /// fields but changes what the panel shows, so a panel told only about field
 /// changes would draw a list of numbered blank rows and never redraw it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestLogUpdate;
+pub(crate) struct QuestLogUpdate;
 
 /// `GOSSIP_SHOW`, the first of the gossip window's two events; the merchant
 /// has three more. None carries an argument: each panel re-reads everything
 /// through its own API functions, as the quest panel does.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct GossipShow;
+pub(crate) struct GossipShow;
 
 /// `GOSSIP_CLOSED`: the window was closed, by the client or by the server.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct GossipClosed;
+pub(crate) struct GossipClosed;
 
 /// `CONFIRM_BINDER`: an innkeeper is asking to be made the character's home.
 /// `arg1` is the place's name, which the popup formats into `"Do you want to
@@ -545,16 +545,10 @@ pub struct GossipClosed;
 /// `StaticPopup_Show("CONFIRM_BINDER", arg1)`, and the popup's Accept calls
 /// `ConfirmBinder()`. Without this event the gossip option closes its window
 /// and nothing else happens.
-///
-/// The guid is carried beside the name because `ConfirmBinder` has to name the
-/// innkeeper on the wire and Lua never sees it; see
-/// [`vale_protocol::play::bindpoint`].
 #[derive(Message, Debug, Clone)]
-pub struct ConfirmBinder {
+pub(crate) struct ConfirmBinder {
     /// What the sentence is about: the sub-zone the inn stands in.
     pub place: String,
-    /// The innkeeper's guid, for `CMSG_BINDER_ACTIVATE`.
-    pub guid: u64,
 }
 
 /// `DUEL_REQUESTED`: another player has challenged the player to a duel.
@@ -563,40 +557,40 @@ pub struct ConfirmBinder {
 /// `"%s has challenged you to a duel."`. Raised only for a challenger in view;
 /// see [`super::duel`].
 #[derive(Message, Debug, Clone)]
-pub struct DuelRequested(pub String);
+pub(crate) struct DuelRequested(pub(crate) String);
 
 /// `DUEL_OUTOFBOUNDS`: the player has left the duel flag's area. The handler
 /// shows the ten-second forfeit popup.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct DuelOutOfBounds;
+pub(crate) struct DuelOutOfBounds;
 
 /// `DUEL_INBOUNDS`: the player has returned to the area, which hides the
 /// popup.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct DuelInBounds;
+pub(crate) struct DuelInBounds;
 
 /// `DUEL_FINISHED`: the duel is over, however it ended. The handler hides
 /// both duel popups.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct DuelFinished;
+pub(crate) struct DuelFinished;
 
 /// `INSPECT_HONOR_UPDATE`: the inspected player's honor tab data has arrived.
 /// No arguments: `InspectHonorFrame` reads `GetInspectHonorData`. See
 /// [`super::inspect`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct InspectHonorUpdate;
+pub(crate) struct InspectHonorUpdate;
 
 /// `CONFIRM_SUMMON`: another player is summoning the player. No arguments: the
 /// popup reads the three `GetSummonConfirm*` functions instead. See
 /// [`super::summon`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ConfirmSummon;
+pub(crate) struct ConfirmSummon;
 
 /// `TIME_PLAYED_MSG`: the answer to `/played`. `arg1` is the total and `arg2`
 /// the time at this level, both in seconds, and `ChatFrame_DisplayTimePlayed`
 /// formats them.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TimePlayedMsg {
+pub(crate) struct TimePlayedMsg {
     pub total: u32,
     pub level: u32,
 }
@@ -605,13 +599,13 @@ pub struct TimePlayedMsg {
 /// No arguments: `WorldStateFrame.lua` re-reads `GetNumWorldStateUI` and
 /// `GetWorldStateUIInfo`. See [`super::worldstate`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateWorldStates;
+pub(crate) struct UpdateWorldStates;
 
 /// `TUTORIAL_TRIGGER`: a tutorial tip should be offered. `arg1` is the
 /// tutorial's id, 1 to 50, which `TutorialFrame_NewTutorial` queues as an
 /// alert button. See [`super::tutorial`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TutorialTrigger {
+pub(crate) struct TutorialTrigger {
     pub id: u32,
 }
 
@@ -619,7 +613,7 @@ pub struct TutorialTrigger {
 /// their name and `arg2` the quest's title; `UIParent.lua` shows them in the
 /// `QUEST_ACCEPT` popup. See [`super::questshare`].
 #[derive(Message, Debug, Clone)]
-pub struct QuestAcceptConfirm {
+pub(crate) struct QuestAcceptConfirm {
     pub name: String,
     pub title: String,
 }
@@ -628,14 +622,14 @@ pub struct QuestAcceptConfirm {
 /// arguments: `TargetFrame.lua` re-reads `GetRaidTargetIndex("target")`. See
 /// [`super::raidtarget`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct RaidTargetUpdated;
+pub(crate) struct RaidTargetUpdated;
 
 /// `BAG_UPDATE_COOLDOWN`: an item's cooldown changed. No arguments: the bags
 /// re-read `GetContainerItemCooldown` and the character sheet
 /// `GetInventoryItemCooldown`. Raised beside the two cooldown events above when
 /// an `SMSG_ITEM_COOLDOWN` arrives.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct BagUpdateCooldown;
+pub(crate) struct BagUpdateCooldown;
 
 /// `ITEM_TEXT_BEGIN`: the player started reading an item or object, and its
 /// title and material are known before any of its text has arrived.
@@ -644,12 +638,12 @@ pub struct BagUpdateCooldown;
 /// It is separate from the text arriving because the window is set up first and
 /// filled afterwards. See [`super::pagetext`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ItemTextBegin;
+pub(crate) struct ItemTextBegin;
 
 /// `ITEM_TEXT_READY`: a page arrived, or the shown page changed. This event
 /// shows the panel: its handler ends in `ShowUIPanel(this)`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ItemTextReady;
+pub(crate) struct ItemTextReady;
 
 /// `ITEM_TEXT_CLOSED`: the text window was closed.
 ///
@@ -658,19 +652,19 @@ pub struct ItemTextReady;
 /// translation to send. The panel registers it and nothing raises it, which is
 /// also true of the 1.12.1 client. See [`super::pagetext`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ItemTextClosed;
+pub(crate) struct ItemTextClosed;
 
 /// `MERCHANT_SHOW`: the merchant window opened.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MerchantShow;
+pub(crate) struct MerchantShow;
 
 /// `MERCHANT_UPDATE`: a row changed: stock changed, or an item name arrived.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MerchantUpdate;
+pub(crate) struct MerchantUpdate;
 
 /// `MERCHANT_CLOSED`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MerchantClosed;
+pub(crate) struct MerchantClosed;
 
 /// `PARTY_MEMBERS_CHANGED`: the party roster may have changed and readers must
 /// re-read it. It does not mean that a member joined.
@@ -681,7 +675,7 @@ pub struct MerchantClosed;
 /// [`crate::interface::party`], which decides that a member going AFK does not
 /// raise this.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PartyMembersChanged;
+pub(crate) struct PartyMembersChanged;
 
 /// `RAID_ROSTER_UPDATE`: the raid roster may have changed. Raised beside
 /// [`PartyMembersChanged`], not instead of it.
@@ -697,7 +691,7 @@ pub struct PartyMembersChanged;
 /// from party to raid. See [`crate::interface::raid`], which separates a
 /// membership change from a member going AFK.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct RaidRosterUpdate;
+pub(crate) struct RaidRosterUpdate;
 
 /// `READY_CHECK`: a group leader or assistant has started a ready check.
 ///
@@ -705,7 +699,7 @@ pub struct RaidRosterUpdate;
 /// `ShowReadyCheck` finds who asked by searching the roster for the row whose
 /// rank is 2. Registered by `UIParent.lua` and answered by that one call.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ReadyCheck;
+pub(crate) struct ReadyCheck;
 
 /// `SKILL_LINES_CHANGED`: the skills list changed, with no detail.
 ///
@@ -716,7 +710,7 @@ pub struct ReadyCheck;
 /// after the character entered the world. [`PartyMembersChanged`] has the same
 /// re-read-everything form.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SkillLinesChanged;
+pub(crate) struct SkillLinesChanged;
 
 /// `CHARACTER_POINTS_CHANGED`: the unspent point counters changed.
 ///
@@ -739,12 +733,12 @@ pub struct SkillLinesChanged;
 ///
 /// `TalentFrame` and `SkillFrame` read neither argument and rebuild whole.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CharacterPointsChanged {
+pub(crate) struct CharacterPointsChanged {
     /// The change in unspent talent points since the last raise.
     pub talent: i32,
     /// The change in unspent profession points, which is the value the chat
     /// frame reports.
-    pub profession: i32,
+    pub(crate) profession: i32,
 }
 
 /// `UPDATE_FACTION`: the reputation list changed, with no detail.
@@ -760,7 +754,7 @@ pub struct CharacterPointsChanged {
 /// `MainMenuBar.lua`, the bar above the action bar. 1.12 has no `TokenFrame`
 /// and no other reader.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateFaction;
+pub(crate) struct UpdateFaction;
 
 /// `FRIENDLIST_UPDATE`: the friends list changed, with no detail, like
 /// [`UpdateFaction`].
@@ -770,11 +764,11 @@ pub struct UpdateFaction;
 /// that was shown as Unknown. `FriendsList_Update` rebuilds every row from
 /// `GetFriendInfo`, so each raise costs a redraw of fifteen buttons.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct FriendListUpdate;
+pub(crate) struct FriendListUpdate;
 
 /// `IGNORELIST_UPDATE`: the ignore list changed, with no detail.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct IgnoreListUpdate;
+pub(crate) struct IgnoreListUpdate;
 
 /// `WHO_LIST_UPDATE`: a `/who` was answered.
 ///
@@ -782,7 +776,7 @@ pub struct IgnoreListUpdate;
 /// which selects the Who tab. A `/who` typed into the chat frame therefore opens
 /// the panel on the Who tab.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct WhoListUpdate;
+pub(crate) struct WhoListUpdate;
 
 /// `FRIENDLIST_SHOW`: open the panel on the friends tab. This is different
 /// from [`FriendListUpdate`].
@@ -791,7 +785,7 @@ pub struct WhoListUpdate;
 /// by asking the server for the list. This event is raised when that answer
 /// arrives for a request to show the list, rather than when the list changed.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct FriendListShow;
+pub(crate) struct FriendListShow;
 
 /// `GUILD_ROSTER_UPDATE`: the guild roster changed.
 ///
@@ -800,7 +794,7 @@ pub struct FriendListShow;
 /// when the server stated a change without sending the roster, and clear
 /// when a roster arrived. See [`crate::interface::guild`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct GuildRosterUpdate {
+pub(crate) struct GuildRosterUpdate {
     pub refresh: bool,
 }
 
@@ -808,20 +802,20 @@ pub struct GuildRosterUpdate {
 /// of its guild arrived. The character sheet redraws its guild line on it and
 /// the social window enables or disables its guild tab.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerGuildUpdate;
+pub(crate) struct PlayerGuildUpdate;
 
 /// `GUILD_MOTD`: the guild's message of the day, as the first argument.
 /// `ChatFrame_OnEvent` prints it and `FriendsFrame_OnEvent` keeps it for the
 /// guild tab.
 #[derive(Message, Debug, Clone)]
-pub struct GuildMotd(pub String);
+pub(crate) struct GuildMotd(pub(crate) String);
 
 /// `GUILD_INVITE_REQUEST`: an invitation to a guild. The arguments are the
 /// inviter's name and the guild's name, and `UIParent_OnEvent` shows the
 /// `GUILD_INVITE` popup with them.
 #[derive(Message, Debug, Clone)]
-pub struct GuildInviteRequest {
-    pub inviter: String,
+pub(crate) struct GuildInviteRequest {
+    pub(crate) inviter: String,
     pub guild: String,
 }
 
@@ -830,50 +824,50 @@ pub struct GuildInviteRequest {
 /// `PetitionFrame_Update`, which reads the whole charter again. See
 /// [`crate::interface::petition`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetitionShow;
+pub(crate) struct PetitionShow;
 
 /// `PETITION_CLOSED`: the charter window is to close. Its handler is
 /// `HideUIPanel(PetitionFrame)`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetitionClosed;
+pub(crate) struct PetitionClosed;
 
 /// `GUILD_REGISTRAR_SHOW`: a guild registrar's offer arrived.
 /// `GuildRegistrarFrame`'s handler shows the frame.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct GuildRegistrarShow;
+pub(crate) struct GuildRegistrarShow;
 
 /// `GUILD_REGISTRAR_CLOSED`: the registrar window is to close.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct GuildRegistrarClosed;
+pub(crate) struct GuildRegistrarClosed;
 
 /// `OPEN_TABARD_FRAME`: a tabard designer opened its window.
 /// `TabardFrame_OnEvent` points `TabardModel` at the character and shows the
 /// frame. See [`crate::interface::tabard`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct OpenTabardFrame;
+pub(crate) struct OpenTabardFrame;
 
 /// `CLOSE_TABARD_FRAME`: the tabard designer's window is to close.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CloseTabardFrame;
+pub(crate) struct CloseTabardFrame;
 
 /// `TABARD_CANSAVE_CHANGED`: whether the design can be saved changed.
 /// `TabardFrame_UpdateButtons` reads `TabardModel:CanSaveTabardNow()` on it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TabardCansaveChanged;
+pub(crate) struct TabardCansaveChanged;
 
 /// `TABARD_SAVE_PENDING`: a save was sent and has not been answered. The
 /// handler is the same `TabardFrame_UpdateButtons`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TabardSavePending;
+pub(crate) struct TabardSavePending;
 
 /// `PARTY_LEADER_CHANGED`: the party leader changed. Raised from the roster's
 /// leader guid rather than from `SMSG_GROUP_SET_LEADER`, which carries a name.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PartyLeaderChanged;
+pub(crate) struct PartyLeaderChanged;
 
 /// `PARTY_LOOT_METHOD_CHANGED`: the loot method or its threshold changed.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PartyLootMethodChanged;
+pub(crate) struct PartyLootMethodChanged;
 
 /// `PARTY_INVITE_REQUEST`: another player invited the player to a party, and
 /// `arg1` is their name.
@@ -882,7 +876,7 @@ pub struct PartyLootMethodChanged;
 /// client needs no popup of its own. The popup is FrameXML's, and its Accept
 /// and Decline call `AcceptGroup()` and `DeclineGroup()`.
 #[derive(Message, Debug, Clone)]
-pub struct PartyInviteRequest {
+pub(crate) struct PartyInviteRequest {
     pub from: String,
 }
 
@@ -891,12 +885,12 @@ pub struct PartyInviteRequest {
 /// `ClassTrainerFrame_LoadUI()` and only then `ClassTrainerFrame_Show()`. See
 /// [`crate::interface::trainer`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TrainerShow;
+pub(crate) struct TrainerShow;
 
 /// `TRAINER_UPDATE`: the rows changed: a filter changed, a line collapsed, or a
 /// service was learned. Each of the three trainer filter setters raises it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TrainerUpdate;
+pub(crate) struct TrainerUpdate;
 
 /// `TRADE_SKILL_SHOW`: a profession window opened. The player's own
 /// `SMSG_SPELL_GO` completed a spell whose `Effect[0]` is 47 with
@@ -905,7 +899,7 @@ pub struct TrainerUpdate;
 /// [`super::tradeskill`], and `vale_assets::tables::tradeskill` for how the
 /// deciding column was identified.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeSkillShow;
+pub(crate) struct TradeSkillShow;
 
 /// `TRADE_SKILL_UPDATE`: the rows changed: a rank changed, a reagent count
 /// changed, a created item's template arrived, or a filter or collapse was
@@ -913,40 +907,40 @@ pub struct TradeSkillShow;
 /// an item it requested for the list arrives. It has the same re-read form as
 /// `TRAINER_UPDATE`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeSkillUpdate;
+pub(crate) struct TradeSkillUpdate;
 
 /// `TRADE_SKILL_CLOSE`: raised by `CloseTradeSkill()`, and by casting the same
 /// opening spell again while its window is shown.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeSkillClose;
+pub(crate) struct TradeSkillClose;
 
 /// `CRAFT_SHOW`: the craft window's equivalent of [`TradeSkillShow`]. The
 /// completed spell's `EffectMiscValue[0]` was non-zero, which in 5875's data is
 /// Enchanting (3) and Beast Training (1). See
 /// `vale_assets::tables::tradeskill::TRAINING_KIND`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CraftShow;
+pub(crate) struct CraftShow;
 
 /// `CRAFT_UPDATE`: the craft rows changed, on the same terms as
 /// [`TradeSkillUpdate`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CraftUpdate;
+pub(crate) struct CraftUpdate;
 
 /// `CRAFT_CLOSE`: raised by `CloseCraft()`, and by casting the opening spell
 /// again, which toggles the window.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CraftClose;
+pub(crate) struct CraftClose;
 
 /// `UPDATE_TRADESKILL_RECAST`: the repeat counter changed. The 1.12.1 client
 /// raises it when the repeat spell and count are set and when they are
 /// cleared. `TradeSkillFrame_OnEvent` answers it by putting
 /// `GetTradeskillRepeatCount()` back in the input box.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateTradeskillRecast;
+pub(crate) struct UpdateTradeskillRecast;
 
 /// `TRAINER_CLOSED`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TrainerClosed;
+pub(crate) struct TrainerClosed;
 
 /// `PET_STABLE_SHOW`, the first of the stable master's four events.
 /// `PetStable.lua` registers all four and none carries an argument: the panel
@@ -956,22 +950,22 @@ pub struct TrainerClosed;
 /// `ShowUIPanel(this)`. The handler for `PET_STABLE_UPDATE_PAPERDOLL` is only
 /// `SetPetStablePaperdoll(PetStableModel)`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetStableShow;
+pub(crate) struct PetStableShow;
 
 /// `PET_STABLE_UPDATE`: the list changed: it arrived, or a stable action
 /// succeeded.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetStableUpdate;
+pub(crate) struct PetStableUpdate;
 
 /// `PET_STABLE_UPDATE_PAPERDOLL`: point the `<PlayerModel>` at the selected pet,
 /// and nothing else.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetStableUpdatePaperdoll;
+pub(crate) struct PetStableUpdatePaperdoll;
 
 /// `PET_STABLE_CLOSED`: the window was closed, by the client or by the server.
 /// Its `OnEvent` handler is `HideUIPanel(this)`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PetStableClosed;
+pub(crate) struct PetStableClosed;
 
 /// `BANKFRAME_OPENED`, the first of the bank's four events. `BankFrame.lua`
 /// registers all four: two open and close the frame, two redraw it.
@@ -980,10 +974,10 @@ pub struct PetStableClosed;
 /// each slot button's own `OnEvent` redraws on it too; `BANKFRAME_CLOSED` runs
 /// `HideUIPanel`. See [`crate::interface::bank`] for what raises them.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct BankframeOpened;
+pub(crate) struct BankframeOpened;
 
 #[derive(Message, Debug, Clone, Copy)]
-pub struct BankframeClosed;
+pub(crate) struct BankframeClosed;
 
 /// `PLAYERBANKSLOTS_CHANGED`: a bank slot, or one of the bank's six bag slots,
 /// holds something else. The thirty bank buttons redraw on it. The argument is
@@ -992,14 +986,14 @@ pub struct BankframeClosed;
 /// in [`crate::interface::items`], because the bank's contents arrive as update
 /// fields, never as a packet.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerbankslotsChanged(pub u32);
+pub(crate) struct PlayerbankslotsChanged(pub(crate) u32);
 
 /// `PLAYERBANKBAGSLOTS_CHANGED`: the purchased bank bag slot count changed.
 /// That count is the third byte of `PLAYER_BYTES_2`, and its change is the
 /// only thing a successful purchase sends. `BankFrame_OnEvent` answers with
 /// `UpdateBagSlotStatus`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerbankbagslotsChanged;
+pub(crate) struct PlayerbankbagslotsChanged;
 
 // ---- Mail events ----
 //
@@ -1011,12 +1005,12 @@ pub struct PlayerbankbagslotsChanged;
 /// answers it with `ShowUIPanel`, `SendMailFrame_Update`, tab 1 and
 /// `CheckInbox()`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MailShow;
+pub(crate) struct MailShow;
 
 /// `MAIL_CLOSED`: the window was closed, by the close button or by walking
 /// away. The handler is `HideUIPanel(MailFrame)` alone.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MailClosed;
+pub(crate) struct MailClosed;
 
 /// `MAIL_INBOX_UPDATE`: the inbox list changed, or a request for it was
 /// declined.
@@ -1026,17 +1020,17 @@ pub struct MailClosed;
 /// The panel called `CheckInbox()` expecting the list, and without the event
 /// the rows it already has are never redrawn.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MailInboxUpdate;
+pub(crate) struct MailInboxUpdate;
 
 /// `MAIL_SEND_INFO_UPDATE`: the draft's attachment changed.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MailSendInfoUpdate;
+pub(crate) struct MailSendInfoUpdate;
 
 /// `MAIL_SEND_SUCCESS`: the letter was sent. The handler runs
 /// `SendMailFrame_Reset`, plays a page-turn sound, and returns to the inbox tab
 /// if this was a reply.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MailSendSuccess;
+pub(crate) struct MailSendSuccess;
 
 /// `MAIL_FAILED`: sending failed. This is the only event that re-enables the
 /// Send button.
@@ -1046,15 +1040,15 @@ pub struct MailSendSuccess;
 /// that reason this is a separate name from `MAIL_SEND_SUCCESS` rather than one
 /// event with an outcome argument.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MailFailed;
+pub(crate) struct MailFailed;
 
 /// `SEND_MAIL_MONEY_CHANGED`: `SetSendMailMoney` stored an amount.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SendMailMoneyChanged;
+pub(crate) struct SendMailMoneyChanged;
 
 /// `SEND_MAIL_COD_CHANGED`: `SetSendMailCOD` stored an amount.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SendMailCodChanged;
+pub(crate) struct SendMailCodChanged;
 
 /// `CLOSE_INBOX_ITEM`: the open letter was removed, carrying its mail id.
 ///
@@ -1062,7 +1056,7 @@ pub struct SendMailCodChanged;
 /// hides `OpenMailFrame` only when they match. A letter deleted from a list of
 /// ten must not close a different letter the player is reading.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CloseInboxItem(pub u32);
+pub(crate) struct CloseInboxItem(pub(crate) u32);
 
 /// `UPDATE_PENDING_MAIL`: the new-mail envelope on the minimap may need to
 /// show or hide.
@@ -1072,7 +1066,7 @@ pub struct CloseInboxItem(pub u32);
 /// `SMSG_RECEIVED_MAIL` arrives, and when the client's countdown to the next
 /// mail reaches zero; see [`crate::interface::mail`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdatePendingMail;
+pub(crate) struct UpdatePendingMail;
 
 /// `QUEST_WATCH_UPDATE`: one quest's objectives changed. Carries the quest log
 /// index, not the quest id.
@@ -1082,26 +1076,26 @@ pub struct UpdatePendingMail;
 /// quest with no error, because the id is also a valid index. See
 /// [`crate::interface::quest`], where the conversion happens.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct QuestWatchUpdate(pub u32);
+pub(crate) struct QuestWatchUpdate(pub(crate) u32);
 
 /// `TAXIMAP_OPENED`: a flight master's map is open. No arguments:
 /// `TaxiFrame_OnEvent` re-reads `NumTaxiNodes()` and every node's type, and
 /// ends in the `ShowUIPanel(this)` that shows the panel. See
 /// [`crate::interface::taxi`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TaximapOpened;
+pub(crate) struct TaximapOpened;
 
 /// `TAXIMAP_CLOSED`: the frame's handler is `HideUIPanel(this)`, so this event
 /// is how the client closes the window. No packet raises it; `CloseTaxiMap()`
 /// does.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TaximapClosed;
+pub(crate) struct TaximapClosed;
 
 /// `LOOT_OPENED`: a loot window opened on a corpse or object. No arguments:
 /// `ShowUIPanel(LootFrame)` triggers `LootFrame_OnShow`, which re-reads
 /// `GetNumLootItems()`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct LootOpened;
+pub(crate) struct LootOpened;
 
 /// `LOOT_SLOT_CLEARED`: arg1 is the row, one-based, as the interface counts
 /// rows.
@@ -1111,7 +1105,7 @@ pub struct LootOpened;
 /// `LootButton<n>`, so a sparse server index hides the wrong button or none.
 /// The conversion happens once, in `vale_protocol::play::loot::Loot::remove`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct LootSlotCleared {
+pub(crate) struct LootSlotCleared {
     pub row: usize,
 }
 
@@ -1122,7 +1116,7 @@ pub struct LootSlotCleared {
 /// releases whatever it last recorded, so the response is the only statement
 /// that the loot is released.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct LootClosed;
+pub(crate) struct LootClosed;
 
 /// `START_LOOT_ROLL`: a group roll has started, and a roll frame is shown.
 ///
@@ -1133,9 +1127,9 @@ pub struct LootClosed;
 /// The roll id is assigned by the client, not taken from the wire; see
 /// [`crate::interface::lootroll`], which maps between the two.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct StartLootRoll {
+pub(crate) struct StartLootRoll {
     pub id: u32,
-    pub countdown_ms: u32,
+    pub(crate) countdown_ms: u32,
 }
 
 /// `CANCEL_LOOT_ROLL`: the roll frame closes. `arg1` is the roll id, and
@@ -1146,7 +1140,7 @@ pub struct StartLootRoll {
 /// ended, the player voted (on the press, not on the server's answer), or the
 /// roll's countdown expired with no answer.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CancelLootRoll {
+pub(crate) struct CancelLootRoll {
     pub id: u32,
 }
 
@@ -1158,17 +1152,17 @@ pub struct CancelLootRoll {
 /// `ConfirmLootRoll(data, data2)`. No packet has been sent at this point; the
 /// press that raised this sent nothing. See [`crate::interface::lootroll`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ConfirmLootRoll {
+pub(crate) struct ConfirmLootRoll {
     pub id: u32,
-    pub vote: vale_protocol::play::lootroll::RollVote,
+    pub(crate) vote: vale_protocol::play::lootroll::RollVote,
 }
 
 /// `MIRROR_TIMER_STOP`: the timer bar is removed. arg1 is the same name the
 /// start carried, which `MirrorTimerFrame_OnEvent` compares against
 /// `this.timer` before hiding anything.
 #[derive(Message, Debug, Clone)]
-pub struct MirrorTimerStop {
-    pub timer: String,
+pub(crate) struct MirrorTimerStop {
+    pub(crate) timer: String,
 }
 
 /// `MIRROR_TIMER_PAUSE`: the shipped handler for this event cannot work.
@@ -1179,8 +1173,8 @@ pub struct MirrorTimerStop {
 /// start packet instead. The 1.12.1 client passes the flag, so this carries the
 /// flag, matching the packet rather than the FrameXML handler.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MirrorTimerPause {
-    pub paused: bool,
+pub(crate) struct MirrorTimerPause {
+    pub(crate) paused: bool,
 }
 
 /// `PLAYER_ENTER_COMBAT`: the player's own melee auto-attack has started.
@@ -1204,12 +1198,12 @@ pub struct MirrorTimerPause {
 /// `IsCurrentAction` answers from, so the flash and the checked border always
 /// agree.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerEnterCombat;
+pub(crate) struct PlayerEnterCombat;
 
 /// `PLAYER_LEAVE_COMBAT`: the player's melee auto-attack stopped. See
 /// [`PlayerEnterCombat`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerLeaveCombat;
+pub(crate) struct PlayerLeaveCombat;
 
 /// `VARIABLES_LOADED`: the saved variables have been loaded, if there were
 /// any.
@@ -1229,7 +1223,7 @@ pub struct PlayerLeaveCombat;
 /// placeholder 40-pixel width. Without the event both show as blank stubs on
 /// the interface options panel.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct VariablesLoaded;
+pub(crate) struct VariablesLoaded;
 
 /// `UPDATE_BINDINGS`: a key binding changed.
 ///
@@ -1243,7 +1237,7 @@ pub struct VariablesLoaded;
 /// the panel increments. One press of OK raises it once, and a session that
 /// never opens the panel never raises it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateBindings;
+pub(crate) struct UpdateBindings;
 
 /// `CVAR_UPDATE`: a setting changed, and the panels that watch it re-read it.
 ///
@@ -1256,7 +1250,7 @@ pub struct UpdateBindings;
 /// setting is `statusBarText`. The 1.12.1 client passes that key, so this
 /// message carries the name rather than deriving it.
 #[derive(Message, Debug, Clone)]
-pub struct CVarUpdate {
+pub(crate) struct CVarUpdate {
     /// `SetCVar`'s third argument.
     pub name: String,
     /// The value the CVar was set to.
@@ -1271,7 +1265,7 @@ pub struct CVarUpdate {
 /// and the level text. Written by [`super::vitals`] when the player entity first
 /// resolves.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerEnteringWorld;
+pub(crate) struct PlayerEnteringWorld;
 
 /// `PLAYER_LEAVING_WORLD`: the session has ended and the world is being
 /// removed.
@@ -1290,7 +1284,7 @@ pub struct PlayerEnteringWorld;
 ///
 /// Written by [`super::leaving`], once, on the frame the session ends.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerLeavingWorld;
+pub(crate) struct PlayerLeavingWorld;
 
 /// `PLAYER_CAMPING`: a logout has been accepted and is counting down.
 ///
@@ -1303,7 +1297,7 @@ pub struct PlayerLeavingWorld;
 /// over before the popup would draw, and the 1.12.1 client does not show one.
 /// See [`super::logout`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerCamping;
+pub(crate) struct PlayerCamping;
 
 /// `PLAYER_QUITING`: the same as [`PlayerCamping`] for Exit Game, in the
 /// game's spelling (one `t`).
@@ -1312,7 +1306,7 @@ pub struct PlayerCamping;
 /// button is `QUIT_NOW` and calls `ForceQuit()`, so a player can leave without
 /// waiting for the server's countdown.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerQuiting;
+pub(crate) struct PlayerQuiting;
 
 /// `LOGOUT_CANCEL`: the logout request was cancelled, and both popups close.
 ///
@@ -1321,7 +1315,7 @@ pub struct PlayerQuiting;
 /// pending, and the interface has no other event that closes whichever popup
 /// is shown. See [`super::logout`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct LogoutCancel;
+pub(crate) struct LogoutCancel;
 
 /// `PLAYER_DEAD`: health has reached zero and the spirit has not been
 /// released.
@@ -1334,7 +1328,7 @@ pub struct LogoutCancel;
 /// Raised when the health field changes, because no packet states that a
 /// player died; see [`super::death`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerDead;
+pub(crate) struct PlayerDead;
 
 /// `PLAYER_ALIVE`: raised when the spirit is released and when the character
 /// is resurrected. It does not mean only "alive again".
@@ -1344,7 +1338,7 @@ pub struct PlayerDead;
 /// (its health is 1), so the name is consistent with the game's rules.
 /// [`PlayerUnghost`] is the event that means "no longer dead in any sense".
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerAlive;
+pub(crate) struct PlayerAlive;
 
 /// `PLAYER_UNGHOST`: the character is resurrected, by any of the four routes
 /// (the corpse, an accepted resurrection, a spirit healer, a soulstone).
@@ -1352,7 +1346,7 @@ pub struct PlayerAlive;
 /// `UIParent_OnEvent` hides all three resurrect popups and both skinned popups
 /// on it, closing anything shown about being dead.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerUnghost;
+pub(crate) struct PlayerUnghost;
 
 /// `CORPSE_IN_RANGE`: the ghost is within reclaim range of its corpse.
 ///
@@ -1361,12 +1355,12 @@ pub struct PlayerUnghost;
 /// server checks again. `UIParent_OnEvent` shows `RECOVER_CORPSE`, whose Accept
 /// is `RetrieveCorpse()`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CorpseInRange;
+pub(crate) struct CorpseInRange;
 
 /// `CORPSE_OUT_OF_RANGE`: the ghost has moved out of reclaim range, which
 /// closes the popup.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CorpseOutOfRange;
+pub(crate) struct CorpseOutOfRange;
 
 /// `RESURRECT_REQUEST`: another player has offered a resurrection. `arg1` is
 /// the caster's name, which the popup formats into its text.
@@ -1375,7 +1369,7 @@ pub struct CorpseOutOfRange;
 /// and `ResurrectHasTimer()`, both API functions that answer from the offer;
 /// see [`super::death`].
 #[derive(Message, Debug, Clone)]
-pub struct ResurrectRequest(pub String);
+pub(crate) struct ResurrectRequest(pub(crate) String);
 
 /// `CONFIRM_XP_LOSS`: a spirit healer has offered a resurrection, which is
 /// `SMSG_SPIRIT_HEALER_CONFIRM` arriving. `UIParent_OnEvent` answers it with
@@ -1384,7 +1378,7 @@ pub struct ResurrectRequest(pub String);
 /// `OnUpdate` closes it as soon as `CheckSpiritHealerDist()` returns false. See
 /// [`super::death`], which raises it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ConfirmXpLoss;
+pub(crate) struct ConfirmXpLoss;
 
 // ---- Trade window events: six from `TradeFrame.lua`, two for the popup ----
 //
@@ -1396,30 +1390,30 @@ pub struct ConfirmXpLoss;
 /// opens on both sides, so the popup is never seen; see [`super::trade`]. Kept
 /// so the probe and the manifest know the name is the game's.
 #[derive(Message, Debug, Clone)]
-pub struct TradeRequest(pub String);
+pub(crate) struct TradeRequest(pub(crate) String);
 
 /// `TRADE_REQUEST_CANCEL`: the other player withdrew the request. Never
 /// raised, as above.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeRequestCancel;
+pub(crate) struct TradeRequestCancel;
 
 /// `TRADE_SHOW`: the trade window opens, on both sides at once.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeShow;
+pub(crate) struct TradeShow;
 
 /// `TRADE_CLOSED`: the trade window closes: complete, cancelled, or refused.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeClosed;
+pub(crate) struct TradeClosed;
 
 /// `TRADE_UPDATE`: redraw everything. Registered by the frame and not raised
 /// here: an offer change raises the per-slot events below instead.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeUpdate;
+pub(crate) struct TradeUpdate;
 
 /// `TRADE_ACCEPT_UPDATE`: `arg1` is the player's accept and `arg2` the other
 /// side's, each 0 or 1, passed straight to `TradeFrame_SetAcceptState`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeAcceptUpdate {
+pub(crate) struct TradeAcceptUpdate {
     pub player: bool,
     pub target: bool,
 }
@@ -1427,23 +1421,23 @@ pub struct TradeAcceptUpdate {
 /// `TRADE_PLAYER_ITEM_CHANGED`: one of the player's seven trade slots changed;
 /// `arg1` is its id, 1..7.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TradePlayerItemChanged(pub u8);
+pub(crate) struct TradePlayerItemChanged(pub(crate) u8);
 
 /// `TRADE_TARGET_ITEM_CHANGED`: one of the other side's seven trade slots
 /// changed.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TradeTargetItemChanged(pub u8);
+pub(crate) struct TradeTargetItemChanged(pub(crate) u8);
 
 /// `TRADE_MONEY_CHANGED`: the other side's money offer changed;
 /// `MoneyFrame_OnEvent` re-reads `GetTargetTradeMoney` on it for the
 /// `TARGET_TRADE` frame.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeMoneyChanged;
+pub(crate) struct TradeMoneyChanged;
 
 /// `PLAYER_TRADE_MONEY`: the player's own money offer changed, which the same
 /// handler answers for the `PLAYER_TRADE` frame.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerTradeMoney;
+pub(crate) struct PlayerTradeMoney;
 
 /// `ZONE_CHANGED_NEW_AREA`: the zone changed, for example Elwynn Forest to
 /// Westfall.
@@ -1453,17 +1447,17 @@ pub struct PlayerTradeMoney;
 /// [`super::worldmap`], which samples the terrain under the player because no
 /// packet states the player's location below the map id.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ZoneChangedNewArea;
+pub(crate) struct ZoneChangedNewArea;
 
 /// `ZONE_CHANGED`: the sub-area changed. This happens far more often, because
 /// every named clearing, road and building has its own `AreaTable` row.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ZoneChanged;
+pub(crate) struct ZoneChanged;
 
 /// `MINIMAP_ZONE_CHANGED`: either of the two above changed. It is a separate
 /// name because the minimap's title bar redraws on it and on nothing else.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MinimapZoneChanged;
+pub(crate) struct MinimapZoneChanged;
 
 /// `WORLD_MAP_UPDATE`: the map being shown is different, so anything drawn on
 /// it is stale.
@@ -1475,25 +1469,25 @@ pub struct MinimapZoneChanged;
 /// login, and by `SetMapZoom`/`ZoomOut`/`SetMapToCurrentZone` from the
 /// interface.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct WorldMapUpdate;
+pub(crate) struct WorldMapUpdate;
 
 /// `UNIT_HEALTH`: a unit's health changed. `arg1` is the unit token, which
 /// `UnitFrameHealthBar_Update` uses to decide whether the event is about its
 /// own unit.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitHealthChanged(pub super::api::UnitId);
+pub(crate) struct UnitHealthChanged(pub(crate) super::api::UnitId);
 
 /// `UNIT_MAXHEALTH`: the maximum health changed, which resizes the bar rather
 /// than refilling it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitMaxHealthChanged(pub super::api::UnitId);
+pub(crate) struct UnitMaxHealthChanged(pub(crate) super::api::UnitId);
 
 /// `UNIT_MANA` / `UNIT_RAGE` / `UNIT_FOCUS` / `UNIT_ENERGY` / `UNIT_HAPPINESS`,
 /// and their `UNIT_MAX*` counterparts. The event is named for the power it
 /// carries, as in FrameXML: `UnitFrameManaBar_Initialize` registers all ten and
 /// the frame re-reads whichever arrives. `arg1` is the unit token.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitPowerChanged {
+pub(crate) struct UnitPowerChanged {
     pub unit: super::api::UnitId,
     /// The wire's power type: 0 mana, 1 rage, 2 focus, 3 energy, 4 happiness.
     pub power: u8,
@@ -1505,7 +1499,7 @@ pub struct UnitPowerChanged {
 /// shapeshifting, or a target change between a warrior and a mage).
 /// `UnitFrame_UpdateManaType` recolours the bar on this event.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitDisplaypowerChanged(pub super::api::UnitId);
+pub(crate) struct UnitDisplaypowerChanged(pub(crate) super::api::UnitId);
 
 /// `UNIT_NAME_UPDATE`: the value `UnitName` returns for this token changed.
 ///
@@ -1515,7 +1509,7 @@ pub struct UnitDisplaypowerChanged(pub super::api::UnitId);
 /// permanently. `UnitFrame_OnEvent` re-reads the name on this, and
 /// `CharacterFrame`'s "Name" placeholder fills on the same event.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitNameUpdate(pub super::api::UnitId);
+pub(crate) struct UnitNameUpdate(pub(crate) super::api::UnitId);
 
 /// `BAG_UPDATE`: the contents of one bag changed. `arg1` is the bag id: 0 the
 /// backpack, 1..4 the equipped bags, -2 the key ring.
@@ -1531,7 +1525,7 @@ pub struct UnitNameUpdate(pub super::api::UnitId);
 /// bag id and not a slot: the paper doll's bag buttons are the same four
 /// containers.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct BagUpdate(pub i32);
+pub(crate) struct BagUpdate(pub(crate) i32);
 
 /// `UNIT_INVENTORY_CHANGED`: the items a unit holds changed. `arg1` is the unit
 /// token, and `PaperDollItemSlotButton_OnEvent` compares it against `"player"`
@@ -1548,7 +1542,7 @@ pub struct BagUpdate(pub i32);
 /// no `BAG_UPDATE`. When this event covered only equipped slots, a stack of
 /// potions on the bar kept its drawn count however many were used.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitInventoryChanged(pub super::api::UnitId);
+pub(crate) struct UnitInventoryChanged(pub(crate) super::api::UnitId);
 
 /// `UNIT_QUEST_LOG_CHANGED`: a quest objective's count changed, and `arg1` is
 /// the unit token. `QuestLog_OnEvent` tests it against `"player"` and then runs
@@ -1568,7 +1562,7 @@ pub struct UnitInventoryChanged(pub super::api::UnitId);
 /// the counts the active quests ask about. Raising it on every bag change would
 /// rebuild the quest log and tracker every time any stack changed.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitQuestLogChanged(pub super::api::UnitId);
+pub(crate) struct UnitQuestLogChanged(pub(crate) super::api::UnitId);
 
 /// `ITEM_LOCK_CHANGED`: an item slot's item was picked up onto the cursor, or
 /// put back.
@@ -1591,7 +1585,7 @@ pub struct UnitQuestLogChanged(pub super::api::UnitId);
 /// every open bag, and raising it per frame would do that every frame of a
 /// drag.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ItemLockChanged;
+pub(crate) struct ItemLockChanged;
 
 /// `PLAYER_MONEY`: the player's money changed.
 ///
@@ -1599,7 +1593,7 @@ pub struct ItemLockChanged;
 /// `MoneyFrameTemplate`. Raised when `PLAYER_FIELD_COINAGE` changes, which is
 /// the only way the wire reports money; there is no packet for it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerMoney;
+pub(crate) struct PlayerMoney;
 
 /// `PLAYER_AURAS_CHANGED`: the buff bar's event, and the only event its
 /// twenty-four buttons redraw on.
@@ -1608,14 +1602,14 @@ pub struct PlayerMoney;
 /// has one branch. A client that never raises it shows the buttons as they were
 /// at load: hidden by their own `OnLoad` and never updated.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerAurasChanged;
+pub(crate) struct PlayerAurasChanged;
 
 /// `UNIT_AURA`: the auras on one unit changed. `arg1` is the unit token.
 ///
 /// `TargetFrame_OnEvent`'s branch runs `TargetDebuffButton_Update`, which
 /// fills the target frame's two rows of icons.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitAuraChanged(pub super::api::UnitId);
+pub(crate) struct UnitAuraChanged(pub(crate) super::api::UnitId);
 
 /// `UNIT_PET`: the unit at `arg1` has a different pet. This is the only event
 /// that shows or hides a pet frame.
@@ -1633,7 +1627,7 @@ pub struct UnitAuraChanged(pub super::api::UnitId);
 /// party frame at the no-pet offset. No other code in the ninety FrameXML files
 /// calls either function after load.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitPetChanged(pub super::api::UnitId);
+pub(crate) struct UnitPetChanged(pub(crate) super::api::UnitId);
 
 /// `UNIT_FACTION`: the reaction of the unit at `arg1` towards the player
 /// changed.
@@ -1649,7 +1643,7 @@ pub struct UnitPetChanged(pub super::api::UnitId);
 /// disguise, a phase), while `UNIT_FLAG_PVP` changes every time a player flags
 /// for PvP.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitFactionChanged(pub super::api::UnitId);
+pub(crate) struct UnitFactionChanged(pub(crate) super::api::UnitId);
 
 /// `PLAYER_LEVEL_UP`: the player gained a level. 1.12's interface reports it in
 /// the chat frame rather than in a panel.
@@ -1674,7 +1668,7 @@ pub struct UnitFactionChanged(pub super::api::UnitId);
 /// The effect is that the line "You have gained 1 talent point." does not
 /// appear; FrameXML guards it with `arg4 > 0`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerLevelUp(pub vale_protocol::play::spells::LevelUp);
+pub(crate) struct PlayerLevelUp(pub(crate) vale_protocol::play::spells::LevelUp);
 
 /// A sound the server asked to play: `SMSG_PLAY_SOUND`, `SMSG_PLAY_MUSIC` or
 /// `SMSG_PLAY_OBJECT_SOUND`.
@@ -1685,13 +1679,13 @@ pub struct PlayerLevelUp(pub vale_protocol::play::spells::LevelUp);
 /// none of the three packets raises anything in FrameXML, so the client plays
 /// them, not a panel.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SoundPushed(pub vale_protocol::play::sound::Cue);
+pub(crate) struct SoundPushed(pub(crate) vale_protocol::play::sound::Cue);
 
 /// `UNIT_LEVEL`: the level shown for a unit changed. For this client that is
 /// almost always a level going from unknown to known, arriving late as names
 /// do. `TargetFrame_OnEvent` redraws the level text on it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UnitLevelChanged(pub super::api::UnitId);
+pub(crate) struct UnitLevelChanged(pub(crate) super::api::UnitId);
 
 /// `PLAYER_XP_UPDATE`: `PLAYER_XP` or `PLAYER_NEXT_LEVEL_XP` changed.
 ///
@@ -1705,7 +1699,7 @@ pub struct UnitLevelChanged(pub super::api::UnitId);
 /// (`TextStatusBar_UpdateTextString`), so a stub `UnitXPMax` that returned zero
 /// removed the whole XP bar rather than emptying it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PlayerXpUpdate;
+pub(crate) struct PlayerXpUpdate;
 
 /// `UPDATE_EXHAUSTION`: `PLAYER_REST_STATE_EXPERIENCE` changed.
 ///
@@ -1714,7 +1708,7 @@ pub struct PlayerXpUpdate;
 /// `ExhaustionLevelFillBar` when `GetXPExhaustion()` returns nothing, which is
 /// the usual state for a character with no rested experience.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateExhaustion;
+pub(crate) struct UpdateExhaustion;
 
 /// The character sheet's events, as one type named by the group that changed,
 /// in the same way as [`UnitPowerChanged`]. There are nine names for one
@@ -1727,14 +1721,14 @@ pub struct UpdateExhaustion;
 ///
 /// Written by [`super::stats`], on a change, never per frame.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UnitStatsChanged {
+pub(crate) struct UnitStatsChanged {
     pub unit: super::api::UnitId,
     pub what: StatGroup,
 }
 
 /// Which of the nine names [`UnitStatsChanged`] fires under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StatGroup {
+pub(crate) enum StatGroup {
     /// The five attributes: `PaperDollFrame_SetStats`.
     Attributes,
     /// The seven resistances, armour included, so the panel also re-runs
@@ -1779,7 +1773,7 @@ pub struct ChatMessageReceived {
     /// `arg1`: the message text.
     pub text: String,
     /// `arg2`: the sender, or `""` for the server's own output.
-    pub author: String,
+    pub(crate) author: String,
     /// `arg6`: the sender's flag: `""`, `"AFK"`, `"DND"` or `"GM"`. The
     /// handler looks up `CHAT_FLAG_<this>` in `GlobalStrings.lua`, so the
     /// spelling is the game's rather than a code.
@@ -1793,12 +1787,12 @@ pub struct ChatMessageReceived {
     /// `arg7`: the `ChatChannels.dbc` row of a zone channel, which the chat
     /// frame uses to match `General - Westfall` to the `General` it was
     /// registered for. 0 for a custom channel and for everything else.
-    pub zone_channel: u32,
+    pub(crate) zone_channel: u32,
     /// `arg8`: the channel's number, `ChatTypeInfo["CHANNEL"..arg8]`.
     pub number: u32,
     /// `arg9`: the channel's full name, `General - Elwynn Forest`, which the
     /// frame compares against its list for a custom channel.
-    pub channel_name: String,
+    pub(crate) channel_name: String,
     /// `arg10`: the instance number a split channel carries; 0 from vmangos.
     pub instance: u32,
 }
@@ -1809,7 +1803,7 @@ pub struct ChatMessageReceived {
 /// It is not an `mlua::Value`: `interface/` does not depend on the interpreter,
 /// for the same reason `assets/` does not depend on Bevy.
 #[derive(Debug, Clone, PartialEq)]
-pub enum EventArg {
+pub(crate) enum EventArg {
     Number(f64),
     Text(String),
 }
@@ -1828,14 +1822,14 @@ pub enum EventArg {
 /// loader, immediately after `Interface\GlueXML\` finishes, as the 1.12.1
 /// client does.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct FramesLoaded;
+pub(crate) struct FramesLoaded;
 
 /// `ADDON_LIST_UPDATE`: the addon list has been filled, so `GetNumAddOns()`
 /// answers. `CharacterSelect_OnEvent` calls `UpdateAddonButton()` on it, which
 /// shows the AddOns button. Raised by `crate::settings::addons` once per Lua
 /// host it fills.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct AddonListUpdate;
+pub(crate) struct AddonListUpdate;
 
 /// `SET_GLUE_SCREEN`: the client tells the interface to change screen, with
 /// the screen's key in `arg1`.
@@ -1850,14 +1844,14 @@ pub struct AddonListUpdate;
 /// The keys are those of `GlueScreenInfo`: `login`, `charselect`, `charcreate`,
 /// `realmwizard`, `patchdownload`, `movie`, `credits`.
 #[derive(Message, Debug, Clone)]
-pub struct SetGlueScreen(pub String);
+pub(crate) struct SetGlueScreen(pub(crate) String);
 
 /// `CHARACTER_LIST_UPDATE`: the character list changed, or has arrived.
 ///
 /// `CharacterSelect_OnEvent` runs `UpdateCharacterList()` on it, which is the
 /// only way the ten row buttons get their names, levels and zones.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CharacterListUpdate;
+pub(crate) struct CharacterListUpdate;
 
 /// `UPDATE_SELECTED_CHARACTER`: the selected row changed; `arg1` is one-based,
 /// 0 for none.
@@ -1867,12 +1861,12 @@ pub struct CharacterListUpdate;
 /// does nothing. `CharacterSelect_OnEvent` writes the name into
 /// `CharSelectCharacterName` and calls `UpdateCharacterSelection()`.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UpdateSelectedCharacter(pub usize);
+pub(crate) struct UpdateSelectedCharacter(pub(crate) usize);
 
 /// `SELECT_FIRST_CHARACTER`: select row 1. The 1.12.1 client raises this when a
 /// character screen opens with nothing selected.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SelectFirstCharacter;
+pub(crate) struct SelectFirstCharacter;
 
 /// `DISCONNECTED_FROM_SERVER`: the connection to the server closed.
 ///
@@ -1881,7 +1875,7 @@ pub struct SelectFirstCharacter;
 /// times out while a character screen is open, which is the failure
 /// [`crate::world::session::keep_selection_alive`] exists to prevent.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct DisconnectedFromServer;
+pub(crate) struct DisconnectedFromServer;
 
 /// `OPEN_STATUS_DIALOG`: show a `GlueDialog`, with the dialog's kind in `arg1`
 /// and the text already resolved in `arg2`.
@@ -1903,7 +1897,7 @@ pub struct DisconnectedFromServer;
 /// client omits it: its `LaunchURL` opens nothing, so the five codes that would
 /// use it show the same text in a plain `OKAY` dialog.
 #[derive(Message, Debug, Clone)]
-pub struct OpenStatusDialog {
+pub(crate) struct OpenStatusDialog {
     /// The `GlueDialogTypes` key: `"OKAY"`, `"CANCEL"`.
     pub which: &'static str,
     /// The resolved text.
@@ -1917,7 +1911,7 @@ pub struct OpenStatusDialog {
 /// successful logon needs it, because the connecting dialog is still shown when
 /// the character list arrives.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CloseStatusDialog;
+pub(crate) struct CloseStatusDialog;
 
 /// The game's name for an event, and the arguments it carries.
 ///
@@ -1925,13 +1919,14 @@ pub struct CloseStatusDialog;
 /// string, so a name spelled differently here is an event no addon and no
 /// FrameXML file can receive. Every name is therefore quoted from the archive file named in
 /// the type's doc comment.
-pub trait GameEvent {
+pub(crate) trait GameEvent {
     /// For example `"PLAYER_TARGET_CHANGED"`. Always upper snake case.
     const EVENT: &'static str;
 
     /// Every name an instance of this type can be raised under, for
     /// [`FIRED`]: [`Self::EVENT`] alone, except for the three types whose
     /// [`Self::name`] depends on the instance.
+    #[cfg(any(test, feature = "diagnostics"))]
     const NAMES: &'static [&'static str] = &[Self::EVENT];
 
     /// `arg1`..`argN`, in the game's order. Most events have none.
@@ -2835,6 +2830,7 @@ impl GameEvent for UnitPowerChanged {
     /// The most common of the ten; [`Self::name`] gives the name actually
     /// raised.
     const EVENT: &'static str = "UNIT_MANA";
+    #[cfg(any(test, feature = "diagnostics"))]
     const NAMES: &'static [&'static str] = &[
         // The ten names one type is raised under; see `UnitPowerChanged::name`.
         "UNIT_MANA",
@@ -2876,6 +2872,7 @@ impl GameEvent for UnitStatsChanged {
     const EVENT: &'static str = "UNIT_STATS";
     /// The nine names the character sheet registers; see
     /// `PaperDollFrame_OnLoad` for the spelling.
+    #[cfg(any(test, feature = "diagnostics"))]
     const NAMES: &'static [&'static str] = &[
         "UNIT_STATS",
         "UNIT_RESISTANCES",
@@ -2914,6 +2911,7 @@ impl GameEvent for ChatMessageReceived {
     /// actually raised. Present because the trait requires it, and
     /// `CHAT_MSG_SAY` is a representative member of the set.
     const EVENT: &'static str = "CHAT_MSG_SAY";
+    #[cfg(any(test, feature = "diagnostics"))]
     const NAMES: &'static [&'static str] = &[
         // The twenty-six names one type is raised under; see
         // [`ChatMessageReceived`] and [`super::chat::event_name`], which maps the
@@ -3079,7 +3077,7 @@ macro_rules! game_events {
         /// has its own reader. The error messages have no other reader;
         /// `UIErrorsFrame` shows them. See `two_readers_each_see_every_message`.
         #[derive(SystemParam)]
-        pub struct GameEventReaders<'w, 's> {
+        pub(crate) struct GameEventReaders<'w, 's> {
             $( $field: MessageReader<'w, 's, $ty>, )*
         }
 
@@ -3111,6 +3109,7 @@ macro_rules! game_events {
 
         /// The groups [`FIRED`] is the concatenation of: each drained type's
         /// names, then the names raised without a message.
+        #[cfg(any(test, feature = "diagnostics"))]
         const FIRED_GROUPS: &[&[&str]] = &[
             $( <$ty as GameEvent>::NAMES, )*
             &[ $( $raised ),* ],
@@ -3123,7 +3122,8 @@ macro_rules! game_events {
         /// [`GameEvent::NAMES`] in list order, then the names the Lua host raises
         /// without a message type. It is compared with the set of names passed to
         /// `RegisterEvent`.
-        pub const FIRED: [&str; name_count(FIRED_GROUPS)] = concatenated(FIRED_GROUPS);
+        #[cfg(any(test, feature = "diagnostics"))]
+        pub(crate) const FIRED: [&str; name_count(FIRED_GROUPS)] = concatenated(FIRED_GROUPS);
 
         /// Registers every message type in this module.
         ///
@@ -3139,6 +3139,7 @@ macro_rules! game_events {
 }
 
 /// The number of names in `groups`, which is [`FIRED`]'s length.
+#[cfg(any(test, feature = "diagnostics"))]
 const fn name_count(groups: &[&[&str]]) -> usize {
     let mut count = 0;
     let mut group = 0;
@@ -3150,6 +3151,7 @@ const fn name_count(groups: &[&[&str]]) -> usize {
 }
 
 /// `groups` concatenated into one array, for [`FIRED`].
+#[cfg(any(test, feature = "diagnostics"))]
 const fn concatenated<const N: usize>(groups: &[&[&'static str]]) -> [&'static str; N] {
     let mut out = [""; N];
     let mut at = 0;

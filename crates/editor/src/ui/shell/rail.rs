@@ -111,7 +111,8 @@ fn corner() -> impl Iterator<Item = Subject> {
 
 /// The name of every subject this file draws a button for, which is what
 /// [`super::icons`] checks its icon names against.
-pub fn names() -> impl Iterator<Item = &'static str> {
+#[cfg(test)]
+pub(crate) fn names() -> impl Iterator<Item = &'static str> {
     HEADINGS
         .iter()
         .flat_map(|heading| tiles(heading))
@@ -123,10 +124,10 @@ pub fn names() -> impl Iterator<Item = &'static str> {
 
 /// The rail's memory between frames.
 #[derive(Resource, Debug, Clone, Copy)]
-pub struct Rail {
+pub(crate) struct Rail {
     /// The last tool chosen on the rail or in the corner, which the *World*
     /// part of the workspace control returns to.
-    pub last_world: Tool,
+    pub(crate) last_world: Tool,
 }
 
 impl Default for Rail {
@@ -139,7 +140,7 @@ impl Default for Rail {
 
 impl Rail {
     /// Note the tool in use, when it is one the viewport is the document for.
-    pub fn follow(&mut self, tool: Tool) {
+    pub(crate) fn follow(&mut self, tool: Tool) {
         if tool.surface() != Surface::Middle {
             self.last_world = tool;
         }
@@ -198,7 +199,7 @@ const GAP: f32 = 4.0;
 /// take about 470 with icons and 310 without. The rail is still a
 /// `ScrollArea`, because more subjects will be added; the scroll area draws
 /// nothing while everything fits.
-pub fn draw(
+pub(crate) fn draw(
     ui: &mut egui::Ui,
     tool: &mut Tool,
     rail: &mut Rail,
@@ -342,7 +343,7 @@ fn fitted(ui: &egui::Ui, name: &str, size: f32, width: f32) -> egui::FontId {
 /// and pressing one sends the tool to its window and brings the window
 /// forward (see `crate::popout`). A pop-out window draws the same control
 /// with `world` false, since it has no world to return to.
-pub fn workspaces(
+pub(crate) fn workspaces(
     ui: &mut egui::Ui,
     tool: &mut Tool,
     rail: &mut Rail,
@@ -446,7 +447,7 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
 /// tool. Answers the part pressed when it is not the one in use; the shell
 /// switches to it after the frame is drawn, since the tool is borrowed while
 /// a workspace draws.
-pub fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
+pub(crate) fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
     let parts = tool.parts();
     if parts.is_empty() {
         return None;
@@ -462,7 +463,7 @@ pub fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
 /// Select and Measure, drawn over the viewport's top-left corner. Answers the
 /// rectangle drawn, which the caller adds to the viewport's floating list so a
 /// click on a button is not also a click on the ground behind it.
-pub fn pointer(
+pub(crate) fn pointer(
     ctx: &egui::Context,
     viewport: egui::Rect,
     tool: &mut Tool,

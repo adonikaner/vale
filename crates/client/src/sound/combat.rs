@@ -108,20 +108,20 @@ pub struct Heard {
 /// between them.
 mod bark_priority {
     /// `AI_REACTION_ALERT`, the lowest priority on the channel.
-    pub const ALERT: u32 = 0;
-    pub const AGGRO: u32 = 0;
+    pub(crate) const ALERT: u32 = 0;
+    pub(crate) const AGGRO: u32 = 0;
     /// A pet ordered to cast something: `PET_TALK_SPECIAL_SPELL`, which the
     /// client plays at priority 1 from the pet order column.
-    pub const PET_ORDER: u32 = 1;
+    pub(crate) const PET_ORDER: u32 = 1;
     /// A pet ordered to attack: `PET_TALK_ATTACK`, priority 2, from the pet
     /// attack column.
     ///
     /// The client maps each talk value to its value plus one: talk 0 is the
     /// order and talk 1 the attack. So an attack order can interrupt a cast
     /// order, which is the reverse of what the enum's order suggests.
-    pub const PET_ATTACK: u32 = 2;
+    pub(crate) const PET_ATTACK: u32 = 2;
     /// The highest priority; nothing interrupts a death cry.
-    pub const DEATH: u32 = 4;
+    pub(crate) const DEATH: u32 = 4;
 }
 
 /// The swinging weapon, as the sound tables want it: `(subclass, metal)`.
@@ -178,7 +178,7 @@ fn met(victim_state: u32, hit_info: u32, victim_material: u32) -> Option<usize> 
     }
 }
 
-pub struct CombatPlugin;
+pub(crate) struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {

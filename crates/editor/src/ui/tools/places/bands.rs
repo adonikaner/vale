@@ -53,10 +53,10 @@ const STRIP_STEPS: usize = 120;
 /// so `times.len()` is the count and the slots past it are not represented
 /// here at all. See the module note on why they are left alone.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Band {
-    pub row: usize,
-    pub times: Vec<u32>,
-    pub values: Vec<u32>,
+pub(crate) struct Band {
+    pub(crate) row: usize,
+    pub(crate) times: Vec<u32>,
+    pub(crate) values: Vec<u32>,
 }
 
 impl Band {
@@ -65,14 +65,14 @@ impl Band {
     /// `None` for a band with no keys, which draws as nothing rather than as
     /// black: a band with no keys states no value, which is not the same as a
     /// dark one.
-    pub fn at(&self, time: u32) -> Option<u32> {
+    pub(crate) fn at(&self, time: u32) -> Option<u32> {
         let (i, j, t) = straddle(&self.times, time)?;
         Some(mix(self.values[i], self.values[j], t))
     }
 
     /// The value at a time as an `f32`, for the float table, whose sixteen
     /// values are the bits of an `f32` rather than a packed colour.
-    pub fn value_at(&self, time: u32) -> Option<f32> {
+    pub(crate) fn value_at(&self, time: u32) -> Option<f32> {
         let (i, j, t) = straddle(&self.times, time)?;
         let (a, b) = (
             f32::from_bits(self.values[i]),
@@ -139,7 +139,7 @@ fn swatch(packed: u32) -> egui::Color32 {
 }
 
 /// `14:30` — a band time, which is half-minutes past midnight.
-pub fn clock(time: u32) -> String {
+pub(crate) fn clock(time: u32) -> String {
     let minutes = (time % DAY) / 2;
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
@@ -154,7 +154,7 @@ pub fn clock(time: u32) -> String {
 /// `None` for anything else, which leaves the box on the value it had. That is
 /// egui's own behaviour for a parse it cannot make, and it is safer than
 /// guessing a time from a word.
-pub fn minutes_of_day(text: &str) -> Option<u32> {
+pub(crate) fn minutes_of_day(text: &str) -> Option<u32> {
     let text = text.trim();
     let minutes = match text.split_once(':') {
         Some((hours, minutes)) => {
@@ -215,7 +215,7 @@ fn write(work: &mut Workspace<'_>, table: &'static str, band: &Band, label: &str
 ///
 /// This is the only route into the two band tables: they are reached by
 /// arithmetic on this row's id, and nothing points at them.
-pub fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour: u32) {
+pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour: u32) {
     for (table, count, names, notes) in [
         (
             "LightIntBand",

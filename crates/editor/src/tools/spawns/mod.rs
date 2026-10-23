@@ -23,7 +23,7 @@
 //!                because a path has no existence apart from its creature
 //! ```
 
-pub mod creatures;
-pub mod gameobjects;
-pub mod spawn;
-pub mod waypoints;
+pub(crate) mod creatures;
+pub(crate) mod gameobjects;
+pub(crate) mod spawn;
+pub(crate) mod waypoints;

@@ -94,7 +94,7 @@ use bevy::window::{PrimaryWindow, WindowResized};
 /// middle of the afternoon, with no error anywhere. It also stores light
 /// linearly in eight bits, which bands the darks.
 #[derive(Resource)]
-pub struct WorldFrame(pub Handle<Image>);
+pub(crate) struct WorldFrame(pub(crate) Handle<Image>);
 
 impl WorldFrame {
     /// What [`crate::world::camera`] points its `Camera` at.
@@ -114,7 +114,7 @@ impl WorldFrame {
 /// a driver rather than producing a small picture.
 const INITIAL: UVec2 = UVec2::new(1280, 720);
 
-pub struct PresentPlugin;
+pub(crate) struct PresentPlugin;
 
 impl Plugin for PresentPlugin {
     fn build(&self, app: &mut App) {
@@ -373,7 +373,7 @@ fn repoint(
 /// draw and this quad is the only surface in the client that sees the frame
 /// exactly once.
 #[derive(Clone, Copy, Default, ShaderType)]
-pub struct NightGrade {
+pub(crate) struct NightGrade {
     /// The night factor, 0 in daylight — and the shader's early-out.
     pub night: f32,
 }
@@ -381,7 +381,7 @@ pub struct NightGrade {
 /// The full-screen quad's material: the world frame, the transfer function that
 /// undoes the encode the swapchain is about to redo, and the night grade.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct PresentMaterial {
+pub(crate) struct PresentMaterial {
     #[texture(0)]
     #[sampler(1)]
     pub frame: Handle<Image>,

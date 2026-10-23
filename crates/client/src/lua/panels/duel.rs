@@ -14,7 +14,7 @@
 use crate::lua::host::LuaHost;
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::duel::DuelPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::duel::DuelPress>>>;
 
 /// Register the four writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

@@ -44,14 +44,14 @@ use super::dbc::Dbc;
 mod enchantment_fields {
     pub const ID: usize = 0;
     pub const NAME: usize = 13;
-    pub const ITEM_VISUAL: usize = 22;
+    pub(crate) const ITEM_VISUAL: usize = 22;
 }
 
 mod property_fields {
     pub const ID: usize = 0;
-    pub const ENCHANTMENT: usize = 2;
-    pub const ENCHANTMENT_COUNT: usize = 5;
-    pub const SUFFIX: usize = 7;
+    pub(crate) const ENCHANTMENT: usize = 2;
+    pub(crate) const ENCHANTMENT_COUNT: usize = 5;
+    pub(crate) const SUFFIX: usize = 7;
 }
 
 /// `SpellItemEnchantment.dbc`: each id's name, and the item visual of the

@@ -39,8 +39,8 @@ pub struct CreatureInfo {
     /// 0 normal, 1 elite, 2 rare elite, 3 boss, 4 rare.
     pub rank: u32,
     pub display_id: u32,
-    pub civilian: bool,
-    pub racial_leader: bool,
+    pub(crate) civilian: bool,
+    pub(crate) racial_leader: bool,
 }
 
 impl CreatureInfo {
@@ -50,7 +50,7 @@ impl CreatureInfo {
     /// puts the classification in its own `(…)` cell through
     /// [`classification_key`], which uses a different set of words. A rare
     /// creature gets no word at all there.
-    pub fn rank_label(&self) -> &'static str {
+    pub(crate) fn rank_label(&self) -> &'static str {
         match self.rank {
             1 => " (Elite)",
             2 => " (Rare Elite)",
@@ -60,7 +60,7 @@ impl CreatureInfo {
         }
     }
 
-    pub fn display_name(&self) -> String {
+    pub(crate) fn display_name(&self) -> String {
         if self.sub_name.is_empty() {
             format!("{}{}", self.name, self.rank_label())
         } else {
@@ -143,7 +143,7 @@ pub fn parse_creature_response(body: &[u8]) -> Option<CreatureInfo> {
 /// Body for `CMSG_CREATURE_QUERY`: the entry, then the GUID of an instance of
 /// it. The server needs both: the entry to look up and the GUID to answer
 /// about.
-pub fn creature_query_body(entry: u32, guid: u64) -> Vec<u8> {
+pub(crate) fn creature_query_body(entry: u32, guid: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(12);
     out.extend_from_slice(&entry.to_le_bytes());
     out.extend_from_slice(&guid.to_le_bytes());
@@ -151,7 +151,7 @@ pub fn creature_query_body(entry: u32, guid: u64) -> Vec<u8> {
 }
 
 /// `CMSG_GAMEOBJECT_QUERY` takes the same pair.
-pub fn gameobject_query_body(entry: u32, guid: u64) -> Vec<u8> {
+pub(crate) fn gameobject_query_body(entry: u32, guid: u64) -> Vec<u8> {
     creature_query_body(entry, guid)
 }
 
@@ -161,7 +161,7 @@ pub fn gameobject_query_body(entry: u32, guid: u64) -> Vec<u8> {
 /// the packet appends the whole raw block for every type. The count is
 /// therefore fixed, and [`parse_gameobject_response`] uses it to measure the
 /// trailing name fields.
-pub const GAMEOBJECT_DATA: usize = 24;
+pub(crate) const GAMEOBJECT_DATA: usize = 24;
 
 /// The parts of `SMSG_GAMEOBJECT_QUERY_RESPONSE` worth keeping.
 #[derive(Debug, Clone)]
@@ -263,7 +263,7 @@ pub fn parse_gameobject_response(body: &[u8]) -> Option<GameObjectInfo> {
 /// a valid GUID. Callers often have no GUID to send: a visible item field
 /// carries only the entry. Another player's sword is a number in
 /// `PLAYER_VISIBLE_ITEM_n_0`, with no item object behind it.
-pub fn item_query_body(entry: u32, guid: u64) -> Vec<u8> {
+pub(crate) fn item_query_body(entry: u32, guid: u64) -> Vec<u8> {
     creature_query_body(entry, guid)
 }
 
@@ -423,15 +423,16 @@ pub struct ItemInfo {
 /// `MAX_ITEM_PROTO_STATS`, `_DAMAGES` and `_SPELLS`. Fixed for this build; the
 /// packet writes every slot whether or not it is used, so these are widths
 /// rather than counts.
-pub const ITEM_STATS: usize = 10;
-pub const ITEM_DAMAGES: usize = 5;
-pub const ITEM_SPELLS: usize = 5;
+pub(crate) const ITEM_STATS: usize = 10;
+pub(crate) const ITEM_DAMAGES: usize = 5;
+pub(crate) const ITEM_SPELLS: usize = 5;
 
 impl ItemInfo {
     /// Is this a bag? True for `ITEM_CLASS_CONTAINER` (1) and
     /// `ITEM_CLASS_QUIVER` (11), the two classes the paper doll's four bag
     /// slots accept.
-    pub fn is_container(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_container(&self) -> bool {
         self.class == 1 || self.class == 11
     }
 
@@ -571,7 +572,7 @@ pub const INVTYPE_AMMO: u32 = 24;
 pub mod item_flags {
     /// A conjured item: the plate says "Conjured Item". Values follow
     /// vmangos' `ItemPrototype.h`.
-    pub const CONJURED: u32 = 0x0000_0002;
+    pub(crate) const CONJURED: u32 = 0x0000_0002;
     /// A guild charter: the tooltip says "<Right Click for Details>".
     pub const CHARTER: u32 = 0x0000_2000;
     /// Right-clicking this opens it for loot: a Blue Sack of Gems, a lockbox,
@@ -584,7 +585,7 @@ pub mod item_flags {
     /// on an already wrapped item sends `CMSG_OPEN_ITEM`. The two cases are
     /// told apart by [`crate::play::items::item_dyn_flags::WRAPPED`] on the
     /// item object, not by anything in the prototype.
-    pub const WRAPPER: u32 = 0x0000_0200;
+    pub(crate) const WRAPPER: u32 = 0x0000_0200;
 }
 
 /// Parse `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, which carries the whole prototype.
@@ -861,7 +862,7 @@ pub fn classification_key(rank: u32) -> &'static str {
 impl PlayerInfo {
     /// `"Merrick (Night Elf Warrior)"`, degrading to just the name when the
     /// server sent ids this build does not know.
-    pub fn display_name(&self) -> String {
+    pub(crate) fn display_name(&self) -> String {
         let parts: Vec<&str> = [race_name(self.race), class_name(self.class)]
             .into_iter()
             .filter(|s| !s.is_empty())
@@ -878,7 +879,7 @@ impl PlayerInfo {
 ///
 /// `HandleNameQueryOpcode` does `recv_data >> guid` into an `ObjectGuid`, which
 /// streams as its raw value. The GUID is not packed in this packet.
-pub fn name_query_body(guid: u64) -> Vec<u8> {
+pub(crate) fn name_query_body(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
 

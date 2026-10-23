@@ -50,7 +50,7 @@ pub struct ActiveSession {
     /// The realm's type from the realm list, carried the same way. The world
     /// does read this one: `GetZonePVPInfo` answers differently on a PvP
     /// realm. See [`vale_assets::tables::territory`].
-    pub realm_type: u32,
+    pub(crate) realm_type: u32,
     /// Which account this character belongs to. The world does read this: the
     /// key bindings live under `WTF\Account\<account>\`, and the two files there
     /// are keyed by this and by [`Self::realm`]. See [`Handshake::account`] for
@@ -71,7 +71,7 @@ impl ActiveSession {
     /// cannot say whether the eye is inside the hillside. This is the same
     /// `MapTerrain` the mover stands on, so the camera and the mover agree about
     /// where the ground is.
-    pub fn terrain_height(&self, map_id: u32, x: f32, y: f32) -> Option<f32> {
+    pub(crate) fn terrain_height(&self, map_id: u32, x: f32, y: f32) -> Option<f32> {
         self.terrain.height_at(map_id, x, y)
     }
 
@@ -83,7 +83,7 @@ impl ActiveSession {
     /// per point. The session thread holds the same lock while it moves the
     /// character, which is why this is a separate method and not a loop over
     /// [`Self::terrain_height`] in the caller.
-    pub fn terrain_heights(&self, map_id: u32, points: &[(f32, f32)], out: &mut Vec<Option<f32>>) {
+    pub(crate) fn terrain_heights(&self, map_id: u32, points: &[(f32, f32)], out: &mut Vec<Option<f32>>) {
         self.terrain.heights_at(map_id, points, out);
     }
 
@@ -103,7 +103,7 @@ impl ActiveSession {
     /// [`vale_protocol::socket::session::World`] and so cannot return a kind.
     /// [`crate::render::sky`] asks about the camera's eye, which decides whether
     /// the world is drawn from under the surface.
-    pub fn terrain_liquid(
+    pub(crate) fn terrain_liquid(
         &self,
         map_id: u32,
         x: f32,
@@ -118,7 +118,7 @@ impl ActiveSession {
     ///
     /// It reads the same `MapTerrain` as the mover, so the tile is already
     /// resident and the lookup is a cache hit rather than a parse.
-    pub fn terrain_area(&self, map_id: u32, x: f32, y: f32) -> Option<u32> {
+    pub(crate) fn terrain_area(&self, map_id: u32, x: f32, y: f32) -> Option<u32> {
         self.terrain.area_at(map_id, x, y)
     }
 
@@ -126,7 +126,7 @@ impl ActiveSession {
     /// the dominant texture layer, which alone decides the footstep sound. See
     /// [`vale_assets::Terrain::ground_effect_at`]; it uses the same cache as
     /// [`Self::terrain_area`].
-    pub fn terrain_ground_effect(&self, map_id: u32, x: f32, y: f32) -> Option<u32> {
+    pub(crate) fn terrain_ground_effect(&self, map_id: u32, x: f32, y: f32) -> Option<u32> {
         self.terrain.ground_effect_at(map_id, x, y)
     }
 
@@ -134,7 +134,7 @@ impl ActiveSession {
     /// bit, which selects a unit's sun scale. See
     /// [`vale_assets::Terrain::shadowed_at`]; it uses the same cache as
     /// [`Self::terrain_area`].
-    pub fn terrain_shadowed(&self, map_id: u32, x: f32, y: f32) -> bool {
+    pub(crate) fn terrain_shadowed(&self, map_id: u32, x: f32, y: f32) -> bool {
         self.terrain.shadowed_at(map_id, x, y)
     }
 }
@@ -156,7 +156,7 @@ pub struct Handshake {
     /// Which realm's world server this is, for the screen to say so.
     pub realm: String,
     /// That realm's type; see [`ActiveSession::realm_type`].
-    pub realm_type: u32,
+    pub(crate) realm_type: u32,
     /// The account that logged in: the one the SRP6 exchange used. It is
     /// carried for the same reason as [`ActiveSession::realm`]: nothing else in
     /// the client can reconstruct it for this session.
@@ -261,7 +261,7 @@ pub struct Session {
     /// `None` means no loading screen has been chosen for a login, not map 0.
     /// Map 0's parchment is also the fallback, so a default of zero would look
     /// correct everywhere except Kalimdor.
-    pub entering_map: Option<u32>,
+    pub(crate) entering_map: Option<u32>,
     /// When the attempt in flight started, for the backstop; `None` when
     /// nothing is in flight. See [`ATTEMPT_BACKSTOP`] and [`finish_login`].
     started: Option<Instant>,
@@ -288,7 +288,7 @@ pub struct Session {
 const ATTEMPT_BACKSTOP: Duration = Duration::from_secs(90);
 
 impl Session {
-    pub fn is_connecting(&self) -> bool {
+    pub(crate) fn is_connecting(&self) -> bool {
         self.connecting.is_some() || self.entering.is_some()
     }
 
@@ -353,7 +353,7 @@ impl Session {
     ///
     /// Does nothing without a world, so a completion that arrives after the
     /// session has ended some other way is harmless.
-    pub fn log_out_to_characters(&mut self) {
+    pub(crate) fn log_out_to_characters(&mut self) {
         let Some(active) = self.active.take() else {
             return;
         };
@@ -401,7 +401,7 @@ impl Session {
     /// `SMSG_CHAR_CREATE` carries none of them; its body is one byte. The only
     /// way to get a correct row for the new character is to ask for the list,
     /// which is what `GetCharacterListUpdate()` means one layer up.
-    pub fn create_character(
+    pub(crate) fn create_character(
         &mut self,
         name: &str,
         race: u8,
@@ -490,7 +490,7 @@ impl Session {
     /// send no reply; see [`vale_protocol::socket::world::delete_character`],
     /// which turns the deadline into an ordinary refusal instead of an
     /// `io::Error`.
-    pub fn delete_character(&mut self, index: usize) -> Result<(), LoginFailure> {
+    pub(crate) fn delete_character(&mut self, index: usize) -> Result<(), LoginFailure> {
         let Some(handshake) = self.selection.as_mut() else {
             return Err(LoginFailure::local(
                 "CHAR_DELETE_FAILED",
@@ -777,7 +777,7 @@ impl Credentials {
 /// Two round trips and no third: this stops at the character list, so the
 /// player can choose a character; see [`Handshake`]. Returns immediately;
 /// [`finish_login`] collects the result.
-pub fn start_login(session: &mut Session, credentials: &Credentials) {
+pub(crate) fn start_login(session: &mut Session, credentials: &Credentials) {
     if session.is_connecting() {
         return;
     }
@@ -862,7 +862,7 @@ impl Default for QueryCaches {
     }
 }
 
-pub fn start_entering(
+pub(crate) fn start_entering(
     session: &mut Session,
     // The whole resource and not only its directory, because two things are
     // taken from it: where the archives are, and the overlay consulted before

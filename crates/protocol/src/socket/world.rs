@@ -151,14 +151,14 @@ impl CapturedPacket {
 /// A busy realm sends a few hundred packets a second, so this holds a few
 /// seconds of stream: enough to keep the packets that preceded a visible fault,
 /// and small enough that copying a snapshot has no measurable cost.
-pub const CAPTURE_PACKETS: usize = 512;
+pub(crate) const CAPTURE_PACKETS: usize = 512;
 
 /// How much of each body is kept.
 ///
 /// `SMSG_UPDATE_OBJECT` runs to tens of kilobytes, and the fields read by hand
 /// are near the front. Keeping every packet whole would make the ring about a
 /// megabyte and make each snapshot expensive.
-pub const CAPTURE_BODY_BYTES: usize = 512;
+pub(crate) const CAPTURE_BODY_BYTES: usize = 512;
 
 /// The recent-packet ring, shared by the two funnels that fill it.
 ///
@@ -370,7 +370,7 @@ impl WorldSession {
         )
     }
 
-    pub fn connect_as(
+    pub(crate) fn connect_as(
         world_addr: &str,
         account: &str,
         session_key: [u8; 40],
@@ -384,7 +384,7 @@ impl WorldSession {
     /// the default fifteen seconds.
     ///
     /// [`connect_as`]: Self::connect_as
-    pub fn connect_within(
+    pub(crate) fn connect_within(
         world_addr: &str,
         account: &str,
         session_key: [u8; 40],
@@ -509,7 +509,7 @@ impl WorldSession {
 
     /// Send an `(opcode, body)` pair as built by a verb's `packet`, such as
     /// [`crate::play::quest::QuestVerb::packet`].
-    pub fn send_packet(&mut self, (opcode, body): (Opcode, Vec<u8>)) -> io::Result<()> {
+    pub(crate) fn send_packet(&mut self, (opcode, body): (Opcode, Vec<u8>)) -> io::Result<()> {
         self.send(opcode, &body)
     }
 
@@ -713,7 +713,7 @@ impl WorldSession {
     ///
     /// `Ok(None)` means the socket was quiet, which is the usual result when a
     /// live loop asks. Anything already buffered is returned without waiting.
-    pub fn next_packet(&mut self, wait: Duration) -> io::Result<Option<Packet>> {
+    pub(crate) fn next_packet(&mut self, wait: Duration) -> io::Result<Option<Packet>> {
         if let Some(p) = self.take_packet() {
             return Ok(Some(p));
         }
@@ -762,7 +762,7 @@ impl WorldSession {
     ///
     /// The timeout covers the whole wait rather than each packet, so a server
     /// that keeps sending other packets cannot extend it.
-    pub fn recv_until_within(&mut self, want: Opcode, wait: Duration) -> io::Result<Packet> {
+    pub(crate) fn recv_until_within(&mut self, want: Opcode, wait: Duration) -> io::Result<Packet> {
         match self.try_recv_until_within(want, wait)? {
             Some(pkt) => Ok(pkt),
             None => Err(err(format!("timed out waiting for {want}"))),
@@ -781,7 +781,7 @@ impl WorldSession {
     /// the server declining, not the connection closing, and treating it as a
     /// closed connection would discard a working character screen. See
     /// [`delete_character`].
-    pub fn try_recv_until_within(
+    pub(crate) fn try_recv_until_within(
         &mut self,
         want: Opcode,
         wait: Duration,
@@ -856,7 +856,7 @@ impl WorldSession {
     /// name one machine two ways (`localhost` and `127.0.0.1`), and anything
     /// keyed by the name would then keep two entries for one server. `None` if
     /// the socket cannot report it, which does not happen on a live connection.
-    pub fn peer_address(&self) -> Option<String> {
+    pub(crate) fn peer_address(&self) -> Option<String> {
         self.stream.peer_addr().ok().map(|a| a.to_string())
     }
 
@@ -944,7 +944,7 @@ impl WorldSession {
     /// asynchronously as `SMSG_CREATURE_QUERY_RESPONSE` and is picked up by
     /// [`Self::pump`], so send a batch and then pump once rather than blocking
     /// per entry.
-    pub fn query_creature(&mut self, entry: u32, guid: u64) -> io::Result<()> {
+    pub(crate) fn query_creature(&mut self, entry: u32, guid: u64) -> io::Result<()> {
         self.send(
             Opcode::CMSG_CREATURE_QUERY,
             &query::creature_query_body(entry, guid),
@@ -1014,7 +1014,7 @@ impl WorldSession {
     ///
     /// The GUID is a plain u64 here, not the packed form (`recvData >> guid`
     /// on an `ObjectGuid` reads `uint64` in 1.12).
-    pub fn set_active_mover(&mut self, guid: u64) -> io::Result<()> {
+    pub(crate) fn set_active_mover(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_SET_ACTIVE_MOVER, &plain_guid_body(guid))
     }
 
@@ -1022,7 +1022,7 @@ impl WorldSession {
     ///
     /// Unlike the server's relay of these packets, the client's copy has no
     /// GUID prefix, because the server knows which session sent it.
-    pub fn send_movement(&mut self, opcode: Opcode, info: &MovementInfo) -> io::Result<()> {
+    pub(crate) fn send_movement(&mut self, opcode: Opcode, info: &MovementInfo) -> io::Result<()> {
         self.send(opcode, &info.to_bytes())
     }
 
@@ -1037,7 +1037,7 @@ impl WorldSession {
     /// a victim generates the packets of an attacking unit (a chase spline,
     /// `UPDATEFLAG_MELEE_ATTACKING`, `SMSG_ATTACKERSTATEUPDATE`), and they
     /// cannot be observed by walking around.
-    pub fn attack_swing(&mut self, guid: u64) -> io::Result<()> {
+    pub(crate) fn attack_swing(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_ATTACKSWING, &plain_guid_body(guid))
     }
 
@@ -1051,7 +1051,7 @@ impl WorldSession {
         self.send(Opcode::CMSG_RESET_INSTANCES, &[])
     }
 
-    pub fn attack_stop(&mut self) -> io::Result<()> {
+    pub(crate) fn attack_stop(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_ATTACKSTOP, &[])
     }
 
@@ -1105,7 +1105,7 @@ impl WorldSession {
     /// `ObjectGuid`.
     ///
     /// Zero is a legitimate value and means "nothing selected".
-    pub fn set_selection(&mut self, guid: u64) -> io::Result<()> {
+    pub(crate) fn set_selection(&mut self, guid: u64) -> io::Result<()> {
         self.send(Opcode::CMSG_SET_SELECTION, &plain_guid_body(guid))
     }
 
@@ -1229,7 +1229,7 @@ impl WorldSession {
     /// Equip a carried item: `CMSG_AUTOEQUIP_ITEM`. This is what a right-click
     /// in a bag sends for an equippable item, where [`Self::use_item`] covers a
     /// usable one.
-    pub fn auto_equip_item(&mut self, bag: u8, slot: u8) -> io::Result<()> {
+    pub(crate) fn auto_equip_item(&mut self, bag: u8, slot: u8) -> io::Result<()> {
         self.send(
             Opcode::CMSG_AUTOEQUIP_ITEM,
             &crate::play::items::auto_equip_body(bag, slot),
@@ -1327,7 +1327,7 @@ impl WorldSession {
     /// The reply is `SMSG_LOGOUT_RESPONSE`, which may refuse. See
     /// [`crate::play::logout`] for the three refusal reasons and for why this
     /// method starts no timer of its own.
-    pub fn logout_request(&mut self) -> io::Result<()> {
+    pub(crate) fn logout_request(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_LOGOUT_REQUEST, &[])
     }
 
@@ -1347,7 +1347,7 @@ impl WorldSession {
     /// `HandleRepopRequestOpcode` is a commented-out `read_skip<uint8>()` with
     /// the note "client crash", so the 5875 client sends nothing here and an
     /// extra byte would desynchronise the stream.
-    pub fn repop_request(&mut self) -> io::Result<()> {
+    pub(crate) fn repop_request(&mut self) -> io::Result<()> {
         self.send(Opcode::CMSG_REPOP_REQUEST, &[])
     }
 
@@ -1572,14 +1572,14 @@ pub(crate) fn plain_guid_body(guid: u64) -> Vec<u8> {
 /// vmangos `HandleSetSheathedOpcode` returns without answering for any value at
 /// or above it. There is no refusal packet, so a client that sends 3 is out of
 /// step with the server and nothing on the wire shows it.
-pub const MAX_SHEATH_STATE: u8 = 3;
+pub(crate) const MAX_SHEATH_STATE: u8 = 3;
 
 /// Body for `CMSG_SETSHEATHED`: one `u32` and nothing else.
 ///
 /// The value ranges over 0..2 and the update field holds it as a `u8`, but
 /// vmangos reads `recv_data >> sheathed` into a `uint32`. A one-byte body
 /// under-runs and is dropped with no error at either end.
-pub fn set_sheathed_body(state: u32) -> Vec<u8> {
+pub(crate) fn set_sheathed_body(state: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(state);
     w.buf

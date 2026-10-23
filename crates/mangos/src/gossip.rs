@@ -56,7 +56,7 @@ pub const TABLES: &[Table] = &[
 ];
 
 /// How many lines an `npc_text` row holds.
-pub const LINES: usize = 8;
+pub(crate) const LINES: usize = 8;
 
 /// The largest `gossip_menu.entry`, a `smallint unsigned`.
 pub const MAX_MENU: u32 = u16::MAX as u32;
@@ -122,7 +122,7 @@ pub fn flag_for(option_type: u32) -> u32 {
 }
 
 /// `gossip_menu`, in table order.
-pub const MENU_COLUMNS: [Column; 4] = [
+pub(crate) const MENU_COLUMNS: [Column; 4] = [
     Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the menu id; creature_template.gossip_menu_id references it" },
     Column { name: "text_id", kind: Kind::Key, group: Group::Text, about: "the npc_text row shown as this text" },
     Column { name: "script_id", kind: Kind::Unsigned, group: Group::Behaviour, about: "a gossip_scripts id run when the menu opens with this text, or 0" },
@@ -130,7 +130,7 @@ pub const MENU_COLUMNS: [Column; 4] = [
 ];
 
 /// `gossip_menu_option`, in table order.
-pub const OPTION_COLUMNS: [Column; 15] = [
+pub(crate) const OPTION_COLUMNS: [Column; 15] = [
     Column { name: "menu_id", kind: Kind::Key, group: Group::Identity, about: "the gossip_menu entry the option belongs to" },
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the option's position in the menu, from 0" },
     Column { name: "option_icon", kind: Kind::Choice(&ICONS), group: Group::Appearance, about: "the icon shown beside the option" },
@@ -150,7 +150,7 @@ pub const OPTION_COLUMNS: [Column; 15] = [
 
 /// `npc_text`, in table order: the id, then eight pairs of a broadcast text
 /// and its chance.
-pub const NPC_TEXT_COLUMNS: [Column; 17] = [
+pub(crate) const NPC_TEXT_COLUMNS: [Column; 17] = [
     Column { name: "ID", kind: Kind::Key, group: Group::Identity, about: "the npc_text id; gossip_menu.text_id references it" },
     Column { name: "BroadcastTextID0", kind: Kind::Unsigned, group: Group::Text, about: "broadcast_text id of line 1, or 0" },
     Column { name: "Probability0", kind: Kind::Float, group: Group::Text, about: "the chance that line 1 is chosen" },
@@ -172,7 +172,7 @@ pub const NPC_TEXT_COLUMNS: [Column; 17] = [
 
 /// `points_of_interest`, in table order (`ObjectMgr::LoadPointsOfInterest`,
 /// `ObjectMgr.cpp:9081`).
-pub const POI_COLUMNS: [Column; 7] = [
+pub(crate) const POI_COLUMNS: [Column; 7] = [
     Column { name: "entry", kind: Kind::Key, group: Group::Identity, about: "the point id; gossip_menu_option.action_poi_id references it" },
     Column { name: "x", kind: Kind::Float, group: Group::Place, about: "world x of the marked point" },
     Column { name: "y", kind: Kind::Float, group: Group::Place, about: "world y of the marked point" },
@@ -182,11 +182,11 @@ pub const POI_COLUMNS: [Column; 7] = [
     Column { name: "icon_name", kind: Kind::Text, group: Group::Text, about: "the name shown with the marker" },
 ];
 
-pub fn menu_key(entry: u32, text_id: u32) -> Key {
+pub(crate) fn menu_key(entry: u32, text_id: u32) -> Key {
     Key::two(("entry", u64::from(entry)), ("text_id", u64::from(text_id)))
 }
 
-pub fn option_key(menu_id: u32, id: u32) -> Key {
+pub(crate) fn option_key(menu_id: u32, id: u32) -> Key {
     Key::two(("menu_id", u64::from(menu_id)), ("id", u64::from(id)))
 }
 
@@ -200,9 +200,9 @@ pub fn point_key(entry: u32) -> Key {
 
 /// The icon, flags and data every shipped `points_of_interest` row holds, which
 /// a new row takes.
-pub const POI_ICON: u32 = 6;
-pub const POI_FLAGS: u32 = 99;
-pub const POI_DATA: u32 = 0;
+pub(crate) const POI_ICON: u32 = 6;
+pub(crate) const POI_FLAGS: u32 = 99;
+pub(crate) const POI_DATA: u32 = 0;
 
 /// One `points_of_interest` row: a place an option marks on the map.
 #[derive(Debug, Clone, PartialEq, Default)]

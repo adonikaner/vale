@@ -75,6 +75,7 @@ use crate::lua::host::LuaHost;
 /// **`SetPetStablePaperdoll` is in this list and it is a write** — it changes a
 /// frame, and it has to have done so before the call returns, exactly as
 /// `SelectTrainerService` does. See [`install`].
+#[cfg(test)]
 pub const READS: [&str; 7] = [
     "GetNextStableSlotCost",
     "GetNumStablePets",
@@ -95,9 +96,9 @@ pub struct StableLine {
     pub name: String,
     pub level: u32,
     /// "Wolf", "Cat". Empty on the same terms as the icon.
-    pub family: String,
+    pub(crate) family: String,
     /// The `PetLoyalty.dbc` label, already in words.
-    pub loyalty: String,
+    pub(crate) loyalty: String,
 }
 
 /// **What the stable panel may ask.**
@@ -211,8 +212,7 @@ impl super::super::api::Live<'_, '_, '_> {
     /// query would re-queue it from inside a Lua call every time the panel
     /// redrew.
     fn stable_family_id(&self, entry: u32) -> Option<u32> {
-        let world = self.live?.world();
-        let world = world.lock().ok()?;
+        let world = self.live?.read();
         let family = world.creatures.get(&entry)?.pet_family;
         (family != 0).then_some(family)
     }
@@ -232,8 +232,7 @@ impl super::super::api::Live<'_, '_, '_> {
     /// which draws an empty rectangle for a frame or two rather than the wrong
     /// creature.
     fn stable_display_id(&self, entry: u32) -> Option<u32> {
-        let world = self.live?.world();
-        let world = world.lock().ok()?;
+        let world = self.live?.read();
         let display = world.creatures.get(&entry)?.display_id;
         (display != 0).then_some(display)
     }
@@ -313,7 +312,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::stable::StablePress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::stable::StablePress>>>;
 
 /// Register the four writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

@@ -67,6 +67,7 @@ use crate::interface::api::UnitId;
 /// `UpdateMapHighlight` 1, `GetPlayerMapPosition` 1, plus the four zone-text
 /// names and `GetZonePVPInfo`, which the minimap, the zone popup and the chat
 /// line call rather than the map.
+#[cfg(test)]
 pub const READS: [&str; 18] = [
     "GetCorpseMapPosition",
     "GetCurrentMapContinent",
@@ -89,18 +90,6 @@ pub const READS: [&str; 18] = [
     // it needs the character's facing to rotate the arrow, so it has to be
     // scoped like the reads.
     "UpdateWorldMapArrowFrames",
-];
-
-/// The unscoped writes, which record a request or build a widget rather than
-/// return a value. Sorted.
-pub const WRITES: [&str; 7] = [
-    "CreateWorldMapArrowFrame",
-    "PositionWorldMapArrowFrame",
-    "ProcessMapClick",
-    "SetMapToCurrentZone",
-    "SetMapZoom",
-    "ShowWorldMapArrowFrame",
-    "ZoomOut",
 ];
 
 /// What `UpdateMapHighlight` returns: a name for the label, and the art to
@@ -137,12 +126,12 @@ pub struct OverlayArt {
     pub width: u32,
     pub height: u32,
     pub offset: (u32, u32),
-    pub map_point: (u32, u32),
+    pub(crate) map_point: (u32, u32),
 }
 
 /// A write the interface made to the map view; see the module comment.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MapRequest {
+pub(crate) enum MapRequest {
     /// `SetMapZoom(continent, zone)`, one-based, with 0 for the whole map.
     Zoom(usize, usize),
     /// `SetMapToCurrentZone()`: show the character's zone.
@@ -156,7 +145,7 @@ pub enum MapRequest {
     Click(f32, f32),
 }
 
-pub type MapQueue = Rc<RefCell<Vec<MapRequest>>>;
+pub(crate) type MapQueue = Rc<RefCell<Vec<MapRequest>>>;
 
 /// Register the four queued writes and the arrow functions. Unscoped: they
 /// record requests.
@@ -292,7 +281,7 @@ fn arrow(lua: &mlua::Lua) -> mlua::Result<()> {
 ///
 /// The art points up: `Interface\Minimap\MinimapArrow.blp` is 32x32 DXT3 whose
 /// alpha is one texel wide at row 7 and fifteen wide at row 21.
-pub fn arrow_angle(facing: f32) -> f32 {
+pub(crate) fn arrow_angle(facing: f32) -> f32 {
     -facing
 }
 

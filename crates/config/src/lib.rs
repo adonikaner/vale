@@ -75,11 +75,11 @@ pub const CHARACTER_ENV: &str = "VALE_CHARACTER";
 
 /// The directory holding the archives, for a run started outside the install
 /// folder. Overrides [`DATA_DIR`].
-pub const GAMEDATA_ENV: &str = "VALE_GAMEDATA";
+pub(crate) const GAMEDATA_ENV: &str = "VALE_GAMEDATA";
 
 /// The directory a 1.12 install keeps its archives in, relative to the
 /// install folder.
-pub const DATA_DIR: &str = "Data";
+pub(crate) const DATA_DIR: &str = "Data";
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -133,7 +133,7 @@ impl Config {
     /// client does. The default here is the loopback address, not the
     /// original logon server, because this project's server runs on the same
     /// machine.
-    pub fn in_folder(root: impl AsRef<Path>) -> Config {
+    pub(crate) fn in_folder(root: impl AsRef<Path>) -> Config {
         let root = root.as_ref();
         let d = Config::default();
 

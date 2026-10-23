@@ -89,33 +89,33 @@
 //! a character who walks far enough onto it is corrected back down.
 
 pub(crate) mod args;
-pub mod camera;
-pub mod context;
-pub mod import;
-pub mod instruments;
-pub mod jobs;
-pub mod map;
-pub mod marks;
-pub mod navmesh;
-pub mod pick;
-pub mod places;
-pub mod playtest;
-pub mod popout;
-pub mod prefs;
-pub mod preview;
-pub mod server;
-pub mod session;
-pub mod subjects;
-pub mod tables;
-pub mod tablet;
-pub mod tools;
+pub(crate) mod camera;
+pub(crate) mod context;
+pub(crate) mod import;
+pub(crate) mod instruments;
+pub(crate) mod jobs;
+pub(crate) mod map;
+pub(crate) mod marks;
+pub(crate) mod navmesh;
+pub(crate) mod pick;
+pub(crate) mod places;
+pub(crate) mod playtest;
+pub(crate) mod popout;
+pub(crate) mod prefs;
+pub(crate) mod preview;
+pub(crate) mod server;
+pub(crate) mod session;
+pub(crate) mod subjects;
+pub(crate) mod tables;
+pub(crate) mod tablet;
+pub(crate) mod tools;
 /// The heap census, built only with the `heap-census` feature. See [`instruments::heap`],
 /// and the manifest, which states why the feature is off by default.
 #[cfg(feature = "heap-census")]
 #[global_allocator]
 static HEAP: instruments::heap::Counted = instruments::heap::Counted;
 
-pub mod ui;
+pub(crate) mod ui;
 
 use args::Args;
 use bevy::prelude::*;
@@ -134,7 +134,7 @@ use bevy::prelude::*;
 /// 3x3's 9: about five times the resident cost, five times the fill, and 2,133
 /// yards of ground on a side instead of 800. `--reach` sets another value, and
 /// `render::terrain::TerrainReach::HIGHEST` is the client's upper limit.
-pub const REACH: i32 = 3;
+pub(crate) const REACH: i32 = 3;
 
 /// The width of the block the editor opens, in yards: 3,733 at [`REACH`].
 ///
@@ -151,7 +151,7 @@ pub const REACH: i32 = 3;
 /// narrows the block keeps the wider limits, and that causes no harm: a brush
 /// that extends past the open ground paints only the open part of its circle,
 /// and a camera pulled back further than the ground extends shows sky.
-pub const OPEN_BLOCK: f32 = (2.0 * REACH as f32 + 1.0) * vale_assets::world::adt::TILE_SIZE;
+pub(crate) const OPEN_BLOCK: f32 = (2.0 * REACH as f32 + 1.0) * vale_assets::world::adt::TILE_SIZE;
 
 /// What the streamer is told, which is `--reach` or [`REACH`].
 pub(crate) fn reach(args: &Args) -> vale_client::render::terrain::TerrainReach {
@@ -232,7 +232,7 @@ pub fn run() {
 }
 
 /// Everything this crate adds to the client's app.
-pub struct EditorPlugins;
+pub(crate) struct EditorPlugins;
 
 impl Plugin for EditorPlugins {
     fn build(&self, app: &mut App) {

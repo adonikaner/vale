@@ -37,16 +37,16 @@ use vale_mangos::row::{Edits, Key, Life};
 
 /// The selected creature, which the shell writes each frame.
 #[derive(Debug, Clone, PartialEq)]
-pub struct About {
-    pub entry: u32,
-    pub label: String,
+pub(crate) struct About {
+    pub(crate) entry: u32,
+    pub(crate) label: String,
     /// The template row's key, for the offers that write a template column.
-    pub template_key: Key,
-    pub gossip_menu_id: u32,
-    pub npc_flags: u32,
+    pub(crate) template_key: Key,
+    pub(crate) gossip_menu_id: u32,
+    pub(crate) npc_flags: u32,
     /// Where the selected spawn stands, world x and y, which a new point of
     /// interest starts at.
-    pub at: Option<[f32; 2]>,
+    pub(crate) at: Option<[f32; 2]>,
 }
 
 impl About {
@@ -54,7 +54,7 @@ impl About {
     /// are about, with its `gossip_menu_id` read from `template`, the
     /// template row as read, with this project's edits over it. `at` is
     /// where the selected spawn stands.
-    pub fn from_services(
+    pub(crate) fn from_services(
         services: &crate::subjects::services::About,
         template: Option<&vale_mangos::schema::Row>,
         edits: &Edits,
@@ -77,15 +77,15 @@ impl About {
 /// One row as the window draws it: the shown value, the database's value, and
 /// the project's change to the row.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Shown<T> {
-    pub row: T,
-    pub in_database: Option<T>,
-    pub life: Life,
+pub(crate) struct Shown<T> {
+    pub(crate) row: T,
+    pub(crate) in_database: Option<T>,
+    pub(crate) life: Life,
 }
 
 /// A new menu asked for before the ids it is numbered from were read.
 #[derive(Debug, Clone, PartialEq)]
-pub enum NewMenu {
+pub(crate) enum NewMenu {
     /// A menu of its own, opened in the window.
     Open,
     /// A menu named in a creature template's `gossip_menu_id`, with the
@@ -109,22 +109,22 @@ struct Read {
 
 /// The window's state.
 #[derive(Resource, Default)]
-pub struct Gossip {
-    pub open: bool,
+pub(crate) struct Gossip {
+    pub(crate) open: bool,
     /// The selected creature; `None` under another tool or with nothing
     /// selected.
-    pub about: Option<About>,
+    pub(crate) about: Option<About>,
     /// The menu shown when it is not the creature's, and the menus the window
     /// came from, newest last.
-    pub menu: Option<u32>,
-    pub trail: Vec<u32>,
+    pub(crate) menu: Option<u32>,
+    pub(crate) trail: Vec<u32>,
     /// The number typed into the Open field.
-    pub typed: u32,
+    pub(crate) typed: u32,
     /// The npc_text id typed beside Add existing text.
-    pub existing_text: u32,
+    pub(crate) existing_text: u32,
     /// The point of interest chooser, open for one option: its menu and id,
     /// and the search typed.
-    pub point_chooser: Option<(u32, u32, String)>,
+    pub(crate) point_chooser: Option<(u32, u32, String)>,
     /// Every `points_of_interest` row, by entry, read with the first menu.
     points: Option<HashMap<u32, Point>>,
     texts: HashMap<u32, Vec<MenuText>>,
@@ -135,28 +135,28 @@ pub struct Gossip {
     highest: Option<(u32, u32)>,
     /// Whether a button that makes a menu has been drawn, so the highest ids
     /// are read with the window shut. Set by that button; once set, it stays.
-    pub numbering: bool,
+    pub(crate) numbering: bool,
     /// A new menu asked for before the highest ids were read.
-    pub pending: Option<NewMenu>,
+    pub(crate) pending: Option<NewMenu>,
     /// The read in flight, and why the last one failed.
     reads: FreshTask<Read>,
 }
 
 impl Gossip {
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.reads.trouble()
     }
 
     /// The menu the window shows: one opened by number or through an option,
     /// else the selected creature's.
-    pub fn showing(&self) -> Option<u32> {
+    pub(crate) fn showing(&self) -> Option<u32> {
         self.menu
             .or_else(|| self.about.as_ref().map(|about| about.gossip_menu_id).filter(|menu| *menu != 0))
     }
 
     /// Open a menu, keeping the one shown now on the trail.
-    pub fn show(&mut self, menu: u32) {
+    pub(crate) fn show(&mut self, menu: u32) {
         if let Some(now) = self.showing().filter(|now| *now != menu) {
             self.trail.push(now);
         }
@@ -164,17 +164,17 @@ impl Gossip {
         self.open = true;
     }
 
-    pub fn back(&mut self) {
+    pub(crate) fn back(&mut self) {
         self.menu = self.trail.pop();
     }
 
     /// Whether a menu's rows have been read.
-    pub fn is_read(&self, menu: u32) -> bool {
+    pub(crate) fn is_read(&self, menu: u32) -> bool {
         self.texts.contains_key(&menu)
     }
 
     /// The menu's texts as the project leaves them, removals included.
-    pub fn texts_of(&self, edits: &Edits, menu: u32) -> Vec<Shown<MenuText>> {
+    pub(crate) fn texts_of(&self, edits: &Edits, menu: u32) -> Vec<Shown<MenuText>> {
         let held = self.texts.get(&menu).cloned().unwrap_or_default();
         let mut out: Vec<Shown<MenuText>> = held
             .iter()
@@ -194,7 +194,7 @@ impl Gossip {
     }
 
     /// The menu's options as the project leaves them, in the order shown.
-    pub fn options_of(&self, edits: &Edits, menu: u32) -> Vec<Shown<MenuOption>> {
+    pub(crate) fn options_of(&self, edits: &Edits, menu: u32) -> Vec<Shown<MenuOption>> {
         let held = self.options.get(&menu).cloned().unwrap_or_default();
         let mut out: Vec<Shown<MenuOption>> = held
             .iter()
@@ -214,7 +214,7 @@ impl Gossip {
     }
 
     /// An `npc_text` row as the project leaves it.
-    pub fn npc_text_of(&self, edits: &Edits, id: u32) -> Option<Shown<NpcText>> {
+    pub(crate) fn npc_text_of(&self, edits: &Edits, id: u32) -> Option<Shown<NpcText>> {
         let held = self.npc_texts.get(&id).cloned().flatten();
         let key = gossip::text_key(id);
         let assignments = held.as_ref().filter(|_| !created(edits, gossip::NPC_TEXT, &key)).map(NpcText::assignments);
@@ -224,7 +224,7 @@ impl Gossip {
 
     /// Every broadcast text the shown menu's texts and options name, for the
     /// behaviour tool to read.
-    pub fn broadcast_texts(&self, edits: &Edits) -> Vec<u32> {
+    pub(crate) fn broadcast_texts(&self, edits: &Edits) -> Vec<u32> {
         let Some(menu) = self.showing() else {
             return Vec::new();
         };
@@ -245,7 +245,7 @@ impl Gossip {
     }
 
     /// The entry a new menu takes, once the highest has been read.
-    pub fn next_menu(&self, edits: &Edits) -> Option<u32> {
+    pub(crate) fn next_menu(&self, edits: &Edits) -> Option<u32> {
         let (menu, _) = self.highest?;
         let created = edits
             .rows()
@@ -257,7 +257,7 @@ impl Gossip {
     }
 
     /// The id a new `npc_text` row takes, once the highest has been read.
-    pub fn next_npc_text(&self, edits: &Edits) -> Option<u32> {
+    pub(crate) fn next_npc_text(&self, edits: &Edits) -> Option<u32> {
         let (_, text) = self.highest?;
         let created = edits
             .rows()
@@ -270,7 +270,7 @@ impl Gossip {
 
     /// Add a text to a menu: an `npc_text` row of one line naming
     /// `broadcast_text`, and the menu row naming it. Answers the npc_text id.
-    pub fn add_text(&mut self, session: &mut EditSession, menu: u32, broadcast_text: u32, now: f64) -> Option<u32> {
+    pub(crate) fn add_text(&mut self, session: &mut EditSession, menu: u32, broadcast_text: u32, now: f64) -> Option<u32> {
         let id = self.next_npc_text(&session.rows.edits)?;
         let subject = format!("{} {menu} text", gossip::MENU);
         session.as_one("Add gossip text", &subject, |session| {
@@ -284,27 +284,27 @@ impl Gossip {
 
     /// Remove a text from a menu. The `npc_text` row stays: other menus may
     /// name it.
-    pub fn remove_text(&mut self, session: &mut EditSession, shown: &Shown<MenuText>, now: f64) {
+    pub(crate) fn remove_text(&mut self, session: &mut EditSession, shown: &Shown<MenuText>, now: f64) {
         let key = shown.row.key();
         let label = format!("{} {}", gossip::MENU, key.text());
         crate::tools::places::triggers::remove_row(session, gossip::MENU, &key, shown.in_database.is_some(), Gesture { label: "Remove gossip text", subject: &label, now });
     }
 
     /// Set one column of a menu text.
-    pub fn set_text(&mut self, session: &mut EditSession, shown: &Shown<MenuText>, column: &'static str, value: String, now: f64) {
+    pub(crate) fn set_text(&mut self, session: &mut EditSession, shown: &Shown<MenuText>, column: &'static str, value: String, now: f64) {
         let held = shown.in_database.as_ref().map(MenuText::assignments);
         write(session, gossip::MENU, &shown.row.key(), held, column, value, "Edit gossip text", now);
     }
 
     /// Set one column of an `npc_text` row: a line's broadcast text or its
     /// chance.
-    pub fn set_npc_text(&mut self, session: &mut EditSession, shown: &Shown<NpcText>, column: &'static str, value: String, now: f64) {
+    pub(crate) fn set_npc_text(&mut self, session: &mut EditSession, shown: &Shown<NpcText>, column: &'static str, value: String, now: f64) {
         let held = shown.in_database.as_ref().map(NpcText::assignments);
         write(session, gossip::NPC_TEXT, &shown.row.key(), held, column, value, "Edit gossip text", now);
     }
 
     /// Add an option at the end of a menu, a gossip line with `label`.
-    pub fn add_option(&mut self, session: &mut EditSession, menu: u32, label: &str, now: f64) -> u32 {
+    pub(crate) fn add_option(&mut self, session: &mut EditSession, menu: u32, label: &str, now: f64) -> u32 {
         let id = self
             .options_of(&session.rows.edits, menu)
             .iter()
@@ -317,21 +317,21 @@ impl Gossip {
         id
     }
 
-    pub fn remove_option(&mut self, session: &mut EditSession, shown: &Shown<MenuOption>, now: f64) {
+    pub(crate) fn remove_option(&mut self, session: &mut EditSession, shown: &Shown<MenuOption>, now: f64) {
         let key = shown.row.key();
         let label = format!("{} {}", gossip::OPTION, key.text());
         crate::tools::places::triggers::remove_row(session, gossip::OPTION, &key, shown.in_database.is_some(), Gesture { label: "Remove gossip option", subject: &label, now });
     }
 
     /// Set one column of an option.
-    pub fn set_option(&mut self, session: &mut EditSession, shown: &Shown<MenuOption>, column: &'static str, value: String, now: f64) {
+    pub(crate) fn set_option(&mut self, session: &mut EditSession, shown: &Shown<MenuOption>, column: &'static str, value: String, now: f64) {
         let held = shown.in_database.as_ref().map(MenuOption::assignments);
         write(session, gossip::OPTION, &shown.row.key(), held, column, value, "Edit gossip option", now);
     }
 
     /// Swap an option with its neighbour, `-1` up or `1` down, by swapping
     /// every column of the two rows, since an option's place is its key.
-    pub fn move_option(&mut self, session: &mut EditSession, menu: u32, id: u32, by: i32, now: f64) {
+    pub(crate) fn move_option(&mut self, session: &mut EditSession, menu: u32, id: u32, by: i32, now: f64) {
         let shown: Vec<Shown<MenuOption>> = self
             .options_of(&session.rows.edits, menu)
             .into_iter()
@@ -357,7 +357,7 @@ impl Gossip {
 
     /// One point of interest as the project leaves it. `None` when neither
     /// the table nor the project has it, or the table is not read.
-    pub fn point(&self, edits: &Edits, entry: u32) -> Option<Shown<Point>> {
+    pub(crate) fn point(&self, edits: &Edits, entry: u32) -> Option<Shown<Point>> {
         let held = self.points.as_ref()?.get(&entry).cloned();
         let key = gossip::point_key(entry);
         let assignments = held.as_ref().filter(|_| !created(edits, gossip::POI, &key)).map(Point::assignments);
@@ -366,13 +366,13 @@ impl Gossip {
     }
 
     /// Whether the points of interest have been read.
-    pub fn points_read(&self) -> bool {
+    pub(crate) fn points_read(&self) -> bool {
         self.points.is_some()
     }
 
     /// Every point of interest whose entry or name matches `search`, removals
     /// left out, by entry.
-    pub fn points_matching(&self, edits: &Edits, search: &str) -> Vec<Shown<Point>> {
+    pub(crate) fn points_matching(&self, edits: &Edits, search: &str) -> Vec<Shown<Point>> {
         let Some(held) = self.points.as_ref() else {
             return Vec::new();
         };
@@ -397,7 +397,7 @@ impl Gossip {
     }
 
     /// The entry a new point of interest takes, once the table is read.
-    pub fn next_point(&self, edits: &Edits) -> Option<u32> {
+    pub(crate) fn next_point(&self, edits: &Edits) -> Option<u32> {
         let held = self.points.as_ref()?.keys().copied().max().unwrap_or(0);
         let created = edits
             .rows()
@@ -409,7 +409,7 @@ impl Gossip {
     }
 
     /// Make a point of interest at `x`, `y`. Answers its entry.
-    pub fn new_point(&mut self, session: &mut EditSession, x: f32, y: f32, name: &str, now: f64) -> Option<u32> {
+    pub(crate) fn new_point(&mut self, session: &mut EditSession, x: f32, y: f32, name: &str, now: f64) -> Option<u32> {
         let entry = self.next_point(&session.rows.edits)?;
         let point = Point::new(entry, x, y, name);
         create(session, gossip::POI, &point.key(), &point.assignments(), now);
@@ -417,20 +417,20 @@ impl Gossip {
     }
 
     /// Set one column of a point of interest. `value` is a SQL literal.
-    pub fn set_point(&mut self, session: &mut EditSession, shown: &Shown<Point>, column: &'static str, value: String, now: f64) {
+    pub(crate) fn set_point(&mut self, session: &mut EditSession, shown: &Shown<Point>, column: &'static str, value: String, now: f64) {
         let held = shown.in_database.as_ref().map(Point::assignments);
         write(session, gossip::POI, &shown.row.key(), held, column, value, "Edit point of interest", now);
     }
 
     /// Put an existing `npc_text` row into a menu: the menu row naming it.
-    pub fn add_existing_text(&mut self, session: &mut EditSession, menu: u32, text_id: u32, now: f64) {
+    pub(crate) fn add_existing_text(&mut self, session: &mut EditSession, menu: u32, text_id: u32, now: f64) {
         let row = MenuText { entry: menu, text_id, ..MenuText::default() };
         create(session, gossip::MENU, &row.key(), &row.assignments(), now);
     }
 
     /// Make a new menu with one text, saying `broadcast_text`. Answers the
     /// menu's entry.
-    pub fn new_menu(&mut self, session: &mut EditSession, broadcast_text: u32, now: f64) -> Option<u32> {
+    pub(crate) fn new_menu(&mut self, session: &mut EditSession, broadcast_text: u32, now: f64) -> Option<u32> {
         let menu = self.next_menu(&session.rows.edits)?;
         self.add_text(session, menu, broadcast_text, now)?;
         Some(menu)
@@ -478,7 +478,7 @@ fn write(
     super::services::write_column(session, table, key, held.as_deref(), column, value, Gesture { label, subject: &subject, now });
 }
 
-pub struct GossipToolPlugin;
+pub(crate) struct GossipToolPlugin;
 
 impl Plugin for GossipToolPlugin {
     fn build(&self, app: &mut App) {

@@ -6,6 +6,7 @@
 use super::super::api::Answers;
 
 /// **The reads this module registers**, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 3] = [
     "GetSummonConfirmAreaName",
     "GetSummonConfirmSummoner",
@@ -38,12 +39,7 @@ impl SummonAnswers for super::super::api::Live<'_, '_, '_> {
             return String::new();
         };
         self.live
-            .and_then(|live| {
-                live.world()
-                    .lock()
-                    .ok()
-                    .and_then(|world| world.players.get(&guid).map(|player| player.name.clone()))
-            })
+            .and_then(|live| live.read().players.get(&guid).map(|player| player.name.clone()))
             .unwrap_or_default()
     }
 

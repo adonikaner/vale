@@ -86,15 +86,12 @@ use vale_assets::interface::wtf::{lua_number, SavedValue};
 /// that is what makes the file diffable; duplicates are refused on the way in,
 /// which is cheap at forty-four names and is what the reference's hash set does
 /// for free.
-pub type SavedNames = Rc<RefCell<Vec<String>>>;
+pub(crate) type SavedNames = Rc<RefCell<Vec<String>>>;
 
 /// **What the file said**, held so that [`register`] can apply a name the
 /// moment it is registered. Empty until the file has been read; see the module
 /// note, which is where the ordering argument is.
-pub type SavedValues = Rc<RefCell<Vec<(String, SavedValue)>>>;
-
-/// **The reads this module registers**, for the count that measures the gap.
-pub const GLOBALS: [&str; 1] = ["RegisterForSave"];
+pub(crate) type SavedValues = Rc<RefCell<Vec<(String, SavedValue)>>>;
 
 /// Set one global to a saved value, by its kind.
 fn set_global(lua: &mlua::Lua, name: &str, value: &SavedValue) -> mlua::Result<()> {

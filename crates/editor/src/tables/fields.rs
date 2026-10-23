@@ -11,7 +11,7 @@ use bevy::prelude::*;
 /// one motion is one entry, and the same field changed again half a second
 /// later is a second entry. That is `History::begin_gesture`'s rule, which the
 /// panels also use for a dragged rotation.
-pub fn set_field(
+pub(crate) fn set_field(
     session: &mut EditSession,
     table_name: &str,
     record: usize,
@@ -50,7 +50,7 @@ pub fn set_field(
 /// `subject` is the gesture key. Pass a name for the movement rather than for
 /// the columns; [`vale_edit::undo::History::begin_gesture`] merges writes
 /// with the same key inside its time window into one change.
-pub fn set_fields(
+pub(crate) fn set_fields(
     session: &mut EditSession,
     table_name: &str,
     record: usize,
@@ -99,7 +99,7 @@ pub(super) fn table_mut<'a>(
 /// Write one string field and record it on the undo stack, as [`set_field`]
 /// does for a number. A string write appends to the string block and then
 /// writes the field.
-pub fn set_text(
+pub(crate) fn set_text(
     session: &mut EditSession,
     table_name: &str,
     record: usize,

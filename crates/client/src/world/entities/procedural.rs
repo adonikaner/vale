@@ -22,7 +22,7 @@ pub(super) const OPACITY_EASE_SECS: f64 = 1.0;
 
 /// The kit procedurals' state on one unit.
 #[derive(Component, Default)]
-pub struct Procedurals {
+pub(crate) struct Procedurals {
     /// The timed colour running on the unit, and when its kit played, in
     /// seconds. A second flash replaces the first.
     pub(super) flash: Option<(ModelFlash, f64)>,
@@ -76,7 +76,7 @@ impl Procedurals {
 /// attachment root. Inserted by [`super::hang_model`] on every attached model
 /// that carries both.
 #[derive(Component, Clone, Copy)]
-pub struct Blade(pub TrailPoints);
+pub(crate) struct Blade(pub(crate) TrailPoints);
 
 /// Starts an armed trail on every weapon the unit carries, on the first
 /// animation the unit starts after the kit that armed it.

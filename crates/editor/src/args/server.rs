@@ -7,13 +7,13 @@ use crate::server::stack::Subject;
 
 /// Playtests, Apply and Put back, and publishing.
 #[derive(Debug, Clone, Default)]
-pub struct Server {
+pub(crate) struct Server {
     /// `--character <name>`: who a playtest logs in as.
     ///
     /// A default for [`crate::playtest::Login`]'s field rather than a setting
     /// of its own: `VALE_CHARACTER` answers the same question and the panel
     /// edits it for the session.
-    pub character: Option<String>,
+    pub(crate) character: Option<String>,
     /// `--playtest <seconds>[,<back>]`: start a playtest this long after the map
     /// opens, and, with the second number, leave it that long after.
     ///
@@ -30,7 +30,7 @@ pub struct Server {
     ///
     /// The delay exists because the world has to be loaded before unloading it
     /// tests anything.
-    pub playtest: Option<(f32, Option<f32>)>,
+    pub(crate) playtest: Option<(f32, Option<f32>)>,
     /// `--shell`: open the editor's panels as soon as a playtest is running.
     ///
     /// Same reason as [`Self::playtest`]. The panels over a playtest open only
@@ -41,7 +41,7 @@ pub struct Server {
     /// panels instead of a world.
     ///
     /// On its own it does nothing, since there is no playtest to draw over.
-    pub shell: bool,
+    pub(crate) shell: bool,
     /// `--reload <table>[,<table>…]`: ask the server to re-read those, once the
     /// playtest is in the world.
     ///
@@ -55,7 +55,7 @@ pub struct Server {
     /// Sending `.reload` for a table nothing has written is deliberate: the
     /// reply confirms the exchange works without the run changing anything on
     /// the server.
-    pub reload: Option<String>,
+    pub(crate) reload: Option<String>,
     /// `--revert`: put the server back, then carry on.
     ///
     /// The scripted form of the Server panel's Put back button for the
@@ -64,7 +64,7 @@ pub struct Server {
     /// `sql\revert.sql` and then deletes it; with nothing applied it does
     /// nothing and prints that. Followed by a subject's word it is
     /// [`Self::revert_subjects`] instead.
-    pub revert: bool,
+    pub(crate) revert: bool,
     /// `--apply <subject>` and `--revert <subject>`: the Server panel's Apply
     /// and Put back on one row subject, from the command line, named by
     /// `crate::server::subject::RowSubject::word` (`creatures`, `gameobjects`,
@@ -79,28 +79,28 @@ pub struct Server {
     /// nothing checks it. Under `--playtest` with `--shell`, an Apply also asks
     /// the server for the subject's reloads. The flags run once, after every
     /// scripted edit has landed; see `crate::server::subject::flags`.
-    pub apply_subjects: Vec<Subject>,
-    pub revert_subjects: Vec<Subject>,
+    pub(crate) apply_subjects: Vec<Subject>,
+    pub(crate) revert_subjects: Vec<Subject>,
     /// `--server`: open the Server panel, for photographing it.
     ///
     /// Same reason as `--projects`: the panel is a button and a popover in, and
     /// the layout of a panel a scripted run cannot put on screen goes
     /// unchecked.
-    pub panel: bool,
+    pub(crate) panel: bool,
     /// `--publish [name]`: the bar's Publish… button, from the command line: a
     /// patch folder under the project's `publish\`, named or stamped — see
     /// `server::publish::patch`. The tile regeneration runs on the server queue and
     /// reports on the log when it finishes, minutes later, so a run that wants
     /// it done pairs this with `--after`.
-    pub publish: bool,
-    pub publish_name: Option<String>,
+    pub(crate) publish: bool,
+    pub(crate) publish_name: Option<String>,
     /// `--regenerate` / `--migration`: two of Publish's server steps run on
     /// their own, the Server panel's Regenerate changed tiles and Write
     /// migration buttons, so each can be checked without the other.
     /// `--regenerate` rebuilds the project's archive first, since the tools
     /// read it.
-    pub regenerate: bool,
-    pub migration: bool,
+    pub(crate) regenerate: bool,
+    pub(crate) migration: bool,
 }
 
 pub(super) const FLAGS: &[Flag] = &[

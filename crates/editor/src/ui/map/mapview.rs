@@ -107,10 +107,10 @@ const RULER: f32 = 16.0;
 
 /// What the map window is holding.
 #[derive(Resource, Default)]
-pub struct MapView {
-    pub open: bool,
+pub(crate) struct MapView {
+    pub(crate) open: bool,
     /// The tiles every operation applies to.
-    pub selection: HashSet<(u32, u32)>,
+    pub(crate) selection: HashSet<(u32, u32)>,
     /// Where a box-drag began, while one is in progress.
     drag_from: Option<(u32, u32)>,
     /// The tiles the last Copy took, in the coordinates they were taken
@@ -125,7 +125,7 @@ pub struct MapView {
     ///   with the copied region's corner placed on the selection's corner.
     ///   Any other rule would need a second gesture to say which copied tile
     ///   goes where.
-    pub clipboard: Vec<(u32, u32)>,
+    pub(crate) clipboard: Vec<(u32, u32)>,
     zoom: usize,
     /// Select the camera's tile on the first frame the window is drawn.
     ///
@@ -143,7 +143,7 @@ pub struct MapView {
     edited: HashSet<(u32, u32)>,
     /// Set by whatever changes the project's tiles: the window opening, and
     /// every operation that makes, deletes or pastes one.
-    pub edited_stale: bool,
+    pub(crate) edited_stale: bool,
     /// Whether the window was open on the last frame, for the re-read above.
     was_open: bool,
 }
@@ -151,7 +151,7 @@ pub struct MapView {
 impl MapView {
     /// A map view that starts open, for `--tiles`, which is how the window is
     /// captured in screenshots.
-    pub fn opened() -> MapView {
+    pub(crate) fn opened() -> MapView {
         MapView {
             open: true,
             preselect: true,
@@ -160,13 +160,13 @@ impl MapView {
     }
 
     /// Select exactly these.
-    pub fn select_only(&mut self, at: (u32, u32)) {
+    pub(crate) fn select_only(&mut self, at: (u32, u32)) {
         self.selection.clear();
         self.selection.insert(at);
     }
 
     /// How many of the selection exist, and how many do not.
-    pub fn split(&self, session: &EditSession) -> (usize, usize) {
+    pub(crate) fn split(&self, session: &EditSession) -> (usize, usize) {
         let exist = self
             .selection
             .iter()
@@ -199,7 +199,7 @@ impl MapView {
 /// reference, and every operation needs it mutably and also needs the
 /// archives. `crate::map::tiles` uses the same arrangement one layer down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Asked {
+pub(crate) enum Asked {
     Create,
     Delete,
     Copy,
@@ -290,7 +290,7 @@ fn frame(zoom: usize, session: &EditSession, selection: &HashSet<(u32, u32)>, ro
 
 /// Draw the window. Returns its rectangle, so the shell can keep clicks in it
 /// out of the world, and whatever was asked for.
-pub fn draw(
+pub(crate) fn draw(
     ctx: &egui::Context,
     view: &mut MapView,
     session: &EditSession,

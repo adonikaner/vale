@@ -55,7 +55,7 @@ use crate::world::session::ClientConfig;
 /// a fresh install), or one whose realm and character are not known yet.
 /// Nothing is read from or written to a `None` path.
 #[derive(Resource, Default)]
-pub struct BindingFiles {
+pub(crate) struct BindingFiles {
     pub account: Option<PathBuf>,
     pub character: Option<PathBuf>,
     /// Whether [`load`] has run for the current interpreter. The write systems
@@ -64,7 +64,7 @@ pub struct BindingFiles {
     loaded: bool,
 }
 
-pub struct KeybindingsPlugin;
+pub(crate) struct KeybindingsPlugin;
 
 impl Plugin for KeybindingsPlugin {
     fn build(&self, app: &mut App) {

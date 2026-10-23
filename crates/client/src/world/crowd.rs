@@ -59,11 +59,11 @@ use super::entity::{LocalPlayer, WorldEntity};
 
 /// How many synthetic entities to hold.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct Crowd {
+pub(crate) struct Crowd {
     /// Clones of the local player, each with its own appearance.
     pub players: usize,
     /// Clones of whatever creature display ids are in view, cycled.
-    pub mobs: usize,
+    pub(crate) mobs: usize,
     /// **Stand them still instead of running.** Not a knob for looking at —
     /// a subtraction: a still crowd writes no `Transform` and marks no
     /// `GlobalTransform` changed, so the pair of runs separates "what a drawn
@@ -73,12 +73,12 @@ pub struct Crowd {
     /// **Take the buffs off**, which is the second subtraction the instrument
     /// needs: an aura with art is a spell-effect model hung on the wearer, and
     /// this client draws every batch of it as its own translucent phase item.
-    pub no_auras: bool,
+    pub(crate) no_auras: bool,
     /// …and the third: **take the gear off**, so the helm, the two shoulders
     /// and the weapon stop being four more models each with batches of their
     /// own. Together the three separate what a *body* costs from what is hung
     /// on it, which no count could otherwise tell apart.
-    pub no_gear: bool,
+    pub(crate) no_gear: bool,
 }
 
 impl Crowd {
@@ -106,7 +106,7 @@ impl Crowd {
 
 /// A member of the crowd, and the circle it is walking.
 #[derive(Component)]
-pub struct CrowdMember {
+pub(crate) struct CrowdMember {
     /// Where its circle is centred, in Bevy space.
     anchor: Vec3,
     /// Its own place on that circle, so the crowd is not one lockstep ring.

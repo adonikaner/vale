@@ -62,13 +62,13 @@ pub mod fields {
     /// level: the client skips the area check for a landmark whose row has a
     /// negative one, which is 200 of the 339 rows in `AreaPOI.dbc`. See
     /// [`crate::tables::areapoi`].
-    pub const EXPLORE_LEVEL: usize = 10;
+    pub(crate) const EXPLORE_LEVEL: usize = 10;
     pub const NAME: usize = 11;
     /// The word after the eight name columns.
     pub const NAME_FLAGS: usize = 19;
     /// Which side the area belongs to: 2 for the Alliance, 4 for the Horde,
     /// 0 for neither. 1,019 of the 1,081 shipped rows hold 0.
-    pub const TEAM: usize = 20;
+    pub(crate) const TEAM: usize = 20;
     /// A `LiquidType` row that replaces the liquid drawn in the area. One
     /// shipped row holds one: Naxxramas, 21.
     pub const LIQUID_TYPE: usize = 24;
@@ -105,7 +105,7 @@ pub struct Area {
     /// 0 is a real value (the first bit) rather than "no bit", so nothing
     /// here filters on it. See [`crate::tables::worldmap::WorldMap::overlays`], which is
     /// the only reader.
-    pub explore_bit: u32,
+    pub(crate) explore_bit: u32,
     /// Field 10, and it is a gate rather than a level here. A negative one
     /// means a landmark in this area is shown without asking whether it has
     /// been explored — see [`crate::tables::areapoi`], which is the only reader.
@@ -119,7 +119,7 @@ pub struct Area {
 /// `AREA_FLAG_SLAVE_CAPITAL`, `0x8` — "allow trade channel" in vmangos' own
 /// comment: the sub-areas of a capital carry it, and it is what decides
 /// whether the trade channel exists where a character stands.
-pub const AREA_FLAG_SLAVE_CAPITAL: u32 = 0x8;
+pub(crate) const AREA_FLAG_SLAVE_CAPITAL: u32 = 0x8;
 /// `AREA_FLAG_CITY`, `0x200` — "highest areaid with this flag will be name
 /// used on chat channels": the row the city channels are named after, which
 /// in 1.12 is the one called `City`. See [`Areas::city_name`].
@@ -132,7 +132,7 @@ impl Area {
     }
 
     /// A zone is an area nothing encloses — see the module comment.
-    pub fn is_zone(&self) -> bool {
+    pub(crate) fn is_zone(&self) -> bool {
         self.parent == 0
     }
 }

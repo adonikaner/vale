@@ -93,12 +93,12 @@ pub struct Scene<'w, 's> {
 #[derive(Default)]
 pub struct Counts {
     /// `Time::elapsed_secs` when these were last taken.
-    pub taken_at: f32,
+    pub(crate) taken_at: f32,
     running: usize,
     walking: usize,
     standing: usize,
-    pub total_meshes: usize,
-    pub visible_meshes: usize,
+    pub(crate) total_meshes: usize,
+    pub(crate) visible_meshes: usize,
     placements: usize,
     furniture: usize,
     doodad_batches: usize,

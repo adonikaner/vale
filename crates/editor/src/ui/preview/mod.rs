@@ -5,4 +5,4 @@
 //!               body, with the handles that move it
 //! ```
 
-pub mod lab;
+pub(crate) mod lab;

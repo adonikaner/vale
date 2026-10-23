@@ -113,11 +113,11 @@ impl Filter {
 /// and a scripted run arms the ring before anyone opens it. Read once, when the
 /// tab is first drawn, so the checkbox agrees with the ring it is reading.
 #[derive(bevy::prelude::Resource, Default)]
-pub struct CaptureRequest(pub bool);
+pub(crate) struct CaptureRequest(pub(crate) bool);
 
 /// What the panel has accumulated about the wire.
 #[derive(Default)]
-pub struct NetSample {
+pub(crate) struct NetSample {
     /// The last reading's totals and when it was taken, so the next one can be
     /// a rate.
     at: f32,
@@ -134,7 +134,7 @@ pub struct NetSample {
     /// Whether the capture checkbox is ticked. Held here rather than read back
     /// from the session so that the tick responds in the frame it is clicked;
     /// the session's own flag is what [`show`] reports beside it.
-    pub capturing: bool,
+    pub(crate) capturing: bool,
     /// Which captured packet is open in the byte view, by sequence number.
     ///
     /// A sequence number rather than an index, because the ring moves under the

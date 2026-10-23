@@ -43,14 +43,14 @@ use vale_mangos::quest;
 use vale_mangos::row::{self, Edits};
 
 /// What this project does to the server's quests, as SQL.
-pub const SQL_VPATH: &str = "sql\\quests.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\quests.sql";
 
 /// The statements that put the changed rows back, as SQL.
-pub const REVERT_VPATH: &str = "sql\\quests-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\quests-revert.sql";
 
 /// The quest subject: `quest_template` and the four relation tables, in
 /// [`quest::RELOAD_ORDER`], which is [`quest::TABLES`]' order.
-pub struct Quests;
+pub(crate) struct Quests;
 
 impl RowSubject for Quests {
     fn subject(&self) -> Subject {

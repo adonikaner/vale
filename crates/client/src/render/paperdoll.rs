@@ -206,11 +206,6 @@ impl Dolls {
         Some(self.taken.get(frame)?.picture.image.clone())
     }
 
-    /// How many dolls are kept, for the HUD line.
-    pub fn count(&self) -> usize {
-        self.taken.len()
-    }
-
     /// The lowest render layer nobody is using.
     fn free_layer(&self) -> Option<usize> {
         offscreen::free_layer(layers::DOLLS, |layer| {
@@ -219,7 +214,7 @@ impl Dolls {
     }
 }
 
-pub struct PaperDollPlugin;
+pub(crate) struct PaperDollPlugin;
 
 impl Plugin for PaperDollPlugin {
     fn build(&self, app: &mut App) {
@@ -492,7 +487,7 @@ fn turn(rotation: f32) -> Quat {
 /// none of the sixteen real tokens contains a colon, so a mistyped `"target"`
 /// is never read as a display id, and a frame pointed at a real unit never
 /// takes this path.
-pub const DISPLAY_ID_PREFIX: &str = "displayid:";
+pub(crate) const DISPLAY_ID_PREFIX: &str = "displayid:";
 
 /// The name of the tabard designer's `<TabardModel>` frame in
 /// `TabardFrame.xml`.

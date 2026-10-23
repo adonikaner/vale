@@ -87,13 +87,13 @@
 //!   the library list.
 
 #[cfg(any(test, feature = "diagnostics"))]
-pub mod audit;
-pub mod dialect;
+pub(crate) mod audit;
+pub(crate) mod dialect;
 pub mod host;
 pub mod load;
 pub mod manifest;
-pub mod scoped;
-pub mod xml;
+pub(crate) mod scoped;
+pub(crate) mod xml;
 
 pub mod api;
 pub mod panels;
@@ -106,7 +106,7 @@ use bevy::prelude::*;
 /// Registered before [`crate::interface::InterfacePlugins`] reads anything, because the
 /// binding dispatch calls into the interpreter, and an interpreter that does
 /// not exist yet means a frame at login in which keys do nothing.
-pub struct LuaPlugins;
+pub(crate) struct LuaPlugins;
 
 impl Plugin for LuaPlugins {
     fn build(&self, app: &mut App) {

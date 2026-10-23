@@ -40,13 +40,14 @@ pub struct MerchantLine {
     /// Copper, the discount already applied by the server.
     pub price: u32,
     /// How many one purchase buys — `SetItemButtonCount`'s number.
-    pub quantity: u32,
+    pub(crate) quantity: u32,
     /// `-1` unlimited; otherwise what is left.
     pub available: i64,
     pub usable: bool,
 }
 
 /// **The reads this module registers**, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 10] = [
     "CanMerchantRepair",
     "GetBuybackItemInfo",
@@ -208,7 +209,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 ///
 /// A free function so the rule can be tested without a session; the live
 /// [`super::super::api::Answers`] impl is its only other caller.
-pub fn max_stack(buy_count: u32, stackable: Option<u32>) -> u32 {
+pub(crate) fn max_stack(buy_count: u32, stackable: Option<u32>) -> u32 {
     if buy_count > 1 {
         return 1;
     }
@@ -216,7 +217,7 @@ pub fn max_stack(buy_count: u32, stackable: Option<u32>) -> u32 {
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::merchant::MerchantPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::merchant::MerchantPress>>>;
 
 /// Register the three writes. Unscoped — they record.
 ///

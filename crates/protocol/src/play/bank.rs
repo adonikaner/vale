@@ -87,14 +87,14 @@ impl BankSlotResult {
 
 /// `SMSG_SHOW_BANK`: **`u64 guid`** — the banker, and nothing else. See the
 /// module note on why the contents are not here.
-pub fn parse_show_bank(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_show_bank(body: &[u8]) -> Option<u64> {
     let mut r = Reader::new(body);
     r.has(8).then(|| r.u64())
 }
 
 /// `SMSG_BUY_BANK_SLOT_RESULT`: **`u32 result`**, kept raw beside its reading
 /// so a code this client does not know is data rather than a dropped packet.
-pub fn parse_buy_bank_slot_result(body: &[u8]) -> Option<(u32, Option<BankSlotResult>)> {
+pub(crate) fn parse_buy_bank_slot_result(body: &[u8]) -> Option<(u32, Option<BankSlotResult>)> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -105,7 +105,7 @@ pub fn parse_buy_bank_slot_result(body: &[u8]) -> Option<(u32, Option<BankSlotRe
 
 /// Body for `CMSG_BANKER_ACTIVATE` — the bare guid, the same shape as
 /// `CMSG_LIST_INVENTORY` and `CMSG_TRAINER_LIST`.
-pub fn banker_activate_body(banker: u64) -> Vec<u8> {
+pub(crate) fn banker_activate_body(banker: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(banker);
     w.buf
@@ -114,7 +114,7 @@ pub fn banker_activate_body(banker: u64) -> Vec<u8> {
 /// Body for `CMSG_BUY_BANK_SLOT` — the banker again. The server prices the
 /// slot itself (`GetBankBagSlotCount() + 1` into the table) and the client
 /// names none.
-pub fn buy_bank_slot_body(banker: u64) -> Vec<u8> {
+pub(crate) fn buy_bank_slot_body(banker: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(banker);
     w.buf
@@ -125,7 +125,7 @@ pub fn buy_bank_slot_body(banker: u64) -> Vec<u8> {
 /// ([`crate::play::items::server_container_slot`]). No destination: both
 /// let `CanBankItem` / `CanStoreItem` choose, which is what a right-click
 /// across the counter is.
-pub fn bank_move_body(src_bag: u8, src_slot: u8) -> Vec<u8> {
+pub(crate) fn bank_move_body(src_bag: u8, src_slot: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(src_bag).u8(src_slot);
     w.buf

@@ -8,7 +8,7 @@ impl EditSession {
     /// Write one tile to the project folder, or take it out of the folder
     /// when its bytes are the archives' own. Answers whether the folder now
     /// matches the tile; see [`Self::save_one`].
-    pub fn save(&mut self, coord: (u32, u32)) -> bool {
+    pub(crate) fn save(&mut self, coord: (u32, u32)) -> bool {
         self.save_one(coord).is_some()
     }
 
@@ -56,7 +56,7 @@ impl EditSession {
 
     /// …and all of them. Answers how many tiles the folder now matches,
     /// written or removed.
-    pub fn save_all(&mut self) -> usize {
+    pub(crate) fn save_all(&mut self) -> usize {
         let unsaved: Vec<(u32, u32)> = self.unsaved.iter().copied().collect();
         let (mut written, mut dropped) = (0, 0);
         for coord in unsaved {
@@ -88,7 +88,7 @@ impl EditSession {
     /// the one it published before — see `Project::publish_into`. Answers
     /// where it landed and how many files went in, or `None` when there was
     /// nothing to pack or the write failed; the status line says which.
-    pub fn publish_archive(&mut self, data_dir: &str) -> Option<(std::path::PathBuf, usize)> {
+    pub(crate) fn publish_archive(&mut self, data_dir: &str) -> Option<(std::path::PathBuf, usize)> {
         self.save_all();
         match self.project.publish_into(data_dir) {
             Ok(report) => {

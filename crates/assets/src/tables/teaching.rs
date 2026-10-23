@@ -132,7 +132,7 @@ const CATEGORY_SORT: usize = 10;
 
 /// `SkillLineCategory.dbc` rows 11, Professions, and 9, Secondary Skills:
 /// the lines a trainer row's required skill names. They are listed first.
-pub const TRAINED_CATEGORIES: [u32; 2] = [11, 9];
+pub(crate) const TRAINED_CATEGORIES: [u32; 2] = [11, 9];
 
 /// Every named skill line, grouped by category: the two trained categories
 /// first, then the others in the category table's own sort order, and by name

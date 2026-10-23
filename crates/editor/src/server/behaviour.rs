@@ -35,21 +35,21 @@ use vale_mangos::row;
 use vale_mangos::{broadcast, creaturespells, eventai, scripts};
 
 /// What this project does to the server's behaviour tables, as SQL.
-pub const SQL_VPATH: &str = "sql\\behaviour.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\behaviour.sql";
 
 /// What puts it back.
-pub const REVERT_VPATH: &str = "sql\\behaviour-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\behaviour-revert.sql";
 
 /// Where the project keeps the scripts it changes, a store of their own for
 /// the reason `super::creatures::PATHS_VPATH` is.
-pub const SCRIPTS_VPATH: &str = "server\\scripts.txt";
+pub(crate) const SCRIPTS_VPATH: &str = "server\\scripts.txt";
 
 /// The tables the row store may hold for this subject.
-pub const ROW_TABLES: &[row::Table] = &[eventai::EVENTS, creaturespells::LISTS, broadcast::TEXTS];
+pub(crate) const ROW_TABLES: &[row::Table] = &[eventai::EVENTS, creaturespells::LISTS, broadcast::TEXTS];
 
 /// A creature's behaviour: its events, spell lists and texts as keyed rows,
 /// and its scripts written whole.
-pub struct Behaviour;
+pub(crate) struct Behaviour;
 
 impl RowSubject for Behaviour {
     fn subject(&self) -> Subject {

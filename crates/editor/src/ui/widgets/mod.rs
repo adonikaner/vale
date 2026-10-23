@@ -20,11 +20,11 @@
 //!               every paged list and dialog uses
 //! ```
 
-pub mod folders;
-pub mod members;
-pub mod models;
-pub mod preview;
-pub mod reference;
-pub mod rowform;
-pub mod theme;
-pub mod thumbnails;
+pub(crate) mod folders;
+pub(crate) mod members;
+pub(crate) mod models;
+pub(crate) mod preview;
+pub(crate) mod reference;
+pub(crate) mod rowform;
+pub(crate) mod theme;
+pub(crate) mod thumbnails;

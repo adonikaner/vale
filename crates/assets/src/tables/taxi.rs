@@ -59,7 +59,7 @@ use crate::tables::dbc::Dbc;
 use crate::AssetError;
 
 /// `TaxiMaskSize`: 256 bits, one per node, indexed from node id 1.
-pub const TAXI_MASK_WORDS: usize = 8;
+pub(crate) const TAXI_MASK_WORDS: usize = 8;
 
 /// The largest node id the flight map can reach. The 1.12.1 client finds no
 /// path from or to a node id above 256, so such a node has no edges at all.
@@ -193,10 +193,6 @@ pub struct TaxiWaypoint {
 }
 
 impl TaxiWaypoint {
-    /// `KeyFrame::IsStopFrame`: `actionFlag == 2`, compared as a whole value.
-    pub fn is_stop(&self) -> bool {
-        self.action_flag == 2
-    }
 }
 
 /// The box a continent's world positions are projected through:
@@ -502,7 +498,7 @@ impl TaxiTables {
     /// The single path from one node to the other, if there is one.
     /// Node ids 0 and above 256 have no paths, as in the 1.12.1 client, so a
     /// shipped node past 256 is unreachable.
-    pub fn direct(&self, from: u32, to: u32) -> Option<&TaxiPath> {
+    pub(crate) fn direct(&self, from: u32, to: u32) -> Option<&TaxiPath> {
         if from == 0 || from > MAX_NODE_ID || to == 0 || to > MAX_NODE_ID {
             return None;
         }

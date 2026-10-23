@@ -32,7 +32,7 @@ pub fn to_wow(v: Vec3) -> [f32; 3] {
 /// Orthogonal with determinant +1, which is the formal statement that this
 /// preserves handedness. Both facts are asserted in the tests, because getting
 /// it wrong mirrors the world rather than failing.
-pub fn basis() -> Mat3 {
+pub(crate) fn basis() -> Mat3 {
     // Columns are the images of the WoW basis vectors: north, west, up.
     Mat3::from_cols(
         Vec3::new(0.0, 0.0, -1.0), // +X north  -> −Z
@@ -74,7 +74,7 @@ pub fn from_bevy_affine(m: Mat4) -> Mat4 {
 /// scale and a rotated child produces shear, and `Transform::from_matrix` would
 /// decompose that away silently and pose the model plausibly wrongly. The
 /// engine reads joints as `GlobalTransform`, which is an affine and can hold it.
-pub fn pose_to_bevy(m: &[f32; 12]) -> Mat4 {
+pub(crate) fn pose_to_bevy(m: &[f32; 12]) -> Mat4 {
     // Row-major 3x4 -> column-major 4x4, then the same conjugation every other
     // composed-in-WoW-space transform gets.
     to_bevy_affine(Mat4::from_cols_array(&[
@@ -95,7 +95,7 @@ pub fn pose_to_bevy(m: &[f32; 12]) -> Mat4 {
 /// same value [`pose_to_bevy`] computes with two 4x4 multiplies — bit for
 /// bit, as its test pins — and it is on the per-bone path of the pose pass,
 /// where the two multiplies were most of a joint's cost.
-pub fn pose_to_bevy_affine(m: &[f32; 12]) -> Affine3A {
+pub(crate) fn pose_to_bevy_affine(m: &[f32; 12]) -> Affine3A {
     Affine3A::from_cols(
         Vec3A::new(m[5], -m[9], m[1]),
         Vec3A::new(-m[6], m[10], -m[2]),

@@ -16,19 +16,19 @@ use vale_assets::tables::taxi::{node_fields as nf, path_fields as pf, path_node_
 use vale_edit::dbc::taxi;
 
 /// What the panel is drawn from.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub flights: &'a mut Flightpaths,
-    pub assets: &'a vale_client::assets::GameAssets,
-    pub now: f64,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) flights: &'a mut Flightpaths,
+    pub(crate) assets: &'a vale_client::assets::GameAssets,
+    pub(crate) now: f64,
     /// The top bar's Server… popover, which holds Apply and Put back.
-    pub server_panel: &'a mut crate::ui::shell::popover::Popover,
+    pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where the Fly to buttons send their requests. See
     /// [`crate::camera::FlyTo`].
-    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
-pub fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
     let Subject {
         session,
         flights,
@@ -348,7 +348,7 @@ fn controls(ui: &mut egui::Ui, flights: &mut Flightpaths) {
 }
 
 /// A copper amount as the game writes it.
-pub fn money(copper: u32) -> String {
+pub(crate) fn money(copper: u32) -> String {
     let (gold, silver, copper) = (copper / 10_000, copper / 100 % 100, copper % 100);
     match (gold, silver) {
         (0, 0) => format!("{copper}c"),

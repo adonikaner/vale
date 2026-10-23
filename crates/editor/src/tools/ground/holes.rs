@@ -70,15 +70,15 @@ use bevy::prelude::*;
 
 /// What the tool is about to do, and what it has done this session.
 #[derive(Resource, Debug, Default)]
-pub struct Holes {
+pub(crate) struct Holes {
     /// The square under the pointer — or `None` when the pointer is over no
     /// open tile at all.
-    pub at: Option<Square>,
+    pub(crate) at: Option<Square>,
     /// Whether that square is already a hole, which is what the panel reports
     /// and what says whether `Shift` would do anything.
-    pub already: bool,
+    pub(crate) already: bool,
     /// How many squares this session has cut, less the ones it put back.
-    pub cut: i32,
+    pub(crate) cut: i32,
     /// Whether the press that started this drag was accepted — *a drag belongs
     /// to where it began*, the rule every other tool in this directory ended up
     /// with.
@@ -90,16 +90,16 @@ pub struct Holes {
 
 /// One of a tile's 4,096 hole squares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Square {
-    pub tile: (u32, u32),
-    pub chunk: usize,
+pub(crate) struct Square {
+    pub(crate) tile: (u32, u32),
+    pub(crate) chunk: usize,
     /// 0..16, row-major over the chunk's 4x4 grid — see
     /// `vale_assets::world::adt::hole_bit`, which is the one statement of
     /// which bit is where.
-    pub bit: usize,
+    pub(crate) bit: usize,
 }
 
-pub struct HoleToolPlugin;
+pub(crate) struct HoleToolPlugin;
 
 impl Plugin for HoleToolPlugin {
     fn build(&self, app: &mut App) {

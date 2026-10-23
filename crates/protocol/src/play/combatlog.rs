@@ -122,14 +122,14 @@ pub enum CombatEvent {
 /// cannot describe, so stopping at an unknown id loses nothing that was sent.
 pub mod spell_effects {
     pub const POWER_DRAIN: u32 = 8;
-    pub const HEAL: u32 = 10;
-    pub const ADD_EXTRA_ATTACKS: u32 = 19;
+    pub(crate) const HEAL: u32 = 10;
+    pub(crate) const ADD_EXTRA_ATTACKS: u32 = 19;
     pub const CREATE_ITEM: u32 = 24;
-    pub const ENERGIZE: u32 = 30;
-    pub const HEAL_MAX_HEALTH: u32 = 67;
-    pub const INTERRUPT_CAST: u32 = 68;
-    pub const FEED_PET: u32 = 101;
-    pub const DURABILITY_DAMAGE: u32 = 111;
+    pub(crate) const ENERGIZE: u32 = 30;
+    pub(crate) const HEAL_MAX_HEALTH: u32 = 67;
+    pub(crate) const INTERRUPT_CAST: u32 = 68;
+    pub(crate) const FEED_PET: u32 = 101;
+    pub(crate) const DURABILITY_DAMAGE: u32 = 111;
 }
 
 /// One entry of one effect's list in `SMSG_SPELLLOGEXECUTE`.
@@ -139,7 +139,7 @@ pub mod spell_effects {
 /// id, so the body is parsed entry by entry rather than read as a fixed layout.
 /// vmangos' `Spell::SendLogExecute` is the authority for every one of them.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ExecuteEntry {
+pub(crate) enum ExecuteEntry {
     PowerDrain { target: u64, amount: u32, power: u32, multiplier: f32 },
     Heal { target: u64, amount: u32, critical: bool },
     Energize { target: u64, amount: u32, power: u32 },
@@ -157,7 +157,7 @@ pub enum ExecuteEntry {
 /// `SMSG_SPELLLOGEXECUTE`: what a cast's effects did, per effect and per
 /// target.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SpellExecuteLog {
+pub(crate) struct SpellExecuteLog {
     pub caster: u64,
     pub spell_id: u32,
     pub entries: Vec<ExecuteEntry>,
@@ -174,7 +174,7 @@ pub struct SpellExecuteLog {
 /// read up to that point is valid, and an entry that ran off the end is one
 /// this reader does not understand, which is the same outcome as `default:` on
 /// the writing side.
-pub fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
+pub(crate) fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -270,7 +270,7 @@ pub fn parse_spell_execute_log(body: &[u8]) -> Option<SpellExecuteLog> {
 /// The log has one line per aura removed (`AURADISPELSELF`/`…OTHER`), so the
 /// list is kept here and the handler fans it out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpellDispelLog {
+pub(crate) struct SpellDispelLog {
     pub victim: u64,
     pub caster: u64,
     /// The auras that were removed, named by the spell that applied them.
@@ -283,7 +283,7 @@ pub struct SpellDispelLog {
 ///
 /// The caster is read, but no line this client composes names it:
 /// `AURADISPEL*` is a one-unit family that says only whose aura went.
-pub fn parse_spell_dispel_log(body: &[u8]) -> Option<SpellDispelLog> {
+pub(crate) fn parse_spell_dispel_log(body: &[u8]) -> Option<SpellDispelLog> {
     let mut r = Reader::new(body);
     if !r.has(2) {
         return None;
@@ -320,7 +320,7 @@ pub fn parse_spell_dispel_log(body: &[u8]) -> Option<SpellDispelLog> {
 /// periodic tick" and then drops the line when the `CombatLogPeriodicSpells`
 /// CVar is 0, which a 0 byte never reaches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpellNotTaken {
+pub(crate) struct SpellNotTaken {
     pub caster: u64,
     pub target: u64,
     pub spell_id: u32,
@@ -328,7 +328,7 @@ pub struct SpellNotTaken {
 }
 
 /// Reads [`SpellNotTaken`]: 21 bytes.
-pub fn parse_spell_not_taken(body: &[u8]) -> Option<SpellNotTaken> {
+pub(crate) fn parse_spell_not_taken(body: &[u8]) -> Option<SpellNotTaken> {
     if body.len() < 21 {
         return None;
     }
@@ -353,7 +353,7 @@ pub struct DispelFailed {
 /// Two raw guids, caster first, then spell ids to the end of the body with no
 /// count (`Spell::EffectDispel` in vmangos' `Spells/SpellEffects.cpp`). A
 /// trailing part of a spell id is dropped.
-pub fn parse_dispel_failed(body: &[u8]) -> Option<DispelFailed> {
+pub(crate) fn parse_dispel_failed(body: &[u8]) -> Option<DispelFailed> {
     if body.len() < 16 {
         return None;
     }
@@ -369,7 +369,7 @@ pub fn parse_dispel_failed(body: &[u8]) -> Option<DispelFailed> {
 
 /// `SMSG_SPELLINSTAKILLLOG`: a raw victim guid and the spell, and no caster
 /// (`Spell::EffectInstaKill`). vmangos sends it only to clients after 1.11.2.
-pub fn parse_instakill_log(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_instakill_log(body: &[u8]) -> Option<(u64, u32)> {
     if body.len() < 12 {
         return None;
     }
@@ -400,11 +400,11 @@ pub struct XpGain {
     /// "1=none 0=100% group bonus output", and it writes 1.0 unconditionally,
     /// so the group and raid variants of the key are unreachable against this
     /// server.
-    pub group_bonus: f32,
+    pub(crate) group_bonus: f32,
 }
 
 /// `victimGuid` is a raw `uint64`, and the tail is present only for a kill.
-pub fn parse_xp_gain(body: &[u8]) -> Option<XpGain> {
+pub(crate) fn parse_xp_gain(body: &[u8]) -> Option<XpGain> {
     let mut r = Reader::new(body);
     if !r.has(13) {
         return None;
@@ -433,11 +433,11 @@ pub fn parse_xp_gain(body: &[u8]) -> Option<XpGain> {
 /// which every observer sees and which names nobody.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PartyKill {
-    pub killer: u64,
+    pub(crate) killer: u64,
     pub victim: u64,
 }
 
-pub fn parse_party_kill(body: &[u8]) -> Option<PartyKill> {
+pub(crate) fn parse_party_kill(body: &[u8]) -> Option<PartyKill> {
     let mut r = Reader::new(body);
     if !r.has(16) {
         return None;
@@ -468,7 +468,7 @@ pub struct EnvironmentalDamage {
 /// The victim is a raw guid. The absorb and resist tail exists in 1.7.0 and
 /// later, which includes 1.12, but it is read defensively for the same reason
 /// as every other tail here.
-pub fn parse_environmental_damage(body: &[u8]) -> Option<EnvironmentalDamage> {
+pub(crate) fn parse_environmental_damage(body: &[u8]) -> Option<EnvironmentalDamage> {
     let mut r = Reader::new(body);
     if !r.has(13) {
         return None;
@@ -507,7 +507,7 @@ pub struct DamageShield {
     pub school: u32,
 }
 
-pub fn parse_damage_shield(body: &[u8]) -> Option<DamageShield> {
+pub(crate) fn parse_damage_shield(body: &[u8]) -> Option<DamageShield> {
     let mut r = Reader::new(body);
     if !r.has(24) {
         return None;
@@ -588,7 +588,7 @@ impl SpellMiss {
 /// four of six targets is one cast: the caster is named once and the targets
 /// follow.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpellMissLog {
+pub(crate) struct SpellMissLog {
     pub spell_id: u32,
     pub caster: u64,
     pub targets: Vec<(u64, SpellMiss)>,
@@ -598,7 +598,7 @@ pub struct SpellMissLog {
 /// `useExtendedInfo` byte as `false`, with vmangos' note that it "seems unused
 /// in client", so the two floats behind it never appear. If the byte is ever
 /// set, this reader refuses the packet rather than guess at them.
-pub fn parse_spell_miss_log(body: &[u8]) -> Option<SpellMissLog> {
+pub(crate) fn parse_spell_miss_log(body: &[u8]) -> Option<SpellMissLog> {
     let mut r = Reader::new(body);
     if !r.has(17) {
         return None;
@@ -642,7 +642,7 @@ pub struct EnergizeLog {
     pub amount: u32,
 }
 
-pub fn parse_energize_log(body: &[u8]) -> Option<EnergizeLog> {
+pub(crate) fn parse_energize_log(body: &[u8]) -> Option<EnergizeLog> {
     let mut r = Reader::new(body);
     let target = r.packed_guid();
     let caster = r.packed_guid();
@@ -699,26 +699,26 @@ pub struct PeriodicAuraLog {
     pub spell_id: u32,
     /// The `AuraType` id, kept raw so an arm this client does not model is
     /// still identifiable in a report.
-    pub aura_type: u32,
+    pub(crate) aura_type: u32,
     pub effect: PeriodicEffect,
 }
 
 /// The seven `AuraType` values `SendPeriodicAuraLog` writes.
-pub mod aura_type {
-    pub const PERIODIC_DAMAGE: u32 = 3;
-    pub const PERIODIC_HEAL: u32 = 8;
-    pub const OBS_MOD_HEALTH: u32 = 20;
-    pub const OBS_MOD_MANA: u32 = 21;
-    pub const PERIODIC_ENERGIZE: u32 = 24;
-    pub const PERIODIC_MANA_LEECH: u32 = 64;
-    pub const PERIODIC_DAMAGE_PERCENT: u32 = 89;
+pub(crate) mod aura_type {
+    pub(crate) const PERIODIC_DAMAGE: u32 = 3;
+    pub(crate) const PERIODIC_HEAL: u32 = 8;
+    pub(crate) const OBS_MOD_HEALTH: u32 = 20;
+    pub(crate) const OBS_MOD_MANA: u32 = 21;
+    pub(crate) const PERIODIC_ENERGIZE: u32 = 24;
+    pub(crate) const PERIODIC_MANA_LEECH: u32 = 64;
+    pub(crate) const PERIODIC_DAMAGE_PERCENT: u32 = 89;
 }
 
 /// Both guids are packed. The `count` word after the spell is written as a
 /// literal 1 and is not a length: the body that follows is one effect, not
 /// `count` of them, and reading it as a length walks off the end of every
 /// packet.
-pub fn parse_periodic_aura_log(body: &[u8]) -> Option<PeriodicAuraLog> {
+pub(crate) fn parse_periodic_aura_log(body: &[u8]) -> Option<PeriodicAuraLog> {
     use aura_type::*;
     let mut r = Reader::new(body);
     let target = r.packed_guid();

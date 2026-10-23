@@ -76,7 +76,8 @@ use crate::lua::host::LuaHost;
 
 /// The unscoped functions this file registers, sorted. Checked against
 /// [`register`] by `every_verb_is_registered`.
-pub const VERBS: [&str; 44] = [
+#[cfg(test)]
+pub(crate) const VERBS: [&str; 44] = [
     "AcceptGuild",
     "CanEditGuildInfo",
     "CanEditMOTD",
@@ -124,6 +125,7 @@ pub const VERBS: [&str; 44] = [
 ];
 
 /// The scoped read, for the interface census.
+#[cfg(test)]
 pub const READS: [&str; 1] = ["GetGuildInfo"];
 
 /// What `GetGuildInfo` needs from the world.
@@ -144,8 +146,7 @@ impl GuildAnswers for super::super::api::Live<'_, '_, '_> {
         if unit.kind != vale_protocol::state::update::ObjectType::Player {
             return None;
         }
-        let world = self.live?.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = self.live?.read();
         let object = world.get(unit.guid)?;
         let guild = object.field(player::GUILDID).filter(|id| *id != 0)?;
         Some((guild, object.field(player::GUILDRANK).unwrap_or(0)))
@@ -218,10 +219,10 @@ pub struct Guild {
     pub areas: Option<Arc<Areas>>,
     pub strings: Option<Arc<vale_assets::interface::strings::Strings>>,
     /// Incremented when the roster or its view changes.
-    pub roster_version: u32,
+    pub(crate) roster_version: u32,
     /// Incremented when the character's membership changes or a guild's name
     /// arrives, which are the two things `GetGuildInfo` answers from.
-    pub membership_version: u32,
+    pub(crate) membership_version: u32,
 }
 
 impl Default for Guild {
@@ -268,7 +269,7 @@ impl Guild {
         self.membership_version = self.membership_version.wrapping_add(1);
     }
 
-    pub fn guild_id(&self) -> u32 {
+    pub(crate) fn guild_id(&self) -> u32 {
         self.guild_id
     }
 
@@ -279,12 +280,12 @@ impl Guild {
 
     /// The saved emblem of the character's guild, when its query has
     /// answered. The tabard designer starts its design from it.
-    pub fn own_emblem(&self) -> Option<vale_protocol::play::guild::Emblem> {
+    pub(crate) fn own_emblem(&self) -> Option<vale_protocol::play::guild::Emblem> {
         self.guilds.get(&self.guild_id).map(|guild| guild.emblem)
     }
 
     /// `SMSG_GUILD_QUERY_RESPONSE`.
-    pub fn note_query(&mut self, query: GuildQuery) {
+    pub(crate) fn note_query(&mut self, query: GuildQuery) {
         self.guilds.insert(query.id, query);
         self.membership_version = self.membership_version.wrapping_add(1);
     }
@@ -297,17 +298,18 @@ impl Guild {
     }
 
     /// The guild ids to query, emptied.
-    pub fn take_wanted(&mut self) -> Vec<u32> {
+    pub(crate) fn take_wanted(&mut self) -> Vec<u32> {
         std::mem::take(&mut self.wanted)
     }
 
     /// The name of the character's guild, when its query has answered.
-    pub fn own_name(&self) -> Option<&str> {
+    #[cfg(test)]
+    pub(crate) fn own_name(&self) -> Option<&str> {
         self.guilds.get(&self.guild_id).map(|g| g.name.as_str())
     }
 
     /// `SMSG_GUILD_ROSTER`: the whole roster, replacing the one held.
-    pub fn set_roster(&mut self, roster: Roster) {
+    pub(crate) fn set_roster(&mut self, roster: Roster) {
         self.motd = roster.motd;
         self.info = roster.info;
         self.rank_rights = roster.rank_rights;
@@ -317,12 +319,12 @@ impl Guild {
 
     /// The message of the day, which also arrives alone in an
     /// `SMSG_GUILD_EVENT`.
-    pub fn set_motd(&mut self, motd: String) {
+    pub(crate) fn set_motd(&mut self, motd: String) {
         self.motd = motd;
     }
 
     /// `GlobalStrings.lua`'s value for `key`, or `fallback`.
-    pub fn string(&self, key: &str, fallback: &str) -> String {
+    pub(crate) fn string(&self, key: &str, fallback: &str) -> String {
         self.strings
             .as_ref()
             .and_then(|s| s.get(key))
@@ -450,7 +452,7 @@ fn last_online(days: f32) -> (u32, u32, u32, u32) {
 }
 
 pub type Held = Rc<RefCell<Guild>>;
-pub type Queue = Rc<RefCell<Vec<GuildVerb>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<GuildVerb>>>;
 
 /// The interface's boolean: nil and `false` are false, and so is the number
 /// 0, which is what `SHOW_OFFLINE_GUILD_MEMBERS` holds when the box is clear.

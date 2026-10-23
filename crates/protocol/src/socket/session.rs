@@ -281,7 +281,8 @@ const TICK: Duration = Duration::from_millis(25);
 /// [`TICK`] in seconds, for a reader that needs a nominal step before it has
 /// two readings of [`SessionStatus::world_ms`] to subtract. A test keeps it
 /// equal to `TICK`.
-pub const TICK_SECS: f32 = 0.025;
+#[cfg(test)]
+pub(crate) const TICK_SECS: f32 = 0.025;
 
 /// How long a tick may spend draining the socket before it does the rest of
 /// its work. Bounded so that a busy zone cannot starve movement.
@@ -1098,9 +1099,12 @@ impl LiveSession {
         }
     }
 
-    /// The world state. Lock it briefly; the session thread needs it too.
-    pub fn world(&self) -> &Arc<Mutex<ObjectManager>> {
-        &self.world
+    /// Read the world state. The guard holds the world lock until it is
+    /// dropped, and the session thread waits on that lock to fold in packets,
+    /// so drop it before anything slow. Do not call a method of this session
+    /// that takes the world lock while holding one: the lock is not reentrant.
+    pub fn read(&self) -> WorldRead<'_> {
+        WorldRead(lock(&self.world))
     }
 
     /// Ask for an item's template on the next query pass. Takes the world
@@ -1153,6 +1157,17 @@ impl LiveSession {
     /// [`ObjectManager::requery_quest_status`].
     pub fn requery_quest_status(&self) {
         lock(&self.world).requery_quest_status();
+    }
+
+    /// Take the combat log entries and the template arrivals recorded since
+    /// the last call, under one lock. Drained for the same reason as
+    /// [`Self::take_chat`]; see [`ObjectManager::take_combat`] and
+    /// [`ObjectManager::take_arrivals`].
+    pub fn take_combat_and_arrivals(
+        &self,
+    ) -> (Vec<crate::play::combatlog::CombatEvent>, crate::state::objects::Arrivals) {
+        let mut world = lock(&self.world);
+        (world.take_combat(), world.take_arrivals())
     }
 
     pub fn status(&self) -> SessionStatus {
@@ -1739,7 +1754,7 @@ impl LiveSession {
     }
 
     /// Ask the thread to stop, and wait for it.
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         let _ = self.commands.send(Command::Shutdown);
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
@@ -1772,6 +1787,22 @@ impl LiveSession {
 impl Drop for LiveSession {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Read access to the world state, from [`LiveSession::read`].
+///
+/// Holds the world lock for as long as it lives and dereferences to
+/// `&ObjectManager` only. Every change to the world state from outside the
+/// session thread goes through a [`LiveSession`] method that takes the lock
+/// itself.
+pub struct WorldRead<'a>(MutexGuard<'a, ObjectManager>);
+
+impl std::ops::Deref for WorldRead<'_> {
+    type Target = ObjectManager;
+
+    fn deref(&self) -> &ObjectManager {
+        &self.0
     }
 }
 

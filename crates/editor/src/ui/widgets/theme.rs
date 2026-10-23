@@ -29,19 +29,19 @@ use bevy_egui::egui;
 use egui::{Color32, CornerRadius, Margin, RichText, Stroke, Ui, Vec2};
 
 /// Text, and the two quieter weights of it.
-pub const INK: Color32 = Color32::from_rgb(0xE2, 0xE6, 0xED);
-pub const INK_DIM: Color32 = Color32::from_rgb(0x94, 0x9C, 0xAC);
-pub const INK_FAINT: Color32 = Color32::from_rgb(0x6C, 0x74, 0x84);
+pub(crate) const INK: Color32 = Color32::from_rgb(0xE2, 0xE6, 0xED);
+pub(crate) const INK_DIM: Color32 = Color32::from_rgb(0x94, 0x9C, 0xAC);
+pub(crate) const INK_FAINT: Color32 = Color32::from_rgb(0x6C, 0x74, 0x84);
 
 /// The four surfaces — see the module comment.
-pub const SHELL: Color32 = Color32::from_rgb(0x15, 0x18, 0x1D);
-pub const PANEL: Color32 = Color32::from_rgb(0x1E, 0x22, 0x2A);
-pub const SUNK: Color32 = Color32::from_rgb(0x14, 0x17, 0x1C);
-pub const RAISED: Color32 = Color32::from_rgb(0x2A, 0x2F, 0x3A);
-pub const RAISED_HOT: Color32 = Color32::from_rgb(0x35, 0x3C, 0x4A);
+pub(crate) const SHELL: Color32 = Color32::from_rgb(0x15, 0x18, 0x1D);
+pub(crate) const PANEL: Color32 = Color32::from_rgb(0x1E, 0x22, 0x2A);
+pub(crate) const SUNK: Color32 = Color32::from_rgb(0x14, 0x17, 0x1C);
+pub(crate) const RAISED: Color32 = Color32::from_rgb(0x2A, 0x2F, 0x3A);
+pub(crate) const RAISED_HOT: Color32 = Color32::from_rgb(0x35, 0x3C, 0x4A);
 
 /// The hairline everything is separated by.
-pub const LINE: Color32 = Color32::from_rgb(0x30, 0x36, 0x42);
+pub(crate) const LINE: Color32 = Color32::from_rgb(0x30, 0x36, 0x42);
 
 /// A button that cannot be pressed.
 ///
@@ -50,29 +50,29 @@ pub const LINE: Color32 = Color32::from_rgb(0x30, 0x36, 0x42);
 /// disabled button was invisible: "Save" with nothing to save disappeared
 /// instead of greying out. A control that stays visible while unavailable
 /// shows where it will be when it becomes available.
-pub const DEAD: Color32 = Color32::from_rgb(0x23, 0x27, 0x30);
+pub(crate) const DEAD: Color32 = Color32::from_rgb(0x23, 0x27, 0x30);
 
 /// The only accent colour. Selection, the active tool and the primary action
 /// all use this blue, so one colour means "active" everywhere in the editor.
-pub const ACCENT: Color32 = Color32::from_rgb(0x4F, 0xA3, 0xE3);
-pub const ACCENT_SUNK: Color32 = Color32::from_rgb(0x22, 0x3B, 0x52);
+pub(crate) const ACCENT: Color32 = Color32::from_rgb(0x4F, 0xA3, 0xE3);
+pub(crate) const ACCENT_SUNK: Color32 = Color32::from_rgb(0x22, 0x3B, 0x52);
 
 /// The three state colours other than selection: pending ([`WARN`]), finished
 /// ([`GOOD`]) and failed ([`BAD`]).
-pub const WARN: Color32 = Color32::from_rgb(0xE0, 0xA8, 0x4F);
-pub const GOOD: Color32 = Color32::from_rgb(0x6F, 0xBF, 0x73);
-pub const BAD: Color32 = Color32::from_rgb(0xE0, 0x6C, 0x6C);
+pub(crate) const WARN: Color32 = Color32::from_rgb(0xE0, 0xA8, 0x4F);
+pub(crate) const GOOD: Color32 = Color32::from_rgb(0x6F, 0xBF, 0x73);
+pub(crate) const BAD: Color32 = Color32::from_rgb(0xE0, 0x6C, 0x6C);
 
 /// How wide the label column of a field row is, in points.
 ///
 /// Fixed rather than measured, so the rows in one panel line up with the rows
 /// in the next and a stack of settings reads as a form.
-pub const LABEL_WIDTH: f32 = 74.0;
+pub(crate) const LABEL_WIDTH: f32 = 74.0;
 
 /// How wide the subject rail is. Wide enough for the longest subject name,
 /// "Graveyards", on a half-width tile at the rail's font size; at 132 it was
 /// clipped at both ends.
-pub const RAIL_WIDTH: f32 = 148.0;
+pub(crate) const RAIL_WIDTH: f32 = 148.0;
 
 /// The starting width of the inspector beside the viewport. The panel is
 /// resizable, so this is a default rather than a fixed size.
@@ -81,24 +81,24 @@ pub const RAIL_WIDTH: f32 = 148.0;
 /// minimum is a width that every control on every panel fits inside;
 /// [`segmented`] was the control that did not fit. The maximum stops the
 /// panel from taking over the window.
-pub const INSPECTOR_WIDTH: f32 = 300.0;
+pub(crate) const INSPECTOR_WIDTH: f32 = 300.0;
 
-pub const INSPECTOR_MIN: f32 = 240.0;
-pub const INSPECTOR_MAX: f32 = 560.0;
+pub(crate) const INSPECTOR_MIN: f32 = 240.0;
+pub(crate) const INSPECTOR_MAX: f32 = 560.0;
 
 /// How wide a workspace's docked list is at first: the table browser's, the
 /// item and quest lists', and the Creatures and Game Objects lists'.
-pub const LIST_WIDTH: f32 = 320.0;
+pub(crate) const LIST_WIDTH: f32 = 320.0;
 
 /// The gap between a workspace's list and its form. A panel's margin ends at
 /// its edge, and without this the form's section heads sit against the
 /// list's border.
-pub const FORM_GAP: f32 = 12.0;
+pub(crate) const FORM_GAP: f32 = 12.0;
 
 /// The gap above a workspace's list and form, under the top bar. The docked
 /// panels carry their own margin and the middle region carries none, so it is
 /// applied to both, and the strip of chrome across the window is one height.
-pub const TOP_GAP: f32 = 10.0;
+pub(crate) const TOP_GAP: f32 = 10.0;
 
 /// A floating window over the shell: the title, a fixed id, resizable, in the
 /// shell's fill with a hairline edge.
@@ -107,7 +107,7 @@ pub const TOP_GAP: f32 = 10.0;
 /// the id defaults to the title. A window titled after the creature it shows
 /// would otherwise go back to its default position whenever another creature
 /// is chosen. The caller adds `open`, the default size and the position.
-pub fn window(title: impl Into<egui::WidgetText>, id: impl std::hash::Hash + std::fmt::Debug) -> egui::Window<'static> {
+pub(crate) fn window(title: impl Into<egui::WidgetText>, id: impl std::hash::Hash + std::fmt::Debug) -> egui::Window<'static> {
     egui::Window::new(title)
         .id(egui::Id::new(id))
         .resizable(true)
@@ -126,11 +126,11 @@ pub fn window(title: impl Into<egui::WidgetText>, id: impl std::hash::Hash + std
 /// which is too small to read and, in the game's typeface, dropped the
 /// underscore out of `npc_flags`. No text in the editor is set smaller than
 /// this.
-pub const SMALL: f32 = 11.5;
+pub(crate) const SMALL: f32 = 11.5;
 
 /// The size of body text, buttons and fields, in points: egui's `Body` and
 /// `Button` styles. egui's default is 13.
-pub const BODY: f32 = 13.5;
+pub(crate) const BODY: f32 = 13.5;
 
 /// Put the editor's own style on a context.
 ///
@@ -138,7 +138,7 @@ pub const BODY: f32 = 13.5;
 /// few dozen field writes against a context that is rebuilt each pass anyway,
 /// and the alternative — a `Local<bool>` latch — is a style that a `ReloadUI`
 /// or a second context silently reverts.
-pub fn install(ctx: &egui::Context) {
+pub(crate) fn install(ctx: &egui::Context) {
     // Write both themes, not only the current one. egui 0.35 keeps a light
     // style and a dark style side by side and picks between them from the
     // host's preference, so writing only the one showing would make the
@@ -231,7 +231,7 @@ fn paint(style: &mut egui::Style) {
 /// SHADOWS or SERVER FILES), which tells one bar from another when two are
 /// running. `label`, the step, follows it. `width` is the whole bar; the
 /// height is [`PROGRESS_HEIGHT`].
-pub fn progress(ui: &mut Ui, fraction: f32, kind: &str, label: &str, width: f32) -> egui::Response {
+pub(crate) fn progress(ui: &mut Ui, fraction: f32, kind: &str, label: &str, width: f32) -> egui::Response {
     let fraction = fraction.clamp(0.0, 1.0);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, PROGRESS_HEIGHT), egui::Sense::hover());
@@ -296,7 +296,7 @@ pub fn progress(ui: &mut Ui, fraction: f32, kind: &str, label: &str, width: f32)
 /// How tall a progress bar is, which sets the status line's height while
 /// one is running: taller than a line of the bar's own text so the step
 /// reads at a glance.
-pub const PROGRESS_HEIGHT: f32 = 22.0;
+pub(crate) const PROGRESS_HEIGHT: f32 = 22.0;
 
 /// A section heading: the name, quiet and small, with a hairline running out to
 /// the right of it.
@@ -304,7 +304,7 @@ pub const PROGRESS_HEIGHT: f32 = 22.0;
 /// The rule makes a stack of these read as sections rather than as labels. It
 /// starts after the text rather than crossing it, so the heading reads as a
 /// word and not as a divider with a caption.
-pub fn heading(ui: &mut Ui, text: &str) {
+pub(crate) fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let label = ui.label(
@@ -326,7 +326,7 @@ pub fn heading(ui: &mut Ui, text: &str) {
 ///
 /// Every setting in this editor is one of these, which is why the label width is
 /// a constant rather than an argument.
-pub fn row<R>(ui: &mut Ui, label: &str, contents: impl FnOnce(&mut Ui) -> R) -> R {
+pub(crate) fn row<R>(ui: &mut Ui, label: &str, contents: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
         ui.add_sized(
             [LABEL_WIDTH, ui.spacing().interact_size.y],
@@ -339,7 +339,7 @@ pub fn row<R>(ui: &mut Ui, label: &str, contents: impl FnOnce(&mut Ui) -> R) -> 
 
 /// [`row`], with `about` shown when the label is hovered, for a setting whose
 /// name alone does not say what it is for.
-pub fn row_about<R>(ui: &mut Ui, label: &str, about: &str, contents: impl FnOnce(&mut Ui) -> R) -> R {
+pub(crate) fn row_about<R>(ui: &mut Ui, label: &str, about: &str, contents: impl FnOnce(&mut Ui) -> R) -> R {
     ui.horizontal(|ui| {
         ui.add_sized(
             [LABEL_WIDTH, ui.spacing().interact_size.y],
@@ -363,7 +363,7 @@ pub fn row_about<R>(ui: &mut Ui, label: &str, about: &str, contents: impl FnOnce
 /// `same` is asked rather than `PartialEq` so that a caller with a variant
 /// carrying data — the flatten brush's target height — can compare on the
 /// discriminant.
-pub fn segmented<T: Copy>(
+pub(crate) fn segmented<T: Copy>(
     ui: &mut Ui,
     current: &mut T,
     options: &[(&str, T)],
@@ -424,7 +424,7 @@ pub fn segmented<T: Copy>(
 }
 
 /// The primary button of a panel: the action the panel exists for.
-pub fn primary(ui: &mut Ui, text: &str) -> egui::Response {
+pub(crate) fn primary(ui: &mut Ui, text: &str) -> egui::Response {
     ui.add_sized(
         [ui.available_width(), 26.0],
         egui::Button::new(RichText::new(text).color(Color32::from_rgb(0x0C, 0x16, 0x1E)))
@@ -434,7 +434,7 @@ pub fn primary(ui: &mut Ui, text: &str) -> egui::Response {
 }
 
 /// Small, faint text under something else: a hint, a count, a path.
-pub fn note(ui: &mut Ui, text: impl Into<String>) {
+pub(crate) fn note(ui: &mut Ui, text: impl Into<String>) {
     ui.label(RichText::new(text.into()).size(SMALL).color(INK_FAINT));
 }
 
@@ -445,7 +445,7 @@ pub fn note(ui: &mut Ui, text: impl Into<String>) {
 /// window goes on being drawn while it runs. The part of the window that is
 /// waiting shows this in the meantime. The toast in the corner counts all
 /// reads in progress.
-pub fn waiting(ui: &mut Ui, text: impl Into<String>) {
+pub(crate) fn waiting(ui: &mut Ui, text: impl Into<String>) {
     ui.horizontal(|ui| {
         ui.add(egui::Spinner::new().size(12.0).color(INK_DIM));
         ui.label(RichText::new(text.into()).small().color(INK_DIM));
@@ -456,7 +456,7 @@ pub fn waiting(ui: &mut Ui, text: impl Into<String>) {
 /// not. Painted rather than typed because egui's bundled fonts carry no star,
 /// and a missing glyph draws as a hollow box — the folder rows' triangle is
 /// painted for the same reason.
-pub fn star(painter: &egui::Painter, centre: egui::Pos2, radius: f32, on: bool) {
+pub(crate) fn star(painter: &egui::Painter, centre: egui::Pos2, radius: f32, on: bool) {
     let points: Vec<egui::Pos2> = (0..10)
         .map(|i| {
             let angle = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
@@ -479,7 +479,7 @@ pub fn star(painter: &egui::Painter, centre: egui::Pos2, radius: f32, on: bool) 
 /// Interacted with by an id of the caller's choosing rather than allocated,
 /// because it sits inside a row that has already been allocated and sensed —
 /// a picker's row is one click and its star is another, in the same rectangle.
-pub fn star_button(ui: &Ui, id: egui::Id, rect: egui::Rect, on: bool, hint: &str) -> bool {
+pub(crate) fn star_button(ui: &Ui, id: egui::Id, rect: egui::Rect, on: bool, hint: &str) -> bool {
     let response = ui.interact(rect, id, egui::Sense::click());
     let radius = match response.hovered() {
         true => rect.width() * 0.5,
@@ -501,8 +501,8 @@ pub fn star_button(ui: &Ui, id: egui::Id, rect: egui::Rect, on: bool, hint: &str
 /// lists have the same shape (a picture, a name, a line under it and the row's
 /// own id), and three panels that each chose their own text sizes and selected
 /// fill would look like three separate tools. See [`list_row`].
-pub const LIST_ROW: f32 = 38.0;
-pub const LIST_PICTURE: f32 = 26.0;
+pub(crate) const LIST_ROW: f32 = 38.0;
+pub(crate) const LIST_PICTURE: f32 = 26.0;
 
 /// A workspace list's scroll area, scrolled so row `at` is in the middle when
 /// `at` is given.
@@ -516,7 +516,7 @@ pub const LIST_PICTURE: f32 = 26.0;
 /// `row_height` is the height given to `show_rows`, which adds the item
 /// spacing to it, so the offset does the same. The area fills the rest of the
 /// panel, so the room it centres in is the height still available.
-pub fn list_area(ui: &Ui, at: Option<usize>, row_height: f32) -> egui::ScrollArea {
+pub(crate) fn list_area(ui: &Ui, at: Option<usize>, row_height: f32) -> egui::ScrollArea {
     let area = egui::ScrollArea::vertical().auto_shrink([false, false]);
     let Some(at) = at else {
         return area;
@@ -527,33 +527,33 @@ pub fn list_area(ui: &Ui, at: Option<usize>, row_height: f32) -> egui::ScrollAre
 }
 
 /// What one row of such a list says.
-pub struct ListRow<'a> {
+pub(crate) struct ListRow<'a> {
     /// The name, which is the thing being chosen between.
-    pub title: &'a str,
+    pub(crate) title: &'a str,
     /// The dimmer line under the title: what kind of thing it is.
-    pub sub: &'a str,
+    pub(crate) sub: &'a str,
     /// The number at the right-hand edge, which is the row's own id in
     /// whatever table it comes from. Empty for a list whose rows have none.
     ///
     /// It is laid out before the title, so a long name truncates rather than
     /// pushing the number off the edge.
-    pub trailing: &'a str,
+    pub(crate) trailing: &'a str,
     /// What colour the title is drawn in — [`INK`] for a list whose names mean
     /// nothing by their colour, and the game's own quality colour for the one
     /// that does.
-    pub tint: Color32,
+    pub(crate) tint: Color32,
     /// Whether the row leaves room for a picture on the left. The room is left
     /// whether or not one has arrived, so a list does not jitter sideways as
     /// the pictures decode.
-    pub picture: bool,
+    pub(crate) picture: bool,
 }
 
 /// Where a [`list_row`] was drawn, for the caller to paint its picture into.
-pub struct RowShape {
-    pub response: egui::Response,
+pub(crate) struct RowShape {
+    pub(crate) response: egui::Response,
     /// The square the picture goes in, whatever the row is a picture of — a
     /// decoded BLP icon, a rendered model, or nothing.
-    pub picture: egui::Rect,
+    pub(crate) picture: egui::Rect,
 }
 
 /// One row of a list of things to choose between, painted.
@@ -567,7 +567,7 @@ pub struct RowShape {
 /// this serves fill that square from three different sources (a thumbnail
 /// cache, a portrait rig, a rendered body), and none of them belongs in the
 /// theme module.
-pub fn list_row(ui: &mut Ui, row: ListRow<'_>, chosen: bool) -> RowShape {
+pub(crate) fn list_row(ui: &mut Ui, row: ListRow<'_>, chosen: bool) -> RowShape {
     let width = ui.available_width();
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, LIST_ROW - 2.0), egui::Sense::click());
@@ -626,7 +626,7 @@ pub fn list_row(ui: &mut Ui, row: ListRow<'_>, chosen: bool) -> RowShape {
 /// Coordinates change every frame, and in a proportional font they shift
 /// sideways as the digits change width. On a status line showing the
 /// pointer's position, that makes the numbers hard to read.
-pub fn number(text: impl Into<String>) -> RichText {
+pub(crate) fn number(text: impl Into<String>) -> RichText {
     RichText::new(text.into()).monospace().size(SMALL).color(INK)
 }
 

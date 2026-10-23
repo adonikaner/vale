@@ -65,7 +65,8 @@ use super::super::api::one_or_nil;
 /// Every name this module registers with nothing behind it. Sorted.
 ///
 /// This count is not a measure of progress. See the module comment.
-pub const REGISTERED: [&str; 99] = [
+#[cfg(test)]
+pub(crate) const REGISTERED: [&str; 99] = [
     "AcceptAreaSpiritHeal",
     "CanJoinBattlefieldAsGroup",
     "CanMerchantRepair",
@@ -171,7 +172,8 @@ pub const REGISTERED: [&str; 99] = [
 ///
 /// Kept apart from [`REGISTERED`] so that the share of the API that is real
 /// can be counted.
-pub const ANSWERED: [&str; 8] = [
+#[cfg(test)]
+pub(crate) const ANSWERED: [&str; 8] = [
     // `GetChatWindowMessages` is derived from the directory's `ChatTypeGroup`
     // and is not a constant. See the note where it is registered.
     "GetChatWindowMessages",
@@ -222,14 +224,14 @@ const REG_MODIFIERS: &str = "vale.modifiers";
 /// is [`super::super::panels::container::item_link`]. A quality past the end
 /// of the table is clamped to the last row, which is what the 1.12.1 client
 /// does.
-pub fn quality_hex(quality: u32) -> &'static str {
+pub(crate) fn quality_hex(quality: u32) -> &'static str {
     QUALITY_COLOURS[clamp_quality(quality)].1
 }
 
 /// The same row as an opaque colour, for a caller that paints and does not
 /// build an escape: [`super::super::widgets::tooltip::item_lines`], which
 /// colours an item's name.
-pub fn quality_rgb(quality: u32) -> [f64; 4] {
+pub(crate) fn quality_rgb(quality: u32) -> [f64; 4] {
     let [r, g, b] = QUALITY_COLOURS[clamp_quality(quality)].0;
     [r, g, b, 1.0]
 }
@@ -256,7 +258,7 @@ const QUALITY_COLOURS: [([f64; 3], &str); 7] = [
 /// them to tell three gestures apart on one button. They are reads, but not
 /// scoped reads: they answer from a value the client writes here and not from
 /// the world, so [`super::super::api`]'s per-call scope does not grow.
-pub fn set_modifiers(lua: &mlua::Lua, shift: bool, control: bool, alt: bool) {
+pub(crate) fn set_modifiers(lua: &mlua::Lua, shift: bool, control: bool, alt: bool) {
     let _ = lua.set_named_registry_value(REG_MODIFIERS, vec![shift, control, alt]);
 }
 
@@ -1114,7 +1116,8 @@ pub(in crate::lua) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
 /// reason: a nil method aborts the body it is called in. `RegisterForDrag`
 /// alone stopped 540 `OnLoad`s (every bag, every equipment slot, every
 /// merchant and spellbook button) because it is the second line of each.
-pub const METHODS: [&str; 12] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 12] = [
     "AppendText",
     "GetEffectiveScale",
     "GetFont",
@@ -1299,7 +1302,8 @@ pub(in crate::lua) fn install_methods(lua: &mlua::Lua, methods: &mlua::Table) ->
 /// frame is therefore still nil on the font string `UIDropDownMenu` calls it
 /// on. That was one failing `OnLoad` for `GetFont` and ten for
 /// `SetTextColor`. The split is only found by running the shipped files.
-pub const REGION_METHODS: [&str; 3] = [
+#[cfg(test)]
+pub(crate) const REGION_METHODS: [&str; 3] = [
     "GetFont",
     "SetDesaturated",
     "SetNonSpaceWrap",

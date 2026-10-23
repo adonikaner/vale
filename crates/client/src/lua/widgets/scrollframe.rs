@@ -102,18 +102,6 @@ pub(in crate::lua) fn adopt(
     list.push(frame.clone())
 }
 
-/// The methods this module installs, listed for the count of implemented
-/// methods, as every sibling module's list is.
-pub const METHODS: [&str; 7] = [
-    "GetHorizontalScrollRange",
-    "GetScrollChild",
-    "GetVerticalScroll",
-    "GetVerticalScrollRange",
-    "SetScrollChild",
-    "SetVerticalScroll",
-    "UpdateScrollChildRect",
-];
-
 /// Install the methods on the shared frame table beside every other widget's.
 /// [`super::super::panels::loot::install_methods`] states the rule.
 pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::Result<()> {

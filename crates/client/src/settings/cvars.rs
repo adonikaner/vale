@@ -118,7 +118,7 @@ impl CVars {
     /// Not dirty afterwards. Reading the file is not a change, and marking it
     /// as one would rewrite `Config.wtf` every session whether or not a
     /// setting changed.
-    pub fn with_saved(saved: &[(String, String)]) -> CVars {
+    pub(crate) fn with_saved(saved: &[(String, String)]) -> CVars {
         let mut cvars = CVars::default();
         for (name, value) in saved {
             cvars.set(name, value);
@@ -196,7 +196,7 @@ impl CVars {
     /// read. The 1.12.1 client applies the same two tests when saving, in this
     /// order: the dirty flag, then skipping every setting still at its
     /// default.
-    pub fn to_save(&self) -> Option<String> {
+    pub(crate) fn to_save(&self) -> Option<String> {
         if !self.dirty {
             return None;
         }
@@ -220,7 +220,7 @@ impl CVars {
     ///
     /// This does not break the one-way rule in the module doc: the write comes
     /// from an interface call.
-    pub fn remember_account(&mut self, account: &str) {
+    pub(crate) fn remember_account(&mut self, account: &str) {
         self.set(vale_config::ACCOUNT_CVAR, account);
     }
 
@@ -238,7 +238,7 @@ impl CVars {
 /// A resource rather than a second read of the file, because both stores are
 /// loaded from it and two reads could disagree.
 #[derive(Resource, Debug, Default, Clone)]
-pub struct SavedCVars {
+pub(crate) struct SavedCVars {
     /// The file's path, where it is written back to.
     pub path: PathBuf,
     /// The file's settings, with names in the client's own spelling; see
@@ -246,7 +246,7 @@ pub struct SavedCVars {
     pub values: Vec<(String, String)>,
 }
 
-pub struct CVarsPlugin;
+pub(crate) struct CVarsPlugin;
 
 impl Plugin for CVarsPlugin {
     /// The file is read here, while the app is built, not in a system.

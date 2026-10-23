@@ -496,7 +496,7 @@ pub enum Mask {
 
 impl Mask {
     /// Whether a stroke under this mask may move one vertex of one chunk.
-    pub fn lets(self, selected: &Selected, chunk: usize, vertex: usize) -> bool {
+    pub(crate) fn lets(self, selected: &Selected, chunk: usize, vertex: usize) -> bool {
         match self {
             Mask::Protect => !selected.holds(chunk, vertex),
             Mask::Confine => selected.holds(chunk, vertex),

@@ -28,21 +28,21 @@ use vale_assets::tables::spell::WeaponTrail;
 /// The one material every strip draws through: a white texel, alpha blended,
 /// unlit, two-sided and not writing depth. The colour is per vertex.
 #[derive(Resource)]
-pub struct TrailMaterial(pub Handle<M2Material>);
+pub(crate) struct TrailMaterial(pub(crate) Handle<M2Material>);
 
 /// Where a strip reads the weapon's two points from: the weapon model's own
 /// joints when it has a skeleton, or the attachment's root when it does not.
 /// The points are in model space and every joint's matrix maps model space
 /// to the world, so either is applied to the point as it stands.
 #[derive(Clone, Copy)]
-pub struct TrailAnchors {
+pub(crate) struct TrailAnchors {
     pub bottom: Entity,
     pub top: Entity,
 }
 
 /// One weapon's trail.
 #[derive(Component)]
-pub struct WeaponTrailStrip {
+pub(crate) struct WeaponTrailStrip {
     /// The attachment root of the weapon. When it no longer exists the strip
     /// is despawned: a weapon put away, or a unit rebuilt or gone.
     owner: Entity,
@@ -64,7 +64,7 @@ impl WeaponTrailStrip {
 }
 
 /// Spawns one strip on the weapon whose attachment root is `owner`.
-pub fn spawn_strip(
+pub(crate) fn spawn_strip(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     material: &TrailMaterial,
@@ -76,6 +76,7 @@ pub fn spawn_strip(
 ) -> Entity {
     commands
         .spawn((
+            crate::render::effect::EffectOf(owner),
             WeaponTrailStrip {
                 owner,
                 anchors,
@@ -260,7 +261,7 @@ fn simulate_strips(
     }
 }
 
-pub struct WeaponTrailPlugin;
+pub(crate) struct WeaponTrailPlugin;
 
 impl Plugin for WeaponTrailPlugin {
     fn build(&self, app: &mut App) {

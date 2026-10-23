@@ -87,11 +87,11 @@ impl Channel {
 /// the sink holds the product, and the product cannot be un-multiplied once
 /// the gain that made it has changed.
 #[derive(Component, Debug, Clone, Copy)]
-pub struct BaseVolume(pub f32);
+pub(crate) struct BaseVolume(pub(crate) f32);
 
 /// The decoded-file cache and the pick roll.
 #[derive(Resource, Default)]
-pub struct Mixer {
+pub(crate) struct Mixer {
     /// Archive path -> decoded handle. An `AudioSource` is the file's bytes;
     /// rodio decodes per play, so one handle serves any number of voices.
     cache: HashMap<String, Handle<AudioSource>>,
@@ -133,7 +133,7 @@ pub enum Place {
 /// voice outlives the code that let go of it. This client despawns instead,
 /// which is the same lifetime through Bevy's own door.
 #[derive(Component, Debug, Clone, Copy)]
-pub struct Fade {
+pub(crate) struct Fade {
     target: f32,
     /// Volume per second, always positive; the direction is the target.
     rate: f32,
@@ -164,7 +164,7 @@ impl Fade {
     }
 
     /// Whether `seconds` is long enough to be a ramp at all.
-    pub fn is_a_ramp(seconds: f32) -> bool {
+    pub(crate) fn is_a_ramp(seconds: f32) -> bool {
         seconds > CUT_BELOW_SECS
     }
 
@@ -254,7 +254,7 @@ impl Voices<'_, '_> {
     /// The voice is spawned at zero rather than at its volume, so the first
     /// frame is silent rather than a click — which is the ordering the
     /// reference uses and the only one that makes a cross-fade a cross-fade.
-    pub fn play_file_fading_in(
+    pub(crate) fn play_file_fading_in(
         &mut self,
         path: &str,
         volume: f32,
@@ -372,7 +372,7 @@ impl Voices<'_, '_> {
     }
 }
 
-pub struct MixerPlugin;
+pub(crate) struct MixerPlugin;
 
 impl Plugin for MixerPlugin {
     fn build(&self, app: &mut App) {

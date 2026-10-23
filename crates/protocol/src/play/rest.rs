@@ -16,7 +16,7 @@
 use crate::bytes::Reader;
 
 /// `SMSG_SET_REST_START`: four bytes.
-pub fn parse_set_rest_start(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_set_rest_start(body: &[u8]) -> Option<u32> {
     if body.len() < 4 {
         return None;
     }

@@ -269,7 +269,7 @@ pub const TELEPORT_COLUMNS: [Column; 11] = [
 
 /// `areatrigger_template`'s key and the five columns the client's file does
 /// not have, which the places subject writes.
-pub const TEMPLATE_COLUMNS_OF_THE_SERVER: [Column; 7] = [
+pub(crate) const TEMPLATE_COLUMNS_OF_THE_SERVER: [Column; 7] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "build", kind: Kind::Key, group: Group::Identity, about: "the client build the row belongs to; edits are written at 5875" },
     Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
@@ -280,7 +280,7 @@ pub const TEMPLATE_COLUMNS_OF_THE_SERVER: [Column; 7] = [
 ];
 
 /// `areatrigger_bg_entrance`, in table order.
-pub const BG_ENTRANCE_COLUMNS: [Column; 9] = [
+pub(crate) const BG_ENTRANCE_COLUMNS: [Column; 9] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
     Column { name: "team", kind: Kind::Choice(&TEAMS), group: Group::Requirements, about: "the side the entrance serves: 469 Alliance, 67 Horde" },
@@ -299,14 +299,14 @@ pub const TEAMS: [crate::schema::Value; 2] = [
 ];
 
 /// `areatrigger_tavern`, in table order.
-pub const TAVERN_COLUMNS: [Column; 3] = [
+pub(crate) const TAVERN_COLUMNS: [Column; 3] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "name", kind: Kind::Text, group: Group::Identity, about: "a label for editors; not shown by the server" },
     Column { name: "patch_min", kind: Kind::Unsigned, group: Group::Identity, about: "the first content patch the inn exists in" },
 ];
 
 /// `areatrigger_involvedrelation`, in table order.
-pub const QUEST_COLUMNS: [Column; 2] = [
+pub(crate) const QUEST_COLUMNS: [Column; 2] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the AreaTrigger.dbc id" },
     Column { name: "quest", kind: REF_QUEST, group: Group::Objectives, about: "the quest whose exploration objective is completed by entering the trigger" },
 ];

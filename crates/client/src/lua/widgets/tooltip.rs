@@ -109,7 +109,7 @@ use crate::interface::api::SpellTip;
 
 /// Shows the world mouseover tooltip, the one population no `<OnEnter>` in the
 /// directory reaches. See the module comment.
-pub struct TooltipPlugin;
+pub(crate) struct TooltipPlugin;
 
 impl Plugin for TooltipPlugin {
     fn build(&self, app: &mut App) {
@@ -388,7 +388,8 @@ impl Plate {
 
 /// The methods installed once on the shared frame table, sorted. Counted by
 /// `vale framexml` beside every other module's list.
-pub const METHODS: [&str; 11] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 11] = [
     "AddDoubleLine",
     "AddLine",
     "ClearLines",
@@ -403,7 +404,8 @@ pub const METHODS: [&str; 11] = [
 ];
 
 /// The methods installed per scope, because they read the live world.
-pub const SCOPED_METHODS: [&str; 24] = [
+#[cfg(test)]
+pub(crate) const SCOPED_METHODS: [&str; 24] = [
     "SetAction",
     "SetBagItem",
     "SetBuybackItem",

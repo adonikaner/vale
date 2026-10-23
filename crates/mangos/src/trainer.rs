@@ -100,11 +100,11 @@ pub const COLUMNS: [Column; 8] = [
 pub const BUILD: u32 = crate::CLIENT_BUILD;
 
 /// The build range a row made here is written with: every build.
-pub const EVERY_BUILD: (u32, u32) = (0, BUILD);
+pub(crate) const EVERY_BUILD: (u32, u32) = (0, BUILD);
 
 /// The largest spell id the `spell` column holds: it is a `smallint
 /// unsigned`.
-pub const MAX_SPELL: u32 = 65_535;
+pub(crate) const MAX_SPELL: u32 = 65_535;
 
 /// The most `reqlevel` holds: a `tinyint unsigned`.
 pub const MAX_LEVEL: u32 = 255;
@@ -285,7 +285,7 @@ pub fn who_words(trainer_type: u32, class: u32, race: u32, spell: &str) -> Strin
 }
 
 /// `Classes`, from `SharedDefines.h`.
-pub fn class_word(class: u32) -> Option<&'static str> {
+pub(crate) fn class_word(class: u32) -> Option<&'static str> {
     Some(match class {
         1 => "Warrior",
         2 => "Paladin",
@@ -301,7 +301,7 @@ pub fn class_word(class: u32) -> Option<&'static str> {
 }
 
 /// `Races`, from `SharedDefines.h`.
-pub fn race_word(race: u32) -> Option<&'static str> {
+pub(crate) fn race_word(race: u32) -> Option<&'static str> {
     Some(match race {
         1 => "Human",
         2 => "Orc",

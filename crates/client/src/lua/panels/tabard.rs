@@ -58,26 +58,9 @@ use vale_assets::look::emblem;
 use vale_protocol::play::guild::{Emblem, EMBLEM_COST, EMBLEM_COUNTS};
 use crate::lua::host::LuaHost;
 
-/// The unscoped functions this file registers, sorted.
-pub const VERBS: [&str; 2] = ["CloseTabardCreation", "GetTabardCreationCost"];
-
-/// The widget methods this file registers, sorted.
-pub const METHODS: [&str; 10] = [
-    "CanSaveTabardNow",
-    "CycleVariation",
-    "GetLowerBackgroundFileName",
-    "GetLowerEmblemFileName",
-    "GetLowerEmblemTexture",
-    "GetUpperBackgroundFileName",
-    "GetUpperEmblemFileName",
-    "GetUpperEmblemTexture",
-    "InitializeTabardColors",
-    "Save",
-];
-
 /// A texture path with this prefix is drawn as a mask: the file after the
 /// prefix, with every texel made white and its alpha kept.
-pub const ALPHA_MASK_PREFIX: &str = "vale-mask:";
+pub(crate) const ALPHA_MASK_PREFIX: &str = "vale-mask:";
 
 /// A press the interface made, for [`crate::interface::tabard`] to act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +79,7 @@ pub struct Tabard {
     /// The tabard designer the window is open at.
     pub vendor: Option<u64>,
     /// The design the five rows hold.
-    pub design: Emblem,
+    pub(crate) design: Emblem,
     /// A save was sent and has not been answered.
     pub pending: bool,
     /// The saved emblem of the character's guild, or `None` while the
@@ -109,14 +92,14 @@ pub struct Tabard {
     /// The state of the generator `InitializeTabardColors` draws from.
     random: u64,
     /// Incremented when the design changes.
-    pub design_version: u32,
+    pub(crate) design_version: u32,
 }
 
 impl Tabard {
     /// Start the design at the guild's saved emblem. A guild with no record
     /// held, or with an emblem that has a number outside its count, starts
     /// at a random design.
-    pub fn initialize(&mut self) {
+    pub(crate) fn initialize(&mut self) {
         self.design = match self.guild.filter(|emblem| emblem.in_range()) {
             Some(emblem) => emblem,
             None => {
@@ -147,7 +130,7 @@ impl Tabard {
     /// `CycleVariation(row, delta)`: move one number and wrap it at its
     /// count. A row outside 1..=5 and a step as large as the count change
     /// nothing.
-    pub fn cycle(&mut self, row: i64, delta: i64) {
+    pub(crate) fn cycle(&mut self, row: i64, delta: i64) {
         let Some(index) = usize::try_from(row - 1).ok().filter(|i| *i < 5) else {
             return;
         };
@@ -163,13 +146,13 @@ impl Tabard {
 
     /// `CanSaveTabardNow`: the guild's record is held and no save is
     /// waiting for its answer. The rank and the money are not part of it.
-    pub fn can_save(&self) -> bool {
+    pub(crate) fn can_save(&self) -> bool {
         self.guild.is_some() && !self.pending
     }
 
     /// The key of the refusal `Save` prints for this design, or `None` for a
     /// design that is sent.
-    pub fn save_fault(&self) -> Option<&'static str> {
+    pub(crate) fn save_fault(&self) -> Option<&'static str> {
         if !self.design.in_range() {
             return Some("ERR_GUILDEMBLEM_INVALID_TABARD_COLORS");
         }
@@ -189,7 +172,7 @@ impl Tabard {
 }
 
 pub type Held = Rc<RefCell<Tabard>>;
-pub type Queue = Rc<RefCell<Vec<Press>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<Press>>>;
 
 /// The board as the widget methods find it: in the interpreter's app data.
 struct Shared {

@@ -22,14 +22,14 @@ use crate::session::EditSession;
 
 /// Which of the two display tables a column names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Table {
+pub(crate) enum Table {
     Creature,
     Object,
 }
 
 impl Table {
     /// The DBC's bare name, as a column's `Kind::Ref` spells it.
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Table::Creature => "CreatureDisplayInfo",
             Table::Object => "GameObjectDisplayInfo",
@@ -38,7 +38,7 @@ impl Table {
 
     /// The table a reference names, or `None` for a reference to anything
     /// else.
-    pub fn of(dbc: &str) -> Option<Table> {
+    pub(crate) fn of(dbc: &str) -> Option<Table> {
         match dbc {
             "CreatureDisplayInfo" => Some(Table::Creature),
             "GameObjectDisplayInfo" => Some(Table::Object),
@@ -49,10 +49,10 @@ impl Table {
 
 /// One row of a display table, as the picker searches and draws it.
 #[derive(Debug, Clone)]
-pub struct Fact {
-    pub id: u32,
+pub(crate) struct Fact {
+    pub(crate) id: u32,
     /// The model path the row resolves to.
-    pub path: String,
+    pub(crate) path: String,
     /// What a query is matched against: the path and, for a creature, its
     /// skins, in lower case.
     text: String,
@@ -60,19 +60,19 @@ pub struct Fact {
 
 /// The picker while it is open.
 #[derive(Debug)]
-pub struct DisplayPick {
+pub(crate) struct DisplayPick {
     /// The window the dialog was opened in. Several windows can draw it, and
     /// it is drawn in this one only. See `crate::ui::dialog_home`.
-    pub home: Option<bevy_egui::egui::Context>,
-    pub table: Table,
+    pub(crate) home: Option<bevy_egui::egui::Context>,
+    pub(crate) table: Table,
     /// The column a choice is written to.
-    pub target: ColumnTarget,
-    pub query: String,
-    pub page: usize,
+    pub(crate) target: ColumnTarget,
+    pub(crate) query: String,
+    pub(crate) page: usize,
     /// The id under the pointer, drawn large under the grid.
-    pub preview: Option<u32>,
+    pub(crate) preview: Option<u32>,
     /// Whether the search box takes focus on the next frame.
-    pub focus: bool,
+    pub(crate) focus: bool,
     /// Every row of the table that resolves to a model, built on the first
     /// frame the dialog is drawn.
     facts: Option<Vec<Fact>>,
@@ -89,11 +89,11 @@ pub struct DisplayPick {
 }
 
 /// How many cells a page holds.
-pub const PAGE: usize = 40;
+pub(crate) const PAGE: usize = 40;
 
 impl DisplayPick {
     /// Open the picker on a column, previewing the id the column holds.
-    pub fn open(table: Table, target: ColumnTarget, showing: u32) -> DisplayPick {
+    pub(crate) fn open(table: Table, target: ColumnTarget, showing: u32) -> DisplayPick {
         DisplayPick {
             table,
             target,
@@ -111,7 +111,7 @@ impl DisplayPick {
     }
 
     /// Every row the table resolves to a model.
-    pub fn facts(&mut self, session: &mut EditSession, assets: &GameAssets) -> &[Fact] {
+    pub(crate) fn facts(&mut self, session: &mut EditSession, assets: &GameAssets) -> &[Fact] {
         let generation = assets.tables_generation();
         if self.facts.is_some() && self.facts_at != generation {
             self.facts = None;
@@ -129,7 +129,7 @@ impl DisplayPick {
     ///
     /// A number matches the row with that id; text matches the model path
     /// and, for a creature, a skin name.
-    pub fn matches(&mut self, session: &mut EditSession, assets: &GameAssets) -> &[u32] {
+    pub(crate) fn matches(&mut self, session: &mut EditSession, assets: &GameAssets) -> &[u32] {
         let query = self.query.trim().to_ascii_lowercase();
         if self.built.as_ref() == Some(&query) {
             return &self.hits;
@@ -142,7 +142,7 @@ impl DisplayPick {
     }
 
     /// The model path a display id resolves to, from the facts.
-    pub fn path_of(&self, id: u32) -> Option<&str> {
+    pub(crate) fn path_of(&self, id: u32) -> Option<&str> {
         self.facts
             .as_deref()?
             .iter()
@@ -151,7 +151,7 @@ impl DisplayPick {
     }
 
     /// What a creature display id is drawn as, memoised. See [`resolve_worn`].
-    pub fn worn(&mut self, assets: &GameAssets, id: u32) -> Option<Worn> {
+    pub(crate) fn worn(&mut self, assets: &GameAssets, id: u32) -> Option<Worn> {
         if let Some(had) = self.worn.get(&id) {
             return had.clone();
         }
@@ -217,7 +217,7 @@ fn build_facts(session: &mut EditSession, assets: &GameAssets, table: Table) -> 
 /// wears.
 ///
 /// `None` for id 0 and for an id the tables do not resolve.
-pub fn resolve_worn(assets: &GameAssets, display_id: u32) -> Option<Worn> {
+pub(crate) fn resolve_worn(assets: &GameAssets, display_id: u32) -> Option<Worn> {
     if display_id == 0 {
         return None;
     }

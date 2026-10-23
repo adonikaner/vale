@@ -96,8 +96,8 @@ pub const CREATURE_GIVES: &str = "creature_questrelation";
 pub const CREATURE_TAKES: &str = "creature_involvedrelation";
 
 /// …and the same two for a game object.
-pub const OBJECT_GIVES: &str = "gameobject_questrelation";
-pub const OBJECT_TAKES: &str = "gameobject_involvedrelation";
+pub(crate) const OBJECT_GIVES: &str = "gameobject_questrelation";
+pub(crate) const OBJECT_TAKES: &str = "gameobject_involvedrelation";
 
 /// The four relation tables.
 pub const RELATIONS: [&str; 4] = [CREATURE_GIVES, CREATURE_TAKES, OBJECT_GIVES, OBJECT_TAKES];
@@ -480,18 +480,12 @@ pub const TEMPLATE_COLUMNS: [Column; 131] = [
 
 /// A relation table's two columns, the key's two aside — see the module
 /// comment.
-pub const RELATION_COLUMNS: [Column; 4] = [
+pub(crate) const RELATION_COLUMNS: [Column; 4] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the creature_template or gameobject_template entry" },
     Column { name: "quest", kind: Kind::Key, group: Group::Identity, about: "the quest_template entry" },
     Column { name: "patch_min", kind: Kind::Unsigned, group: Group::Identity, about: "the first content patch the row is loaded at" },
     Column { name: "patch_max", kind: Kind::Unsigned, group: Group::Identity, about: "the last content patch the row is loaded at" },
 ];
-
-/// The four numbered groups an objective is spread across, as the column
-/// stems a form walks to draw one objective per line: the creature or object,
-/// its count, the spell cast on it and what the log calls it.
-pub const KILL_STEMS: [&str; 4] =
-    ["ReqCreatureOrGOId", "ReqCreatureOrGOCount", "ReqSpellCast", "ObjectiveText"];
 
 /// The key an edit to a quest row is written under.
 pub fn template_key(entry: u32, patch: u32) -> Key {

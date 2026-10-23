@@ -48,7 +48,7 @@ use super::{interface, Readout, BAD, DIM, WARN};
 
 /// How many lines the ring keeps. A login writes about two hundred lines, so
 /// this holds several minutes of an ordinary session.
-pub const CAPACITY: usize = 2000;
+pub(crate) const CAPACITY: usize = 2000;
 
 /// One log event, as the tab draws it.
 pub struct Line {

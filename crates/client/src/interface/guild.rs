@@ -54,7 +54,7 @@ use vale_protocol::play::guild::GuildVerb;
 /// What the session thread said about the guild, forwarded by
 /// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
-pub enum GuildAnswer {
+pub(crate) enum GuildAnswer {
     Query(vale_protocol::play::guild::GuildQuery),
     Roster(vale_protocol::play::guild::Roster),
     Event(GuildEvent),
@@ -65,7 +65,7 @@ pub enum GuildAnswer {
     Info(GuildInfo),
 }
 
-pub struct GuildPlugin;
+pub(crate) struct GuildPlugin;
 
 impl Plugin for GuildPlugin {
     fn build(&self, app: &mut App) {
@@ -140,7 +140,7 @@ fn track_membership(
     // No session is no guild: the board of a character who logged out must
     // not keep the last character's membership.
     let membership = session.active.as_ref().and_then(|active| {
-        let world = active.live.world().lock().ok()?;
+        let world = active.live.read();
         let me = world.player()?;
         if own.0.is_none() {
             own.0 = world.players.get(&me.guid).map(|info| info.name.clone());
@@ -360,7 +360,7 @@ fn send_verbs(host: Option<NonSendMut<crate::lua::host::LuaHost>>, session: Res<
 }
 
 /// The arm [`crate::world::incoming`] calls for the seven guild events.
-pub fn answer_of(event: &PlayerEvent) -> Option<GuildAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<GuildAnswer> {
     Some(match event {
         PlayerEvent::GuildQuery(query) => GuildAnswer::Query(query.clone()),
         PlayerEvent::GuildRoster(roster) => GuildAnswer::Roster(roster.clone()),

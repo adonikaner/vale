@@ -132,10 +132,10 @@ pub const MAX_ZONES: usize = 10;
 pub const MAX_TERMS: usize = 4;
 
 /// …and how much of the typed line is read at all: 128 bytes.
-pub const MAX_LINE: usize = 128;
+pub(crate) const MAX_LINE: usize = 128;
 
 /// The top of the default level range.
-pub const DEFAULT_LEVEL_MAX: u32 = 100;
+pub(crate) const DEFAULT_LEVEL_MAX: u32 = 100;
 
 /// One `/who`, parsed.
 ///

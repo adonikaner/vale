@@ -17,7 +17,7 @@ use crate::world::entity::{EntityIndex, WorldEntity};
 use bevy::prelude::*;
 
 #[derive(Component)]
-pub struct HeardCasts {
+pub(crate) struct HeardCasts {
     begun: u32,
     released: u32,
     landed: u32,
@@ -34,7 +34,7 @@ pub struct HeardCasts {
     precast: Option<Entity>,
 }
 
-pub struct SpellsPlugin;
+pub(crate) struct SpellsPlugin;
 
 impl Plugin for SpellsPlugin {
     fn build(&self, app: &mut App) {

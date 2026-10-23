@@ -81,20 +81,20 @@ use std::collections::HashMap;
 
 /// One path, with its points in order.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Route {
-    pub path: Path,
-    pub points: Vec<Point>,
+pub(crate) struct Route {
+    pub(crate) path: Path,
+    pub(crate) points: Vec<Point>,
     /// Yards, point to point, not counting a crossing between maps.
-    pub length: f32,
+    pub(crate) length: f32,
     /// Whether either end is a node with no mount on either side. Those are
     /// the ends of the boat and zeppelin routes, which share `TaxiPath.dbc`
     /// with the flights; `vale taxi` separates them by the same rule.
-    pub transport: bool,
+    pub(crate) transport: bool,
 }
 
 /// What the pointer is over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Handle {
+pub(crate) enum Handle {
     Node(u32),
     Point(u32),
     /// A path's line, between two of its points.
@@ -103,7 +103,7 @@ pub enum Handle {
 
 /// What a click on empty ground does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Armed {
+pub(crate) enum Armed {
     /// Nothing.
     #[default]
     Nothing,
@@ -119,33 +119,33 @@ pub enum Armed {
 
 /// A path being drawn point by point from a node, before it is a row.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Draft {
-    pub from: u32,
+pub(crate) struct Draft {
+    pub(crate) from: u32,
     /// The points placed so far, in order, after the start node, in the
     /// world's axes.
-    pub points: Vec<Vec3>,
+    pub(crate) points: Vec<Vec3>,
     /// The height, in world yards, the next point is placed at.
-    pub height: f32,
+    pub(crate) height: f32,
     /// A Ctrl + drag in progress.
-    pub lift: Option<Lift>,
+    pub(crate) lift: Option<Lift>,
 }
 
 /// A Ctrl + drag that sets the next point's height. The point stands above
 /// the place the press landed, and is placed when the button comes up.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Lift {
+pub(crate) struct Lift {
     /// Where the point stands across the ground, in the world's axes.
-    pub at: Vec2,
+    pub(crate) at: Vec2,
     /// The offset from the pointer's hit on the upright plane to the point's
     /// height, measured on the first frame of the drag so the point does not
     /// jump.
-    pub grab: Option<f32>,
+    pub(crate) grab: Option<f32>,
 }
 
 impl Draft {
     /// Where the next point would go for a pointer over `surface`: above the
     /// lift's place while one is held, else above the pointer.
-    pub fn next(&self, surface: Option<Vec3>) -> Option<Vec3> {
+    pub(crate) fn next(&self, surface: Option<Vec3>) -> Option<Vec3> {
         let across = match self.lift {
             Some(lift) => lift.at,
             None => surface?.truncate(),
@@ -156,49 +156,49 @@ impl Draft {
 
 /// The flight path tool's state.
 #[derive(Resource, Debug)]
-pub struct Flightpaths {
+pub(crate) struct Flightpaths {
     /// The nodes on the open map.
-    pub nodes: Vec<Node>,
+    pub(crate) nodes: Vec<Node>,
     /// Every node's name by id, on any map, for a path whose far end is not
     /// on this one.
-    pub names: HashMap<u32, String>,
+    pub(crate) names: HashMap<u32, String>,
     /// The paths with a point or an end on the open map.
-    pub routes: Vec<Route>,
+    pub(crate) routes: Vec<Route>,
     /// What `vale_edit::dbc::taxi::check` finds wrong with the three
     /// tables. Empty for the shipped ones.
-    pub findings: Vec<Finding>,
+    pub(crate) findings: Vec<Finding>,
     /// The session's table revision and the map the lists were built for.
     built: Option<(u64, u32)>,
-    pub map: u32,
-    pub node: Option<u32>,
-    pub path: Option<u32>,
-    pub point: Option<u32>,
-    pub hovered: Option<Handle>,
+    pub(crate) map: u32,
+    pub(crate) node: Option<u32>,
+    pub(crate) path: Option<u32>,
+    pub(crate) point: Option<u32>,
+    pub(crate) hovered: Option<Handle>,
     /// A held left button on a node or a point. See
     /// [`crate::tools::points`] for what a drag does.
-    pub drag: Option<PointDrag<Handle>>,
-    pub armed: Armed,
+    pub(crate) drag: Option<PointDrag<Handle>>,
+    pub(crate) armed: Armed,
     /// Make the path back as well when connecting two nodes. On by default:
     /// 270 of the 275 shipped flights have one.
-    pub with_return: bool,
+    pub(crate) with_return: bool,
     /// Connect draws the path point by point instead of seeding it. Off by
     /// default.
-    pub draw_by_hand: bool,
+    pub(crate) draw_by_hand: bool,
     /// The path being drawn, while [`Armed::Draw`] is armed.
-    pub draft: Option<Draft>,
+    pub(crate) draft: Option<Draft>,
     /// Move the ends of a node's paths with the node. On by default.
-    pub carry_ends: bool,
+    pub(crate) carry_ends: bool,
     /// Yards above the ground a new point is put at.
-    pub clearance: f32,
+    pub(crate) clearance: f32,
     /// Draw the boat and zeppelin routes as well as the flights.
-    pub transports: bool,
+    pub(crate) transports: bool,
     /// Whether the command line's flight path flags have run, or none were
     /// given. `crate::server::publish::release::migration_on_the_command_line` waits on
     /// it.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
     /// Whether the archive chain holds the flight map picture of a map, by
     /// map, read once per map and again after [`draw_flight_map`].
-    pub picture_known: Option<(u32, bool)>,
+    pub(crate) picture_known: Option<(u32, bool)>,
 }
 
 impl Default for Flightpaths {
@@ -229,16 +229,16 @@ impl Default for Flightpaths {
 }
 
 impl Flightpaths {
-    pub fn node(&self, id: u32) -> Option<&Node> {
+    pub(crate) fn node(&self, id: u32) -> Option<&Node> {
         self.nodes.iter().find(|node| node.id == id)
     }
 
-    pub fn route(&self, id: u32) -> Option<&Route> {
+    pub(crate) fn route(&self, id: u32) -> Option<&Route> {
         self.routes.iter().find(|route| route.path.id == id)
     }
 
     /// The point with this id, and the route it is on.
-    pub fn point(&self, id: u32) -> Option<(&Route, &Point)> {
+    pub(crate) fn point(&self, id: u32) -> Option<(&Route, &Point)> {
         self.routes.iter().find_map(|route| {
             route
                 .points
@@ -249,21 +249,21 @@ impl Flightpaths {
     }
 
     /// The paths leaving a node, then the paths arriving at it.
-    pub fn routes_of(&self, node: u32) -> (Vec<&Route>, Vec<&Route>) {
+    pub(crate) fn routes_of(&self, node: u32) -> (Vec<&Route>, Vec<&Route>) {
         let leaving = self.routes.iter().filter(|r| r.path.from == node).collect();
         let arriving = self.routes.iter().filter(|r| r.path.to == node).collect();
         (leaving, arriving)
     }
 
     /// A node's name, or its id when the table has no node by that id.
-    pub fn name(&self, id: u32) -> String {
+    pub(crate) fn name(&self, id: u32) -> String {
         match self.names.get(&id) {
             Some(name) if !name.is_empty() => name.clone(),
             _ => format!("node {id}"),
         }
     }
 
-    pub fn select_node(&mut self, id: u32) {
+    pub(crate) fn select_node(&mut self, id: u32) {
         self.node = Some(id);
         // Keep the path when it starts or ends here, so clicking along a
         // path's ends does not drop it.
@@ -275,14 +275,14 @@ impl Flightpaths {
         }
     }
 
-    pub fn select_path(&mut self, id: u32) {
+    pub(crate) fn select_path(&mut self, id: u32) {
         if self.path != Some(id) {
             self.point = None;
         }
         self.path = Some(id);
     }
 
-    pub fn select_point(&mut self, id: u32) {
+    pub(crate) fn select_point(&mut self, id: u32) {
         if let Some((route, _)) = self.point(id) {
             self.path = Some(route.path.id);
         }
@@ -292,7 +292,7 @@ impl Flightpaths {
     /// The camera request that frames a whole path: the middle of the box its
     /// points on this map span, from a distance that fits the box's width. A
     /// node or a point is looked at from the current distance instead.
-    pub fn path_flight(&self, id: u32) -> Option<crate::camera::FlyTo> {
+    pub(crate) fn path_flight(&self, id: u32) -> Option<crate::camera::FlyTo> {
         let route = self.route(id)?;
         let here: Vec<Vec3> = route
             .points
@@ -311,7 +311,7 @@ impl Flightpaths {
     }
 
     /// Rebuild the lists on the next frame, after an edit this frame.
-    pub fn stale(&mut self) {
+    pub(crate) fn stale(&mut self) {
         self.built = None;
     }
 
@@ -319,7 +319,7 @@ impl Flightpaths {
     /// [`Self::draw_by_hand`] is on, else [`Armed::Connect`]. The path and
     /// point selections are dropped while drawing, so their handles do not
     /// take the clicks that place points.
-    pub fn arm_connect(&mut self, from: u32) {
+    pub(crate) fn arm_connect(&mut self, from: u32) {
         if !self.draw_by_hand {
             self.armed = Armed::Connect { from };
             return;
@@ -337,7 +337,7 @@ impl Flightpaths {
     }
 
     /// Disarm, discarding a draft.
-    pub fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.armed = Armed::Nothing;
         self.draft = None;
     }
@@ -345,7 +345,7 @@ impl Flightpaths {
 
 /// Yards above the ground a new point is put at, by default. The shipped
 /// flights cruise well above this; it is a floor for a point placed by hand.
-pub const DEFAULT_CLEARANCE: f32 = 40.0;
+pub(crate) const DEFAULT_CLEARANCE: f32 = 40.0;
 
 /// How far from the camera a node marker is drawn and picked, in yards. A
 /// little past the block the editor streams.
@@ -362,9 +362,9 @@ const SEED_SPACING: f32 = 120.0;
 /// Mount creature ids a new node is given: the Horde wind rider in field 14
 /// and the Alliance gryphon in field 15, which is how vmangos reads the two
 /// columns. Node 79, Marshal's Refuge, carries the same pair.
-pub const NEW_NODE_MOUNTS: [u32; 2] = [2224, 541];
+pub(crate) const NEW_NODE_MOUNTS: [u32; 2] = [2224, 541];
 
-pub struct FlightpathToolPlugin;
+pub(crate) struct FlightpathToolPlugin;
 
 impl Plugin for FlightpathToolPlugin {
     fn build(&self, app: &mut App) {
@@ -753,7 +753,7 @@ fn lift(
 
 /// The points of a drawn path: the start node, the points placed, the far
 /// node.
-pub fn drawn_points(from: Vec3, placed: &[Vec3], to: Vec3) -> Vec<[f32; 3]> {
+pub(crate) fn drawn_points(from: Vec3, placed: &[Vec3], to: Vec3) -> Vec<[f32; 3]> {
     std::iter::once(from)
         .chain(placed.iter().copied())
         .chain(std::iter::once(to))
@@ -779,7 +779,7 @@ fn finish_draft(session: &mut EditSession, flights: &mut Flightpaths, to: u32) -
 
 /// Write a node's position, and the ends of its paths when they are carried,
 /// as one gesture.
-pub fn move_node(session: &mut EditSession, flights: &Flightpaths, id: u32, to: Vec3, now: f64) {
+pub(crate) fn move_node(session: &mut EditSession, flights: &Flightpaths, id: u32, to: Vec3, now: f64) {
     use vale_assets::tables::taxi::{node_fields as nf, path_node_fields as wf};
     let Some(node) = flights.node(id) else { return };
     let subject = format!("TaxiNodes {id} position");
@@ -822,7 +822,7 @@ pub fn move_node(session: &mut EditSession, flights: &Flightpaths, id: u32, to: 
 }
 
 /// Write one point's position as a gesture.
-pub fn move_point(session: &mut EditSession, flights: &Flightpaths, id: u32, to: Vec3, now: f64) {
+pub(crate) fn move_point(session: &mut EditSession, flights: &Flightpaths, id: u32, to: Vec3, now: f64) {
     use vale_assets::tables::taxi::path_node_fields as wf;
     let Some((_, point)) = flights.point(id) else { return };
     crate::tables::fields::set_fields(
@@ -842,7 +842,7 @@ pub fn move_point(session: &mut EditSession, flights: &Flightpaths, id: u32, to:
 
 /// Put an operation's edits on the undo stack as one entry and mark the
 /// tables it wrote as edited.
-pub fn record(session: &mut EditSession, label: &str, done: Edits) {
+pub(crate) fn record(session: &mut EditSession, label: &str, done: Edits) {
     let mut touched: Vec<String> = Vec::new();
     session.history.begin(label);
     for (table, row) in done.rows {
@@ -888,7 +888,7 @@ fn add_point(session: &mut EditSession, flights: &mut Flightpaths, at: Vec3) -> 
 /// height of the leg at that place. It goes into the leg whose line, across
 /// the ground, passes nearest the click, and never before the first point or
 /// after the last, which stand at the nodes.
-pub fn insertion(points: &[Point], at: Vec3) -> (u32, f32) {
+pub(crate) fn insertion(points: &[Point], at: Vec3) -> (u32, f32) {
     let mut best: Option<(f32, u32, f32)> = None;
     for pair in points.windows(2) {
         let (a, b) = (Vec3::from(pair[0].at), Vec3::from(pair[1].at));
@@ -929,7 +929,7 @@ fn new_node(session: &mut EditSession, flights: &mut Flightpaths, map: u32, at: 
 /// and a point every [`SEED_SPACING`] yards between them at `clearance`
 /// yards above the ground where the ground is known, and never below the
 /// straight line between the ends.
-pub fn seed(
+pub(crate) fn seed(
     from: Vec3,
     to: Vec3,
     clearance: f32,
@@ -953,7 +953,7 @@ pub fn seed(
 /// A cost for a new path: the median copper per yard of the paths on this map
 /// that cost anything, times the new path's length, rounded to ten copper.
 /// Zero when no path on the map has a cost.
-pub fn suggested_cost(routes: &[Route], length: f32) -> u32 {
+pub(crate) fn suggested_cost(routes: &[Route], length: f32) -> u32 {
     let mut rates: Vec<f32> = routes
         .iter()
         .filter(|route| route.path.cost > 0 && route.length > 0.0 && !route.transport)
@@ -969,7 +969,7 @@ pub fn suggested_cost(routes: &[Route], length: f32) -> u32 {
 
 /// Make a path from one node to another, and the path back when asked, as one
 /// undo entry. Answers the status line.
-pub fn connect(
+pub(crate) fn connect(
     session: &mut EditSession,
     flights: &mut Flightpaths,
     from: u32,
@@ -1051,7 +1051,7 @@ fn make_path(
 }
 
 /// Remove the selected point. Answers the status line.
-pub fn remove_selected_point(session: &mut EditSession, flights: &mut Flightpaths) -> String {
+pub(crate) fn remove_selected_point(session: &mut EditSession, flights: &mut Flightpaths) -> String {
     let Some(id) = flights.point else {
         return "no point is selected".to_string();
     };
@@ -1116,7 +1116,7 @@ pub(super) const MARKER_RADIUS: f32 = 2.0;
 
 /// A node's colour: by which sides vmangos offers it to, from its two mount
 /// columns (field 14 Horde, field 15 Alliance).
-pub fn side_colour(mounts: [u32; 2]) -> Color {
+pub(crate) fn side_colour(mounts: [u32; 2]) -> Color {
     match (mounts[0] != 0, mounts[1] != 0) {
         (true, true) => Color::srgb(0.95, 0.8, 0.3),
         (true, false) => Color::srgb(0.9, 0.3, 0.25),
@@ -1331,7 +1331,7 @@ fn chevron(marks: &mut Marks, a: Vec3, b: Vec3, colour: Color) {
 
 /// How far back the camera stands to see a box `across` yards wide: about its
 /// width, within the range the editor streams.
-pub fn framing_distance(across: f32) -> f32 {
+pub(crate) fn framing_distance(across: f32) -> f32 {
     (across * 0.9).clamp(120.0, 1500.0)
 }
 
@@ -1456,7 +1456,7 @@ fn rebuilt(session: &EditSession, flights: &mut Flightpaths) -> Option<()> {
 
 /// What the open map's flight map is.
 #[derive(Debug, Clone, PartialEq)]
-pub enum FlightMap {
+pub(crate) enum FlightMap {
     /// The map is a continent of the world map, whose flight map the game
     /// ships.
     Shipped,
@@ -1469,7 +1469,7 @@ pub enum FlightMap {
 }
 
 /// The open map's flight map. `None` while the tables are not open.
-pub fn flight_map(session: &EditSession, flights: &Flightpaths) -> Option<FlightMap> {
+pub(crate) fn flight_map(session: &EditSession, flights: &Flightpaths) -> Option<FlightMap> {
     use vale_edit::flightmap;
     let continents = session.table(flightmap::TABLE)?;
     let areas = session.table(WORLD_MAP_AREA)?;
@@ -1488,12 +1488,12 @@ pub fn flight_map(session: &EditSession, flights: &Flightpaths) -> Option<Flight
 
 /// The table whose continent rows (area 0) mark a map as one of the world
 /// map's continents: field 1 is the map, field 2 the area.
-pub const WORLD_MAP_AREA: &str = "WorldMapArea";
+pub(crate) const WORLD_MAP_AREA: &str = "WorldMapArea";
 
 /// Give the open map a flight map, or fit the one it has to its tiles and
 /// nodes: write its `WorldMapContinent` row as one undo entry, and draw the
 /// picture. Answers what happened, for the status line.
-pub fn make_flight_map(session: &mut EditSession, assets: &vale_client::assets::GameAssets, flights: &mut Flightpaths) -> String {
+pub(crate) fn make_flight_map(session: &mut EditSession, assets: &vale_client::assets::GameAssets, flights: &mut Flightpaths) -> String {
     use vale_edit::flightmap;
     if session.map_id != flights.map {
         return "the flight path tool is still reading this map".to_string();
@@ -1532,7 +1532,7 @@ pub fn make_flight_map(session: &mut EditSession, assets: &vale_client::assets::
 
 /// Draw the flight map picture of `flight` from the map's minimap tiles and
 /// write it into the project. Answers what happened.
-pub fn draw_flight_map(
+pub(crate) fn draw_flight_map(
     session: &mut EditSession,
     assets: &vale_client::assets::GameAssets,
     flights: &mut Flightpaths,
@@ -1570,7 +1570,7 @@ pub fn draw_flight_map(
 
 /// Whether the archive chain holds the open map's flight map picture, read
 /// once per map.
-pub fn has_picture(assets: &vale_client::assets::GameAssets, flights: &mut Flightpaths) -> bool {
+pub(crate) fn has_picture(assets: &vale_client::assets::GameAssets, flights: &mut Flightpaths) -> bool {
     if let Some((map, known)) = flights.picture_known {
         if map == flights.map {
             return known;

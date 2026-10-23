@@ -63,11 +63,11 @@ use crate::world::session::Session;
 /// reader, so anything else that wants the news is handed it as a message
 /// rather than draining the queue a second time and stealing half of it.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct LogoutAnswer(pub Logout);
+pub(crate) struct LogoutAnswer(pub(crate) Logout);
 
 /// Which button started this, so the completion knows what to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Intent {
+pub(crate) enum Intent {
     /// `Logout()` — back to the screens before the world.
     Camp,
     /// `Quit()` — close the window.
@@ -82,11 +82,11 @@ pub enum Intent {
 /// stands the character back up — so this is never a gate on the wire, only on
 /// what the client does with the answer.
 #[derive(Resource, Default, Debug)]
-pub struct Leaving {
-    pub intent: Option<Intent>,
+pub(crate) struct Leaving {
+    pub(crate) intent: Option<Intent>,
 }
 
-pub struct LogoutPlugin;
+pub(crate) struct LogoutPlugin;
 
 impl Plugin for LogoutPlugin {
     fn build(&self, app: &mut App) {

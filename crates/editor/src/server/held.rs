@@ -24,22 +24,23 @@ const CLIENT_TABLES: &str = "client table";
 
 /// What a project holds that Put back would need.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Held {
+pub(crate) struct Held {
     /// `(subject, rows)` for every subject whose revert file has entries, in
     /// `Subject::ORDER`, then the client-table rows. A revert file that could
     /// not be read is listed with `None`.
-    pub rows: Vec<(&'static str, Option<usize>)>,
+    pub(crate) rows: Vec<(&'static str, Option<usize>)>,
     /// The server DBC files whose original copies the project keeps.
-    pub dbcs: Vec<String>,
+    pub(crate) dbcs: Vec<String>,
 }
 
 impl Held {
-    pub fn is_empty(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_empty(&self) -> bool {
         self.rows.is_empty() && self.dbcs.is_empty()
     }
 
     /// One line per thing held, for the confirmation.
-    pub fn lines(&self) -> Vec<String> {
+    pub(crate) fn lines(&self) -> Vec<String> {
         let mut out: Vec<String> = self
             .rows
             .iter()
@@ -59,7 +60,7 @@ impl Held {
 }
 
 /// Read the project's revert files and saved server copies.
-pub fn held_by(project: &Project) -> Held {
+pub(crate) fn held_by(project: &Project) -> Held {
     let mut out = Held::default();
     for subject in Subject::ORDER {
         match Undo::open_at(project, subject.revert_vpath()) {

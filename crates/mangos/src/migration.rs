@@ -72,7 +72,6 @@
 //! data and is not packed into the archive.
 
 use crate::row::Key;
-use std::collections::BTreeMap;
 
 /// The server's own table of applied migration ids.
 pub const TABLE: &str = "migrations";
@@ -233,13 +232,13 @@ pub fn stamp(after: Option<&str>) -> String {
 }
 
 /// The id for a moment, in seconds since the epoch.
-pub fn stamp_of(seconds: u64) -> String {
+pub(crate) fn stamp_of(seconds: u64) -> String {
     let (year, month, day, hour, minute, second) = civil(seconds);
     format!("{year:04}{month:02}{day:02}{hour:02}{minute:02}{second:02}")
 }
 
 /// Whether text is an id: fourteen digits.
-pub fn is_id(text: &str) -> bool {
+pub(crate) fn is_id(text: &str) -> bool {
     text.len() == 14 && text.bytes().all(|b| b.is_ascii_digit())
 }
 
@@ -249,7 +248,7 @@ pub fn file_name(id: &str) -> String {
 }
 
 /// The delimiters tried, in order, for the procedure. `??` is vmangos' own.
-pub const DELIMITERS: [&str; 4] = ["??", "$$", "//", "|||"];
+pub(crate) const DELIMITERS: [&str; 4] = ["??", "$$", "//", "|||"];
 
 /// **The file**, in the form at the head of this module.
 ///
@@ -409,8 +408,9 @@ impl Released {
     }
 
     /// The rows by subject, for a panel that counts them.
-    pub fn by_subject(&self) -> BTreeMap<String, usize> {
-        let mut out = BTreeMap::new();
+    #[cfg(test)]
+    pub(crate) fn by_subject(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut out = std::collections::BTreeMap::new();
         for entry in &self.entries {
             *out.entry(entry.subject.clone()).or_default() += 1;
         }

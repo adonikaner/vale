@@ -79,10 +79,6 @@ impl Category {
         self as u8
     }
 
-    pub fn from_id(id: u8) -> Option<Category> {
-        Category::ALL.get(id as usize).copied()
-    }
-
     /// Whether this is the local player.
     ///
     /// This is the only test [`Perspective`] makes. Your pet is therefore
@@ -124,7 +120,7 @@ impl Category {
 
 /// The range the client uses for a category with no CVar: a finite value
 /// rather than an infinity.
-pub const NO_RANGE_LIMIT: f32 = 100_000.0;
+pub(crate) const NO_RANGE_LIMIT: f32 = 100_000.0;
 
 /// The facts about a unit that [`categorise`] needs.
 ///
@@ -331,11 +327,11 @@ impl Perspective {
     /// A perspective is two bits, this and [`Self::names_victim`]: the key
     /// mentions whichever unit is not you, and the line takes a name for each
     /// unit the key mentions.
-    pub fn names_attacker(self) -> bool {
+    pub(crate) fn names_attacker(self) -> bool {
         matches!(self, Perspective::OtherSelf | Perspective::OtherOther)
     }
 
-    pub fn names_victim(self) -> bool {
+    pub(crate) fn names_victim(self) -> bool {
         matches!(self, Perspective::SelfOther | Perspective::OtherOther)
     }
 }
@@ -454,7 +450,7 @@ impl Subject {
 ///
 /// A unit that was not summoned by a spell reads 0 here, has no `Spell.dbc`
 /// record to look up, and dies like any other unit.
-pub const DESTROYED_BY_EFFECT: [u32; 10] = [
+pub(crate) const DESTROYED_BY_EFFECT: [u32; 10] = [
     50,  // SPELL_EFFECT_TRANS_DOOR: a summoned portal or door
     74,  // SPELL_EFFECT_SUMMON_TOTEM
     87, 88, 89, 90,      // SPELL_EFFECT_SUMMON_TOTEM_SLOT1..4

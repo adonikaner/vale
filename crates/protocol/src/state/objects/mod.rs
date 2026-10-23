@@ -48,7 +48,7 @@ fn clipped(world: Option<&dyn Footing>, from: Position, dx: f32, dy: f32) -> [f3
 }
 
 /// `EQUIPMENT_SLOT_END` (`Player.h:501`) — head through tabard.
-pub const EQUIPMENT_SLOTS: usize = 19;
+pub(crate) const EQUIPMENT_SLOTS: usize = 19;
 
 /// `UNIT_FLAG_STUNNED`, bit 18 of `UNIT_FIELD_FLAGS`.
 ///
@@ -93,7 +93,7 @@ pub const UNIT_VIS_FLAGS_UNTRACKABLE: u8 = 0x04;
 /// blocks are in the player's field block. It is 12 from 1.6 onwards and 11
 /// before, because the enchantment array grew. A value copied from the wrong
 /// version reads the neighbouring slot's data without any error.
-pub const VISIBLE_ITEM_STRIDE: u16 = 12;
+pub(crate) const VISIBLE_ITEM_STRIDE: u16 = 12;
 
 /// One entity the client currently knows about.
 #[derive(Debug, Clone)]
@@ -166,11 +166,11 @@ pub struct Entity {
     ///
     /// Empty for almost every entity in the world; see
     /// [`crate::state::movement::FlagOverride`].
-    pub forced_flags: crate::state::movement::FlagOverride,
+    pub(crate) forced_flags: crate::state::movement::FlagOverride,
     /// Where a `Final_Target` spline told this unit to look, resolved to a
     /// position when the packet arrived. Kept because [`ObjectManager::advance`]
     /// only sees one entity at a time and cannot look the target up itself.
-    pub facing_target: Option<[f32; 3]>,
+    pub(crate) facing_target: Option<[f32; 3]>,
     /// How far into an arc this unit is, in seconds, when
     /// [`Self::movement`] carries `MOVEFLAG_JUMPING`.
     ///
@@ -181,7 +181,7 @@ pub struct Entity {
     /// Without this field a jumping player was dead-reckoned horizontally with
     /// z held at the take-off height, and the real height arrived only with
     /// each heartbeat. Other players appeared to teleport up and back down.
-    pub fall_secs: f32,
+    pub(crate) fall_secs: f32,
     /// How many times the server has stated this entity's position.
     ///
     /// The live session dead-reckons the player between packets and writes the
@@ -198,7 +198,7 @@ pub struct Entity {
     /// is hundreds of entities, and the terrain query is the only costly step
     /// in `advance`. `None` means "never checked", which is also the state a
     /// new create block leaves.
-    pub grounded_for: Option<u32>,
+    pub(crate) grounded_for: Option<u32>,
     /// How many melee swings this unit has thrown, and how many have landed on
     /// it.
     ///
@@ -235,7 +235,7 @@ pub struct Entity {
     /// Written by a packet handler rather than by an update block, like
     /// [`Self::attacking`], and discarded with the object, as in the 1.12.1
     /// client.
-    pub client_controlled: bool,
+    pub(crate) client_controlled: bool,
     /// `HitInfo` of the swing that last moved [`Self::swings_thrown`].
     ///
     /// The attacker-side counterpart of [`Self::last_victim_state`], from the
@@ -499,7 +499,7 @@ pub struct Entity {
     /// show that the client moved a creature somewhere the server did not and
     /// was then corrected. The counters identify which packet causes the jumps
     /// and how far they are.
-    pub worst_jump: f32,
+    pub(crate) worst_jump: f32,
     pub jumps: u32,
 }
 
@@ -649,7 +649,7 @@ impl Entity {
         self.fields.get(&index).copied()
     }
 
-    pub fn field_f32(&self, index: u16) -> Option<f32> {
+    pub(crate) fn field_f32(&self, index: u16) -> Option<f32> {
         self.field(index).map(f32::from_bits)
     }
 
@@ -707,7 +707,7 @@ impl Entity {
         self.field_f32(fields::unit::BOUNDINGRADIUS)
     }
 
-    pub fn is_unit_like(&self) -> bool {
+    pub(crate) fn is_unit_like(&self) -> bool {
         matches!(
             self.object_type,
             Some(ObjectType::Unit) | Some(ObjectType::Player)
@@ -1008,8 +1008,7 @@ impl Entity {
     /// caused no compile error; the field was simply unreadable.
     ///
     /// `PRIVATE`, so it is only sent for the local player's character. See
-    /// [`crate::play::death::RELEASE_TIMER`] and
-    /// [`crate::play::death::NO_RELEASE_WINDOW`] for the two bits used here.
+    /// [`crate::play::death::RELEASE_TIMER`] for the bit read here.
     pub fn player_field_flags(&self) -> u32 {
         (self.object_type == Some(ObjectType::Player))
             .then(|| self.field(fields::player::FIELD_BYTES))
@@ -1257,7 +1256,7 @@ impl Entity {
     /// Empty for a player. A player has these indices but the server never
     /// writes them, because a player's gear is in `PLAYER_VISIBLE_ITEM_n_0` and
     /// needs the query round trip. [`ObjectManager::weapons_of`] handles both.
-    pub fn virtual_items(&self) -> [HeldItem; 3] {
+    pub(crate) fn virtual_items(&self) -> [HeldItem; 3] {
         let mut out = [HeldItem::default(); 3];
         if !self.is_unit_like() {
             return out;
@@ -1299,7 +1298,7 @@ impl Entity {
     /// same order [`Self::virtual_items`] uses. The two sources of a unit's
     /// weapons therefore match slot for slot, and the caller does not need to
     /// know which one it used.
-    pub fn weapon_entries(&self) -> Option<[u32; 3]> {
+    pub(crate) fn weapon_entries(&self) -> Option<[u32; 3]> {
         const EQUIPMENT_SLOT_MAINHAND: usize = 15;
         let equipment = self.equipment()?;
         Some([
@@ -1510,7 +1509,7 @@ impl Entity {
     /// `SMSG_PET_NAME_QUERY_RESPONSE` echoes the same value. A value the name
     /// cache has not seen means the name must be queried again. Zero for a
     /// unit whose field never arrived.
-    pub fn pet_name_timestamp(&self) -> u32 {
+    pub(crate) fn pet_name_timestamp(&self) -> u32 {
         self.is_unit_like()
             .then(|| self.field(fields::unit::PET_NAME_TIMESTAMP))
             .flatten()
@@ -1887,7 +1886,7 @@ impl Entity {
     /// (`WaypointMovementGenerator.cpp` 396 and 363), and both times together
     /// with `UNIT_FLAG_REMOVE_CLIENT_CONTROL`, whose comment in `UnitDefines.h`
     /// says it is there to "disable player movement".
-    pub fn is_on_taxi(&self) -> bool {
+    pub(crate) fn is_on_taxi(&self) -> bool {
         self.is_unit_like()
             .then(|| self.field(fields::unit::FLAGS))
             .flatten()
@@ -2013,7 +2012,7 @@ impl Entity {
     /// client is not told which mode the server uses. A max health of exactly
     /// 100 is the indicator, since vmangos substitutes that constant when it
     /// hides real values.
-    pub fn health_is_percentage(&self) -> bool {
+    pub(crate) fn health_is_percentage(&self) -> bool {
         self.max_health() == Some(100)
     }
 
@@ -2144,7 +2143,7 @@ impl Entity {
     /// drawn with and the flags it is moved with cannot disagree. Before it
     /// existed, `move_flags` applied the override and `advance` read the raw
     /// field, so a rooted player was drawn standing and still moved.
-    pub fn effective_movement(&self) -> Option<MovementInfo> {
+    pub(crate) fn effective_movement(&self) -> Option<MovementInfo> {
         let mut info = self.movement?;
         if !self.forced_flags.is_empty() {
             info.flags = self.forced_flags.over(info.flags);
@@ -2276,7 +2275,7 @@ pub struct ObjectManager {
     /// `SMSG_FRIEND_STATUS` is the only announcement of an addition and the
     /// server does not resend the list, so without this a friend added
     /// mid-session has no name until the next login.
-    pub wanted_social: HashSet<u64>,
+    pub(crate) wanted_social: HashSet<u64>,
     /// Guilds resolved by `CMSG_GUILD_QUERY`, keyed by guild id: the name,
     /// the rank names and the emblem. A player object carries only the id, in
     /// `PLAYER_GUILDID`. See [`crate::play::guild`].
@@ -2304,8 +2303,8 @@ pub struct ObjectManager {
     /// the quest log fills these: an objective is `ReqCreatureOrGOId` plus a
     /// count, and a name such as "Kobold Vermin" exists only in the answer to
     /// `CMSG_CREATURE_QUERY`. See [`Self::want_creature`].
-    pub wanted_creatures: HashSet<u32>,
-    pub wanted_gameobjects: HashSet<u32>,
+    pub(crate) wanted_creatures: HashSet<u32>,
+    pub(crate) wanted_gameobjects: HashSet<u32>,
     /// Query answers learned this session that are not on disk yet, as the
     /// response bodies they arrived as. The session loop drains them into
     /// [`crate::state::wdb`].
@@ -2316,8 +2315,8 @@ pub struct ObjectManager {
     ///
     /// Off unless something drains it. A snapshot pump has no cache to write
     /// to and would otherwise keep a copy of every answer it received.
-    pub record_cache: bool,
-    pub learned: Vec<Learned>,
+    pub(crate) record_cache: bool,
+    pub(crate) learned: Vec<Learned>,
     /// Every `(kind, key)` on disk at start-up or recorded this session, so
     /// an answer the server restates is not written twice. See
     /// [`Self::remember`].
@@ -2451,7 +2450,7 @@ pub struct ObjectManager {
     /// Pet numbers a name has been queried for, with the field timestamp the
     /// query was made against. One query per number per timestamp, so a
     /// server that does not answer is not queried again until the field moves.
-    pub wanted_pet_names: HashMap<u32, u32>,
+    pub(crate) wanted_pet_names: HashMap<u32, u32>,
     /// The same kind of version counter as [`Self::spellbook_version`]:
     /// resolving the bar needs a `Spell.dbc` lookup per slot, which is cheap
     /// once and too costly sixty times a second.
@@ -2478,7 +2477,7 @@ pub struct ObjectManager {
     /// enchantments and expiring items. See [`crate::play::items::ItemTimers`].
     /// Setting one bumps [`Self::inventory_version`], because the snapshot
     /// copies the expiry times.
-    pub item_timers: crate::play::items::ItemTimers,
+    pub(crate) item_timers: crate::play::items::ItemTimers,
     /// The unit the local player is auto-attacking, per `SMSG_ATTACKSTART` and
     /// `SMSG_ATTACKSTOP` about the local player.
     ///
@@ -2606,7 +2605,7 @@ pub const RECENT_SPELLS: usize = 4;
 /// How many `UNIT_FIELD_AURA` slots a unit has: 48, computed from the field
 /// table rather than assumed (`UNIT_FIELD_AURAFLAGS` at 95 minus
 /// `UNIT_FIELD_AURA` at 47).
-pub const MAX_AURA_SLOTS: u8 = (fields::unit::AURAFLAGS - fields::unit::AURA) as u8;
+pub(crate) const MAX_AURA_SLOTS: u8 = (fields::unit::AURAFLAGS - fields::unit::AURA) as u8;
 
 /// How many of the aura slots are buffs. The first 32 slots hold positive
 /// auras and the 16 above them negative ones. The slot is the only way a
@@ -2746,16 +2745,12 @@ pub mod power_type {
 /// page can come from an object that is not in the world. Every client-side
 /// rule that measures the distance to the current quest giver must allow for
 /// that.
-pub fn guid_high(guid: u64) -> u16 {
+pub(crate) fn guid_high(guid: u64) -> u16 {
     (guid >> 48) as u16
 }
 
 /// `HIGHGUID_ITEM`. See [`guid_high`].
-pub const HIGHGUID_ITEM: u16 = 0x4000;
-/// `HIGHGUID_GAMEOBJECT`.
-pub const HIGHGUID_GAMEOBJECT: u16 = 0xF110;
-/// `HIGHGUID_UNIT`.
-pub const HIGHGUID_UNIT: u16 = 0xF130;
+pub(crate) const HIGHGUID_ITEM: u16 = 0x4000;
 
 /// Whether this guid names an object that has a position in the world.
 ///
@@ -2988,19 +2983,19 @@ impl ObjectManager {
     /// Entries that have a creature template we have not fetched yet.
     ///
     /// Deduplicated, so a field of forty identical wolves costs one query.
-    pub fn unresolved_creature_entries(&self) -> Vec<(u32, u64)> {
+    pub(crate) fn unresolved_creature_entries(&self) -> Vec<(u32, u64)> {
         self.unresolved(ObjectType::Unit, &self.creatures)
     }
 
     /// The same for game objects, which have their own template table.
-    pub fn unresolved_gameobject_entries(&self) -> Vec<(u32, u64)> {
+    pub(crate) fn unresolved_gameobject_entries(&self) -> Vec<(u32, u64)> {
         self.unresolved(ObjectType::GameObject, &self.gameobjects)
     }
 
     /// Players whose name has not been queried yet. Keyed by GUID, so there is
     /// nothing to deduplicate. The local player is excluded, because its name
     /// is already known from the character list.
-    pub fn unresolved_player_guids(&self) -> Vec<u64> {
+    pub(crate) fn unresolved_player_guids(&self) -> Vec<u64> {
         self.entities
             .values()
             .filter(|e| e.object_type == Some(ObjectType::Player))
@@ -3020,7 +3015,7 @@ impl ObjectManager {
 
     /// Guild ids on a player in sight that have no query answer yet.
     /// Deduplicated: a city full of one guild's members is one query.
-    pub fn unresolved_guild_ids(&self) -> Vec<u32> {
+    pub(crate) fn unresolved_guild_ids(&self) -> Vec<u32> {
         let mut seen: HashSet<u32> = HashSet::new();
         for entity in self.entities.values() {
             let guild = entity.guild_id();
@@ -3043,7 +3038,7 @@ impl ObjectManager {
     /// nineteen slots for every player in an inn is many packets for a few
     /// distinct items. Entries the server has already refused are not queried
     /// again.
-    pub fn unresolved_item_entries(&self) -> Vec<u32> {
+    pub(crate) fn unresolved_item_entries(&self) -> Vec<u32> {
         let mut seen: HashSet<u32> = HashSet::new();
         let want = |entry: u32, seen: &mut HashSet<u32>| {
             if entry != 0 && !self.items.contains_key(&entry) && !self.unknown_items.contains(&entry)
@@ -3108,7 +3103,7 @@ impl ObjectManager {
     /// on-demand kinds are held as bodies for [`Self::cached_answer`]. Every
     /// key read is marked known, so a restated answer is not written again.
     /// Recording is switched on when the caches have anywhere to write.
-    pub fn seed_cache(&mut self, caches: &Caches) {
+    pub(crate) fn seed_cache(&mut self, caches: &Caches) {
         self.record_cache = caches.enabled();
         for (_, body) in caches.seed(Kind::Item) {
             if let Some(info) = crate::state::query::parse_item_response(body) {
@@ -3174,7 +3169,7 @@ impl ObjectManager {
     /// Keep an answer that replaces an earlier answer under the same key. A
     /// pet's name changes under its pet number; the cache file uses the last
     /// record for a key, so the new name is appended rather than skipped.
-    pub fn remember_again(&mut self, kind: Kind, key: u64, body: &[u8]) {
+    pub(crate) fn remember_again(&mut self, kind: Kind, key: u64, body: &[u8]) {
         if key == 0 || body.is_empty() {
             return;
         }
@@ -3195,12 +3190,13 @@ impl ObjectManager {
     /// The cached body of an on-demand answer, if the disk had one. The
     /// session loop runs it through the packet dispatch instead of sending the
     /// query. See `SessionLoop::answer_from_cache`.
-    pub fn cached_answer(&self, kind: Kind, key: u64) -> Option<&[u8]> {
+    pub(crate) fn cached_answer(&self, kind: Kind, key: u64) -> Option<&[u8]> {
         self.on_demand.get(&(kind, key)).map(Vec::as_slice)
     }
 
     /// How many on-demand answers are held.
-    pub fn cached_answers(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn cached_answers(&self) -> usize {
         self.on_demand.len()
     }
 
@@ -3224,7 +3220,7 @@ impl ObjectManager {
     /// each see the arrival and the second would raise events about a template
     /// already applied, which on a busy login means a redraw per item per
     /// frame.
-    pub fn take_arrivals(&mut self) -> Arrivals {
+    pub(crate) fn take_arrivals(&mut self) -> Arrivals {
         std::mem::take(&mut self.arrivals)
     }
 
@@ -3393,7 +3389,7 @@ impl ObjectManager {
     /// existing entity whose count is unchanged does not raise it either; that
     /// case waits for the periodic pass, which is kept because a query gets no
     /// acknowledgement and an unanswered one must be sent again anyway.
-    pub fn take_query_hint(&mut self) -> bool {
+    pub(crate) fn take_query_hint(&mut self) -> bool {
         std::mem::take(&mut self.queries_wanted)
     }
 
@@ -3403,7 +3399,7 @@ impl ObjectManager {
     /// rule above does not apply, and the name it makes queryable is derived
     /// rather than queued. Without this the pet's name waits for the next
     /// two-second pass.
-    pub fn hint_queries(&mut self) {
+    pub(crate) fn hint_queries(&mut self) {
         self.queries_wanted = true;
     }
 
@@ -3411,7 +3407,7 @@ impl ObjectManager {
     ///
     /// A stop packet (no destination) places the unit where the server says it
     /// is, which also corrects any drift the interpolation accumulated.
-    pub fn apply_monster_move(&mut self, mm: &MonsterMove) {
+    pub(crate) fn apply_monster_move(&mut self, mm: &MonsterMove) {
         // Resolved here rather than in `advance`, because only the manager can
         // look up another entity. A creature told to face its victim needs the
         // victim's position, which is the usual case in combat.
@@ -3519,7 +3515,7 @@ impl ObjectManager {
     }
 
     /// Queue a line of chat, dropping the oldest if nothing is reading.
-    pub fn note_chat(&mut self, message: crate::play::chat::ChatMessage) {
+    pub(crate) fn note_chat(&mut self, message: crate::play::chat::ChatMessage) {
         if self.chat.len() >= CHAT_BACKLOG {
             self.chat.remove(0);
         }
@@ -3640,7 +3636,7 @@ impl ObjectManager {
 
     /// Queue the server's response to one of the local player's actions, on
     /// the same terms as [`Self::note_chat`]: bounded, oldest dropped.
-    pub fn note_event(&mut self, event: crate::state::events::PlayerEvent) {
+    pub(crate) fn note_event(&mut self, event: crate::state::events::PlayerEvent) {
         if self.events.len() >= EVENT_BACKLOG {
             self.events.remove(0);
         }
@@ -3657,7 +3653,7 @@ impl ObjectManager {
     ///
     /// Bounded at [`COMBAT_BACKLOG`], oldest dropped. See that constant for
     /// why this is separate from [`Self::note_event`].
-    pub fn note_combat(&mut self, event: crate::play::combatlog::CombatEvent) {
+    pub(crate) fn note_combat(&mut self, event: crate::play::combatlog::CombatEvent) {
         if self.combat.len() >= COMBAT_BACKLOG {
             self.combat.remove(0);
         }
@@ -3681,7 +3677,7 @@ impl ObjectManager {
     /// rejects it. See [`Self::aura_durations`] and, in the client crate,
     /// `game::auras`, which ignores a reading older than the aura it would be
     /// matched to.
-    pub fn note_aura_duration(&mut self, slot: u8, remaining_ms: u32) {
+    pub(crate) fn note_aura_duration(&mut self, slot: u8, remaining_ms: u32) {
         let seq = self
             .aura_durations
             .get(&slot)
@@ -3728,7 +3724,7 @@ impl ObjectManager {
     ///
     /// The dismissal needs no special handling: a `PetSpells` with a zero guid
     /// is the empty bar, so storing it is correct.
-    pub fn apply_pet_spells(&mut self, spells: crate::play::pet::PetSpells) {
+    pub(crate) fn apply_pet_spells(&mut self, spells: crate::play::pet::PetSpells) {
         self.pet = spells;
         self.pet_attacking = false;
         self.pet_version = self.pet_version.wrapping_add(1);
@@ -3759,7 +3755,7 @@ impl ObjectManager {
     ///
     /// `data` is the slot's packed word and `had_target` is whether the press
     /// carried a target guid.
-    pub fn apply_pet_press(&mut self, data: u32, had_target: bool) {
+    pub(crate) fn apply_pet_press(&mut self, data: u32, had_target: bool) {
         use crate::play::pet::{active_state, command_state, PetAction};
         if self.pet.pet == 0 {
             return;
@@ -3802,7 +3798,7 @@ impl ObjectManager {
     /// Each entry is `(position, packed)`, the same pair the packet carries:
     /// one entry for a removal, two for a move. The rule that the body length
     /// gives the entry count is at [`crate::play::pet::pet_set_action_body`].
-    pub fn apply_pet_set_action(&mut self, moves: &[(u32, u32)]) {
+    pub(crate) fn apply_pet_set_action(&mut self, moves: &[(u32, u32)]) {
         use crate::play::pet::PetAction;
         if self.pet.pet == 0 {
             return;
@@ -3825,7 +3821,7 @@ impl ObjectManager {
 
     /// The client-side effect of `CMSG_PET_STOP_ATTACK`: the attack flag is
     /// cleared and the bar redraws with the attack button released.
-    pub fn apply_pet_stop_attack(&mut self) {
+    pub(crate) fn apply_pet_stop_attack(&mut self) {
         if self.pet_attacking {
             self.pet_attacking = false;
             self.pet_version = self.pet_version.wrapping_add(1);
@@ -3838,7 +3834,7 @@ impl ObjectManager {
     /// a charmed unit this client is not controlling, and writing that over the
     /// bar's state would make the panel show another unit's react and command
     /// state.
-    pub fn apply_pet_mode(&mut self, mode: crate::play::pet::PetMode) {
+    pub(crate) fn apply_pet_mode(&mut self, mode: crate::play::pet::PetMode) {
         if self.pet.pet != mode.pet || self.pet.pet == 0 {
             return;
         }
@@ -3866,7 +3862,7 @@ impl ObjectManager {
     /// toggle again. The bar and the spellbook list both hold the spell, so
     /// both are updated. A passive spell is not changed, which applies the
     /// server's `IsAutocastable` check locally.
-    pub fn apply_pet_autocast(&mut self, spell_id: u32, on: bool) {
+    pub(crate) fn apply_pet_autocast(&mut self, spell_id: u32, on: bool) {
         use crate::play::pet::active_state;
         let wanted = match on {
             true => active_state::ENABLED,
@@ -3892,7 +3888,7 @@ impl ObjectManager {
     ///
     /// The timestamp is stored even when the name did not change, because it is
     /// what settles the re-ask latch in [`Self::unresolved_pet_names`].
-    pub fn apply_pet_name(&mut self, name: crate::play::pet::PetName) {
+    pub(crate) fn apply_pet_name(&mut self, name: crate::play::pet::PetName) {
         self.wanted_pet_names.remove(&name.pet_number);
         let changed = self
             .pet_names
@@ -3920,7 +3916,7 @@ impl ObjectManager {
     /// timestamp the cache does not hold is queried once; a server that does
     /// not answer is not asked again until the field changes. If the query is
     /// missed, the panel keeps showing the species name it already has.
-    pub fn unresolved_pet_names(&mut self) -> Vec<(u32, u64)> {
+    pub(crate) fn unresolved_pet_names(&mut self) -> Vec<(u32, u64)> {
         let guid = self.pet.pet;
         if guid == 0 {
             return Vec::new();
@@ -3947,7 +3943,7 @@ impl ObjectManager {
     }
 
     /// One spell learned or unlearned after login.
-    pub fn apply_spell_change(&mut self, spell_id: u32, learned: bool) {
+    pub(crate) fn apply_spell_change(&mut self, spell_id: u32, learned: bool) {
         let known = self.spellbook.known.contains(&spell_id);
         match (learned, known) {
             (true, false) => self.spellbook.known.push(spell_id),
@@ -3981,7 +3977,7 @@ impl ObjectManager {
     /// The slots that changed are reported in
     /// [`crate::state::events::PlayerEvent::SpellSuperceded`], and the caller
     /// must send them to the server.
-    pub fn apply_superceded_spell(&mut self, old: u32, new: u32) {
+    pub(crate) fn apply_superceded_spell(&mut self, old: u32, new: u32) {
         use crate::play::spells::action_kind;
 
         // Only spell buttons: an item entry or a macro index can equal a spell
@@ -4006,7 +4002,7 @@ impl ObjectManager {
     }
 
     /// `SMSG_ACTION_BUTTONS`: the whole bar, likewise replacing.
-    pub fn apply_action_buttons(&mut self, buttons: Vec<crate::play::spells::ActionButton>) {
+    pub(crate) fn apply_action_buttons(&mut self, buttons: Vec<crate::play::spells::ActionButton>) {
         self.action_buttons = buttons;
         self.spellbook_version = self.spellbook_version.wrapping_add(1);
     }
@@ -4048,7 +4044,7 @@ impl ObjectManager {
     /// rest. That put every unit near a fight into its combat stance,
     /// including a unit being shot at from across a room and a unit running
     /// away.
-    pub fn apply_attack_state(&mut self, attacker: u64, victim: Option<u64>) {
+    pub(crate) fn apply_attack_state(&mut self, attacker: u64, victim: Option<u64>) {
         let victim = victim.filter(|guid| *guid != 0);
         if let Some(unit) = self.entities.get_mut(&attacker) {
             unit.attacking = victim;
@@ -4143,7 +4139,7 @@ impl ObjectManager {
     /// Neither unit is created if it is not already known: a swing landing on
     /// something out of sight is not a reason to invent an entity with no
     /// position, which would be drawn at the centre of the map.
-    pub fn apply_attack(&mut self, attack: &crate::play::action::AttackUpdate) {
+    pub(crate) fn apply_attack(&mut self, attack: &crate::play::action::AttackUpdate) {
         use crate::play::action::victim_state;
         if let Some(attacker) = self.entities.get_mut(&attack.attacker) {
             attacker.swings_thrown = attacker.swings_thrown.wrapping_add(1);
@@ -4223,7 +4219,7 @@ impl ObjectManager {
     /// Recorded in the same counter, with the amount as the damage and the
     /// spell id set. The reader tells a heal apart by [`Entity::healed`], and
     /// this method is the only one that sets it.
-    pub fn apply_spell_heal(&mut self, log: &crate::play::action::SpellHeal) {
+    pub(crate) fn apply_spell_heal(&mut self, log: &crate::play::action::SpellHeal) {
         if self.player_guid != Some(log.healer) {
             return;
         }
@@ -4249,7 +4245,7 @@ impl ObjectManager {
     /// every client in sight of the creature, which is a larger set than the
     /// clients the creature is in sight of, and a sound from a unit with no
     /// position would play at the map origin.
-    pub fn apply_ai_reaction(&mut self, reaction: &crate::play::action::AiReaction) {
+    pub(crate) fn apply_ai_reaction(&mut self, reaction: &crate::play::action::AiReaction) {
         if let Some(unit) = self.entities.get_mut(&reaction.guid) {
             unit.reactions = unit.reactions.wrapping_add(1);
             unit.last_reaction = reaction.reaction;
@@ -4257,7 +4253,7 @@ impl ObjectManager {
     }
 
     /// Record a one-shot emote against the unit that played it.
-    pub fn apply_emote(&mut self, emote: &crate::play::action::Emote) {
+    pub(crate) fn apply_emote(&mut self, emote: &crate::play::action::Emote) {
         if let Some(unit) = self.entities.get_mut(&emote.guid) {
             unit.emotes = unit.emotes.wrapping_add(1);
             unit.last_emote = emote.emote_id;
@@ -4277,7 +4273,7 @@ impl ObjectManager {
     /// a unit with no position, no model and no create block, which the
     /// renderer would have to filter out. [`Self::apply_emote`] handles its
     /// packet the same way.
-    pub fn apply_spell_visual(&mut self, guid: u64, kit: u32, impact: bool) {
+    pub(crate) fn apply_spell_visual(&mut self, guid: u64, kit: u32, impact: bool) {
         let Some(unit) = self.entities.get_mut(&guid) else {
             return;
         };
@@ -4294,7 +4290,7 @@ impl ObjectManager {
     /// `SMSG_GAMEOBJECT_DESPAWN_ANIM`; see [`crate::play::object`]. A guid this
     /// client does not hold is ignored, as [`Self::apply_spell_visual`] ignores
     /// one: there is no model to play it on.
-    pub fn apply_object_anim(&mut self, guid: u64, anim: crate::play::object::ObjectAnim) {
+    pub(crate) fn apply_object_anim(&mut self, guid: u64, anim: crate::play::object::ObjectAnim) {
         let Some(object) = self.entities.get_mut(&guid) else {
             return;
         };
@@ -4314,7 +4310,7 @@ impl ObjectManager {
     /// that arrives before any `SMSG_SPELL_START` has nothing to remove. In
     /// that case `unit.last_spell` still names the previous cast, and the
     /// guard below ignores the refusal.
-    pub fn apply_cast_cancelled(&mut self, caster: u64, spell_id: u32) {
+    pub(crate) fn apply_cast_cancelled(&mut self, caster: u64, spell_id: u32) {
         let Some(unit) = self.entities.get_mut(&caster) else {
             return;
         };
@@ -4345,7 +4341,7 @@ impl ObjectManager {
     /// and sends the request, and draws nothing. With the prediction, a
     /// refused cast played a wind-up and a release for a spell that was never
     /// cast.
-    pub fn apply_cast(&mut self, cast: &crate::play::action::SpellCast, start: bool) {
+    pub(crate) fn apply_cast(&mut self, cast: &crate::play::action::SpellCast, start: bool) {
         let Some(unit) = self.entities.get_mut(&cast.caster) else {
             return;
         };
@@ -4392,7 +4388,7 @@ impl ObjectManager {
     /// Recorded as a counter rather than a new absolute length, because the
     /// packet states a difference and each consumer holds its own deadline;
     /// see [`Entity::casts_delayed`].
-    pub fn apply_cast_delayed(&mut self, guid: u64, delay_ms: u32) {
+    pub(crate) fn apply_cast_delayed(&mut self, guid: u64, delay_ms: u32) {
         let Some(unit) = self.entities.get_mut(&guid) else {
             return;
         };
@@ -4413,7 +4409,7 @@ impl ObjectManager {
     /// little, and without it a half-second-old server position would
     /// conflict with the live simulation and cause jitter that is hard to
     /// diagnose.
-    pub fn apply_movement(&mut self, guid: u64, info: &MovementInfo) {
+    pub(crate) fn apply_movement(&mut self, guid: u64, info: &MovementInfo) {
         if Some(guid) == self.player_guid {
             return;
         }
@@ -4459,7 +4455,7 @@ impl ObjectManager {
     /// not arrive. If one did, it would be a statement worth keeping. This
     /// differs from [`Self::apply_movement`], where this client owns the
     /// position and must not receive an older copy of it.
-    pub fn apply_spline_flag(&mut self, guid: u64, change: crate::state::movement::SplineFlagChange) {
+    pub(crate) fn apply_spline_flag(&mut self, guid: u64, change: crate::state::movement::SplineFlagChange) {
         let entity = self
             .entities
             .entry(guid)

@@ -33,10 +33,10 @@ use vale_mangos::loot;
 use vale_mangos::row;
 
 /// What this project does to the server's loot, as SQL.
-pub const SQL_VPATH: &str = "sql\\loot.sql";
+pub(crate) const SQL_VPATH: &str = "sql\\loot.sql";
 
 /// The SQL that puts back the loot rows this project changed.
-pub const REVERT_VPATH: &str = "sql\\loot-revert.sql";
+pub(crate) const REVERT_VPATH: &str = "sql\\loot-revert.sql";
 
 /// The loot subject: the nine `*_loot_template` tables.
 ///
@@ -45,7 +45,7 @@ pub const REVERT_VPATH: &str = "sql\\loot-revert.sql";
 /// id of its own. A table whose primary key is `(entry, item)` alone refuses a
 /// second group of the same item itself, and MySQL's error message is
 /// reported unchanged.
-pub struct Loot;
+pub(crate) struct Loot;
 
 impl RowSubject for Loot {
     fn subject(&self) -> Subject {

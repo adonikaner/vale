@@ -183,7 +183,7 @@ impl HudReport {
     /// …and the same, on the shelf that is **above the fold** — the header, on
     /// every tab. A pinned line has no section for that reason: it is not on a
     /// tab, it is over all of them.
-    pub fn set_pinned(&mut self, slot: Slot, key: &'static str, text: impl Into<String>) {
+    pub(crate) fn set_pinned(&mut self, slot: Slot, key: &'static str, text: impl Into<String>) {
         self.lines.insert(
             (slot, key),
             Line {

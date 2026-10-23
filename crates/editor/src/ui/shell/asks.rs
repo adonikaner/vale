@@ -26,7 +26,7 @@ use vale_client::assets::GameAssets;
 
 /// One thing a panel asks of the shell.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ShellAsk {
+pub(crate) enum ShellAsk {
     /// Open the item workspace on an item.
     ShowItem(u32),
     /// Open a client table's row in the table browser, under the tool that
@@ -75,10 +75,10 @@ impl ShellAsk {
 
 /// The asks pushed this frame, waiting for [`carry_out`].
 #[derive(Resource, Debug, Default)]
-pub struct ShellAsks(Vec<ShellAsk>);
+pub(crate) struct ShellAsks(Vec<ShellAsk>);
 
 impl ShellAsks {
-    pub fn push(&mut self, ask: ShellAsk) {
+    pub(crate) fn push(&mut self, ask: ShellAsk) {
         self.0.push(ask);
     }
 }

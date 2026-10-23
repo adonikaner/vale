@@ -14,49 +14,49 @@ use super::rows::{push_row, rows_naming};
 /// `SkillLineAbility.dbc`'s fields, as the spell form's Learning section and
 /// the skill line form read them. The indices are
 /// `schema::SKILL_LINE_ABILITY`'s.
-pub mod ability {
-    pub const TABLE: &str = "SkillLineAbility";
-    pub const SKILL: usize = 1;
-    pub const SPELL: usize = 2;
-    pub const RACES: usize = 3;
-    pub const CLASSES: usize = 4;
-    pub const REQ_SKILL_VALUE: usize = 7;
-    pub const SUPERSEDED_BY: usize = 8;
-    pub const LEARN_ON_GET_SKILL: usize = 9;
-    pub const MAX_VALUE: usize = 10;
-    pub const MIN_VALUE: usize = 11;
-    pub const REQ_TRAIN_POINTS: usize = 14;
+pub(crate) mod ability {
+    pub(crate) const TABLE: &str = "SkillLineAbility";
+    pub(crate) const SKILL: usize = 1;
+    pub(crate) const SPELL: usize = 2;
+    pub(crate) const RACES: usize = 3;
+    pub(crate) const CLASSES: usize = 4;
+    pub(crate) const REQ_SKILL_VALUE: usize = 7;
+    pub(crate) const SUPERSEDED_BY: usize = 8;
+    pub(crate) const LEARN_ON_GET_SKILL: usize = 9;
+    pub(crate) const MAX_VALUE: usize = 10;
+    pub(crate) const MIN_VALUE: usize = 11;
+    pub(crate) const REQ_TRAIN_POINTS: usize = 14;
 }
 
 /// `SkillRaceClassInfo.dbc`'s fields, as the skill line form reads them. The
 /// indices are `schema::SKILL_RACE_CLASS_INFO`'s.
-pub mod race_class {
-    pub const TABLE: &str = "SkillRaceClassInfo";
-    pub const SKILL: usize = 1;
-    pub const RACES: usize = 2;
-    pub const CLASSES: usize = 3;
-    pub const FLAGS: usize = 4;
-    pub const MIN_LEVEL: usize = 5;
-    pub const SKILL_TIER: usize = 6;
+pub(crate) mod race_class {
+    pub(crate) const TABLE: &str = "SkillRaceClassInfo";
+    pub(crate) const SKILL: usize = 1;
+    pub(crate) const RACES: usize = 2;
+    pub(crate) const CLASSES: usize = 3;
+    pub(crate) const FLAGS: usize = 4;
+    pub(crate) const MIN_LEVEL: usize = 5;
+    pub(crate) const SKILL_TIER: usize = 6;
     /// Every race: 134 of the 201 shipped rows hold it.
-    pub const EVERY_RACE: u32 = 511;
+    pub(crate) const EVERY_RACE: u32 = 511;
     /// Every class: 60 of the shipped rows hold it.
-    pub const EVERY_CLASS: u32 = 1503;
+    pub(crate) const EVERY_CLASS: u32 = 1503;
 }
 
 /// The `SkillLineAbility` rows that put `spell` in a skill line. Most spells
 /// have none: 4,753 of the shipped spells are named by a row.
-pub fn abilities_of(browser: &mut Browser, session: &EditSession, spell: u32) -> Vec<usize> {
+pub(crate) fn abilities_of(browser: &mut Browser, session: &EditSession, spell: u32) -> Vec<usize> {
     rows_naming(browser, session, "Spell", spell, ability::TABLE, ability::SPELL)
 }
 
 /// The `SkillLineAbility` rows of one skill line.
-pub fn abilities_in(browser: &mut Browser, session: &EditSession, skill: u32) -> Vec<usize> {
+pub(crate) fn abilities_in(browser: &mut Browser, session: &EditSession, skill: u32) -> Vec<usize> {
     rows_naming(browser, session, "SkillLine", skill, ability::TABLE, ability::SKILL)
 }
 
 /// The `SkillRaceClassInfo` rows that give `skill` to races and classes.
-pub fn race_class_rows_of(browser: &mut Browser, session: &EditSession, skill: u32) -> Vec<usize> {
+pub(crate) fn race_class_rows_of(browser: &mut Browser, session: &EditSession, skill: u32) -> Vec<usize> {
     rows_naming(browser, session, "SkillLine", skill, race_class::TABLE, race_class::SKILL)
 }
 
@@ -72,7 +72,7 @@ pub(super) const INSTANT_CAST: u32 = 1;
 /// 4,183 of the shipped spells have one and 511 of those have more than one,
 /// usually an instant one a trainer's list names beside one with a cast time
 /// that a book casts.
-pub fn teachers_of(browser: &mut Browser, session: &EditSession, spell: u32) -> Vec<(usize, bool)> {
+pub(crate) fn teachers_of(browser: &mut Browser, session: &EditSession, spell: u32) -> Vec<(usize, bool)> {
     use vale_assets::tables::spellbook::spell_fields;
     let rows = rows_naming(
         browser,
@@ -100,7 +100,7 @@ pub fn teachers_of(browser: &mut Browser, session: &EditSession, spell: u32) -> 
 /// one undo entry. The skill line is not chosen here; the form opens the
 /// picker on the new row. `ReqSkillValue` starts at 1, which 5,026 of the
 /// 5,072 shipped rows hold.
-pub fn add_ability(session: &mut EditSession, spell: u32) -> Option<usize> {
+pub(crate) fn add_ability(session: &mut EditSession, spell: u32) -> Option<usize> {
     session.history.begin("Add to a skill line");
     let at = push_row(
         session,
@@ -115,7 +115,7 @@ pub fn add_ability(session: &mut EditSession, spell: u32) -> Option<usize> {
 /// Give `skill` to races and classes: a new `SkillRaceClassInfo` row naming
 /// it, for every race and every class, as one undo entry. The flags start at
 /// zero, which lists the line normally and gives it a spellbook tab.
-pub fn add_race_class_row(session: &mut EditSession, skill: u32) -> Option<usize> {
+pub(crate) fn add_race_class_row(session: &mut EditSession, skill: u32) -> Option<usize> {
     session.history.begin("Add race/class row");
     let at = push_row(
         session,
@@ -173,7 +173,7 @@ const TEACHING_SPELL_MULTIPLIER_3: (usize, u32) = (169, 0x3F80_0000);
 /// The row takes the taught spell's name, rank and icon, which is what the
 /// shipped ones do (2,958, 3,126 and 2,748 of the 3,392 whose taught spell
 /// exists), and [`TEACHING_SPELL`] for the rest.
-pub fn add_teaching_spell(session: &mut EditSession, spell: u32) -> Option<u32> {
+pub(crate) fn add_teaching_spell(session: &mut EditSession, spell: u32) -> Option<u32> {
     use vale_assets::tables::spellbook::spell_fields;
     let spells = session.table("Spell")?;
     let taught = spells.row_of(spell)?;

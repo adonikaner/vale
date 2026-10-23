@@ -101,7 +101,7 @@ impl Standing {
     /// repeat `floor`'s refusal while a building loads, because a missing
     /// stance costs one frame of the previous lean, not a fall through the
     /// world.
-    pub fn stance(&self, map_id: u32, x: f32, y: f32, z: f32) -> Option<[f32; 3]> {
+    pub(crate) fn stance(&self, map_id: u32, x: f32, y: f32, z: f32) -> Option<[f32; 3]> {
         let ceiling = z + vale_assets::world::collision::STEP_UP;
         let building = self.solids.surface(map_id, x, y, ceiling);
         let ground = self.terrain.height_at(map_id, x, y).filter(|g| {

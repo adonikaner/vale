@@ -117,7 +117,7 @@ impl Live<'_, '_, '_> {
     /// takes a server round trip, see [`crate::interface::items`]); or the
     /// item has no on-use spell, such as a garment placed on the bar.
     fn item_action_spell(&self, slot: u8) -> Option<vale_assets::tables::spellbook::SpellInfo> {
-        let entry = api::action_item(self.bar, slot)?;
+        let entry = api::action_item(&self.bar, slot)?;
         let template = self.inventory.template(entry)?;
         let index = template.on_use_spell()?;
         let id = template.spells.get(usize::from(index))?.spell_id;
@@ -128,7 +128,7 @@ impl Live<'_, '_, '_> {
 impl ActionAnswers for Live<'_, '_, '_> {
 
     fn has_action(&self, slot: u8) -> bool {
-        api::has_action(self.bar, slot)
+        api::has_action(&self.bar, slot)
     }
 
     fn bonus_bar_offset(&self) -> u8 {
@@ -142,7 +142,7 @@ impl ActionAnswers for Live<'_, '_, '_> {
     fn action_tooltip(&self, slot: u8) -> Option<api::SpellTip> {
         let names = |entry| self.reagent_name(entry);
         api::action_tooltip(
-            self.bar,
+            &self.bar,
             slot,
             &api::TipContext {
                 level: self.tip_level(),
@@ -162,11 +162,11 @@ impl ActionAnswers for Live<'_, '_, '_> {
     /// may sit in three bags, so there is no single stack to take a count or
     /// a durability from.
     fn action_item_tooltip(&self, slot: u8) -> Option<crate::interface::plate::ItemTip> {
-        self.tip_from(api::action_item(self.bar, slot)?, None)
+        self.tip_from(api::action_item(&self.bar, slot)?, None)
     }
 
     fn action_text(&self, slot: u8) -> Option<String> {
-        api::get_action_text(self.bar, slot)
+        api::get_action_text(&self.bar, slot)
     }
 
     /// A spell's icon or an item's. This branch decides whether an item on
@@ -175,23 +175,23 @@ impl ActionAnswers for Live<'_, '_, '_> {
     /// hides the icon. Without the item branch, an item button showed as an
     /// empty slot.
     fn action_texture(&self, slot: u8) -> Option<String> {
-        if let Some(entry) = api::action_item(self.bar, slot) {
+        if let Some(entry) = api::action_item(&self.bar, slot) {
             let template = self.inventory.template(entry)?;
             return self.tables.as_ref()?.item_icon(template.display_id);
         }
-        api::get_action_texture(self.bar, slot).map(str::to_string)
+        api::get_action_texture(&self.bar, slot).map(str::to_string)
     }
 
     /// The same split for the cooldown swirl. An item's cooldown is its
     /// `ON_USE` spell's, read through the same clocks a bag square uses, so
     /// the bar and the bag cannot show different timers.
     fn action_cooldown(&self, slot: u8) -> (f64, f64, bool) {
-        if let Some(entry) = api::action_item(self.bar, slot) {
+        if let Some(entry) = api::action_item(&self.bar, slot) {
             return self.item_cooldown(Some(entry));
         }
         api::get_action_cooldown(
-            self.bar,
-            self.cooldowns,
+            &self.bar,
+            &self.cooldowns,
             slot,
             self.now,
             self.item_action_spell(slot).as_ref(),
@@ -200,21 +200,21 @@ impl ActionAnswers for Live<'_, '_, '_> {
 
     fn action_usable(&self, slot: u8) -> (bool, bool) {
         api::is_usable_action(
-            self.bar,
-            self.units,
-            self.inventory,
+            &self.bar,
+            &self.units,
+            &self.inventory,
             slot,
-            api::action_item(self.bar, slot).map(|entry| self.inventory.carried.count_of(entry)),
+            api::action_item(&self.bar, slot).map(|entry| self.inventory.carried.count_of(entry)),
         )
     }
 
     fn is_attack_action(&self, slot: u8) -> bool {
-        api::is_attack_action(self.bar, slot)
+        api::is_attack_action(&self.bar, slot)
     }
 
     fn is_current_action(&self, slot: u8) -> bool {
         api::is_current_action(
-            self.bar,
+            &self.bar,
             slot,
             self.attacking,
             self.casting.next_swing,
@@ -231,35 +231,35 @@ impl ActionAnswers for Live<'_, '_, '_> {
     }
 
     fn is_auto_repeat_action(&self, slot: u8) -> bool {
-        api::is_auto_repeat_action(self.bar, self.auto_repeat, slot)
+        api::is_auto_repeat_action(&self.bar, self.auto_repeat, slot)
     }
 
     fn action_has_range(&self, slot: u8) -> bool {
-        api::action_has_range(self.bar, slot, self.item_action_spell(slot).as_ref())
+        api::action_has_range(&self.bar, slot, self.item_action_spell(slot).as_ref())
     }
 
     fn is_action_in_range(&self, slot: u8) -> Option<bool> {
         api::is_action_in_range(
-            self.bar,
-            self.units,
+            &self.bar,
+            &self.units,
             slot,
             self.item_action_spell(slot).as_ref(),
         )
     }
 
     fn is_consumable_action(&self, slot: u8) -> bool {
-        api::action_item(self.bar, slot)
+        api::action_item(&self.bar, slot)
             .and_then(|entry| self.inventory.template(entry))
             .is_some_and(vale_protocol::state::query::ItemInfo::is_consumable)
     }
 
     fn is_equipped_action(&self, slot: u8) -> bool {
-        api::action_item(self.bar, slot)
+        api::action_item(&self.bar, slot)
             .is_some_and(|entry| self.inventory.carried.is_equipped(entry))
     }
 
     fn action_count(&self, slot: u8) -> u32 {
-        api::action_item(self.bar, slot)
+        api::action_item(&self.bar, slot)
             .map(|entry| self.inventory.carried.count_of(entry))
             .unwrap_or(0)
     }

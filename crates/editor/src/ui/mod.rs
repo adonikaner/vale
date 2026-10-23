@@ -91,15 +91,15 @@
 //! every tool. [`Viewport::holds`] is the one function that decides whether a
 //! pointer position is over the world.
 
-pub mod import;
-pub mod map;
-pub mod preview;
-pub mod shell;
-pub mod subjects;
-pub mod tables;
-pub mod tools;
-pub mod widgets;
-pub mod workspace;
+pub(crate) mod import;
+pub(crate) mod map;
+pub(crate) mod preview;
+pub(crate) mod shell;
+pub(crate) mod subjects;
+pub(crate) mod tables;
+pub(crate) mod tools;
+pub(crate) mod widgets;
+pub(crate) mod workspace;
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
@@ -143,7 +143,7 @@ use workspace::{workspace, Bench};
 /// the scale factor instead, because its ray goes into a render target
 /// measured in physical pixels, which the zoom does not change.
 #[derive(Resource, Debug, Clone)]
-pub struct Viewport {
+pub(crate) struct Viewport {
     /// `None` before the panels are first drawn; on that frame the whole
     /// window is the world.
     rect: Option<egui::Rect>,
@@ -152,7 +152,7 @@ pub struct Viewport {
     floating: Vec<egui::Rect>,
     /// egui's zoom factor this frame: how many of the window's logical pixels
     /// one point is. Set by the shell; 1 before it has run.
-    pub zoom: f32,
+    pub(crate) zoom: f32,
 }
 
 impl Default for Viewport {
@@ -172,7 +172,7 @@ impl Viewport {
     /// widget held by the pointer and an open combo box list are answered by
     /// `is_using_pointer` and `is_popup_open`, so this is asked together with
     /// egui's own answer rather than instead of it. See [`over_the_world`].
-    pub fn holds(&self, at: Vec2) -> bool {
+    pub(crate) fn holds(&self, at: Vec2) -> bool {
         // The pointer is in logical pixels and the rectangles in points.
         let at = at / self.zoom.max(0.01);
         let at = egui::pos2(at.x, at.y);
@@ -195,7 +195,7 @@ impl Viewport {
 /// box's list. The popup check is coarse on purpose: while any list is open no
 /// press reaches the world, so the click that closes a list does not also act
 /// in the world.
-pub fn over_the_world(
+pub(crate) fn over_the_world(
     viewport: &Viewport,
     wants: &bevy_egui::input::EguiWantsInput,
     windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
@@ -217,7 +217,7 @@ pub fn over_the_world(
 /// `add_plugins` hits the same limit. These four also belong together: they
 /// are everything `crate::playtest::start` and `stop` take.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct Playing<'w> {
+pub(crate) struct Playing<'w> {
     client: ResMut<'w, vale_client::world::session::Session>,
     state: ResMut<'w, Playtest>,
     login: ResMut<'w, Login>,
@@ -252,7 +252,7 @@ pub struct Playing<'w> {
 /// brush and a gizmo were added. They are exactly what [`tools::draw`]
 /// takes, and nothing else in this file touches any of them.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct Editing<'w> {
+pub(crate) struct Editing<'w> {
     pub(crate) terrain: ResMut<'w, Terrain>,
     pub(crate) grading: ResMut<'w, crate::tools::ground::grade::Grading>,
     pub(crate) road: ResMut<'w, crate::tools::ground::road::RoadTool>,
@@ -380,7 +380,7 @@ pub struct Editing<'w> {
 /// (`RenderTuning`'s MSAA, vsync and sun shadows) are not gated and are always
 /// present.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct Viewing<'w> {
+pub(crate) struct Viewing<'w> {
     world: ResMut<'w, vale_client::render::tuning::WorldTuning>,
     frame: ResMut<'w, vale_client::world::camera::RenderTuning>,
     #[cfg(feature = "diagnostics")]
@@ -402,7 +402,7 @@ pub struct Viewing<'w> {
     rail: ResMut<'w, shell::rail::Rail>,
 }
 
-pub struct PanelPlugin;
+pub(crate) struct PanelPlugin;
 
 impl Plugin for PanelPlugin {
     fn build(&self, app: &mut App) {

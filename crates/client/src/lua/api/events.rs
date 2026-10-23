@@ -35,7 +35,7 @@ use super::super::host::LuaHost;
 use crate::input::bindings::BindingPressed;
 use crate::interface::events::GameEventReaders;
 
-pub struct EventsPlugin;
+pub(crate) struct EventsPlugin;
 
 impl Plugin for EventsPlugin {
     fn build(&self, app: &mut App) {

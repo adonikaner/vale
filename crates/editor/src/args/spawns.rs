@@ -8,7 +8,7 @@ use crate::tools::Tool;
 
 /// The spawn tools' scripted gestures.
 #[derive(Debug, Clone, Default)]
-pub struct Spawns {
+pub(crate) struct Spawns {
     /// `--spawn <guid>`: open the creature tool on that spawn, and move the
     /// camera to it.
     ///
@@ -20,14 +20,14 @@ pub struct Spawns {
     /// The guid is the `creature` row's own, which `vale spawns <entry>`
     /// prints. A guid that is not on the open map selects nothing and prints
     /// that.
-    pub spawn: Option<u64>,
+    pub(crate) spawn: Option<u64>,
     /// `--waypoints`: open the chosen spawn's path with it.
     ///
     /// Same reason as `--spawn`, one step further in: a path is opened by a
     /// button on a form that is itself reached by a click, so without this a
     /// scripted run cannot photograph or drive the waypoint window. It implies
     /// `--spawn`'s tool, and does nothing without a `--spawn` to open.
-    pub waypoints: bool,
+    pub(crate) waypoints: bool,
     /// `--waypoint-add <n>`: give the chosen spawn a ring of `n` points.
     ///
     /// Placing a point is a click on the ground, which a scripted run cannot
@@ -37,7 +37,7 @@ pub struct Spawns {
     /// starts a patrol from and then drags into place.
     ///
     /// It implies `--waypoints`, and replaces whatever path the creature has.
-    pub waypoint_add: Option<usize>,
+    pub(crate) waypoint_add: Option<usize>,
     /// `--spawn-add <entry>`: place a spawn of that creature under the camera.
     ///
     /// `--spawn-delete <guid>`: mark that spawn for removal. These are the two
@@ -49,8 +49,8 @@ pub struct Spawns {
     ///
     /// `--spawn-add` goes through the picker rather than bypassing it, so one
     /// run checks the search as well as the placement.
-    pub spawn_add: Option<u32>,
-    pub spawn_delete: Option<u64>,
+    pub(crate) spawn_add: Option<u32>,
+    pub(crate) spawn_delete: Option<u64>,
     /// `--pick <entry>`: open the creature tool's Place half on that creature,
     /// and do nothing further.
     ///
@@ -63,27 +63,27 @@ pub struct Spawns {
     /// It cannot show the translucent preview, and no flag can: the model on
     /// the cursor stands where the pointer meets the ground, and a scripted run
     /// has no pointer. The placement tools' own preview has the same limitation.
-    pub pick: Option<u32>,
+    pub(crate) pick: Option<u32>,
     /// `--template`: open the creature template window on `--spawn`'s creature.
     ///
     /// Same reason as `--lab` and `--browse`, for the creature tool. The window
     /// opens from a button two clicks in, so without this a scripted run cannot
     /// photograph the form that edits a creature.
-    pub template: bool,
+    pub(crate) template: bool,
     /// `--template-new`: make a new creature template, choose it in the
     /// creature tool's picker and open the template window on it.
     ///
     /// The creature counterpart of `--item-new`: creating a template is a
     /// press on the picker, so without this a script cannot check a new
     /// creature. It implies `--tool creatures`.
-    pub template_new: bool,
+    pub(crate) template_new: bool,
     /// `--template-entry <n>`: renumber the template the window is about,
     /// which is `--template-new`'s creature or `--spawn`'s.
     ///
     /// The one action on the template window that is not a column edit: it
     /// re-keys the project's claim on the row. See
     /// `crate::tools::spawns::creatures::Creatures::rekey_template`.
-    pub template_entry: Option<u32>,
+    pub(crate) template_entry: Option<u32>,
     /// `--pick-display [id]`: open the display picker on the template
     /// window's first display column (`display_id1` under the creature tool,
     /// `displayId` under the game object tool), and with an id choose it.
@@ -94,29 +94,29 @@ pub struct Spawns {
     /// whole path with nobody at the keyboard. Two fields because 0 is a
     /// display id a row can hold. It does not choose a tool: `--spawn`,
     /// `--template-new`, `--object` or `--object-new` names the template.
-    pub pick_display: bool,
-    pub display_id: Option<u32>,
+    pub(crate) pick_display: bool,
+    pub(crate) display_id: Option<u32>,
     /// `--object <guid>`: open the game-object tool on that spawn, and move the
     /// camera to it. It is `--spawn` for the `gameobject` table. `--template`
     /// and `--quests` open the same two windows on it. It implies
     /// `--tool objects`.
-    pub object: Option<u64>,
+    pub(crate) object: Option<u64>,
     /// `--object-add <entry>`, `--object-delete <guid>` and `--object-pick
     /// <entry>`: `--spawn-add`, `--spawn-delete` and `--pick` for a game
     /// object, for the same reasons: placing is a click on the ground,
     /// removing is a press under a selection, and the picker is a mode, a
     /// search and a choice. Each implies `--tool objects`.
-    pub object_add: Option<u32>,
-    pub object_delete: Option<u64>,
-    pub object_pick: Option<u32>,
+    pub(crate) object_add: Option<u32>,
+    pub(crate) object_delete: Option<u64>,
+    pub(crate) object_pick: Option<u32>,
     /// `--object-new`: make a new game object template, choose it in the
     /// picker and open the template window on it. `--object-entry <n>`:
     /// renumber the template the window is about, which is `--object-new`'s
     /// object or `--object`'s. They are `--template-new` and
     /// `--template-entry` for the `gameobject_template` table. Each implies
     /// `--tool objects`.
-    pub object_new: bool,
-    pub object_entry: Option<u32>,
+    pub(crate) object_new: bool,
+    pub(crate) object_entry: Option<u32>,
 }
 
 pub(super) const FLAGS: &[Flag] = &[

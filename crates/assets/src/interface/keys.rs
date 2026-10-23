@@ -64,12 +64,6 @@
 //! `GetBindingText(key, "KEY_")` looks the name up and falls back to the raw
 //! string, so a stored `-` displays as `-` either way.
 
-/// The three modifier prefixes, in the order the reference client strips them.
-///
-/// Stripping order does not matter, because the loop repeats until nothing
-/// matches. Writing order does matter; see [`join`].
-pub const MODIFIER_PREFIXES: [&str; 3] = ["SHIFT-", "CTRL-", "ALT-"];
-
 /// The three families whose members are a prefix and a digit.
 ///
 /// In practice `F1`..`F16`, `NUMPAD0`..`NUMPAD9`, `BUTTON1`..`BUTTON5`. The
@@ -112,7 +106,7 @@ pub const NAMED_KEYS: [&str; 26] = [
 
 /// The nine punctuation names the setter rewrites to a single character, and
 /// what each becomes, in the reference client's compare order.
-pub const PUNCTUATION: [(&str, char); 9] = [
+pub(crate) const PUNCTUATION: [(&str, char); 9] = [
     ("LEFTBRACKET", '['),
     ("RIGHTBRACKET", ']'),
     ("SLASH", '/'),
@@ -129,7 +123,7 @@ pub const PUNCTUATION: [(&str, char); 9] = [
 ///
 /// Separate from [`PUNCTUATION`] only because they are checked apart from the
 /// nine; the rule is the same and [`normalise`] walks both.
-pub const PUNCTUATION_TAIL: [(&str, char); 2] = [("EQUALS", '='), ("MINUS", '-')];
+pub(crate) const PUNCTUATION_TAIL: [(&str, char); 2] = [("EQUALS", '='), ("MINUS", '-')];
 
 /// Which modifiers a key string carries. A set, not one of three: the
 /// reference client strips in a loop, and `CTRL-SHIFT-PAGEDOWN` is in its

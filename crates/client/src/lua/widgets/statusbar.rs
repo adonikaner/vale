@@ -55,7 +55,8 @@ use super::widget;
 /// The methods a status bar carries. Sorted, and each one a name the shipped
 /// directory calls, the rule [`super::super::api::verbs::REGISTERED`] also
 /// follows.
-pub const METHODS: [&str; 13] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 13] = [
     "GetMinMaxValues",
     "GetOrientation",
     "GetStatusBarColor",
@@ -435,25 +436,6 @@ pub(in crate::lua) fn install(lua: &mlua::Lua, methods: &mlua::Table) -> mlua::R
     let _ = widget::METHODS;
     Ok(())
 }
-
-/// The globals this module registers: none.
-///
-/// `HealthBar_OnValueChanged` is not registered here because the game defines
-/// it in Lua: `Interface\FrameXML\HealthBar.lua`, 529 bytes, one function. An
-/// earlier Rust closure for it was written on the belief that 1.12 ships no
-/// body (a search of 78 of the 86 `.toc` files found none; the file was in the
-/// eight not searched). It had two faults:
-///
-/// * The loader runs after the host is built, so the file's definition
-///   replaced the closure at every login. `ActionButtonDown` had the same
-///   collision, and `vale framexml`'s collision count reports such cases.
-/// * The closure followed the 2.x `HealthBar.lua`, which ramps green through
-///   yellow to red as the bar drains. The 1.12 file takes `(value, smooth)`
-///   and colours the bar flat green unless `smooth` is passed; the gradient is
-///   the `smooth` branch, and 1.12's unit frames do not pass it.
-///
-/// The game's own file is therefore the only definition.
-pub const GLOBALS: [&str; 0] = [];
 
 #[cfg(test)]
 mod tests {

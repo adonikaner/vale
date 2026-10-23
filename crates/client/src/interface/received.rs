@@ -52,7 +52,7 @@ use crate::world::session::Session;
 /// handful for the first minute of a new character, and its order is the order
 /// the items arrived in, which is the order the lines are said in.
 #[derive(Resource, Default)]
-pub struct PendingPushes(Vec<ItemPush>);
+pub(crate) struct PendingPushes(Vec<ItemPush>);
 
 /// How many pushes may queue up waiting for a name.
 ///
@@ -61,7 +61,7 @@ pub struct PendingPushes(Vec<ItemPush>);
 /// whose queries are dropped; a line said a minute late is worse than no line.
 const MAX_PENDING: usize = 64;
 
-pub struct ReceivedPlugin;
+pub(crate) struct ReceivedPlugin;
 
 impl Plugin for ReceivedPlugin {
     fn build(&self, app: &mut App) {
@@ -73,7 +73,7 @@ impl Plugin for ReceivedPlugin {
 
 /// One `SMSG_ITEM_PUSH_RESULT`, handed on from [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ItemReceived(pub ItemPush);
+pub(crate) struct ItemReceived(pub(crate) ItemPush);
 
 fn announce(
     mut arrived: MessageReader<ItemReceived>,
@@ -105,8 +105,7 @@ fn announce(
     // otherwise free.
     active.live.want_items(waiting.iter().map(|push| push.item_id));
     let ours = {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         world.player_guid
     };
     let Some(ours) = ours else {

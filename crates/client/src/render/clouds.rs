@@ -34,7 +34,7 @@ use vale_assets::tables::light::clouds::{dome, CloudField, CloudLight};
 /// the dome is centred on the camera and written at the far plane.
 const CLOUD_RADIUS: f32 = 700.0;
 
-pub struct CloudPlugin;
+pub(crate) struct CloudPlugin;
 
 impl Plugin for CloudPlugin {
     fn build(&self, app: &mut App) {
@@ -55,11 +55,11 @@ impl Plugin for CloudPlugin {
 
 /// The dome entity.
 #[derive(Component)]
-pub struct CloudDome;
+pub(crate) struct CloudDome;
 
 /// The generator and the image it writes into.
 #[derive(Resource)]
-pub struct CloudLayer {
+pub(crate) struct CloudLayer {
     field: CloudField,
     /// The `SkyCloudLOD` the field was made for.
     lod: u32,
@@ -70,7 +70,7 @@ pub struct CloudLayer {
 /// The dome's material: the cloud texture, multiplied by each ring's vertex
 /// alpha.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct CloudMaterial {
+pub(crate) struct CloudMaterial {
     #[texture(0)]
     #[sampler(1)]
     pub texture: Handle<Image>,

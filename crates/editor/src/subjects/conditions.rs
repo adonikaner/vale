@@ -52,41 +52,41 @@ use vale_mangos::condition::{self, Condition, Node};
 use vale_mangos::row::{Edits, Life};
 
 /// Where a form posts its [`Request`], in egui's frame memory.
-pub fn request_id() -> egui::Id {
+pub(crate) fn request_id() -> egui::Id {
     egui::Id::new("vale-open-condition")
 }
 
 /// What a form asks of the window.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Request {
+pub(crate) struct Request {
     /// The condition to show, or 0 for the page that makes one.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// Show the list of every condition instead.
-    pub list: bool,
+    pub(crate) list: bool,
     /// The column a made or chosen condition is written into, or `None`.
-    pub asker: Option<Asker>,
+    pub(crate) asker: Option<Asker>,
 }
 
 /// The form column the window answers into.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Asker {
+pub(crate) struct Asker {
     /// Where the answer is posted; the form's cell reads it back from there.
-    pub reply: egui::Id,
+    pub(crate) reply: egui::Id,
     /// The table and column, as the window names it.
-    pub column: String,
+    pub(crate) column: String,
     /// The entry the column holds.
-    pub holds: u32,
+    pub(crate) holds: u32,
 }
 
 /// Ask the condition window for something. Any form can call this with the
 /// `egui::Context` it draws on; the window takes it on its next draw.
-pub fn ask(ctx: &egui::Context, request: Request) {
+pub(crate) fn ask(ctx: &egui::Context, request: Request) {
     ctx.data_mut(|data| data.insert_temp(request_id(), request));
 }
 
 /// Post `entry` to the column that asked, and remember that the column holds
 /// it now. Nothing when no column asked.
-pub fn answer(ctx: &egui::Context, conditions: &mut Conditions, entry: u32) {
+pub(crate) fn answer(ctx: &egui::Context, conditions: &mut Conditions, entry: u32) {
     if let Some(asker) = conditions.asker.as_mut() {
         ctx.data_mut(|data| data.insert_temp(asker.reply, entry));
         asker.holds = entry;
@@ -95,7 +95,7 @@ pub fn answer(ctx: &egui::Context, conditions: &mut Conditions, entry: u32) {
 
 /// Take the entry the window answered into the column whose reply id is
 /// `reply`, once.
-pub fn take_answer(ctx: &egui::Context, reply: egui::Id) -> Option<u32> {
+pub(crate) fn take_answer(ctx: &egui::Context, reply: egui::Id) -> Option<u32> {
     ctx.data_mut(|data| data.remove_temp::<u32>(reply))
 }
 
@@ -111,20 +111,20 @@ fn board_id() -> egui::Id {
 
 /// Note that a form shows `entry`, so the window says what it tests on its
 /// next draw.
-pub fn ask_about(ctx: &egui::Context, entry: u32) {
+pub(crate) fn ask_about(ctx: &egui::Context, entry: u32) {
     ctx.data_mut(|data| {
         data.get_temp_mut_or_default::<HashSet<u32>>(asked_id()).insert(entry);
     });
 }
 
 /// The entries the forms showed since the last call, taken.
-pub fn take_asked(ctx: &egui::Context) -> HashSet<u32> {
+pub(crate) fn take_asked(ctx: &egui::Context) -> HashSet<u32> {
     ctx.data_mut(|data| data.remove_temp::<HashSet<u32>>(asked_id())).unwrap_or_default()
 }
 
 /// What one entry tests, as a form shows it beside the number.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Told {
+pub(crate) enum Told {
     /// The condition in one line, and why the server would skip it.
     Tests { line: String, faults: Vec<String> },
     /// Neither the table nor the project holds the entry.
@@ -135,51 +135,51 @@ pub enum Told {
 
 /// What the window last told the forms.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Board {
+pub(crate) struct Board {
     /// Why the table could not be read, when it could not.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// Whether the table has been read.
-    pub read: bool,
-    pub told: HashMap<u32, Told>,
+    pub(crate) read: bool,
+    pub(crate) told: HashMap<u32, Told>,
 }
 
 /// Post the board for the forms to read.
-pub fn post_board(ctx: &egui::Context, board: Board) {
+pub(crate) fn post_board(ctx: &egui::Context, board: Board) {
     ctx.data_mut(|data| data.insert_temp(board_id(), Arc::new(board)));
 }
 
 /// The board the window last posted, or an empty one.
-pub fn board(ctx: &egui::Context) -> Arc<Board> {
+pub(crate) fn board(ctx: &egui::Context) -> Arc<Board> {
     ctx.data(|data| data.get_temp::<Arc<Board>>(board_id())).unwrap_or_default()
 }
 
 /// One condition as the window draws it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Shown {
-    pub condition: Condition,
+pub(crate) struct Shown {
+    pub(crate) condition: Condition,
     /// The row as the database holds it, or `None` for one the project
     /// creates.
-    pub in_database: Option<Condition>,
-    pub life: Life,
+    pub(crate) in_database: Option<Condition>,
+    pub(crate) life: Life,
 }
 
 /// A condition being edited as a tree. See the module doc.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Draft {
+pub(crate) struct Draft {
     /// The entry the tree was read from, or 0 for a new condition.
-    pub from: u32,
-    pub tree: Node,
+    pub(crate) from: u32,
+    pub(crate) tree: Node,
     /// The tree as read, which Revert goes back to.
-    pub read: Node,
+    pub(crate) read: Node,
     /// The tests whose values are unfolded, by path.
-    pub open: HashSet<Vec<usize>>,
+    pub(crate) open: HashSet<Vec<usize>>,
 }
 
 impl Draft {
     /// The condition `from` read as a tree whose root is always a group, so
     /// that a test can be added beside a condition that is one test. A group
     /// of one member is written as that member, so the rows do not change.
-    pub fn read(from: u32, lookup: impl Fn(u32) -> Option<Condition>) -> Draft {
+    pub(crate) fn read(from: u32, lookup: impl Fn(u32) -> Option<Condition>) -> Draft {
         let tree = match from {
             0 => Node::empty(),
             entry => match condition::tree(entry, lookup) {
@@ -191,37 +191,37 @@ impl Draft {
     }
 
     /// Whether the tree differs from what was read.
-    pub fn changed(&self) -> bool {
+    pub(crate) fn changed(&self) -> bool {
         self.tree != self.read
     }
 }
 
 /// The window's state.
 #[derive(Resource, Default)]
-pub struct Conditions {
-    pub open: bool,
+pub(crate) struct Conditions {
+    pub(crate) open: bool,
     /// The condition shown, or `None` for the page that makes a new one.
-    pub showing: Option<u32>,
+    pub(crate) showing: Option<u32>,
     /// The conditions the window came from, newest last, for Back.
-    pub trail: Vec<u32>,
+    pub(crate) trail: Vec<u32>,
     /// The entry typed into the Open field.
-    pub typed: u32,
+    pub(crate) typed: u32,
     /// The list of every condition is shown instead of one condition.
-    pub listing: bool,
+    pub(crate) listing: bool,
     /// The list's search: an entry, a value, or part of a type's name.
-    pub search: String,
+    pub(crate) search: String,
     /// The list's type, or `None` for every type.
-    pub search_type: Option<i32>,
+    pub(crate) search_type: Option<i32>,
     /// The form column a made or chosen condition is written into.
-    pub asker: Option<Asker>,
+    pub(crate) asker: Option<Asker>,
     /// A form showed a condition on the last frame, so the table is read
     /// whether or not the window is open.
-    pub wanted: bool,
+    pub(crate) wanted: bool,
     /// The condition being edited as a tree, in the Tests view.
-    pub draft: Option<Draft>,
+    pub(crate) draft: Option<Draft>,
     /// The Rows view, which edits the shown row's columns, is shown instead
     /// of the Tests view.
-    pub rows_view: bool,
+    pub(crate) rows_view: bool,
     /// The whole table by entry, read at once and kept until an apply moves
     /// `EditSession::database_writes`.
     held: FreshReads<(), HashMap<u32, Condition>>,
@@ -229,12 +229,12 @@ pub struct Conditions {
 
 impl Conditions {
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.held.trouble()
     }
 
     /// Show a condition, keeping the one shown now on the trail.
-    pub fn show(&mut self, entry: Option<u32>) {
+    pub(crate) fn show(&mut self, entry: Option<u32>) {
         if let Some(now) = self.showing.filter(|now| Some(*now) != entry) {
             self.trail.push(now);
         }
@@ -244,13 +244,13 @@ impl Conditions {
     }
 
     /// Show the list of every condition.
-    pub fn list(&mut self) {
+    pub(crate) fn list(&mut self) {
         self.listing = true;
         self.open = true;
     }
 
     /// Take a form's request.
-    pub fn take(&mut self, request: Request) {
+    pub(crate) fn take(&mut self, request: Request) {
         self.asker = request.asker;
         match request.list {
             true => self.list(),
@@ -259,21 +259,21 @@ impl Conditions {
     }
 
     /// Go back to the condition shown before.
-    pub fn back(&mut self) {
+    pub(crate) fn back(&mut self) {
         if let Some(previous) = self.trail.pop() {
             self.showing = Some(previous);
         }
     }
 
     /// Whether the table has been read.
-    pub fn read(&self) -> bool {
+    pub(crate) fn read(&self) -> bool {
         self.held.value().is_some()
     }
 
     /// One condition, the database's with the project's edits over it, or the
     /// project's creation. `None` when neither has it, or the table is not
     /// read.
-    pub fn shown(&self, edits: &Edits, entry: u32) -> Option<Shown> {
+    pub(crate) fn shown(&self, edits: &Edits, entry: u32) -> Option<Shown> {
         let held = self.held.value()?.get(&entry);
         let assignments = held.map(Condition::assignments);
         let (row, life) = crate::tools::places::triggers::shown(edits, condition::TABLE, &condition::key(entry), assignments.as_deref())?;
@@ -286,7 +286,7 @@ impl Conditions {
 
     /// Every condition as the project leaves it, in entry order, removals
     /// left out.
-    pub fn all(&self, edits: &Edits) -> Vec<Condition> {
+    pub(crate) fn all(&self, edits: &Edits) -> Vec<Condition> {
         let Some(held) = self.held.value() else {
             return Vec::new();
         };
@@ -308,7 +308,7 @@ impl Conditions {
     }
 
     /// The conditions that name `entry` as a child.
-    pub fn users(&self, edits: &Edits, entry: u32) -> Vec<u32> {
+    pub(crate) fn users(&self, edits: &Edits, entry: u32) -> Vec<u32> {
         self.all(edits)
             .into_iter()
             .filter(|other| other.children().contains(&entry))
@@ -318,7 +318,7 @@ impl Conditions {
 
     /// The entry a new condition takes: one above every entry the table holds
     /// and the project creates, which is also above any child it names.
-    pub fn next_entry(&self, edits: &Edits) -> Option<u32> {
+    pub(crate) fn next_entry(&self, edits: &Edits) -> Option<u32> {
         let held = self.held.value()?.keys().copied().max().unwrap_or(0);
         let created = edits
             .rows()
@@ -333,7 +333,7 @@ impl Conditions {
     /// already tests exactly that, which the table would refuse a second of.
     /// Answers the entry, and whether it is new; `None` while the table is
     /// not read.
-    pub fn create(&mut self, session: &mut EditSession, kind: i32, values: [i32; 4], flags: u8, now: f64) -> Option<(u32, bool)> {
+    pub(crate) fn create(&mut self, session: &mut EditSession, kind: i32, values: [i32; 4], flags: u8, now: f64) -> Option<(u32, bool)> {
         let entry = self.next_entry(&session.rows.edits)?;
         let made = Condition { entry, kind, values, flags };
         let all = self.all(&session.rows.edits);
@@ -348,7 +348,7 @@ impl Conditions {
     }
 
     /// Set one column of a condition. `value` is a SQL literal.
-    pub fn set(&mut self, session: &mut EditSession, shown: &Shown, column: &'static str, value: String, now: f64) {
+    pub(crate) fn set(&mut self, session: &mut EditSession, shown: &Shown, column: &'static str, value: String, now: f64) {
         let key = shown.condition.key();
         let label = format!("{} {} {column}", condition::TABLE, key.text());
         let gesture = Gesture { label: "Edit condition", subject: &label, now };
@@ -358,7 +358,7 @@ impl Conditions {
 
     /// Remove a condition: a `Delete` claim for one the database holds, and
     /// the creation taken back for one the project makes.
-    pub fn remove(&mut self, session: &mut EditSession, shown: &Shown, now: f64) {
+    pub(crate) fn remove(&mut self, session: &mut EditSession, shown: &Shown, now: f64) {
         let key = shown.condition.key();
         let label = format!("{} {}", condition::TABLE, key.text());
         let gesture = Gesture { label: "Remove condition", subject: &label, now };
@@ -367,7 +367,7 @@ impl Conditions {
 
     /// Why the server would skip a condition: its own faults, a child that
     /// does not exist, and a row that already tests the same thing.
-    pub fn faults(&self, edits: &Edits, shown: &Condition) -> Vec<String> {
+    pub(crate) fn faults(&self, edits: &Edits, shown: &Condition) -> Vec<String> {
         let all = self.all(edits);
         let mut out = shown.check();
         out.extend(condition::check_tree(shown, |entry| all.iter().any(|other| other.entry == entry)));
@@ -378,20 +378,20 @@ impl Conditions {
     }
 
     /// Whether `entry` is a condition the project leaves in place.
-    pub fn exists(&self, edits: &Edits, entry: u32) -> bool {
+    pub(crate) fn exists(&self, edits: &Edits, entry: u32) -> bool {
         self.shown(edits, entry).is_some_and(|shown| shown.life != Life::Delete)
     }
 
     /// The row an entry names as the project leaves it, or `None` for one
     /// neither holds or the project removes.
-    pub fn row(&self, edits: &Edits, entry: u32) -> Option<Condition> {
+    pub(crate) fn row(&self, edits: &Edits, entry: u32) -> Option<Condition> {
         self.shown(edits, entry).filter(|shown| shown.life != Life::Delete).map(|shown| shown.condition)
     }
 
     /// Make sure the draft is the one read from `from` (0 for a new
     /// condition). A draft read from another entry is dropped, changes and
     /// all.
-    pub fn draft_for(&mut self, edits: &Edits, from: u32) {
+    pub(crate) fn draft_for(&mut self, edits: &Edits, from: u32) {
         if self.draft.as_ref().is_some_and(|draft| draft.from == from) || !self.read() {
             return;
         }
@@ -401,7 +401,7 @@ impl Conditions {
 
     /// What Save would write: the entry the draft is, and the rows it would
     /// create. An error says why the draft cannot be written.
-    pub fn plan(&self, edits: &Edits) -> Result<condition::Built, String> {
+    pub(crate) fn plan(&self, edits: &Edits) -> Result<condition::Built, String> {
         let draft = self.draft.as_ref().ok_or("there is no condition to save")?;
         let next = self.next_entry(edits).ok_or("the conditions table has not been read yet")?;
         condition::build(&draft.tree, &self.all(edits), next)
@@ -409,7 +409,7 @@ impl Conditions {
 
     /// Write the draft: create the rows [`Self::plan`] names, as one undo
     /// entry, and drop the draft. Answers the entry the draft is.
-    pub fn save(&mut self, session: &mut EditSession, now: f64) -> Result<u32, String> {
+    pub(crate) fn save(&mut self, session: &mut EditSession, now: f64) -> Result<u32, String> {
         let built = self.plan(&session.rows.edits)?;
         let label = format!("{} {}", condition::TABLE, built.root);
         session.as_one("Edit condition", &label, |session| {
@@ -426,7 +426,7 @@ impl Conditions {
     /// [`Self::faults`] without the search for a repeated test, which reads
     /// every row: the row's own faults and a child that does not exist. For
     /// the line a form draws beside a column, every frame.
-    pub fn row_faults(&self, edits: &Edits, shown: &Condition) -> Vec<String> {
+    pub(crate) fn row_faults(&self, edits: &Edits, shown: &Condition) -> Vec<String> {
         let mut out = shown.check();
         out.extend(condition::check_tree(shown, |entry| self.exists(edits, entry)));
         out
@@ -436,7 +436,7 @@ impl Conditions {
     /// which matches an entry or any of the four values, or text, which
     /// matches part of a type's name; empty matches every row. `kind`
     /// narrows to one type.
-    pub fn matching(&self, edits: &Edits, search: &str, kind: Option<i32>) -> Vec<Condition> {
+    pub(crate) fn matching(&self, edits: &Edits, search: &str, kind: Option<i32>) -> Vec<Condition> {
         let search = search.trim();
         let number: Option<i64> = search.parse().ok();
         let words = search.to_ascii_lowercase();
@@ -452,7 +452,7 @@ impl Conditions {
     }
 }
 
-pub struct ConditionToolPlugin;
+pub(crate) struct ConditionToolPlugin;
 
 impl Plugin for ConditionToolPlugin {
     fn build(&self, app: &mut App) {

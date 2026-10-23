@@ -67,7 +67,7 @@ use crate::codes::{response_key, CHAR_CREATE_SUCCESS, CHAR_DELETE_SUCCESS};
 /// (`ObjectMgr::NormalizePlayerName`), so a client that title-cased it here
 /// would be doing the same work twice and would differ from the reference the
 /// first time a locale disagreed about what an initial is.
-pub fn char_create_body(
+pub(crate) fn char_create_body(
     name: &str,
     race: u8,
     class: u8,
@@ -104,7 +104,7 @@ pub struct CreateRefusal {
 /// sends `SMSG_CHAR_CREATE` without a code, but reading "no bytes" as success
 /// would put a character on the list that does not exist, and the failure would
 /// then be the character screen's rather than this function's.
-pub fn read_create_result(body: &[u8]) -> Result<(), CreateRefusal> {
+pub(crate) fn read_create_result(body: &[u8]) -> Result<(), CreateRefusal> {
     let Some(&code) = body.first() else {
         return Err(CreateRefusal {
             code: 0,
@@ -127,7 +127,7 @@ pub fn read_create_result(body: &[u8]) -> Result<(), CreateRefusal> {
 /// the character screen rather than the world, and the packed form only ever
 /// appears in world traffic. Sending a packed guid here is a short body the
 /// server reads garbage out of.
-pub fn char_delete_body(guid: u64) -> Vec<u8> {
+pub(crate) fn char_delete_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -139,7 +139,7 @@ pub fn char_delete_body(guid: u64) -> Vec<u8> {
 /// `code: 0` is not a `ResponseCodes` value and is not pretending to be one:
 /// nothing came back, so there is no byte. The key is the one the *answered*
 /// failure uses, because from the character screen the two are the same event.
-pub const SILENTLY_REFUSED: CreateRefusal = CreateRefusal {
+pub(crate) const SILENTLY_REFUSED: CreateRefusal = CreateRefusal {
     code: 0,
     key: Some("CHAR_DELETE_FAILED"),
 };
@@ -151,7 +151,7 @@ pub const SILENTLY_REFUSED: CreateRefusal = CreateRefusal {
 /// character off the list that is still on the server, and the next
 /// `CMSG_CHAR_ENUM` would put it back — a list that flickers rather than a
 /// failure that says so.
-pub fn read_delete_result(body: &[u8]) -> Result<(), CreateRefusal> {
+pub(crate) fn read_delete_result(body: &[u8]) -> Result<(), CreateRefusal> {
     let Some(&code) = body.first() else {
         return Err(SILENTLY_REFUSED);
     };
@@ -243,10 +243,12 @@ impl CharListEntry {
     pub fn is_ghost(&self) -> bool {
         self.flags & Self::GHOST != 0
     }
-    pub fn hides_helm(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn hides_helm(&self) -> bool {
         self.flags & Self::HIDE_HELM != 0
     }
-    pub fn hides_cloak(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn hides_cloak(&self) -> bool {
         self.flags & Self::HIDE_CLOAK != 0
     }
 }

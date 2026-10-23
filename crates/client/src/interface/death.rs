@@ -72,7 +72,7 @@ use crate::world::session::Session;
 /// `LiveSession::take_events` — the same shape, and the same reason, as
 /// [`super::logout::LogoutAnswer`].
 #[derive(Message, Debug, Clone)]
-pub enum DeathAnswer {
+pub(crate) enum DeathAnswer {
     /// `SMSG_CORPSE_RECLAIM_DELAY`, in milliseconds.
     ReclaimDelay(u32),
     /// The reply to our own `MSG_CORPSE_QUERY`.
@@ -91,7 +91,7 @@ pub enum DeathAnswer {
 /// restated. A few hundred milliseconds of round trip is the whole error and the
 /// boxes they drive are counting in whole seconds.
 #[derive(Resource, Default, Debug)]
-pub struct Dying {
+pub(crate) struct Dying {
     /// Health is zero and the spirit is still in the body.
     pub dead: bool,
     /// `PLAYER_FLAGS_GHOST` — released.
@@ -124,7 +124,7 @@ pub struct Dying {
     /// re-open its box once a frame.
     offered: bool,
     /// The spirit healer whose offer is on the table.
-    pub healer: Option<u64>,
+    pub(crate) healer: Option<u64>,
 }
 
 impl Dying {
@@ -135,7 +135,7 @@ impl Dying {
     /// Zero once the six minutes are up, and zero when not dead at all: the box
     /// is only ever shown on `PLAYER_DEAD`, and `UIParent_OnEvent` refuses to
     /// show it for a zero.
-    pub fn release_remaining(&self, now: f32) -> i32 {
+    pub(crate) fn release_remaining(&self, now: f32) -> i32 {
         if !self.timed_release {
             return -1;
         }
@@ -152,7 +152,7 @@ impl Dying {
     /// Both popups that use it call it as a `StartDelay`, so a non-zero here is
     /// a Retrieve button that is drawn disabled and counts down rather than one
     /// that is pressed and silently ignored.
-    pub fn recovery_delay(&self, now: f32) -> i32 {
+    pub(crate) fn recovery_delay(&self, now: f32) -> i32 {
         let Some(released_at) = self.released_at else {
             return 0;
         };
@@ -190,7 +190,7 @@ fn leave_corpse_range(dying: &mut Dying, left: &mut MessageWriter<CorpseOutOfRan
     }
 }
 
-pub struct DeathPlugin;
+pub(crate) struct DeathPlugin;
 
 impl Plugin for DeathPlugin {
     fn build(&self, app: &mut App) {

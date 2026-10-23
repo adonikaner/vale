@@ -30,7 +30,7 @@ const WIDTH: f32 = COLUMNS as f32 * (CELL + GAP) + 24.0;
 /// `pick` is the tool's slot for it; the dialog closes by taking it. Drawn
 /// against the context, so the inspector and the template window both reach
 /// it.
-pub fn window(
+pub(crate) fn window(
     ctx: &egui::Context,
     pick: &mut Option<DisplayPick>,
     session: &mut EditSession,

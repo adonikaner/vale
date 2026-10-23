@@ -58,7 +58,9 @@ use super::widgets::frames;
 use super::api::verbs::{self, Queue};
 use super::xml;
 use crate::input::bindings::Binding;
-use crate::interface::events::{EventArg, FIRED};
+use crate::interface::events::EventArg;
+#[cfg(any(test, feature = "diagnostics"))]
+use crate::interface::events::FIRED;
 /// How many distinct failures to keep. A cap, because a broken addon could
 /// otherwise name a new function on every frame and this set is unbounded.
 const MAX_FAILURES: usize = 64;
@@ -265,7 +267,7 @@ impl LuaHost {
     /// The [`xml::Report`] is kept for the HUD and its errors are added to the
     /// same `missing` set a binding's are, so the one HUD line counts every
     /// call the interface made that this client could not answer.
-    pub fn load_interface(
+    pub(crate) fn load_interface(
         &mut self,
         answers: &dyn Answers,
         read: &mut dyn FnMut(&str) -> Option<Vec<u8>>,
@@ -407,7 +409,7 @@ impl LuaHost {
     /// `SET_GLUE_SCREEN` is not raised here. Nothing is shown until
     /// `crate::glue::glue`'s watcher sees which screen the session is on, on
     /// the next frame, so that one mechanism alone decides what is on screen.
-    pub fn load_glue(
+    pub(crate) fn load_glue(
         &mut self,
         answers: &dyn Answers,
         read: &mut dyn FnMut(&str) -> Option<Vec<u8>>,
@@ -448,7 +450,7 @@ impl LuaHost {
     /// against [`super::widgets::layout::DEFAULT_SCREEN`]. See
     /// [`super::widgets::layout::UI_SIZE`], which is the size passed instead,
     /// and [`super::widgets::layout::VIRTUAL_WIDTH`] for why that is a constant.
-    pub fn set_screen(&self, width: f64, height: f64) {
+    pub(crate) fn set_screen(&self, width: f64, height: f64) {
         let _ = super::widgets::layout::set_screen(&self.lua, width, height);
     }
 
@@ -510,7 +512,7 @@ impl LuaHost {
     /// anyway and compared with `last`. A difference means some write reached a
     /// field the walk reads without bumping a counter: it is logged once with
     /// the first differing item (a test panics), and the fresh list is returned.
-    pub fn drawn_if_changed(
+    pub(crate) fn drawn_if_changed(
         &self,
         screen: (f32, f32),
         now: f64,
@@ -570,7 +572,7 @@ impl LuaHost {
     /// screens before the world. `Interface\FrameXML\`'s model frames (fourteen
     /// portraits, plus the cooldown indicators) are drawn inside their own
     /// rectangles, which this client does not do yet, and are not a scene.
-    pub fn glue_scene(&self) -> Option<super::widgets::model::Scene> {
+    pub(crate) fn glue_scene(&self) -> Option<super::widgets::model::Scene> {
         if self.directory() != Some(Directory::Glue) {
             return None;
         }
@@ -583,11 +585,11 @@ impl LuaHost {
     /// A method here rather than a free function so that nothing outside this
     /// directory holds the `mlua::Lua`, the rule the module comment states and
     /// [`LuaHost::drawn`] follows.
-    pub fn set_modifiers(&self, shift: bool, control: bool, alt: bool) {
+    pub(crate) fn set_modifiers(&self, shift: bool, control: bool, alt: bool) {
         super::api::stubs::set_modifiers(&self.lua, shift, control, alt);
     }
 
-    pub fn set_bindings(&mut self, bindings: std::sync::Arc<vale_assets::interface::bindings::Bindings>) {
+    pub(crate) fn set_bindings(&mut self, bindings: std::sync::Arc<vale_assets::interface::bindings::Bindings>) {
         // Both uses are set from one call. The declarations decide what a key
         // does (here) and what the key-bindings panel lists
         // (`keybindings::Keys`); setting only the first would draw an empty
@@ -599,7 +601,7 @@ impl LuaHost {
     }
 
     /// The declaration for a name, if the game declares one.
-    pub fn declaration(&self, name: &str) -> Option<&vale_assets::interface::bindings::BindingDecl> {
+    pub(crate) fn declaration(&self, name: &str) -> Option<&vale_assets::interface::bindings::BindingDecl> {
         self.bindings.as_ref()?.get(name)
     }
 
@@ -678,7 +680,7 @@ impl LuaHost {
     /// writes to, because a handler may call one. `TargetFrame.lua`'s `OnEvent`
     /// does not, but an addon's may, and dropping those verbs would make a verb
     /// work from a key and not from an event.
-    pub fn fire_event(
+    pub(crate) fn fire_event(
         &mut self,
         event: &str,
         args: &[EventArg],
@@ -706,7 +708,7 @@ impl LuaHost {
     /// the middle of a batch are still delivered. The verbs come back as one
     /// list rather than per event; the caller writes each one as a
     /// `BindingPressed` in the order they were called.
-    pub fn fire_events(
+    pub(crate) fn fire_events(
         &mut self,
         news: &[(&str, &[EventArg])],
         answers: &dyn Answers,
@@ -740,7 +742,8 @@ impl LuaHost {
 
     /// How many frames have an `OnUpdate` handler: the number the HUD shows,
     /// and the number of frames a tick walks.
-    pub fn ticking(&self) -> usize {
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub(crate) fn ticking(&self) -> usize {
         super::api::update::tracked(&self.lua)
     }
 
@@ -749,7 +752,8 @@ impl LuaHost {
     /// Checked once a frame before anything else, so that a client at the
     /// login screen, or one whose interface has not loaded, pays a single table
     /// read rather than opening a scope.
-    pub fn has_updates(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn has_updates(&self) -> bool {
         self.ticking() > 0
     }
 
@@ -771,7 +775,7 @@ impl LuaHost {
     /// because it reads an archive and needs `UiModels` mutably, and neither
     /// belongs inside a Lua scope. That system is ordered `.before` this one,
     /// so a file is loaded by the time the tick asks how long its sequence is.
-    pub fn fire_tick(
+    pub(crate) fn fire_tick(
         &mut self,
         elapsed: f64,
         answers: &dyn Answers,
@@ -798,14 +802,15 @@ impl LuaHost {
 
     /// Store the rendered frame rate `GetFramerate()` answers; see
     /// [`super::api::stubs::set_framerate`].
-    pub fn set_framerate(&self, framerate: f64) {
+    pub(crate) fn set_framerate(&self, framerate: f64) {
         super::api::stubs::set_framerate(&self.lua, framerate);
     }
 
     /// Every visible frame's `OnUpdate`, with the elapsed seconds in `arg1`, in
     /// its own scope. [`LuaHost::fire_tick`] runs this and the model ticks in
     /// one scope.
-    pub fn fire_updates(&mut self, elapsed: f64, answers: &dyn Answers) -> Vec<Binding> {
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub(crate) fn fire_updates(&mut self, elapsed: f64, answers: &dyn Answers) -> Vec<Binding> {
         self.queue.borrow_mut().clear();
         match self.run(answers, |lua| super::api::update::fire(lua, elapsed)) {
             Ok(errors) => {
@@ -821,46 +826,20 @@ impl LuaHost {
 
     /// Which files the visible `<Model>` frames hold. See
     /// [`super::widgets::model::files`], whose caller loads them.
-    pub fn model_files(&self) -> Vec<String> {
+    pub(crate) fn model_files(&self) -> Vec<String> {
         super::widgets::model::files(&self.lua)
     }
 
     /// Every visible `<PlayerModel>` frame that is set to a unit, for
     /// [`crate::render::paperdoll`]. These are the paper dolls;
     /// [`Self::model_files`] returns the frames that show a model file.
-    pub fn unit_models(&self) -> Vec<super::widgets::model::UnitFrame> {
+    pub(crate) fn unit_models(&self) -> Vec<super::widgets::model::UnitFrame> {
         super::widgets::model::unit_frames(&self.lua)
-    }
-
-    /// Tick every visible `<Model>` frame: `OnUpdateModel` every frame, and
-    /// `OnAnimFinished` when the sequence it is playing has ended.
-    ///
-    /// Works like [`LuaHost::fire_updates`] for a different script kind, and
-    /// returns verbs for the same reason. `models` answers how long a sequence
-    /// is; nothing else in this file knows what a model contains.
-    pub fn fire_model_ticks(
-        &mut self,
-        delta: f64,
-        answers: &dyn Answers,
-        models: &super::widgets::model::UiModels,
-    ) -> Vec<Binding> {
-        self.queue.borrow_mut().clear();
-        let length_of = |path: &str, sequence: u32| models.sequence_length(path, sequence);
-        match self.run(answers, |lua| super::widgets::model::tick(lua, delta, &length_of)) {
-            Ok(errors) => {
-                for error in errors {
-                    self.note(error);
-                }
-            }
-            Err(e) => self.note(format!("OnUpdateModel: {}", first_line(&e))),
-        }
-        self.drain_swallowed();
-        std::mem::take(&mut *self.queue.borrow_mut())
     }
 
     /// Whether a mouse pass for `pointer` would change nothing; see
     /// `api::mouse::unchanged`. Reads the interpreter without opening a scope.
-    pub fn mouse_unchanged(&self, pointer: &super::api::mouse::Pointer) -> bool {
+    pub(crate) fn mouse_unchanged(&self, pointer: &super::api::mouse::Pointer) -> bool {
         super::api::mouse::unchanged(&self.lua, pointer)
     }
 
@@ -954,7 +933,7 @@ impl LuaHost {
     /// One scope for the whole frame's keys rather than one per key, for the
     /// reason given in [`Self::fire_events`]: a scope costs 0.12 ms and
     /// 27.8 KB, and a key repeat produces several edges.
-    pub fn keys_to_frame(
+    pub(crate) fn keys_to_frame(
         &mut self,
         keys: &[(String, bool)],
         answers: &dyn Answers,
@@ -988,14 +967,16 @@ impl LuaHost {
 
     /// How many frames have ever declared themselves keyboard receivers: the
     /// count `--audit` prints. See [`super::widgets::keyboard`].
-    pub fn keyboard_receivers(&self) -> usize {
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn keyboard_receivers(&self) -> usize {
         super::widgets::keyboard::receiver_count(&self.lua)
     }
 
     /// The keyboard receivers' names, with a `*` on the ones currently
     /// visible. The visible ones are the ones to check, since a receiver that
     /// is always visible would take every key away from the key table.
-    pub fn keyboard_receiver_names(&self) -> Vec<String> {
+    #[cfg(feature = "diagnostics")]
+    pub(crate) fn keyboard_receiver_names(&self) -> Vec<String> {
         super::widgets::keyboard::receiver_names(&self.lua)
     }
 
@@ -1006,7 +987,7 @@ impl LuaHost {
     /// Cheap: it reads a registry of the frames that declared themselves
     /// receivers rather than walking the frame tree. See
     /// [`super::widgets::keyboard`].
-    pub fn keyboard_frame(&self) -> Option<String> {
+    pub(crate) fn keyboard_frame(&self) -> Option<String> {
         super::widgets::keyboard::receiver_name(&self.lua)
     }
 
@@ -1017,7 +998,7 @@ impl LuaHost {
     /// does the copying. `None` covers both "nothing was copied" and "nothing
     /// was selected", which the 1.12.1 client treats the same way: it leaves
     /// the clipboard unchanged.
-    pub fn take_copied(&mut self) -> Option<String> {
+    pub(crate) fn take_copied(&mut self) -> Option<String> {
         self.copied.take()
     }
 
@@ -1026,7 +1007,7 @@ impl LuaHost {
     /// Checked once a frame before any key is examined, so that a client with
     /// nothing focused, which is most of the time, pays one registry read
     /// rather than opening a scope.
-    pub fn keyboard_focus(&self) -> Option<mlua::Table> {
+    pub(crate) fn keyboard_focus(&self) -> Option<mlua::Table> {
         super::widgets::editbox::focused(&self.lua)
     }
 
@@ -1034,25 +1015,25 @@ impl LuaHost {
     ///
     /// One caller, [`crate::interface::chat::send`], for the same reason
     /// `take_chat` has one caller: this empties the queue.
-    pub fn take_said(&mut self) -> Vec<verbs::Said> {
+    pub(crate) fn take_said(&mut self) -> Vec<verbs::Said> {
         std::mem::take(&mut *self.said.borrow_mut())
     }
 
     /// Take and clear the requested text emotes. One caller,
     /// [`crate::interface::emotetext`].
-    pub fn take_emoted(&mut self) -> Vec<verbs::Emoted> {
+    pub(crate) fn take_emoted(&mut self) -> Vec<verbs::Emoted> {
         std::mem::take(&mut *self.emoted.borrow_mut())
     }
 
     /// Take and clear the names typed into the pet rename box. See
     /// [`verbs::PetRenameQueue`]. One caller, [`crate::interface::pet`].
-    pub fn take_pet_renames(&mut self) -> Vec<String> {
+    pub(crate) fn take_pet_renames(&mut self) -> Vec<String> {
         std::mem::take(&mut *self.renamed.borrow_mut())
     }
 
     /// Take and clear the sound requests. See [`super::api::sound`]. One
     /// caller, `crate::sound::interface`.
-    pub fn take_sound_requests(&mut self) -> Vec<super::api::sound::SoundRequest> {
+    pub(crate) fn take_sound_requests(&mut self) -> Vec<super::api::sound::SoundRequest> {
         std::mem::take(&mut *self.sound.borrow_mut())
     }
 
@@ -1080,7 +1061,7 @@ impl LuaHost {
     /// logout, which is also when the 1.12.1 client saves them. See
     /// [`super::api::savedvars`], whose module note explains why this is not a
     /// queue.
-    pub fn saved_variables(&self) -> Vec<(String, vale_assets::interface::wtf::SavedValue)> {
+    pub(crate) fn saved_variables(&self) -> Vec<(String, vale_assets::interface::wtf::SavedValue)> {
         super::api::savedvars::snapshot(&self.lua, &self.saved)
     }
 
@@ -1089,7 +1070,7 @@ impl LuaHost {
     /// at that scope. An addon that has not loaded is left out, so its file on
     /// disk is not overwritten with nothing. See
     /// [`super::api::savedvars::render_addon`].
-    pub fn addon_saved_variables(&self) -> Vec<(String, super::panels::addons::Scope, String)> {
+    pub(crate) fn addon_saved_variables(&self) -> Vec<(String, super::panels::addons::Scope, String)> {
         let addons = super::panels::addons::held(self);
         let board = addons.borrow();
         let mut out = Vec::new();
@@ -1114,7 +1095,7 @@ impl LuaHost {
     /// loaded; otherwise it is held on the board until the addon loads,
     /// because an addon's saved variables are applied over its defaults, which
     /// do not exist before its files have run.
-    pub fn apply_addon_saved_variables(&mut self, addon: &str, scope: super::panels::addons::Scope, text: &str) {
+    pub(crate) fn apply_addon_saved_variables(&mut self, addon: &str, scope: super::panels::addons::Scope, text: &str) {
         let loaded = super::panels::addons::held(self).borrow().is_loaded(addon);
         if loaded {
             if let Err(e) = super::api::savedvars::apply_addon_chunk(&self.lua, text) {
@@ -1132,7 +1113,7 @@ impl LuaHost {
     /// The caller asks the host rather than keeping its own flag, because a
     /// flag outside the host outlives it and goes stale when the host is
     /// replaced.
-    pub fn needs_saved_variables(&self) -> bool {
+    pub(crate) fn needs_saved_variables(&self) -> bool {
         !self.saved_applied
     }
 
@@ -1141,7 +1122,7 @@ impl LuaHost {
     /// Marks the host as applied even when the values are empty: a fresh
     /// install has nothing to apply, and asking again every frame for the whole
     /// session would never succeed.
-    pub fn apply_saved_variables(
+    pub(crate) fn apply_saved_variables(
         &mut self,
         values: &[(String, vale_assets::interface::wtf::SavedValue)],
     ) {
@@ -1155,13 +1136,8 @@ impl LuaHost {
 
     /// Take and clear every `SetCVar` since the last call. See
     /// [`super::api::cvars`]. One caller, [`crate::settings::cvars`].
-    pub fn take_cvar_writes(&mut self) -> Vec<super::api::cvars::CVarWrite> {
+    pub(crate) fn take_cvar_writes(&mut self) -> Vec<super::api::cvars::CVarWrite> {
         std::mem::take(&mut *self.cvars.borrow_mut())
-    }
-
-    /// The whole CVar store, read once when the settings resource is built.
-    pub fn cvar_snapshot(&self) -> Vec<(String, String)> {
-        super::api::cvars::snapshot(&self.lua)
     }
 
     /// Write the values from `WTF\Config.wtf` into the CVar store, once,
@@ -1170,7 +1146,7 @@ impl LuaHost {
     /// One caller, [`crate::settings::cvars`], from a `Startup` system, which
     /// is early enough because all of `Interface\` loads in `Update`. See
     /// [`super::api::cvars::seed`] for why this does not go on the queue.
-    pub fn seed_cvars(&mut self, values: &[(String, String)]) {
+    pub(crate) fn seed_cvars(&mut self, values: &[(String, String)]) {
         if let Err(e) = super::api::cvars::seed(&self.lua, values) {
             warn!("the saved settings would not load ({e})");
         }
@@ -1178,7 +1154,7 @@ impl LuaHost {
 
     /// Take and clear the requested portraits. See [`super::api::portrait`].
     /// One caller, [`crate::render::portraits`].
-    pub fn take_portrait_requests(&mut self) -> Vec<String> {
+    pub(crate) fn take_portrait_requests(&mut self) -> Vec<String> {
         std::mem::take(&mut *self.portrait.borrow_mut())
     }
 
@@ -1253,7 +1229,7 @@ impl LuaHost {
     /// call adds `PER_KB` microseconds per kilobyte, up to `BUDGET`. A frame
     /// that allocates nothing pays the floor; an allocation burst is still
     /// paced, and `GC_BEHIND_BYTES` is still the upper limit.
-    pub fn pace_collector(&self) {
+    pub(crate) fn pace_collector(&self) {
         /// The minimum budget of a call that runs, so that a cycle in progress
         /// always advances.
         const FLOOR: std::time::Duration = std::time::Duration::from_micros(300);
@@ -1341,7 +1317,8 @@ impl LuaHost {
     /// The count falls as events are implemented. `ActionButton_OnLoad` alone
     /// registers seven events this client does not raise, and a frame waiting
     /// on one of them is not updated until something raises it.
-    pub fn unfired_events(&self) -> Vec<String> {
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub(crate) fn unfired_events(&self) -> Vec<String> {
         frames::registered_events(&self.lua)
             .unwrap_or_default()
             .into_iter()
@@ -1350,7 +1327,8 @@ impl LuaHost {
     }
 
     /// How many event names any frame is listening on at all.
-    pub fn registered_events(&self) -> usize {
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub(crate) fn registered_events(&self) -> usize {
         frames::registered_events(&self.lua).map_or(0, |set| set.len())
     }
 
@@ -1434,7 +1412,8 @@ const FLATTENED: [(&str, &str, &str); 26] = [
 /// Separate from [`FLATTENED`] because that list includes names the shipped
 /// interface does not call (an addon may call `strrep`), so it cannot serve as
 /// a check. These are the names counted in the files.
-pub const REQUIRED_FLAT_NAMES: [&str; 15] = [
+#[cfg(test)]
+pub(crate) const REQUIRED_FLAT_NAMES: [&str; 15] = [
     "abs", "ceil", "floor", "format", "getn", "gsub", "max", "min", "mod", "sort", "sqrt",
     "strfind", "strlen", "strsub", "strupper",
 ];

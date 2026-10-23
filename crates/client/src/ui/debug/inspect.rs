@@ -99,7 +99,7 @@ pub struct Inspector {
     pub model: Option<String>,
 }
 
-pub struct InspectPlugin;
+pub(crate) struct InspectPlugin;
 
 impl Plugin for InspectPlugin {
     fn build(&self, app: &mut App) {

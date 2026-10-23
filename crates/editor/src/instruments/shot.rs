@@ -30,16 +30,16 @@ use bevy::prelude::*;
 
 /// What was asked for, and whether it has been taken.
 #[derive(Resource)]
-pub struct Shot {
+pub(crate) struct Shot {
     /// Where to write it. `None` is every ordinary run.
-    pub path: Option<String>,
+    pub(crate) path: Option<String>,
     /// Seconds to wait first.
-    pub after: f32,
+    pub(crate) after: f32,
     taken: bool,
 }
 
 impl Shot {
-    pub fn new(path: Option<String>, after: Option<f32>) -> Shot {
+    pub(crate) fn new(path: Option<String>, after: Option<f32>) -> Shot {
         Shot {
             path,
             // Long enough for the archives, the nine tiles and the drop onto the
@@ -111,7 +111,7 @@ fn count(shot: Res<Shot>, time: Res<Time>, mut frames: ResMut<Frames>) {
     frames.0.drain(..drop);
 }
 
-pub struct ShotPlugin;
+pub(crate) struct ShotPlugin;
 
 impl Plugin for ShotPlugin {
     fn build(&self, app: &mut App) {

@@ -78,7 +78,7 @@ pub const DEFAULT_FRILL_DENSITY: u32 = 16;
 pub const FRILL_DENSITY_RANGE: std::ops::RangeInclusive<u32> = 1..=256;
 
 /// How far a tuft's scale may be from 1.0, either way.
-pub const SCALE_SPREAD: f32 = 0.1;
+pub(crate) const SCALE_SPREAD: f32 = 0.1;
 
 /// One planted doodad, in the file's own axes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -267,7 +267,8 @@ impl ChunkFoliage {
     }
 
     /// How many of the 64 cells grow anything.
-    pub fn planted_cells(&self) -> usize {
+    #[cfg(test)]
+    pub(crate) fn planted_cells(&self) -> usize {
         self.cells.iter().filter(|&&id| id != 0).count()
     }
 

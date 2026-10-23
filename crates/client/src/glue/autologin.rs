@@ -111,12 +111,13 @@ impl AutoLogin {
 
     /// …and the half of that which starts at the character screen, for a caller
     /// that still holds the socket.
-    pub fn arm_at_the_character_screen(&mut self) {
+    pub(crate) fn arm_at_the_character_screen(&mut self) {
         self.pending = true;
     }
 
     /// Whether a login this asked for is still working its way in.
-    pub fn under_way(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn under_way(&self) -> bool {
         self.wanted || self.pending
     }
 
@@ -127,7 +128,7 @@ impl AutoLogin {
     }
 }
 
-pub struct AutoLoginPlugin;
+pub(crate) struct AutoLoginPlugin;
 
 impl Plugin for AutoLoginPlugin {
     fn build(&self, app: &mut App) {
@@ -179,7 +180,7 @@ fn start_the_logon(
 /// **`pub` so a caller can order itself in front of it.** `--relogin` does: it
 /// asks for a logout, and the frame that asks must not also be the frame that
 /// would click a character.
-pub fn pick_the_character(
+pub(crate) fn pick_the_character(
     mut auto: ResMut<AutoLogin>,
     mut session: ResMut<Session>,
     assets: Res<GameAssets>,
@@ -234,7 +235,7 @@ pub fn pick_the_character(
 
 /// **The row the character screen opens on**, 5875's own CVar.
 /// Read here and written by nothing — see the module comment.
-pub const LAST_CHARACTER_INDEX: &str = "lastCharacterIndex";
+pub(crate) const LAST_CHARACTER_INDEX: &str = "lastCharacterIndex";
 
 #[cfg(test)]
 mod tests {

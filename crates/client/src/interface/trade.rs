@@ -78,7 +78,7 @@ use crate::world::session::Session;
 
 /// One of the two trade packets, handed on from [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
-pub enum TradeAnswer {
+pub(crate) enum TradeAnswer {
     Status(TradeStatusPacket),
     Offer(Box<TradeOffer>),
 }
@@ -116,11 +116,11 @@ pub enum TradePress {
 /// other two are: every cast in this client goes out through one place, and this
 /// module has no bar, no cooldowns and no error frame.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TradeSlotPicked {
+pub(crate) struct TradeSlotPicked {
     /// Always `TRADE_SLOT_NONTRADED` — the server refuses every other square
     /// with `SPELL_FAILED_ITEM_NOT_READY`, so the number is carried rather than
     /// assumed at the far end.
-    pub trade_slot: u8,
+    pub(crate) trade_slot: u8,
 }
 
 /// What one open trade is.
@@ -153,7 +153,7 @@ impl TradeWindow {
     }
 
     /// Who the window is with — the `"NPC"` token's answer while it is up.
-    pub fn partner(&self) -> Option<u64> {
+    pub(crate) fn partner(&self) -> Option<u64> {
         Some(self.open.as_ref()?.partner)
     }
 
@@ -161,15 +161,6 @@ impl TradeWindow {
     pub fn offer(&self, theirs: bool) -> Option<&TradeOffer> {
         let open = self.open.as_ref()?;
         Some(if theirs { &open.theirs } else { &open.mine })
-    }
-
-    /// Our own accept flag, as the interface last heard it.
-    pub fn my_accept(&self) -> bool {
-        self.open.as_ref().is_some_and(|open| open.my_accept)
-    }
-
-    pub fn their_accept(&self) -> bool {
-        self.open.as_ref().is_some_and(|open| open.their_accept)
     }
 
     /// The window, for a test: open with a partner and nothing in it.
@@ -192,7 +183,7 @@ impl Open {
     }
 }
 
-pub struct TradePlugin;
+pub(crate) struct TradePlugin;
 
 impl Plugin for TradePlugin {
     fn build(&self, app: &mut App) {

@@ -47,19 +47,19 @@ use vale_assets::world::wmo::Liquid;
 
 /// The steepest slope a character can walk up in 1.12, in degrees. The
 /// grading tool's panel marks the same limit.
-pub const CLIMB_LIMIT: f32 = 50.0;
+pub(crate) const CLIMB_LIMIT: f32 = 50.0;
 
 /// What the measuring tool is holding.
 #[derive(Resource, Debug, Clone, Default)]
-pub struct Measuring {
+pub(crate) struct Measuring {
     /// The two points, in the order they were clicked.
-    pub first: Option<Probe>,
-    pub second: Option<Probe>,
+    pub(crate) first: Option<Probe>,
+    pub(crate) second: Option<Probe>,
 }
 
 /// What stands at the point that was hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum On {
+pub(crate) enum On {
     Ground,
     /// A building, doodad or game object's collision hull, nearer to the eye
     /// than the ground.
@@ -68,49 +68,49 @@ pub enum On {
 
 /// What is at one point of the open map.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Probe {
+pub(crate) struct Probe {
     /// World axes: x north, y west, z up.
-    pub at: Vec3,
-    pub on: On,
+    pub(crate) at: Vec3,
+    pub(crate) on: On,
     /// The terrain height at `at`'s x and y, or `None` off the open tiles and
     /// over a hole.
-    pub ground: Option<f32>,
-    pub tile: (u32, u32),
+    pub(crate) ground: Option<f32>,
+    pub(crate) tile: (u32, u32),
     /// Which of the tile's 256 chunks, when the tile is open.
-    pub chunk: Option<usize>,
+    pub(crate) chunk: Option<usize>,
     /// The chunk's `AreaTable` id.
-    pub area: Option<u32>,
+    pub(crate) area: Option<u32>,
     /// The ground's slope, in degrees from level.
-    pub slope: Option<f32>,
+    pub(crate) slope: Option<f32>,
     /// The liquid over the point: kind, surface height and the cell's flag
     /// nibble.
-    pub water: Option<(Liquid, f32, u8)>,
+    pub(crate) water: Option<(Liquid, f32, u8)>,
     /// The ground under the point is cut out of the mesh.
-    pub hole: bool,
+    pub(crate) hole: bool,
     /// The chunk carries `MCNK`'s impassable flag.
-    pub impassable: bool,
+    pub(crate) impassable: bool,
 }
 
 /// Between two points.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Span {
+pub(crate) struct Span {
     /// Straight-line distance, in yards.
-    pub distance: f32,
+    pub(crate) distance: f32,
     /// Distance in the x-y plane, in yards.
-    pub horizontal: f32,
+    pub(crate) horizontal: f32,
     /// The second point's height minus the first's.
-    pub rise: f32,
+    pub(crate) rise: f32,
     /// The line's angle from level, in degrees; positive when it climbs.
-    pub slope: f32,
+    pub(crate) slope: f32,
     /// The facing from the first point to the second, in radians from +x
     /// toward +y, in `[0, 2π)`: the `orientation` a spawn at the first point
     /// needs to face the second.
-    pub facing: f32,
+    pub(crate) facing: f32,
 }
 
 impl Measuring {
     /// Take the next point. The third click starts again.
-    pub fn pick(&mut self, probe: Probe) {
+    pub(crate) fn pick(&mut self, probe: Probe) {
         match (self.first.is_some(), self.second.is_some()) {
             (false, _) => self.first = Some(probe),
             (true, false) => self.second = Some(probe),
@@ -121,19 +121,19 @@ impl Measuring {
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.first = None;
         self.second = None;
     }
 
     /// The span between the two points, when both are picked.
-    pub fn span(&self) -> Option<Span> {
+    pub(crate) fn span(&self) -> Option<Span> {
         Some(span(self.first?.at, self.second?.at))
     }
 }
 
 /// The distance and direction from `a` to `b`, both in world axes.
-pub fn span(a: Vec3, b: Vec3) -> Span {
+pub(crate) fn span(a: Vec3, b: Vec3) -> Span {
     let d = b - a;
     let horizontal = d.truncate().length();
     let facing = d.y.atan2(d.x).rem_euclid(std::f32::consts::TAU);
@@ -147,14 +147,14 @@ pub fn span(a: Vec3, b: Vec3) -> Span {
 }
 
 /// Slope in degrees from level, for a unit normal in world axes.
-pub fn slope_of(normal: [f32; 3]) -> f32 {
+pub(crate) fn slope_of(normal: [f32; 3]) -> f32 {
     normal[2].clamp(-1.0, 1.0).acos().to_degrees()
 }
 
 /// Read what is at `at` from the open tiles. `ground_hit` is where the
 /// pointer's ray met the ground, if it did; `at` is taken to be on the ground
 /// when the two are the same point.
-pub fn probe(session: &EditSession, at: Vec3, ground_hit: Option<Vec3>) -> Probe {
+pub(crate) fn probe(session: &EditSession, at: Vec3, ground_hit: Option<Vec3>) -> Probe {
     use vale_edit::adt::{area, heights, impass};
 
     let tile = vale_assets::tile_for_position(at.x, at.y);
@@ -181,7 +181,7 @@ pub fn probe(session: &EditSession, at: Vec3, ground_hit: Option<Vec3>) -> Probe
 }
 
 /// The liquid's name, as the water panel uses it.
-pub fn liquid_name(kind: Liquid) -> &'static str {
+pub(crate) fn liquid_name(kind: Liquid) -> &'static str {
     match kind {
         Liquid::Water => "water",
         Liquid::Ocean => "ocean",
@@ -191,18 +191,18 @@ pub fn liquid_name(kind: Liquid) -> &'static str {
 }
 
 /// The text the Copy buttons put on the clipboard.
-pub fn position_text(at: Vec3) -> String {
+pub(crate) fn position_text(at: Vec3) -> String {
     format!("{:.3} {:.3} {:.3}", at.x, at.y, at.z)
 }
 
 /// vmangos' teleport command for a point: `.go xyz x y z [mapid]`
 /// (`HandleGoXYZCommand`, `src/game/Commands/TeleportCommands.cpp:859`).
-pub fn go_command(at: Vec3, map: u32) -> String {
+pub(crate) fn go_command(at: Vec3, map: u32) -> String {
     format!(".go xyz {} {map}", position_text(at))
 }
 
 /// One line for the status bar about the span, set on the second click.
-pub fn said(span: &Span) -> String {
+pub(crate) fn said(span: &Span) -> String {
     format!(
         "distance {:.1} yd ({:.1} yd horizontal, {:+.1} yd vertical)",
         span.distance, span.horizontal, span.rise
@@ -325,7 +325,7 @@ fn scripted(
     }
 }
 
-pub struct MeasureToolPlugin;
+pub(crate) struct MeasureToolPlugin;
 
 impl Plugin for MeasureToolPlugin {
     fn build(&self, app: &mut App) {

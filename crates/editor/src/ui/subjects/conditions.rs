@@ -53,7 +53,7 @@ const BUTTONS: f32 = 110.0;
 /// every column a form draws. `column` is what the window calls it
 /// (`npc_vendor 54 2488 condition_id`). `width` fixes the line's width, for a
 /// row of fixed cells; `None` lets it take what the row has left.
-pub fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width: Option<f32>) -> Option<u32> {
+pub(crate) fn cell(ui: &mut egui::Ui, reply: egui::Id, column: &str, entry: u32, width: Option<f32>) -> Option<u32> {
     let answered = conditions::take_answer(ui.ctx(), reply).filter(|answered| *answered != entry);
     if entry != 0 {
         conditions::ask_about(ui.ctx(), entry);
@@ -132,20 +132,20 @@ fn line(board: &Board, entry: u32) -> (String, egui::Color32, String) {
 }
 
 /// What the window is drawn from.
-pub struct Subject<'a> {
-    pub session: &'a mut EditSession,
-    pub conditions: &'a mut Conditions,
-    pub quests: &'a mut Quests,
-    pub assets: &'a GameAssets,
-    pub thumbnails: &'a mut Thumbnails,
-    pub now: f64,
+pub(crate) struct Subject<'a> {
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) conditions: &'a mut Conditions,
+    pub(crate) quests: &'a mut Quests,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) thumbnails: &'a mut Thumbnails,
+    pub(crate) now: f64,
     /// Where a value's name asks the shell to open its row.
-    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+    pub(crate) asks: &'a mut crate::ui::shell::asks::ShellAsks,
 }
 
 /// Take a form's request, tell the forms what the conditions they show test,
 /// and draw the window when it is open.
-pub fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
+pub(crate) fn window(ctx: &egui::Context, mut subject: Subject<'_>) -> Option<egui::Rect> {
     if let Some(request) = ctx.data_mut(|data| data.remove_temp::<Request>(conditions::request_id())) {
         subject.conditions.take(request);
     }

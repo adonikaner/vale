@@ -108,7 +108,7 @@ impl Rank {
     /// applied before the friendliness bump. The 1.12.1 client never answers
     /// better than Revered there, so a creature of an Exalted faction reads one
     /// rank below the bar the reputation panel draws.
-    pub const CEILING: Rank = Rank::Revered;
+    pub(crate) const CEILING: Rank = Rank::Revered;
 
     /// The value `UnitReaction` returns: the rank plus one.
     pub fn lua(self) -> u8 {
@@ -316,12 +316,12 @@ struct Template {
 mod template_fields {
     pub const FACTION: usize = 1;
     pub const FLAGS: usize = 2;
-    pub const OUR_MASK: usize = 3;
-    pub const FRIENDLY_MASK: usize = 4;
-    pub const HOSTILE_MASK: usize = 5;
-    pub const ENEMY_FACTION: usize = 6;
-    pub const FRIEND_FACTION: usize = 10;
-    pub const LIST_LEN: usize = 4;
+    pub(crate) const OUR_MASK: usize = 3;
+    pub(crate) const FRIENDLY_MASK: usize = 4;
+    pub(crate) const HOSTILE_MASK: usize = 5;
+    pub(crate) const ENEMY_FACTION: usize = 6;
+    pub(crate) const FRIEND_FACTION: usize = 10;
+    pub(crate) const LIST_LEN: usize = 4;
 }
 
 /// `FactionTemplate.dbc` field 2, bit 12: this faction's units are hostile to
@@ -331,21 +331,21 @@ mod template_fields {
 /// The bit marks a guard faction. The 44 rows that carry it are the city and
 /// road guards of both sides. It is the only case where a creature's reaction
 /// to the local player depends on a `PLAYER_FLAGS` bit.
-pub const CONTESTED_GUARD: u32 = 1 << 12;
+pub(crate) const CONTESTED_GUARD: u32 = 1 << 12;
 
 /// The `UNIT_FIELD_FLAGS` bits this module reads, by their vmangos names.
 pub mod unit_flags {
     /// `UNIT_FLAG_PLAYER_CONTROLLED`: a player, a pet, a totem, a charm.
     /// Every rule of the reaction order before the masks requires it.
-    pub const PLAYER_CONTROLLED: u32 = 0x0000_0008;
+    pub(crate) const PLAYER_CONTROLLED: u32 = 0x0000_0008;
     /// `UNIT_FLAG_IMMUNE_TO_PLAYER`.
-    pub const IMMUNE_TO_PLAYER: u32 = 0x0000_0100;
+    pub(crate) const IMMUNE_TO_PLAYER: u32 = 0x0000_0100;
     /// `UNIT_FLAG_IMMUNE_TO_NPC`.
     pub const IMMUNE_TO_NPC: u32 = 0x0000_0200;
     /// `UNIT_FLAG_PVP`: attackable by the other side.
     pub const PVP: u32 = 0x0000_1000;
     /// `UNIT_FLAG_NOT_SELECTABLE`: the unit cannot be targeted or assisted.
-    pub const NOT_SELECTABLE: u32 = 0x0200_0000;
+    pub(crate) const NOT_SELECTABLE: u32 = 0x0200_0000;
 }
 
 /// The `PLAYER_FLAGS` bits this module reads, by their vmangos names.
@@ -356,10 +356,10 @@ pub mod player_flags {
     /// everybody. Two flagged players are Hostile to each other whatever their
     /// factions say. This rule is what lets two players of the same faction
     /// fight outside a duel.
-    pub const FFA_PVP: u32 = 0x0000_0080;
+    pub(crate) const FFA_PVP: u32 = 0x0000_0080;
     /// `PLAYER_FLAGS_CONTESTED_PVP`: the player has attacked the other side
     /// recently, and a [`super::CONTESTED_GUARD`] faction is hostile to them.
-    pub const CONTESTED_PVP: u32 = 0x0000_0100;
+    pub(crate) const CONTESTED_PVP: u32 = 0x0000_0100;
 }
 
 /// Field indices of `FactionGroup.dbc`, whose four rows give the name of the
@@ -377,8 +377,8 @@ pub mod player_flags {
 ///  4     3      Monster       (empty)
 /// ```
 mod group_fields {
-    pub const MASK_ID: usize = 1;
-    pub const INTERNAL_NAME: usize = 2;
+    pub(crate) const MASK_ID: usize = 1;
+    pub(crate) const INTERNAL_NAME: usize = 2;
     pub const NAME: usize = 3;
 }
 
@@ -443,7 +443,7 @@ impl Factions {
     /// this one is optional. Without it the group mask still answers (the taxi
     /// filter and the character-creation join are unaffected) and only the
     /// side's name is missing, so a party frame shows no PvP icon.
-    pub fn with_groups(mut self, raw: &[u8]) -> Factions {
+    pub(crate) fn with_groups(mut self, raw: &[u8]) -> Factions {
         let Ok(dbc) = Dbc::parse(raw) else {
             return self;
         };
@@ -694,7 +694,7 @@ impl Factions {
 /// These bits keep a quest giver, a flight master mid-flight and a spawning
 /// creature out of the Tab-target pool. Faction does not exclude
 /// them: most are ordinary friendly NPCs, and some are not friendly.
-pub const UNATTACKABLE_FLAGS: u32 = (1 << 1) | (1 << 7) | (1 << 16) | (1 << 20) | (1 << 25);
+pub(crate) const UNATTACKABLE_FLAGS: u32 = (1 << 1) | (1 << 7) | (1 << 16) | (1 << 20) | (1 << 25);
 
 /// Can this unit be attacked? The flags first, then the reaction.
 ///

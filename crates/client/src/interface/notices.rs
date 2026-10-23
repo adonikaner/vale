@@ -38,7 +38,7 @@ use super::messages::{Announce, UiStrings};
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
-pub enum NoticeAnswer {
+pub(crate) enum NoticeAnswer {
     PlayerNotFound(String),
     ServerMessage { kind: u32, text: String },
     ZoneUnderAttack { area: u32 },
@@ -46,7 +46,7 @@ pub enum NoticeAnswer {
 }
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<NoticeAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<NoticeAnswer> {
     Some(match event {
         PlayerEvent::PlayerNotFound { name } => NoticeAnswer::PlayerNotFound(name.clone()),
         PlayerEvent::ServerMessage(message) => NoticeAnswer::ServerMessage {
@@ -62,7 +62,7 @@ pub fn answer_of(event: &PlayerEvent) -> Option<NoticeAnswer> {
     })
 }
 
-pub struct NoticesPlugin;
+pub(crate) struct NoticesPlugin;
 
 impl Plugin for NoticesPlugin {
     fn build(&self, app: &mut App) {

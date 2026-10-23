@@ -60,7 +60,7 @@ use bevy::mesh::{Indices, Mesh};
 /// write — `COLOR`, on the two passes that have one — has to agree with it about
 /// the count, or Bevy's `count_vertices` picks the shortest array and the mesh
 /// describes something neither of them meant.
-pub const VERTICES: usize = 4;
+pub(crate) const VERTICES: usize = 4;
 
 /// Fill `mesh` with a single degenerate quad, for the reason the module doc
 /// gives.
@@ -71,7 +71,7 @@ pub const VERTICES: usize = 4;
 /// the same argument about `VERTEX_COLORS` and the skinning pair), so handing a
 /// colour to a pass whose material was never specialised against one is a
 /// different bug from the one this function exists to fix.
-pub fn nothing_drawn(mesh: &mut Mesh) {
+pub(crate) fn nothing_drawn(mesh: &mut Mesh) {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; VERTICES]);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; VERTICES]);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]; VERTICES]);

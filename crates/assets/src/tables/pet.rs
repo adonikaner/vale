@@ -74,11 +74,11 @@ use crate::tables::dbc::Dbc;
 /// addresses each was read at.
 mod personality_fields {
     /// `+0x28`, `+0x2c`, `+0x30`: the happiness value each band starts at.
-    pub const THRESHOLDS: usize = 10;
+    pub(crate) const THRESHOLDS: usize = 10;
     /// `+0x34`..`+0x3c`: the damage multiplier in each band.
-    pub const DAMAGE: usize = 13;
+    pub(crate) const DAMAGE: usize = 13;
     /// `+0x40`..`+0x48`: the loyalty gained (or lost) per tick in each band.
-    pub const LOYALTY: usize = 16;
+    pub(crate) const LOYALTY: usize = 16;
 }
 
 /// `CreatureFamily.dbc` field indices.
@@ -87,9 +87,9 @@ mod family_fields {
     /// the shared pet line), which is where a pet spell's `SkillLineAbility`
     /// row is looked up: the client tries each in turn. Read for the craft
     /// window's training-point cost.
-    pub const SKILL_LINES: usize = 5;
+    pub(crate) const SKILL_LINES: usize = 5;
     /// `+0x1c` — a bitmask of `ItemPetFood.dbc` ids, `1 << (id - 1)`.
-    pub const FOOD_MASK: usize = 7;
+    pub(crate) const FOOD_MASK: usize = 7;
     /// `+0x20`, localised — "Wolf", "Cat", "Boar".
     pub const NAME: usize = 8;
     /// `+0x44`, **not** localised — `Interface\Icons\Ability_Hunter_Pet_Wolf`.
@@ -120,7 +120,7 @@ pub const BANDS: usize = 3;
 
 /// The damage percentage a pet below the first band does, and the loyalty it
 /// gains — `100.0` and `0.0`, for both the no-pet case and the level-0 one.
-pub const NO_BAND: (f32, f32) = (100.0, 0.0);
+pub(crate) const NO_BAND: (f32, f32) = (100.0, 0.0);
 
 /// One row of `PetPersonality.dbc`.
 #[derive(Debug, Clone, Copy, PartialEq)]

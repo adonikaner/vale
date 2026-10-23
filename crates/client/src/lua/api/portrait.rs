@@ -46,7 +46,7 @@ use std::rc::Rc;
 /// accumulates the tokens, so keeping the order costs nothing, and the
 /// reader's `HashSet` removes duplicates. See
 /// [`crate::render::portraits::Portraits::wanted`].
-pub type PortraitQueue = Rc<RefCell<Vec<String>>>;
+pub(crate) type PortraitQueue = Rc<RefCell<Vec<String>>>;
 
 /// Register `SetPortraitTexture`. It is not scoped, because it only records
 /// and reads nothing from the world.

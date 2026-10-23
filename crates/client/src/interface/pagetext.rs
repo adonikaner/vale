@@ -54,7 +54,7 @@ use crate::world::session::Session;
 
 /// What the session heard about a page.
 #[derive(Message, Debug, Clone)]
-pub enum PageTextAnswer {
+pub(crate) enum PageTextAnswer {
     /// `SMSG_GAMEOBJECT_PAGETEXT` — this object has pages. The id is not here;
     /// see the module comment.
     Object { guid: u64 },
@@ -64,7 +64,7 @@ pub enum PageTextAnswer {
 
 /// …and what the interface pressed.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PagePress {
+pub(crate) enum PagePress {
     Next,
     Prev,
     /// `CloseItemText()` — local, like the gossip close.
@@ -74,11 +74,11 @@ pub enum PagePress {
 /// **Open this**, from a click that the server will say nothing about — a sign,
 /// or a readable item in a bag.
 #[derive(Message, Debug, Clone)]
-pub struct ReadPage {
+pub(crate) struct ReadPage {
     /// The words at the top of the window.
     pub title: String,
     /// The first page of the chain.
-    pub page_id: u32,
+    pub(crate) page_id: u32,
     /// `PageTextMaterial.dbc`'s row, or 0 for plain parchment.
     pub material: u32,
     /// The object being read, when there is one — the query carries it.
@@ -131,7 +131,7 @@ impl OpenBook {
 
     /// Is there another after this one? The chain's own `next`, so a book whose
     /// tail has not arrived still says yes and the press asks for it.
-    pub fn has_next(&self) -> bool {
+    pub(crate) fn has_next(&self) -> bool {
         self.pages.get(self.showing).is_some_and(|page| page.next != 0)
     }
 
@@ -203,7 +203,7 @@ impl OpenBook {
     }
 }
 
-pub struct PageTextPlugin;
+pub(crate) struct PageTextPlugin;
 
 impl Plugin for PageTextPlugin {
     fn build(&self, app: &mut App) {
@@ -377,7 +377,7 @@ fn act(
 }
 
 /// Which answer, if any, a session event is.
-pub fn answer_of(event: &vale_protocol::state::events::PlayerEvent) -> Option<PageTextAnswer> {
+pub(crate) fn answer_of(event: &vale_protocol::state::events::PlayerEvent) -> Option<PageTextAnswer> {
     use vale_protocol::state::events::PlayerEvent as E;
     Some(match event {
         E::GameObjectPageText { guid } => PageTextAnswer::Object { guid: *guid },

@@ -102,7 +102,7 @@ use std::sync::Arc;
 /// How far a tuft is drawn: the 1.12.1 client's small-prop band. The module
 /// doc says which part of that is the client's rule and which is this
 /// client's choice.
-pub const FOLIAGE_RANGE: f32 = 50.0;
+pub(crate) const FOLIAGE_RANGE: f32 = 50.0;
 
 /// Half a chunk's diagonal: how much further out a chunk's centre has to be
 /// watched, since the whole chunk is one mesh.
@@ -126,12 +126,12 @@ const STREAM_STEP: f32 = 8.0;
 /// phase is measured along, and that is the axis the shader leans the tips
 /// down. The two are separate because one is baked into a vertex buffer once
 /// and the other is read every frame; a test checks that they agree.
-pub const WIND_DIRECTION: Vec2 = Vec2::new(0.7071, 0.7071);
+pub(crate) const WIND_DIRECTION: Vec2 = Vec2::new(0.7071, 0.7071);
 
 /// Radians of phase per yard along [`WIND_DIRECTION`], so the gust is a wave
 /// about 20 yards long: a few tufts lean together, rather than the whole field
 /// moving at once.
-pub const WIND_WAVE: f32 = 0.3;
+pub(crate) const WIND_WAVE: f32 = 0.3;
 
 /// How many chunks are built in one frame.
 ///
@@ -153,7 +153,8 @@ const BUILD_BUDGET: usize = 2;
 /// The count is recorded at the merge, which built the index buffer, so
 /// nothing reads a mesh back.
 #[derive(Component)]
-pub struct Foliage {
+pub(crate) struct Foliage {
+    #[cfg(feature = "diagnostics")]
     pub triangles: usize,
 }
 
@@ -170,8 +171,9 @@ pub struct Foliage {
 /// produced by the same function, so `batches[i]` is the geometry of
 /// `ModelAssets::draws[i]` and takes its material. Two lists built by two
 /// filters could differ; two lists built by one cannot.
-pub struct FoliageProto {
+pub(crate) struct FoliageProto {
     /// The archive path, which is also [`ModelCache`]'s key for the material.
+    #[cfg(test)]
     pub path: String,
     pub batches: Vec<FoliageGeometry>,
 }
@@ -190,7 +192,7 @@ pub struct FoliageProto {
 /// So every foliage vertex takes the ground's shading normal under its tuft
 /// instead ([`FoliageInstance::normal`], the `MCNR` sample at its cell's
 /// centre), and the grass shades with the slope it grows on.
-pub struct FoliageGeometry {
+pub(crate) struct FoliageGeometry {
     positions: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,
     indices: Vec<u32>,
@@ -211,7 +213,7 @@ pub struct FoliageGeometry {
 /// where the `Adt` and an archive both are, and because parsing even a few M2s
 /// on the main thread causes a frame hitch.
 #[derive(Default)]
-pub struct TileFoliage {
+pub(crate) struct TileFoliage {
     /// The plans, each with the index of the `MCNK` it came from.
     ///
     /// The index is carried, not derived: a chunk that grows nothing has no
@@ -223,7 +225,7 @@ pub struct TileFoliage {
     /// The distinct models this tile's plans name, by
     /// [`GroundEffects::models`] index. Repeats across tiles are dropped on
     /// arrival; a zone uses a few models (six on `Azeroth_34_51`).
-    pub protos: Vec<(u16, FoliageProto)>,
+    pub(crate) protos: Vec<(u16, FoliageProto)>,
 }
 
 /// The plans a tile carries, and what has been built from them.
@@ -292,7 +294,7 @@ struct PlannedChunk {
 /// and a zone uses a few, each a few hundred bytes of vertices, so nothing is
 /// evicted.
 #[derive(Resource, Default)]
-pub struct FoliageModels {
+pub(crate) struct FoliageModels {
     protos: HashMap<u16, Arc<FoliageProto>>,
     /// The join, once the first tile has brought it. `None` before a world is
     /// entered, and empty on a chain with no ground-effect tables, which draws
@@ -303,7 +305,7 @@ pub struct FoliageModels {
 impl FoliageModels {
     /// Take what a tile brought: its models, and the table if this is the
     /// first.
-    pub fn absorb(&mut self, effects: &Arc<GroundEffects>, protos: Vec<(u16, FoliageProto)>) {
+    pub(crate) fn absorb(&mut self, effects: &Arc<GroundEffects>, protos: Vec<(u16, FoliageProto)>) {
         if self.effects.is_none() {
             self.effects = Some(Arc::clone(effects));
         }
@@ -313,7 +315,7 @@ impl FoliageModels {
     }
 }
 
-pub struct FoliagePlugin;
+pub(crate) struct FoliagePlugin;
 
 impl Plugin for FoliagePlugin {
     fn build(&self, app: &mut App) {
@@ -388,7 +390,7 @@ fn report(
 /// the vertices, which the cache does not keep. Their textures still come from
 /// the cache, so the expensive part is loaded once for the session and shared
 /// with every other doodad.
-pub fn read_tile_foliage(
+pub(crate) fn read_tile_foliage(
     archive: &mut vale_assets::Assets,
     adt: &Adt,
     effects: &GroundEffects,
@@ -460,6 +462,7 @@ pub fn read_tile_foliage(
         out.protos.push((
             model,
             FoliageProto {
+                #[cfg(test)]
                 path: path.to_string(),
                 batches,
             },
@@ -469,7 +472,7 @@ pub fn read_tile_foliage(
 }
 
 /// The plans a tile arrived with, as the component the streamer walks.
-pub fn plans_of(tile: TileFoliage, models: &mut FoliageModels, effects: &Arc<GroundEffects>) -> TileFoliagePlans {
+pub(crate) fn plans_of(tile: TileFoliage, models: &mut FoliageModels, effects: &Arc<GroundEffects>) -> TileFoliagePlans {
     let plans = tile
         .chunks
         .into_iter()
@@ -597,6 +600,7 @@ fn stream_foliage(
                             let entity = commands
                                 .spawn((
                                     Foliage {
+                                        #[cfg(feature = "diagnostics")]
                                         triangles: group.triangles,
                                     },
                                     Mesh3d(meshes.add(group.mesh)),
@@ -755,10 +759,12 @@ fn merge_chunk(
                     sun_scale::NEUTRAL
                 };
                 let material = group.material.clone();
+                #[cfg(any(test, feature = "diagnostics"))]
                 let triangles = group.indices.len() / 3;
                 Merged {
                     material,
                     tag: instance_tag(None, sun),
+                    #[cfg(any(test, feature = "diagnostics"))]
                     triangles,
                     mesh: group.into_mesh(),
                 }
@@ -776,6 +782,7 @@ struct Merged {
     material: Handle<M2Material>,
     /// The packed sun scale — see [`instance_tag`].
     tag: u32,
+    #[cfg(any(test, feature = "diagnostics"))]
     triangles: usize,
     mesh: Mesh,
 }

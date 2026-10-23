@@ -60,17 +60,17 @@ pub struct M2Material {
     /// its base texture already occupies, and the extra handle costs no slot.
     #[texture(3)]
     #[sampler(4)]
-    pub overlay_a: Handle<Image>,
+    pub(crate) overlay_a: Handle<Image>,
     #[texture(5)]
     #[sampler(6)]
-    pub overlay_b: Handle<Image>,
+    pub(crate) overlay_b: Handle<Image>,
     /// `M2Material::blending_mode`: 0 opaque, 1 alpha-key, 2 alpha blend,
     /// 3 additive, 4 add-alpha, 5 modulate, 6 modulate2x.
     pub blend: u16,
     /// Material flag 0x04 — do not cull back faces. Set on most foliage.
-    pub two_sided: bool,
+    pub(crate) two_sided: bool,
     /// Material flag 0x10 — do not write depth.
-    pub no_depth_write: bool,
+    pub(crate) no_depth_write: bool,
     /// Whether this batch's vertices sway. Only the ground foliage sets it.
     ///
     /// It is a pipeline distinction, not a uniform or a branch, in the same way
@@ -96,19 +96,19 @@ pub struct M2Material {
     /// Every material names the same image, and bevy's bindless allocator
     /// deduplicates resources by id, so the table takes one slot per slab.
     #[texture(7)]
-    pub uv_table: Handle<Image>,
+    pub(crate) uv_table: Handle<Image>,
 }
 
 /// The shared texture-matrix table every [`M2Material`] binds; see
 /// [`M2Material::uv_table`]. Inserted by [`insert_uv_table`] and written by
 /// [`follow_uv_animations`].
-pub const UV_TABLE: Handle<Image> = bevy::asset::uuid_handle!("7d3c9a52-1f6e-4b8a-9c0d-5e2f81a4b6c3");
+pub(crate) const UV_TABLE: Handle<Image> = bevy::asset::uuid_handle!("7d3c9a52-1f6e-4b8a-9c0d-5e2f81a4b6c3");
 
 /// How many moving batches the table holds at once. A batch registered while
 /// every row is taken keeps its matrix in its own params instead, and
 /// [`follow_uv_animations`] rewrites that material on each frame the matrix
 /// changes.
-pub const UV_TABLE_ROWS: u32 = 1024;
+pub(crate) const UV_TABLE_ROWS: u32 = 1024;
 
 /// Texels per row: one per matrix element, `a, b, tx, c, d, ty`, and two unused.
 const UV_TABLE_WIDTH: u32 = 8;
@@ -117,7 +117,7 @@ const UV_TABLE_WIDTH: u32 = 8;
 /// may be lit by; see [`crate::render::building_lights`]. Slot `n` (1..=255)
 /// is row `UV_TABLE_ROWS + n - 1`, and `m2.wgsl`'s `LAMP_ROW_BEFORE` is that
 /// row less `n`.
-pub const LAMP_ROWS: u32 = 255;
+pub(crate) const LAMP_ROWS: u32 = 255;
 
 /// The table's whole height: the matrices, then the lights.
 const TABLE_ROWS: u32 = UV_TABLE_ROWS + LAMP_ROWS;
@@ -125,7 +125,7 @@ const TABLE_ROWS: u32 = UV_TABLE_ROWS + LAMP_ROWS;
 /// `uv_row0.w` for a batch whose matrix is in row 0 of [`UV_TABLE`]; row `n`
 /// is this plus `n`. The values below it are 0, no matrix, and 1, a matrix held
 /// in `uv_row0` and `uv_row1` themselves.
-pub const UV_TABLE_BASE: f32 = 2.0;
+pub(crate) const UV_TABLE_BASE: f32 = 2.0;
 
 /// The table as an image: `Rgba8Unorm`, each texel holding the four bytes of
 /// one `f32`, least significant byte in red. The shader reads a texel with
@@ -136,7 +136,7 @@ pub const UV_TABLE_BASE: f32 = 2.0;
 ///
 /// The image is kept in both the main and the render world, because
 /// [`follow_uv_animations`] rewrites it in the main world.
-pub fn uv_table_image() -> Image {
+pub(crate) fn uv_table_image() -> Image {
     Image::new(
         bevy::render::render_resource::Extent3d {
             width: UV_TABLE_WIDTH,
@@ -153,7 +153,7 @@ pub fn uv_table_image() -> Image {
 /// Put [`UV_TABLE`] into `Assets<Image>` at startup. A material whose table
 /// image is missing fails `AsBindGroup` and waits, so this runs before any
 /// material can be prepared.
-pub fn insert_uv_table(mut images: ResMut<Assets<Image>>) {
+pub(crate) fn insert_uv_table(mut images: ResMut<Assets<Image>>) {
     // An id-addressed insert fails only on a stale generation, which a UUID
     // id does not have.
     let _ = images.insert(UV_TABLE.id(), uv_table_image());
@@ -165,7 +165,7 @@ pub fn insert_uv_table(mut images: ResMut<Assets<Image>>) {
 /// [`M2Params::uv_row0`]). A selector is used rather than storing the identity
 /// matrix because a zero-initialised pair, read as a matrix, would map every UV
 /// in the world to one texel.
-pub const UV_STILL: (Vec4, Vec4) = (Vec4::ZERO, Vec4::ZERO);
+pub(crate) const UV_STILL: (Vec4, Vec4) = (Vec4::ZERO, Vec4::ZERO);
 
 #[derive(Clone, Copy, ShaderType)]
 pub struct M2Params {
@@ -175,14 +175,14 @@ pub struct M2Params {
     /// dark by exactly the ambient. Zero for an M2, which has no such thing.
     ///
     /// [`WmoGroup::shaded_colours`]: vale_assets::world::wmo::WmoGroup::shaded_colours
-    pub ambient: Vec4,
-    pub alpha_cutoff: f32,
+    pub(crate) ambient: Vec4,
+    pub(crate) alpha_cutoff: f32,
     pub unlit: f32,
     /// Which lighting law this batch takes: 0.0 the outdoor sun, 1.0 its vertex
     /// colours plus [`Self::ambient`], 2.0 those vertex colours faded per vertex
     /// toward the sun (a WMO transition batch). See the note in `m2.wgsl` for
     /// why a room lit by the sun is lit through its own roof.
-    pub vertex_lit: f32,
+    pub(crate) vertex_lit: f32,
     /// This batch is an `MLIQ` surface, so its colour and its alpha come from
     /// the two fields below rather than from the texel. 1.0 or 0.0. It occupies
     /// the slot the struct needs as padding for its 16-byte alignment.
@@ -196,8 +196,8 @@ pub struct M2Params {
     /// they are foam masks. The colour of water is a property of the zone and
     /// the hour, not of the liquid texture. Zero on every other batch, where
     /// `liquid` is 0 and nothing reads them.
-    pub liquid_close: Vec4,
-    pub liquid_far: Vec4,
+    pub(crate) liquid_close: Vec4,
+    pub(crate) liquid_far: Vec4,
     /// The batch's texture matrix, as the 2x3 affine `M2TextureTransform`
     /// resolves to: `x`, `y`, `z` of the first are `a`, `b`, `tx` and of the
     /// second are `c`, `d`, `ty`, so `u' = a*u + b*v + tx`.
@@ -220,8 +220,8 @@ pub struct M2Params {
     /// not interned (see [`Materials::moving`]), because each owns its table
     /// row, or in the table-full case is rewritten in place, and a pooled
     /// handle would give another batch its matrix.
-    pub uv_row0: Vec4,
-    pub uv_row1: Vec4,
+    pub(crate) uv_row0: Vec4,
+    pub(crate) uv_row1: Vec4,
     /// `.x`: 0 for everything that is not a particle quad, 1 for one, 2 for an
     /// additive one, which fogs toward black rather than toward the air, as
     /// the 1.12.1 client fogs additive blends. The particle branch multiplies
@@ -276,14 +276,14 @@ pub struct M2Params {
     /// in [`Self::scene_lamps`] in `w`. Zero for everything in the world.
     ///
     /// See [`SceneLighting`] for why this is in the material.
-    pub scene_ambient: Vec4,
+    pub(crate) scene_ambient: Vec4,
     /// The model's own lamps, two `vec4`s each. The first is
     /// `(place.xyz, is_point)`: for a point light `place` is a position in the
     /// space the fragment's own is in, and for a directional one it is a unit
     /// vector pointing toward the light. The second is `(colour.rgb, 0)`. See
     /// `vale_assets::world::m2::M2Light::kind`, which holds the measurement
     /// that the two kinds are different.
-    pub scene_lamps: [Vec4; MAX_SCENE_LAMPS * 2],
+    pub(crate) scene_lamps: [Vec4; MAX_SCENE_LAMPS * 2],
 }
 
 impl M2Params {
@@ -292,7 +292,7 @@ impl M2Params {
     /// Zero rather than a separate sentinel because every material in the world
     /// is already built with zero there. The stashed value is offset instead:
     /// see [`stash_blend`].
-    pub const NO_STASH: f32 = 0.0;
+    pub(crate) const NO_STASH: f32 = 0.0;
 
     /// Remember the blend mode a batch really has, while it is forced to 2 to
     /// be blendable at all.
@@ -332,7 +332,7 @@ fn stashed_blend(y: f32) -> Option<u16> {
 /// Four, because no glue scene in the game states more: `vale glue` counts 23
 /// over 13 models and the busiest has four. A model stating more would have
 /// the rest dropped; no model in 1.12 does.
-pub const MAX_SCENE_LAMPS: usize = 4;
+pub(crate) const MAX_SCENE_LAMPS: usize = 4;
 
 /// The lighting a model states for itself, resolved into what the shader
 /// reads — see `vale_assets::world::m2::M2Light` for the block and the measurement.
@@ -355,8 +355,8 @@ pub const MAX_SCENE_LAMPS: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SceneLighting {
     /// rgb, and `w` is how many of [`Self::lamps`] are real.
-    pub ambient: Vec4,
-    pub lamps: [Vec4; MAX_SCENE_LAMPS * 2],
+    pub(crate) ambient: Vec4,
+    pub(crate) lamps: [Vec4; MAX_SCENE_LAMPS * 2],
 }
 
 impl SceneLighting {
@@ -426,7 +426,7 @@ impl SceneLighting {
     }
 
     /// Whether anything is stated at all. False for every model in the world.
-    pub fn is_lit(&self) -> bool {
+    pub(crate) fn is_lit(&self) -> bool {
         self.ambient.w > 0.0 || self.ambient.truncate() != Vec3::ZERO
     }
 
@@ -566,7 +566,7 @@ impl MaterialPool {
     /// Counts the keys, dead ones included, which is why [`Self::prune`] runs
     /// on the residency sweep: without it the HUD figure would only ever rise,
     /// and a leak of materials could not be told from dead keys.
-    pub fn distinct(&self) -> usize {
+    pub(crate) fn distinct(&self) -> usize {
         self.by_key.len()
     }
 
@@ -576,7 +576,7 @@ impl MaterialPool {
     /// Nothing depends on this having run — an intern of a dead key rebuilds
     /// the material and overwrites the entry — so it is bookkeeping, and it
     /// keeps [`Self::distinct`] an accurate count of what is resident.
-    pub fn prune(&mut self, assets: &Assets<M2Material>) -> usize {
+    pub(crate) fn prune(&mut self, assets: &Assets<M2Material>) -> usize {
         let before = self.by_key.len();
         self.by_key.retain(|_, id| assets.contains(*id));
         before - self.by_key.len()
@@ -735,7 +735,7 @@ impl MaterialKey {
 /// them one-shot bursts. Two arcane explosions overlapping within the same
 /// 800 ms swirl in step.
 #[derive(Resource)]
-pub struct UvAnimations {
+pub(crate) struct UvAnimations {
     entries: Vec<UvAnimated>,
     /// The main-world copy of [`UV_TABLE`]'s bytes, compared against before a
     /// row is written so that the image is re-uploaded only on a frame where
@@ -807,7 +807,7 @@ impl UvAnimations {
     /// Write one building light's row: slot `slot` (1..=255) of the
     /// [`LAMP_ROWS`]. `false` when the row already held these values, so the
     /// caller uploads only on a change; see [`Self::upload`].
-    pub fn set_lamp_row(&mut self, slot: u8, row: [f32; 8]) -> bool {
+    pub(crate) fn set_lamp_row(&mut self, slot: u8, row: [f32; 8]) -> bool {
         if slot == 0 {
             return false;
         }
@@ -826,7 +826,7 @@ impl UvAnimations {
 
     /// Copy the whole table into [`UV_TABLE`], for a caller that changed a
     /// lamp row. [`follow_uv_animations`] does the same for the matrices.
-    pub fn upload(&self, images: &mut Assets<Image>) {
+    pub(crate) fn upload(&self, images: &mut Assets<Image>) {
         if let Some(mut image) = images.get_mut(&UV_TABLE) {
             if let Some(data) = image.data.as_mut() {
                 data.copy_from_slice(&self.table);
@@ -836,12 +836,9 @@ impl UvAnimations {
 
     /// How many batches in the world have a moving texture. A test reads it to
     /// check that a model's texture animation is registered at all.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 
     /// Whether this material has a registered texture matrix.
@@ -853,7 +850,7 @@ impl UvAnimations {
     /// An interned copy of one would name the original's table row without
     /// owning it, and would read another batch's matrix once the original is
     /// dropped and the row reused. Such a batch is left unchanged.
-    pub fn is_moving(&self, material: AssetId<M2Material>) -> bool {
+    pub(crate) fn is_moving(&self, material: AssetId<M2Material>) -> bool {
         self.entries.iter().any(|entry| entry.material == material)
     }
 }
@@ -879,7 +876,7 @@ impl UvAnimations {
 /// The forgetting happens here rather than on the residency sweep because
 /// this pass already walks the list: a material `Assets` no longer holds is a
 /// dressing that has been evicted, and its row is released for reuse.
-pub fn follow_uv_animations(
+pub(crate) fn follow_uv_animations(
     time: Res<Time>,
     mut registry: ResMut<UvAnimations>,
     mut assets: ResMut<Assets<M2Material>>,
@@ -965,7 +962,7 @@ impl Materials<'_> {
     /// remembers an id, and an id is only upgradable while something else still
     /// holds the asset. A material every holder has dropped answers `None` here
     /// and is rebuilt — same bits, same key, a new id.
-    pub fn intern(&mut self, material: M2Material) -> Handle<M2Material> {
+    pub(crate) fn intern(&mut self, material: M2Material) -> Handle<M2Material> {
         let key = MaterialKey::of(&material);
         if let Some(&id) = self.pool.by_key.get(&key) {
             if let Some(handle) = self.assets.get_strong_handle(id) {
@@ -991,7 +988,7 @@ impl Materials<'_> {
     /// two-sidedness, which are the model cache's own, so the swaying grass is
     /// drawn through the material the reference would have drawn it through,
     /// plus a pipeline variant.
-    pub fn with_wind(&mut self, handle: &Handle<M2Material>) -> Option<Handle<M2Material>> {
+    pub(crate) fn with_wind(&mut self, handle: &Handle<M2Material>) -> Option<Handle<M2Material>> {
         let material = self.assets.get(handle)?;
         if material.wind {
             return None;
@@ -1013,7 +1010,7 @@ impl Materials<'_> {
     /// It lives here rather than in the caller because the pool's invariant is
     /// this file's: a copy handed back into circulation has to go through
     /// [`Self::intern`] or two batches meaning the same thing stop sharing.
-    pub fn with_highlight(
+    pub(crate) fn with_highlight(
         &mut self,
         handle: &Handle<M2Material>,
         lift: f32,
@@ -1041,7 +1038,7 @@ impl Materials<'_> {
     /// The colour is packed as `0xRRGGBB + 1`. The offset exists because
     /// `Glowy (Black)` states a colour of zero, which has to be distinguishable
     /// from no colour; see the note on `.w` in `m2.wgsl`.
-    pub fn with_model_tint(
+    pub(crate) fn with_model_tint(
         &mut self,
         handle: &Handle<M2Material>,
         colour: Option<[u8; 3]>,

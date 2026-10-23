@@ -66,23 +66,21 @@ use crate::world::templates::TemplatesArrived;
 /// One of the four vendor packets, handed on from
 /// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
-pub enum MerchantAnswer {
+pub(crate) enum MerchantAnswer {
     Show(Box<VendorList>),
     /// `SMSG_BUY_ITEM`: a purchase went through and a slot's stock changed.
     Sold { slot: u32, left: Option<u32> },
     BuyFailed {
-        entry: u32,
         reason: Option<BuyFailure>,
     },
     SellFailed {
-        item: u64,
         reason: Option<SellFailure>,
     },
 }
 
 /// The open shop, or nothing.
 #[derive(Resource, Default)]
-pub struct MerchantWindow {
+pub(crate) struct MerchantWindow {
     vendor: Option<VendorList>,
     /// What this vendor's `UNIT_NPC_FLAGS` says about repairing, and the
     /// current quote. [`price_repairs`] is the only writer.
@@ -96,7 +94,7 @@ pub struct Repairs {
     /// `CanMerchantRepair()`: `UNIT_NPC_FLAGS & 0x4000` on the open vendor.
     /// `SMSG_LIST_INVENTORY` says nothing about repairing, so this is read from
     /// the unit in the world.
-    pub can_repair: bool,
+    pub(crate) can_repair: bool,
     /// The sum over everything a repair-all would touch, in copper.
     pub cost: u32,
     /// Whether every item in that sum could be priced, the second value
@@ -129,7 +127,7 @@ impl MerchantWindow {
     }
 
     /// The repair values and the repair-mode flag; see [`Repairs`].
-    pub fn repairs(&self) -> Repairs {
+    pub(crate) fn repairs(&self) -> Repairs {
         self.repair
     }
 
@@ -141,7 +139,7 @@ impl MerchantWindow {
     }
 }
 
-pub struct MerchantPlugin;
+pub(crate) struct MerchantPlugin;
 
 impl Plugin for MerchantPlugin {
     fn build(&self, app: &mut App) {
@@ -189,7 +187,7 @@ impl super::gossip::NpcToken for MerchantWindow {
 
 /// A press the interface made.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MerchantPress {
+pub(crate) enum MerchantPress {
     /// `BuyMerchantItem(index [, quantity])`: a one-based row, and a number of
     /// purchases, defaulting to one. One purchase of a row whose `buy_count` is
     /// 5 yields five items; see [`act`] for the effect of reading the quantity
@@ -204,10 +202,6 @@ pub enum MerchantPress {
     /// `RepairAllItems()`: `CMSG_REPAIR_ITEM` with a zero item guid, which the
     /// server reads as every item.
     RepairAll,
-    /// Repair one item: a click on a bag slot in repair mode. Given in the
-    /// container coordinates the interface uses, which are what a bag button
-    /// knows about itself.
-    RepairItem { bag: i32, slot: usize },
     /// `ShowRepairCursor()` / `HideRepairCursor()`: the flag behind
     /// `InRepairMode()`, and nothing else.
     RepairMode(bool),
@@ -394,23 +388,6 @@ fn act(
                 // tooltip's quote, and the range check is its own. The request
                 // is sent and the server decides.
                 active.live.npc(NpcVerb::Repair { vendor, item: 0 });
-            }
-            MerchantPress::RepairItem { bag, slot } => {
-                let Some(vendor) = window.guid() else { continue };
-                let Some(item) = inventory
-                    .carried
-                    .container(*bag)
-                    .and_then(|slots| slots.get(*slot))
-                    .and_then(|held| held.as_ref())
-                else {
-                    continue;
-                };
-                // The packet takes the item object's guid, which distinguishes
-                // one stack from an identical one.
-                active.live.npc(NpcVerb::Repair {
-                    vendor,
-                    item: item.guid,
-                });
             }
             MerchantPress::RepairMode(on) => window.repair.mode = *on,
         }

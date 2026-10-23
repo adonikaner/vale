@@ -77,7 +77,7 @@ use crate::world::templates::TemplatesArrived;
 
 /// One of the two stable packets, handed on from [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
-pub enum StableAnswer {
+pub(crate) enum StableAnswer {
     /// `MSG_LIST_STABLED_PETS`.
     List(Box<StableList>),
     /// `SMSG_STABLE_RESULT`: the answer to all four verbs. It does not say
@@ -101,7 +101,7 @@ pub enum StablePress {
 
 /// The open stable, or nothing.
 #[derive(Resource, Default)]
-pub struct StableWindow {
+pub(crate) struct StableWindow {
     open: Option<Open>,
 }
 
@@ -134,7 +134,7 @@ impl StableWindow {
     }
 
     /// `GetNumStablePets()`.
-    pub fn pet_count(&self) -> usize {
+    pub(crate) fn pet_count(&self) -> usize {
         self.open.as_ref().map_or(0, |open| open.list.count())
     }
 
@@ -157,7 +157,7 @@ impl StableWindow {
     }
 }
 
-pub struct StablePlugin;
+pub(crate) struct StablePlugin;
 
 impl Plugin for StablePlugin {
     fn build(&self, app: &mut App) {
@@ -261,8 +261,7 @@ fn ask_for_templates(session: &Session, window: &mut StableWindow) {
         return;
     };
     {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         open.unresolved.retain(|entry| !world.creatures.contains_key(entry));
     }
     for entry in &open.unresolved {

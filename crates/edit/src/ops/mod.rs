@@ -556,7 +556,7 @@ impl Edit {
 
     /// Whether this edit renumbers the placement lists, so a caller holding an
     /// index into them has to let go of it.
-    pub fn renumbers_placements(&self) -> bool {
+    pub(crate) fn renumbers_placements(&self) -> bool {
         matches!(self, Edit::Placements { .. })
     }
 
@@ -587,28 +587,6 @@ impl Edit {
         )
     }
 
-    /// …and which chunk that was, for a caller that only wants to know whether
-    /// anything changed.
-    pub fn holed(&self) -> Option<usize> {
-        match self {
-            Edit::Holes { chunk, .. } => Some(*chunk),
-            Edit::Flags { chunk, .. } => Some(*chunk),
-            _ => None,
-        }
-    }
-
-    /// …and which chunk's **area** it changed.
-    ///
-    /// There is no matching "and therefore do X" here, which is the point: an
-    /// area id is read by the panel and by a playtest's own terrain and by
-    /// nothing that is drawn, so a caller that has one has nothing to catch up.
-    /// See `crate::adt::area`.
-    pub fn rezoned(&self) -> Option<usize> {
-        match self {
-            Edit::Area { chunk, .. } => Some(*chunk),
-            _ => None,
-        }
-    }
 }
 
 fn write_area(tile: &mut AdtFile, chunk: usize, id: u32) {

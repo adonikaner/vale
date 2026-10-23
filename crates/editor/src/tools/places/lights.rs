@@ -63,27 +63,27 @@ use bevy::prelude::*;
 
 /// One light, as the viewport needs it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Mark {
-    pub id: u32,
+pub(crate) struct Mark {
+    pub(crate) id: u32,
     /// Its row in the open table, so a press can open it without searching.
-    pub record: usize,
+    pub(crate) record: usize,
     /// The centre, in the world's own axes.
-    pub at: Vec3,
+    pub(crate) at: Vec3,
     /// Yards it applies at full strength within.
-    pub start: f32,
+    pub(crate) start: f32,
     /// …and yards it has faded to nothing by.
-    pub end: f32,
+    pub(crate) end: f32,
     /// **The map's default light**, which applies everywhere and whose position
     /// is not read. Kept in the list and left out of the drawing.
-    pub everywhere: bool,
+    pub(crate) everywhere: bool,
 }
 
 /// What the pointer is doing with the lights on the open map.
 #[derive(Resource, Debug, Default)]
-pub struct Lights {
+pub(crate) struct Lights {
     /// Every light on the open map. Rebuilt when the table or the map moves,
     /// not per frame — see [`collect`].
-    pub marks: Vec<Mark>,
+    pub(crate) marks: Vec<Mark>,
     /// What [`marks`](Self::marks) was built from: the session's table revision
     /// and the map it was read for.
     built: Option<(u64, u32)>,
@@ -92,9 +92,9 @@ pub struct Lights {
     /// A handle rather than a light, because a light has three things that can
     /// be taken hold of and they are dragged to different ends. Drawn as the
     /// lit one by [`draw`].
-    pub hovered: Option<(u32, Dragging)>,
+    pub(crate) hovered: Option<(u32, Dragging)>,
     /// …and the one that is chosen, which is the row the panel has open.
-    pub selected: Option<u32>,
+    pub(crate) selected: Option<u32>,
     /// **Draw the chosen light's falloff, or only its marker.** On by default.
     ///
     /// It was "draw every light's falloff" and that is what put a bar across
@@ -102,26 +102,26 @@ pub struct Lights {
     /// 2,648 yards, 38 of them lying flat at height zero. Every light is
     /// marked now whatever this says; this is only the two spheres of the one
     /// being edited, which is worth turning off while dragging it somewhere.
-    pub show_falloff: bool,
+    pub(crate) show_falloff: bool,
     /// What the left button is moving, if anything — see [`Drag`].
-    pub drag: Option<Drag>,
+    pub(crate) drag: Option<Drag>,
     /// Whether a click on the ground makes a light there. See [`new_light`].
-    pub armed: bool,
+    pub(crate) armed: bool,
 }
 
 /// The radii a new light is made with, in yards: full strength within the
 /// first, faded out by the second.
-pub const NEW_RADII: (f32, f32) = (50.0, 120.0);
+pub(crate) const NEW_RADII: (f32, f32) = (50.0, 120.0);
 
 impl Lights {
     /// The map's default light, if the open map has one.
-    pub fn default_light(&self) -> Option<&Mark> {
+    pub(crate) fn default_light(&self) -> Option<&Mark> {
         self.marks.iter().find(|mark| mark.everywhere)
     }
 
     /// The light a new one copies its weather from: the chosen light, else the
     /// map's default light, else any light on the map.
-    pub fn template(&self) -> Option<&Mark> {
+    pub(crate) fn template(&self) -> Option<&Mark> {
         self.selected
             .and_then(|id| self.marks.iter().find(|mark| mark.id == id))
             .or_else(|| self.default_light())
@@ -133,7 +133,7 @@ impl Lights {
 /// `None`, lit like [`Lights::template`] (or, on a map with no light, like
 /// light 1, Eastern Kingdoms' default). Select it and open its row. Answers
 /// the status line.
-pub fn new_light(
+pub(crate) fn new_light(
     session: &mut EditSession,
     lights: &mut Lights,
     browser: &mut crate::tables::browser::Browser,
@@ -166,13 +166,13 @@ pub fn new_light(
 /// button is down on a handle, the pointer wandering off it — or over a panel —
 /// goes on moving that handle rather than picking a new one.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Drag {
+pub(crate) struct Drag {
     /// The light being moved, by id. Not by index: [`collect`] rebuilds and
     /// reorders the list on every edit, and a drag *is* an edit, so an index
     /// taken when the button went down names a different light by the next
     /// frame.
-    pub id: u32,
-    pub what: Dragging,
+    pub(crate) id: u32,
+    pub(crate) what: Dragging,
     /// **How far the light is from the pointer**, in the world's own axes, so
     /// a press near the edge of a handle does not snap the light under the
     /// cursor on the first frame.
@@ -181,15 +181,15 @@ pub struct Drag {
     /// the press is handled by a system with no ray to hand, and the offset is
     /// the difference between two things only the ray knows. A drag writes
     /// nothing on that frame, which is right — the pointer has not moved yet.
-    pub grab: Option<Vec3>,
+    pub(crate) grab: Option<Vec3>,
     /// The label the undo entry gets, and the gesture key every frame of this
     /// drag writes under — see [`crate::tables::fields::set_fields`].
-    pub subject: &'static str,
+    pub(crate) subject: &'static str,
 }
 
 /// Which of a light's three handles is being dragged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dragging {
+pub(crate) enum Dragging {
     /// The centre, across the horizontal plane at the light's own height.
     ///
     /// **The height is not dragged.** Two of the three coordinates can be
@@ -205,7 +205,7 @@ pub enum Dragging {
 
 impl Lights {
     /// The chosen light, if it is still on this map.
-    pub fn chosen(&self) -> Option<&Mark> {
+    pub(crate) fn chosen(&self) -> Option<&Mark> {
         let id = self.selected?;
         self.marks.iter().find(|mark| mark.id == id)
     }
@@ -215,12 +215,12 @@ impl Lights {
     /// A request rather than a write, because the camera is driven by
     /// [`crate::camera`] and a second writer would fight it on the frames a
     /// drag is also moving it.
-    pub fn fly_to(mark: &Mark) -> crate::camera::FlyTo {
+    pub(crate) fn fly_to(mark: &Mark) -> crate::camera::FlyTo {
         crate::camera::FlyTo::at(mark.at)
     }
 }
 
-pub struct LightToolPlugin;
+pub(crate) struct LightToolPlugin;
 
 impl Plugin for LightToolPlugin {
     fn build(&self, app: &mut App) {

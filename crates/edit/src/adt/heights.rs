@@ -37,7 +37,7 @@ use vale_assets::world::adt::{
 };
 
 /// The world position of one vertex of one chunk.
-pub fn vertex_position(origin: [f32; 3], index: usize, height: f32) -> [f32; 3] {
+pub(crate) fn vertex_position(origin: [f32; 3], index: usize, height: f32) -> [f32; 3] {
     let (dx, dy) = vertex_offset(index);
     [origin[0] - dx, origin[1] - dy, height]
 }
@@ -107,7 +107,7 @@ pub fn recompute_normals(tile: &mut AdtFile, chunk_index: usize) {
 /// one across its high-x side and `(x, 16)` the one across its low-x side. A
 /// `None` leaves that side at the one-sided difference. Nothing asks for a
 /// diagonal, because a central difference moves along one axis at a time.
-pub fn recompute_normals_with(
+pub(crate) fn recompute_normals_with(
     tile: &mut AdtFile,
     chunk_index: usize,
     beyond: &dyn Fn(i32, i32) -> Option<Vec<f32>>,

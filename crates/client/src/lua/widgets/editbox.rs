@@ -94,7 +94,8 @@ use crate::interface::events::EventArg;
 ///
 /// `SetText`/`GetText` are absent: they are [`super::button`]'s forwarding
 /// pair on the shared method table, and an edit box uses them unchanged.
-pub const METHODS: [&str; 20] = [
+#[cfg(test)]
+pub(crate) const METHODS: [&str; 20] = [
     "AddHistoryLine",
     "ClearFocus",
     "GetFontObject",
@@ -404,7 +405,7 @@ pub fn text(frame: &mlua::Table) -> String {
 
 /// Where the caret is, clamped into the text. A script that sets the text
 /// through a path this file does not see would otherwise leave it past the end.
-pub fn caret(frame: &mlua::Table) -> usize {
+pub(crate) fn caret(frame: &mlua::Table) -> usize {
     let letters = text(frame).chars().count();
     frame
         .raw_get::<Option<i64>>(CARET_KEY)
@@ -441,7 +442,7 @@ fn selected_text(frame: &mlua::Table) -> Option<String> {
 
 /// Whether this box is drawn as dots and copies as the empty string; see
 /// [`selected_text`].
-pub fn is_password(frame: &mlua::Table) -> bool {
+pub(crate) fn is_password(frame: &mlua::Table) -> bool {
     frame.raw_get::<Option<bool>>(PASSWORD_KEY).ok().flatten().unwrap_or(false)
 }
 
@@ -516,7 +517,7 @@ fn without(text: &str, start: usize, end: usize) -> String {
 /// This fallback is inferred from the markup. The default text inset of the
 /// 1.12.1 client is not established here; zero is known to be wrong, because
 /// it draws the text under art the same file positions.
-pub fn insets(frame: &mlua::Table) -> [f32; 4] {
+pub(crate) fn insets(frame: &mlua::Table) -> [f32; 4] {
     let Ok(Some(table)) = frame.raw_get::<Option<mlua::Table>>(INSETS_KEY) else {
         return super::backdrop::read(frame).map_or([0.0; 4], |backdrop| backdrop.insets);
     };

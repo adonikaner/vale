@@ -460,7 +460,7 @@ fn loot_nearest(live: &vale_protocol::socket::session::LiveSession, n: usize) {
     use vale_protocol::state::update::ObjectType;
     let me = live.status().position;
     let target = {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         let mut bodies: Vec<_> = world
             .iter()
             .filter(|e| e.object_type == Some(ObjectType::Unit) && !e.is_alive())
@@ -625,7 +625,7 @@ fn use_nearest(live: &vale_protocol::socket::session::LiveSession, n: usize) {
     // read as a dead packet the first time this was run; and the loot queue is a
     // chest, a vein or a herb.
     let watch = || {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         let object = world.get(guid).and_then(|e| e.game_object_state());
         let mine = world
             .iter()
@@ -699,10 +699,10 @@ fn nearby_objects(live: &vale_protocol::socket::session::LiveSession) -> Option<
     // The character's own book, which is what decides whether a vein is
     // gatherable at all: the ore is the same, the spell is the player's.
     let known = {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         world.spellbook.known.clone()
     };
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     let mut rows: Vec<ObjectRow> = world
         .iter()
         .filter(|e| e.object_type == Some(ObjectType::GameObject))
@@ -797,9 +797,7 @@ fn roll_on(live: &vale_protocol::socket::session::LiveSession, arg: Option<&str>
         return;
     };
     let name = live
-        .world()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .read()
         .items
         .get(&entry)
         .map(|item| item.name.clone())
@@ -889,10 +887,7 @@ fn drain_loot(live: &vale_protocol::socket::session::LiveSession, ms: u64) {
                     );
                     // The name is a round trip away and the renderer asks for
                     // it; here nothing else would, so this verb does.
-                    live.world()
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .want_item(start.entry);
+                    live.want_item(start.entry);
                     LAST_ROLL.with(|r| r.set(Some((start.guid, start.item_slot, start.entry))));
                     println!("  (roll need | roll greed | roll pass)");
                 }
@@ -996,7 +991,7 @@ fn print_loot(
         loot.rows(),
         loot.kind
     );
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     for row in 1..=loot.rows() {
         if loot.is_money(row) {
             println!("    {row:>2}  {} copper", loot.gold);
@@ -1030,7 +1025,7 @@ fn nth_nearest_unit(
 ) -> Option<(u64, String, f32)> {
     use vale_protocol::state::update::ObjectType;
     let me = live.status().position;
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     let mut units: Vec<_> = world
         .iter()
         .filter(|e| e.object_type == Some(ObjectType::Unit) && e.is_alive())
@@ -1066,7 +1061,7 @@ fn target_nearest(live: &vale_protocol::socket::session::LiveSession, n: usize) 
     // times the loopback latency and short enough not to be noticed.
     std::thread::sleep(std::time::Duration::from_millis(500));
     let echoed = {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         world.player().and_then(|p| p.target_guid())
     };
     match echoed {
@@ -1083,7 +1078,7 @@ fn target_nearest(live: &vale_protocol::socket::session::LiveSession, n: usize) 
 /// action bar would simply be blank for the whole session.
 fn print_spellbook(cfg: &Config, live: &vale_protocol::socket::session::LiveSession) {
     let (known, buttons) = {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         (world.spellbook.known.clone(), world.action_buttons.clone())
     };
     println!(
@@ -1156,7 +1151,7 @@ fn cast_spell(cfg: &Config, live: &vale_protocol::socket::session::LiveSession, 
     // table open, so the reaction is the neutral default — which is attackable,
     // and which the server range- and faction-checks anyway.
     let (selected, me) = {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         let mine = world.player().and_then(|p| p.target_guid()).filter(|g| *g != 0);
         let candidate = mine.map(|guid| Candidate {
             guid,
@@ -1302,7 +1297,7 @@ fn close_on(live: &vale_protocol::socket::session::LiveSession, guid: u64) -> Op
     loop {
         let me = live.status().position;
         let at = {
-            let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+            let world = live.read();
             world.get(guid)?.position?
         };
         let d = ((at.x - me.x).powi(2) + (at.y - me.y).powi(2)).sqrt();
@@ -1392,7 +1387,7 @@ fn watch_guid(
     while std::time::Instant::now() < deadline {
         let me = live.status().position;
         {
-            let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+            let world = live.read();
             match world.get(guid) {
                 None => {
                     println!("    GONE from the object manager");
@@ -1519,7 +1514,7 @@ fn open_bank(live: &vale_protocol::socket::session::LiveSession) {
     let nearest = {
         let status = live.status();
         let me = status.position;
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         world
             .iter()
             .filter(|e| e.npc_flags() & BANKER_FLAG != 0)
@@ -1624,7 +1619,7 @@ fn bank_move(live: &vale_protocol::socket::session::LiveSession, arg: Option<&st
 
 /// The third byte of `PLAYER_BYTES_2`, straight off the player's fields.
 fn bank_bag_slots(live: &vale_protocol::socket::session::LiveSession) -> u8 {
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     vale_protocol::play::items::Inventory::read(&world).bank_bag_slots
 }
 
@@ -1632,7 +1627,7 @@ fn bank_bag_slots(live: &vale_protocol::socket::session::LiveSession) -> u8 {
 /// the point: nothing here arrived with the window.
 fn print_bank(live: &vale_protocol::socket::session::LiveSession) {
     use vale_protocol::play::items::{Inventory, BANK_CONTAINERS_FOR_REPORT, BANK_CONTAINER};
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     let carried = Inventory::read(&world);
     let name_of = |entry: u32| {
         world
@@ -1681,7 +1676,7 @@ fn print_bank(live: &vale_protocol::socket::session::LiveSession) {
 fn print_bags(live: &vale_protocol::socket::session::LiveSession) {
     use vale_protocol::play::items::{Inventory, CONTAINERS_FOR_REPORT};
 
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     let carried = Inventory::read(&world);
     if world.player().is_none() {
         println!("  no player entity yet");
@@ -1789,7 +1784,7 @@ fn print_bags(live: &vale_protocol::socket::session::LiveSession) {
 /// client side by side is the whole test.
 fn print_sheet(live: &vale_protocol::socket::session::LiveSession) {
     use vale_protocol::play::stats::UnitStats;
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     let Some(me) = world.iter().find(|e| e.is_self) else {
         println!("  no player entity yet");
         return;
@@ -1864,7 +1859,7 @@ fn print_sheet(live: &vale_protocol::socket::session::LiveSession) {
 
 fn print_nearby(live: &vale_protocol::socket::session::LiveSession, count: usize) {
     let status = live.status();
-    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+    let world = live.read();
     let me = status.position;
 
     let mut nearby: Vec<_> = world
@@ -2044,7 +2039,7 @@ fn print_status(live: &vale_protocol::socket::session::LiveSession) {
     // and an entity would otherwise have silently vanished — see
     // `Entity::set_server_position`.
     let (rejected, jump_count, jump_log) = {
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         (
             world.rejected_positions,
             world.jump_count,
@@ -2277,7 +2272,7 @@ fn trade_with(live: &vale_protocol::socket::session::LiveSession, arg: Option<&s
     };
     let found = {
         use vale_protocol::state::update::ObjectType;
-        let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = live.read();
         let found = world
             .iter()
             .filter(|e| e.object_type == Some(ObjectType::Player))
@@ -2370,7 +2365,7 @@ fn drain_trade(live: &vale_protocol::socket::session::LiveSession, ms: u64) {
                 }
                 PlayerEvent::TradeOffer(offer) => {
                     quiet = false;
-                    let world = live.world().lock().unwrap_or_else(|e| e.into_inner());
+                    let world = live.read();
                     println!(
                         "  SMSG_TRADE_STATUS_EXTENDED {}: {} copper, spell {}",
                         if offer.theirs { "theirs" } else { "mine" },

@@ -392,7 +392,7 @@ impl Loot {
 }
 
 /// `SMSG_LOOT_RESPONSE` — the window, or the refusal wearing the same opcode.
-pub fn parse_loot_response(body: &[u8]) -> Option<Loot> {
+pub(crate) fn parse_loot_response(body: &[u8]) -> Option<Loot> {
     let mut r = Reader::new(body);
     if !r.has(8 + 1) {
         return None;
@@ -448,20 +448,20 @@ pub fn parse_loot_response(body: &[u8]) -> Option<Loot> {
 /// **This is what closes the window**, not the send that asked for it: the
 /// server reads the guid off `CMSG_LOOT_RELEASE` and ignores it in favour of its
 /// own record, so until this arrives the server still thinks the body is open.
-pub fn parse_loot_release_response(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_loot_release_response(body: &[u8]) -> Option<u64> {
     let mut r = Reader::new(body);
     r.has(8).then(|| r.u64())
 }
 
 /// `SMSG_LOOT_REMOVED` — one row is gone, by the **server's** index.
-pub fn parse_loot_removed(body: &[u8]) -> Option<u8> {
+pub(crate) fn parse_loot_removed(body: &[u8]) -> Option<u8> {
     let mut r = Reader::new(body);
     r.has(1).then(|| r.u8())
 }
 
 /// `SMSG_LOOT_MONEY_NOTIFY` — *your share*, in copper, which in a group is not
 /// what was on the body.
-pub fn parse_loot_money_notify(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_loot_money_notify(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
@@ -469,7 +469,7 @@ pub fn parse_loot_money_notify(body: &[u8]) -> Option<u32> {
 // --- what we send -----------------------------------------------------------
 
 /// `CMSG_LOOT` — open the window on this guid.
-pub fn loot_body(guid: u64) -> Vec<u8> {
+pub(crate) fn loot_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -479,14 +479,14 @@ pub fn loot_body(guid: u64) -> Vec<u8> {
 ///
 /// The guid is written because the packet has the field; the server discards it
 /// (`recv_data.read_skip<uint64>()`) and releases whatever it last recorded.
-pub fn loot_release_body(guid: u64) -> Vec<u8> {
+pub(crate) fn loot_release_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
 }
 
 /// `CMSG_AUTOSTORE_LOOT_ITEM` — take row `index`, by the **server's** index.
-pub fn autostore_loot_item_body(index: u8) -> Vec<u8> {
+pub(crate) fn autostore_loot_item_body(index: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(index);
     w.buf

@@ -96,7 +96,7 @@ use vale_assets::world::wmo::{mopy_flags, Liquid, WmoGroup, WmoRoot};
 pub const SIDE: usize = 256;
 
 /// …so one map chunk is this many pixels.
-pub const PIXELS_PER_CHUNK: usize = SIDE / CHUNKS_PER_SIDE;
+pub(crate) const PIXELS_PER_CHUNK: usize = SIDE / CHUNKS_PER_SIDE;
 
 /// A texture, reduced to what survives at two yards a pixel.
 ///

@@ -70,7 +70,7 @@ pub mod palette {
     pub const HOSTILE: Argb = 0xffff_0000;
     pub const UNFRIENDLY: Argb = 0xffff_8000;
     pub const NEUTRAL: Argb = 0xffff_ff00;
-    pub const FRIENDLY: Argb = 0xff00_ff00;
+    pub(crate) const FRIENDLY: Argb = 0xff00_ff00;
     /// A player nobody may attack — the pale blue, and **not** the nameplate
     /// palette's pure blue.
     pub const PLAYER: Argb = 0xff60_60ff;

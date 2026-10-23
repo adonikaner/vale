@@ -50,7 +50,7 @@ pub const TABLE: &str = "conditions";
 pub const TABLES: &[Table] = &[CONDITIONS];
 
 /// `conditions`. Every row may be edited, created and removed.
-pub const CONDITIONS: Table = Table::new(TABLE, &COLUMNS);
+pub(crate) const CONDITIONS: Table = Table::new(TABLE, &COLUMNS);
 
 /// `flags`, `ConditionFlags` in `Conditions.h`.
 pub const FLAGS: [Bit; 2] = [

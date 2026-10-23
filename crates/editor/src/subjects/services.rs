@@ -50,7 +50,7 @@ use std::collections::HashSet;
 
 /// Which of the two windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Kind {
+pub(crate) enum Kind {
     Vendor,
     Trainer,
 }
@@ -58,7 +58,7 @@ pub enum Kind {
 impl Kind {
     /// The creature's own table and the template table, in the order the
     /// tabs are drawn.
-    pub fn tables(self) -> [&'static str; 2] {
+    pub(crate) fn tables(self) -> [&'static str; 2] {
         match self {
             Kind::Vendor => [vendor::VENDOR, vendor::TEMPLATE],
             Kind::Trainer => [trainer::TRAINER, trainer::TEMPLATE],
@@ -68,7 +68,7 @@ impl Kind {
     /// The `npc_flags` bit the client reads to offer the window at all:
     /// `UNIT_NPC_FLAG_VENDOR` and `UNIT_NPC_FLAG_TRAINER`, from
     /// `UnitDefines.h`.
-    pub fn flag(self) -> (u32, &'static str) {
+    pub(crate) fn flag(self) -> (u32, &'static str) {
         match self {
             Kind::Vendor => (0x4, "VENDOR"),
             Kind::Trainer => (0x10, "TRAINER"),
@@ -76,7 +76,7 @@ impl Kind {
     }
 
     /// The template column that names the shared list.
-    pub fn template_column(self) -> &'static str {
+    pub(crate) fn template_column(self) -> &'static str {
         match self {
             Kind::Vendor => "vendor_id",
             Kind::Trainer => "trainer_id",
@@ -86,17 +86,17 @@ impl Kind {
 
 /// One list: a table, and an entry of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct List {
-    pub table: &'static str,
-    pub entry: u32,
+pub(crate) struct List {
+    pub(crate) table: &'static str,
+    pub(crate) entry: u32,
 }
 
 impl List {
-    pub fn new(table: &'static str, entry: u32) -> List {
+    pub(crate) fn new(table: &'static str, entry: u32) -> List {
         List { table, entry }
     }
 
-    pub fn kind(&self) -> Kind {
+    pub(crate) fn kind(&self) -> Kind {
         match vale_mangos::row::table_named(vendor::TABLES, self.table) {
             Some(_) => Kind::Vendor,
             None => Kind::Trainer,
@@ -104,7 +104,7 @@ impl List {
     }
 
     /// Whether this is a template list, shared by every creature that names it.
-    pub fn is_template(&self) -> bool {
+    pub(crate) fn is_template(&self) -> bool {
         self.table == vendor::TEMPLATE || self.table == trainer::TEMPLATE
     }
 }
@@ -112,18 +112,18 @@ impl List {
 /// What the windows are about: the selected creature, with the project's
 /// edits over its template row. Rebuilt by the shell every frame.
 #[derive(Debug, Clone, PartialEq)]
-pub struct About {
-    pub entry: u32,
-    pub label: String,
+pub(crate) struct About {
+    pub(crate) entry: u32,
+    pub(crate) label: String,
     /// The template row's key, for the offers that write a template column.
-    pub template_key: Key,
-    pub npc_flags: u32,
-    pub vendor_id: u32,
-    pub trainer_id: u32,
-    pub trainer_type: u32,
-    pub trainer_class: u32,
-    pub trainer_race: u32,
-    pub trainer_spell: u32,
+    pub(crate) template_key: Key,
+    pub(crate) npc_flags: u32,
+    pub(crate) vendor_id: u32,
+    pub(crate) trainer_id: u32,
+    pub(crate) trainer_type: u32,
+    pub(crate) trainer_class: u32,
+    pub(crate) trainer_race: u32,
+    pub(crate) trainer_spell: u32,
 }
 
 impl About {
@@ -132,7 +132,7 @@ impl About {
     /// `vendor_id`, a `trainer_id` or `npc_flags` typed into the template form
     /// changes the window on the next frame. `None` while the row is being
     /// read.
-    pub fn from_focus(
+    pub(crate) fn from_focus(
         focus: &crate::subjects::windows::Focus,
         template: Option<&vale_mangos::schema::Row>,
         edits: &Edits,
@@ -159,7 +159,7 @@ impl About {
 
     /// The creature's two lists of a kind: its own, then its template's. The
     /// template list's entry is 0 when the column names none.
-    pub fn lists(&self, kind: Kind) -> [List; 2] {
+    pub(crate) fn lists(&self, kind: Kind) -> [List; 2] {
         let [own, template] = kind.tables();
         let shared = match kind {
             Kind::Vendor => self.vendor_id,
@@ -169,7 +169,7 @@ impl About {
     }
 
     /// Whether `npc_flags` carries the kind's bit.
-    pub fn has_flag(&self, kind: Kind) -> bool {
+    pub(crate) fn has_flag(&self, kind: Kind) -> bool {
         self.npc_flags & kind.flag().0 != 0
     }
 }
@@ -177,22 +177,22 @@ impl About {
 /// One vendor row as the window draws it: the database's reading with the
 /// project's edits over it, and what the project says is to become of it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShownWare {
-    pub ware: Ware,
-    pub life: Life,
+pub(crate) struct ShownWare {
+    pub(crate) ware: Ware,
+    pub(crate) life: Life,
     /// The row as the database has it, for an edit typed back to that value
     /// to be cleared. `None` for a row this project creates.
-    pub in_database: Option<Ware>,
+    pub(crate) in_database: Option<Ware>,
     /// Whether `forbidden_items` leaves the row out at the server's patch.
-    pub forbidden: bool,
+    pub(crate) forbidden: bool,
 }
 
 /// …and one trainer row.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShownLesson {
-    pub lesson: Lesson,
-    pub life: Life,
-    pub in_database: Option<Lesson>,
+pub(crate) struct ShownLesson {
+    pub(crate) lesson: Lesson,
+    pub(crate) life: Life,
+    pub(crate) in_database: Option<Lesson>,
 }
 
 /// A vendor row as the database answered it.
@@ -217,37 +217,37 @@ struct Held {
 
 /// What the two windows are holding.
 #[derive(Resource, Default)]
-pub struct Services {
-    pub vendor_open: bool,
-    pub trainer_open: bool,
+pub(crate) struct Services {
+    pub(crate) vendor_open: bool,
+    pub(crate) trainer_open: bool,
     /// The selected creature, which the shell writes each frame; `None`
     /// under another tool, or with nothing selected.
-    pub about: Option<About>,
+    pub(crate) about: Option<About>,
     /// Which list each window shows: 0 the creature's own, 1 the template's.
     /// `None` until a tab is pressed; see [`Self::showing`].
-    pub vendor_tab: Option<usize>,
-    pub trainer_tab: Option<usize>,
+    pub(crate) vendor_tab: Option<usize>,
+    pub(crate) trainer_tab: Option<usize>,
     /// Every list read so far, kept until an apply moves
     /// `EditSession::database_writes`.
     lists: FreshReads<List, Held>,
     /// Every spell id that is a rank of a talent, out of `Talent.dbc`; `None`
     /// until the trainer window has opened the table.
-    pub talents: Option<HashSet<u32>>,
+    pub(crate) talents: Option<HashSet<u32>>,
     /// Every row of `SkillLine.dbc` in the groups the `reqskill` menu lists;
     /// `None` until the trainer window has opened the table.
-    pub skill_lines: Option<Vec<LineGroup>>,
+    pub(crate) skill_lines: Option<Vec<LineGroup>>,
     /// Whether the scripted flags have been acted on; see
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
     /// `--vendor-find` or `--trainer-find`: the window whose add-picker is
     /// to be opened, and the text to search, taken by the window the first
     /// time it draws that list.
-    pub find: Option<(Kind, String)>,
+    pub(crate) find: Option<(Kind, String)>,
 }
 
 impl Services {
     /// Whether a window is open.
-    pub fn is_open(&self, kind: Kind) -> bool {
+    pub(crate) fn is_open(&self, kind: Kind) -> bool {
         match kind {
             Kind::Vendor => self.vendor_open,
             Kind::Trainer => self.trainer_open,
@@ -255,7 +255,7 @@ impl Services {
     }
 
     /// Open a window, or shut it. Opening leaves the tab to [`Self::showing`].
-    pub fn toggle(&mut self, kind: Kind) {
+    pub(crate) fn toggle(&mut self, kind: Kind) {
         match kind {
             Kind::Vendor => {
                 self.vendor_open = !self.vendor_open;
@@ -269,7 +269,7 @@ impl Services {
     }
 
     /// Show one tab of a window, as a press on it does.
-    pub fn set_tab(&mut self, kind: Kind, tab: usize) {
+    pub(crate) fn set_tab(&mut self, kind: Kind, tab: usize) {
         match kind {
             Kind::Vendor => self.vendor_tab = Some(tab.min(1)),
             Kind::Trainer => self.trainer_tab = Some(tab.min(1)),
@@ -281,7 +281,7 @@ impl Services {
     /// database and a template list is named. Zaldimar Wefhellt (328), a mage
     /// trainer, is that case: his own list is empty, and `trainer_id` 1 names
     /// a template list of 146 spells at build 5875.
-    pub fn tab(&self, kind: Kind) -> usize {
+    pub(crate) fn tab(&self, kind: Kind) -> usize {
         let pressed = match kind {
             Kind::Vendor => self.vendor_tab,
             Kind::Trainer => self.trainer_tab,
@@ -299,19 +299,19 @@ impl Services {
     }
 
     /// The list a window shows now.
-    pub fn showing(&self, kind: Kind) -> Option<List> {
+    pub(crate) fn showing(&self, kind: Kind) -> Option<List> {
         let about = self.about.as_ref()?;
         Some(about.lists(kind)[self.tab(kind)])
     }
 
     /// Whether a list's rows are in hand. A list with entry 0 is never read
     /// and counts as read, with no rows.
-    pub fn is_read(&self, list: List) -> bool {
+    pub(crate) fn is_read(&self, list: List) -> bool {
         list.entry == 0 || self.lists.is_read(&list)
     }
 
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.lists.trouble()
     }
 
@@ -334,14 +334,14 @@ impl Services {
     /// The creatures that name a template list, once it has been read: the
     /// database's, with the project's `vendor_id` or `trainer_id` edits and
     /// its created templates over them.
-    pub fn users(&self, list: List, edits: &Edits) -> Option<Vec<(u32, String)>> {
+    pub(crate) fn users(&self, list: List, edits: &Edits) -> Option<Vec<(u32, String)>> {
         let from_database = self.lists.get(&list)?.users.as_ref()?;
         Some(crate::server::fresh::naming(from_database, edits, list.kind().template_column(), list.entry))
     }
 
     /// Every vendor row of one list, the database's with the project's over
     /// them, in the order the server sends them: by slot, then by item.
-    pub fn wares_of(&self, list: List, edits: &Edits) -> Vec<ShownWare> {
+    pub(crate) fn wares_of(&self, list: List, edits: &Edits) -> Vec<ShownWare> {
         let mut out: Vec<ShownWare> = self
             .wares(list)
             .map(Vec::as_slice)
@@ -377,7 +377,7 @@ impl Services {
 
     /// Every trainer row of one list, the database's with the project's over
     /// them, by spell.
-    pub fn lessons_of(&self, list: List, edits: &Edits) -> Vec<ShownLesson> {
+    pub(crate) fn lessons_of(&self, list: List, edits: &Edits) -> Vec<ShownLesson> {
         let mut out: Vec<ShownLesson> = self
             .lessons(list)
             .map(Vec::as_slice)
@@ -414,7 +414,7 @@ impl Services {
     /// the reason, when the server would skip it: see the module comment.
     /// `other` is the creature's other vendor list, for the duplicate and
     /// count checks.
-    pub fn add_item(
+    pub(crate) fn add_item(
         &mut self,
         session: &mut EditSession,
         list: List,
@@ -470,7 +470,7 @@ impl Services {
     /// Add a teaching spell to a trainer list. Refused, with the reason, when
     /// the server would skip it; `taught` is what `Spell.dbc` and `Talent.dbc`
     /// say about the spell, and `other` is the creature's other trainer list.
-    pub fn add_spell(
+    pub(crate) fn add_spell(
         &mut self,
         session: &mut EditSession,
         list: List,
@@ -520,7 +520,7 @@ impl Services {
 
     /// Remove a row: a `Delete` claim for one in the database, and the claim
     /// taken back for one this project added.
-    pub fn remove(&mut self, session: &mut EditSession, table: &'static str, key: &Key, in_database: bool, now: f64) {
+    pub(crate) fn remove(&mut self, session: &mut EditSession, table: &'static str, key: &Key, in_database: bool, now: f64) {
         let label = format!("{table} {}", key.text());
         let gesture = Gesture {
             label: "Remove vendor or trainer row",
@@ -541,7 +541,7 @@ impl Services {
 
     /// Keep a row that was marked for removal: the claim is taken back, and
     /// with it any column edit made before the mark.
-    pub fn keep(&mut self, session: &mut EditSession, table: &'static str, key: &Key, now: f64) {
+    pub(crate) fn keep(&mut self, session: &mut EditSession, table: &'static str, key: &Key, now: f64) {
         let label = format!("{table} {}", key.text());
         session.set_server_row(
             table,
@@ -560,7 +560,7 @@ impl Services {
     /// creates, the column is written into the creation. `held` is the row's
     /// columns as the database has them, `None` for a created row.
     #[allow(clippy::too_many_arguments)]
-    pub fn set_column(
+    pub(crate) fn set_column(
         &mut self,
         session: &mut EditSession,
         table: &'static str,
@@ -583,7 +583,7 @@ impl Services {
     /// list is renumbered from 1 in its new order, which changes two slots in
     /// a list already numbered that way, and every change is one entry on the
     /// undo stack.
-    pub fn move_ware(&mut self, session: &mut EditSession, list: List, item: u32, by: i32, now: f64) {
+    pub(crate) fn move_ware(&mut self, session: &mut EditSession, list: List, item: u32, by: i32, now: f64) {
         let mut order: Vec<ShownWare> = self
             .wares_of(list, &session.rows.edits)
             .into_iter()
@@ -876,7 +876,7 @@ fn on_the_command_line(
     adds.remove(0);
 }
 
-pub struct ServicesToolPlugin;
+pub(crate) struct ServicesToolPlugin;
 
 impl Plugin for ServicesToolPlugin {
     fn build(&self, app: &mut App) {

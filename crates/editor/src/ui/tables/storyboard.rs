@@ -75,71 +75,69 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 
 /// One model a kit hangs somewhere.
-pub struct EffectRow {
-    /// The kit column it came from, so a click can open the right field.
-    pub field: usize,
+pub(crate) struct EffectRow {
     /// What that column is called — "Right hand", "Ground".
-    pub where_it_hangs: &'static str,
+    pub(crate) where_it_hangs: &'static str,
     /// The `SpellVisualEffectName` id.
-    pub id: u32,
+    pub(crate) id: u32,
     /// The name of that `SpellVisualEffectName` row; `path` is its model path.
-    pub name: String,
-    pub path: String,
-    pub scale: f32,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) scale: f32,
     /// Whether the archives hold the model. A missing model is the main reason
     /// this list is drawn: an id that resolves to a path that opens nothing
     /// gives a spell that casts and shows nothing, and no number on the form
     /// shows that.
-    pub present: bool,
+    pub(crate) present: bool,
     /// Whether the client draws this column at all. The breath and the two
     /// weapon columns are read and not drawn — the schema says so — and a
     /// model listed here that the preview will never show is worth marking.
-    pub drawn: bool,
+    pub(crate) drawn: bool,
 }
 
 /// One lane of the rail.
-pub struct Phase {
-    pub name: &'static str,
+pub(crate) struct Phase {
+    pub(crate) name: &'static str,
     /// What it is for, in a sentence — the column's own `about`, shortened.
-    pub about: &'static str,
+    pub(crate) about: &'static str,
     /// The `SpellVisual` column this lane reads.
-    pub field: usize,
+    pub(crate) field: usize,
     /// The kit id, and `None` when the lane is empty.
-    pub kit: Option<u32>,
+    pub(crate) kit: Option<u32>,
     /// The kit's animation id and name.
-    pub animation: Option<(u32, String)>,
-    pub sound: u32,
-    pub sound_name: String,
-    pub shake: u32,
-    pub effects: Vec<EffectRow>,
+    pub(crate) animation: Option<(u32, String)>,
+    pub(crate) sound: u32,
+    pub(crate) sound_name: String,
+    pub(crate) shake: u32,
+    pub(crate) effects: Vec<EffectRow>,
     /// The procedurals the kit names, already worded.
-    pub procedurals: Vec<String>,
+    pub(crate) procedurals: Vec<String>,
 }
 
 /// The missile block, which is not a kit.
-pub struct Missile {
-    pub model: EffectRow,
-    pub path_type: u32,
-    pub destination: u32,
-    pub sound: u32,
-    pub sound_name: String,
+pub(crate) struct Missile {
+    pub(crate) model: EffectRow,
+    pub(crate) path_type: u32,
+    pub(crate) destination: u32,
+    pub(crate) sound: u32,
+    pub(crate) sound_name: String,
 }
 
 /// What one spell's visual chain comes to.
 #[derive(Resource, Default)]
-pub struct Storyboard {
+pub(crate) struct Storyboard {
     /// The row and the table revision it was built for.
     built: Option<(String, usize, u64)>,
     /// The `SpellVisual` id, and whether the table has such a row.
-    pub visual: u32,
-    pub visual_row: Option<usize>,
-    pub phases: Vec<Phase>,
-    pub missile: Option<Missile>,
+    pub(crate) visual: u32,
+    pub(crate) visual_row: Option<usize>,
+    pub(crate) phases: Vec<Phase>,
+    pub(crate) missile: Option<Missile>,
     /// The area block: its model, and the kit that goes with it.
-    pub area: Option<EffectRow>,
-    pub area_kit: u32,
+    pub(crate) area: Option<EffectRow>,
+    pub(crate) area_kit: u32,
     /// What could not be resolved, for the panel to say plainly.
-    pub notes: Vec<String>,
+    pub(crate) notes: Vec<String>,
 }
 
 /// The lanes, in the order they happen. The fourth and fifth are not part of
@@ -195,7 +193,7 @@ fn client_draws(field: usize) -> bool {
 
 /// What a `SoundEntries` id is called: the edited table when it is open, the
 /// client's own bank otherwise.
-pub fn sound_name(session: &EditSession, assets: &GameAssets, id: u32) -> String {
+pub(crate) fn sound_name(session: &EditSession, assets: &GameAssets, id: u32) -> String {
     if id == 0 || id == u32::MAX {
         return String::new();
     }
@@ -216,7 +214,7 @@ pub fn sound_name(session: &EditSession, assets: &GameAssets, id: u32) -> String
 
 impl Storyboard {
     /// Build it for a row, if it is not already built for that row.
-    pub fn refresh(
+    pub(crate) fn refresh(
         &mut self,
         session: &EditSession,
         assets: &GameAssets,
@@ -441,7 +439,6 @@ impl Storyboard {
                 .push(format!("{where_it_hangs}: {path} is not in the archives"));
         }
         Some(EffectRow {
-            field,
             where_it_hangs,
             id,
             name,
@@ -469,7 +466,7 @@ impl Storyboard {
 /// and its id in the corner, two to a row, greyed when the slot is empty. This
 /// panel does the same, so the shape of a spell's visual is visible before any
 /// text is read.
-pub fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard, record: usize) {
+pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Storyboard, record: usize) {
     let table = work.browser.table.clone();
     board.refresh(work.session, work.assets, &table, record);
 
@@ -983,7 +980,7 @@ const BAR_HEIGHT: f32 = 20.0;
 /// cast path, or a loop of kits pushed onto the actors, which needs no
 /// spell. See `crate::preview::stage`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Show {
+pub(crate) enum Show {
     Spell(u32),
     Pushes(crate::preview::stage::Pushes),
 }
@@ -996,7 +993,7 @@ pub enum Show {
 ///
 /// `board` is the open spell's chain, which says which phases of the bar
 /// have a kit in them. Without one every phase is drawn as filled.
-pub fn stage_pane(
+pub(crate) fn stage_pane(
     ui: &mut egui::Ui,
     stage: &mut crate::preview::stage::Stage,
     show: Option<Show>,

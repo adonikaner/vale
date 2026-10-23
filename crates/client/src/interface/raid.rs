@@ -63,7 +63,7 @@ use crate::world::session::Session;
 /// person — somebody leaving shifts everybody below them up one — which is the
 /// same warning [`crate::interface::api::Units::guid`] carries about `party<n>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RaidSlot {
+pub(crate) enum RaidSlot {
     /// A member the server named, by index into [`Party::members`].
     Member(usize),
     /// …and us, whom it never does. **Always last.**
@@ -79,7 +79,7 @@ impl Party {
     /// shows the Convert to Raid button when it is zero. Answering anything but
     /// zero for a party would blank the party frames and hide the button that
     /// makes a raid.
-    pub fn raid_count(&self) -> usize {
+    pub(crate) fn raid_count(&self) -> usize {
         if !self.raid {
             return 0;
         }
@@ -87,7 +87,7 @@ impl Party {
     }
 
     /// The slot `raid<index>` names, `index` from 1.
-    pub fn raid_slot(&self, index: usize) -> Option<RaidSlot> {
+    pub(crate) fn raid_slot(&self, index: usize) -> Option<RaidSlot> {
         let count = self.raid_count();
         if index == 0 || index > count {
             return None;
@@ -102,7 +102,7 @@ impl Party {
     ///
     /// `own` is the local player's guid, which is the only thing that can put
     /// the last row into the answer — see the module comment.
-    pub fn raid_index_of(&self, guid: u64, own: Option<u64>) -> Option<usize> {
+    pub(crate) fn raid_index_of(&self, guid: u64, own: Option<u64>) -> Option<usize> {
         if !self.raid || guid == 0 {
             return None;
         }
@@ -120,7 +120,7 @@ impl Party {
     /// into 1..=8 rather than trusted: `getglobal("RaidGroup"..subgroup)` is a
     /// nil index in Lua for anything else, and that takes the whole rebuild
     /// down.
-    pub fn raid_subgroup(&self, slot: RaidSlot) -> usize {
+    pub(crate) fn raid_subgroup(&self, slot: RaidSlot) -> usize {
         let flags = match slot {
             RaidSlot::Member(index) => self.members.get(index).map_or(0, |member| member.flags),
             RaidSlot::Player => self.own_flags,
@@ -130,7 +130,7 @@ impl Party {
 
     /// **What rank a slot holds** — 0, 1 or 2. See
     /// [`vale_protocol::play::group::raid_rank`].
-    pub fn raid_rank(&self, slot: RaidSlot, own: Option<u64>) -> u32 {
+    pub(crate) fn raid_rank(&self, slot: RaidSlot, own: Option<u64>) -> u32 {
         match slot {
             RaidSlot::Member(index) => match self.members.get(index) {
                 Some(member) => rank_of(member.guid, self.leader, member.flags & 0x80 != 0),
@@ -149,7 +149,7 @@ impl Party {
     /// Not "we hold the assistant bit". vmangos gates the four verbs a raid
     /// panel sends on `IsLeader || IsAssistant`, and a leader who never held the
     /// bit would otherwise find Add Member greyed out on their own raid.
-    pub fn is_raid_officer(&self, own: Option<u64>) -> bool {
+    pub(crate) fn is_raid_officer(&self, own: Option<u64>) -> bool {
         self.raid
             && self
                 .raid_slot(self.raid_count())
@@ -163,7 +163,7 @@ impl Party {
     /// carry. `None` for an index nobody occupies — and the caller must send
     /// nothing rather than an empty name, which the server answers with a
     /// lookup failure over an empty `%s`.
-    pub fn raid_name(&self, index: usize, own_name: Option<&str>) -> Option<String> {
+    pub(crate) fn raid_name(&self, index: usize, own_name: Option<&str>) -> Option<String> {
         match self.raid_slot(index)? {
             RaidSlot::Member(at) => Some(self.members.get(at)?.name.clone()),
             RaidSlot::Player => own_name.map(str::to_string),
@@ -171,7 +171,7 @@ impl Party {
     }
 
     /// …and the guid, for the two that want one.
-    pub fn raid_guid(&self, index: usize, own: Option<u64>) -> Option<u64> {
+    pub(crate) fn raid_guid(&self, index: usize, own: Option<u64>) -> Option<u64> {
         match self.raid_slot(index)? {
             RaidSlot::Member(at) => Some(self.members.get(at)?.guid),
             RaidSlot::Player => own,
@@ -179,7 +179,7 @@ impl Party {
     }
 }
 
-pub struct RaidPlugin;
+pub(crate) struct RaidPlugin;
 
 impl Plugin for RaidPlugin {
     fn build(&self, app: &mut App) {
@@ -208,9 +208,7 @@ fn learn_member_classes(session: Res<Session>, mut party: ResMut<Party>) {
     let Some(active) = session.active.as_ref() else {
         return;
     };
-    let Ok(world) = active.live.world().lock() else {
-        return;
-    };
+    let world = active.live.read();
     for member in &mut party.members {
         if member.class.is_some() {
             continue;

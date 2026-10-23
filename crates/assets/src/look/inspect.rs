@@ -15,7 +15,7 @@
 
 /// How close a player must be to be inspected, in yards. The client compares
 /// squared distances, against 100.
-pub const INSPECT_DISTANCE: f32 = 10.0;
+pub(crate) const INSPECT_DISTANCE: f32 = 10.0;
 
 /// What `CanInspect` knows about the unit its token names.
 #[derive(Debug, Clone, Copy, PartialEq)]

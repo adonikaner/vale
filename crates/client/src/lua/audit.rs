@@ -37,7 +37,9 @@
 //! fix: with no units at all, `PlayerFrame_OnLoad` fails four lines in.
 //! [`SELECTED`] holds the target back until the load has finished.
 
+#[cfg(feature = "diagnostics")]
 use std::cell::Cell;
+#[cfg(feature = "diagnostics")]
 use std::collections::BTreeMap;
 
 // Imported so the doubles below can call its methods on themselves:
@@ -46,11 +48,13 @@ use std::collections::BTreeMap;
 // imported because nothing here implements it directly; it is the sum of the
 // twelve subject traits and has no method bodies of its own.
 use super::api::UnitAnswers;
+#[cfg(feature = "diagnostics")]
 use super::host::LuaHost;
 
 /// How many of the bodies a missing name aborted are listed on its line. Six
 /// shows the pattern (`ActionButton1`… is one template, not twelve problems)
 /// without a 540-entry line.
+#[cfg(feature = "diagnostics")]
 const SHOW_BODIES: usize = 6;
 
 /// The stub world: a player, a target and a full bar. See the module comment.
@@ -1951,7 +1955,9 @@ impl super::api::UnitAnswers for Login {
 /// The double's race and class as ids, for the seeds that need them as numbers
 /// rather than names. See [`run`]'s reputation block and
 /// [`Login::CHARACTERS`], whose first row is the character every probe plays.
+#[cfg(feature = "diagnostics")]
 const HUMAN: u8 = 1;
+#[cfg(feature = "diagnostics")]
 const MAGE: u8 = 8;
 /// The id of the guild the probes' character is seeded into.
 const SEEDED_GUILD: u32 = 1;
@@ -1987,6 +1993,7 @@ impl Login {
 /// `run(&dir, script, draw, spin, events)`. A row of `bool` arguments is easy
 /// to pass in the wrong order, the pattern that caused the `CharSections` and
 /// `geosetGroup` field-index bugs in `vale-assets`.
+#[cfg(feature = "diagnostics")]
 #[derive(Default)]
 pub struct Probe {
     /// One Lua chunk, run the way `--script` runs one at a real login.
@@ -1997,7 +2004,7 @@ pub struct Probe {
     pub spin: usize,
     /// `--party <n>`: how many other players are in the double's party.
     /// `None` keeps [`PARTY`]'s initial value. See [`PARTY`].
-    pub party: Option<usize>,
+    pub(crate) party: Option<usize>,
     /// `--raid <n>`: the size of the double's raid, including the double.
     /// `None` keeps [`RAID`]'s initial value, 0, which means a party. See
     /// [`RAID`].
@@ -2034,6 +2041,7 @@ pub struct Probe {
 /// login. `spin` then runs that many simulated frames of the interface's
 /// per-frame work and prints the timing distribution, for investigating an
 /// oscillating frame rate; see [`spin_frames`].
+#[cfg(feature = "diagnostics")]
 pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
     let Probe {
         script,
@@ -2514,6 +2522,7 @@ pub fn run(gamedata_dir: &str, root: &str, probe: &Probe) {
 /// its realm name and its four buttons and no rows, which are the part of the
 /// screen that matters. This fires the two events with the arguments
 /// [`crate::glue::glue`] uses, against [`Login`]'s two-character list.
+#[cfg(feature = "diagnostics")]
 fn answer_the_glue(host: &mut LuaHost) {
     host.fire_event("CHARACTER_LIST_UPDATE", &[], &Login);
     host.fire_event(
@@ -2542,6 +2551,7 @@ fn answer_the_glue(host: &mut LuaHost) {
 /// from the game's `SLASH_SAY1`, and `--type ".tele tanaris"` shows that a GM
 /// command still goes out as an ordinary say. It does not check drawing; that
 /// is `--draw`.
+#[cfg(feature = "diagnostics")]
 fn type_a_line(host: &mut LuaHost, line: &str) {
     use super::widgets::editbox::Stroke;
 
@@ -2625,6 +2635,7 @@ fn type_a_line(host: &mut LuaHost, line: &str) {
 /// A short explicit list rather than firing every event first: this mode opens
 /// one panel at a time from a clean screen, and a full event sweep beforehand
 /// would hide which panel needed which event.
+#[cfg(feature = "diagnostics")]
 const PANEL_PREREQUISITES: [(&str, &str); 2] = [
     // `LootFrame.page` is nil until this; `LootFrame_OnShow` does arithmetic
     // on it.
@@ -2680,6 +2691,7 @@ const PANEL_PREREQUISITES: [(&str, &str); 2] = [
 ///   as in the 1.12.1 client. [`Login`] answers a two-node flight map with one
 ///   node one hop away, so the panel stays open. Before that answer existed
 ///   the count was 27 of 29 panels; with it, 28.
+#[cfg(feature = "diagnostics")]
 fn open_every_panel(host: &mut LuaHost) {
     let names = match panel_names(host) {
         Ok(names) if !names.is_empty() => names,
@@ -2861,6 +2873,7 @@ fn open_every_panel(host: &mut LuaHost) {
 /// no key. A command in the table with no declaration is counted separately,
 /// because it is a different bug (a key bound to nothing rather than a body
 /// that fails), and `vale bindings` expects zero of them.
+#[cfg(feature = "diagnostics")]
 fn press_every_binding(host: &mut LuaHost) {
     // The live table's commands, deduplicated and in table order, so two runs
     // compare line by line and a command on two keys is pressed once.
@@ -2949,6 +2962,7 @@ fn press_every_binding(host: &mut LuaHost) {
 /// kept here rather than read from `UIParent.lua` would drift from the
 /// interface; `UIPanelWindows` is the table `ShowUIPanel` consults, so
 /// iterating it stays current.
+#[cfg(feature = "diagnostics")]
 fn panel_names(host: &mut LuaHost) -> mlua::Result<Vec<String>> {
     host.run(&Login, |lua| {
         let table: Option<mlua::Table> = lua.globals().get("UIPanelWindows")?;
@@ -2977,6 +2991,7 @@ fn panel_names(host: &mut LuaHost) -> mlua::Result<Vec<String>> {
 /// [`click_everything`] reopens it every round: `ToggleCharacter` closes the
 /// whole panel when the tab it is given is the one already showing, so
 /// clicking tab 1 on a newly opened panel takes the other four off the screen.
+#[cfg(feature = "diagnostics")]
 fn tab_pass(
     host: &mut LuaHost,
     panel: &str,
@@ -3021,6 +3036,7 @@ fn tab_pass(
 
 /// The highest tab number the tab search tries. `CharacterFrame` has five and
 /// `FriendsFrame` four; eight leaves room for a panel with more.
+#[cfg(feature = "diagnostics")]
 const MAX_TABS: usize = 8;
 
 /// `--audit --clicks`: click every button the interface has.
@@ -3063,6 +3079,7 @@ const MAX_TABS: usize = 8;
 /// * The world is [`Login`]'s stub, as everywhere else here: a body that would
 ///   fail only with a real bag or a real party passes. A reported failure is
 ///   real; a pass is a lower bound.
+#[cfg(feature = "diagnostics")]
 fn click_everything(host: &mut LuaHost, glue: bool) {
     // The reset between rounds differs by directory. In the interface it
     // closes every panel and every static popup. The glue has no panels and
@@ -3308,6 +3325,7 @@ fn click_everything(host: &mut LuaHost, glue: bool) {
 /// that tab's buttons reveal) and the number of times a panel is restored
 /// after a close button emptied it. The loop stops early when a round finds
 /// no button it has not already clicked.
+#[cfg(feature = "diagnostics")]
 const CLICK_ROUNDS: usize = 6;
 
 /// The glue screens the click walk visits in addition to the one already
@@ -3317,6 +3335,7 @@ const CLICK_ROUNDS: usize = 6;
 /// a probe: `realmwizard` needs `GET_PREFERRED_REALM_INFO`, `patchdownload`
 /// needs a patch, `movie` needs a movie, and `credits` is a menu item on a
 /// screen that is itself one of these two.
+#[cfg(feature = "diagnostics")]
 const GLUE_SCREENS: [&str; 2] = ["charselect", "charcreate"];
 
 /// How a widget is pressed.
@@ -3326,6 +3345,7 @@ const GLUE_SCREENS: [&str; 2] = ["charselect", "charcreate"];
 /// same walk and pressed through the two paths [`super::api::mouse`] uses for
 /// them. They are counted separately in the report because the probe did not
 /// press the second kind before this enum existed.
+#[cfg(feature = "diagnostics")]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Press {
     /// `frame:Click("LeftButton")`.
@@ -3357,6 +3377,7 @@ enum Press {
 /// `OnEnter` and `OnLeave` are a hover and `OnDragStart` is a drag. None is a
 /// press, and firing them here would report on an action the probe does not
 /// perform.
+#[cfg(feature = "diagnostics")]
 fn clickable(lua: &mlua::Lua) -> Vec<(String, mlua::Table, Press)> {
     let mut found = Vec::new();
     let Ok(roots) = super::widgets::widget::roots(lua) else {
@@ -3368,6 +3389,7 @@ fn clickable(lua: &mlua::Lua) -> Vec<(String, mlua::Table, Press)> {
     found
 }
 
+#[cfg(feature = "diagnostics")]
 fn gather(object: &mlua::Table, found: &mut Vec<(String, mlua::Table, Press)>, depth: usize) {
     if depth > 64 || !shown(object) {
         return;
@@ -3409,6 +3431,7 @@ fn gather(object: &mlua::Table, found: &mut Vec<(String, mlua::Table, Press)>, d
     }
 }
 
+#[cfg(feature = "diagnostics")]
 fn shown(object: &mlua::Table) -> bool {
     object
         .raw_get::<Option<bool>>(super::widgets::widget::SHOWN_KEY)
@@ -3417,6 +3440,7 @@ fn shown(object: &mlua::Table) -> bool {
         .unwrap_or(true)
 }
 
+#[cfg(feature = "diagnostics")]
 fn enabled(button: &mlua::Table) -> bool {
     button
         .get::<mlua::Function>("IsEnabled")
@@ -3425,16 +3449,19 @@ fn enabled(button: &mlua::Table) -> bool {
         .unwrap_or(true)
 }
 
+#[cfg(feature = "diagnostics")]
 fn has_click(button: &mlua::Table) -> bool {
     declares(button, "OnClick")
 }
 
 /// Whether a press on this frame would reach a handler: the non-button half of
 /// [`clickable`]'s test.
+#[cfg(feature = "diagnostics")]
 fn has_press(frame: &mlua::Table) -> bool {
     declares(frame, "OnMouseDown") || declares(frame, "OnMouseUp")
 }
 
+#[cfg(feature = "diagnostics")]
 fn declares(frame: &mlua::Table, script: &str) -> bool {
     frame
         .raw_get::<mlua::Table>(super::widgets::frames::SCRIPTS_KEY)
@@ -3447,6 +3474,7 @@ fn declares(frame: &mlua::Table, script: &str) -> bool {
 /// The same test as `IsVisible`, done here by walking the parent chain rather
 /// than calling the method, because the walk that found the button no longer
 /// holds that chain.
+#[cfg(feature = "diagnostics")]
 fn visible(object: &mlua::Table) -> bool {
     let mut current = object.clone();
     for _ in 0..64 {
@@ -3465,6 +3493,7 @@ fn visible(object: &mlua::Table) -> bool {
     true
 }
 
+#[cfg(feature = "diagnostics")]
 fn first_line(e: &mlua::Error) -> String {
     e.to_string().lines().next().unwrap_or_default().to_string()
 }
@@ -3487,6 +3516,7 @@ fn first_line(e: &mlua::Error) -> String {
 /// runs against [`Login`]'s stub world, so a body that would fail only with a
 /// real party or a real bag passes here. A reported failure is real; a pass is
 /// a lower bound.
+#[cfg(feature = "diagnostics")]
 fn fire_everything(host: &mut LuaHost) {
     use crate::interface::events::{
         self, ActionbarSlotChanged, ChatMessageReceived, PlayerLevelUp, SpellcastChannelStart,
@@ -3553,7 +3583,6 @@ fn fire_everything(host: &mut LuaHost) {
     // error as the two above.
     push(&crate::interface::events::ConfirmBinder {
         place: "Lion's Pride Inn".to_string(),
-        guid: 0xF130_0000_0000_0007,
     });
     // The duel request, the same case a fifth time: `StaticPopup_Show(
     // "DUEL_REQUESTED", arg1)` formats the name into `"%s has challenged you
@@ -3934,11 +3963,13 @@ fn fire_everything(host: &mut LuaHost) {
 /// A `dyn`-safe view of [`crate::interface::events::GameEvent`], whose own methods
 /// take `Self: Sized` through the associated const. Local to the audit because
 /// nothing else needs to hold one of these as a trait object.
+#[cfg(feature = "diagnostics")]
 trait GameEvent2 {
     fn fire_name(&self) -> &'static str;
     fn fire_args(&self) -> Vec<crate::interface::events::EventArg>;
 }
 
+#[cfg(feature = "diagnostics")]
 impl<T: crate::interface::events::GameEvent> GameEvent2 for T {
     fn fire_name(&self) -> &'static str {
         crate::interface::events::GameEvent::name(self)
@@ -3951,8 +3982,10 @@ impl<T: crate::interface::events::GameEvent> GameEvent2 for T {
 /// [`Login`] with a clock that advances, used by the spin. Every answer is
 /// [`Login`]'s except `GetTime()`, which advances because the `OnUpdate`
 /// bodies and the message-frame expiries are all timed against it.
+#[cfg(feature = "diagnostics")]
 struct Ticking(Cell<f64>);
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::container::ContainerAnswers for Ticking {
     fn container_num_slots(&self, bag: i32) -> usize {
         Login.container_num_slots(bag)
@@ -4005,6 +4038,7 @@ impl super::panels::container::ContainerAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::quest::QuestAnswers for Ticking {
 
     fn quest_greeting_text(&self) -> String {
@@ -4100,6 +4134,7 @@ impl super::panels::quest::QuestAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::gossip::GossipAnswers for Ticking {
 
 
@@ -4114,6 +4149,7 @@ impl super::panels::gossip::GossipAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::merchant::MerchantAnswers for Ticking {
     fn merchant_rows(&self) -> usize {
         Login.merchant_rows()
@@ -4141,6 +4177,7 @@ impl super::panels::merchant::MerchantAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::tradeskill::TradeSkillAnswers for Ticking {
     fn trade_line(&self) -> Option<(String, u32, u32)> {
         Login.trade_line()
@@ -4214,6 +4251,7 @@ impl super::panels::tradeskill::TradeSkillAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::craft::CraftAnswers for Ticking {
     fn craft_name(&self) -> Option<String> {
         Login.craft_name()
@@ -4275,6 +4313,7 @@ impl super::panels::craft::CraftAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::mail::MailAnswers for Ticking {
     fn mail_count(&self) -> usize {
         Login.mail_count()
@@ -4332,23 +4371,35 @@ impl super::panels::mail::MailAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::trade::TradeAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::summon::SummonAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::worldstate::WorldStateAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::tutorial::TutorialAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::raidtarget::RaidTargetAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::questshare::QuestShareAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::uioptions::OptionsAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::inspect::InspectAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::guild::GuildAnswers for Ticking {
     fn unit_guild(&self, token: &str) -> Option<(u32, u32)> {
         (token == "player").then_some((SEEDED_GUILD, 0))
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::bank::BankAnswers for Ticking {}
+#[cfg(feature = "diagnostics")]
 impl super::panels::pagetext::PageTextAnswers for Ticking {}
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::stable::StableAnswers for Ticking {
     fn stable_slots(&self) -> u32 {
         Login.stable_slots()
@@ -4373,6 +4424,7 @@ impl super::panels::stable::StableAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::trainer::TrainerAnswers for Ticking {
     fn trainer_rows(&self) -> usize {
         Login.trainer_rows()
@@ -4406,6 +4458,7 @@ impl super::panels::trainer::TrainerAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::taxi::TaxiAnswers for Ticking {
     fn taxi_nodes(&self) -> usize {
         Login.taxi_nodes()
@@ -4424,6 +4477,7 @@ impl super::panels::taxi::TaxiAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::loot::LootAnswers for Ticking {
 
     fn loot_rows(&self) -> usize {
@@ -4445,6 +4499,7 @@ impl super::panels::loot::LootAnswers for Ticking {
 /// this double's advancing clock: `GroupLootFrame_OnUpdate` reads it only to
 /// fill a bar, and a bar that empties during a headless run would close the
 /// probe's roll frame.
+#[cfg(feature = "diagnostics")]
 impl super::panels::lootroll::LootRollAnswers for Ticking {
     fn loot_roll_item(&self, id: u32) -> Option<super::panels::lootroll::RollItem> {
         Login.loot_roll_item(id)
@@ -4457,6 +4512,7 @@ impl super::panels::lootroll::LootRollAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::pet::PetAnswers for Ticking {
     fn has_pet_ui(&self) -> (bool, bool) {
         Login.has_pet_ui()
@@ -4511,6 +4567,7 @@ impl super::panels::pet::PetAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::shapeshift::ShapeshiftAnswers for Ticking {
     fn shapeshift_form_count(&self) -> usize {
         Login.shapeshift_form_count()
@@ -4526,6 +4583,7 @@ impl super::panels::shapeshift::ShapeshiftAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::party::PartyAnswers for Ticking {
     fn can_show_reset_instances(&self) -> bool {
         Login.can_show_reset_instances()
@@ -4550,6 +4608,7 @@ impl super::panels::party::PartyAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::raid::RaidAnswers for Ticking {
     fn raid_count(&self) -> usize {
         Login.raid_count()
@@ -4571,6 +4630,7 @@ impl super::panels::raid::RaidAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::worldmap::MapAnswers for Ticking {
     fn current_map_view(&self) -> vale_assets::tables::worldmap::MapView {
         Login.current_map_view()
@@ -4610,6 +4670,7 @@ impl super::panels::worldmap::MapAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::glue::GlueAnswers for Ticking {
     fn character_count(&self) -> usize {
         Login.character_count()
@@ -4628,6 +4689,7 @@ impl super::panels::glue::GlueAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::talent::TalentAnswers for Ticking {
     fn num_talent_tabs(&self) -> usize {
         Login.num_talent_tabs()
@@ -4649,6 +4711,7 @@ impl super::panels::talent::TalentAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::spellbook::SpellbookAnswers for Ticking {
     fn num_spell_tabs(&self) -> usize {
         Login.num_spell_tabs()
@@ -4676,6 +4739,7 @@ impl super::panels::spellbook::SpellbookAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::panels::auras::AuraAnswers for Ticking {
     fn player_buff(&self, index: usize, filter: &str) -> i32 {
         Login.player_buff(index, filter)
@@ -4693,6 +4757,7 @@ impl super::panels::auras::AuraAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::api::ActionAnswers for Ticking {
     fn has_action(&self, slot: u8) -> bool {
         Login.has_action(slot)
@@ -4756,6 +4821,7 @@ impl super::api::ActionAnswers for Ticking {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 impl super::api::UnitAnswers for Ticking {
     fn now(&self) -> f64 {
         self.0.get()
@@ -4882,6 +4948,7 @@ impl super::api::UnitAnswers for Ticking {
 /// `UnitFrameHealthBar_OnEvent` filters on. The batch size is therefore
 /// `2 + party + partypets`, and `--party <n>` changes it; this is why the
 /// events phase is where the cost of a group shows.
+#[cfg(feature = "diagnostics")]
 fn news_tokens() -> Vec<String> {
     let mut out = vec!["player".to_string(), "target".to_string()];
     for index in 1..=party_size() {
@@ -4929,6 +4996,7 @@ fn news_tokens() -> Vec<String> {
 /// of that phase, over the ticks on which it ran, so they stay comparable with
 /// earlier measurements. The tick count is printed beside them so the two are
 /// not confused.
+#[cfg(feature = "diagnostics")]
 fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
     const DT: f64 = 1.0 / 60.0;
     /// Mid-screen, in the game's units: over the world rather than a panel,
@@ -5185,12 +5253,14 @@ fn spin_frames(host: &mut LuaHost, frames: usize, gamedata_dir: &str) {
 /// from `layout::UI_SIZE` rather than restated here as a rounded 1365. See
 /// [`super::widgets::layout::VIRTUAL_WIDTH`]. It is printed in the output so
 /// two dumps can be checked as comparable.
+#[cfg(feature = "diagnostics")]
 const SCREEN: (f64, f64) = super::widgets::layout::UI_SIZE;
 
 /// Prints every visible object, named, with its solved rectangle and its
 /// paint, to identify an unexplained quad headlessly. The draw pass carries no
 /// names (an `Item` holds no `String`, to keep the walk cheap); this walks the
 /// same tree more slowly, which a probe can afford.
+#[cfg(feature = "diagnostics")]
 fn dump(host: &LuaHost) {
     let lua = host.state();
     let _ = super::widgets::layout::set_screen(lua, SCREEN.0, SCREEN.1);
@@ -5249,6 +5319,7 @@ fn dump(host: &LuaHost) {
 /// Sorted by paint order, so a bar drawn over another is the later line. The
 /// frame level is printed beside each, because two bars at one level are
 /// ordered only by their sequence.
+#[cfg(feature = "diagnostics")]
 fn bars(items: &[super::widgets::draw::Item]) {
     let bars: Vec<&super::widgets::draw::Item> = items
         .iter()
@@ -5314,6 +5385,7 @@ fn bars(items: &[super::widgets::draw::Item]) {
 /// frame title's rectangle and is transparent where the words are, and an
 /// `ADD` highlight over a bar's label brightens it rather than hiding it. The
 /// list is to be read, not driven to zero; a new line in it is what matters.
+#[cfg(feature = "diagnostics")]
 fn buried_text(items: &[super::widgets::draw::Item]) {
     let covers = |over: &super::widgets::draw::Item, under: &super::widgets::draw::Item| {
         let (a, b) = (&over.rect, &under.rect);
@@ -5351,6 +5423,7 @@ fn buried_text(items: &[super::widgets::draw::Item]) {
     }
 }
 
+#[cfg(feature = "diagnostics")]
 fn dump_object(lua: &mlua::Lua, this: &mlua::Table, depth: usize) {
     if depth > 64 {
         return;

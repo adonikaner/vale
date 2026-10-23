@@ -9,34 +9,34 @@ use crate::tools::Tool;
 
 /// The pointer tools' scripted gestures.
 #[derive(Debug, Clone, Default)]
-pub struct Tools {
+pub(crate) struct Tools {
     /// `--vertices <radius>[,<rise>]`: with `--tool terrain`, select the
     /// vertices within that many yards of the camera's target, as a press of
     /// Select vertices would, and with a second number move them up by that
     /// many yards. A selection is a drag, which a scripted run cannot make.
     /// See `tools::ground::terrain`.
-    pub vertices: Option<(f32, Option<f32>)>,
+    pub(crate) vertices: Option<(f32, Option<f32>)>,
     /// `--minimaps`: draw the minimaps of the tile under the camera and its
     /// eight neighbours, in the background, into the project. See
     /// `crate::map::tiles::start_minimaps`.
-    pub minimaps: bool,
+    pub(crate) minimaps: bool,
     /// `--tilt <angle>,<bearing>`: the terrain tool's tilt, in degrees, and
     /// with `--vertices` and no rise, the selection tilted by it.
-    pub tilt: Option<(f32, f32)>,
+    pub(crate) tilt: Option<(f32, f32)>,
     /// `--measure "<x,y>[;<x,y>]"`: open the measuring tool with one or two
     /// points kept, on the ground at those world positions. A click is the
     /// only other way to keep a point, and a scripted run cannot click. See
     /// [`crate::tools::measure`].
-    pub measure: Option<Vec<(f32, f32)>>,
+    pub(crate) measure: Option<Vec<(f32, f32)>>,
     /// `--chunks "<x,y>[;<x,y>]"`: open the chunk tool with the block between
     /// the chunks at two world positions selected, or the one chunk at one
     /// position. The selection is otherwise a press and a drag, which a
     /// scripted run cannot make. See [`crate::tools::ground::chunks`].
-    pub chunks: Option<Vec<(f32, f32)>>,
+    pub(crate) chunks: Option<Vec<(f32, f32)>>,
     /// `--stitch`: stitch the `--chunks` selection to the ground around it
     /// once it is made, with the tool's default settings. See
     /// [`crate::tools::ground::chunks::stitch`].
-    pub stitch: bool,
+    pub(crate) stitch: bool,
     /// `--place [<path>]`: open the placement panel on its Place half, with
     /// that model armed.
     ///
@@ -49,7 +49,7 @@ pub struct Tools {
     ///
     /// With no path it opens the picker and arms nothing, which is how the
     /// folder browser is photographed.
-    pub place: Option<Option<String>>,
+    pub(crate) place: Option<Option<String>>,
     /// `--find <path>`: open on the sweep tool, look for that path over every
     /// tile of the map, and print what it found.
     ///
@@ -63,7 +63,7 @@ pub struct Tools {
     /// The list it searches is `--tool`'s: `--tool sweep` is the default and
     /// means textures, and the panel's own control is what chooses models or
     /// buildings for a person.
-    pub find: Option<String>,
+    pub(crate) find: Option<String>,
     /// `--enclose <x0,y0,x1,y1>`: a rectangle in window pixels, released over
     /// the world once it has streamed in, as though it had been dragged on
     /// empty ground with the chosen tool. See `tools::placements::group`.
@@ -73,27 +73,27 @@ pub struct Tools {
     /// the `--after` picture is taken, so the picture shows the group and the
     /// frame sample, which covers the last five seconds, is taken with it
     /// selected.
-    pub enclose: Option<[f32; 4]>,
+    pub(crate) enclose: Option<[f32; 4]>,
     /// `--taxi-node <id>`: the flight path tool, open on one node, with the
     /// camera over it.
-    pub taxi_node: Option<u32>,
+    pub(crate) taxi_node: Option<u32>,
     /// `--trigger <id>`: the area trigger tool, open on one trigger of the
     /// open map, with the camera over it.
-    pub trigger: Option<u32>,
+    pub(crate) trigger: Option<u32>,
     /// `--taxi-path <id>`: the flight path tool, open on one path, with the
     /// camera over its middle.
-    pub taxi_path: Option<u32>,
+    pub(crate) taxi_path: Option<u32>,
     /// `--taxi-connect <from>,<to>`: a new path between two nodes on the open
     /// map, and the path back, seeded as a click on Connect makes them. The
     /// scripted form of a gesture that needs a pointer.
-    pub taxi_connect: Option<(u32, u32)>,
+    pub(crate) taxi_connect: Option<(u32, u32)>,
     /// `--taxi-node-add <x>,<y>`: a new node on the ground at that place, once
     /// its tile is open.
-    pub taxi_node_add: Option<(f32, f32)>,
+    pub(crate) taxi_node_add: Option<(f32, f32)>,
     /// `--flight-map`: Make a flight map (or Fit the flight map) on the open
     /// map, once its nodes are read: the `WorldMapContinent.dbc` row and the
     /// picture.
-    pub flight_map: bool,
+    pub(crate) flight_map: bool,
 }
 
 pub(super) const FLAGS: &[Flag] = &[

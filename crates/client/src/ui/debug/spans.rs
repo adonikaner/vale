@@ -307,7 +307,7 @@ pub fn add(slot: Slot, elapsed: std::time::Duration) {
 /// next frame's first, which is everything outside `Main`: the render schedule
 /// (which bevy runs on its own thread, pipelined against the next frame), the
 /// present, and any wait on vsync.
-pub struct PhasePlugin;
+pub(crate) struct PhasePlugin;
 
 /// One mark, and which phase it closes.
 #[derive(bevy::ecs::schedule::ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
@@ -364,7 +364,7 @@ fn mark(
 /// of the frame charges nothing (there is no previous set): what it measures
 /// instead is the gap since the last mark, which on this side is the extract
 /// and the hand-over.
-pub struct RenderPhasePlugin;
+pub(crate) struct RenderPhasePlugin;
 
 impl bevy::app::Plugin for RenderPhasePlugin {
     fn build(&self, _app: &mut bevy::app::App) {}
@@ -446,10 +446,10 @@ const WINDOW_SECS: f32 = 0.5;
 #[derive(bevy::prelude::Resource, Clone)]
 pub struct Spans {
     /// Per-slot milliseconds per frame, in [`Slot`] order.
-    pub per_frame_ms: [f32; Slot::COUNT],
+    pub(crate) per_frame_ms: [f32; Slot::COUNT],
     /// …and how many times each ran per frame, which is what separates "cheap"
     /// from "hardly ever ran".
-    pub calls_per_frame: [f32; Slot::COUNT],
+    pub(crate) calls_per_frame: [f32; Slot::COUNT],
     /// Whether a window has closed yet.
     pub taken: bool,
     accum_secs: f32,
@@ -465,7 +465,7 @@ pub struct Spans {
 }
 
 /// How many frames [`Spans::worst`] keeps.
-pub const WORST_KEPT: usize = 24;
+pub(crate) const WORST_KEPT: usize = 24;
 
 /// One frame that was among the longest since the last restart, and what each
 /// slot spent in it.
@@ -542,7 +542,7 @@ impl Spans {
     /// The phase brackets are deliberately left out: they measure the same
     /// milliseconds from the outside, so adding the two together counts every
     /// system twice and reports a frame longer than the frame.
-    pub fn total_ms(&self) -> f32 {
+    pub(crate) fn total_ms(&self) -> f32 {
         self.per_frame_ms[..Slot::PhaseFirst as usize].iter().sum()
     }
 

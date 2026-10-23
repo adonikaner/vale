@@ -33,17 +33,17 @@ const NAME_PATIENCE: f32 = 3.0;
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct RollAnswer(pub RandomRoll);
+pub(crate) struct RollAnswer(pub(crate) RandomRoll);
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<RollAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<RollAnswer> {
     match event {
         PlayerEvent::RandomRoll(roll) => Some(RollAnswer(*roll)),
         _ => None,
     }
 }
 
-pub struct RandomRollPlugin;
+pub(crate) struct RandomRollPlugin;
 
 impl Plugin for RandomRollPlugin {
     fn build(&self, app: &mut App) {
@@ -101,9 +101,7 @@ fn say_rolls(
     let Some(format) = strings.get().and_then(|s| s.get("RANDOM_ROLL_RESULT")).map(str::to_string) else {
         return;
     };
-    let Ok(world) = active.live.world().lock() else {
-        return;
-    };
+    let world = active.live.read();
     for item in queue {
         let name = if world.player_guid == Some(item.roll.roller) {
             Some(status.character.clone())
@@ -126,7 +124,7 @@ fn say_rolls(
 }
 
 /// `RANDOM_ROLL_RESULT` filled: the name, the result, then the range.
-pub fn roll_line(format: &str, name: &str, roll: &RandomRoll) -> String {
+pub(crate) fn roll_line(format: &str, name: &str, roll: &RandomRoll) -> String {
     format
         .replacen("%s", name, 1)
         .replacen("%d", &roll.result.to_string(), 1)
@@ -137,7 +135,7 @@ pub fn roll_line(format: &str, name: &str, roll: &RandomRoll) -> String {
 /// A `RandomRoll` argument as a number: a Lua number, or a string read as a
 /// leading run of digits after any blanks. Anything else reads as 0, and a
 /// range with a 0 maximum is one the server drops.
-pub fn roll_bound(value: Option<&mlua::Value>) -> u32 {
+pub(crate) fn roll_bound(value: Option<&mlua::Value>) -> u32 {
     match value {
         Some(mlua::Value::Integer(n)) => (*n).clamp(0, i64::from(u32::MAX)) as u32,
         Some(mlua::Value::Number(n)) if n.is_finite() => n.clamp(0.0, f64::from(u32::MAX)) as u32,

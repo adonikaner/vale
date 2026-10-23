@@ -52,7 +52,7 @@ use crate::world::session::Session;
 /// [`crate::world::incoming::drain_events`]. The vendor family is
 /// [`super::merchant::MerchantAnswer`]'s.
 #[derive(Message, Debug, Clone)]
-pub enum GossipAnswer {
+pub(crate) enum GossipAnswer {
     Show(Box<GossipMenu>),
     Closed,
     Text { text_id: u32, text: String },
@@ -62,7 +62,7 @@ pub enum GossipAnswer {
 /// names, or `None` between conversations. Derived by [`point_the_token`]; read
 /// by [`super::api::Units`].
 #[derive(Resource, Default)]
-pub struct NpcUnit(pub Option<u64>);
+pub(crate) struct NpcUnit(pub(crate) Option<u64>);
 
 /// The open gossip window, and the words behind every menu this session.
 #[derive(Resource, Default)]
@@ -108,7 +108,7 @@ impl GossipWindow {
 /// substituted once, at the read, by [`crate::interface::messages::substitute`],
 /// which the quest pages use too. A second copy of that rule could drift from
 /// the first.
-pub struct GossipPlugin;
+pub(crate) struct GossipPlugin;
 
 impl Plugin for GossipPlugin {
     fn build(&self, app: &mut App) {

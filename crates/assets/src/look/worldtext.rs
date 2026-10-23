@@ -108,16 +108,9 @@
 /// The font, out of `Fonts.xml`'s `DAMAGE_TEXT_FONT`.
 pub const FONT: &str = r"Fonts\FRIZQT__.TTF";
 
-/// How far below the source's `PlayerName` attachment the 1.12.1 client starts
-/// its world text, in yards.
-///
-/// This client does not use it; [`ORIGIN`] says why. The constant is kept
-/// because it is the 1.12.1 client's value.
-pub const ANCHOR_DROP: f32 = 0.333_333_34;
-
 /// Where a number starts, as a fraction of the unit's own height.
 ///
-/// A deviation from [`ANCHOR_DROP`], made because two of this client's
+/// A deviation from the 1.12.1 client's anchor, made because two of this client's
 /// approximations compound. The 1.12.1 client anchors world text a third of a
 /// yard under the `PlayerName` attachment, clear of the name, which sits at
 /// that attachment. This client's `EntityModel::name_anchor` falls back to the
@@ -126,10 +119,16 @@ pub const ANCHOR_DROP: f32 = 0.333_333_34;
 /// numbers at head height, on top of the name and rising through it.
 ///
 /// Mid-body is where a blow lands, and screenshots of the 1.12.1 client show
-/// numbers rising from there, past the head and away. This goes back to
-/// `ANCHOR_DROP` once something measures how high attachment 18 sits across
+// numbers rising from there, past the head and away. This goes back to the/n/// third of a yard once something measures how high attachment 18 sits across
 /// the bestiary, which is `vale unitname`'s job and is on the list.
 pub const ORIGIN: f32 = 0.55;
+
+/// How far below the source's `PlayerName` attachment the 1.12.1 client starts
+/// its world text, in yards.
+///
+/// This client does not use it; [`ORIGIN`] says why. The constant is kept
+/// because it is the 1.12.1 client's value.
+pub const ANCHOR_DROP: f32 = 0.333_333_34;
 
 /// The `GlobalStrings.lua` key an experience line is built from. It is a key
 /// rather than the word, so a localised build draws its own word.
@@ -177,9 +176,9 @@ pub struct Style {
     /// How far it floats up over its life, in yards.
     pub rise: f32,
     /// Milliseconds from nothing to full alpha.
-    pub fade_in_ms: u32,
+    pub(crate) fade_in_ms: u32,
     /// The moment the fade back out begins.
-    pub fade_out_ms: u32,
+    pub(crate) fade_out_ms: u32,
     /// When it is gone.
     pub life_ms: u32,
     /// Font height as a fraction of the interface's height, at birth and at
@@ -212,7 +211,7 @@ pub struct Style {
 pub const SIZE_GAIN: f32 = 1.6;
 
 /// The six rows, indexed by [`Kind`].
-pub const STYLES: [Style; 6] = [
+pub(crate) const STYLES: [Style; 6] = [
     // 0 — damage
     Style { rise: 2.0, fade_in_ms: 150, fade_out_ms: 760, life_ms: 1500, height: (0.018_333_3, 0.018_333_3), colour: 0xffff_ffff },
     // 1 — absorb, which is the damage row with a much earlier fade
@@ -237,7 +236,7 @@ pub fn style(kind: Kind) -> Style {
 ///
 /// It overshoots to double size and settles back, which is a different shape
 /// from a linear ramp.
-pub const PUNCH: [[f32; 4]; 3] = [
+pub(crate) const PUNCH: [[f32; 4]; 3] = [
     [0.0, 0.1, 0.1, 2.0],
     [0.1, 0.2, 2.0, 1.0],
     [0.2, 1.0, 1.0, 1.0],

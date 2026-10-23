@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 /// A play the interface asked for — see the module comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SoundRequest {
+pub(crate) enum SoundRequest {
     /// `PlaySound("igMainMenuOption")` — a `SoundEntries` **name**.
     Named(String),
     /// `PlaySoundFile("Sound\\...")` — an archive path, played as it is.
@@ -24,7 +24,7 @@ pub enum SoundRequest {
     StopMusic,
 }
 
-pub type SoundQueue = Rc<RefCell<Vec<SoundRequest>>>;
+pub(crate) type SoundQueue = Rc<RefCell<Vec<SoundRequest>>>;
 
 /// Register the four verbs. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua, queue: &SoundQueue) -> mlua::Result<()> {

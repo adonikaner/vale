@@ -49,13 +49,13 @@ use bevy::prelude::*;
 /// [`crate::interface::action`]'s drain. The raw byte, because three of the codes are
 /// deliberately silent and deciding that is this module's job.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct TransferAborted(pub u8);
+pub(crate) struct TransferAborted(pub(crate) u8);
 
 /// `SMSG_AREA_TRIGGER_MESSAGE`'s text, forwarded the same way.
 #[derive(Message, Debug, Clone)]
-pub struct AreaTriggerMessage(pub String);
+pub(crate) struct AreaTriggerMessage(pub(crate) String);
 
-pub struct AreaTriggerPlugin;
+pub(crate) struct AreaTriggerPlugin;
 
 impl Plugin for AreaTriggerPlugin {
     fn build(&self, app: &mut App) {

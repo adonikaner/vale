@@ -15,7 +15,7 @@
 //!                on the task pool, and the tiles it has left closed
 //! ```
 
-pub mod maps;
+pub(crate) mod maps;
 pub(crate) mod open;
-pub mod sweep;
-pub mod tiles;
+pub(crate) mod sweep;
+pub(crate) mod tiles;

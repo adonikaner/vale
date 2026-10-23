@@ -17,10 +17,12 @@
 //! ribbons.rs    the trails they carry: a weapon's streak, a missile's tail
 //! weapon_trail.rs the strip a melee ability's kit draws behind a unit's
 //!               weapons, which no model carries
-//! missiles.rs   the object a cast throws: a model with a velocity and no owner
+//! missiles.rs   the object a cast throws: a model with a velocity and no parent
 //! lightning.rs  the bolt a spell draws between two units, whose geometry is a
 //!               DBC row rather than a file
 //! decals.rs     the floor art where a spell lands, projected onto the ground
+//! effect.rs     whose effect an entity at the world root is: the one owner
+//!               component the six effect passes above stamp
 //! selection.rs  which unit is which: the ring under the target, the hover highlight
 //! reticle.rs    the circle under a cast being aimed at the ground, the third
 //!               user of the decal projector
@@ -92,22 +94,23 @@
 //! listed in [`shader`], and its test checks each one.
 
 pub mod axes;
-pub mod building_lights;
+pub(crate) mod building_lights;
 pub mod celestial;
 pub mod clouds;
-pub mod decals;
+pub(crate) mod decals;
 pub mod doodads;
+pub mod effect;
 pub mod focus;
 pub mod foliage;
 // Used only by `ui::debug` and the `--shot` numbers, which are both behind the
 // `diagnostics` feature.
 #[cfg(feature = "diagnostics")]
 pub mod draws;
-pub mod globalwmo;
+pub(crate) mod globalwmo;
 pub mod glue;
 pub mod labels;
-pub mod lamps;
-pub mod lens;
+pub(crate) mod lamps;
+pub(crate) mod lens;
 pub mod lightning;
 pub mod missiles;
 pub mod models;
@@ -116,16 +119,16 @@ pub mod nothing;
 pub mod offscreen;
 #[cfg(feature = "diagnostics")]
 pub mod overlay;
-pub mod paperdoll;
+pub(crate) mod paperdoll;
 pub mod particles;
 pub mod portraits;
 pub mod present;
 pub mod glow;
-pub mod questmarks;
+pub(crate) mod questmarks;
 pub mod residency;
-pub mod reticle;
+pub(crate) mod reticle;
 pub mod ribbons;
-pub mod weapon_trail;
+pub(crate) mod weapon_trail;
 pub mod selection;
 pub(crate) mod strip;
 pub mod shadows;
@@ -147,7 +150,7 @@ pub mod wmos;
 /// Each of the three directories that draw owns one of these
 /// ([`crate::world::WorldPlugins`], [`crate::ui::UiPlugins`] and this one), so
 /// `lib.rs` names three plugins.
-pub struct RenderPlugins;
+pub(crate) struct RenderPlugins;
 
 impl bevy::app::Plugin for RenderPlugins {
     fn build(&self, app: &mut bevy::app::App) {
@@ -335,24 +338,24 @@ impl bevy::app::Plugin for RenderPlugins {
 /// shaders in `models`'s own tests.
 pub mod shader {
     pub const M2: &str = "embedded://vale_client/render/models/shaders/m2.wgsl";
-    pub const M2_PREPASS: &str =
+    pub(crate) const M2_PREPASS: &str =
         "embedded://vale_client/render/models/shaders/m2_prepass.wgsl";
     /// The vertex stage. This crate has its own so that ground foliage can
     /// sway; see `m2_vertex.wgsl` and `wind.wgsl` beside it.
-    pub const M2_VERTEX: &str = "embedded://vale_client/render/models/shaders/m2_vertex.wgsl";
-    pub const M2_PREPASS_VERTEX: &str =
+    pub(crate) const M2_VERTEX: &str = "embedded://vale_client/render/models/shaders/m2_vertex.wgsl";
+    pub(crate) const M2_PREPASS_VERTEX: &str =
         "embedded://vale_client/render/models/shaders/m2_prepass_vertex.wgsl";
-    pub const CELESTIAL: &str = "embedded://vale_client/render/shaders/celestial.wgsl";
-    pub const CLOUDS: &str = "embedded://vale_client/render/shaders/clouds.wgsl";
-    pub const PRESENT: &str = "embedded://vale_client/render/shaders/present.wgsl";
-    pub const GLOW_BOX4: &str = "embedded://vale_client/render/shaders/glow_box4.wgsl";
-    pub const GLOW_GAUSS4: &str = "embedded://vale_client/render/shaders/glow_gauss4.wgsl";
-    pub const GLOW_COMBINE: &str = "embedded://vale_client/render/shaders/glow_combine.wgsl";
+    pub(crate) const CELESTIAL: &str = "embedded://vale_client/render/shaders/celestial.wgsl";
+    pub(crate) const CLOUDS: &str = "embedded://vale_client/render/shaders/clouds.wgsl";
+    pub(crate) const PRESENT: &str = "embedded://vale_client/render/shaders/present.wgsl";
+    pub(crate) const GLOW_BOX4: &str = "embedded://vale_client/render/shaders/glow_box4.wgsl";
+    pub(crate) const GLOW_GAUSS4: &str = "embedded://vale_client/render/shaders/glow_gauss4.wgsl";
+    pub(crate) const GLOW_COMBINE: &str = "embedded://vale_client/render/shaders/glow_combine.wgsl";
     pub const SKY: &str = "embedded://vale_client/render/shaders/sky.wgsl";
-    pub const SKYBOX: &str = "embedded://vale_client/render/shaders/skybox.wgsl";
-    pub const STARS: &str = "embedded://vale_client/render/shaders/stars.wgsl";
+    pub(crate) const SKYBOX: &str = "embedded://vale_client/render/shaders/skybox.wgsl";
+    pub(crate) const STARS: &str = "embedded://vale_client/render/shaders/stars.wgsl";
     pub const TERRAIN: &str = "embedded://vale_client/render/shaders/terrain.wgsl";
-    pub const WEATHER: &str = "embedded://vale_client/render/shaders/weather.wgsl";
+    pub(crate) const WEATHER: &str = "embedded://vale_client/render/shaders/weather.wgsl";
 }
 
 /// The `embedded://` URI of a shader in the calling file's `shaders/`

@@ -62,10 +62,10 @@ pub struct FrameSample {
     /// hitch; this does.
     accum_worst: f32,
     /// What the line shows until the open window closes.
-    pub fps: f64,
-    pub frame_ms: f64,
-    pub worst_ms: f64,
-    pub gpu_ms: f64,
+    pub(crate) fps: f64,
+    pub(crate) frame_ms: f64,
+    pub(crate) worst_ms: f64,
+    pub(crate) gpu_ms: f64,
     pub passes: Vec<(String, f64)>,
     /// The last [`TRACE`] closed windows' frame times, oldest first.
     pub trace: Vec<f32>,
@@ -466,16 +466,16 @@ fn ceiling(samples: &[f32]) -> f32 {
 /// Computed in one function because two readers use it, the panel every frame
 /// and stdout when a scripted `--shot` fires, and two copies of the rule for
 /// which spans count could disagree.
-pub struct FrameVerdict {
-    pub frame_ms: f64,
-    pub gpu_ms: f64,
+pub(crate) struct FrameVerdict {
+    pub(crate) frame_ms: f64,
+    pub(crate) gpu_ms: f64,
     /// Every render span worth showing, biggest first, the `render/` prefix
     /// trimmed. GPU and CPU spans both — the path's own suffix says which.
     pub passes: Vec<(String, f64)>,
 }
 
 /// Read a [`FrameVerdict`] out of the diagnostics store.
-pub fn frame_verdict(diagnostics: &DiagnosticsStore) -> FrameVerdict {
+pub(crate) fn frame_verdict(diagnostics: &DiagnosticsStore) -> FrameVerdict {
     let frame_ms = diagnostics
         .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
         .and_then(|d| d.smoothed())

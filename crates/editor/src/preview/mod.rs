@@ -12,6 +12,6 @@
 //!              frame into a small image, for the pickers' rows
 //! ```
 
-pub mod lab;
-pub mod portraits;
-pub mod stage;
+pub(crate) mod lab;
+pub(crate) mod portraits;
+pub(crate) mod stage;

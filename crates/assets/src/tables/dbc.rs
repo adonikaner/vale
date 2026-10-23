@@ -114,6 +114,14 @@ pub trait Rows {
     fn row_of(&self, id: u32) -> Option<usize> {
         (0..self.record_count()).find(|&record| self.u32_at(record, 0) == Some(id))
     }
+    /// The field's word read as a signed number.
+    fn i32_at(&self, record: usize, field: usize) -> Option<i32> {
+        self.u32_at(record, field).map(|word| word as i32)
+    }
+    /// The field's word read as a float.
+    fn f32_at(&self, record: usize, field: usize) -> Option<f32> {
+        self.u32_at(record, field).map(f32::from_bits)
+    }
 }
 
 impl Rows for Dbc {
@@ -290,7 +298,7 @@ impl DisplayModel {
     /// player". A shapeshifted or disguised player wears an NPC's display id
     /// and must be drawn with that NPC's bake, not with their own composed face
     /// on a bear model.
-    pub fn composes_its_skin(&self) -> bool {
+    pub(crate) fn composes_its_skin(&self) -> bool {
         self.skins.first().is_none_or(|skin| skin.is_empty())
     }
 }
@@ -511,18 +519,18 @@ pub struct DisplayTables {
 mod display_fields {
     /// `CreatureDisplayInfo`: id, modelId, soundId, extendedDisplayInfoId,
     /// scale, alpha, textureVariation[3], portrait, blood, npcSound.
-    pub const MODEL_ID: usize = 1;
-    pub const EXTENDED_DISPLAY_INFO_ID: usize = 3;
+    pub(crate) const MODEL_ID: usize = 1;
+    pub(crate) const EXTENDED_DISPLAY_INFO_ID: usize = 3;
     pub const SCALE: usize = 4;
-    pub const TEXTURE_VARIATION: usize = 6;
-    pub const TEXTURE_VARIATION_COUNT: usize = 3;
+    pub(crate) const TEXTURE_VARIATION: usize = 6;
+    pub(crate) const TEXTURE_VARIATION_COUNT: usize = 3;
 
     /// `CreatureModelData`: id, flags, modelName, sizeClass, modelScale, ...
-    pub const MODEL_NAME: usize = 2;
-    pub const MODEL_SCALE: usize = 4;
+    pub(crate) const MODEL_NAME: usize = 2;
+    pub(crate) const MODEL_SCALE: usize = 4;
 
     /// `GameObjectDisplayInfo`: id, modelName, then sounds and a bounding box.
-    pub const OBJECT_MODEL_NAME: usize = 1;
+    pub(crate) const OBJECT_MODEL_NAME: usize = 1;
 
     /// `CreatureDisplayInfoExtra`: id, race, gender, skin, face, hairStyle,
     /// hairColour, facialHair, then ten equipped-item display ids, then the
@@ -533,12 +541,12 @@ mod display_fields {
     /// needs only the name. Race in field 1 and gender in field 2 cross-check
     /// the layout: record 0 reads race 3 gender 0 (dwarf male), and its model
     /// is `Character\Dwarf\Male\DwarfMale.mdx`.
-    pub const BAKE_NAME: usize = 18;
+    pub(crate) const BAKE_NAME: usize = 18;
     /// The seven appearance ids, fields 1..7. The hairstyle and beard are
     /// geometry and cannot be baked into a texture, so these ids are the only
     /// record of which head geosets the NPC uses.
-    pub const APPEARANCE: usize = 1;
-    pub const APPEARANCE_COUNT: usize = 7;
+    pub(crate) const APPEARANCE: usize = 1;
+    pub(crate) const APPEARANCE_COUNT: usize = 7;
 
     /// The ten `ItemDisplayInfo` ids, at 8..17.
     ///
@@ -549,8 +557,8 @@ mod display_fields {
     /// NPC with its garment textures and none of its garment geometry; a
     /// Gadgetzan Bruiser then has a correctly coloured leather vest and
     /// trousers and no shoulders.
-    pub const EQUIPPED_ITEM: usize = 8;
-    pub const EQUIPPED_ITEM_COUNT: usize = 10;
+    pub(crate) const EQUIPPED_ITEM: usize = 8;
+    pub(crate) const EQUIPPED_ITEM_COUNT: usize = 10;
 }
 
 impl DisplayTables {
@@ -891,10 +899,6 @@ impl DisplayTables {
         self.item_tables.icon_path(&name)
     }
 
-    pub fn item_sounds(&self) -> &crate::tables::itemsound::ItemGroupSounds {
-        &self.item_sounds
-    }
-
     /// The `SoundEntries` id an item plays when it is picked up or put down,
     /// resolved from a display id. This is the same join the client makes. It
     /// is a single entry point for the same reason as [`Self::item_icon`]:
@@ -1002,7 +1006,7 @@ impl DisplayTables {
 
     /// Whether a realm of this type is a PvP realm; see
     /// [`crate::tables::territory::RealmConfigs`].
-    pub fn is_pvp_realm(&self, realm_type: u32) -> bool {
+    pub(crate) fn is_pvp_realm(&self, realm_type: u32) -> bool {
         self.realm_configs.is_pvp(realm_type)
     }
 
@@ -1273,7 +1277,7 @@ impl DisplayTables {
     ///
     /// `None` when the chain has no such table. The only cost is hair drawn
     /// through a helm.
-    pub fn helmet_visibility(&self) -> Option<&crate::tables::item::HelmetVisibility> {
+    pub(crate) fn helmet_visibility(&self) -> Option<&crate::tables::item::HelmetVisibility> {
         self.helmet_vis.as_ref()
     }
 
@@ -1405,7 +1409,7 @@ impl DisplayTables {
 
     /// Which geosets an appearance selects. This is the entry point for a
     /// player, whose appearance comes from the server instead of a DBC.
-    pub fn character_geosets(&self, look: &Appearance) -> crate::world::m2::CharacterGeosets {
+    pub(crate) fn character_geosets(&self, look: &Appearance) -> crate::world::m2::CharacterGeosets {
         self.char_geosets.geosets(look)
     }
 
@@ -1514,7 +1518,7 @@ impl DisplayTables {
     /// painting them again would duplicate precomputed work, and on a model
     /// whose UVs already address the baked atlas it would change nothing. The
     /// bake lacks only the geometry: the attached models and the geosets.
-    pub fn equipped_items(&self, display_id: u32) -> Vec<crate::tables::item::Equipped> {
+    pub(crate) fn equipped_items(&self, display_id: u32) -> Vec<crate::tables::item::Equipped> {
         Self::EQUIPPED_SLOTS
             .iter()
             .zip(self.equipped_item_columns(display_id))
@@ -1949,7 +1953,7 @@ pub(crate) mod testing {
 
     /// The three mandatory tables, as empty but valid DBCs, for a test of one
     /// of the optional tables.
-    pub fn empty_required() -> Vec<(&'static str, Vec<u8>)> {
+    pub(crate) fn empty_required() -> Vec<(&'static str, Vec<u8>)> {
         vec![
             ("CreatureDisplayInfo", dbc(&[vec![0; 12]], 12, b"\0")),
             ("CreatureModelData", dbc(&[vec![0; 16]], 16, b"\0")),

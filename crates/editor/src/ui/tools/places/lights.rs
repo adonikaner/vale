@@ -28,7 +28,7 @@ use vale_assets::tables::schema;
 /// fly the camera to it, its position and radius in yards rather than the
 /// file's 1/36 of a yard, and then the five `LightParams` rows it uses under
 /// the five conditions, which hold the colours.
-pub fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
+pub(crate) fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     if !work.session.open_table(work.assets, "Light") {
         theme::note(ui, "opening Light.dbc…");
         return;

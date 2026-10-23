@@ -64,7 +64,7 @@ pub enum Logout {
 /// **The order is reason-then-flag** and both are read: a client that took the
 /// first byte as the flag would read every refusal as an instant logout, which
 /// is a character screen with the character still standing in the world.
-pub fn parse_logout_response(body: &[u8]) -> Option<Logout> {
+pub(crate) fn parse_logout_response(body: &[u8]) -> Option<Logout> {
     let mut r = Reader::new(body);
     if !r.has(5) {
         return None;

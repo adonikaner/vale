@@ -10,5 +10,5 @@
 //!                DBCs the server reads as files
 //! ```
 
-pub mod patch;
-pub mod release;
+pub(crate) mod patch;
+pub(crate) mod release;

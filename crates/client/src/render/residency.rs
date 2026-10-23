@@ -85,7 +85,7 @@ use bevy::render::renderer::RenderDevice;
 /// entry that is too young and cost O(evicted), but it is a second index that
 /// has to be kept consistent with the cache. A walk of a few thousand hash
 /// entries once every [`SWEEP_SECS`] takes microseconds.
-pub const IDLE_SECS: f32 = 30.0;
+pub(crate) const IDLE_SECS: f32 = 30.0;
 
 /// How often the caches are swept.
 ///
@@ -142,14 +142,14 @@ pub struct Residency {
     pub images: usize,
     /// Everything dropped since the session started, so that "it is holding
     /// 2,000 models" can be told from "it has never let go of anything".
-    pub freed: usize,
+    pub(crate) freed: usize,
     /// What the GPU allocator has handed out, in bytes, and the most it has
     /// held this session. See [`gpu_bytes`].
     ///
     /// `None` where the backend does not report it. A zero here would read as
     /// "nothing allocated" for a client drawing a city.
     pub gpu: Option<u64>,
-    pub gpu_peak: u64,
+    pub(crate) gpu_peak: u64,
 }
 
 /// What the GPU allocator is holding, in bytes.
@@ -188,7 +188,7 @@ fn mib(bytes: u64) -> u64 {
     bytes / (1024 * 1024)
 }
 
-pub struct ResidencyPlugin;
+pub(crate) struct ResidencyPlugin;
 
 impl Plugin for ResidencyPlugin {
     fn build(&self, app: &mut App) {
@@ -472,7 +472,7 @@ pub fn leave_world(
 /// tile resident here in the ordinary case; this covers a host that was
 /// drawing a map of its own when the character logged in. A despawned tile is
 /// read again by the streamer and places its hulls then.
-pub fn enter_world(
+pub(crate) fn enter_world(
     mut commands: Commands,
     session: Res<Session>,
     mut had_session: Local<bool>,

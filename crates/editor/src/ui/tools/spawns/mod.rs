@@ -21,10 +21,10 @@
 //!               which point is chosen
 //! ```
 
-pub mod creatures;
-pub mod gameobjects;
-pub mod spawn;
-pub mod waypoints;
+pub(crate) mod creatures;
+pub(crate) mod gameobjects;
+pub(crate) mod spawn;
+pub(crate) mod waypoints;
 
 /// The shell's server state a spawn panel reads and links to, as one
 /// argument of the panels' constructors.

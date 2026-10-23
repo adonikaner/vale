@@ -30,8 +30,8 @@
 //! whether it can be written, and a refusal from every other writer would put
 //! the same complaint on several blocks of the Server panel.
 
-pub mod apply;
-pub mod flags;
+pub(crate) mod apply;
+pub(crate) mod flags;
 
 use super::stack::Subject;
 use crate::session::EditSession;
@@ -41,12 +41,12 @@ use bevy::prelude::*;
 
 /// Where the project keeps the server rows it changes: one store for every
 /// row subject, keyed by table.
-pub const EDITS_VPATH: &str = "server\\rows.txt";
+pub(crate) const EDITS_VPATH: &str = "server\\rows.txt";
 
 /// One subject whose edits are rows of vmangos' world database, written and
 /// applied on the module's terms. Everything a subject differs in is here;
 /// everything else is the module's.
-pub trait RowSubject: Sync {
+pub(crate) trait RowSubject: Sync {
     /// Its place in [`super::stack`]'s order.
     fn subject(&self) -> Subject;
 
@@ -157,15 +157,15 @@ pub trait RowSubject: Sync {
 
 /// The session's three stores a plan is read from: the row store, the
 /// waypoint paths and the behaviour scripts.
-pub struct Stores<'a> {
-    pub edits: &'a Edits,
-    pub paths: &'a vale_mangos::path::Paths,
-    pub scripts: &'a vale_mangos::scripts::Scripts,
+pub(crate) struct Stores<'a> {
+    pub(crate) edits: &'a Edits,
+    pub(crate) paths: &'a vale_mangos::path::Paths,
+    pub(crate) scripts: &'a vale_mangos::scripts::Scripts,
 }
 
 impl<'a> Stores<'a> {
     /// The session's own.
-    pub fn of(session: &'a EditSession) -> Stores<'a> {
+    pub(crate) fn of(session: &'a EditSession) -> Stores<'a> {
         Stores {
             edits: &session.rows.edits,
             paths: &session.rows.paths,
@@ -177,23 +177,23 @@ impl<'a> Stores<'a> {
 /// One row's worth of change: what is to become of it, and the columns it
 /// sets.
 #[derive(Debug, Clone)]
-pub struct Row {
-    pub table: &'static row::Table,
-    pub key: Key,
+pub(crate) struct Row {
+    pub(crate) table: &'static row::Table,
+    pub(crate) key: Key,
     /// Whether the row is edited, created or removed; see
     /// [`vale_mangos::row::Life`].
-    pub life: Life,
-    pub changes: Vec<Assignment>,
+    pub(crate) life: Life,
+    pub(crate) changes: Vec<Assignment>,
     /// Where the database has the row: [`Self::key`] unless the project
     /// changes the row's id. See `vale_mangos::row::RowEdit::from`.
-    pub at: Key,
+    pub(crate) at: Key,
 }
 
 impl Row {
     /// The statements it becomes by its table's rule: one `UPDATE`, the
     /// `DELETE` and `INSERT` a creation is, the removal with its cascade, or
     /// the move of a row whose id changes with every column that names it.
-    pub fn statements(&self) -> Vec<String> {
+    pub(crate) fn statements(&self) -> Vec<String> {
         if self.moves() {
             return row::move_statements(self.table.name, &self.at, &self.key, &self.changes, self.table.references);
         }
@@ -201,12 +201,12 @@ impl Row {
     }
 
     /// Whether the project changes this row's id.
-    pub fn moves(&self) -> bool {
+    pub(crate) fn moves(&self) -> bool {
         self.life == Life::Update && self.at != self.key
     }
 
     /// How it is named in a file's marker and in a status line.
-    pub fn names(&self) -> String {
+    pub(crate) fn names(&self) -> String {
         format!("{} {}", self.table.name, self.key.text())
     }
 }
@@ -214,7 +214,7 @@ impl Row {
 /// A set of rows written whole under one id, which has no key of its own per
 /// row: a `DELETE` of the id and an `INSERT` a row.
 #[derive(Debug, Clone)]
-pub enum Whole {
+pub(crate) enum Whole {
     /// A creature's waypoint path.
     Path(vale_mangos::path::Path),
     /// A behaviour script.
@@ -223,7 +223,7 @@ pub enum Whole {
 
 impl Whole {
     /// The table its rows are in.
-    pub fn table(&self) -> &'static str {
+    pub(crate) fn table(&self) -> &'static str {
         match self {
             Whole::Path(path) => path.which.table(),
             Whole::Script(script) => script.table,
@@ -231,7 +231,7 @@ impl Whole {
     }
 
     /// The id it is written under, as a key.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         match self {
             Whole::Path(path) => path.key(),
             Whole::Script(script) => script.key(),
@@ -239,7 +239,7 @@ impl Whole {
     }
 
     /// The statements it becomes.
-    pub fn statements(&self) -> Vec<String> {
+    pub(crate) fn statements(&self) -> Vec<String> {
         match self {
             Whole::Path(path) => vale_mangos::path::statements(path),
             Whole::Script(script) => vale_mangos::scripts::statements(script),
@@ -266,7 +266,7 @@ impl Whole {
     /// What the database holds under its id now, as the statements that put
     /// it back. A set with no rows still gets an undo, the `DELETE` alone,
     /// which is the inverse of creating one where there was none.
-    pub fn undo(&self, db: &mut Db) -> Result<Vec<String>, String> {
+    pub(crate) fn undo(&self, db: &mut Db) -> Result<Vec<String>, String> {
         match self {
             Whole::Path(path) => {
                 let rows = db.rows(&vale_mangos::path::whole_rows_query(path.which, path.owner))?;
@@ -281,17 +281,17 @@ impl Whole {
 }
 
 /// Everything a project changes about one subject.
-pub struct Plan {
-    pub subject: &'static dyn RowSubject,
+pub(crate) struct Plan {
+    pub(crate) subject: &'static dyn RowSubject,
     /// The keyed rows, in the order they are written: table by table in the
     /// subject's order, removals first inside a table, then by key. Removals
     /// go first because a row moved between two keys that share a unique
     /// index (a loot row regrouped) is a removal and a creation, and the
     /// `INSERT` fails while the old row stands.
-    pub rows: Vec<Row>,
+    pub(crate) rows: Vec<Row>,
     /// The sets written whole, after the rows: a spawn this project creates
     /// has to exist before its path is written.
-    pub wholes: Vec<Whole>,
+    pub(crate) wholes: Vec<Whole>,
     /// What the store asked for and this writer would not write, each as a
     /// sentence.
     ///
@@ -300,36 +300,37 @@ pub struct Plan {
     /// that does not name every column or that the server would skip. Reported
     /// rather than skipped silently: the store is a text file somebody may have
     /// edited, and an edit that reaches no statement never happens.
-    pub refused: Vec<String>,
+    pub(crate) refused: Vec<String>,
 }
 
 /// One row or one whole set of a plan, as a file and an Apply need it.
-pub struct Unit {
-    pub table: String,
-    pub key: Key,
-    pub statements: Vec<String>,
+pub(crate) struct Unit {
+    pub(crate) table: String,
+    pub(crate) key: Key,
+    pub(crate) statements: Vec<String>,
     /// Its heading in the SQL file.
-    pub heading: String,
+    pub(crate) heading: String,
 }
 
 impl Plan {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.rows.is_empty() && self.wholes.is_empty()
     }
 
     /// How many rows and whole sets it writes.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.rows.len() + self.wholes.len()
     }
 
     /// How many rows it creates, edits and removes.
-    pub fn counts(&self) -> (usize, usize, usize) {
+    pub(crate) fn counts(&self) -> (usize, usize, usize) {
         let of = |life: Life| self.rows.iter().filter(|row| row.life == life).count();
         (of(Life::Insert), of(Life::Update), of(Life::Delete))
     }
 
     /// The tables its rows touch, in the subject's order.
-    pub fn tables(&self) -> Vec<&'static str> {
+    #[cfg(test)]
+    pub(crate) fn tables(&self) -> Vec<&'static str> {
         self.subject
             .tables()
             .iter()
@@ -339,7 +340,7 @@ impl Plan {
     }
 
     /// Every row and whole set, in the order they are written.
-    pub fn units(&self) -> Vec<Unit> {
+    pub(crate) fn units(&self) -> Vec<Unit> {
         let rows = self.rows.iter().map(|row| Unit {
             table: row.table.name.to_string(),
             key: row.key.clone(),
@@ -356,7 +357,7 @@ impl Plan {
     }
 
     /// Every statement this plan comes to, rows first.
-    pub fn statements(&self) -> Vec<String> {
+    pub(crate) fn statements(&self) -> Vec<String> {
         self.units().into_iter().flat_map(|unit| unit.statements).collect()
     }
 
@@ -369,7 +370,7 @@ impl Plan {
     /// change when the edit does. The hash is over the statements rather than
     /// the row count: two edits to one row are one row and two different
     /// databases.
-    pub fn signature(&self) -> u64 {
+    pub(crate) fn signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for statement in self.statements() {
@@ -380,7 +381,7 @@ impl Plan {
 
     /// One line for a panel: rows created, edited and removed, and whole sets
     /// replaced.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         let (new, edited, gone) = self.counts();
         let mut parts: Vec<String> = Vec::new();
         if new > 0 {
@@ -418,7 +419,7 @@ impl Plan {
 }
 
 /// What the project's stores come to for one subject, as statements.
-pub fn plan(session: &EditSession, subject: &'static dyn RowSubject) -> Plan {
+pub(crate) fn plan(session: &EditSession, subject: &'static dyn RowSubject) -> Plan {
     plan_from(subject, &Stores::of(session))
 }
 
@@ -430,7 +431,7 @@ pub fn plan(session: &EditSession, subject: &'static dyn RowSubject) -> Plan {
 /// then checked as the server checks it. The column's name in a statement is
 /// always one of `vale_mangos`' own constants rather than text read off a
 /// disk.
-pub fn plan_from(subject: &'static dyn RowSubject, stores: &Stores<'_>) -> Plan {
+pub(crate) fn plan_from(subject: &'static dyn RowSubject, stores: &Stores<'_>) -> Plan {
     let mut out = Plan {
         subject,
         rows: Vec::new(),
@@ -487,7 +488,7 @@ pub fn plan_from(subject: &'static dyn RowSubject, stores: &Stores<'_>) -> Plan 
 /// Write the subject's SQL file, or remove it when the project changes nothing
 /// in the subject. Called by every save; it writes a file and touches no
 /// database. Answers how many rows and whole sets it wrote.
-pub fn write_sql(session: &mut EditSession, subject: &'static dyn RowSubject) -> Result<usize, String> {
+pub(crate) fn write_sql(session: &mut EditSession, subject: &'static dyn RowSubject) -> Result<usize, String> {
     let plan = plan(session, subject);
     let vpath = subject.sql_vpath();
     for refused in &plan.refused {
@@ -524,7 +525,7 @@ pub fn write_sql(session: &mut EditSession, subject: &'static dyn RowSubject) ->
 
 /// One subject's part of a save: its SQL file, and a status line. The stores
 /// are written by [`save_stores`], which every save calls first.
-pub fn save(session: &mut EditSession, subject: &'static dyn RowSubject) {
+pub(crate) fn save(session: &mut EditSession, subject: &'static dyn RowSubject) {
     match write_sql(session, subject) {
         Ok(0) => {}
         Ok(count) => {
@@ -540,7 +541,7 @@ pub fn save(session: &mut EditSession, subject: &'static dyn RowSubject) {
 /// The project's three server stores: the rows, the waypoint paths and the
 /// scripts. `false` when one could not be written, with the reason already on
 /// the status line.
-pub fn save_stores(session: &mut EditSession) -> bool {
+pub(crate) fn save_stores(session: &mut EditSession) -> bool {
     match session.rows.save(&session.project) {
         Ok(()) => true,
         Err(e) => {
@@ -553,7 +554,7 @@ pub fn save_stores(session: &mut EditSession) -> bool {
 /// Every row subject's half of a save: the stores, then each subject's SQL in
 /// [`Subject::ORDER`]. Nothing is written from a store that could not be
 /// saved, so a SQL file never says more than the project folder holds.
-pub fn save_all(session: &mut EditSession) {
+pub(crate) fn save_all(session: &mut EditSession) {
     if !save_stores(session) {
         return;
     }
@@ -565,7 +566,7 @@ pub fn save_all(session: &mut EditSession) {
 /// The default refusal of a row arriving at a key: a row already at the whole
 /// key is not this project's, since the database holds none of this project's
 /// rows while an Apply runs (see [`super::reconcile`]).
-pub fn refuse_a_present_key(db: &mut Db, row: &Row) -> Result<(), String> {
+pub(crate) fn refuse_a_present_key(db: &mut Db, row: &Row) -> Result<(), String> {
     if db.row(&row::exists_query(row.table.name, &row.key))?.is_some() {
         return Err(format!(
             "{} {} is already in the database and is not this project's.",
@@ -579,7 +580,7 @@ pub fn refuse_a_present_key(db: &mut Db, row: &Row) -> Result<(), String> {
 /// The default undo of a removal: the `DELETE` first, so the entry can be run
 /// against a row it has already restored (see [`super::reconcile`]), then the
 /// row as it stands. `None` when the row is not there.
-pub fn snapshot_one_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
+pub(crate) fn snapshot_one_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
     Ok(db.row(&row::row_query(row.table.name, &row.key))?.map(|held| {
         let mut out = vec![row::delete(row.table.name, &row.key)];
         out.extend(row::insert_from_row(row.table.name, &held));
@@ -591,7 +592,7 @@ pub fn snapshot_one_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, S
 /// names, with the table's own references; see
 /// [`super::reconcile::refuse_a_taken_id`]. With a `limit`, an id above it is
 /// refused first: a spawn's guid past the guid space stops the server.
-pub fn refuse_a_taken_id(db: &mut Db, row: &Row, own: &Edits, limit: Option<u64>) -> Result<(), String> {
+pub(crate) fn refuse_a_taken_id(db: &mut Db, row: &Row, own: &Edits, limit: Option<u64>) -> Result<(), String> {
     if let Some(limit) = limit {
         super::reconcile::refuse_a_guid_past_the_limit(row.table.name, &row.key, limit)?;
     }
@@ -603,7 +604,7 @@ pub fn refuse_a_taken_id(db: &mut Db, row: &Row, own: &Edits, limit: Option<u64>
 /// against a row it has already restored, then the row as it stands, then
 /// every row of each `(table, column)` in `dependents` that names its id, in
 /// that order. `None` when the row is not there.
-pub fn snapshot_with_dependents(
+pub(crate) fn snapshot_with_dependents(
     db: &mut Db,
     row: &Row,
     deletes: Vec<String>,

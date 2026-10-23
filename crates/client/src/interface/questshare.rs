@@ -39,17 +39,17 @@ use crate::interface::quest::Quests;
 use crate::world::session::Session;
 
 /// `QUEST_FLAGS_SHARABLE` (vmangos `QuestDef.h`).
-pub const QUEST_FLAGS_SHARABLE: u32 = 0x8;
+pub(crate) const QUEST_FLAGS_SHARABLE: u32 = 0x8;
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
-pub enum QuestShareAnswer {
+pub(crate) enum QuestShareAnswer {
     PushResult(PushOutcome),
     ConfirmAccept(Box<ConfirmAccept>),
 }
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<QuestShareAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<QuestShareAnswer> {
     match event {
         PlayerEvent::QuestPushResult(outcome) => Some(QuestShareAnswer::PushResult(*outcome)),
         PlayerEvent::QuestConfirmAccept(offer) => Some(QuestShareAnswer::ConfirmAccept(offer.clone())),
@@ -59,13 +59,13 @@ pub fn answer_of(event: &PlayerEvent) -> Option<QuestShareAnswer> {
 
 /// The party quest last offered; 0 before any offer.
 #[derive(Resource, Default, Debug)]
-pub struct QuestShare {
+pub(crate) struct QuestShare {
     offered: u32,
 }
 
 /// `GetQuestLogPushable()`: whether the quest selected in the log may be
 /// shared.
-pub fn pushable(quests: &Quests) -> bool {
+pub(crate) fn pushable(quests: &Quests) -> bool {
     selected_quest(quests)
         .and_then(|quest_id| quests.template(quest_id))
         .is_some_and(|template| template.flags & QUEST_FLAGS_SHARABLE != 0)
@@ -76,7 +76,7 @@ fn selected_quest(quests: &Quests) -> Option<u32> {
     quests.at(quests.selected()).map(|slot| slot.quest_id).filter(|&id| id != 0)
 }
 
-pub struct QuestSharePlugin;
+pub(crate) struct QuestSharePlugin;
 
 impl Plugin for QuestSharePlugin {
     fn build(&self, app: &mut App) {
@@ -100,15 +100,13 @@ fn offers(
     mut share: ResMut<QuestShare>,
     mut raise: MessageWriter<QuestAcceptConfirm>,
 ) {
-    let world = session.active.as_ref().map(|active| active.live.world());
+    let live = session.active.as_ref().map(|active| &active.live);
     for answer in answers.read() {
         let QuestShareAnswer::ConfirmAccept(offer) = answer else {
             continue;
         };
         share.offered = offer.quest_id;
-        let name = world.and_then(|world| {
-            world.lock().ok().and_then(|world| world.players.get(&offer.accepter).map(|p| p.name.clone()))
-        });
+        let name = live.and_then(|live| live.read().players.get(&offer.accepter).map(|p| p.name.clone()));
         if let Some(name) = name {
             raise.write(QuestAcceptConfirm { name, title: offer.title.clone() });
         }
@@ -131,9 +129,7 @@ fn results(session: Res<Session>, mut answers: MessageReader<QuestShareAnswer>, 
     let Some(active) = session.active.as_ref() else {
         return;
     };
-    let Ok(world) = active.live.world().lock() else {
-        return;
-    };
+    let world = active.live.read();
     for outcome in outcomes {
         let (Some(result), Some(player)) =
             (PushResult::from_code(outcome.result), world.players.get(&outcome.member))

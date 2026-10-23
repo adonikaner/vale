@@ -96,22 +96,23 @@ pub struct InitialCooldown {
     /// (every healthstone, every bandage).
     pub category: u32,
     /// Milliseconds left on the spell's own recovery.
-    pub spell_ms: u32,
+    pub(crate) spell_ms: u32,
     /// Milliseconds left on the category's recovery. The top bit is a flag, not
     /// part of the duration: `SendInitialSpells` sets `0x80000000` on a permanent
     /// cooldown (and puts 1 ms in `spell_ms` beside it). Such a spell does not
     /// become ready again this session; it does not mean 24 days.
-    pub category_ms: u32,
+    pub(crate) category_ms: u32,
 }
 
 impl InitialCooldown {
     /// Whether the `0x80000000` marker described on `category_ms` is set.
     /// `category_duration_ms` is the category duration without it.
-    pub fn is_permanent(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_permanent(&self) -> bool {
         self.category_ms & 0x8000_0000 != 0
     }
 
-    pub fn category_duration_ms(&self) -> u32 {
+    pub(crate) fn category_duration_ms(&self) -> u32 {
         self.category_ms & 0x7FFF_FFFF
     }
 }
@@ -121,7 +122,7 @@ impl InitialCooldown {
 /// parser refuses such a packet rather than allocating for an invalid count.
 const MAX_SPELLS: u16 = 4096;
 
-pub fn parse_initial_spells(body: &[u8]) -> Option<Spellbook> {
+pub(crate) fn parse_initial_spells(body: &[u8]) -> Option<Spellbook> {
     let mut r = Reader::new(body);
     if !r.has(1 + 2) {
         return None;
@@ -168,7 +169,7 @@ pub fn parse_initial_spells(body: &[u8]) -> Option<Spellbook> {
 /// How many buttons the server stores. `MAX_ACTION_BUTTONS` in
 /// `Objects/Player.h`. The packet is exactly this many `u32`s with no count in
 /// front, so this number is the packet's framing.
-pub const ACTION_BUTTONS: usize = 120;
+pub(crate) const ACTION_BUTTONS: usize = 120;
 
 /// One occupied slot of `SMSG_ACTION_BUTTONS`.
 ///
@@ -228,7 +229,7 @@ pub mod action_kind {
 /// The 1.12.1 client sends the same five bytes: the slot as a byte, then the
 /// slot's packed word as a `u32`, the same word [`parse_action_buttons`]
 /// reads. It then raises `ACTIONBAR_SLOT_CHANGED` with `slot + 1`.
-pub fn set_action_button_body(slot: u8, packed: u32) -> Vec<u8> {
+pub(crate) fn set_action_button_body(slot: u8, packed: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(slot);
     w.u32(packed);
@@ -285,7 +286,7 @@ pub mod multi_bar {
 ///
 /// The high four bits are masked off. See [`multi_bar`] for the fifth
 /// argument, which looks as if it belongs in them and does not.
-pub fn set_actionbar_toggles_body(mask: u8) -> Vec<u8> {
+pub(crate) fn set_actionbar_toggles_body(mask: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(mask & multi_bar::ALL);
     w.buf
@@ -295,7 +296,7 @@ pub fn set_actionbar_toggles_body(mask: u8) -> Vec<u8> {
 ///
 /// A short body is read as far as it goes rather than refused: the bar is
 /// display state, and a partial bar is better than none.
-pub fn parse_action_buttons(body: &[u8]) -> Vec<ActionButton> {
+pub(crate) fn parse_action_buttons(body: &[u8]) -> Vec<ActionButton> {
     let mut r = Reader::new(body);
     let mut buttons = Vec::new();
     for slot in 0..ACTION_BUTTONS {
@@ -341,12 +342,12 @@ pub const SPELL_ATTACK: u32 = 6603;
 /// (u32 spellId, u32 ms) x n    to the end of the body
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpellCooldowns {
+pub(crate) struct SpellCooldowns {
     pub guid: u64,
     pub entries: Vec<(u32, u32)>,
 }
 
-pub fn parse_spell_cooldowns(body: &[u8]) -> Option<SpellCooldowns> {
+pub(crate) fn parse_spell_cooldowns(body: &[u8]) -> Option<SpellCooldowns> {
     let mut r = Reader::new(body);
     if !r.has(8) {
         return None;
@@ -368,7 +369,7 @@ pub fn parse_spell_cooldowns(body: &[u8]) -> Option<SpellCooldowns> {
 /// `u32 spellId`, then a plain `u64` guid. The guid is second here and first
 /// in `SMSG_SPELL_COOLDOWN`; reading it in the wrong order produces a cooldown
 /// on spell 0.
-pub fn parse_cooldown_event(body: &[u8]) -> Option<(u32, u64)> {
+pub(crate) fn parse_cooldown_event(body: &[u8]) -> Option<(u32, u64)> {
     let mut r = Reader::new(body);
     if !r.has(4 + 8) {
         return None;
@@ -407,7 +408,7 @@ pub fn parse_cooldown_event(body: &[u8]) -> Option<(u32, u64)> {
 /// guid would hold a spell id in its low half and would not match, so a wrong
 /// reading refuses every packet rather than clearing a random spell. The
 /// refusals appear in the session's warning channel.
-pub fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
+pub(crate) fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
     if body.len() != 4 + 8 {
         return None;
     }
@@ -430,7 +431,7 @@ pub fn parse_clear_cooldown(body: &[u8]) -> Option<(u32, u64)> {
 /// [`EQUIP_COOLDOWN_MS`] on that item's spell, with no category cooldown, and
 /// raises `ACTIONBAR_UPDATE_COOLDOWN`, `SPELL_UPDATE_COOLDOWN` and
 /// `BAG_UPDATE_COOLDOWN`.
-pub fn parse_item_cooldown(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_item_cooldown(body: &[u8]) -> Option<(u64, u32)> {
     if body.len() < 12 {
         return None;
     }
@@ -463,7 +464,7 @@ pub const EQUIP_COOLDOWN_MS: u32 = 30_000;
 /// u32 u32 u32         the three EQUIPPED_ITEM_CLASS reasons only — see below
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CastResult {
+pub(crate) struct CastResult {
     pub spell_id: u32,
     /// `None` when the cast was accepted.
     pub failure: Option<u8>,
@@ -494,7 +495,7 @@ pub struct EquipRequirement {
     pub subclass_mask: u32,
     /// `EquippedItemInventoryTypeMask`, not read here: the reason byte already
     /// names the slot (main hand, off hand, either).
-    pub inventory_type_mask: u32,
+    pub(crate) inventory_type_mask: u32,
 }
 
 /// `status = 2`, the only failing value `SendCastResult` writes.
@@ -511,7 +512,7 @@ const EQUIPPED_ITEM_CLASS: u8 = 0x19;
 const EQUIPPED_ITEM_CLASS_MAINHAND: u8 = 0x1a;
 const EQUIPPED_ITEM_CLASS_OFFHAND: u8 = 0x1b;
 
-pub fn parse_cast_result(body: &[u8]) -> Option<CastResult> {
+pub(crate) fn parse_cast_result(body: &[u8]) -> Option<CastResult> {
     let mut r = Reader::new(body);
     if !r.has(4 + 1) {
         return None;
@@ -547,7 +548,7 @@ pub fn parse_cast_result(body: &[u8]) -> Option<CastResult> {
 /// sends `SMSG_SPELL_FAILURE`; `Spell::SendInterrupted` sends this packet. It
 /// stops a cast animation that would otherwise be held for the whole length of
 /// a cast bar that has already been cancelled.
-pub fn parse_spell_failed_other(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_spell_failed_other(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4) {
         return None;
@@ -576,7 +577,7 @@ pub fn parse_spell_failed_other(body: &[u8]) -> Option<(u64, u32)> {
 ///
 /// The trailing field is not returned, because the 1.12.1 client does not use
 /// it either.
-pub fn parse_learned_spell(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_learned_spell(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(2).then(|| u32::from(r.u16()))
 }
@@ -584,7 +585,7 @@ pub fn parse_learned_spell(body: &[u8]) -> Option<u32> {
 /// `SMSG_REMOVED_SPELL`: one spell removed. The body is two bytes, where the
 /// packet above is four. `RemovedSpell::AppendBodyTo` writes `uint16(spellId)`
 /// and nothing else.
-pub fn parse_removed_spell(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_removed_spell(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(2).then(|| u32::from(r.u16()))
 }
@@ -611,7 +612,7 @@ pub fn parse_removed_spell(body: &[u8]) -> Option<u32> {
 /// (`SupercededSpell::AppendBodyTo`), the same narrowing
 /// `SMSG_INITIAL_SPELLS` applies to every id it lists. Nothing is lost: no
 /// 1.12 spell id reaches 65,536.
-pub fn parse_superceded_spell(body: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn parse_superceded_spell(body: &[u8]) -> Option<(u32, u32)> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -675,7 +676,7 @@ impl AttackRefusal {
 /// range, so this is how the client learns that a distant creature has
 /// started a fight. For the local player it is the server's confirmation
 /// that the requested swing started.
-pub fn parse_attack_start(body: &[u8]) -> Option<(u64, u64)> {
+pub(crate) fn parse_attack_start(body: &[u8]) -> Option<(u64, u64)> {
     let mut r = Reader::new(body);
     if !r.has(16) {
         return None;
@@ -691,7 +692,7 @@ pub fn parse_attack_start(body: &[u8]) -> Option<(u64, u64)> {
 /// broadcast form: another player's channel is shown by
 /// `UNIT_CHANNEL_SPELL` in their update block, which this client does not
 /// read.
-pub fn parse_channel_start(body: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn parse_channel_start(body: &[u8]) -> Option<(u32, u32)> {
     let mut r = Reader::new(body);
     if !r.has(8) {
         return None;
@@ -712,7 +713,7 @@ pub fn parse_channel_start(body: &[u8]) -> Option<(u32, u32)> {
 /// The delay is a difference, not a new length. vmangos adds it to `m_timer`
 /// and clamps at the spell's cast time, so a cast can be pushed back several
 /// times and each packet gives only the amount of that pushback.
-pub fn parse_spell_delayed(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_spell_delayed(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     if !r.has(12) {
         return None;
@@ -726,7 +727,7 @@ pub fn parse_spell_delayed(body: &[u8]) -> Option<(u64, u32)> {
 /// `{u32 remainingMs}`. Zero means the channel has ended; an interrupted or
 /// cancelled channel sends this packet with zero rather than a packet of its
 /// own.
-pub fn parse_channel_update(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_channel_update(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
@@ -738,7 +739,7 @@ pub fn parse_channel_update(body: &[u8]) -> Option<u32> {
 /// victim may be a packed zero (`SendAttackStop(nullptr)` writes an empty
 /// `PackedGuid`), which means "stop attacking, no particular target": the
 /// answer to a swing at a friendly or dead unit.
-pub fn parse_attack_stop(body: &[u8]) -> Option<(u64, u64)> {
+pub(crate) fn parse_attack_stop(body: &[u8]) -> Option<(u64, u64)> {
     let mut r = Reader::new(body);
     if !r.has(1) {
         return None;
@@ -756,20 +757,20 @@ pub fn parse_attack_stop(body: &[u8]) -> Option<(u64, u64)> {
 ///
 /// The full table is sixteen bits wide. The constants here are the flags this
 /// client sends.
-pub mod target_flag {
+pub(crate) mod target_flag {
     /// Zero, meaning there is no target block. `SpellCastTargets::read` compares
     /// the whole mask with this value before reading anything, so a self-cast is
     /// two bytes on the wire and the server fills in the target from the spell's
     /// implicit targeting.
     pub const SELF: u16 = 0x0000;
     /// A packed unit guid follows.
-    pub const UNIT: u16 = 0x0002;
+    pub(crate) const UNIT: u16 = 0x0002;
     /// Three plain `f32`s follow and nothing else; no guid in any build. This is
     /// the ground-targeted form of a cast: Blizzard, Flamestrike, Rain of Fire.
     /// `SpellCastTargets::read` validates them with `IsValidMapCoord` and rejects
     /// the whole packet if they fail, so a `NaN` here causes a disconnection
     /// rather than a refusal.
-    pub const DEST_LOCATION: u16 = 0x0040;
+    pub(crate) const DEST_LOCATION: u16 = 0x0040;
     /// A packed game object guid follows: a chest, an ore vein, a herb.
     ///
     /// `0x0800`, from vmangos' `SpellCastTargetFlags`, where it is
@@ -803,7 +804,7 @@ pub mod target_flag {
     /// [`super::CastTarget::TradeSlot`], which quotes how the server reads it:
     /// only `TRADE_SLOT_NONTRADED` is accepted, and while the trade is still open
     /// the cast is stored rather than performed.
-    pub const TRADE_ITEM: u16 = 0x1000;
+    pub(crate) const TRADE_ITEM: u16 = 0x1000;
 }
 
 /// What a cast is aimed at.
@@ -858,7 +859,7 @@ pub enum CastTarget {
 /// See [`CastTarget`] and the module comment: sending the current selection
 /// with a spell that takes no target makes the server refuse a buff with
 /// "Invalid target".
-pub fn cast_spell_body(spell_id: u32, target: CastTarget) -> Vec<u8> {
+pub(crate) fn cast_spell_body(spell_id: u32, target: CastTarget) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(spell_id);
     write_cast_target(&mut w, target);
@@ -906,7 +907,7 @@ pub(crate) fn write_cast_target(w: &mut Writer, target: CastTarget) {
 }
 
 /// `CMSG_CANCEL_CAST`: `u32 spellId` and nothing else.
-pub fn cancel_cast_body(spell_id: u32) -> Vec<u8> {
+pub(crate) fn cancel_cast_body(spell_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(spell_id);
     w.buf
@@ -924,7 +925,7 @@ pub fn cancel_cast_body(spell_id: u32) -> Vec<u8> {
 /// `SPELL_ATTR_NO_AURA_CANCEL`, and sends nothing when it does, so the
 /// client-side `AFLAG_CANCELABLE` check is what stops a right-click on a
 /// debuff from sending a packet that has no effect.
-pub fn cancel_aura_body(spell_id: u32) -> Vec<u8> {
+pub(crate) fn cancel_aura_body(spell_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(spell_id);
     w.buf
@@ -1025,7 +1026,7 @@ pub struct LevelUp {
 /// (`AUTOTRACK_INTERRUPTED`, `HUNGER_SATIATED`, `THIRST_SATIATED`, and the
 /// happiness case of `NO_POWER`). This is not an error in the copy: the
 /// client shows nothing for them, and a missing key is how it does so.
-pub const CAST_FAILURE_KEYS: [&str; 146] = [
+pub(crate) const CAST_FAILURE_KEYS: [&str; 146] = [
     "SPELL_FAILED_AFFECTING_COMBAT",             // 0x00 You are in combat
     "SPELL_FAILED_ALREADY_AT_FULL_HEALTH",       // 0x01 You are already at full Health.
     "SPELL_FAILED_ALREADY_AT_FULL_POWER",        // 0x02 You are already at full %s.
@@ -1186,7 +1187,7 @@ pub const SPELL_FAILED_OUT_OF_RANGE: u8 = 0x59;
 /// `SPELL_FAILED_DONT_REPORT`, which the client never displays. The server
 /// substitutes it for the real reason on a passive spell, and also sends it
 /// for several internal cases.
-pub const DONT_REPORT: u8 = 0x17;
+pub(crate) const DONT_REPORT: u8 = 0x17;
 
 /// The `GlobalStrings.lua` key for a wire reason, or `None` for a code outside
 /// the table or one the client does not display.
@@ -1245,7 +1246,7 @@ pub mod spell_mod_op {
 }
 
 /// `SMSG_SET_FLAT_SPELL_MODIFIER` / `_PCT_`: `{u8 effect_bit, u8 op, i32 value}`.
-pub fn parse_spell_modifier(body: &[u8], percent: bool) -> Option<SpellModifier> {
+pub(crate) fn parse_spell_modifier(body: &[u8], percent: bool) -> Option<SpellModifier> {
     let mut r = Reader::new(body);
     if !r.has(1 + 1 + 4) {
         return None;

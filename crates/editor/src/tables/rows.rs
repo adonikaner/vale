@@ -9,7 +9,7 @@ use super::fields::table_mut;
 use vale_assets::tables::schema::blank_defaults;
 
 /// `ItemSet.dbc`'s seventeen item columns.
-pub const SET_ITEMS: std::ops::Range<usize> = 10..27;
+pub(crate) const SET_ITEMS: std::ops::Range<usize> = 10..27;
 
 /// The records of `table` whose reference column `field` names row `id` of
 /// `target`, in file order, through the reverse index.
@@ -69,7 +69,7 @@ pub(super) fn push_row(
 /// read. Its five `LightParams` ids are copied from the `Light` row at
 /// `template`, so it is lit and fogged like that light until its own are
 /// chosen. Returns the new row's record.
-pub fn add_light(
+pub(crate) fn add_light(
     session: &mut EditSession,
     map: u32,
     centre: Option<[f32; 3]>,
@@ -115,7 +115,7 @@ pub fn add_light(
 /// usual glow and water opacities.
 ///
 /// All three tables must be open; `None` when one is not.
-pub fn copy_light_params(
+pub(crate) fn copy_light_params(
     session: &mut EditSession,
     from: u32,
     assign: Option<(&str, usize, usize)>,
@@ -189,7 +189,7 @@ pub fn copy_light_params(
 }
 
 /// Which item column of an `ItemSet` row lists `item`, if one does.
-pub fn set_lists(sets: &vale_edit::dbc::DbcFile, record: usize, item: u32) -> Option<usize> {
+pub(crate) fn set_lists(sets: &vale_edit::dbc::DbcFile, record: usize, item: u32) -> Option<usize> {
     let mut fields = SET_ITEMS;
     fields.find(|&field| item != 0 && sets.u32_at(record, field) == Some(item))
 }
@@ -209,7 +209,7 @@ fn empty_item_column(sets: &vale_edit::dbc::DbcFile, record: usize) -> Option<us
 /// The edits are recorded under `subject`, so that when the caller has just
 /// written the item's `set_id` under the same subject the two are one undo
 /// entry: the item's column and the set's list are one fact stored twice.
-pub fn move_between_sets(
+pub(crate) fn move_between_sets(
     session: &mut EditSession,
     item: u32,
     from: u32,
@@ -266,16 +266,16 @@ pub fn move_between_sets(
 
 /// The tables a deep copy of a `SpellVisual` follows into: its kits, and the
 /// effects those kits and the visual's own missile and area columns name.
-pub const CHAIN_DEEP: [&str; 2] = ["SpellVisualKit", "SpellVisualEffectName"];
+pub(crate) const CHAIN_DEEP: [&str; 2] = ["SpellVisualKit", "SpellVisualEffectName"];
 
 /// The suffix appended to a copied row's name, so it can be told from the
 /// original.
-pub const COPY_SUFFIX: &str = " (copy)";
+pub(crate) const COPY_SUFFIX: &str = " (copy)";
 
 
 /// Add a blank row to an open table under the next id, as one undo entry.
 /// Returns its record index.
-pub fn add_row(session: &mut EditSession, table_name: &str) -> Option<usize> {
+pub(crate) fn add_row(session: &mut EditSession, table_name: &str) -> Option<usize> {
     let table = session.tables.get_mut(table_name)?;
     let id = table.max_id().checked_add(1)?;
     let bytes = table.blank_record(id);
@@ -297,7 +297,7 @@ pub fn add_row(session: &mut EditSession, table_name: &str) -> Option<usize> {
 
 /// Copy one row under the next id, with its name suffixed, as one undo entry.
 /// Returns the copy's record index.
-pub fn clone_row(session: &mut EditSession, table_name: &str, record: usize) -> Option<usize> {
+pub(crate) fn clone_row(session: &mut EditSession, table_name: &str, record: usize) -> Option<usize> {
     let id = session.table(table_name)?.u32_at(record, 0)?;
     let done = chain::clone_row(&mut session.tables, table_name, id, Some(COPY_SUFFIX))?;
     let new_id = done.new_id(table_name, id)?;
@@ -310,7 +310,7 @@ pub fn clone_row(session: &mut EditSession, table_name: &str, record: usize) -> 
 
 /// Remove one row, as one undo entry. Every record index after it shifts down
 /// by one, so a caller holding one must look its row up again by id.
-pub fn delete_row(session: &mut EditSession, table_name: &str, record: usize) -> bool {
+pub(crate) fn delete_row(session: &mut EditSession, table_name: &str, record: usize) -> bool {
     let Some(table) = session.tables.get_mut(table_name) else {
         return false;
     };
@@ -333,7 +333,7 @@ pub fn delete_row(session: &mut EditSession, table_name: &str, record: usize) ->
 /// `assign` is `(table, record, field)`, typically a spell's `SpellVisual`
 /// column, so that spell casts the copy while every other spell keeps casting
 /// the original.
-pub fn clone_chain(
+pub(crate) fn clone_chain(
     session: &mut EditSession,
     visual: u32,
     assign: Option<(&str, usize, usize)>,
@@ -367,7 +367,7 @@ pub fn clone_chain(
 
 /// Add a blank row to the table a reference names and point the reference at
 /// it, as one undo entry. Returns the new row's id.
-pub fn link_new(
+pub(crate) fn link_new(
     session: &mut EditSession,
     table_name: &str,
     record: usize,
@@ -404,7 +404,7 @@ pub fn link_new(
 ///
 /// This makes a shared kit one visual's own: the other visuals keep naming the
 /// original.
-pub fn unshare(
+pub(crate) fn unshare(
     session: &mut EditSession,
     table_name: &str,
     record: usize,

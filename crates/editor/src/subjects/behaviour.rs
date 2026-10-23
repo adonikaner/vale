@@ -60,7 +60,7 @@ use crate::server::fresh::FreshTask;
 use std::collections::{HashMap, HashSet};
 
 /// How many rows a search answers at most.
-pub const SEARCH_LIMIT: usize = 40;
+pub(crate) const SEARCH_LIMIT: usize = 40;
 
 /// How many scripts or texts one batch read asks for at most.
 const BATCH: usize = 60;
@@ -68,14 +68,14 @@ const BATCH: usize = 60;
 /// The creature the windows are about, as the shell describes it each frame
 /// from the selection with the project's edits over it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct About {
-    pub entry: u32,
-    pub label: String,
+pub(crate) struct About {
+    pub(crate) entry: u32,
+    pub(crate) label: String,
     /// The template row's key, for the two columns the windows offer to set
     /// on it: `ai_name` and `spell_list_id`.
-    pub template_key: Key,
-    pub spell_list_id: u32,
-    pub ai_name: String,
+    pub(crate) template_key: Key,
+    pub(crate) spell_list_id: u32,
+    pub(crate) ai_name: String,
 }
 
 impl About {
@@ -83,7 +83,7 @@ impl About {
     /// its template row as read, with this project's edits over it: so
     /// `ai_name` or `spell_list_id` typed into the template form changes the
     /// windows on the next frame.
-    pub fn from_focus(
+    pub(crate) fn from_focus(
         focus: &crate::subjects::windows::Focus,
         template: Option<&vale_mangos::schema::Row>,
         edits: &Edits,
@@ -106,29 +106,29 @@ impl About {
 /// edits over it, and the project's [`Life`] for the row (update, insert or
 /// delete).
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShownEvent {
-    pub event: Event,
-    pub life: Life,
+pub(crate) struct ShownEvent {
+    pub(crate) event: Event,
+    pub(crate) life: Life,
     /// The row as the database has it, for an edit to be cleared when it is
     /// typed back to what the database holds. `None` for a row this project
     /// creates.
-    pub in_database: Option<Event>,
+    pub(crate) in_database: Option<Event>,
 }
 
 /// One spell list as a window draws it, on [`ShownEvent`]'s terms.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShownList {
-    pub list: List,
-    pub life: Life,
-    pub in_database: Option<List>,
+pub(crate) struct ShownList {
+    pub(crate) list: List,
+    pub(crate) life: Life,
+    pub(crate) in_database: Option<List>,
 }
 
 /// One `broadcast_text` row as a window draws it, on [`ShownEvent`]'s terms.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShownText {
-    pub text: Text,
-    pub life: Life,
-    pub in_database: Option<Text>,
+pub(crate) struct ShownText {
+    pub(crate) text: Text,
+    pub(crate) life: Life,
+    pub(crate) in_database: Option<Text>,
 }
 
 /// A search typed into a chooser, and what it found.
@@ -137,15 +137,15 @@ pub struct ShownText {
 /// text when it differs from the last text sent, so at most one search is
 /// running and the answer that lands is for the last text sent.
 #[derive(Debug, Clone)]
-pub struct Search<T> {
+pub(crate) struct Search<T> {
     /// What is typed.
-    pub typed: String,
+    pub(crate) typed: String,
     /// The text of the search last sent.
-    pub sent: Option<String>,
+    pub(crate) sent: Option<String>,
     /// What came back, with the text it came back for.
-    pub found: Option<(String, Vec<T>)>,
+    pub(crate) found: Option<(String, Vec<T>)>,
     /// Why the last search answered nothing, when it failed.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
 }
 
 impl<T> Default for Search<T> {
@@ -156,7 +156,7 @@ impl<T> Default for Search<T> {
 
 impl<T> Search<T> {
     /// A search that starts with `typed` in the box.
-    pub fn of(typed: &str) -> Self {
+    pub(crate) fn of(typed: &str) -> Self {
         Search { typed: typed.to_string(), ..Search::default() }
     }
 
@@ -169,21 +169,21 @@ impl<T> Search<T> {
     }
 
     /// Whether a search has been sent and its answer has not landed.
-    pub fn searching(&self) -> bool {
+    pub(crate) fn searching(&self) -> bool {
         self.trouble.is_none()
             && self.sent.is_some()
             && self.found.as_ref().map(|(text, _)| text) != self.sent.as_ref()
     }
 
     /// What the last answer found, or nothing.
-    pub fn hits(&self) -> &[T] {
+    pub(crate) fn hits(&self) -> &[T] {
         self.found.as_ref().map(|(_, hits)| hits.as_slice()).unwrap_or(&[])
     }
 }
 
 /// Where a script chosen in the script chooser is written.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ScriptAnswer {
+pub(crate) enum ScriptAnswer {
     /// A column of a keyed row: an event's `action1_script` or a slot's
     /// `scriptId_n`.
     Column(ColumnTarget),
@@ -198,7 +198,7 @@ pub enum ScriptAnswer {
 
 /// The chooser that is open, at most one.
 #[derive(Debug, Clone)]
-pub enum Chooser {
+pub(crate) enum Chooser {
     /// Add an existing event to the creature: every creature's events,
     /// searched by comment, id or creature id.
     Events(Search<Event>),
@@ -225,7 +225,7 @@ pub enum Chooser {
 
 /// How a copied event's scripts are carried over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CopyScripts {
+pub(crate) enum CopyScripts {
     /// Each script is copied under a new id, so an edit to the copy changes
     /// nothing else.
     Copy,
@@ -259,22 +259,22 @@ enum Found {
 
 /// What the three windows are holding.
 #[derive(Resource, Default)]
-pub struct Behaviour {
-    pub about: Option<About>,
-    pub events_open: bool,
-    pub spells_open: bool,
-    pub script_open: bool,
+pub(crate) struct Behaviour {
+    pub(crate) about: Option<About>,
+    pub(crate) events_open: bool,
+    pub(crate) spells_open: bool,
+    pub(crate) script_open: bool,
     /// The script the third window shows, as its table and id.
-    pub script: Option<(&'static str, u32)>,
+    pub(crate) script: Option<(&'static str, u32)>,
     /// The chooser open over the windows, if any.
-    pub chooser: Option<Chooser>,
+    pub(crate) chooser: Option<Chooser>,
     /// The events whose form is unfolded in the events window, by id.
-    pub unfolded_events: HashSet<u32>,
+    pub(crate) unfolded_events: HashSet<u32>,
     /// The steps whose form is unfolded in the script window, by index in
     /// the script's step order. Cleared when another script is opened.
-    pub unfolded_steps: HashSet<usize>,
+    pub(crate) unfolded_steps: HashSet<usize>,
     /// The slots whose form is unfolded in the spells window, 0-based.
-    pub unfolded_slots: HashSet<usize>,
+    pub(crate) unfolded_slots: HashSet<usize>,
     /// Every creature's events read so far, as the database has them.
     events: HashMap<u32, Vec<Event>>,
     /// Every list read so far; `None` for an entry the table does not hold.
@@ -294,27 +294,27 @@ pub struct Behaviour {
     reads: FreshTask<Answer>,
     /// Whether the scripted flags have been acted on; see
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
     /// The texts another window shows, which this tool reads with its own:
     /// the gossip window's lines and option labels. Written by that window
     /// each frame.
-    pub other_texts: Vec<u32>,
+    pub(crate) other_texts: Vec<u32>,
     /// Whether another window makes new texts and gossip scripts (the gossip
     /// window), so the two tables' highest ids are read to number them.
-    pub numbering_texts: bool,
+    pub(crate) numbering_texts: bool,
 }
 
 impl Behaviour {
     // --- events ---------------------------------------------------------
 
     /// Whether a creature's events are in hand.
-    pub fn events_read(&self, creature: u32) -> bool {
+    pub(crate) fn events_read(&self, creature: u32) -> bool {
         self.events.contains_key(&creature)
     }
 
     /// Every event of one creature, the database's with the project's over
     /// them, in id order.
-    pub fn events_of(&self, creature: u32, edits: &Edits) -> Vec<ShownEvent> {
+    pub(crate) fn events_of(&self, creature: u32, edits: &Edits) -> Vec<ShownEvent> {
         let mut out: Vec<ShownEvent> = self
             .events
             .get(&creature)
@@ -343,14 +343,14 @@ impl Behaviour {
 
     /// Add an event to a creature: a repeating combat timer with no script,
     /// at the next free id. Answers the id.
-    pub fn add_event(&mut self, session: &mut EditSession, creature: u32, now: f64) -> u32 {
+    pub(crate) fn add_event(&mut self, session: &mut EditSession, creature: u32, now: f64) -> u32 {
         self.add_event_of(session, creature, 0, now)
     }
 
     /// Add an event of one trigger type to a creature, with no script, at the
     /// next free id. See `vale_mangos::eventai::Event::of_type` for what each
     /// type starts as. Answers the id.
-    pub fn add_event_of(&mut self, session: &mut EditSession, creature: u32, event_type: u32, now: f64) -> u32 {
+    pub(crate) fn add_event_of(&mut self, session: &mut EditSession, creature: u32, event_type: u32, now: f64) -> u32 {
         let id = self.next_event_id(creature, &session.rows.edits);
         let event = Event::of_type(id, creature, event_type);
         create_event(session, &event, "Add event", now);
@@ -362,7 +362,7 @@ impl Behaviour {
     /// the next free id. With [`CopyScripts::Copy`] every script it runs is
     /// copied under a new id first; that needs the scripts in hand, and an
     /// `Err` says so while they are read. Answers the new event's id.
-    pub fn copy_event(
+    pub(crate) fn copy_event(
         &mut self,
         session: &mut EditSession,
         creature: u32,
@@ -411,19 +411,19 @@ impl Behaviour {
 
     /// Remove an event: a `Delete` claim for one in the database, and the
     /// claim taken back for one this project added.
-    pub fn remove_event(&mut self, session: &mut EditSession, shown: &ShownEvent, now: f64) {
+    pub(crate) fn remove_event(&mut self, session: &mut EditSession, shown: &ShownEvent, now: f64) {
         remove_row(session, eventai::TABLE, &shown.event.key(), shown.in_database.is_some(), "Remove event", now);
     }
 
     /// Keep an event that was marked for removal.
-    pub fn keep_event(&mut self, session: &mut EditSession, shown: &ShownEvent, now: f64) {
+    pub(crate) fn keep_event(&mut self, session: &mut EditSession, shown: &ShownEvent, now: f64) {
         keep_row(session, eventai::TABLE, &shown.event.key(), "Keep event", now);
     }
 
     /// Set one column of an event, on [`crate::subjects::loot::Loot::set_column`]'s
     /// terms: cleared when it is what the database holds, written into the
     /// creation for a row this project creates.
-    pub fn set_event(
+    pub(crate) fn set_event(
         &mut self,
         session: &mut EditSession,
         shown: &ShownEvent,
@@ -438,13 +438,13 @@ impl Behaviour {
     // --- spell lists ----------------------------------------------------
 
     /// Whether a list has been asked for.
-    pub fn list_read(&self, entry: u32) -> bool {
+    pub(crate) fn list_read(&self, entry: u32) -> bool {
         self.lists.contains_key(&entry)
     }
 
     /// One list, the database's with the project's over it, or `None` when
     /// neither has it.
-    pub fn list_of(&self, entry: u32, edits: &Edits) -> Option<ShownList> {
+    pub(crate) fn list_of(&self, entry: u32, edits: &Edits) -> Option<ShownList> {
         let key = creaturespells::key(entry);
         if let Some(Some(list)) = self.lists.get(&entry) {
             return Some(ShownList {
@@ -462,18 +462,18 @@ impl Behaviour {
     }
 
     /// How many creature templates name a list, once read.
-    pub fn users_of(&self, entry: u32, edits: &Edits) -> Option<u32> {
+    pub(crate) fn users_of(&self, entry: u32, edits: &Edits) -> Option<u32> {
         let from_database = self.users.get(&entry)?;
         Some(crate::server::fresh::naming(from_database, edits, "spell_list_id", entry).len() as u32)
     }
 
     /// Create a list at an entry, with nothing in it.
-    pub fn create_list(&mut self, session: &mut EditSession, entry: u32, name: &str, now: f64) {
+    pub(crate) fn create_list(&mut self, session: &mut EditSession, entry: u32, name: &str, now: f64) {
         self.create_list_as(session, &List::new(entry, name), "Create spell list", now);
     }
 
     /// Create a list as given: a new list, or a copy of one.
-    pub fn create_list_as(&mut self, session: &mut EditSession, list: &List, label: &'static str, now: f64) {
+    pub(crate) fn create_list_as(&mut self, session: &mut EditSession, list: &List, label: &'static str, now: f64) {
         let key = list.key();
         let subject = format!("{} {}", creaturespells::TABLE, key.text());
         let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
@@ -489,7 +489,7 @@ impl Behaviour {
     }
 
     /// Set one column of a list.
-    pub fn set_list(
+    pub(crate) fn set_list(
         &mut self,
         session: &mut EditSession,
         shown: &ShownList,
@@ -507,7 +507,7 @@ impl Behaviour {
     /// The next entry a new list may take: one above the highest the table
     /// holds and the highest this project creates, once the table's has been
     /// read.
-    pub fn next_list_entry(&self, session: &EditSession) -> Option<u32> {
+    pub(crate) fn next_list_entry(&self, session: &EditSession) -> Option<u32> {
         let database = *self.max_ids.get(creaturespells::TABLE)?;
         let created = session
             .rows.edits
@@ -522,7 +522,7 @@ impl Behaviour {
     // --- scripts --------------------------------------------------------
 
     /// Open the script window on one script.
-    pub fn open_script(&mut self, table: &'static str, id: u32) {
+    pub(crate) fn open_script(&mut self, table: &'static str, id: u32) {
         if self.script != Some((table, id)) {
             self.unfolded_steps.clear();
         }
@@ -531,14 +531,14 @@ impl Behaviour {
     }
 
     /// Whether a script's rows are in hand.
-    pub fn script_read(&self, table: &'static str, id: u32) -> bool {
+    pub(crate) fn script_read(&self, table: &'static str, id: u32) -> bool {
         self.scripts.contains_key(&(table, id))
     }
 
     /// A script as the window draws it: the project's reading over the
     /// database's. `None` while the database's is not in hand and the project
     /// says nothing.
-    pub fn script_of(&self, table: &'static str, id: u32, session: &EditSession) -> Option<Script> {
+    pub(crate) fn script_of(&self, table: &'static str, id: u32, session: &EditSession) -> Option<Script> {
         if let Some(script) = session.rows.scripts.get(table, id) {
             return Some(script);
         }
@@ -547,13 +547,13 @@ impl Behaviour {
     }
 
     /// Whether the database holds rows of a script, once read.
-    pub fn script_in_database(&self, table: &'static str, id: u32) -> bool {
+    pub(crate) fn script_in_database(&self, table: &'static str, id: u32) -> bool {
         self.scripts.get(&(table, id)).is_some_and(|rows| !rows.is_empty())
     }
 
     /// Set what the project says a script is. A script equal to the
     /// database's takes the claim off.
-    pub fn set_script(&mut self, session: &mut EditSession, script: &Script, now: f64) {
+    pub(crate) fn set_script(&mut self, session: &mut EditSession, script: &Script, now: f64) {
         let subject = format!("{} {}", script.table, script.id);
         let gesture = crate::server::store::Gesture { label: "Edit script", subject: &subject, now };
         let same = self
@@ -569,7 +569,7 @@ impl Behaviour {
     /// The next id a new script of a table may take: one above the highest
     /// the table holds and the highest this project claims, once the table's
     /// has been read.
-    pub fn next_script_id(&self, table: &'static str, session: &EditSession) -> Option<u32> {
+    pub(crate) fn next_script_id(&self, table: &'static str, session: &EditSession) -> Option<u32> {
         self.new_script_id(table, None, &session.rows.scripts, &[])
     }
 
@@ -605,13 +605,13 @@ impl Behaviour {
     // --- texts ----------------------------------------------------------
 
     /// Whether a `broadcast_text` row has been asked for.
-    pub fn text_read(&self, entry: u32) -> bool {
+    pub(crate) fn text_read(&self, entry: u32) -> bool {
         self.texts.contains_key(&entry)
     }
 
     /// One text, the database's with the project's over it, or `None` when
     /// neither has it.
-    pub fn text_of(&self, entry: u32, edits: &Edits) -> Option<ShownText> {
+    pub(crate) fn text_of(&self, entry: u32, edits: &Edits) -> Option<ShownText> {
         let key = broadcast::key(entry);
         if let Some(Some(text)) = self.texts.get(&entry) {
             let mut shown = text.clone();
@@ -631,13 +631,13 @@ impl Behaviour {
     }
 
     /// What a text says, with the project's edits, once read.
-    pub fn said(&self, entry: u32, edits: &Edits) -> Option<String> {
+    pub(crate) fn said(&self, entry: u32, edits: &Edits) -> Option<String> {
         self.text_of(entry, edits).map(|shown| shown.text.said().to_string())
     }
 
     /// Create a text at the next free entry, saying `said`. Answers the entry,
     /// or `None` while the table's highest entry is read.
-    pub fn create_text(&mut self, session: &mut EditSession, said: &str, chat_type: u32, now: f64) -> Option<u32> {
+    pub(crate) fn create_text(&mut self, session: &mut EditSession, said: &str, chat_type: u32, now: f64) -> Option<u32> {
         let entry = self.next_text_entry(session)?;
         let text = Text { chat_type, ..Text::new(entry, said) };
         let key = text.key();
@@ -657,7 +657,7 @@ impl Behaviour {
 
     /// Set one column of a text. The two text columns take the text itself
     /// and are stored as SQL literals.
-    pub fn set_text(&mut self, session: &mut EditSession, shown: &ShownText, column: &'static str, value: String, now: f64) {
+    pub(crate) fn set_text(&mut self, session: &mut EditSession, shown: &ShownText, column: &'static str, value: String, now: f64) {
         let literal = |text: String| match matches!(column, "male_text" | "female_text") {
             true => vale_mangos::sql::text(&text),
             false => text,
@@ -666,16 +666,10 @@ impl Behaviour {
         set_column(session, broadcast::TABLE, &shown.text.key(), column, literal(value), held, "Edit text", now);
     }
 
-    /// Remove a text: a `Delete` claim for one in the database, and the claim
-    /// taken back for one this project added.
-    pub fn remove_text(&mut self, session: &mut EditSession, shown: &ShownText, now: f64) {
-        remove_row(session, broadcast::TABLE, &shown.text.key(), shown.in_database.is_some(), "Remove text", now);
-    }
-
     /// The next entry a new text may take: one above the highest the table
     /// holds and the highest this project creates, once the table's has been
     /// read.
-    pub fn next_text_entry(&self, session: &EditSession) -> Option<u32> {
+    pub(crate) fn next_text_entry(&self, session: &EditSession) -> Option<u32> {
         let database = *self.max_ids.get(broadcast::TABLE)?;
         let created = session
             .rows.edits
@@ -688,12 +682,12 @@ impl Behaviour {
     }
 
     /// A list the cache holds, as the database has it.
-    pub fn cached_list(&self, entry: u32) -> Option<&List> {
+    pub(crate) fn cached_list(&self, entry: u32) -> Option<&List> {
         self.lists.get(&entry).and_then(Option::as_ref)
     }
 
     /// Forget every read, which the next frame reads again.
-    pub fn forget(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.events.clear();
         self.lists.clear();
         self.scripts.clear();
@@ -703,7 +697,7 @@ impl Behaviour {
     }
 
     /// Why the last read answered nothing, when it answered nothing.
-    pub fn trouble(&self) -> Option<&String> {
+    pub(crate) fn trouble(&self) -> Option<&String> {
         self.reads.trouble()
     }
 
@@ -1209,7 +1203,7 @@ fn on_the_command_line(
     behaviour.scripted_done = true;
 }
 
-pub struct BehaviourToolPlugin;
+pub(crate) struct BehaviourToolPlugin;
 
 impl Plugin for BehaviourToolPlugin {
     fn build(&self, app: &mut App) {

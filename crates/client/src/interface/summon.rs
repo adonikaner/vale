@@ -32,11 +32,11 @@ use crate::world::session::Session;
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SummonAnswer(pub SummonRequest);
+pub(crate) struct SummonAnswer(pub(crate) SummonRequest);
 
 /// **The offer on the table**, if any.
 #[derive(Resource, Default, Debug)]
-pub struct Summon {
+pub(crate) struct Summon {
     /// The request, and the deadline in the interface's own clock
     /// (`GetTime()`'s, which is `Time::elapsed_secs_f64`).
     pending: Option<(SummonRequest, f64)>,
@@ -44,7 +44,7 @@ pub struct Summon {
 
 impl Summon {
     /// Who is asking, if anybody.
-    pub fn summoner(&self) -> Option<u64> {
+    pub(crate) fn summoner(&self) -> Option<u64> {
         self.pending.map(|(request, _)| request.summoner)
     }
 
@@ -56,13 +56,13 @@ impl Summon {
     /// **Whole seconds until the offer lapses**, 0 after it or with none —
     /// `GetSummonConfirmTimeLeft`, which divides the remaining
     /// milliseconds by 1,000 and floors.
-    pub fn seconds_left(&self, now: f64) -> u32 {
+    pub(crate) fn seconds_left(&self, now: f64) -> u32 {
         self.pending
             .map_or(0, |(_, deadline)| (deadline - now).max(0.0).floor() as u32)
     }
 }
 
-pub struct SummonPlugin;
+pub(crate) struct SummonPlugin;
 
 impl Plugin for SummonPlugin {
     fn build(&self, app: &mut App) {

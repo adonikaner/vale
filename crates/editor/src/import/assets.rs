@@ -55,17 +55,17 @@ use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
 /// Where a ground texture goes, and the folder under it the dialog starts in.
-pub const GROUND_ROOT: &str = "Tileset\\";
-pub const GROUND_FOLDER: &str = "Tileset\\Custom\\";
+pub(crate) const GROUND_ROOT: &str = "Tileset\\";
+pub(crate) const GROUND_FOLDER: &str = "Tileset\\Custom\\";
 /// Where an icon goes.
-pub const ICON_FOLDER: &str = "Interface\\Icons\\";
+pub(crate) const ICON_FOLDER: &str = "Interface\\Icons\\";
 /// Where any other texture starts.
-pub const OTHER_FOLDER: &str = "Textures\\Custom\\";
+pub(crate) const OTHER_FOLDER: &str = "Textures\\Custom\\";
 
 /// What an imported texture is for. It decides where the texture is written,
 /// how large it is and which files are written. See the module comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Purpose {
+pub(crate) enum Purpose {
     /// Ground, painted with the texture tool: under `Tileset\`, as a pair with
     /// its `_s` gloss file, at most 256x256.
     Ground,
@@ -81,9 +81,9 @@ pub enum Purpose {
 impl Purpose {
     /// The purposes the dialog offers a choice between. A field's import is
     /// its field's.
-    pub const OFFERED: [Purpose; 3] = [Purpose::Ground, Purpose::Icon, Purpose::Other];
+    pub(crate) const OFFERED: [Purpose; 3] = [Purpose::Ground, Purpose::Icon, Purpose::Other];
 
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Purpose::Ground => "Ground texture",
             Purpose::Icon => "Icon",
@@ -93,7 +93,7 @@ impl Purpose {
     }
 
     /// One line on what it is for and what is written.
-    pub fn hint(self) -> &'static str {
+    pub(crate) fn hint(self) -> &'static str {
         match self {
             Purpose::Ground => "Painted on the terrain with the texture tool. Written as the \
                                 texture and its _s gloss file, as the game's ground is.",
@@ -107,7 +107,7 @@ impl Purpose {
 
     /// The side the purpose's shipped textures are at most, which an import
     /// is scaled down to unless the dialog says otherwise.
-    pub fn largest(self) -> Option<u32> {
+    pub(crate) fn largest(self) -> Option<u32> {
         match self {
             Purpose::Ground => Some(GROUND_SIDE),
             Purpose::Icon => Some(ICON_SIDE),
@@ -116,7 +116,7 @@ impl Purpose {
     }
 
     /// What a texture at `vpath` is for, from its folder.
-    pub fn of_path(vpath: &str) -> Purpose {
+    pub(crate) fn of_path(vpath: &str) -> Purpose {
         let lower = vpath.replace('/', "\\").to_ascii_lowercase();
         if lower.starts_with("tileset\\") {
             Purpose::Ground
@@ -131,21 +131,21 @@ impl Purpose {
 /// A form field an import was asked for by, which is set to the imported
 /// texture's name once it is written.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldTarget {
-    pub table: String,
-    pub record: usize,
-    pub field: usize,
+pub(crate) struct FieldTarget {
+    pub(crate) table: String,
+    pub(crate) record: usize,
+    pub(crate) field: usize,
     /// The end of the file name the field leaves off, or nothing. A body
     /// texture's field names `Cloth_A_01Black_Sleeve_AU` and the file is
     /// `Cloth_A_01Black_Sleeve_AU_U.blp`, the `_U` for either body.
-    pub suffix: &'static str,
+    pub(crate) suffix: &'static str,
 }
 
 impl FieldTarget {
     /// The file name an import for this field is written under: `name` with
     /// [`Self::suffix`], unless it already ends in one of the three a body
     /// texture can.
-    pub fn file_name(&self, name: &str) -> String {
+    pub(crate) fn file_name(&self, name: &str) -> String {
         let lower = name.to_ascii_lowercase();
         let suffixed = ["_u", "_m", "_f"].iter().any(|end| lower.ends_with(end));
         match self.suffix.is_empty() || suffixed {
@@ -156,7 +156,7 @@ impl FieldTarget {
 
     /// What the field is set to for a texture written as `file`: the name
     /// without its suffix, for a field that leaves one off.
-    pub fn field_text(&self, file: &str) -> String {
+    pub(crate) fn field_text(&self, file: &str) -> String {
         if self.suffix.is_empty() {
             return file.to_string();
         }
@@ -170,14 +170,14 @@ impl FieldTarget {
 }
 
 /// The largest side of any ground texture the archives ship.
-pub const GROUND_SIDE: u32 = 256;
+pub(crate) const GROUND_SIDE: u32 = 256;
 /// The side of every icon the archives ship.
-pub const ICON_SIDE: u32 = 64;
+pub(crate) const ICON_SIDE: u32 = 64;
 
 /// What a ground texture's `_s` file carries in its alpha, which the client
 /// reads as the gloss mask: where the sun's highlight lies on the ground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Gloss {
+pub(crate) enum Gloss {
     /// No highlight: the ground is drawn matte.
     Matte,
     /// The picture's own alpha.
@@ -186,7 +186,7 @@ pub enum Gloss {
 
 /// How the dialog chooses the compression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Choice {
+pub(crate) enum Choice {
     /// [`Encoding::for_pixels`]: the least that keeps the picture's alpha.
     Auto,
     Fixed(Encoding),
@@ -194,29 +194,29 @@ pub enum Choice {
 
 /// The open Import Texture dialog.
 #[derive(Debug, Clone)]
-pub struct Import {
+pub(crate) struct Import {
     /// The picture on disk.
-    pub source: PathBuf,
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
+    pub(crate) source: PathBuf,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) rgba: Vec<u8>,
     /// What it is for. See [`Purpose`].
-    pub purpose: Purpose,
+    pub(crate) purpose: Purpose,
     /// The archive folder it is written into, ending in a backslash. Under
     /// `Tileset\` for a ground texture and `Interface\Icons\` for an icon;
     /// [`Self::set_purpose`] keeps it so.
-    pub folder: String,
+    pub(crate) folder: String,
     /// The file name, without `.blp`.
-    pub name: String,
-    pub choice: Choice,
-    pub mips: bool,
+    pub(crate) name: String,
+    pub(crate) choice: Choice,
+    pub(crate) mips: bool,
     /// Resize to the next powers of two when a side is not one.
-    pub resize: bool,
+    pub(crate) resize: bool,
     /// For a ground texture, what its `_s` file's alpha is.
-    pub gloss: Gloss,
+    pub(crate) gloss: Gloss,
     /// Scale it down to its purpose's largest side ([`Purpose::largest`]).
-    pub shrink: bool,
-    pub for_field: Option<FieldTarget>,
+    pub(crate) shrink: bool,
+    pub(crate) for_field: Option<FieldTarget>,
 }
 
 impl Import {
@@ -224,7 +224,7 @@ impl Import {
     /// from its alpha, mipmaps, a resize where a side is not a power of two,
     /// and for a ground texture, the gloss from its alpha where it has one and
     /// the scale-down.
-    pub fn new(
+    pub(crate) fn new(
         source: PathBuf,
         (width, height, rgba): (u32, u32, Vec<u8>),
         folder: String,
@@ -257,7 +257,7 @@ impl Import {
     }
 
     /// Whether it is a ground texture. See the module comment.
-    pub fn ground(&self) -> bool {
+    pub(crate) fn ground(&self) -> bool {
         self.purpose == Purpose::Ground
     }
 
@@ -265,7 +265,7 @@ impl Import {
     /// a folder under `Tileset\` it already has, an icon goes to
     /// `Interface\Icons\`, and Other leaves either of those for its own
     /// folder.
-    pub fn set_purpose(&mut self, purpose: Purpose) {
+    pub(crate) fn set_purpose(&mut self, purpose: Purpose) {
         let now = Purpose::of_path(&folder_of(&self.folder));
         self.folder = match purpose {
             Purpose::Ground if now == Purpose::Ground => folder_of(&self.folder),
@@ -278,7 +278,7 @@ impl Import {
     }
 
     /// The size the texture is written at.
-    pub fn written_size(&self) -> (u32, u32) {
+    pub(crate) fn written_size(&self) -> (u32, u32) {
         let (width, height) = match self.resize {
             true => (self.width.next_power_of_two(), self.height.next_power_of_two()),
             false => (self.width, self.height),
@@ -291,7 +291,7 @@ impl Import {
 
     /// The compression the texture is written with. A ground texture's plain
     /// file is DXT1, as every shipped one is; its `_s` file is DXT3.
-    pub fn encoding(&self) -> Encoding {
+    pub(crate) fn encoding(&self) -> Encoding {
         if self.ground() {
             return Encoding::Dxt1;
         }
@@ -303,18 +303,18 @@ impl Import {
 
     /// The archive path of a ground texture's `_s` file, or `None` for any
     /// other texture.
-    pub fn gloss_vpath(&self) -> Option<String> {
+    pub(crate) fn gloss_vpath(&self) -> Option<String> {
         self.ground()
             .then(|| format!("{}{}_s.blp", folder_of(&self.folder), self.name.trim()))
     }
 
     /// The archive path it is written at.
-    pub fn vpath(&self) -> String {
+    pub(crate) fn vpath(&self) -> String {
         format!("{}{}.blp", folder_of(&self.folder), self.name.trim())
     }
 
     /// Why it cannot be written as it stands, or nothing.
-    pub fn problems(&self) -> Vec<String> {
+    pub(crate) fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
         let name = self.name.trim();
         if name.is_empty() {
@@ -354,7 +354,7 @@ impl Import {
 
     /// The files written, each archive path with its bytes: the texture, and
     /// for a ground texture its `_s` file beside it.
-    pub fn encode(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+    pub(crate) fn encode(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
         let (width, height) = self.written_size();
         let pixels = match (width, height) == (self.width, self.height) {
             true => self.rgba.clone(),
@@ -389,7 +389,7 @@ impl Import {
 
 /// The `_s` gloss file beside a ground texture at `vpath`, or `None` for a
 /// path that is not a ground texture's plain file.
-pub fn gloss_of(vpath: &str) -> Option<String> {
+pub(crate) fn gloss_of(vpath: &str) -> Option<String> {
     let lower = vpath.to_ascii_lowercase();
     let plain = Purpose::of_path(vpath) == Purpose::Ground
         && lower.ends_with(".blp")
@@ -399,7 +399,7 @@ pub fn gloss_of(vpath: &str) -> Option<String> {
 
 /// The folder part of a typed folder: backslashes, no leading separator, one
 /// trailing backslash; empty for nothing typed.
-pub fn folder_of(typed: &str) -> String {
+pub(crate) fn folder_of(typed: &str) -> String {
     let cleaned = typed.trim().replace('/', "\\");
     let cleaned = cleaned.trim_matches('\\');
     match cleaned.is_empty() {
@@ -410,7 +410,7 @@ pub fn folder_of(typed: &str) -> String {
 
 /// A picture on disk as RGBA pixels, top row first: a PNG of any colour type
 /// at 8 or 16 bits, a TGA, or a BLP's top level.
-pub fn read_picture(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+pub(crate) fn read_picture(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
     let said = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
     let extension = path
         .extension()
@@ -462,17 +462,17 @@ fn read_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 
 /// One of the project's files the workspace lists.
 #[derive(Debug, Clone)]
-pub struct Own {
+pub(crate) struct Own {
     /// Its archive path, as the project folder spells it.
-    pub vpath: String,
-    pub kind: Kind,
-    pub bytes: u64,
+    pub(crate) vpath: String,
+    pub(crate) kind: Kind,
+    pub(crate) bytes: u64,
 }
 
 /// What the workspace asked for, carried out by [`answer`] after the panel
 /// is drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Ask {
+pub(crate) enum Ask {
     /// Choose a picture with the system's file dialog, then open the import
     /// dialog on it, in `folder`, named `name` (or after the picture), for
     /// `for_field` when a form asked.
@@ -494,23 +494,23 @@ pub enum Ask {
 
 /// The workspace's state.
 #[derive(Resource, Debug, Default)]
-pub struct Assets {
+pub(crate) struct Assets {
     /// The selected file's archive path.
-    pub selected: Option<String>,
+    pub(crate) selected: Option<String>,
     /// What the search box holds.
-    pub query: String,
+    pub(crate) query: String,
     /// The open import dialog.
-    pub import: Option<Import>,
-    pub ask: Option<Ask>,
+    pub(crate) import: Option<Import>,
+    pub(crate) ask: Option<Ask>,
     /// A texture imported for a form field, and its name, for the form to
     /// write into the field. Taken by the form.
-    pub imported_for: Option<(FieldTarget, String)>,
+    pub(crate) imported_for: Option<(FieldTarget, String)>,
     /// The texture an import last wrote and what it is for, for the shell:
     /// a ground texture goes on the texture tool's brush. Taken by the shell.
-    pub imported: Option<(String, Purpose)>,
+    pub(crate) imported: Option<(String, Purpose)>,
     /// The folder the last picture was chosen from, where the file dialog
     /// opens next.
-    pub picture_dir: Option<PathBuf>,
+    pub(crate) picture_dir: Option<PathBuf>,
     /// The project's asset files and the `EditSession::files_revision` they
     /// were listed at.
     listed: Option<(u64, Vec<Own>)>,
@@ -519,7 +519,7 @@ pub struct Assets {
 impl Assets {
     /// The project's asset files: every game file but its tiles and tables,
     /// in path order, listed again when the project's files change.
-    pub fn files(&mut self, session: &EditSession) -> &[Own] {
+    pub(crate) fn files(&mut self, session: &EditSession) -> &[Own] {
         let current = self
             .listed
             .as_ref()
@@ -548,7 +548,7 @@ impl Assets {
     }
 }
 
-pub struct AssetsPlugin;
+pub(crate) struct AssetsPlugin;
 
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {

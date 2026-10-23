@@ -11,7 +11,7 @@
 //! answers from `GetTotalPlayedTime` and `GetLevelPlayedTime`.
 
 /// `SMSG_PLAYED_TIME` — `(total, this level)`, both in seconds.
-pub fn parse_played_time(body: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn parse_played_time(body: &[u8]) -> Option<(u32, u32)> {
     if body.len() < 8 {
         return None;
     }

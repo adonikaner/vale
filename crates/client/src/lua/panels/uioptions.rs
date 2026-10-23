@@ -13,6 +13,7 @@ use crate::interface::api::UnitId;
 use vale_assets::look::dress::{HIDE_CLOAK, HIDE_HELM};
 
 /// The reads this module registers, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 2] = ["ShowingCloak", "ShowingHelm"];
 
 /// What the options panel may ask. The defaults answer "shown", which is

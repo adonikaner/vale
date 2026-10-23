@@ -55,7 +55,7 @@ pub struct Reconciled {
     checked_with: u64,
 }
 
-pub struct SupersedePlugin;
+pub(crate) struct SupersedePlugin;
 
 impl Plugin for SupersedePlugin {
     fn build(&self, app: &mut App) {
@@ -98,7 +98,7 @@ fn reconcile(
     // Copy the work list out before touching the socket: `set_action_button`
     // takes this same lock, and holding it across that call is a deadlock.
     let (known, stale) = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         let known = world.spellbook.known.clone();
         // An item or a macro is not a rank of anything — the kind byte is what
         // tells the three apart, and an item entry that happens to equal a

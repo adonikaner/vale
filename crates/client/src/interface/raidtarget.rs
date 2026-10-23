@@ -41,10 +41,10 @@ use crate::world::session::Session;
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
-pub struct RaidTargetAnswer(pub RaidTargetUpdate);
+pub(crate) struct RaidTargetAnswer(pub(crate) RaidTargetUpdate);
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<RaidTargetAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<RaidTargetAnswer> {
     match event {
         PlayerEvent::RaidTargets(update) => Some(RaidTargetAnswer(update.clone())),
         _ => None,
@@ -53,7 +53,7 @@ pub fn answer_of(event: &PlayerEvent) -> Option<RaidTargetAnswer> {
 
 /// The eight icons: the guid each is on, 0 for none.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Eq)]
-pub struct RaidTargets {
+pub(crate) struct RaidTargets {
     slots: [u64; ICON_COUNT as usize],
 }
 
@@ -90,7 +90,7 @@ impl RaidTargets {
     }
 
     /// `GetRaidTargetIndex`: the icon on `guid`, 1 to 8.
-    pub fn index_of(&self, guid: u64) -> Option<u8> {
+    pub(crate) fn index_of(&self, guid: u64) -> Option<u8> {
         self.icon_of(guid).map(|icon| icon + 1)
     }
 
@@ -110,7 +110,7 @@ impl RaidTargets {
     }
 }
 
-pub struct RaidTargetPlugin;
+pub(crate) struct RaidTargetPlugin;
 
 impl Plugin for RaidTargetPlugin {
     fn build(&self, app: &mut App) {

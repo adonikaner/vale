@@ -144,10 +144,11 @@ pub const TYPE_CHEST: u32 = 3;
 
 /// A chest's `data0`: its `Lock.dbc` row, which is what makes one a gathering
 /// node.
-pub const CHEST_LOCK: usize = 0;
+#[cfg(test)]
+pub(crate) const CHEST_LOCK: usize = 0;
 
 /// A chest's `data1`: the `gameobject_loot_template` entry it is looted from.
-pub const CHEST_LOOT: usize = 1;
+pub(crate) const CHEST_LOOT: usize = 1;
 
 /// `GameObjectFlags`, from `GameObjectDefines.h:70`.
 pub const FLAGS: [Bit; 7] = [
@@ -161,7 +162,7 @@ pub const FLAGS: [Bit; 7] = [
 ];
 
 /// `GOState`, from `GameObjectDefines.h:177`: what the client draws it as.
-pub const STATES: [Value; 3] = [
+pub(crate) const STATES: [Value; 3] = [
     Value { value: 0, name: "Active (a door stands open)" },
     Value { value: 1, name: "Ready (a door stands shut)" },
     Value { value: 2, name: "Active, alternative" },
@@ -169,7 +170,7 @@ pub const STATES: [Value; 3] = [
 
 /// `SpawnFlags`, from `ObjectDefines.h:127`: one enumeration for both spawn
 /// tables, so [`crate::creature::SPAWN_FLAGS`] is the list.
-pub use crate::creature::SPAWN_FLAGS;
+pub(crate) use crate::creature::SPAWN_FLAGS;
 
 /// No and yes, for the `data` columns that are switches.
 pub use crate::schema::NO_YES;
@@ -222,10 +223,11 @@ pub const TEMPLATE_COLUMNS: [Column; 35] = [
 ];
 
 /// How many `data` columns a template has.
-pub const DATA_COLUMNS: usize = 24;
+pub(crate) const DATA_COLUMNS: usize = 24;
 
 /// The name of the `index`th data column.
-pub fn data_column(index: usize) -> Option<&'static str> {
+#[cfg(test)]
+pub(crate) fn data_column(index: usize) -> Option<&'static str> {
     const NAMES: [&str; DATA_COLUMNS] = [
         "data0", "data1", "data2", "data3", "data4", "data5", "data6", "data7", "data8", "data9",
         "data10", "data11", "data12", "data13", "data14", "data15", "data16", "data17", "data18",
@@ -589,7 +591,7 @@ pub fn lock_column(kind: u32) -> Option<usize> {
 }
 
 /// `GAMEOBJECT_TYPE_FISHINGHOLE`: a pool, whose catch is a loot set of its own.
-pub const TYPE_FISHINGHOLE: u32 = 25;
+pub(crate) const TYPE_FISHINGHOLE: u32 = 25;
 
 /// Which `data` column names a type's `gameobject_loot_template` entry,
 /// or `None` for a type the server takes no loot from.
@@ -609,7 +611,7 @@ pub fn loot_column(kind: u32) -> Option<usize> {
 /// `gameobject`'s 19 columns, in the order the table declares them, which
 /// is also the order `GameObject::SaveToDB` writes them in
 /// (`GameObject.cpp:926`).
-pub const SPAWN_COLUMNS: [Column; 19] = [
+pub(crate) const SPAWN_COLUMNS: [Column; 19] = [
     Column { name: "guid", kind: Kind::Key, group: Group::Identity, about: "the spawn's guid" },
     Column { name: "id", kind: Kind::Ref(TEMPLATE), group: Group::Identity, about: "the gameobject_template entry spawned here" },
     Column { name: "map", kind: Kind::Ref("Map"), group: Group::Place, about: "Map.dbc id of the map it spawns on" },
@@ -634,7 +636,7 @@ pub const SPAWN_COLUMNS: [Column; 19] = [
 /// The `rotation2` and `rotation3` of an upright object facing that way:
 /// `sin(o / 2)` and `cos(o / 2)`, which is what
 /// `GameObject::UpdateRotationFields` derives and `.gobject turn` saves.
-pub fn rotation_for(orientation: f32) -> (f32, f32) {
+pub(crate) fn rotation_for(orientation: f32) -> (f32, f32) {
     ((orientation / 2.0).sin(), (orientation / 2.0).cos())
 }
 
@@ -800,7 +802,7 @@ pub fn new_template(name: &str) -> Vec<Assignment> {
 
 /// `GAMEOBJECT_TYPE_GENERIC`: a model with no use, and the type a new template
 /// starts as. See [`new_template`].
-pub const TYPE_GENERIC: u32 = 5;
+pub(crate) const TYPE_GENERIC: u32 = 5;
 
 /// The tables a removed spawn takes with it, and the column each keys it
 /// by: `GameObject::DeleteFromDB`'s own list (`GameObject.cpp:1037`).
@@ -842,7 +844,7 @@ pub const TEMPLATE_REFERENCES: [crate::row::Reference; 10] = {
 /// `gameobject_scripts.id` is a spawn's guid (`ScriptMgr.cpp:1446`).
 /// `gameobject_requirement.reqGuid` is a game-object guid while `reqType` is 1,
 /// `GOBJ_REQUIRE_ACTIVE_OBJECT`, and a creature's while it is 0.
-pub const SPAWN_REFERENCES: [crate::row::Reference; 6] = {
+pub(crate) const SPAWN_REFERENCES: [crate::row::Reference; 6] = {
     use crate::row::Reference as R;
     [
         R::new("game_event_gameobject", "guid"),
@@ -861,7 +863,7 @@ pub const SPAWN_REFERENCES: [crate::row::Reference; 6] = {
 /// `LoadGameobjects` logs at every start: it despawns when it is used and never
 /// returns. vmangos' own `.gobject add` writes 25, which is `GameObject`'s
 /// in-memory default.
-pub const NEW_SPAWN_SECONDS: i32 = 300;
+pub(crate) const NEW_SPAWN_SECONDS: i32 = 300;
 
 /// Every column of a new spawn, as the values a row created here starts
 /// from. The `guid` is the key and is not among them.

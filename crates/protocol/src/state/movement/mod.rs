@@ -82,26 +82,26 @@ pub mod move_flags {
     pub const STRAFE_RIGHT: u32 = 0x0000_0008;
     pub const TURN_LEFT: u32 = 0x0000_0010;
     pub const TURN_RIGHT: u32 = 0x0000_0020;
-    pub const PITCH_UP: u32 = 0x0000_0040;
-    pub const PITCH_DOWN: u32 = 0x0000_0080;
+    pub(crate) const PITCH_UP: u32 = 0x0000_0040;
+    pub(crate) const PITCH_DOWN: u32 = 0x0000_0080;
     pub const WALK_MODE: u32 = 0x0000_0100;
     pub const LEVITATING: u32 = 0x0000_0400;
     pub const FIXED_Z: u32 = 0x0000_0800;
     pub const ROOT: u32 = 0x0000_1000;
     pub const JUMPING: u32 = 0x0000_2000;
-    pub const FALLINGFAR: u32 = 0x0000_4000;
+    pub(crate) const FALLINGFAR: u32 = 0x0000_4000;
     pub const SWIMMING: u32 = 0x0020_0000;
-    pub const SPLINE_ENABLED: u32 = 0x0040_0000;
+    pub(crate) const SPLINE_ENABLED: u32 = 0x0040_0000;
     pub const FLYING: u32 = 0x0100_0000;
-    pub const ONTRANSPORT: u32 = 0x0200_0000;
-    pub const SPLINE_ELEVATION: u32 = 0x0400_0000;
-    pub const WATERWALKING: u32 = 0x1000_0000;
+    pub(crate) const ONTRANSPORT: u32 = 0x0200_0000;
+    pub(crate) const SPLINE_ELEVATION: u32 = 0x0400_0000;
+    pub(crate) const WATERWALKING: u32 = 0x1000_0000;
     pub const SAFE_FALL: u32 = 0x2000_0000;
-    pub const HOVER: u32 = 0x4000_0000;
+    pub(crate) const HOVER: u32 = 0x4000_0000;
 
     /// `MOVEFLAG_MASK_MOVING`. The anticheat's "was it moving?" test, and the
     /// trigger for the 500 ms heartbeat requirement.
-    pub const MASK_MOVING: u32 = FORWARD
+    pub(crate) const MASK_MOVING: u32 = FORWARD
         | BACKWARD
         | STRAFE_LEFT
         | STRAFE_RIGHT
@@ -119,17 +119,17 @@ pub mod move_flags {
     /// the ascend key is "moving" by that definition and travels nowhere on the
     /// map. Keying the horizontal step on it would swim a character forward at
     /// their swim speed for as long as they held the key to go straight up.
-    pub const MASK_TRAVEL: u32 = FORWARD | BACKWARD | STRAFE_LEFT | STRAFE_RIGHT;
+    pub(crate) const MASK_TRAVEL: u32 = FORWARD | BACKWARD | STRAFE_LEFT | STRAFE_RIGHT;
 }
 
 /// Baseline run speed in yards/second (`baseMoveSpeed[MOVE_RUN]`). Only used
 /// when the server has not told us the real value yet.
-pub const BASE_RUN_SPEED: f32 = 7.0;
+pub(crate) const BASE_RUN_SPEED: f32 = 7.0;
 
 /// Downward acceleration, yards per second squared. `Movement::gravity` in
 /// `Movement/spline/util.cpp`, and the client's own number — the server carries
 /// it because it re-runs the client's fall to check it.
-pub const GRAVITY: f32 = 19.291_105_270_385_74;
+pub(crate) const GRAVITY: f32 = 19.291_105_270_385_74;
 
 /// Upward speed a jump starts with.
 ///
@@ -140,13 +140,13 @@ pub const GRAVITY: f32 = 19.291_105_270_385_74;
 /// rejected outright — `CheckSpeedHack` only measures the horizontal — but it
 /// puts the two simulations on different parabolas, and the client is the one
 /// that has to land.
-pub const JUMP_SPEED: f32 = 7.957_973_34;
+pub(crate) const JUMP_SPEED: f32 = 7.957_973_34;
 
 /// Fall speed ceilings, `Movement::terminalVelocity` and
 /// `terminalSavefallVelocity`. The second is Slow Fall / Levitate, which arrives
 /// as `MOVEFLAG_SAFE_FALL`.
-pub const TERMINAL_VELOCITY: f32 = 60.148_003;
-pub const TERMINAL_SAFE_FALL_VELOCITY: f32 = 7.0;
+pub(crate) const TERMINAL_VELOCITY: f32 = 60.148_003;
+pub(crate) const TERMINAL_SAFE_FALL_VELOCITY: f32 = 7.0;
 
 /// How far a fall has dropped after `t` seconds, given the **downward** speed it
 /// started with.
@@ -438,7 +438,7 @@ impl MovementInfo {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut w = Writer::new();
         self.write(&mut w);
         w.buf
@@ -657,7 +657,7 @@ pub struct MoveEvent {
 /// the wrong opcode, so a change of two flags is two packets. Stops are emitted
 /// before starts, which is both what the real client does and what keeps
 /// "turn around on the spot" (`FORWARD` -> `BACKWARD`) legal.
-pub fn transitions(old: u32, new: u32) -> Vec<MoveEvent> {
+pub(crate) fn transitions(old: u32, new: u32) -> Vec<MoveEvent> {
     use move_flags::*;
     let mut events = Vec::new();
     let mut cur = old;
@@ -878,7 +878,7 @@ const MAX_PIECES: u32 = 64;
 /// vmangos states the same rule from the other side —
 /// `GetMinSwimDepth() { return GetCollisionHeight() * 0.75f; }` with the comment
 /// *"client switches to swim animation at this depth"* — so the two agree.
-pub const SWIM_DEPTH_FRACTION: f32 = 0.75;
+pub(crate) const SWIM_DEPTH_FRACTION: f32 = 0.75;
 
 /// The height the fraction above is *of*, and **the one number here that is not
 /// this character's own.**
@@ -891,7 +891,7 @@ pub const SWIM_DEPTH_FRACTION: f32 = 0.75;
 /// than a human therefore begins swimming a few inches early or late; it is
 /// stated here rather than hidden because the shape of the rule (a fraction of
 /// the swimmer's height) is the reference's and only the height is a stand-in.
-pub const COLLISION_HEIGHT: f32 = 2.0;
+pub(crate) const COLLISION_HEIGHT: f32 = 2.0;
 
 /// How deep the water must be before the character swims — see
 /// [`SWIM_DEPTH_FRACTION`] and [`COLLISION_HEIGHT`].
@@ -906,7 +906,7 @@ pub const MIN_SWIM_DEPTH: f32 = COLLISION_HEIGHT * SWIM_DEPTH_FRACTION;
 /// exactly enough that a swimmer floating at the entry depth — where this client
 /// holds one — does not chatter between the two states, one packet apiece, for
 /// as long as they stay in the water.
-pub const SWIM_EXIT_HYSTERESIS: f32 = 1.0 / 36.0;
+pub(crate) const SWIM_EXIT_HYSTERESIS: f32 = 1.0 / 36.0;
 
 /// **How far off the ground [`move_flags::HOVER`] holds a unit — one yard.**
 ///
@@ -928,7 +928,7 @@ pub const SWIM_EXIT_HYSTERESIS: f32 = 1.0 / 36.0;
 /// The second site is the selection box: a hovering unit's box has
 /// its floor dropped by the same 1.0, so the thing a player clicks still reaches
 /// the ground under it.
-pub const HOVER_HEIGHT: f32 = 1.0;
+pub(crate) const HOVER_HEIGHT: f32 = 1.0;
 
 /// **What a unit with these movement flags stands on**, given the floor under it
 /// and the liquid surface over that — `None` where the client has no data at
@@ -953,7 +953,7 @@ pub const HOVER_HEIGHT: f32 = 1.0;
 /// **The liquid is the caller's to fetch or not.** It is passed rather than
 /// queried so that the observer path can skip [`Footing::liquid`] entirely for
 /// the overwhelming majority of units, which carry neither flag.
-pub fn standing_surface(flags: u32, floor: Option<f32>, liquid: Option<f32>) -> Option<f32> {
+pub(crate) fn standing_surface(flags: u32, floor: Option<f32>, liquid: Option<f32>) -> Option<f32> {
     let surface = match liquid {
         Some(water)
             if flags & move_flags::WATERWALKING != 0
@@ -1080,7 +1080,7 @@ pub fn strode(info: &MovementInfo, speeds: &Speeds, dt: f32) -> [f32; 2] {
 /// A free function beside [`strode`] because the two are one velocity split into
 /// its parts, and a caller that integrated one without the other would move a
 /// diver horizontally at their full speed.
-pub fn climbed(info: &MovementInfo, speeds: &Speeds, dt: f32) -> f32 {
+pub(crate) fn climbed(info: &MovementInfo, speeds: &Speeds, dt: f32) -> f32 {
     if !info.has(move_flags::SWIMMING) {
         return 0.0;
     }
@@ -1290,7 +1290,7 @@ impl Mover {
     ///
     /// Answers whether the world position changed, which the caller uses to
     /// decide whether the server has to be told sooner than the heartbeat.
-    pub fn carry_platform(&mut self, under: Option<Platform>) -> bool {
+    pub(crate) fn carry_platform(&mut self, under: Option<Platform>) -> bool {
         let Some(platform) = under else {
             // **A transfer in flight is not a step ashore.** The deck was kept
             // across a far teleport on the server's own say-so
@@ -1419,7 +1419,7 @@ impl Mover {
     /// stride. A character who walked off the deck is dropped by the next
     /// tick's query, one step later, which is the tick they would have been
     /// dropped on anyway.
-    pub fn stow_platform(&mut self) {
+    pub(crate) fn stow_platform(&mut self) {
         // **Frozen across a transfer.** Between the teleport and the first
         // placement on the new map every world position is about somewhere
         // else — the offset the packet restated is the only truth, and
@@ -1519,7 +1519,7 @@ impl Mover {
     /// ComputePath`) and nothing on the wire states it — the server sends a path
     /// and a duration, and those two *are* the speed. Reading the run speed
     /// instead draws a character sprinting a third as fast as they are moving.
-    pub fn travel_speed(&self) -> f32 {
+    pub(crate) fn travel_speed(&self) -> f32 {
         if let Some(ride) = self.ride.as_ref() {
             return ride.spline.speed();
         }
@@ -1622,11 +1622,11 @@ impl Mover {
     /// Has the facing drifted far enough from the last one sent to be worth a
     /// `MSG_MOVE_SET_FACING`? A hundredth of a radian is well under what any
     /// observer could see, and keeps idle turning from flooding the socket.
-    pub fn facing_changed(&self) -> bool {
+    pub(crate) fn facing_changed(&self) -> bool {
         (self.info.position.orientation - self.sent_orientation).abs() > 0.01
     }
 
-    pub fn mark_sent(&mut self) {
+    pub(crate) fn mark_sent(&mut self) {
         self.sent_orientation = self.info.position.orientation;
         self.sent_ferry = self.ferry.map(|ferry| ferry.guid);
     }
@@ -1655,7 +1655,7 @@ impl Mover {
     /// The first of those is *"the ship vanished and left me in the sea"*; the
     /// second is *"I slide about the deck and my feet shuffle"*, which is a
     /// correction and a carry fighting each other forty times a second.
-    pub fn ferry_changed(&self) -> bool {
+    pub(crate) fn ferry_changed(&self) -> bool {
         self.ferry.map(|ferry| ferry.guid) != self.sent_ferry
     }
 
@@ -1687,7 +1687,7 @@ impl Mover {
     /// teleported me far out into the middle of nowhere"*.
     ///
     /// A no-op when there is no ferry, which is every teleport but this one.
-    pub fn transfer_aboard(&mut self, offset: Position) {
+    pub(crate) fn transfer_aboard(&mut self, offset: Position) {
         let Some(ferry) = self.ferry.as_mut() else {
             return;
         };
@@ -1721,7 +1721,7 @@ impl Mover {
     /// told goes with the ferry: a no-flag packet fired into that window would
     /// land us in the sea at exactly the moment the boat carried us across it.
     /// The re-boarding a tick later is still an edge and is still reported.
-    pub fn disembark(&mut self) {
+    pub(crate) fn disembark(&mut self) {
         if self.ferry.take().is_some() {
             self.info.flags &= !move_flags::ONTRANSPORT;
             self.info.transport = None;
@@ -1778,7 +1778,7 @@ impl Mover {
     /// comment saying "notice the - sign" — so a knock *up* is a negative wire
     /// value, and the up-positive simulation negates it while the jump block
     /// keeps the wire's own number for the ack.
-    pub fn knock_back(&mut self, cos_angle: f32, sin_angle: f32, xy_speed: f32, z_speed: f32) {
+    pub(crate) fn knock_back(&mut self, cos_angle: f32, sin_angle: f32, xy_speed: f32, z_speed: f32) {
         self.air = Some(Airborne {
             start: [
                 self.info.position.x,
@@ -1882,7 +1882,7 @@ impl Mover {
     }
 
     /// Is the server driving this character right now?
-    pub fn is_riding(&self) -> bool {
+    pub(crate) fn is_riding(&self) -> bool {
         self.ride.is_some()
     }
 
@@ -1892,7 +1892,7 @@ impl Mover {
     /// `IsBeingTeleported()`, so an ack sent across a relocation is thrown away
     /// and the ride's own path leads somewhere on a map we have left. The
     /// relocation *is* the hand-back.
-    pub fn abandon_ride(&mut self) {
+    pub(crate) fn abandon_ride(&mut self) {
         if self.ride.take().is_some() {
             self.stand_down(SplineFacing::Travel, None);
         }
@@ -1900,7 +1900,7 @@ impl Mover {
     }
 
     /// The spline id an ended ride owes the server, taken once.
-    pub fn take_finished_ride(&mut self) -> Option<u32> {
+    pub(crate) fn take_finished_ride(&mut self) -> Option<u32> {
         self.finished_ride.take()
     }
 
@@ -2099,7 +2099,7 @@ impl Mover {
     /// the wire and `MaNGOS::IsValidMapCoord` wants it finite; and it is stored
     /// whatever the state, so that the first packet after entering the water
     /// carries the pitch the player was already looking at rather than zero.
-    pub fn set_pitch(&mut self, pitch: f32) {
+    pub(crate) fn set_pitch(&mut self, pitch: f32) {
         use std::f32::consts::FRAC_PI_2;
         self.info.pitch = pitch.clamp(-FRAC_PI_2 + 0.01, FRAC_PI_2 - 0.01);
     }
@@ -2629,7 +2629,7 @@ pub fn shortest_turn(a: f32, b: f32) -> f32 {
 /// broadcast. Anything else that merely *starts* with `MSG_MOVE_` has a
 /// different body — `MSG_MOVE_TIME_SKIPPED` is a guid and a `u32`, and reading
 /// it as a movement block yields a plausible, silently wrong position.
-pub fn is_broadcast_movement(opcode: Opcode) -> bool {
+pub(crate) fn is_broadcast_movement(opcode: Opcode) -> bool {
     use Opcode::*;
     matches!(
         opcode,
@@ -2692,7 +2692,7 @@ pub fn is_broadcast_movement(opcode: Opcode) -> bool {
 }
 
 /// Parse one of the [`is_broadcast_movement`] packets: whose movement, and what.
-pub fn parse_movement_broadcast(body: &[u8]) -> Option<(u64, MovementInfo)> {
+pub(crate) fn parse_movement_broadcast(body: &[u8]) -> Option<(u64, MovementInfo)> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     let info = MovementInfo::read(&mut r)?;
@@ -2784,23 +2784,23 @@ impl MonsterMove {
 /// `enum MonsterMoveType` from `packet_builder.cpp`.
 mod monster_move_type {
     pub const NORMAL: u8 = 0;
-    pub const STOP: u8 = 1;
-    pub const FACING_SPOT: u8 = 2;
-    pub const FACING_TARGET: u8 = 3;
-    pub const FACING_ANGLE: u8 = 4;
+    pub(crate) const STOP: u8 = 1;
+    pub(crate) const FACING_SPOT: u8 = 2;
+    pub(crate) const FACING_TARGET: u8 = 3;
+    pub(crate) const FACING_ANGLE: u8 = 4;
 }
 
 /// `MoveSplineFlag`, the subset this client reads. `Mask_CatmullRom = Flying`.
-pub mod spline_flags {
+pub(crate) mod spline_flags {
     /// `MoveSplineFlag::Falling` — *"Affects elevation computation"*. The z along
     /// such a spline is an arc rather than the path's own height, so it is the
     /// one server-driven move whose vertical must not be touched. Nothing here
     /// computes the arc yet; what the flag is read for is to keep
     /// [`super::Spline::grounded_z`] off it.
-    pub const FALLING: u32 = 0x0000_0002;
+    pub(crate) const FALLING: u32 = 0x0000_0002;
     pub const FLYING: u32 = 0x0000_0200;
-    pub const CYCLIC: u32 = 0x0010_0000;
-    pub const CATMULLROM: u32 = FLYING;
+    pub(crate) const CYCLIC: u32 = 0x0010_0000;
+    pub(crate) const CATMULLROM: u32 = FLYING;
 }
 
 /// One `appendPackXYZ`: a `u32` holding three signed fixed-point offsets in
@@ -2826,14 +2826,14 @@ fn unpack_offset(packed: u32) -> [f32; 3] {
     ]
 }
 
-pub fn parse_monster_move(body: &[u8]) -> Option<MonsterMove> {
+pub(crate) fn parse_monster_move(body: &[u8]) -> Option<MonsterMove> {
     parse_monster_move_inner(body, false)
 }
 
 /// `SMSG_MONSTER_MOVE_TRANSPORT` — the same body with the transport's packed
 /// guid inserted after the unit's, and every coordinate after it in that
 /// transport's own frame. See [`MonsterMove::transport`].
-pub fn parse_monster_move_transport(body: &[u8]) -> Option<MonsterMove> {
+pub(crate) fn parse_monster_move_transport(body: &[u8]) -> Option<MonsterMove> {
     parse_monster_move_inner(body, true)
 }
 
@@ -3035,7 +3035,7 @@ pub struct Spline {
     /// because the boat moves: a path converted once is right for one instant
     /// and drifts for the rest of the leg, which for a zeppelin is the length
     /// of a continent. See [`Self::in_world`].
-    pub on_transport: Option<u64>,
+    pub(crate) on_transport: Option<u64>,
 }
 
 /// How far ahead [`Spline::velocity`] looks to measure itself.
@@ -3294,7 +3294,7 @@ impl Spline {
     /// that would show as one creature in a hundred drifting, which is the
     /// worst kind. If the cost ever shows up it will show up as
     /// `SessionStatus::stalls` moving, and that is the number to look at first.
-    pub fn grounded_z(&self, world: &dyn Footing, drawn: [f32; 3]) -> Option<f32> {
+    pub(crate) fn grounded_z(&self, world: &dyn Footing, drawn: [f32; 3]) -> Option<f32> {
         if self.flying || self.falling {
             return None;
         }
@@ -3351,13 +3351,13 @@ impl Spline {
 /// The counter has to come back in the matching `CMSG_FORCE_*_ACK` or the
 /// server leaves a pending movement change outstanding.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SpeedChange {
+pub(crate) struct SpeedChange {
     pub guid: u64,
     pub counter: u32,
     pub speed: f32,
 }
 
-pub fn parse_speed_change(body: &[u8]) -> Option<SpeedChange> {
+pub(crate) fn parse_speed_change(body: &[u8]) -> Option<SpeedChange> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if !r.has(8) {
@@ -3395,7 +3395,7 @@ pub struct Teleport {
     pub info: MovementInfo,
 }
 
-pub fn parse_teleport(body: &[u8]) -> Option<Teleport> {
+pub(crate) fn parse_teleport(body: &[u8]) -> Option<Teleport> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if !r.has(4) {
@@ -3425,14 +3425,14 @@ pub fn parse_teleport(body: &[u8]) -> Option<Teleport> {
 /// encoded — see [`crate::socket::world::WorldSession::set_active_mover`],
 /// which is where the consequence of not sending one is written down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClientControl {
+pub(crate) struct ClientControl {
     pub guid: u64,
     /// Whether the keys may move it at all. False for a feared or confused
     /// character, whose body the server is walking itself.
-    pub allow_move: bool,
+    pub(crate) allow_move: bool,
 }
 
-pub fn parse_client_control(body: &[u8]) -> Option<ClientControl> {
+pub(crate) fn parse_client_control(body: &[u8]) -> Option<ClientControl> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if guid == 0 || !r.has(1) {
@@ -3447,7 +3447,7 @@ pub fn parse_client_control(body: &[u8]) -> Option<ClientControl> {
 /// `recvData >> guid` on an `ObjectGuid`, which is `uint64` in 1.12 — even
 /// though the packet that arrived carried a packed one. The asymmetry is the
 /// server's, not a mistake here.
-pub fn teleport_ack_body(guid: u64, counter: u32, time: u32) -> Vec<u8> {
+pub(crate) fn teleport_ack_body(guid: u64, counter: u32, time: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid).u32(counter).u32(time);
     w.buf
@@ -3460,7 +3460,7 @@ pub fn teleport_ack_body(guid: u64, counter: u32, time: u32) -> Vec<u8> {
 /// counter is what retires the server's pending change; without it the change
 /// stays pending forever and the anticheat goes on measuring us against a speed
 /// we are no longer using.
-pub fn speed_change_ack_body(
+pub(crate) fn speed_change_ack_body(
     guid: u64,
     counter: u32,
     info: &MovementInfo,
@@ -3496,7 +3496,7 @@ pub fn speed_change_ack_body(
 /// "reject" — *"Since we dont require client confirmation for flag changes
 /// during move splines, it's possible for client to not have yet processed the
 /// changes when the move spline expires."*
-pub fn spline_done_body(info: &MovementInfo, spline_id: u32) -> Vec<u8> {
+pub(crate) fn spline_done_body(info: &MovementInfo, spline_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     info.write(&mut w);
     w.u32(spline_id).f32(1.0);
@@ -3519,7 +3519,7 @@ pub fn spline_done_body(info: &MovementInfo, spline_id: u32) -> Vec<u8> {
 /// transport's out-of-range and create blocks to a player it has just boarded,
 /// which is the only thing that restates `UPDATEFLAG_TRANSPORT`'s path-progress
 /// word after login. See `SessionLoop::tick_movement`, which is its one caller.
-pub fn time_skipped_body(guid: u64, lag_ms: u32) -> Vec<u8> {
+pub(crate) fn time_skipped_body(guid: u64, lag_ms: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid).u32(lag_ms);
     w.buf
@@ -3587,13 +3587,13 @@ impl FlagChange {
     /// One extra `u32` on a root ack pushes nothing off the end — the server
     /// simply ignores the tail — but a missing one on a water-walk ack reads
     /// garbage, so the asymmetry is stated rather than papered over.
-    pub fn apply_field(&self) -> bool {
+    pub(crate) fn apply_field(&self) -> bool {
         self.flag != move_flags::ROOT
     }
 }
 
 /// `packedGuid` + `u32 movementCounter`, which is the whole body of all six.
-pub fn parse_flag_change(body: &[u8]) -> Option<(u64, u32)> {
+pub(crate) fn parse_flag_change(body: &[u8]) -> Option<(u64, u32)> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if !r.has(4) {
@@ -3603,7 +3603,7 @@ pub fn parse_flag_change(body: &[u8]) -> Option<(u64, u32)> {
 }
 
 /// The reply to one of the six. `apply` is `None` for the root pair.
-pub fn flag_change_ack_body(
+pub(crate) fn flag_change_ack_body(
     guid: u64,
     counter: u32,
     info: &MovementInfo,
@@ -3630,7 +3630,7 @@ pub fn flag_change_ack_body(
 /// and lands on `CHEAT_TYPE_PENDING_ACK_DELAY` exactly as if we had never
 /// answered.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct KnockBack {
+pub(crate) struct KnockBack {
     pub guid: u64,
     pub counter: u32,
     pub cos_angle: f32,
@@ -3639,7 +3639,7 @@ pub struct KnockBack {
     pub z_speed: f32,
 }
 
-pub fn parse_knock_back(body: &[u8]) -> Option<KnockBack> {
+pub(crate) fn parse_knock_back(body: &[u8]) -> Option<KnockBack> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if !r.has(4 + 16) {
@@ -3657,7 +3657,7 @@ pub fn parse_knock_back(body: &[u8]) -> Option<KnockBack> {
 
 /// The reply to a knockback: `u64 guid, u32 counter, MovementInfo` — where the
 /// movement info's jump block is what carries the four numbers back.
-pub fn knock_back_ack_body(guid: u64, counter: u32, info: &MovementInfo) -> Vec<u8> {
+pub(crate) fn knock_back_ack_body(guid: u64, counter: u32, info: &MovementInfo) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid).u32(counter);
     info.write(&mut w);
@@ -3682,12 +3682,12 @@ pub fn knock_back_ack_body(guid: u64, counter: u32, info: &MovementInfo) -> Vec<
 /// client that files this under "unhandled opcodes" is left standing in a world
 /// that no longer contains it, receiving nothing, with no error anywhere.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NewWorld {
+pub(crate) struct NewWorld {
     pub map_id: u32,
     pub position: Position,
 }
 
-pub fn parse_new_world(body: &[u8]) -> Option<NewWorld> {
+pub(crate) fn parse_new_world(body: &[u8]) -> Option<NewWorld> {
     let mut r = Reader::new(body);
     if !r.has(20) {
         return None;
@@ -3758,7 +3758,7 @@ pub struct LoginVerifyWorld {
     pub position: Position,
 }
 
-pub fn parse_login_verify_world(body: &[u8]) -> Option<LoginVerifyWorld> {
+pub(crate) fn parse_login_verify_world(body: &[u8]) -> Option<LoginVerifyWorld> {
     let mut r = Reader::new(body);
     if !r.has(20) {
         return None;
@@ -3810,7 +3810,7 @@ pub struct TransferPending {
     pub transport: Option<(u32, u32)>,
 }
 
-pub fn parse_transfer_pending(body: &[u8]) -> Option<TransferPending> {
+pub(crate) fn parse_transfer_pending(body: &[u8]) -> Option<TransferPending> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;
@@ -3829,7 +3829,7 @@ pub fn parse_transfer_pending(body: &[u8]) -> Option<TransferPending> {
 
 /// Which of the six speeds an `SMSG_FORCE_*_SPEED_CHANGE` carries, and the
 /// opcode that acknowledges it. Order matches [`Speeds`].
-pub fn speed_change_slot(opcode: Opcode) -> Option<(usize, Opcode)> {
+pub(crate) fn speed_change_slot(opcode: Opcode) -> Option<(usize, Opcode)> {
     Some(match opcode {
         Opcode::SMSG_FORCE_WALK_SPEED_CHANGE => (0, Opcode::CMSG_FORCE_WALK_SPEED_CHANGE_ACK),
         Opcode::SMSG_FORCE_RUN_SPEED_CHANGE => (1, Opcode::CMSG_FORCE_RUN_SPEED_CHANGE_ACK),
@@ -3869,7 +3869,7 @@ pub fn speed_change_slot(opcode: Opcode) -> Option<(usize, Opcode)> {
 /// deliberately absent: `moveTypeToOpcode` names them for no build, and
 /// `Opcodes.cpp` files them under `Handle_NULL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpeedBroadcast {
+pub(crate) enum SpeedBroadcast {
     /// `MSG_MOVE_SET_*_SPEED` — packed guid, a whole movement block, then the
     /// speed. Sent about a **player-controlled** unit whose spline has
     /// finalised, and the block is deliberately part of it:
@@ -3886,7 +3886,7 @@ pub enum SpeedBroadcast {
 
 /// Which of the six speeds one of the two observer families carries, and which
 /// family it is. Order matches [`Speeds`] and vmangos' `UnitMoveType`.
-pub fn broadcast_speed_slot(opcode: Opcode) -> Option<(usize, SpeedBroadcast)> {
+pub(crate) fn broadcast_speed_slot(opcode: Opcode) -> Option<(usize, SpeedBroadcast)> {
     use SpeedBroadcast::{Observed, Spline};
     Some(match opcode {
         Opcode::MSG_MOVE_SET_WALK_SPEED => (0, Observed),
@@ -3911,7 +3911,7 @@ pub fn broadcast_speed_slot(opcode: Opcode) -> Option<(usize, SpeedBroadcast)> {
 /// Parsing it as one ([`parse_movement_broadcast`]) succeeds and drops the
 /// trailing float on the floor, which is the failure this whole family had:
 /// the position would move and the speed it is moving at would not.
-pub fn parse_observed_speed(body: &[u8]) -> Option<(u64, MovementInfo, f32)> {
+pub(crate) fn parse_observed_speed(body: &[u8]) -> Option<(u64, MovementInfo, f32)> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     let info = MovementInfo::read(&mut r)?;
@@ -3922,7 +3922,7 @@ pub fn parse_observed_speed(body: &[u8]) -> Option<(u64, MovementInfo, f32)> {
 }
 
 /// [`SpeedBroadcast::Spline`]: packed guid and `f32 speed`, and nothing else.
-pub fn parse_spline_speed(body: &[u8]) -> Option<(u64, f32)> {
+pub(crate) fn parse_spline_speed(body: &[u8]) -> Option<(u64, f32)> {
     let mut r = Reader::new(body);
     let guid = r.packed_guid();
     if !r.has(4) {
@@ -3967,7 +3967,7 @@ pub fn parse_spline_speed(body: &[u8]) -> Option<(u64, f32)> {
 /// drawn running — see `Entity::is_swimming`, which says the same thing from
 /// the other end.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SplineFlagChange {
+pub(crate) struct SplineFlagChange {
     /// The `MOVEFLAG_` being stated.
     pub flag: u32,
     /// Set it, or clear it.
@@ -4014,7 +4014,7 @@ impl SplineFlagChange {
 /// for an empty read the same way it answers 0 for a genuine mask byte of zero,
 /// and a guid of 0 names no entity, so the empty case is refused here rather
 /// than being applied to nothing further down.
-pub fn parse_spline_flag(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_spline_flag(body: &[u8]) -> Option<u64> {
     if body.is_empty() {
         return None;
     }
@@ -4035,7 +4035,7 @@ pub fn parse_spline_flag(body: &[u8]) -> Option<u64> {
 ///
 /// Applied by [`Self::over`], which is the only place the two are combined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct FlagOverride {
+pub(crate) struct FlagOverride {
     /// The bits any of the twelve has stated, set or cleared.
     pub known: u32,
     /// …and the value it stated them at.

@@ -57,7 +57,7 @@ use crate::world::session::Session;
 
 /// One member of the party — everybody but us.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PartyMember {
+pub(crate) struct PartyMember {
     pub guid: u64,
     pub name: String,
     /// [`vale_protocol::play::group::member_status`] — 0 is offline.
@@ -81,7 +81,7 @@ pub struct PartyMember {
 }
 
 impl PartyMember {
-    pub fn online(&self) -> bool {
+    pub(crate) fn online(&self) -> bool {
         self.status & vale_protocol::play::group::member_status::ONLINE != 0
     }
     pub fn dead(&self) -> bool {
@@ -93,11 +93,9 @@ impl PartyMember {
     pub fn ghost(&self) -> bool {
         self.status & vale_protocol::play::group::member_status::GHOST != 0
     }
-    pub fn afk(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn afk(&self) -> bool {
         self.status & vale_protocol::play::group::member_status::AFK != 0
-    }
-    pub fn dnd(&self) -> bool {
-        self.status & vale_protocol::play::group::member_status::DND != 0
     }
     pub fn pvp(&self) -> bool {
         self.status & vale_protocol::play::group::member_status::PVP != 0
@@ -106,7 +104,7 @@ impl PartyMember {
 
 /// The party, as the interface reads it.
 #[derive(Resource, Debug, Default)]
-pub struct Party {
+pub(crate) struct Party {
     /// **Everybody but us**, in the order the server sent them — which is what
     /// `party1`..`party4` index. The server's own order, not sorted here: the
     /// reference does not sort it either, and a re-order would make the frames
@@ -114,10 +112,10 @@ pub struct Party {
     pub members: Vec<PartyMember>,
     /// The leader's guid — **ours when we lead**, which is the one case where a
     /// guid in this struct is not in [`Self::members`].
-    pub leader: u64,
+    pub(crate) leader: u64,
     pub loot: LootMethod,
-    pub looter: u64,
-    pub threshold: u8,
+    pub(crate) looter: u64,
+    pub(crate) threshold: u8,
     /// Whether this is a raid rather than a party — `SMSG_GROUP_LIST`'s first
     /// byte. See [`super::raid`], which is everything derived from it.
     pub raid: bool,
@@ -127,16 +125,16 @@ pub struct Party {
     /// Here rather than in [`Self::members`] because the server leaves the
     /// reader out of their own copy — this byte is the only thing that says
     /// which of the eight columns our own raid button belongs in.
-    pub own_flags: u8,
+    pub(crate) own_flags: u8,
     /// **Which raid row was last picked up or clicked**, one-based, 0 for none.
     ///
     /// `SetRaidRosterSelection(index)`, and it is pure client state: the
     /// reference stores it and nothing in 1.12's own directory reads it back. It is here because `RaidGroupButton_OnDragStart` calls it,
     /// and an unregistered name there takes the whole drag body down.
-    pub raid_selection: usize,
+    pub(crate) raid_selection: usize,
     /// **Who is asking us to join theirs**, and the whole of the popup's state.
     /// `None` when there is no invitation outstanding.
-    pub invited_by: Option<String>,
+    pub(crate) invited_by: Option<String>,
     /// Guids a `CMSG_REQUEST_PARTY_MEMBER_STATS` is already out for — see
     /// [`request_missing_stats`], which is what fills a party frame for somebody
     /// who has not moved since we joined.
@@ -169,7 +167,7 @@ impl Party {
         guid != 0 && self.members.iter().any(|member| member.guid == guid)
     }
 
-    pub fn leader_index(&self, own_guid: Option<u64>) -> usize {
+    pub(crate) fn leader_index(&self, own_guid: Option<u64>) -> usize {
         if self.leader == 0 {
             return 0;
         }
@@ -186,7 +184,7 @@ impl Party {
     ///
     /// Answers what changed, so the caller raises only the events that mean
     /// something — see [`RosterChange`].
-    pub fn apply_list(&mut self, list: &GroupList) -> RosterChange {
+    pub(crate) fn apply_list(&mut self, list: &GroupList) -> RosterChange {
         let before: Vec<(u64, u8)> = self
             .members
             .iter()
@@ -275,7 +273,7 @@ impl Party {
     /// [`StatsChange`]. The bars ride `UNIT_HEALTH` and its nine siblings like
     /// every other unit frame in the game, raised by
     /// [`crate::interface::vitals`] off the reading this leaves behind.
-    pub fn apply_stats(&mut self, stats: PartyMemberStats) -> StatsChange {
+    pub(crate) fn apply_stats(&mut self, stats: PartyMemberStats) -> StatsChange {
         self.asked.remove(&stats.guid);
         let Some(member) = self.members.iter_mut().find(|m| m.guid == stats.guid) else {
             return StatsChange::default();
@@ -297,7 +295,7 @@ impl Party {
 
     /// The party is over — [`vale_protocol::play::group::GroupList`] never says so
     /// and `SMSG_GROUP_DESTROYED` is the only thing that does.
-    pub fn destroyed(&mut self) -> bool {
+    pub(crate) fn destroyed(&mut self) -> bool {
         let had = !self.members.is_empty() || self.leader != 0;
         self.members.clear();
         self.leader = 0;
@@ -315,10 +313,10 @@ impl Party {
 /// own event names, and raising all four on every roster packet is what makes a
 /// party frame rebuild itself sixty times while somebody is AFK.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct RosterChange {
+pub(crate) struct RosterChange {
     pub members: bool,
     pub connection: bool,
-    pub leader: bool,
+    pub(crate) leader: bool,
     pub loot: bool,
     /// **The group became a raid, or stopped being one** — which no other field
     /// here can be: a Convert to Raid changes nobody's guid, nobody's status and
@@ -352,7 +350,7 @@ pub struct RosterChange {
 /// portrait and background included — several times a second for as long as
 /// anybody in the party was walking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct StatsChange {
+pub(crate) struct StatsChange {
     /// The guid was in the roster, so the reading landed somewhere. `false` for
     /// a member who left between the change and the packet — and the request
     /// mark is cleared either way, which is what keeps them from being asked
@@ -367,7 +365,7 @@ pub struct StatsChange {
 /// [`crate::world::incoming::drain_events`] on the same terms as every
 /// other subject's.
 #[derive(Message, Debug, Clone)]
-pub enum PartyAnswer {
+pub(crate) enum PartyAnswer {
     Invited(String),
     Declined(String),
     List(Box<GroupList>),
@@ -381,11 +379,7 @@ pub enum PartyAnswer {
     ReadyCheck(vale_protocol::play::group::ReadyCheck),
 }
 
-/// A verb the interface called, queued the way every other write in `lua/` is —
-/// it happens inside a handler with the world borrowed.
-pub type PartyQueue = std::rc::Rc<std::cell::RefCell<Vec<PartyVerb>>>;
-
-pub struct PartyPlugin;
+pub(crate) struct PartyPlugin;
 
 impl Plugin for PartyPlugin {
     fn build(&self, app: &mut App) {
@@ -412,7 +406,7 @@ impl Plugin for PartyPlugin {
 /// spelled out. These four really are one subject — they are the party's own
 /// event set — so the grouping is a description rather than an accident.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct PartyEvents<'w> {
+pub(crate) struct PartyEvents<'w> {
     members: MessageWriter<'w, PartyMembersChanged>,
     leader: MessageWriter<'w, PartyLeaderChanged>,
     loot: MessageWriter<'w, PartyLootMethodChanged>,

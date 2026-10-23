@@ -110,7 +110,7 @@ use crate::world::templates::TemplatesArrived;
 /// [`super::timers::MirrorTimerAnswer`] is: the queue has one reader, and a
 /// second would take part of its events.
 #[derive(Message, Debug, Clone)]
-pub enum LootAnswer {
+pub(crate) enum LootAnswer {
     /// `SMSG_LOOT_RESPONSE`: the window, or a refusal sent with the same
     /// opcode.
     Opened(Loot),
@@ -118,8 +118,8 @@ pub enum LootAnswer {
     Removed(u8),
     /// `SMSG_LOOT_CLEAR_MONEY`.
     MoneyCleared,
-    /// `SMSG_LOOT_MONEY_NOTIFY`: the player's share, in copper.
-    MoneyGained(u32),
+    /// `SMSG_LOOT_MONEY_NOTIFY`: the player's share was paid.
+    MoneyGained,
     /// `SMSG_LOOT_RELEASE_RESPONSE`: the body is closed.
     Closed(u64),
 }
@@ -144,7 +144,8 @@ impl LootWindow {
     }
 
     /// Whether the window has an answer it has not drawn yet; see [`hold`].
-    pub fn is_holding(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_holding(&self) -> bool {
         self.holding.is_some()
     }
 
@@ -174,7 +175,7 @@ impl LootWindow {
     }
 
     /// Whether the window is a fishing catch: `IsFishingLoot()`.
-    pub fn is_fishing(&self) -> bool {
+    pub(crate) fn is_fishing(&self) -> bool {
         self.open
             .as_ref()
             .and_then(|loot| loot.kind)
@@ -182,7 +183,7 @@ impl LootWindow {
     }
 }
 
-pub struct LootPlugin;
+pub(crate) struct LootPlugin;
 
 impl Plugin for LootPlugin {
     fn build(&self, app: &mut App) {
@@ -304,7 +305,7 @@ fn announce(
             // (`LOOT_MONEY_SPLIT`), which is left to the chat path rather than
             // duplicated here. This arm exists so the packet is read rather
             // than counted as unhandled.
-            LootAnswer::MoneyGained(_) => {}
+            LootAnswer::MoneyGained => {}
             LootAnswer::Closed(guid) => {
                 // Only if it names the open body. A release response for another
                 // guid is a stale answer about a window that has already been
@@ -349,7 +350,7 @@ const HOLD_LIMIT: f32 = 3.0;
 /// blank row. `LootFrame` has no event for that, so the reader calls the
 /// frame's `LootFrame_Update` directly.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LootNamesLanded;
+pub(crate) struct LootNamesLanded;
 
 /// Raise `LOOT_OPENED` once every row can be named, or once [`HOLD_LIMIT`]
 /// has passed.
@@ -387,8 +388,7 @@ fn settled(window: &LootWindow, session: &Session) -> bool {
         // With no session no answers will come, so the window is not held.
         return true;
     };
-    let world = active.live.world();
-    let world = world.lock().unwrap_or_else(|e| e.into_inner());
+    let world = active.live.read();
     loot.items
         .iter()
         .all(|item| world.items.contains_key(&item.entry) || world.unknown_items.contains(&item.entry))

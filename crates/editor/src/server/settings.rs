@@ -50,7 +50,7 @@ use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
 /// The file's name under `Edit\`.
-pub const FILE: &str = "server.txt";
+pub(crate) const FILE: &str = "server.txt";
 
 /// The key the conf path is written under.
 const CONF: &str = "mangosd";
@@ -67,7 +67,7 @@ const COPY_ARCHIVE: &str = "copy_archive_to_data";
 /// Where this machine's server is, as the panel holds it, and what the open
 /// project does with it.
 #[derive(Resource, Debug, Clone)]
-pub struct ServerSettings {
+pub(crate) struct ServerSettings {
     /// The `mangosd.conf` to read `WorldDatabase.Info` out of, or the folder
     /// holding one. Empty when nothing has been set.
     ///
@@ -75,7 +75,7 @@ pub struct ServerSettings {
     /// vmangos already keeps this: pointing at the file means there is still
     /// only one place the answer lives, and a password changed on the server
     /// does not have to be changed here too.
-    pub conf: String,
+    pub(crate) conf: String,
     /// **Whether a save also applies the project's rows to the database.**
     ///
     /// On, because the point of the server half is that an edit is live without
@@ -91,7 +91,7 @@ pub struct ServerSettings {
     /// or a restart — and that is said on each block of the Server panel. See
     /// [`crate::server::save`], which is the whole of what a save does to the
     /// database, and [`crate::ui::shell::sync`], which is the panel.
-    pub apply_on_save: bool,
+    pub(crate) apply_on_save: bool,
     /// **Whether a playtest runs with the query-answer cache turned off.**
     ///
     /// The client writes every `SMSG_*_QUERY_RESPONSE` to `WDB\` and reads
@@ -107,7 +107,7 @@ pub struct ServerSettings {
     /// thing the player meets. The client itself is unaffected — this is the
     /// editor asking for a session without caches, not a change to what a
     /// client does.
-    pub disable_caching: bool,
+    pub(crate) disable_caching: bool,
     /// **The folder holding the four vmangos map tools** — `mapextractor`,
     /// `vmapextractor`, `VMapAssembler`, `MoveMapGenerator` — a patched
     /// build. Empty when nothing has been set. See
@@ -115,14 +115,14 @@ pub struct ServerSettings {
     ///
     /// Beside the conf path for its reason: the server on *this machine* is
     /// where its tools are, and neither is a fact about the project.
-    pub tools: String,
+    pub(crate) tools: String,
     /// **Whether a publish also regenerates the server's tiles** for every
     /// tile the project changed since the last time — `maps\`, `vmaps\` and
     /// `mmaps\` under the server's `DataDir`. On, because a published tile
     /// the server cannot walk on is a tile the character is corrected off
     /// of; off for a publish that is about the client alone, since the vmap
     /// half of a moved building is two minutes of the map.
-    pub regenerate_tiles: bool,
+    pub(crate) regenerate_tiles: bool,
     /// **Whether the project's client archive is copied into this install's
     /// `Data\`** — by a publish, and by the dev-time tile regeneration, which
     /// needs an archive for the tools to read.
@@ -133,14 +133,14 @@ pub struct ServerSettings {
     /// this install. On, a publish and a regeneration both write it there,
     /// replacing the one this project wrote before — see
     /// `Project::publish_into`.
-    pub copy_archive: bool,
+    pub(crate) copy_archive: bool,
     /// What the last **Test** said, for the panel to show. `None` until asked.
-    pub tried: Option<Result<String, String>>,
+    pub(crate) tried: Option<Result<String, String>>,
     /// **What the tools folder last answered**, keyed by the folder asked
     /// about: found and patched, or why not. Held because the check runs the
     /// two extractors for their usage text, and the panel is drawn sixty
     /// times a second. Not written to the file.
-    pub tools_status: Option<(String, Result<String, String>)>,
+    pub(crate) tools_status: Option<(String, Result<String, String>)>,
     /// The project the four switches were read from, by its folder. `None`
     /// until a project has been adopted; see [`Self::adopt`].
     project: Option<PathBuf>,
@@ -168,7 +168,7 @@ impl ServerSettings {
     /// A file written before the switches moved carries them too; they are
     /// read, and they are what the first project adopted starts from when it
     /// has no file of its own.
-    pub fn load(install: impl AsRef<Path>) -> ServerSettings {
+    pub(crate) fn load(install: impl AsRef<Path>) -> ServerSettings {
         let path = Self::path(install);
         let Ok(text) = std::fs::read_to_string(&path) else {
             return ServerSettings::default();
@@ -205,7 +205,7 @@ impl ServerSettings {
     /// project adopted after startup, which keeps what [`Self::load`] read
     /// off a machine file written before the switches moved, so an install
     /// that had turned applying off does not find it on again.
-    pub fn adopt(&mut self, project: &Project) {
+    pub(crate) fn adopt(&mut self, project: &Project) {
         let first = self.project.is_none();
         self.project = Some(project.root.clone());
         let Ok(text) = std::fs::read_to_string(project.settings_path()) else {
@@ -229,13 +229,13 @@ impl ServerSettings {
     }
 
     /// Whether the switches are the named project's.
-    pub fn is_for(&self, project: &Project) -> bool {
+    pub(crate) fn is_for(&self, project: &Project) -> bool {
         self.project.as_deref() == Some(project.root.as_path())
     }
 
     /// …and write both files back: the machine's, or remove it when there is
     /// nothing to say; and the project's, when a project has been adopted.
-    pub fn save(&self, install: impl AsRef<Path>) {
+    pub(crate) fn save(&self, install: impl AsRef<Path>) {
         let path = Self::path(install);
         if self.conf.trim().is_empty() && self.tools.trim().is_empty() {
             let _ = std::fs::remove_file(&path);
@@ -297,7 +297,7 @@ impl ServerSettings {
     /// In order: the two environment variables, then this file. `None` when
     /// none of them answers, which is the ordinary state of a machine with no
     /// server on it and is reported rather than guessed at.
-    pub fn resolve(&self) -> Option<(Where, Source)> {
+    pub(crate) fn resolve(&self) -> Option<(Where, Source)> {
         if let Some(found) = Where::find() {
             // `Where::find` reads `VALE_WORLDDB` then `VALE_MANGOSD`, so
             // which of the two it was is that one question further down.
@@ -320,7 +320,8 @@ impl ServerSettings {
     }
 
     /// Whether the panel's field is what is in force, for greying it.
-    pub fn panel_is_in_force(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn panel_is_in_force(&self) -> bool {
         !matches!(self.resolve(), Some((_, Source::Env(_))))
     }
 
@@ -328,7 +329,7 @@ impl ServerSettings {
     /// connection — `DataDir`, `WowPatch`. `VALE_MANGOSD` first, then the
     /// panel's field, a folder meaning the conf inside it. `None` when
     /// neither says; `VALE_WORLDDB` alone names no conf.
-    pub fn conf_path(&self) -> Option<PathBuf> {
+    pub(crate) fn conf_path(&self) -> Option<PathBuf> {
         let named = std::env::var("VALE_MANGOSD")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -367,7 +368,7 @@ fn truthy(value: &str) -> bool {
 
 /// Which of the three answered.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Source {
+pub(crate) enum Source {
     /// An environment variable, named so the panel can say which.
     Env(&'static str),
     /// `Edit\server.txt`, which is what the panel writes.
@@ -375,7 +376,7 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn line(self) -> String {
+    pub(crate) fn line(self) -> String {
         match self {
             Source::Env(name) => format!("from {name}"),
             Source::Panel => format!("from Edit\\{FILE}"),
@@ -431,7 +432,7 @@ fn follow(
 /// running server does not use. It is read from the same `mangosd.conf` the
 /// connection is; with only `VALE_WORLDDB` set there is no conf and the
 /// default is used.
-pub fn server_patch(settings: &ServerSettings) -> u32 {
+pub(crate) fn server_patch(settings: &ServerSettings) -> u32 {
     use vale_mangos::conn;
     let conf = match settings.resolve() {
         Some((_, Source::Env("VALE_MANGOSD"))) => {
@@ -451,7 +452,7 @@ pub fn server_patch(settings: &ServerSettings) -> u32 {
     conn::wow_patch_from_conf(file).unwrap_or(conn::DEFAULT_WOW_PATCH)
 }
 
-pub struct SettingsPlugin;
+pub(crate) struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {

@@ -49,7 +49,7 @@ pub const TABLES: &[Table] = &[TEMPLATE_TABLE];
 pub const TEMPLATE_TABLE: Table = Table::new(TEMPLATE, &COLUMNS);
 
 /// `map_type`'s values, vmangos' `MAP_COMMON` to `MAP_BATTLEGROUND`.
-pub const MAP_TYPES: [Value; 4] = [
+pub(crate) const MAP_TYPES: [Value; 4] = [
     Value { value: 0, name: "World" },
     Value { value: 1, name: "Dungeon" },
     Value { value: 2, name: "Raid" },

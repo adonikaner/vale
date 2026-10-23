@@ -74,15 +74,15 @@ use bevy::prelude::*;
 /// The upper bound is the height brush's own argument: a stroke can only reach
 /// tiles this session has open, which is the 3x3, and half of that is the honest
 /// cap. The lower bound is under one cell, which is the smallest thing there is.
-pub const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
+pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 1.0..=400.0;
 
 /// What a level may be set to, in yards. The map's own range with room either
 /// side: `MCLQ` holds an absolute world z and the world runs from about -500 to
 /// +1,600.
-pub const LEVEL: std::ops::RangeInclusive<f32> = -2000.0..=2000.0;
+pub(crate) const LEVEL: std::ops::RangeInclusive<f32> = -2000.0..=2000.0;
 
 /// The four kinds, as a list a panel can offer.
-pub const KINDS: [(&str, Liquid); 4] = [
+pub(crate) const KINDS: [(&str, Liquid); 4] = [
     ("Water", Liquid::Water),
     ("Ocean", Liquid::Ocean),
     ("Magma", Liquid::Magma),
@@ -94,29 +94,29 @@ const SAMPLE: KeyCode = KeyCode::Space;
 
 /// The water tool's settings, and what the pointer is over.
 #[derive(Resource, Debug, Default)]
-pub struct Water {
-    pub brush: WaterBrush,
+pub(crate) struct Water {
+    pub(crate) brush: WaterBrush,
     /// The chunk under the pointer, as `(tile, chunk)`.
-    pub at: Option<((u32, u32), usize)>,
+    pub(crate) at: Option<((u32, u32), usize)>,
     /// …and where on the ground that is, which [`draw`] needs and would
     /// otherwise have to march the ray a second time for.
-    pub point: Option<Vec3>,
+    pub(crate) point: Option<Vec3>,
     /// …and the ground there, which `Ctrl+Space` takes and the panel prints so
     /// that a level can be compared with it.
-    pub ground: Option<f32>,
+    pub(crate) ground: Option<f32>,
     /// …and the surface already standing there, if any, with its kind.
-    pub surface: Option<(Liquid, f32)>,
+    pub(crate) surface: Option<(Liquid, f32)>,
     /// …and that cell's high nibble — `liquid::FISHABLE`, `liquid::FATIGUE`
     /// — for the panel to name.
-    pub flags: Option<u8>,
+    pub(crate) flags: Option<u8>,
     /// How many cells this session has wet, less the ones it dried.
-    pub wet: i32,
+    pub(crate) wet: i32,
     /// Whether the surface is sloped between [`Self::ends`] in place of
     /// level at the brush's level.
-    pub sloped: bool,
+    pub(crate) sloped: bool,
     /// The slope's start and end: a world position and a surface height
     /// each, set by `Space` and `Shift+Space`.
-    pub ends: [Option<[f32; 3]>; 2],
+    pub(crate) ends: [Option<[f32; 3]>; 2],
     /// Whether the level has ever been chosen.
     ///
     /// **A level of zero is almost always underground**, which is the one
@@ -129,7 +129,7 @@ pub struct Water {
     painting: bool,
 }
 
-pub struct WaterToolPlugin;
+pub(crate) struct WaterToolPlugin;
 
 impl Plugin for WaterToolPlugin {
     fn build(&self, app: &mut App) {
@@ -266,7 +266,7 @@ fn aim(
 }
 
 /// The two flag bits as words, for the panel and the status line.
-pub fn flag_words(flags: u8) -> String {
+pub(crate) fn flag_words(flags: u8) -> String {
     match (flags & liquid::FISHABLE != 0, flags & liquid::FATIGUE != 0) {
         (true, true) => "fishable, deep water".to_string(),
         (true, false) => "fishable".to_string(),

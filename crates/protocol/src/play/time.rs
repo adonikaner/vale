@@ -43,12 +43,12 @@ use crate::bytes::Reader;
 /// shared with it: this crate does not depend on the asset crate, and a protocol
 /// module reaching into a file-format module to borrow a number would be the
 /// wrong direction for the sake of one integer.
-pub const DAY_HALF_MINUTES: u32 = 2880;
+pub(crate) const DAY_HALF_MINUTES: u32 = 2880;
 
 /// World minutes per real second on an unmodified vmangos — `0.01666667`, which
 /// is 1/60 and makes a world day a real day. Used only when the packet arrives
 /// without its second field; see [`parse_login_set_time_speed`].
-pub const DEFAULT_SPEED: f32 = 1.0 / 60.0;
+pub(crate) const DEFAULT_SPEED: f32 = 1.0 / 60.0;
 
 /// The world's date and time as the server states it, plus how fast it runs.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,7 +80,7 @@ impl GameTime {
     /// midnight has to roll over, and the light bands already interpolate across
     /// that boundary — so a clock that saturated at 23:59 would freeze the
     /// world at dusk for the rest of the evening.
-    pub fn advanced(&self, real_ms: u64) -> GameTime {
+    pub(crate) fn advanced(&self, real_ms: u64) -> GameTime {
         let minutes = self.speed as f64 * (real_ms as f64 / 1000.0);
         let total = (self.hour * 60 + self.minute) as f64 + minutes;
         let wrapped = total.rem_euclid(24.0 * 60.0) as u32;
@@ -97,7 +97,7 @@ impl GameTime {
 }
 
 /// `SMSG_LOGIN_SETTIMESPEED`: the packed word and the rate.
-pub fn parse_login_set_time_speed(body: &[u8]) -> Option<GameTime> {
+pub(crate) fn parse_login_set_time_speed(body: &[u8]) -> Option<GameTime> {
     let mut r = Reader::new(body);
     if r.remaining() < 4 {
         return None;

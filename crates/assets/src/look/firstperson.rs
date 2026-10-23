@@ -12,16 +12,16 @@
 //! widening is not ported.
 
 /// The distance beyond the near plane over which the model fades, in yards.
-pub const FADE_WINDOW: f32 = 1.8315;
+pub(crate) const FADE_WINDOW: f32 = 1.8315;
 
 /// Within this distance beyond the near plane the model is not drawn, in
 /// yards (1/360 of a yard). The camera is then in first person.
-pub const HIDDEN_WITHIN: f32 = 0.002_777_78;
+pub(crate) const HIDDEN_WITHIN: f32 = 0.002_777_78;
 
 /// The player model's opacity, as the client's byte, for a camera
 /// `distance` yards from the point it orbits with its near plane `near` yards
 /// in front of it.
-pub fn opacity_byte(distance: f32, near: f32) -> u8 {
+pub(crate) fn opacity_byte(distance: f32, near: f32) -> u8 {
     let beyond = distance - near;
     if beyond >= FADE_WINDOW {
         return 255;

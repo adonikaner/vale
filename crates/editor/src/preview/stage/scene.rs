@@ -69,7 +69,7 @@ const AREA_GUID: u64 = 0xED17_0000_0000_0003;
 /// Build the stage — the camera, the light and the actors — and take it down
 /// again.
 #[allow(clippy::too_many_arguments)]
-pub fn arrange(
+pub(crate) fn arrange(
     mut commands: Commands,
     mut stage: ResMut<Stage>,
     camera: Res<crate::camera::EditorCamera>,

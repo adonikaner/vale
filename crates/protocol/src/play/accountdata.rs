@@ -30,11 +30,12 @@ use crate::bytes::Reader;
 
 /// How many files the server keeps per account and character in 1.12.1
 /// (vmangos `NUM_ACCOUNT_DATA_TYPES`; five before 1.9).
-pub const FILES: usize = 8;
+pub(crate) const FILES: usize = 8;
 
 /// The file each digest is about, in wire order (vmangos `AccountDataType`).
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccountDataType {
+pub(crate) enum AccountDataType {
     GlobalConfig,
     CharacterConfig,
     GlobalBindings,
@@ -45,8 +46,10 @@ pub enum AccountDataType {
     CharacterChat,
 }
 
+#[cfg(test)]
 impl AccountDataType {
     /// All eight, in the order the packet lists them.
+    #[cfg(test)]
     pub const ALL: [AccountDataType; FILES] = [
         Self::GlobalConfig,
         Self::CharacterConfig,
@@ -60,6 +63,7 @@ impl AccountDataType {
 
     /// Whether the file belongs to the account rather than to one character.
     /// vmangos' `GLOBAL_CACHE_MASK` is `0x15`: types 0, 2 and 4.
+    #[cfg(test)]
     pub fn is_global(self) -> bool {
         matches!(self, Self::GlobalConfig | Self::GlobalBindings | Self::GlobalMacros)
     }
@@ -67,10 +71,11 @@ impl AccountDataType {
 
 /// `SMSG_ACCOUNT_DATA_MD5`, read: one digest per [`AccountDataType`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct AccountDataDigests(pub [[u8; 16]; FILES]);
+pub(crate) struct AccountDataDigests(pub(crate) [[u8; 16]; FILES]);
 
 impl AccountDataDigests {
     /// The digest for one file, or `None` when the server holds nothing for it.
+    #[cfg(test)]
     pub fn digest(&self, kind: AccountDataType) -> Option<[u8; 16]> {
         let index = AccountDataType::ALL.iter().position(|&k| k == kind)?;
         let digest = self.0[index];
@@ -79,7 +84,7 @@ impl AccountDataDigests {
 }
 
 /// `SMSG_ACCOUNT_DATA_MD5`: 128 bytes, no count.
-pub fn parse_account_data_md5(body: &[u8]) -> Option<AccountDataDigests> {
+pub(crate) fn parse_account_data_md5(body: &[u8]) -> Option<AccountDataDigests> {
     if body.len() < FILES * 16 {
         return None;
     }

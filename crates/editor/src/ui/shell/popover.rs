@@ -33,30 +33,30 @@ use crate::playtest::Login;
 
 /// Which popovers are open, and where each was opened from.
 #[derive(Resource, Default)]
-pub struct Popovers {
-    pub go_to: Popover,
+pub(crate) struct Popovers {
+    pub(crate) go_to: Popover,
     /// Naming the current view and keeping it. See [`crate::prefs::bookmarks`].
-    pub bookmark: Popover,
-    pub login: Popover,
+    pub(crate) bookmark: Popover,
+    pub(crate) login: Popover,
     /// Which project is open, and making another one.
-    pub project: Popover,
+    pub(crate) project: Popover,
     /// Where this machine's server is, and what this project has done to it.
-    pub server: Popover,
+    pub(crate) server: Popover,
     /// The patch a publish is about to write: its name, and the button.
-    pub publish: Popover,
+    pub(crate) publish: Popover,
     /// The name typed into the publish popover. Empty means the UTC stamp.
-    pub patch_name: String,
+    pub(crate) patch_name: String,
     /// Which tab of the server popover is showing.
-    pub server_tab: ServerTab,
+    pub(crate) server_tab: ServerTab,
     /// Whether `--server` has already opened the server popover. Its anchor is
     /// the button's rectangle, which does not exist until the bar has been
     /// drawn once, so the flag cannot be acted on at startup. `--projects`
     /// carries a flag of its own for the same reason. See [`Popover::show`].
-    pub server_shown_once: bool,
+    pub(crate) server_shown_once: bool,
 }
 
 /// One popover: whether it is open and where its button is.
-pub struct Popover {
+pub(crate) struct Popover {
     open: bool,
     /// The bottom-left corner of the button that opens it. The window is
     /// placed under that point rather than where egui last left it.
@@ -84,7 +84,7 @@ impl Default for Popover {
 impl Popover {
     /// A click on the button that owns this: open it, or shut it if it is
     /// already open.
-    pub fn toggle(&mut self, button: &egui::Response) {
+    pub(crate) fn toggle(&mut self, button: &egui::Response) {
         self.open = !self.open;
         self.under = button.rect.left_bottom() + egui::vec2(0.0, 4.0);
         self.button = button.rect;
@@ -96,20 +96,17 @@ impl Popover {
     /// The anchor is recorded whether or not the popover is open. That is what
     /// lets [`Self::show`] open one without a press: a scripted run has no
     /// pointer and cannot press the button.
-    pub fn track(&mut self, button: &egui::Response) {
+    pub(crate) fn track(&mut self, button: &egui::Response) {
         self.under = button.rect.left_bottom() + egui::vec2(0.0, 4.0);
         self.button = button.rect;
     }
 
     /// Open it without a press. The anchor is whatever [`Self::track`] last
     /// recorded, so this lands under the button from the frame after.
-    pub fn show(&mut self) {
+    pub(crate) fn show(&mut self) {
         self.open = true;
     }
 
-    pub fn is_open(&self) -> bool {
-        self.open
-    }
 }
 
 impl Popovers {
@@ -157,7 +154,7 @@ impl Popovers {
 /// The windows are drawn against the context rather than into the root `Ui`,
 /// because they float over the panels and the docked regions must not shrink
 /// around them.
-pub fn draw(
+pub(crate) fn draw(
     ctx: &egui::Context,
     popovers: &mut Popovers,
     camera: &mut EditorCamera,
@@ -426,7 +423,7 @@ fn the_patch(
 
 /// Which half of the server popover is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ServerTab {
+pub(crate) enum ServerTab {
     /// What this project has done to the server, and the operations on it.
     #[default]
     Project,

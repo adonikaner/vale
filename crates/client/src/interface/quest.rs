@@ -39,7 +39,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use vale_protocol::play::quest::{
-    QuestComplete, QuestDetails, QuestGreeting, QuestKill, QuestOffer, QuestProgress, QuestReward,
+    QuestDetails, QuestGreeting, QuestKill, QuestOffer, QuestProgress, QuestReward,
     QuestSlot, QuestTemplate,
 };
 use vale_protocol::play::quest::QuestVerb;
@@ -59,12 +59,12 @@ use crate::world::templates::TemplatesArrived;
 /// enum is as wide as its widest member, so every message in this queue would
 /// take the size of the variant that arrives least often.
 #[derive(Message, Debug, Clone)]
-pub enum QuestAnswer {
+pub(crate) enum QuestAnswer {
     Greeting(Box<QuestGreeting>),
     Details(Box<QuestDetails>),
     Progress(Box<QuestProgress>),
     Reward(Box<QuestReward>),
-    Complete(QuestComplete),
+    Complete,
     Template(Box<QuestTemplate>),
     Kill(QuestKill),
     /// `SMSG_QUESTUPDATE_ADD_ITEM`: `(entry, added)`, where `added` is an
@@ -74,8 +74,8 @@ pub enum QuestAnswer {
     /// item.
     Item { entry: u32, added: u32, have: u32 },
     ObjectivesDone(u32),
-    Failed { quest_id: u32, timed_out: bool },
-    Refused(u32),
+    Failed,
+    Refused,
 }
 
 /// Which page of the conversation is shown, or none.
@@ -112,7 +112,7 @@ impl Page {
 
     /// Which quest this page is about. `None` for a greeting, which is about
     /// several.
-    pub fn quest_id(&self) -> Option<u32> {
+    pub(crate) fn quest_id(&self) -> Option<u32> {
         Some(match self {
             Page::Details(page) => page.quest_id,
             Page::Progress(page) => page.quest_id,
@@ -233,7 +233,7 @@ pub struct Quests {
 /// How many quests may be tracked at once: the client's limit, and
 /// `MAX_WATCHABLE_QUESTS` in `QuestLogFrame.lua`. The two agree, so the
 /// interface's own count check is redundant rather than the only gate.
-pub const MAX_WATCHES: usize = 5;
+pub(crate) const MAX_WATCHES: usize = 5;
 
 /// What the quest log panel draws, including the folded headings, which a Lua
 /// call must be able to change and read back immediately.
@@ -293,7 +293,7 @@ impl Quests {
 
     /// The length of the display list, headings included: the first value
     /// `GetNumQuestLogEntries` returns.
-    pub fn row_count(&self) -> usize {
+    pub(crate) fn row_count(&self) -> usize {
         self.display().rows.len()
     }
 
@@ -305,7 +305,7 @@ impl Quests {
     /// How many of those rows are quests rather than headings: the second
     /// value `GetNumQuestLogEntries` returns, which `QuestLog_Update` compares
     /// against zero to decide whether to show `QUESTLOG_NO_QUESTS_TEXT`.
-    pub fn quest_rows(&self) -> usize {
+    pub(crate) fn quest_rows(&self) -> usize {
         self.display()
             .rows
             .iter()
@@ -331,14 +331,14 @@ impl Quests {
     // indices.
 
     /// `GetNumQuestWatches()`.
-    pub fn watch_count(&self) -> usize {
+    pub(crate) fn watch_count(&self) -> usize {
         self.watch_count.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// `IsQuestWatched(row)`, one-based. A heading row is never watched. This
     /// is an answer, not a refusal: `QuestLog_Update` asks it for every row it
     /// draws.
-    pub fn is_watched(&self, row: usize) -> bool {
+    pub(crate) fn is_watched(&self, row: usize) -> bool {
         let Some(quest) = self.at(row).map(|quest| quest.quest_id) else {
             return false;
         };
@@ -355,7 +355,7 @@ impl Quests {
     ///
     /// It has no duplicate check, as in the 1.12.1 client. The interface calls
     /// `IsQuestWatched` before every call it makes.
-    pub fn add_watch(&self, row: usize) {
+    pub(crate) fn add_watch(&self, row: usize) {
         let Some(quest) = self.at(row).map(|quest| quest.quest_id) else {
             return;
         };
@@ -373,7 +373,7 @@ impl Quests {
     ///
     /// The zero matters: the array is fixed at five, and a stale id in the tail
     /// would be read back by a later add that landed on it.
-    pub fn remove_watch(&self, row: usize) {
+    pub(crate) fn remove_watch(&self, row: usize) {
         let Some(quest) = self.at(row).map(|quest| quest.quest_id) else {
             return;
         };
@@ -398,7 +398,7 @@ impl Quests {
     /// `if ( questIndex ) then` and 0 would index a row that does not exist.
     /// A quest handed in stops drawing and stays in the list until something
     /// removes it, which is what `AutoQuestWatch_CheckDeleted` is for.
-    pub fn watch_row(&self, index: usize) -> Option<usize> {
+    pub(crate) fn watch_row(&self, index: usize) -> Option<usize> {
         use std::sync::atomic::Ordering::Relaxed;
         let index = index.checked_sub(1)?;
         if index >= self.watch_count.load(Relaxed) {
@@ -410,7 +410,7 @@ impl Quests {
 
     /// The log row of a quest, by id. This turns a `SMSG_QUESTUPDATE_ADD_KILL`
     /// into the argument `QUEST_WATCH_UPDATE` carries.
-    pub fn row_of_quest(&self, quest_id: u32) -> Option<usize> {
+    pub(crate) fn row_of_quest(&self, quest_id: u32) -> Option<usize> {
         self.display()
             .rows
             .iter()
@@ -454,7 +454,7 @@ impl Quests {
 
     /// Whether a heading row is folded: the fifth value `GetQuestLogTitle`
     /// returns.
-    pub fn is_collapsed(&self, row: usize) -> bool {
+    pub(crate) fn is_collapsed(&self, row: usize) -> bool {
         match self.row(row) {
             Some(Row::Header(zone)) => self.display().collapsed.contains(&zone),
             _ => false,
@@ -473,7 +473,7 @@ impl Quests {
     /// It takes a shared reference, and the rows are rebuilt before it
     /// returns; see [`Display`] for why. The caller is a Lua body that redraws
     /// the panel in its next statement.
-    pub fn set_collapsed(&self, row: usize, collapsed: bool) {
+    pub(crate) fn set_collapsed(&self, row: usize, collapsed: bool) {
         let zones: Vec<i32> = match row {
             0 => self
                 .display()
@@ -535,7 +535,7 @@ impl Quests {
     /// category's name as a quest title over an empty description. That was the
     /// "clicking a zone just shows the category text as a quest" report; the
     /// expand itself worked.
-    pub fn select_entry(&self, row: usize) {
+    pub(crate) fn select_entry(&self, row: usize) {
         if matches!(self.row(row), Some(Row::Header(_)) | None) {
             return;
         }
@@ -548,7 +548,7 @@ impl Quests {
     /// A heading or an empty selection latches `0`, which makes
     /// `GetAbandonQuestName` answer nothing and the popup show an empty title
     /// rather than a wrong one.
-    pub fn set_abandon_quest(&self) {
+    pub(crate) fn set_abandon_quest(&self) {
         let id = self.at(self.selected()).map_or(0, |slot| slot.quest_id);
         self.abandon.store(id, std::sync::atomic::Ordering::Relaxed);
     }
@@ -556,13 +556,9 @@ impl Quests {
     /// The latched quest, or `None` when nothing is latched or the quest has
     /// left the log since. In the second case the 1.12.1 client's
     /// `AbandonQuest` finds no matching quest and does nothing.
-    pub fn abandon_quest(&self) -> Option<u32> {
+    pub(crate) fn abandon_quest(&self) -> Option<u32> {
         let id = self.abandon.load(std::sync::atomic::Ordering::Relaxed);
         (id != 0 && self.holds(id)).then_some(id)
-    }
-
-    pub fn chosen_reward(&self) -> usize {
-        self.chosen_reward
     }
 
     /// The page in front of the character.
@@ -581,7 +577,7 @@ impl Quests {
     /// Filled by [`regroup`], the one system here that can read the DBCs. Kept
     /// in the resource because the headings are sorted by name, so the rebuild
     /// cannot run without it.
-    pub fn heading_name(&self, zone_or_sort: i32) -> &str {
+    pub(crate) fn heading_name(&self, zone_or_sort: i32) -> &str {
         self.heading_names
             .get(&zone_or_sort)
             .map_or("", String::as_str)
@@ -656,7 +652,7 @@ impl Quests {
     }
 }
 
-pub struct QuestPlugin;
+pub(crate) struct QuestPlugin;
 
 impl Plugin for QuestPlugin {
     fn build(&self, app: &mut App) {
@@ -755,7 +751,7 @@ fn templates_landed(
 /// the hand-in. See [`crate::sound::player`], which plays the level-up chime
 /// for the same reason.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QuestAccepted(pub u32);
+pub(crate) struct QuestAccepted(pub(crate) u32);
 
 /// A press the interface made, recorded rather than sent. See
 /// [`crate::lua::api::verbs`] for why every write in this client is a message.
@@ -809,8 +805,7 @@ fn follow_log(
         return;
     };
     let fresh = {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         let Some(guid) = world.player_guid else { return };
         let Some(me) = world.get(guid) else { return };
         me.quest_log()
@@ -905,8 +900,7 @@ fn ask_status(session: Res<Session>, units: Query<&crate::world::entity::WorldEn
     // of the world wait on the network. `handler` follows the same rule for
     // its replies.
     let ask: Vec<u64> = {
-        let world = active.live.world();
-        let world = world.lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         units
             .iter()
             .filter(|unit| unit.npc_flags & QUESTGIVER != 0)
@@ -956,7 +950,7 @@ fn announce(
             }
             // The end of the conversation, and the only thing that closes the
             // panel: `QuestFrame_OnEvent`'s `QUEST_FINISHED` arm hides it.
-            QuestAnswer::Complete(_) => {
+            QuestAnswer::Complete => {
                 quests.page = Page::None;
                 finished.write(QuestFinished);
                 log_update.write(QuestLogUpdate);
@@ -1035,7 +1029,7 @@ fn announce(
                     None => say.key("ERR_QUEST_UNKNOWN_COMPLETE"),
                 }
             }
-            QuestAnswer::Failed { .. } => {
+            QuestAnswer::Failed => {
                 log_update.write(QuestLogUpdate);
             }
             // A refusal ends the conversation. `SendCanTakeQuestResponse`
@@ -1044,7 +1038,7 @@ fn announce(
             // nothing here reads the table of 30-odd `INVALIDREASON_*` strings.
             // The page is dropped either way: leaving it up would offer a
             // quest the server refused.
-            QuestAnswer::Refused(_) => {
+            QuestAnswer::Refused => {
                 quests.page = Page::None;
                 finished.write(QuestFinished);
             }
@@ -1114,7 +1108,7 @@ fn objective_progress(
         None => {
             let active = session.active.as_ref()?;
             let found = {
-                let world = active.live.world().lock().ok()?;
+                let world = active.live.read();
                 match object {
                     true => world.gameobjects.get(&entry).map(|info| info.name.clone()),
                     false => world.creatures.get(&entry).map(|info| info.name.clone()),
@@ -1191,7 +1185,7 @@ fn item_progress(quests: &Quests, entry: u32, added: u32, have: u32) -> Option<(
 /// the next pickup has the name.
 fn item_name(entry: u32, session: &Session) -> Option<String> {
     let active = session.active.as_ref()?;
-    let known = active.live.world().lock().ok()?.items.get(&entry).map(|info| info.name.clone());
+    let known = active.live.read().items.get(&entry).map(|info| info.name.clone());
     if known.is_none() {
         active.live.want_item(entry);
     }
@@ -1462,7 +1456,7 @@ fn nth_offer(page: &QuestGreeting, active: bool, index: usize) -> Option<&QuestO
 /// emits `AVAILABLE` (5) and, for an auto-complete quest, `REWARD_REP` (4).
 /// So 4 means both, and the client treats it as active either way, which fits:
 /// an auto-complete quest is handed straight back.
-pub fn is_active_offer(icon: u32) -> bool {
+pub(crate) fn is_active_offer(icon: u32) -> bool {
     icon == 3 || icon == 4
 }
 
@@ -1476,7 +1470,7 @@ pub fn is_active_offer(icon: u32) -> bool {
 /// vmangos never emits a 0 in a quest menu, so nothing on this server takes
 /// this branch. It is implemented so that a server that does emit 0 opens the
 /// correct page.
-pub fn offer_is_immediate_handin(icon: u32) -> bool {
+pub(crate) fn offer_is_immediate_handin(icon: u32) -> bool {
     icon == 0
 }
 
@@ -1506,7 +1500,7 @@ pub fn offer_is_immediate_handin(icon: u32) -> bool {
 ///
 /// A free function so the rule has somewhere to be tested; [`act`] is the one
 /// caller.
-pub fn complete_quest_asks_for_the_reward_page(guid: u64, quest_id: u32) -> QuestVerb {
+pub(crate) fn complete_quest_asks_for_the_reward_page(guid: u64, quest_id: u32) -> QuestVerb {
     QuestVerb::RequestReward { guid, quest_id }
 }
 

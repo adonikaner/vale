@@ -42,7 +42,7 @@ const EMBEDDED: &[(&str, &[u8])] = &[];
 
 /// The textures the toolbars draw their buttons with.
 #[derive(Resource, Default)]
-pub struct Icons {
+pub(crate) struct Icons {
     /// Keyed by the lowercase button name.
     ready: HashMap<String, egui::TextureId>,
     /// Set after the one attempt to register [`EMBEDDED`], so the table is
@@ -52,18 +52,18 @@ pub struct Icons {
 
 impl Icons {
     /// The texture id egui draws this button's icon by, if it has one.
-    pub fn get(&self, name: &str) -> Option<egui::TextureId> {
+    pub(crate) fn get(&self, name: &str) -> Option<egui::TextureId> {
         self.ready.get(&name.to_lowercase()).copied()
     }
 
     /// Whether any icon is registered. The rail uses it to choose the height
     /// of a tool tile.
-    pub fn any(&self) -> bool {
+    pub(crate) fn any(&self) -> bool {
         !self.ready.is_empty()
     }
 }
 
-pub struct IconPlugin;
+pub(crate) struct IconPlugin;
 
 impl Plugin for IconPlugin {
     fn build(&self, app: &mut App) {

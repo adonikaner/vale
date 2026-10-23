@@ -21,6 +21,7 @@ use super::super::api::Answers;
 
 /// The scoped reads this file registers, sorted; see
 /// [`super::super::api::READS`].
+#[cfg(test)]
 pub const READS: [&str; 3] = [
     "GetNumShapeshiftForms",
     "GetShapeshiftFormCooldown",
@@ -60,7 +61,7 @@ pub struct ShapeshiftInfo {
     pub is_active: bool,
     /// Whether it could be cast right now. `ShapeshiftBar_UpdateState` greys the
     /// icon to 0.4 when this is nil.
-    pub is_castable: bool,
+    pub(crate) is_castable: bool,
 }
 
 impl super::super::api::Live<'_, '_, '_> {
@@ -71,7 +72,7 @@ impl super::super::api::Live<'_, '_, '_> {
         self.tables
             .as_ref()
             .and_then(|tables| tables.spellbook()?.info(spell_id))
-            .is_some_and(|info| crate::interface::api::spell_is_usable(&info, self.units, self.inventory).0)
+            .is_some_and(|info| crate::interface::api::spell_is_usable(&info, &self.units, &self.inventory).0)
     }
 }
 
@@ -119,7 +120,7 @@ impl ShapeshiftAnswers for super::super::api::Live<'_, '_, '_> {
         // The same composition the spellbook's own rows take, so a stance's
         // swirl and the same spell's swirl in the book cannot disagree.
         let (start, duration, enable) =
-            crate::interface::api::cooldown_of(self.cooldowns, &info, self.now);
+            crate::interface::api::cooldown_of(&self.cooldowns, &info, self.now);
         (start, duration, u32::from(enable))
     }
 }

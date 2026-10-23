@@ -54,14 +54,15 @@ pub const READS: [&str; 5] = [
 ];
 
 /// …and the one unscoped write.
-pub const WRITES: [&str; 1] = ["LearnTalent"];
+#[cfg(test)]
+pub(crate) const WRITES: [&str; 1] = ["LearnTalent"];
 
 /// `GetTalentTabInfo`'s four returns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TalentTab {
     pub name: String,
     pub texture: String,
-    pub points_spent: u32,
+    pub(crate) points_spent: u32,
     /// The parchment **stem**, which the addon concatenates onto
     /// `Interface\TalentFrame\` and four corner names itself.
     pub background: String,
@@ -72,20 +73,20 @@ pub struct TalentTab {
 pub struct TalentInfo {
     pub name: String,
     pub texture: String,
-    pub tier: u32,
+    pub(crate) tier: u32,
     pub column: u32,
     pub rank: u32,
-    pub max_rank: u32,
-    pub exceptional: bool,
-    pub meets_prereq: bool,
+    pub(crate) max_rank: u32,
+    pub(crate) exceptional: bool,
+    pub(crate) meets_prereq: bool,
 }
 
 /// …and one triple of `GetTalentPrereqs`'.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TalentPrereq {
-    pub tier: u32,
+    pub(crate) tier: u32,
     pub column: u32,
-    pub learnable: bool,
+    pub(crate) learnable: bool,
 }
 
 /// What the panel may ask the world.
@@ -270,7 +271,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 
 /// The queue the one write pushes onto — a `(tab, index)` pair, both one-based,
 /// resolved to a talent id and a rank by the system that drains it.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<(usize, usize)>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<(usize, usize)>>>;
 
 /// Register `LearnTalent`. Unscoped — it records.
 ///
@@ -308,8 +309,6 @@ pub fn take(host: &LuaHost) -> Vec<(usize, usize)> {
 #[derive(Debug, Clone, Default)]
 pub struct Talents {
     pub tree: TalentTree,
-    /// `PLAYER_CHARACTER_POINTS1` — unspent talent points.
-    pub unspent: u32,
 }
 
 #[cfg(test)]

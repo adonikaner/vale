@@ -242,7 +242,7 @@ impl Spline {
     ///
     /// Zero for `n` of 0 or 1, because the travelled path starts at
     /// `points[1]`.
-    pub fn length_to(&self, n: usize) -> f64 {
+    pub(crate) fn length_to(&self, n: usize) -> f64 {
         let take = n.saturating_sub(1);
         self.lengths.iter().take(take).map(|l| f64::from(*l)).sum()
     }

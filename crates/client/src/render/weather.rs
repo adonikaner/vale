@@ -107,8 +107,8 @@
 //!   [`VISIBILITY_TAKEN_SNOW`], applied in `sky::resolve`: falling weather
 //!   closes the fog with the density, over and above the storm row's own
 //!   distance, and a cap blizzard leaves eighty-odd yards of world.
-//! * **The shorter streak** — [`Layer::streak_fall`] against the measured
-//!   [`STREAK_FALL_YARDS`].
+//! * **The shorter streak** — [`Layer::streak_fall`] against the reference's
+//!   two yards of fall.
 //!
 //! …and one thing that is the reference's behaviour restored rather than a
 //! choice: **an indoor camera gets no particles** ([`WeatherState::indoors`]),
@@ -224,15 +224,6 @@ const SPREAD: f32 = 0.349;
 const RAIN_DROPS_FULL: usize = 6500 * 66 / 100;
 const SNOW_FLAKES_FULL: usize = 1300 * 66 / 100;
 
-/// **How long a rain streak is, and it is measured**: `rain.bls` builds the
-/// trailing pair of corners from the drop's position `2 / -velocity.z` seconds
-/// further along its fall — `RCP R0.x, -v18.z; MAD R0.w, c16.y, R0.x, v24.y`
-/// with `c16.y = 2` — so the streak spans exactly **two yards of fall**,
-/// whatever the speed. It is not a length in the drop's own direction: a
-/// wind-blown drop's streak is longer along the slant and still two yards
-/// tall.
-pub const STREAK_FALL_YARDS: f32 = 2.0;
-
 /// **Where a point sprite has shrunk to nothing**, the far end of
 /// `snowpoint.bls`'s `MAD R0.z, dist, c24.x, c24.y` — the two constants are
 /// program locals the shader text does not carry, so the *form* is the
@@ -281,15 +272,15 @@ const FAR_POINT_FADE_END: f32 = 140.0;
 /// drizzle it is untouched, because the density floor is a quarter of the
 /// grade. This is rain's; snow and sand take more — see
 /// [`VISIBILITY_TAKEN_SNOW`].
-pub const VISIBILITY_TAKEN: f32 = 0.45;
+pub(crate) const VISIBILITY_TAKEN: f32 = 0.45;
 
 /// …and snow's (and a sandstorm's), deeper: a cap-grade snow is a blizzard,
 /// and a blizzard is mostly the world ending eighty yards out. Dun Morogh's
 /// storm fog is 278 yards; at cap this leaves 83 of them, against rain's 153.
-pub const VISIBILITY_TAKEN_SNOW: f32 = 0.70;
+pub(crate) const VISIBILITY_TAKEN_SNOW: f32 = 0.70;
 /// …and the floor under that, so an instance whose fog is already close does
 /// not squeeze to nothing.
-pub const VISIBILITY_FLOOR_YARDS: f32 = 60.0;
+pub(crate) const VISIBILITY_FLOOR_YARDS: f32 = 60.0;
 
 /// **The grade at which the sky is fully the storm row's.** This client's
 /// reading, by request, and physical in direction: clouds precede
@@ -327,7 +318,7 @@ const INDOOR_BLEND_SECONDS: f32 = 2.0;
 
 /// What is falling, ramped — the client side of [`Weather`].
 #[derive(Resource, Default)]
-pub struct WeatherState {
+pub(crate) struct WeatherState {
     /// The packet this ramp is running toward, and what it was running from.
     target: Option<Weather>,
     from_grade: f32,
@@ -345,7 +336,7 @@ pub struct WeatherState {
     /// gated one by one instead ([`Pool`]'s mask), so the world outside
     /// a doorway keeps snowing in view while the room stays dry, and stepping
     /// out is continuous rather than 100%-clear-to-storm in one frame.
-    pub indoors: bool,
+    pub(crate) indoors: bool,
     /// [`Self::indoors`] eased over [`INDOOR_BLEND_SECONDS`], 0 outdoors and
     /// 1 indoors, so the fog release is a walk through a doorway rather than
     /// a cut.
@@ -374,7 +365,7 @@ pub struct WeatherState {
 /// place of the wire's packet, instant, so the ramp does not eat the shot's
 /// settle window.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct ForcedWeather(pub Weather);
+pub(crate) struct ForcedWeather(pub(crate) Weather);
 
 impl ForcedWeather {
     /// `rain`, `snow`, `sand` (or `storm`) or `fine`, with an optional grade
@@ -414,6 +405,7 @@ struct PoolState {
 }
 
 impl PoolState {
+    #[cfg(feature = "diagnostics")]
     fn hidden(&self) -> usize {
         self.indoors.iter().map(|word| word.count_ones() as usize).sum()
     }
@@ -445,7 +437,7 @@ impl WeatherState {
     /// whole world back to daylight in one frame at the end of a storm. Fine
     /// weather is grade 0 on the wire — vmangos' `Weather::ReGenerate` sends
     /// nothing else — so nothing is lost by trusting it here.
-    pub fn storm(&self) -> f32 {
+    pub(crate) fn storm(&self) -> f32 {
         (self.grade / STORM_SKY_FULL_GRADE).clamp(0.0, 1.0)
     }
 
@@ -496,8 +488,8 @@ struct Layer {
     streak: bool,
     /// A streak's half-width, in yards — rain only, and a choice.
     width: f32,
-    /// A streak's length, in yards of fall. The reference's is
-    /// [`STREAK_FALL_YARDS`] — two, measured — and rain's here is shorter, by
+    /// A streak's length, in yards of fall. The reference's is two yards
+    /// of fall whatever the speed, and rain's here is shorter, by
     /// request. The *rule* (length is yards of fall, not of travel) is kept.
     streak_fall: f32,
     /// The far field's population at full density — see [`FAR_BOX_HALF_XY`].
@@ -547,7 +539,7 @@ impl Layer {
                 // times that because the streak is what is seen rather than
                 // the drop, it is a choice, and both 18 and 30 were reported
                 // from the window as too slow ("slow motion"). The streak's
-                // *length* is not a choice — see [`STREAK_FALL_YARDS`].
+                // *length* is not a choice — see [`Layer::streak_fall`].
                 fall: 36.0,
                 // Three and a half degrees: rain falls nearly parallel, and
                 // the mist's twenty made crossing strands.
@@ -710,18 +702,18 @@ struct WeatherMeshes {
 /// pool (rain's 8,580 drops). A uniform rather than a storage buffer because
 /// a kilobyte a pool a frame is nothing and it rides the upload the
 /// parameters already make.
-pub const MASK_VEC4S: usize = 72;
+pub(crate) const MASK_VEC4S: usize = 72;
 
 /// **The shader's parameters**, one set per pool. Every number here is
 /// written by [`draw`]; the layout is `weather.wgsl`'s.
 #[derive(Clone, Copy, ShaderType, Debug, PartialEq)]
-pub struct WeatherParams {
+pub(crate) struct WeatherParams {
     /// half_xy, half_z, alive, pace.
     pub half: Vec4,
     /// The wind's integral wrapped to this box (x, 0, z); w = the time.
     pub wind: Vec4,
     /// The wind this second — the streak's slant; w = the point size's fade end.
-    pub gust: Vec4,
+    pub(crate) gust: Vec4,
     pub tint: Vec4,
     /// kind (0 world, 1 point, 2 streak); a streak's half-width or a point
     /// sprite's floor in pixels; a streak's yards of fall; the near fade
@@ -762,7 +754,7 @@ fn pack_mask(words: &[u32]) -> [UVec4; MASK_VEC4S] {
 /// and never writing depth, since a streak in front of a tree must not cut a
 /// hole in it.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub struct WeatherMaterial {
+pub(crate) struct WeatherMaterial {
     #[uniform(0)]
     pub params: WeatherParams,
     #[texture(1)]
@@ -808,7 +800,7 @@ impl Material for WeatherMaterial {
     }
 }
 
-pub struct WeatherPlugin;
+pub(crate) struct WeatherPlugin;
 
 impl Plugin for WeatherPlugin {
     fn build(&self, app: &mut App) {

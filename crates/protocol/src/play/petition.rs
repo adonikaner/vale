@@ -67,7 +67,7 @@ use crate::opcodes::Opcode;
 
 /// The most signatures a charter takes. The server refuses a tenth, and the
 /// petition window has nine lines.
-pub const MAX_SIGNATURES: usize = 9;
+pub(crate) const MAX_SIGNATURES: usize = 9;
 
 /// One row of `SMSG_PETITION_SHOWLIST`: a charter the registrar sells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +91,7 @@ pub struct ShowList {
 }
 
 /// `SMSG_PETITION_SHOWLIST` (444).
-pub fn parse_show_list(body: &[u8]) -> Option<ShowList> {
+pub(crate) fn parse_show_list(body: &[u8]) -> Option<ShowList> {
     let mut r = Reader::new(body);
     if !r.has(9) {
         return None;
@@ -128,7 +128,7 @@ pub struct Signatures {
 }
 
 /// `SMSG_PETITION_SHOW_SIGNATURES` (447).
-pub fn parse_signatures(body: &[u8]) -> Option<Signatures> {
+pub(crate) fn parse_signatures(body: &[u8]) -> Option<Signatures> {
     let mut r = Reader::new(body);
     if !r.has(21) {
         return None;
@@ -173,7 +173,7 @@ pub struct PetitionQuery {
 /// The fields after the two signature counts are a deadline, a creation
 /// time, five restrictions and a list of choices. vmangos writes every one
 /// as zero and this client reads none of them.
-pub fn parse_query(body: &[u8]) -> Option<PetitionQuery> {
+pub(crate) fn parse_query(body: &[u8]) -> Option<PetitionQuery> {
     let mut r = Reader::new(body);
     if !r.has(12) {
         return None;
@@ -220,7 +220,7 @@ pub struct SignResult {
 }
 
 /// `SMSG_PETITION_SIGN_RESULTS` (449).
-pub fn parse_sign_result(body: &[u8]) -> Option<SignResult> {
+pub(crate) fn parse_sign_result(body: &[u8]) -> Option<SignResult> {
     let mut r = Reader::new(body);
     if !r.has(20) {
         return None;
@@ -233,21 +233,21 @@ pub fn parse_sign_result(body: &[u8]) -> Option<SignResult> {
 }
 
 /// `SMSG_TURN_IN_PETITION_RESULTS` (453): one of [`result`].
-pub fn parse_turn_in_result(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_turn_in_result(body: &[u8]) -> Option<u32> {
     let mut r = Reader::new(body);
     r.has(4).then(|| r.u32())
 }
 
 /// `MSG_PETITION_DECLINE` (450), from the server: the guid of the player who
 /// declined to sign.
-pub fn parse_decline(body: &[u8]) -> Option<u64> {
+pub(crate) fn parse_decline(body: &[u8]) -> Option<u64> {
     let mut r = Reader::new(body);
     r.has(8).then(|| r.u64())
 }
 
 /// `MSG_PETITION_RENAME` (705), from the server: the charter and its new
 /// guild name.
-pub fn parse_rename(body: &[u8]) -> Option<(u64, String)> {
+pub(crate) fn parse_rename(body: &[u8]) -> Option<(u64, String)> {
     let mut r = Reader::new(body);
     if !r.has(9) {
         return None;
@@ -256,7 +256,7 @@ pub fn parse_rename(body: &[u8]) -> Option<(u64, String)> {
 }
 
 /// A body that is one guid: the registrar's or the charter's.
-pub fn guid_body(guid: u64) -> Vec<u8> {
+pub(crate) fn guid_body(guid: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.buf
@@ -266,7 +266,7 @@ pub fn guid_body(guid: u64) -> Vec<u8> {
 /// [`CharterOffer::index`], and it is the last field. The fields between the
 /// name and the index are an empty body text and the record's limits and
 /// restrictions, all zero.
-pub fn buy_body(npc: u64, name: &str, index: u32) -> Vec<u8> {
+pub(crate) fn buy_body(npc: u64, name: &str, index: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(npc).u32(0).u64(0).cstring(name).cstring("");
     for _ in 0..8 {
@@ -278,28 +278,28 @@ pub fn buy_body(npc: u64, name: &str, index: u32) -> Vec<u8> {
 
 /// `CMSG_PETITION_SIGN` (448). The 1.12.1 client sends 1 in the trailing
 /// byte; the server reads the byte and ignores it.
-pub fn sign_body(item: u64, byte: u8) -> Vec<u8> {
+pub(crate) fn sign_body(item: u64, byte: u8) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(item).u8(byte);
     w.buf
 }
 
 /// `CMSG_OFFER_PETITION` (451): ask `player` to sign the charter.
-pub fn offer_body(item: u64, player: u64) -> Vec<u8> {
+pub(crate) fn offer_body(item: u64, player: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(item).u64(player);
     w.buf
 }
 
 /// `CMSG_PETITION_QUERY` (454).
-pub fn query_body(petition: u32, item: u64) -> Vec<u8> {
+pub(crate) fn query_body(petition: u32, item: u64) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(petition).u64(item);
     w.buf
 }
 
 /// `MSG_PETITION_RENAME` (705), to the server.
-pub fn rename_body(item: u64, name: &str) -> Vec<u8> {
+pub(crate) fn rename_body(item: u64, name: &str) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(item).cstring(name);
     w.buf

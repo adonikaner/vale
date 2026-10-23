@@ -110,7 +110,7 @@ pub const PLAYER_RADIUS: f32 = 0.5;
 /// a single ray up the centre axis stops a stride only when something is dead
 /// ahead of the character's own middle: a post, a trunk, a door jamb taken at
 /// an angle and the corner of anything are all missed by it entirely.
-pub const PROBE_LANES: [f32; 3] = [0.0, -PLAYER_RADIUS, PLAYER_RADIUS];
+pub(crate) const PROBE_LANES: [f32; 3] = [0.0, -PLAYER_RADIUS, PLAYER_RADIUS];
 
 /// How many times one stride may have a wall's own direction taken out of it
 /// before the answer is to stand still.
@@ -125,7 +125,7 @@ const CANCELS: usize = 3;
 ///
 /// 0.5 is 60° from horizontal — steeper than any ramp or staircase the game
 /// asks a character to walk up, and shallower than any wall.
-pub const WALL_NORMAL_Z: f32 = 0.5;
+pub(crate) const WALL_NORMAL_Z: f32 = 0.5;
 
 /// Target size of a grid cell, in yards. The grid is capped at
 /// [`GRID_MAX`] cells per axis, so a building larger than
@@ -1195,7 +1195,8 @@ impl CollisionWorld {
 
     /// Drop every hull of one placement, wherever it is held, and its
     /// settled mark. Returns how many hulls went.
-    pub fn remove_placement(&self, map_id: u32, unique_id: u32) -> usize {
+    #[cfg(test)]
+    pub(crate) fn remove_placement(&self, map_id: u32, unique_id: u32) -> usize {
         let mut inner = self.write();
         if inner.map_id != Some(map_id) {
             return 0;

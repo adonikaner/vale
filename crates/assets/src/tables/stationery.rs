@@ -60,19 +60,19 @@ mod fields {
     pub const FLAGS: usize = 3;
 
     /// `Package.dbc`: the parcel's icon, under `Interface\Icons\`.
-    pub const PACKAGE_ICON: usize = 1;
+    pub(crate) const PACKAGE_ICON: usize = 1;
 
     /// `MailTemplate.dbc`: the subject, then the body — both eight-column
     /// localised runs, so the second starts at 1 + 8 + 1 (the string block's
     /// own flag column).
-    pub const TEMPLATE_SUBJECT: usize = 1;
-    pub const TEMPLATE_BODY: usize = 10;
+    pub(crate) const TEMPLATE_SUBJECT: usize = 1;
+    pub(crate) const TEMPLATE_BODY: usize = 10;
 }
 
 /// Where the two stationery pictures live, and the two halves a background is
 /// cut into. `STATIONERY_PATH` in `MailFrame.lua`, and the `"1"`/`"2"` suffix
 /// is the interface's own concatenation.
-pub const STATIONERY_PATH: &str = r"Interface\Stationery\";
+pub(crate) const STATIONERY_PATH: &str = r"Interface\Stationery\";
 
 /// One row of `Stationery.dbc`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

@@ -16,8 +16,8 @@
 //!               sixteen pairs of numbers
 //! ```
 
-pub mod bands;
-pub mod flightpaths;
-pub mod graveyards;
-pub mod lights;
-pub mod triggers;
+pub(crate) mod bands;
+pub(crate) mod flightpaths;
+pub(crate) mod graveyards;
+pub(crate) mod lights;
+pub(crate) mod triggers;

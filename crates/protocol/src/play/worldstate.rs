@@ -35,7 +35,7 @@
 //! lists depends on the map and zone the last `SMSG_INIT_WORLD_STATES` named;
 //! see `vale_assets::tables::worldstate`.
 
-use crate::bytes::{Reader, Writer};
+use crate::bytes::Reader;
 
 /// `SMSG_INIT_WORLD_STATES`, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +51,7 @@ pub struct WorldStatesInit {
 ///
 /// A list that the body cannot hold is refused, since a short body means the
 /// count or a width was read wrongly.
-pub fn parse_init_world_states(body: &[u8]) -> Option<WorldStatesInit> {
+pub(crate) fn parse_init_world_states(body: &[u8]) -> Option<WorldStatesInit> {
     if body.len() < 10 {
         return None;
     }
@@ -67,7 +67,7 @@ pub fn parse_init_world_states(body: &[u8]) -> Option<WorldStatesInit> {
 }
 
 /// `SMSG_UPDATE_WORLD_STATE`: one `(state, value)` pair.
-pub fn parse_update_world_state(body: &[u8]) -> Option<(u32, i32)> {
+pub(crate) fn parse_update_world_state(body: &[u8]) -> Option<(u32, i32)> {
     if body.len() < 8 {
         return None;
     }
@@ -77,8 +77,9 @@ pub fn parse_update_world_state(body: &[u8]) -> Option<(u32, i32)> {
 
 /// Builds an `SMSG_INIT_WORLD_STATES` body, for tests and headless probes that
 /// feed the client a zone the server did not send.
-pub fn init_world_states_body(init: &WorldStatesInit) -> Vec<u8> {
-    let mut w = Writer::new();
+#[cfg(test)]
+pub(crate) fn init_world_states_body(init: &WorldStatesInit) -> Vec<u8> {
+    let mut w = crate::bytes::Writer::new();
     w.u32(init.map).u32(init.zone).u16(init.states.len() as u16);
     for &(state, value) in &init.states {
         w.u32(state).u32(value as u32);
@@ -108,7 +109,7 @@ mod tests {
 
     #[test]
     fn an_update_is_one_signed_pair() {
-        let mut w = Writer::new();
+        let mut w = crate::bytes::Writer::new();
         w.u32(1581).u32((-2i32) as u32);
         assert_eq!(parse_update_world_state(&w.buf), Some((1581, -2)));
         assert_eq!(parse_update_world_state(&w.buf[..7]), None);

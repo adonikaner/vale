@@ -37,7 +37,7 @@ use crate::interface::events::{PlayerLeavingWorld, UpdateWorldStates};
 
 /// What the session thread said. Written by [`crate::world::incoming`].
 #[derive(Message, Debug, Clone)]
-pub enum WorldStateAnswer {
+pub(crate) enum WorldStateAnswer {
     /// `SMSG_INIT_WORLD_STATES`.
     Init(Box<WorldStatesInit>),
     /// `SMSG_UPDATE_WORLD_STATE`.
@@ -45,7 +45,7 @@ pub enum WorldStateAnswer {
 }
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &PlayerEvent) -> Option<WorldStateAnswer> {
+pub(crate) fn answer_of(event: &PlayerEvent) -> Option<WorldStateAnswer> {
     match event {
         PlayerEvent::WorldStatesInit(init) => Some(WorldStateAnswer::Init(init.clone())),
         PlayerEvent::WorldStateUpdate { state, value } => {
@@ -57,7 +57,7 @@ pub fn answer_of(event: &PlayerEvent) -> Option<WorldStateAnswer> {
 
 /// The world state table and the rows listed from it.
 #[derive(Resource, Default)]
-pub struct WorldStates {
+pub(crate) struct WorldStates {
     /// The map and zone the last `SMSG_INIT_WORLD_STATES` named; `None` before
     /// the first one of a session.
     place: Option<(u32, u32)>,
@@ -104,7 +104,7 @@ impl WorldStates {
     }
 }
 
-pub struct WorldStatePlugin;
+pub(crate) struct WorldStatePlugin;
 
 impl Plugin for WorldStatePlugin {
     fn build(&self, app: &mut App) {

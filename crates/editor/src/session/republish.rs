@@ -1,119 +1,60 @@
 //! What the client's caches are told when the overlay changes, and the edited
 //! tables put where a preview reads them.
 
-use vale_client::assets::GameAssets;
+use vale_client::assets::PathsChanged;
 use bevy::prelude::*;
 use super::EditSession;
 
-/// Tell every cache in the client what has changed under it.
+/// Tell the client what has changed under it.
 ///
 /// Publishing bytes into the overlay is half of a change. The other half is
-/// that the overlay is asked only when a path is read, and the client has four
-/// banks that read a path once and keep what they read:
-///
-/// ```text
-/// ModelCache             every model, dressing and skin, by archive path
-/// GameAssets             the DBC banks, the strings, the bindings, the sounds
-/// DisplayCache           an Arc of the parsed display tables, and what it
-///                        resolved from them
-/// UiTextures             the interface painter's minimap pictures, by the
-///                        path the index names
-/// ```
-///
-/// Each needs to be told. The third is easy to miss behind the second:
-/// `GameAssets::forget_tables` drops the bank's copy, and `DisplayCache` goes
-/// on holding the `Arc` it took at the first entity. Without the fourth, a
-/// redrawn minimap reaches only the first playtest: the picture is read then
-/// and answered from the cache at every playtest after.
+/// that the overlay is asked only when a path is read, and the client has
+/// banks that read a path once and keep what they read. One [`PathsChanged`]
+/// carries what this session recorded since the last frame, and each bank
+/// handles it in its own module; the message's own note lists them.
 ///
 /// None of this rebuilds what is drawn. What is standing keeps its
 /// handles; the next thing to ask reads the file. For the lab that is the
-/// next hang, for the storyboard the next loop of the timeline, and for a
-/// playtest the login.
-#[allow(clippy::too_many_arguments)]
-pub fn forget_what_changed(
+/// next hang, for the storyboard the next loop of the timeline (see
+/// [`show_the_edit`]), and for a playtest the login.
+pub(crate) fn forget_what_changed(
     session: Option<ResMut<EditSession>>,
-    assets: Res<GameAssets>,
-    models: Option<ResMut<vale_client::render::models::ModelCache>>,
-    displays: Option<ResMut<vale_client::world::entities::DisplayCache>>,
-    mut stage: ResMut<crate::preview::stage::Stage>,
-    mut ui_textures: Option<ResMut<vale_client::ui::mesh::textures::UiTextures>>,
+    mut changed: MessageWriter<PathsChanged>,
 ) {
     let Some(mut session) = session else { return };
-
-    // The minimap pictures first, since they are the one bank here that
-    // is not the model cache and the paths are about to be drained.
-    if session.republished_all {
-        if let Some(textures) = ui_textures.as_mut() {
-            textures.forget_all_minimaps();
-        }
-    } else {
-        for path in &session.republished {
-            if let Some(textures) = ui_textures.as_mut() {
-                textures.forget_minimap(path);
-            }
-        }
-    }
-
-    // The tables first, because a display the models are then asked for
-    // is resolved through them.
-    if std::mem::take(&mut session.tables_republished) {
-        let began = std::time::Instant::now();
-        assets.forget_tables();
-        // Read again here, and not on the next entity that needs a display.
-        // The stage's actors are already standing when a kit is edited
-        // beside its preview, so there is no next entity: the effect and
-        // pose passes would find no tables from then on, and the actors
-        // would stand idle with nothing hung on them.
-        //
-        // The re-parse is 73 reads with `Spell.dbc` among them twice, about
-        // a tenth of a second. Doing it in this call puts it where the
-        // person has just made an edit, and gives it somewhere to be
-        // measured.
-        if let Some(mut displays) = displays {
-            displays.reread(&assets);
-        }
-        // The lab's compare keys on this revision, so without the bump the
-        // model view keeps the effect it hung off the tables from before.
-        session.republished_revision += 1;
-        // What is standing is shown the edit now. The effect pass hangs a
-        // kit when a counter changes, so a playing stage starts its loop
-        // again, and a paused one is put back at its own time, which moves
-        // the counters of its phase again and leaves it paused.
-        if stage.showing.is_some() || stage.pushing.is_some() {
-            match stage.playing {
-                true => stage.restart(),
-                false => {
-                    let at = stage.at;
-                    stage.seek(at);
-                }
-            }
-        }
-        let ok = assets.display_tables().is_ok();
-        info!(
-            "tables re-read in {:?}{}",
-            began.elapsed(),
-            match ok {
-                true => "",
-                false => " (they did not parse)",
-            }
-        );
-    }
-
-    let Some(mut models) = models else { return };
-    if session.republished_all {
-        session.republished_all = false;
-        session.republished.clear();
-        session.republished_revision += 1;
-        models.forget_all();
+    let tables = std::mem::take(&mut session.tables_republished);
+    let all = std::mem::take(&mut session.republished_all);
+    let paths = std::mem::take(&mut session.republished);
+    // The lab's compare keys on this revision, so without the bump the
+    // model view keeps the effect it hung before the change: once for the
+    // tables, and once for the files.
+    session.republished_revision += u64::from(tables) + u64::from(all || !paths.is_empty());
+    if !tables && !all && paths.is_empty() {
         return;
     }
-    if session.republished.is_empty() {
+    changed.write(PathsChanged { paths, all, tables });
+}
+
+/// Show the stage an edit to the tables, once the client has read them again.
+///
+/// The effect pass hangs a kit when a counter changes, so a playing stage
+/// starts its loop again, and a paused one is put back at its own time, which
+/// moves the counters of its phase again and leaves it paused.
+pub(crate) fn show_the_edit(
+    mut changed: MessageReader<PathsChanged>,
+    mut stage: ResMut<crate::preview::stage::Stage>,
+) {
+    if !changed.read().fold(false, |any, change| any | change.tables) {
         return;
     }
-    session.republished_revision += 1;
-    for path in std::mem::take(&mut session.republished) {
-        models.forget(&path);
+    if stage.showing.is_some() || stage.pushing.is_some() {
+        match stage.playing {
+            true => stage.restart(),
+            false => {
+                let at = stage.at;
+                stage.seek(at);
+            }
+        }
     }
 }
 
@@ -131,7 +72,7 @@ pub fn forget_what_changed(
 /// cheap; [`SETTLE`] after the last one is one re-read per thing a person
 /// does. With no preview open nothing here runs at all, which is every other
 /// tool in the editor.
-pub fn publish_for_the_preview(
+pub(crate) fn publish_for_the_preview(
     time: Res<Time>,
     stage: Res<crate::preview::stage::Stage>,
     tool: Res<crate::tools::Tool>,

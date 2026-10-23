@@ -86,7 +86,7 @@ use crate::bytes::{Reader, Writer};
 use crate::opcodes::Opcode;
 
 const VERSION: u32 = 2;
-pub const HEADER_LEN: usize = 16;
+pub(crate) const HEADER_LEN: usize = 16;
 
 /// The largest body a file will believe. The length is a `u32` read off a file
 /// that may have been truncated mid-write. The largest real answer is a quest
@@ -521,7 +521,7 @@ impl Caches {
 /// A stable key for one server address, so two realms cannot share a file's
 /// entries. FNV-1a over the bytes: this needs to be the same number next
 /// launch and nothing else, so a hash with a randomised seed would be wrong.
-pub fn realm_key(address: &str) -> u32 {
+pub(crate) fn realm_key(address: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
     for byte in address.as_bytes() {
         hash ^= u32::from(*byte);
@@ -536,7 +536,7 @@ pub fn realm_key(address: &str) -> u32 {
 /// caches sit in one `WDB\` folder: the header check is what makes a
 /// mismatched file safe, and the name is what stops the second server
 /// rewriting the first one's file on every append.
-pub fn cache_path(dir: impl AsRef<Path>, kind: Kind, realm: u32) -> PathBuf {
+pub(crate) fn cache_path(dir: impl AsRef<Path>, kind: Kind, realm: u32) -> PathBuf {
     dir.as_ref().join(format!("{}-{realm:08x}.wdb2", kind.stem()))
 }
 
@@ -578,7 +578,7 @@ pub const CACHE_DIR: &str = "WDB";
 ///
 /// [`crate::socket::world::WorldSession::caches`] calls this with the socket's
 /// own peer address.
-pub fn for_server(address: &str) -> Caches {
+pub(crate) fn for_server(address: &str) -> Caches {
     let realm = realm_key(address);
     Caches::open(CACHE_DIR, u32::from(crate::version::BUILD), realm)
 }

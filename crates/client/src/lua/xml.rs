@@ -91,31 +91,31 @@ const MAX_ERRORS: usize = 1024;
 #[derive(Debug, Clone, Default)]
 pub struct Report {
     /// Files read, split by what they were.
-    pub lua_files: usize,
-    pub xml_files: usize,
+    pub(crate) lua_files: usize,
+    pub(crate) xml_files: usize,
     /// Named in the `.toc` or by a `<Script>`/`<Include>` and not in the
     /// archives. Expected to be empty.
     pub missing: Vec<String>,
     /// `<Script>` elements carrying their Lua in the body rather than naming a
     /// file. The directory has seven; one of them defines `TEXT` (see the module
     /// comment).
-    pub inline_scripts: usize,
+    pub(crate) inline_scripts: usize,
     /// Objects created, and the two kinds of them.
     pub frames: usize,
-    pub regions: usize,
+    pub(crate) regions: usize,
     /// `virtual="true"` elements recorded rather than instantiated.
     pub templates: usize,
     /// `<Scripts>` handlers compiled and attached.
-    pub handlers: usize,
+    pub(crate) handlers: usize,
     /// `inherits` values naming a template no file declared. Each produces a
     /// widget with no art and no size, and raises no error.
-    pub unresolved: BTreeSet<String>,
+    pub(crate) unresolved: BTreeSet<String>,
     /// Element names [`vale_assets::interface::widgets::classify`] does not know.
     pub unknown: BTreeSet<String>,
     /// Every error raised, one line each, capped at [`MAX_ERRORS`]. Most are
     /// `attempt to call a nil value` from an `OnLoad` calling an API function
     /// this client does not implement; see the module comment.
-    pub errors: BTreeSet<String>,
+    pub(crate) errors: BTreeSet<String>,
 }
 
 impl Report {
@@ -205,7 +205,7 @@ pub fn templates(lua: &mlua::Lua) -> mlua::Result<Templates> {
 /// quietly would leave a 0x0 object with no scripts, and Lua could not detect
 /// it. Errors raised by the template's body are recorded and dropped, as in the
 /// load's [`Report`]: a template with one bad child still makes a usable frame.
-pub fn instantiate(
+pub(crate) fn instantiate(
     lua: &mlua::Lua,
     object: &mlua::Table,
     template: &str,
@@ -239,7 +239,7 @@ pub fn instantiate(
 /// Takes a reader function rather than the archive chain, as
 /// `DisplayTables::load` does, so the whole module can be tested against files
 /// written in a test, with no MPQ, no window and no server.
-pub struct Loader<'a> {
+pub(crate) struct Loader<'a> {
     read: &'a mut dyn FnMut(&str) -> Option<Vec<u8>>,
     /// `virtual="true"` elements by name: the templates `inherits` names, and
     /// that a later `CreateFrame(…, "SomeTemplate")` uses. Shared with the Lua
@@ -284,7 +284,7 @@ impl<'a> Loader<'a> {
     /// full of calls this client cannot answer is recorded in the [`Report`],
     /// because a partly loaded interface is the normal state while the API is
     /// incomplete, and it must not stop the client.
-    pub fn load_toc(self, lua: &mlua::Lua, path: &str) -> Report {
+    pub(crate) fn load_toc(self, lua: &mlua::Lua, path: &str) -> Report {
         self.load_tocs(lua, &[path])
     }
 
@@ -296,7 +296,7 @@ impl<'a> Loader<'a> {
     /// would have no art and no size. In the 1.12.1 client an addon's markup
     /// also inherits `FrameXML`'s templates. The one caller that passes more than
     /// one path is [`crate::lua::host::LuaHost::load_interface`].
-    pub fn load_tocs(mut self, lua: &mlua::Lua, paths: &[&str]) -> Report {
+    pub(crate) fn load_tocs(mut self, lua: &mlua::Lua, paths: &[&str]) -> Report {
         // Use the state's registry, not one owned by this pass, so a template
         // read here is still available when `CreateFrame` names it later, and a
         // second `.toc` loaded into the same state (the trainer addon) inherits

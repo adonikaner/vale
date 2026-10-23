@@ -109,7 +109,7 @@ use std::time::{Duration, Instant};
 /// from [`ActionBar::bonus_bar`], and every button adds both to its own id
 /// before it asks anything here. A slot number from the interface is therefore
 /// already absolute.
-pub const BAR_SLOTS: usize = 120;
+pub(crate) const BAR_SLOTS: usize = 120;
 
 /// One slot of the bar, resolved against the archives.
 #[derive(Clone, Debug)]
@@ -133,7 +133,7 @@ impl Slot {
 
     /// Whether this slot is the auto-attack toggle rather than a cast. See the
     /// module comment.
-    pub fn is_auto_attack(&self) -> bool {
+    pub(crate) fn is_auto_attack(&self) -> bool {
         self.kind == action_kind::SPELL && self.action == SPELL_ATTACK
     }
 }
@@ -162,7 +162,7 @@ pub struct ActionBar {
     /// computes this value itself, because the packet carries the form and
     /// never the bar. See [`ActionbarBonusChanged`], the event the interface
     /// redraws on.
-    pub bonus_bar: u8,
+    pub(crate) bonus_bar: u8,
     /// `GetActionBarToggles()`: which of the four extra bars this character
     /// has switched on, as a mask of
     /// [`vale_protocol::play::spells::multi_bar`] bits.
@@ -200,7 +200,7 @@ pub struct ActionBar {
 /// user moving) produces that one packet, so [`Self::stop`] is called from the
 /// event drain rather than from the press.
 #[derive(Resource, Default)]
-pub struct AutoRepeat {
+pub(crate) struct AutoRepeat {
     /// Which spell, for `IsAutoRepeatAction`.
     pub spell: Option<u32>,
 }
@@ -253,11 +253,11 @@ impl AutoRepeat {
 /// bar and the spellbook are not members: they are rebuilt from the server and
 /// only read here.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct PressState<'w> {
-    pub cooldowns: ResMut<'w, Cooldowns>,
+pub(crate) struct PressState<'w> {
+    pub(crate) cooldowns: ResMut<'w, Cooldowns>,
     pub casting: ResMut<'w, Casting>,
-    pub auto_repeat: ResMut<'w, AutoRepeat>,
-    pub targeting: ResMut<'w, SpellTargeting>,
+    pub(crate) auto_repeat: ResMut<'w, AutoRepeat>,
+    pub(crate) targeting: ResMut<'w, SpellTargeting>,
 }
 
 /// The cast this client believes is in progress, for the cast bar.
@@ -339,7 +339,7 @@ pub struct Casting {
     /// argument is `skipChanneled`), so a cast pressed during a channel is
     /// accepted and replaces it, while one pressed during a wind-up is refused.
     /// See [`in_progress`].
-    pub channelling: Option<u32>,
+    pub(crate) channelling: Option<u32>,
     /// The next-swing ability waiting on the weapon (Heroic Strike, Raptor
     /// Strike, Cleave). This is a third state, separate from the two above.
     ///
@@ -360,7 +360,7 @@ pub struct Casting {
     /// [`drain_events`]. A queued ability that nothing releases stays queued: a
     /// player standing out of reach keeps it armed, as in the 1.12.1 client.
     /// This is not a leak.
-    pub next_swing: Option<u32>,
+    pub(crate) next_swing: Option<u32>,
 }
 
 impl Casting {
@@ -495,7 +495,7 @@ pub(crate) fn disarm_auto_repeat(
 /// faction or moved out of range while the cursor was up, and a cached answer
 /// would cast at it anyway.
 #[derive(Resource, Default)]
-pub struct SpellTargeting {
+pub(crate) struct SpellTargeting {
     /// The spell awaiting a target, if any.
     spell: Option<u32>,
     /// What the cursor is waiting for: a unit, a location or an item. Blizzard,
@@ -511,23 +511,23 @@ pub struct SpellTargeting {
     /// the pointer is on the sky or off the loaded world. Written by
     /// [`crate::interface::target::spell_ground_under_pointer`], only while
     /// [`Self::wants_ground`] is true, because the ray walks the terrain.
-    pub over_ground: Option<[f32; 3]>,
+    pub(crate) over_ground: Option<[f32; 3]>,
     /// Whether the unit under the pointer would satisfy the spell. It selects
     /// `Cast.blp` or `UnableCast.blp`, the only feedback the player gets before
     /// clicking.
-    pub over_valid: bool,
+    pub(crate) over_valid: bool,
     /// True for the frame in which this mode consumed a click. A click that
     /// casts must not also change the target, and two systems make those
     /// decisions: `pick_spell_target` runs first and sets this flag, and
     /// `target::select_on_click` reads it and does nothing. System order alone
     /// is not enough, because it says which system runs first, not which one
     /// acted.
-    pub took_click: bool,
+    pub(crate) took_click: bool,
 }
 
 impl SpellTargeting {
     /// `SpellIsTargeting()`: whether the cursor is up.
-    pub fn is_targeting(&self) -> bool {
+    pub(crate) fn is_targeting(&self) -> bool {
         self.spell.is_some()
     }
 
@@ -537,7 +537,7 @@ impl SpellTargeting {
     }
 
     /// Whether the cursor is waiting for a location rather than a unit.
-    pub fn wants_ground(&self) -> bool {
+    pub(crate) fn wants_ground(&self) -> bool {
         self.spell.is_some() && self.asking == Asking::Ground
     }
 
@@ -550,7 +550,7 @@ impl SpellTargeting {
     /// is a use or a target choice. The reader is therefore the use path in
     /// [`crate::interface::items`], where the clicked slot has already been
     /// resolved to an item.
-    pub fn wants_item(&self) -> bool {
+    pub(crate) fn wants_item(&self) -> bool {
         self.spell.is_some() && self.asking == Asking::Item
     }
 
@@ -584,7 +584,7 @@ impl SpellTargeting {
 /// same gesture; only the answer differs: a unit, three floats, or an item's
 /// guid. See [`SpellTargeting`], whose state is this value plus the spell id.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Asking {
+pub(crate) enum Asking {
     #[default]
     Unit,
     Ground,
@@ -623,7 +623,7 @@ enum Pointed {
 /// decides whether that is a use or a target choice. That path has already
 /// resolved the item by the time it has a slot, so the guid is available.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellItemPicked {
+pub(crate) struct SpellItemPicked {
     /// The item object's guid, which is what `TARGET_FLAG_ITEM` carries.
     pub guid: u64,
 }
@@ -637,7 +637,7 @@ pub struct SpellItemPicked {
 /// message between them keeps [`run_bindings`] the only entry point for a
 /// cast, the property described in [`cast_known_spell`]'s doc.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellTargetPicked {
+pub(crate) struct SpellTargetPicked {
     /// The unit clicked, as an entity: the same handle [`Selection`] holds, so
     /// the cast path resolves it the same way it resolves a selection.
     pub unit: Entity,
@@ -651,7 +651,7 @@ pub struct SpellTargetPicked {
 /// that produces a unit cannot produce a point (its ray tests pick boxes, not
 /// the ground).
 #[derive(Message, Debug, Clone, Copy)]
-pub struct SpellGroundPicked {
+pub(crate) struct SpellGroundPicked {
     /// The point on the floor, in WoW axes and yards, which is the frame the
     /// packet uses. See [`Pointed::Ground`].
     pub at: [f32; 3],
@@ -720,7 +720,7 @@ struct Record {
 
 /// What the player is waiting on, per spell.
 #[derive(Resource, Default)]
-pub struct Cooldowns(HashMap<u32, Record>);
+pub(crate) struct Cooldowns(HashMap<u32, Record>);
 
 impl Cooldowns {
     /// How long until `spell` can be cast, in seconds, and the full length of
@@ -730,7 +730,7 @@ impl Cooldowns {
     /// how a global cooldown works: one cast's GCD is stored on that spell's
     /// record, and it blocks this spell because both have the same
     /// `startRecoveryCategory`. The longest remaining timer wins.
-    pub fn remaining(&self, spell: &SpellInfo) -> Option<(f32, f32)> {
+    pub(crate) fn remaining(&self, spell: &SpellInfo) -> Option<(f32, f32)> {
         let now = Instant::now();
         let left = |timer: Option<(Instant, Duration)>| {
             timer.and_then(|(start, duration)| {
@@ -924,25 +924,25 @@ impl Cooldowns {
 /// runs two systems that hold this one after the other (a writer is a `ResMut`
 /// underneath); they are chained anyway.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct ActionEvents<'w> {
-    pub slot_changed: MessageWriter<'w, ActionbarSlotChanged>,
+pub(crate) struct ActionEvents<'w> {
+    pub(crate) slot_changed: MessageWriter<'w, ActionbarSlotChanged>,
     pub page: MessageWriter<'w, ActionbarPageChanged>,
-    pub bonus: MessageWriter<'w, ActionbarBonusChanged>,
+    pub(crate) bonus: MessageWriter<'w, ActionbarBonusChanged>,
     pub cooldown: MessageWriter<'w, ActionbarUpdateCooldown>,
     /// The spellbook's event for the same change. See [`Self::cooldown_moved`],
     /// the only writer of either.
-    pub spell_cooldown: MessageWriter<'w, SpellUpdateCooldown>,
+    pub(crate) spell_cooldown: MessageWriter<'w, SpellUpdateCooldown>,
     pub state: MessageWriter<'w, ActionbarUpdateState>,
-    pub autorepeat_start: MessageWriter<'w, StartAutorepeatSpell>,
-    pub autorepeat_stop: MessageWriter<'w, StopAutorepeatSpell>,
-    pub cast_start: MessageWriter<'w, SpellcastStart>,
-    pub cast_stop: MessageWriter<'w, SpellcastStop>,
-    pub cast_failed: MessageWriter<'w, SpellcastFailed>,
-    pub cast_interrupted: MessageWriter<'w, SpellcastInterrupted>,
-    pub cast_delayed: MessageWriter<'w, SpellcastDelayed>,
-    pub channel_start: MessageWriter<'w, SpellcastChannelStart>,
-    pub channel_update: MessageWriter<'w, SpellcastChannelUpdate>,
-    pub channel_stop: MessageWriter<'w, SpellcastChannelStop>,
+    pub(crate) autorepeat_start: MessageWriter<'w, StartAutorepeatSpell>,
+    pub(crate) autorepeat_stop: MessageWriter<'w, StopAutorepeatSpell>,
+    pub(crate) cast_start: MessageWriter<'w, SpellcastStart>,
+    pub(crate) cast_stop: MessageWriter<'w, SpellcastStop>,
+    pub(crate) cast_failed: MessageWriter<'w, SpellcastFailed>,
+    pub(crate) cast_interrupted: MessageWriter<'w, SpellcastInterrupted>,
+    pub(crate) cast_delayed: MessageWriter<'w, SpellcastDelayed>,
+    pub(crate) channel_start: MessageWriter<'w, SpellcastChannelStart>,
+    pub(crate) channel_update: MessageWriter<'w, SpellcastChannelUpdate>,
+    pub(crate) channel_stop: MessageWriter<'w, SpellcastChannelStop>,
 }
 
 /// Events that are always raised together.
@@ -1005,9 +1005,9 @@ pub(crate) fn begin_item_cast(
 /// [`super::spellbook`] is the current user: the book must be up to date before
 /// a `CastSpell` row is resolved against it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ActionSet;
+pub(crate) struct ActionSet;
 
-pub struct ActionPlugin;
+pub(crate) struct ActionPlugin;
 
 impl Plugin for ActionPlugin {
     fn build(&self, app: &mut App) {
@@ -1381,7 +1381,7 @@ fn rebuild_bar(
         return;
     };
     let (buttons, known) = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         (world.action_buttons.clone(), world.spellbook.known.clone())
     };
 

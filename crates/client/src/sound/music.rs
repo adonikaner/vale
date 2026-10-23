@@ -104,13 +104,13 @@ enum Claim {
 }
 
 #[derive(Resource, Default)]
-pub struct MusicState {
+pub(crate) struct MusicState {
     /// The voice, whose claim it is, and **the volume it was started at** —
     /// which a fade-out needs and the sink cannot be asked for from here.
     playing: Option<(Entity, Claim, f32)>,
     /// `PlayMusic`'s path, held until `StopMusic`. Written by
     /// [`super::interface`], read here — one decider, like the world clock.
-    pub override_path: Option<String>,
+    pub(crate) override_path: Option<String>,
     /// **Which interface directory asked for it** — see the module comment.
     /// `None` before anything has, and the value that makes the override
     /// survive the state that made it a bug rather than a feature.
@@ -148,7 +148,7 @@ impl MusicState {
     /// for the frame between a teardown and the next load — that frame is the
     /// point of the check, since it is exactly when the state that could have
     /// said `StopMusic` stops existing.
-    pub fn interface_changed(&mut self, directory: Option<crate::lua::host::Directory>) -> bool {
+    pub(crate) fn interface_changed(&mut self, directory: Option<crate::lua::host::Directory>) -> bool {
         if self.override_dir == directory {
             return false;
         }
@@ -163,7 +163,7 @@ impl MusicState {
     }
 }
 
-pub struct MusicPlugin;
+pub(crate) struct MusicPlugin;
 
 impl Plugin for MusicPlugin {
     fn build(&self, app: &mut App) {

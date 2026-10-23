@@ -65,49 +65,12 @@ use vale_assets::interface::bindings::{BindingRow, Bindings};
 use vale_assets::interface::keys;
 use crate::lua::host::LuaHost;
 
-/// The **unscoped reads and writes** this file registers, sorted — the same
-/// list [`super::super::api::READS`] is for the scoped ones.
-///
-/// All nine are unscoped because none of them touches the world: a binding is a
-/// pair of strings and both halves live on [`Keys`].
-///
-/// **`RunBinding` is one of them and it was nearly left out.** It looks like a
-/// completeness item — nothing in `Blizzard_BindingUI` calls it — and it is
-/// load-bearing: `WorldMapFrame` is `enableKeyboard="true"` and its `OnKeyDown`
-/// is
-///
-/// ```lua
-/// if ( keyPressed == toggleKey1 or … or arg1 == "ESCAPE" ) then
-///     RunBinding("TOGGLEWORLDMAP");
-/// ```
-///
-/// so with the keyboard population in (see
-/// [`crate::lua::widgets::keyboard`]) the map takes every key while it is open
-/// and **this is the only way out of it**. A missing `RunBinding` there is a
-/// world map that cannot be closed from the keyboard, which is a worse bug than
-/// the one the population fixes.
-///
-/// It runs a `<Binding>` body, which is what [`crate::lua::host::LuaHost::fire`]
-/// does — but it is registered here rather than there because what it needs is
-/// the *declarations*, and those are on this board.
-pub const VERBS: [&str; 9] = [
-    "GetBinding",
-    "GetBindingAction",
-    "GetBindingKey",
-    "GetCurrentBindingSet",
-    "GetNumBindings",
-    "LoadBindings",
-    "RunBinding",
-    "SaveBindings",
-    "SetBinding",
-];
-
 /// Which of the reference's three saved sets — the numbers
 /// `Blizzard_BindingUI.lua` names `DEFAULT_BINDINGS`, `ACCOUNT_BINDINGS` and
 /// `CHARACTER_BINDINGS` in its own first six lines.
-pub const DEFAULT_SET: u32 = 0;
-pub const ACCOUNT_SET: u32 = 1;
-pub const CHARACTER_SET: u32 = 2;
+pub(crate) const DEFAULT_SET: u32 = 0;
+pub(crate) const ACCOUNT_SET: u32 = 1;
+pub(crate) const CHARACTER_SET: u32 = 2;
 
 /// One set: `(key, command)` in the order the keys were bound.
 ///
@@ -121,7 +84,7 @@ pub struct Keys {
     /// `Bindings.xml`. `None` before the archives are open, which draws an
     /// empty panel rather than failing — the same contract every other board
     /// here has.
-    pub declarations: Option<Arc<Bindings>>,
+    pub(crate) declarations: Option<Arc<Bindings>>,
     /// Sets 0, 1 and 2, indexed by the number `GetCurrentBindingSet` answers.
     sets: [Table; 3],
     /// …and set 3, which is the one the keyboard reads.
@@ -168,7 +131,7 @@ impl Default for Keys {
 
 impl Keys {
     /// Put the declarations on the board. Called once, when the archives open.
-    pub fn set_declarations(&mut self, declarations: Arc<Bindings>) {
+    pub(crate) fn set_declarations(&mut self, declarations: Arc<Bindings>) {
         self.declarations = Some(declarations);
         self.version = self.version.wrapping_add(1);
     }
@@ -193,7 +156,7 @@ impl Keys {
 
     /// **Does this board still need filling?** — see [`Keys::seeded`], which is
     /// the whole of why a relogin used to leave every key unbound.
-    pub fn needs_seeding(&self) -> bool {
+    pub(crate) fn needs_seeding(&self) -> bool {
         !self.seeded
     }
 
@@ -203,7 +166,7 @@ impl Keys {
     /// Not the same as [`Keys::load`] — this is the *login* deciding, where
     /// that is the panel's Cancel button re-reading. Only 1 and 2 are current
     /// sets; 0 is the defaults and is never "the set you are on".
-    pub fn use_set(&mut self, which: u32) {
+    pub(crate) fn use_set(&mut self, which: u32) {
         if which != ACCOUNT_SET && which != CHARACTER_SET {
             return;
         }

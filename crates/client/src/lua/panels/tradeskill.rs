@@ -71,7 +71,7 @@ pub struct TradeRow {
     /// `header`, or the difficulty word.
     pub kind: String,
     pub name: String,
-    pub num_available: u32,
+    pub(crate) num_available: u32,
     pub expanded: bool,
     pub header: bool,
 }
@@ -80,6 +80,7 @@ pub struct TradeRow {
 /// The writes that must answer during the call are in the list on
 /// [`super::trainer`]'s terms; `DoTradeSkill` and `CloseTradeSkill` are here
 /// because they are registered here, into the same scope.
+#[cfg(test)]
 pub const READS: [&str; 25] = [
     "CloseTradeSkill",
     "CollapseTradeSkillSubClass",

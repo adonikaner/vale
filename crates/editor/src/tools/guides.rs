@@ -42,36 +42,36 @@ use vale_client::render::terrain::{TerrainGround, TerrainMaterial};
 
 /// The angle the slope guide starts at, in degrees from level. See the module
 /// comment.
-pub const SLOPE_ANGLE: f32 = 50.0;
+pub(crate) const SLOPE_ANGLE: f32 = 50.0;
 
 /// The range the slope angle may be set to. Below 5 degrees nearly all ground
 /// is shaded, and at 90 none can be.
-pub const SLOPE_RANGE: std::ops::RangeInclusive<f32> = 5.0..=85.0;
+pub(crate) const SLOPE_RANGE: std::ops::RangeInclusive<f32> = 5.0..=85.0;
 
 /// The height between two contour lines the guide starts at, in yards.
-pub const CONTOUR_INTERVAL: f32 = 10.0;
+pub(crate) const CONTOUR_INTERVAL: f32 = 10.0;
 
 /// The range the contour interval may be set to, in yards.
-pub const CONTOUR_RANGE: std::ops::RangeInclusive<f32> = 1.0..=200.0;
+pub(crate) const CONTOUR_RANGE: std::ops::RangeInclusive<f32> = 1.0..=200.0;
 
 /// Which guides are on, and the two numbers two of them take.
 #[derive(Resource, Debug, Clone, PartialEq)]
-pub struct Guides {
+pub(crate) struct Guides {
     /// A line on every chunk border: every 33.33 yards.
-    pub chunks: bool,
+    pub(crate) chunks: bool,
     /// A heavier line on every tile border: every 533.33 yards.
-    pub tiles: bool,
+    pub(crate) tiles: bool,
     /// Shade the ground steeper than [`Self::slope_angle`].
-    pub slope: bool,
+    pub(crate) slope: bool,
     /// Degrees from level.
-    pub slope_angle: f32,
+    pub(crate) slope_angle: f32,
     /// A line at every multiple of [`Self::contour_interval`].
-    pub contours: bool,
+    pub(crate) contours: bool,
     /// Yards.
-    pub contour_interval: f32,
+    pub(crate) contour_interval: f32,
     /// Wash the chunks that carry four textures, which is the most a chunk
     /// can hold.
-    pub layers: bool,
+    pub(crate) layers: bool,
 }
 
 impl Default for Guides {
@@ -100,7 +100,7 @@ const NAMES: [(&str, fn(&mut Guides) -> &mut bool); 5] = [
 impl Guides {
     /// The guides `--guides <list>` names, at the default angle and interval.
     /// A name that is not a guide warns, as `--overlay` does.
-    pub fn with(list: &str) -> Guides {
+    pub(crate) fn with(list: &str) -> Guides {
         let mut guides = Guides::default();
         for name in list.split(',').map(str::trim).filter(|name| !name.is_empty()) {
             match NAMES.iter().find(|(known, _)| known.eq_ignore_ascii_case(name)) {
@@ -115,7 +115,7 @@ impl Guides {
     }
 
     /// The switches that are on, as `--guides` takes them. Empty when none is.
-    pub fn list(&self) -> String {
+    pub(crate) fn list(&self) -> String {
         let mut copy = self.clone();
         NAMES
             .iter()
@@ -126,7 +126,7 @@ impl Guides {
     }
 
     /// How many guides are on.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         [self.chunks, self.tiles, self.slope, self.contours, self.layers]
             .into_iter()
             .filter(|on| *on)
@@ -135,13 +135,13 @@ impl Guides {
 
     /// `TerrainParams::grid`: 1 for the chunk lines, 2 for the tile lines, 3
     /// for both.
-    pub fn grid(&self) -> f32 {
+    pub(crate) fn grid(&self) -> f32 {
         f32::from(u8::from(self.chunks)) + 2.0 * f32::from(u8::from(self.tiles))
     }
 
     /// `TerrainParams::guides`: the slope limit as the cosine of its angle and
     /// the contour interval, each zero while its switch is off.
-    pub fn params(&self) -> Vec4 {
+    pub(crate) fn params(&self) -> Vec4 {
         let slope = match self.slope {
             true => self.slope_angle.clamp(*SLOPE_RANGE.start(), *SLOPE_RANGE.end()).to_radians().cos(),
             false => 0.0,
@@ -156,7 +156,7 @@ impl Guides {
 
 /// The colour a chunk is washed by how many textures it carries, and how
 /// opaque: red for four, which is full, and nothing for fewer.
-pub fn layer_colour(layers: u32) -> [u8; 4] {
+pub(crate) fn layer_colour(layers: u32) -> [u8; 4] {
     match layers >= vale_edit::adt::alpha::MAX_LAYERS as u32 {
         true => [230, 60, 50, 255],
         false => [0, 0, 0, 0],
@@ -166,7 +166,7 @@ pub fn layer_colour(layers: u32) -> [u8; 4] {
 /// How much of the full-chunk wash is shown over the ground. Less than the
 /// Areas tool's, because the ground's own textures are what the mark is about
 /// and they have to stay readable under it.
-pub const LAYER_WASH: f32 = 0.4;
+pub(crate) const LAYER_WASH: f32 = 0.4;
 
 /// Write the grid, the slope limit and the contour interval onto every ground
 /// material.
@@ -197,7 +197,7 @@ fn apply(
     }
 }
 
-pub struct GuidesPlugin;
+pub(crate) struct GuidesPlugin;
 
 impl Plugin for GuidesPlugin {
     fn build(&self, app: &mut App) {

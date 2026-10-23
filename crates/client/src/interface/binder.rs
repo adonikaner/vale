@@ -38,7 +38,7 @@ use crate::world::session::Session;
 /// **What the server said about the home**, and the innkeeper waiting on an
 /// answer.
 #[derive(Resource, Default)]
-pub struct HomeBind {
+pub(crate) struct HomeBind {
     /// Where the hearthstone returns the character to. `None` until the login
     /// burst has landed.
     point: Option<BindPoint>,
@@ -58,15 +58,6 @@ impl HomeBind {
         self.point.map(|point| point.area_id)
     }
 
-    /// Which map the home is on — the one thing an area id does not settle.
-    pub fn map(&self) -> Option<u32> {
-        self.point.map(|point| point.map_id)
-    }
-
-    pub fn position(&self) -> Option<[f32; 3]> {
-        self.point.map(|point| point.position)
-    }
-
     /// Whoever is waiting on an answer.
     pub fn pending(&self) -> Option<u64> {
         self.pending
@@ -76,7 +67,7 @@ impl HomeBind {
     /// takes rather than borrows so that a second press cannot send a second
     /// `CMSG_BINDER_ACTIVATE`. The popup's Accept is one answer to one
     /// question.
-    pub fn take_pending(&mut self) -> Option<u64> {
+    pub(crate) fn take_pending(&mut self) -> Option<u64> {
         self.pending.take()
     }
 
@@ -90,14 +81,14 @@ impl HomeBind {
 /// What the session thread said about the home. Written by
 /// [`crate::world::incoming`], read by [`answer`].
 #[derive(Message, Debug, Clone, Copy)]
-pub enum BinderAnswer {
+pub(crate) enum BinderAnswer {
     /// `SMSG_BINDER_CONFIRM` — an innkeeper is asking.
     Confirm { guid: u64 },
     /// `SMSG_PLAYERBOUND` — it went through.
-    Bound { guid: u64, area_id: u32 },
+    Bound,
 }
 
-pub struct BinderPlugin;
+pub(crate) struct BinderPlugin;
 
 impl Plugin for BinderPlugin {
     fn build(&self, app: &mut App) {
@@ -129,7 +120,7 @@ impl Plugin for BinderPlugin {
 fn follow(session: Res<Session>, mut home: ResMut<HomeBind>, mut bound: MessageReader<BinderAnswer>) {
     let changed = bound
         .read()
-        .any(|answer| matches!(answer, BinderAnswer::Bound { .. }));
+        .any(|answer| matches!(answer, BinderAnswer::Bound));
     if home.point.is_some() && !changed {
         return;
     }
@@ -167,12 +158,11 @@ fn answer(
                 home.pending = Some(guid);
                 confirm.write(ConfirmBinder {
                     place: standing_in(&place, &assets),
-                    guid,
                 });
             }
             // The area is folded in by the session thread as well, so this is
             // only the edge that says the question is answered.
-            BinderAnswer::Bound { .. } => home.forget(),
+            BinderAnswer::Bound => home.forget(),
         }
     }
 }
@@ -227,7 +217,7 @@ fn press(
 /// The popup's `OnAccept`, and the only caller of `CMSG_BINDER_ACTIVATE`.
 /// Answers whether anything was sent, so a press with nothing pending is a
 /// no-op rather than a packet naming guid zero.
-pub fn confirm_binder(home: &mut HomeBind, session: &Session) -> bool {
+pub(crate) fn confirm_binder(home: &mut HomeBind, session: &Session) -> bool {
     let Some(guid) = home.take_pending() else {
         return false;
     };
@@ -247,7 +237,7 @@ pub fn confirm_binder(home: &mut HomeBind, session: &Session) -> bool {
 /// rather than taking one down: the dialog is only ever on screen while there
 /// *is* a question, and answering false for an absent one would race the frame
 /// between the event and the popup's first update.
-pub fn binder_in_range(home: &HomeBind, units: &crate::interface::api::Units) -> bool {
+pub(crate) fn binder_in_range(home: &HomeBind, units: &crate::interface::api::Units) -> bool {
     let Some(guid) = home.pending() else {
         return true;
     };

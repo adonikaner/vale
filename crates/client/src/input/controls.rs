@@ -160,7 +160,7 @@ impl ControlState {
     /// mouse's business then, and a turn key that fought it would be two things
     /// steering one character. That rule was in `send_input` and moves here
     /// with the controls it is about.
-    pub fn to_controls(&self, steering: bool, mouse_autorun: bool) -> Controls {
+    pub(crate) fn to_controls(&self, steering: bool, mouse_autorun: bool) -> Controls {
         let steering = steering || self.steer;
         Controls {
             forward: self.forward || self.autorun || mouse_autorun,
@@ -183,12 +183,12 @@ impl ControlState {
 
     /// Whether a turn key is down — read by `world::facing`, whose standing
     /// chase the reference freezes while one is.
-    pub fn turning(&self) -> bool {
+    pub(crate) fn turning(&self) -> bool {
         self.turn_left || self.turn_right
     }
 }
 
-pub struct ControlsPlugin;
+pub(crate) struct ControlsPlugin;
 
 impl Plugin for ControlsPlugin {
     fn build(&self, app: &mut App) {
@@ -270,7 +270,7 @@ pub fn apply(
 ///   looking.
 /// * The camera does not turn the character unless asked. A left-drag looks
 ///   around a character who keeps facing the same way.
-pub fn send_input(
+pub(crate) fn send_input(
     time: Res<Time>,
     buttons: Res<ButtonInput<MouseButton>>,
     controls: Res<crate::input::controls::ControlState>,

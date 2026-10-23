@@ -381,14 +381,14 @@ fn normalise_stem(stem: &str) -> String {
 /// is `wmo\dungeon\md_goldmine\md_goldmine`. The 1.12.1 client removes the six
 /// characters without checking what they are; every `MODF` path starts with
 /// `World\`.
-pub fn interior_stem(wmo_path: &str) -> String {
+pub(crate) fn interior_stem(wmo_path: &str) -> String {
     let rest = wmo_path.get(6..).unwrap_or("");
     let stem = rest.split('.').next().unwrap_or(rest);
     normalise_stem(stem)
 }
 
 /// Yards one texel of a WMO picture covers.
-pub const INTERIOR_YARDS_PER_TEXEL: f32 = 0.5;
+pub(crate) const INTERIOR_YARDS_PER_TEXEL: f32 = 0.5;
 
 /// The widest a WMO picture is, in texels, and so the cell a large group is cut
 /// into: 256 texels at half a yard is 128 yards.
@@ -402,7 +402,7 @@ const INTERIOR_MIN_TEXELS: u32 = 32;
 const INTERIOR_EDGE: f32 = 2.0 * INTERIOR_YARDS_PER_TEXEL;
 
 /// The most pictures one search returns; the client's list holds 512.
-pub const INTERIOR_MOST: usize = 512;
+pub(crate) const INTERIOR_MOST: usize = 512;
 
 /// One cell of a group's picture grid, in the WMO's own frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -484,7 +484,7 @@ pub fn group_tiles(bounds: &[[f32; 3]; 2]) -> Vec<InteriorTile> {
 /// view from anywhere in the cell. Vertically it reaches one and a half radii
 /// below the feet and one above, so a floor below shows through a stairwell
 /// and a floor far above does not.
-pub fn interior_query(position: [f32; 3], radius: f32) -> [[f32; 3]; 2] {
+pub(crate) fn interior_query(position: [f32; 3], radius: f32) -> [[f32; 3]; 2] {
     let snap = |v: f32| {
         let k = 1.0 / radius;
         ((v * k) - 0.5).round_ties_even() * radius
@@ -499,7 +499,7 @@ pub fn interior_query(position: [f32; 3], radius: f32) -> [[f32; 3]; 2] {
 
 /// A world box carried into a WMO's frame: the box around the eight corners,
 /// each through `world_to_local` (column-major, the inverse of the placement).
-pub fn box_to_local(world: &[[f32; 3]; 2], world_to_local: &[f32; 16]) -> [[f32; 3]; 2] {
+pub(crate) fn box_to_local(world: &[[f32; 3]; 2], world_to_local: &[f32; 16]) -> [[f32; 3]; 2] {
     let m = world_to_local;
     let mut lo = [f32::INFINITY; 3];
     let mut hi = [f32::NEG_INFINITY; 3];
@@ -563,7 +563,7 @@ impl InteriorModel {
 
 /// One picture to draw: which cell of which group, and where, WMO-local.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InteriorPicture {
+pub(crate) struct InteriorPicture {
     pub group: u32,
     pub tile: InteriorTile,
 }
@@ -585,7 +585,7 @@ pub struct InteriorPicture {
 ///   dimensions, and it is the one place the height of the box matters.
 ///
 /// The list is in walk order and stops at [`INTERIOR_MOST`].
-pub fn interior_pictures(model: &InteriorModel, seed: u32, query: &[[f32; 3]; 2]) -> Vec<InteriorPicture> {
+pub(crate) fn interior_pictures(model: &InteriorModel, seed: u32, query: &[[f32; 3]; 2]) -> Vec<InteriorPicture> {
     let mut out = Vec::new();
     let mut visited = vec![false; model.groups.len()];
     walk(model, seed, seed, query, &mut visited, &mut out);
@@ -659,7 +659,7 @@ fn walk(
 /// every cell of the first listed picture's group — the group the walk began
 /// in, when it gave any — drawn last. A floor below shows only through the
 /// gaps in the floor the character is on, and a floor above never covers it.
-pub fn draw_order(pictures: &mut [InteriorPicture], local_z: f32) {
+pub(crate) fn draw_order(pictures: &mut [InteriorPicture], local_z: f32) {
     let Some(top) = pictures.first().map(|p| p.group) else {
         return;
     };

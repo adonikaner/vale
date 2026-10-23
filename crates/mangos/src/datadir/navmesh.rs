@@ -67,13 +67,13 @@ use std::path::{Path, PathBuf};
 use crate::datadir::Tile;
 
 /// `MmapTileHeader::mmapMagic`, `'MMAP'`.
-pub const MMAP_MAGIC: u32 = 0x4d4d_4150;
+pub(crate) const MMAP_MAGIC: u32 = 0x4d4d_4150;
 /// `MMAP_VERSION` in `MoveMapSharedDefines.h`.
-pub const MMAP_VERSION: u32 = 6;
+pub(crate) const MMAP_VERSION: u32 = 6;
 /// `DT_NAVMESH_MAGIC`, `'DNAV'`.
-pub const DETOUR_MAGIC: u32 = 0x444e_4156;
+pub(crate) const DETOUR_MAGIC: u32 = 0x444e_4156;
 /// `DT_NAVMESH_VERSION`.
-pub const DETOUR_VERSION: u32 = 7;
+pub(crate) const DETOUR_VERSION: u32 = 7;
 
 /// `DT_VERTS_PER_POLYGON`.
 const VERTS_PER_POLYGON: usize = 6;
@@ -89,11 +89,11 @@ const BV_NODE: usize = 16;
 const OFF_MESH: usize = 36;
 
 /// The `NavTerrain` flag bits, `MoveMapSharedDefines.h`.
-pub const NAV_GROUND: u16 = 0x01;
-pub const NAV_MAGMA: u16 = 0x02;
-pub const NAV_SLIME: u16 = 0x04;
-pub const NAV_WATER: u16 = 0x08;
-pub const NAV_STEEP_SLOPES: u16 = 0x10;
+pub(crate) const NAV_GROUND: u16 = 0x01;
+pub(crate) const NAV_MAGMA: u16 = 0x02;
+pub(crate) const NAV_SLIME: u16 = 0x04;
+pub(crate) const NAV_WATER: u16 = 0x08;
+pub(crate) const NAV_STEEP_SLOPES: u16 = 0x10;
 
 /// What a polygon is to the server's path queries, from its flags.
 ///

@@ -96,7 +96,7 @@ impl Worn {
 /// Anything that is neither a weapon nor armour falls to column 0, because
 /// vmangos returns 0 for it; this is not a guard added here. Only an item that
 /// has durability and is neither would reach it, and 1.12 has none.
-pub fn cost_column(class: u32, subclass: u32) -> usize {
+pub(crate) fn cost_column(class: u32, subclass: u32) -> usize {
     match class {
         CLASS_WEAPON => subclass as usize,
         CLASS_ARMOR => subclass as usize + ARMOR_COLUMN_BASE,

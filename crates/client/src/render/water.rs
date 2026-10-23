@@ -80,7 +80,7 @@ use crate::render::models::{liquid_vec, M2Material};
 use crate::render::terrain::TerrainWater;
 
 /// The flipbook, the palette and the three systems that keep them current.
-pub struct WaterPlugin;
+pub(crate) struct WaterPlugin;
 
 impl Plugin for WaterPlugin {
     fn build(&self, app: &mut App) {
@@ -111,7 +111,7 @@ impl Plugin for WaterPlugin {
 /// to rewrite, and the render world re-upload, every one of them twenty-four
 /// times a second.
 #[derive(Resource, Default)]
-pub struct LiquidFlipbook {
+pub(crate) struct LiquidFlipbook {
     /// Indexed by [`Liquid::index`], each inner run [`LIQUID_FRAMES`] long in
     /// frame order from 1. Empty until the first [`load`] reserves them.
     ///
@@ -181,7 +181,7 @@ impl LiquidFlipbook {
 /// One answer for the whole world rather than one per surface — see the module
 /// doc, where the seam that costs is.
 #[derive(Resource)]
-pub struct LiquidPalette {
+pub(crate) struct LiquidPalette {
     /// Indexed by [`Liquid::index`]. `None` is "draw it from its own texture",
     /// which is what magma and slime always answer.
     tints: [Option<LiquidLight>; 4],

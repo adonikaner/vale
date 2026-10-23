@@ -3,7 +3,7 @@
 use super::*;
 use crate::session::EditSession;
 use super::browser::Browser;
-use super::labels::{basename, describe};
+use super::labels::describe;
 use super::tabs::table_named;
 use super::learning::{INSTANT_CAST, abilities_of, ability, add_ability, add_race_class_row, add_teaching_spell, race_class, race_class_rows_of, teachers_of};
 use super::zones::{add_sub_area, add_zone, area, sub_areas_of};
@@ -11,19 +11,6 @@ use vale_edit::dbc::places::next_explore_bit;
 use super::rows::{SET_ITEMS, add_light, copy_light_params, move_between_sets, set_lists};
 use super::commands::{Command, command_label, commands};
 use super::visuals::first_model;
-
-#[test]
-fn a_basename_is_the_last_component_whichever_way_the_slashes_go() {
-    assert_eq!(
-        basename("Spells\\Fireball_Cast_Hand.mdx"),
-        "Fireball_Cast_Hand.mdx"
-    );
-    assert_eq!(
-        basename("Interface/Icons/Spell_Fire_FlameBolt"),
-        "Spell_Fire_FlameBolt"
-    );
-    assert_eq!(basename("bare"), "bare");
-}
 
 /// An empty table of `fields` columns, for a test to add rows to.
 fn empty(fields: u32) -> vale_edit::dbc::DbcFile {

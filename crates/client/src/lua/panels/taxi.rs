@@ -73,7 +73,7 @@ pub struct TaxiNodeLine {
     pub kind: &'static str,
     pub at: [f32; 2],
     pub cost: u32,
-    pub hops: usize,
+    pub(crate) hops: usize,
 }
 
 /// Register the reads into the scope, beside [`super::super::api::install`]'s.
@@ -178,7 +178,7 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
 }
 
 /// The queue the writes push onto.
-pub type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::taxi::TaxiPress>>>;
+pub(crate) type Queue = std::rc::Rc<std::cell::RefCell<Vec<crate::interface::taxi::TaxiPress>>>;
 
 /// Register the three writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {

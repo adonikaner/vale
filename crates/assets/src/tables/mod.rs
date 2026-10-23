@@ -21,6 +21,8 @@
 //!               the implicit targets); no table for any of these either
 //! schema.rs     what a table's columns are: name, type, and what a number
 //!               points at, as data, for a caller that needs every column
+//! labels.rs     what a row is called in a list: a rule per table, read
+//!               through the open tables and the caller's reverse index
 //! emotetext.rs  what /dance says, from three tables, and which voice line
 //! talent.rs     the three trees a class may spend its points in
 //! skills.rs     which page of the spellbook a spell goes on
@@ -95,6 +97,7 @@ pub mod inventory;
 pub mod item;
 pub mod itemset;
 pub mod itemvisual;
+pub mod labels;
 pub mod itemsound;
 pub mod light;
 pub mod loading;

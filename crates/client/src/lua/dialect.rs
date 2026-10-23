@@ -57,7 +57,7 @@ use std::borrow::Cow;
 ///
 /// Returns the source untouched — and without allocating — when there is nothing
 /// to do, which is the overwhelming majority of the 175 files.
-pub fn to_5_1(source: &str) -> Cow<'_, str> {
+pub(crate) fn to_5_1(source: &str) -> Cow<'_, str> {
     let bytes = source.as_bytes();
     let mut out: Option<String> = None;
     let mut copied = 0usize;

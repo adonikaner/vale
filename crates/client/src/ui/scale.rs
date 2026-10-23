@@ -51,7 +51,7 @@ use crate::lua::widgets::layout::Viewport;
 /// big its window is, and 1.0 is the identity — the space is then exactly
 /// [`layout::UI_SIZE`], which is what a headless run stands in with.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct InterfaceScale(pub f64);
+pub(crate) struct InterfaceScale(pub(crate) f64);
 
 impl Default for InterfaceScale {
     fn default() -> InterfaceScale {
@@ -74,13 +74,13 @@ impl InterfaceScale {
 /// itself: the draw walk, the hit test, the world tooltip, the paper doll and
 /// the mesh painter.
 #[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct InterfaceViewport {
+pub(crate) struct InterfaceViewport {
     /// The primary window's size in logical pixels, or `None` in a run with no
     /// window.
     pub window: Option<Vec2>,
     /// Physical pixels per logical pixel: the window's scale factor, or 1.0
     /// with no window.
-    pub dpi: f32,
+    pub(crate) dpi: f32,
     /// Interface units to logical pixels and back, at the `uiScale` in force.
     /// With no window it fits the space into [`layout::UI_SIZE`].
     pub view: Viewport,
@@ -115,7 +115,7 @@ impl Default for InterfaceViewport {
     }
 }
 
-pub struct InterfaceScalePlugin;
+pub(crate) struct InterfaceScalePlugin;
 
 impl Plugin for InterfaceScalePlugin {
     fn build(&self, app: &mut App) {

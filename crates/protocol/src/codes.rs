@@ -67,7 +67,7 @@ impl LogonResult {
 
     /// What the failure actually means for *this* client, including the
     /// non-obvious ones. Wrong guesses here cost real debugging time.
-    pub fn explain(self) -> &'static str {
+    pub(crate) fn explain(self) -> &'static str {
         use LogonResult::*;
         match self {
             Success | SuccessSurvey => "authenticated",
@@ -90,7 +90,7 @@ impl LogonResult {
         }
     }
 
-    pub fn is_success(self) -> bool {
+    pub(crate) fn is_success(self) -> bool {
         matches!(self, LogonResult::Success | LogonResult::SuccessSurvey)
     }
 
@@ -367,14 +367,14 @@ const RESPONSE_KEYS: [&str; 83] = [
 /// refusal, and the only index into [`RESPONSE_KEYS`] this client compares
 /// against. Named rather than written as 46 for the reason every other code in
 /// this file is: the number means nothing without the table it indexes.
-pub const CHAR_CREATE_SUCCESS: u8 = 46;
+pub(crate) const CHAR_CREATE_SUCCESS: u8 = 46;
 
 /// **`CHAR_DELETE_SUCCESS`** — the same thing eleven entries on, for
 /// `SMSG_CHAR_DELETE`. The `CHAR_DELETE_*` window is 56..=59 and only this one
 /// value means the character is gone; vmangos sends `CHAR_DELETE_FAILED` for a
 /// guild leader and **nothing at all** for its other three refusals, which is
 /// [`crate::socket::world::delete_character`]'s problem rather than this table's.
-pub const CHAR_DELETE_SUCCESS: u8 = 57;
+pub(crate) const CHAR_DELETE_SUCCESS: u8 = 57;
 
 /// The `GlueStrings.lua` key for any `ResponseCodes` byte, or `None` for one the
 /// client's own array does not reach.
@@ -382,7 +382,7 @@ pub const CHAR_DELETE_SUCCESS: u8 = 57;
 /// **`None` is a real answer**: the array is 83 long and a byte past it is a
 /// code this build does not have, which shows no dialog at all rather than an
 /// invented one — the same rule `assets::strings` keeps for a missing key.
-pub fn response_key(code: u8) -> Option<&'static str> {
+pub(crate) fn response_key(code: u8) -> Option<&'static str> {
     RESPONSE_KEYS.get(usize::from(code)).copied()
 }
 

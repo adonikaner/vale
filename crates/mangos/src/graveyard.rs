@@ -45,11 +45,11 @@ pub const FACTIONS: [Value; 3] = [
 ];
 
 /// The patch range a new link covers: every content patch.
-pub const PATCH_MIN: u32 = 0;
-pub const PATCH_MAX: u32 = 10;
+pub(crate) const PATCH_MIN: u32 = 0;
+pub(crate) const PATCH_MAX: u32 = 10;
 
 /// `game_graveyard_zone`, in table order.
-pub const ZONE_COLUMNS: [Column; 5] = [
+pub(crate) const ZONE_COLUMNS: [Column; 5] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id of the graveyard" },
     Column { name: "ghost_zone", kind: Kind::Key, group: Group::Identity, about: "the AreaTable id of the zone or area the graveyard serves" },
     Column { name: "faction", kind: Kind::Choice(&FACTIONS), group: Group::Place, about: "the side it serves: 0 both, 67 Horde, 469 Alliance" },
@@ -58,13 +58,13 @@ pub const ZONE_COLUMNS: [Column; 5] = [
 ];
 
 /// `world_safe_locs_facing`, in table order.
-pub const FACING_COLUMNS: [Column; 2] = [
+pub(crate) const FACING_COLUMNS: [Column; 2] = [
     Column { name: "id", kind: Kind::Key, group: Group::Identity, about: "the WorldSafeLocs.dbc id of the graveyard" },
     Column { name: "orientation", kind: Kind::Float, group: Group::Place, about: "the facing a released spirit takes at the graveyard, in radians" },
 ];
 
 /// The key of a link: the table's primary key.
-pub fn link_key(safe_loc: u32, zone: u32, patch_max: u32) -> Key {
+pub(crate) fn link_key(safe_loc: u32, zone: u32, patch_max: u32) -> Key {
     Key(vec![
         ("id".to_string(), safe_loc.to_string()),
         ("ghost_zone".to_string(), zone.to_string()),

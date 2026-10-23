@@ -71,7 +71,7 @@
 //! auras "are read off the object manager, which is not this cache", which was
 //! true and was the bug: nothing else reads the object manager either.
 
-use vale_protocol::state::objects::{AuraSlot, POSITIVE_AURA_SLOTS};
+use vale_protocol::state::objects::AuraSlot;
 use bevy::prelude::*;
 
 use super::api::{UnitId, Units};
@@ -89,9 +89,9 @@ pub struct Aura {
     pub slot: u8,
     pub spell: u32,
     /// A buff rather than a debuff.
-    pub helpful: bool,
+    pub(crate) helpful: bool,
     /// Whether right-clicking it will be honoured — `AFLAG_CANCELABLE`.
-    pub cancelable: bool,
+    pub(crate) cancelable: bool,
     /// The stack count, one-based. The interface draws it only above 1.
     pub applications: u8,
     /// `Interface\Icons\…`, empty when the catalog has not loaded or the row
@@ -100,13 +100,13 @@ pub struct Aura {
     pub name: String,
     /// "Magic" / "Curse" / "Disease" / "Poison", or empty — see
     /// [`vale_assets::tables::spellbook::SpellInfo::dispel_type`].
-    pub dispel_type: String,
+    pub(crate) dispel_type: String,
     /// The sentence, already substituted, for the hover plate.
     pub description: String,
     /// When it runs out, in [`super::api::get_time`]'s base — `None` is
     /// **until cancelled**, which is both a permanent aura and any aura on
     /// which the server has not spoken.
-    pub expires_at: Option<f64>,
+    pub(crate) expires_at: Option<f64>,
     /// When this aura entered the list, in the same base. The gate a duration
     /// reading is accepted or rejected by; see the module comment.
     appeared_at: f64,
@@ -120,7 +120,7 @@ impl Aura {
     /// than nil** for an aura with no clock: the caller compares it with `<`
     /// two lines later, and a nil there is an arithmetic error rather than an
     /// empty timer.
-    pub fn time_left(&self, now: f64) -> f64 {
+    pub(crate) fn time_left(&self, now: f64) -> f64 {
         self.expires_at.map_or(0.0, |at| (at - now).max(0.0))
     }
 }
@@ -207,7 +207,7 @@ impl Auras {
     /// and each passes its own id. `-1` for "there is no such one", which is
     /// what `BuffButton_Update` compares against — a nil there is an error
     /// rather than a hidden button.
-    pub fn player_buff(&self, index: usize, filter: &str) -> i32 {
+    pub(crate) fn player_buff(&self, index: usize, filter: &str) -> i32 {
         let filter = AuraFilter::parse(filter);
         self.player
             .iter()
@@ -221,7 +221,7 @@ impl Auras {
     /// `-1` the interface routinely passes back in — `BuffButton_Update` asks
     /// for the *harmful* aura at a helpful button's id purely to colour its
     /// border, and gets −1 for every buff.
-    pub fn player_at(&self, handle: i32) -> Option<&Aura> {
+    pub(crate) fn player_at(&self, handle: i32) -> Option<&Aura> {
         self.player.get(usize::try_from(handle).ok()?)
     }
 }
@@ -268,7 +268,7 @@ impl AuraFilter {
     }
 }
 
-pub struct AurasPlugin;
+pub(crate) struct AurasPlugin;
 
 impl Plugin for AurasPlugin {
     fn build(&self, app: &mut App) {
@@ -539,7 +539,7 @@ fn build_visible(
 /// `TargetDebuffButton_Update` loops `for i = 1, MAX_TARGET_BUFFS` and stops
 /// drawing at the first nil, so the two halves have to be numbered separately —
 /// a single list would make the first debuff appear as buff number 17.
-pub fn nth_of_half(list: &[Aura], index: usize, helpful: bool) -> Option<&Aura> {
+pub(crate) fn nth_of_half(list: &[Aura], index: usize, helpful: bool) -> Option<&Aura> {
     list.iter()
         .filter(|aura| aura.helpful == helpful)
         .nth(index.checked_sub(1)?)
@@ -547,7 +547,8 @@ pub fn nth_of_half(list: &[Aura], index: usize, helpful: bool) -> Option<&Aura> 
 
 /// How many of the 48 slots hold buffs — re-exported so a reader of this module
 /// does not have to go and look, since it is the whole of the buff/debuff rule.
-pub const BUFF_SLOTS: u8 = POSITIVE_AURA_SLOTS;
+#[cfg(test)]
+pub(crate) const BUFF_SLOTS: u8 = vale_protocol::state::objects::POSITIVE_AURA_SLOTS;
 
 #[cfg(test)]
 mod tests {

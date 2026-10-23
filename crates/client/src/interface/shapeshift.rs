@@ -58,23 +58,23 @@ use crate::world::session::Session;
 
 /// One button on the stance bar.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ShapeshiftForm {
+pub(crate) struct ShapeshiftForm {
     pub spell_id: u32,
     pub name: String,
     /// The ordinary icon.
     pub texture: String,
     /// …and the one worn while the form is on, empty for a button with none —
     /// see [`vale_assets::tables::spellbook::spell_fields::ACTIVE_ICON_ID`].
-    pub active_texture: String,
+    pub(crate) active_texture: String,
     /// **The form this puts the character into**, or 0 for a button that is not
     /// a form — a paladin's aura, or Stealth. See *What "active" means*.
-    pub form_id: u32,
+    pub(crate) form_id: u32,
 }
 
 /// **The stance bar as the panel reads it**, rebuilt when the book moves.
 #[derive(Resource, Default)]
-pub struct ShapeshiftBar {
-    pub forms: Vec<ShapeshiftForm>,
+pub(crate) struct ShapeshiftBar {
+    pub(crate) forms: Vec<ShapeshiftForm>,
     /// The `spellbook_version` this was built from — the same latch
     /// [`super::spellbook`] uses and for the same reason.
     built_from: Option<u32>,
@@ -90,7 +90,7 @@ impl ShapeshiftBar {
     }
 }
 
-pub struct ShapeshiftPlugin;
+pub(crate) struct ShapeshiftPlugin;
 
 impl Plugin for ShapeshiftPlugin {
     fn build(&self, app: &mut App) {
@@ -137,7 +137,7 @@ fn rebuild(
         return;
     };
     let known = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         world.spellbook.known.clone()
     };
     bar.built_from = Some(version);

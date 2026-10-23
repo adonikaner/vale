@@ -63,7 +63,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Where {
     pub host: String,
-    pub port: u16,
+    pub(crate) port: u16,
     pub user: String,
     pub password: String,
     pub database: String,

@@ -101,16 +101,16 @@ pub(crate) fn vertical(keys: &ButtonInput<KeyCode>) -> bool {
 /// A held left button on a point. `H` names what is held: a point's id, or a
 /// flight path tool handle.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PointDrag<H> {
-    pub handle: H,
+pub(crate) struct PointDrag<H> {
+    pub(crate) handle: H,
     /// Where the pointer was when the button went down, in logical pixels.
-    pub pressed_at: Vec2,
+    pub(crate) pressed_at: Vec2,
     /// Whether the pointer has travelled [`DRAG_PIXELS`], which makes the
     /// press a drag.
-    pub moving: bool,
+    pub(crate) moving: bool,
     /// The offset from the pointer's hit to the point, and whether it was
     /// measured on the upright plane. See the module comment.
-    pub grab: Option<(Vec3, bool)>,
+    pub(crate) grab: Option<(Vec3, bool)>,
 }
 
 impl<H> PointDrag<H> {
@@ -157,7 +157,7 @@ impl<H> PointDrag<H> {
 }
 
 /// A row of a client table that is a point on a map.
-pub trait MapPoint {
+pub(crate) trait MapPoint {
     /// The row's id, which a selection names.
     fn id(&self) -> u32;
     /// Where it is, in the world's axes.
@@ -167,20 +167,20 @@ pub trait MapPoint {
 /// One tool's points on the open map, and what the pointer is doing with
 /// them.
 #[derive(Debug)]
-pub struct Points<P> {
+pub(crate) struct Points<P> {
     /// The points on the open map, in file order.
-    pub list: Vec<P>,
+    pub(crate) list: Vec<P>,
     /// The ids the game's own copy of the table has, read once, for the
     /// warning a removal of one gives.
-    pub shipped: Option<HashSet<u32>>,
+    pub(crate) shipped: Option<HashSet<u32>>,
     /// The session's table revision and the map the list was built for.
     built: Option<(u64, u32)>,
-    pub map: u32,
-    pub selected: Option<u32>,
-    pub hovered: Option<u32>,
-    pub drag: Option<PointDrag<u32>>,
+    pub(crate) map: u32,
+    pub(crate) selected: Option<u32>,
+    pub(crate) hovered: Option<u32>,
+    pub(crate) drag: Option<PointDrag<u32>>,
     /// A shipped point the panel is asking to remove, until it is confirmed.
-    pub confirm_remove: Option<u32>,
+    pub(crate) confirm_remove: Option<u32>,
 }
 
 impl<P> Default for Points<P> {
@@ -199,33 +199,33 @@ impl<P> Default for Points<P> {
 }
 
 impl<P: MapPoint> Points<P> {
-    pub fn get(&self, id: u32) -> Option<&P> {
+    pub(crate) fn get(&self, id: u32) -> Option<&P> {
         self.list.iter().find(|point| point.id() == id)
     }
 
     /// Rebuild the list on the next frame, after an edit this frame.
-    pub fn stale(&mut self) {
+    pub(crate) fn stale(&mut self) {
         self.built = None;
     }
 
     /// Whether the list has been built since the last edit.
-    pub fn is_built(&self) -> bool {
+    pub(crate) fn is_built(&self) -> bool {
         self.built.is_some()
     }
 
-    pub fn is_shipped(&self, id: u32) -> bool {
+    pub(crate) fn is_shipped(&self, id: u32) -> bool {
         self.shipped.as_ref().is_some_and(|ids| ids.contains(&id))
     }
 
     /// Whether a point is drawn and picked: the selected one always, the rest
     /// within `range` yards of the eye.
-    pub fn near(&self, point: &P, eye: Vec3, range: f32) -> bool {
+    pub(crate) fn near(&self, point: &P, eye: Vec3, range: f32) -> bool {
         self.selected == Some(point.id()) || (point.position() - eye).length() <= range
     }
 
     /// The colour a selected point, or the point under the pointer, is drawn
     /// in. `None` for any other, which the tool colours by what it is.
-    pub fn highlight(&self, id: u32) -> Option<Color> {
+    pub(crate) fn highlight(&self, id: u32) -> Option<Color> {
         match (self.selected == Some(id), self.hovered == Some(id)) {
             (true, _) => Some(Color::WHITE),
             (false, true) => Some(Color::srgb(1.0, 1.0, 0.8)),

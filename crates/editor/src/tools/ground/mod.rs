@@ -18,12 +18,12 @@
 //!                declare it
 //! ```
 
-pub mod areas;
-pub mod chunks;
-pub mod grade;
-pub mod holes;
-pub mod road;
-pub mod shading;
-pub mod terrain;
-pub mod textures;
-pub mod water;
+pub(crate) mod areas;
+pub(crate) mod chunks;
+pub(crate) mod grade;
+pub(crate) mod holes;
+pub(crate) mod road;
+pub(crate) mod shading;
+pub(crate) mod terrain;
+pub(crate) mod textures;
+pub(crate) mod water;

@@ -52,8 +52,8 @@ use bevy::prelude::*;
 /// answering 0 means at a character screen — and is the honest answer there
 /// rather than a stale one.
 #[derive(Resource, Default)]
-pub struct Spellbook {
-    pub book: Book,
+pub(crate) struct Spellbook {
+    pub(crate) book: Book,
     /// The `spellbook_version` this was built from — see the module comment.
     built_from: Option<u32>,
     /// …and the race and class it was built for, because those decide the tabs
@@ -68,7 +68,7 @@ pub struct Spellbook {
     built_with: u64,
 }
 
-pub struct SpellbookPlugin;
+pub(crate) struct SpellbookPlugin;
 
 impl Plugin for SpellbookPlugin {
     fn build(&self, app: &mut App) {
@@ -123,7 +123,7 @@ fn rebuild(
         return;
     };
     let known = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         world.spellbook.known.clone()
     };
     let (race, class) = who.unwrap_or((0, 0));

@@ -77,7 +77,8 @@ use crate::bytes::{Reader, Writer};
 /// Never used to decide anything — the countdown is on the wire and the client
 /// takes what it is given. It is here as the number a test can be written
 /// against and as the answer to "how stale can a pending roll get".
-pub const ROLL_TIMEOUT_MS: u32 = 60_000;
+#[cfg(test)]
+pub(crate) const ROLL_TIMEOUT_MS: u32 = 60_000;
 
 /// **How many roll frames the game has**: `NUM_GROUP_LOOT_FRAMES = 4`, in
 /// `LootFrame.lua`'s own second line.
@@ -303,7 +304,7 @@ pub const ALL_PASSED_KEY: &str = "LOOT_ROLL_ALL_PASSED";
 pub const SHOW_LOOT_SPAM: &str = "showLootSpam";
 
 /// `SMSG_LOOT_START_ROLL`.
-pub fn parse_loot_start_roll(body: &[u8]) -> Option<RollStart> {
+pub(crate) fn parse_loot_start_roll(body: &[u8]) -> Option<RollStart> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 * 5) {
         return None;
@@ -319,7 +320,7 @@ pub fn parse_loot_start_roll(body: &[u8]) -> Option<RollStart> {
 }
 
 /// `SMSG_LOOT_ROLL`.
-pub fn parse_loot_roll(body: &[u8]) -> Option<RollCast> {
+pub(crate) fn parse_loot_roll(body: &[u8]) -> Option<RollCast> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 + 8 + 4 * 3 + 2) {
         return None;
@@ -337,7 +338,7 @@ pub fn parse_loot_roll(body: &[u8]) -> Option<RollCast> {
 }
 
 /// `SMSG_LOOT_ROLL_WON`.
-pub fn parse_loot_roll_won(body: &[u8]) -> Option<RollWon> {
+pub(crate) fn parse_loot_roll_won(body: &[u8]) -> Option<RollWon> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 * 4 + 8 + 2) {
         return None;
@@ -356,7 +357,7 @@ pub fn parse_loot_roll_won(body: &[u8]) -> Option<RollWon> {
 
 /// `SMSG_LOOT_ALL_PASSED` — **and its last two fields are transposed** relative
 /// to the rest of the family. See the module note.
-pub fn parse_loot_all_passed(body: &[u8]) -> Option<RollAllPassed> {
+pub(crate) fn parse_loot_all_passed(body: &[u8]) -> Option<RollAllPassed> {
     let mut r = Reader::new(body);
     if !r.has(8 + 4 * 4) {
         return None;
@@ -377,7 +378,7 @@ pub fn parse_loot_all_passed(body: &[u8]) -> Option<RollAllPassed> {
 ///
 /// The interface's `rollID` never leaves the client: it looks the pending
 /// record up by it and writes the record's guid and slot out.
-pub fn loot_roll_body(guid: u64, item_slot: u32, vote: RollVote) -> Vec<u8> {
+pub(crate) fn loot_roll_body(guid: u64, item_slot: u32, vote: RollVote) -> Vec<u8> {
     let mut w = Writer::new();
     w.u64(guid);
     w.u32(item_slot);

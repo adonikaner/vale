@@ -75,7 +75,7 @@ impl TutorialFlags {
 ///
 /// A shorter body is refused rather than padded, since vmangos always sends
 /// all eight and a short one means the packet was cut.
-pub fn parse_tutorial_flags(body: &[u8]) -> Option<TutorialFlags> {
+pub(crate) fn parse_tutorial_flags(body: &[u8]) -> Option<TutorialFlags> {
     if body.len() < WORDS * 4 {
         return None;
     }
@@ -88,7 +88,7 @@ pub fn parse_tutorial_flags(body: &[u8]) -> Option<TutorialFlags> {
 }
 
 /// `CMSG_TUTORIAL_FLAG`: the zero-based index of tutorial `id`.
-pub fn flag_tutorial_body(id: u32) -> Vec<u8> {
+pub(crate) fn flag_tutorial_body(id: u32) -> Vec<u8> {
     id.saturating_sub(1).to_le_bytes().to_vec()
 }
 

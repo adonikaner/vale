@@ -28,7 +28,7 @@ const REPORT: Slot = Slot(30);
 /// cargo run -p vale-client -- Alden --script "ActionButtonDown(1); ActionButtonUp(1)"
 /// ```
 #[derive(Resource, Default)]
-pub struct StartupScript {
+pub(crate) struct StartupScript {
     body: Option<String>,
     /// When to run it, set the moment the interface finishes loading.
     at: Option<f32>,
@@ -56,6 +56,7 @@ impl StartupScript {
 
     /// Run `body` on the next frame, on the same path `--script` and `/script`
     /// take.
+    #[cfg(any(test, feature = "diagnostics"))]
     pub fn queue(&mut self, body: String) {
         self.typed.push(body);
     }
@@ -67,7 +68,7 @@ impl StartupScript {
 /// produces the result a frame later: the console writes to a queue and reads
 /// the log, and the two are separate systems. See [`StartupScript::typed`].
 #[derive(Resource, Default)]
-pub struct ScriptLog {
+pub(crate) struct ScriptLog {
     lines: Vec<(String, Result<String, String>)>,
 }
 
@@ -88,10 +89,12 @@ impl ScriptLog {
         }
     }
 
+    #[cfg(any(test, feature = "diagnostics"))]
     pub fn lines(&self) -> &[(String, Result<String, String>)] {
         &self.lines
     }
 
+    #[cfg(feature = "diagnostics")]
     pub fn clear(&mut self) {
         self.lines.clear();
     }
@@ -265,7 +268,7 @@ impl Default for InterfaceAwake {
 /// The system bodies keep their own checks for the same reason. The flags
 /// only let the scheduler skip the systems; they do not replace the checks.
 #[derive(Resource)]
-pub struct LoadWanted {
+pub(crate) struct LoadWanted {
     /// `Interface\GlueXML\`: the login screen.
     glue: bool,
     /// `Interface\FrameXML\`: the in-world interface.
@@ -288,7 +291,7 @@ impl LoadWanted {
     /// has loaded it. [`crate::ui::scale`] reads it because the `uiScale`
     /// pair is a game-UI setting and the glue always draws at scale 1.0. It
     /// reads this copy rather than the host because the host is `NonSend`.
-    pub fn world_interface_loaded(&self) -> bool {
+    pub(crate) fn world_interface_loaded(&self) -> bool {
         !self.interface
     }
 }

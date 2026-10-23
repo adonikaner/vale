@@ -161,19 +161,19 @@
 //! what the schema knows about the column are in the label's tooltip rather
 //! than a suffix on every label.
 
-pub mod appearance;
-pub mod browser;
-pub mod commands;
-pub mod field;
-pub mod form;
-pub mod learning;
-pub mod modals;
-pub mod previews;
-pub mod reference;
-pub mod sounds;
-pub mod storyboard;
-pub mod unschemad;
-pub mod zones;
+pub(crate) mod appearance;
+pub(crate) mod browser;
+pub(crate) mod commands;
+pub(crate) mod field;
+pub(crate) mod form;
+pub(crate) mod learning;
+pub(crate) mod modals;
+pub(crate) mod previews;
+pub(crate) mod reference;
+pub(crate) mod sounds;
+pub(crate) mod storyboard;
+pub(crate) mod unschemad;
+pub(crate) mod zones;
 
 use bevy_egui::egui;
 
@@ -212,56 +212,56 @@ const TEXT: f32 = crate::ui::widgets::rowform::FORM_TEXT;
 ///
 /// Its four fields come from four different places in the shell. Bundling them
 /// keeps the two entry points here to three arguments each rather than seven.
-pub struct Workspace<'a> {
+pub(crate) struct Workspace<'a> {
     /// The data subject, which decides the chain's tabs (see
     /// [`crate::tools::Tool::tabs`]). It is passed in rather than derived from
     /// `browser.table`, because a followed reference can leave the browser on
     /// a table that is not one of the chain's tabs, and the tabs must not
     /// change when that happens.
-    pub tool: crate::tools::Tool,
-    pub session: &'a mut EditSession,
-    pub browser: &'a mut Browser,
-    pub assets: &'a GameAssets,
-    pub thumbnails: &'a mut Thumbnails,
+    pub(crate) tool: crate::tools::Tool,
+    pub(crate) session: &'a mut EditSession,
+    pub(crate) browser: &'a mut Browser,
+    pub(crate) assets: &'a GameAssets,
+    pub(crate) thumbnails: &'a mut Thumbnails,
     /// The pictures of models, for the model browser's rows, and the two
     /// lists it keeps beside its folders.
-    pub portraits: &'a mut crate::preview::portraits::Portraits,
-    pub favourites: &'a mut crate::prefs::favourites::Favourites,
-    pub now: f64,
+    pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
+    pub(crate) favourites: &'a mut crate::prefs::favourites::Favourites,
+    pub(crate) now: f64,
     /// The two switches toggled at the foot of the model view. They are the
     /// view bar's own: the debug overlay's wireframe and the world's particles.
     /// `None` when the caller has neither (the inspector), and for the
     /// wireframe in a build without diagnostics, where the checkbox is drawn
     /// disabled.
-    pub wireframe: Option<&'a mut bool>,
-    pub particles: Option<&'a mut bool>,
+    pub(crate) wireframe: Option<&'a mut bool>,
+    pub(crate) particles: Option<&'a mut bool>,
     /// The lights on the open map, for the one subject whose rows have a place
     /// in the world (see [`crate::tools::places::lights`]). `None` when the caller has
     /// none, which is the case in the inspector.
-    pub lights: Option<&'a mut crate::tools::places::lights::Lights>,
+    pub(crate) lights: Option<&'a mut crate::tools::places::lights::Lights>,
     /// The quest tool's state, which holds the item name cache and the
     /// reference picker an item column uses. `None` when there is no world
     /// database to name an item from, and in the inspector.
-    pub quests: Option<&'a mut crate::subjects::quests::Quests>,
+    pub(crate) quests: Option<&'a mut crate::subjects::quests::Quests>,
     /// The time of day the world is showing, in half-minutes past midnight, so
     /// a band's strip can mark the viewport's current time on it.
     /// `vale_assets::tables::light::NOON` when the caller has no clock.
-    pub hour: u32,
+    pub(crate) hour: u32,
     /// What the workspace asks of the shell: a part to switch to, an area to
     /// paint, a texture to import. See [`crate::ui::shell::asks`].
-    pub asks: &'a mut crate::ui::shell::asks::ShellAsks,
+    pub(crate) asks: &'a mut crate::ui::shell::asks::ShellAsks,
     /// Where a light's Fly to button sends its request. See
     /// [`crate::camera::FlyTo`].
-    pub fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
 /// What the workspace's middle draws besides the form, which the
 /// inspector's view of a table does not: the spell storyboard, the stage its
 /// preview renders on, and the attachment lab.
-pub struct Story<'a> {
-    pub board: &'a mut storyboard::Storyboard,
-    pub stage: &'a mut crate::preview::stage::Stage,
-    pub lab: &'a mut crate::preview::lab::Lab,
+pub(crate) struct Story<'a> {
+    pub(crate) board: &'a mut storyboard::Storyboard,
+    pub(crate) stage: &'a mut crate::preview::stage::Stage,
+    pub(crate) lab: &'a mut crate::preview::lab::Lab,
 }
 
 impl<'a> Workspace<'a> {
@@ -454,14 +454,14 @@ fn with_blp(path: &str) -> String {
 /// describe. A second panel would need a second row selection kept in step
 /// with the first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum View {
+pub(crate) enum View {
     #[default]
     Fields,
     Storyboard,
 }
 
 /// Draw the whole workspace into the region the panels left.
-pub fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, story: Story<'_>) {
+pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, story: Story<'_>) {
     let Story { board, stage, lab } = story;
     let table_name = work.browser.table.clone();
     // The Tables workspace with no table chosen: the list is the tables.

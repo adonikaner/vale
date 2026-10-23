@@ -9,39 +9,39 @@ use vale_edit::dbc::places::next_explore_bit;
 
 /// `AreaTable.dbc`'s fields, as the Zones workspace reads and writes them.
 /// The indices are `vale_assets::tables::area::fields`'.
-pub mod area {
+pub(crate) mod area {
     use vale_assets::tables::area::fields;
-    pub const TABLE: &str = "AreaTable";
-    pub const MAP: usize = fields::MAP_ID;
-    pub const PARENT: usize = fields::PARENT;
-    pub const EXPLORE_BIT: usize = fields::AREA_BIT;
-    pub const FLAGS: usize = fields::FLAGS;
-    pub const NAME: usize = fields::NAME;
-    pub const NAME_FLAGS: usize = fields::NAME_FLAGS;
+    pub(crate) const TABLE: &str = "AreaTable";
+    pub(crate) const MAP: usize = fields::MAP_ID;
+    pub(crate) const PARENT: usize = fields::PARENT;
+    pub(crate) const EXPLORE_BIT: usize = fields::AREA_BIT;
+    pub(crate) const FLAGS: usize = fields::FLAGS;
+    pub(crate) const NAME: usize = fields::NAME;
+    pub(crate) const NAME_FLAGS: usize = fields::NAME_FLAGS;
     /// `AREA_FLAG_DUEL`, which 969 of the 1,081 shipped rows carry and a new
     /// zone starts with.
-    pub const DUELS: u32 = 0x40;
+    pub(crate) const DUELS: u32 = 0x40;
     /// The word after the name columns on 724 of the 1,081 shipped rows; the
     /// other 357 hold 8,323,198. No source describes the column, so a new row
     /// takes the commoner shipped value and not zero, which no shipped row
     /// holds.
-    pub const SHIPPED_NAME_FLAGS: u32 = 4_128_894;
+    pub(crate) const SHIPPED_NAME_FLAGS: u32 = 4_128_894;
     /// What a new sub-area takes from its zone: the flags, the two reverb
     /// presets, the ambience and the music. Northshire Valley holds Elwynn
     /// Forest's values in all five.
-    pub const FROM_ZONE: [usize; 5] = [4, 5, 6, 7, 8];
-    pub const NEW_ZONE: &str = "New zone";
-    pub const NEW_SUB_AREA: &str = "New area";
+    pub(crate) const FROM_ZONE: [usize; 5] = [4, 5, 6, 7, 8];
+    pub(crate) const NEW_ZONE: &str = "New zone";
+    pub(crate) const NEW_SUB_AREA: &str = "New area";
 }
 
 /// The sub-areas of a zone: the rows whose parent is `zone`, in file order.
-pub fn sub_areas_of(browser: &mut Browser, session: &EditSession, zone: u32) -> Vec<usize> {
+pub(crate) fn sub_areas_of(browser: &mut Browser, session: &EditSession, zone: u32) -> Vec<usize> {
     rows_naming(browser, session, area::TABLE, zone, area::TABLE, area::PARENT)
 }
 
 /// A new zone on `map`, as one undo entry: no parent, the next explore bit,
 /// duels allowed, and a name to be replaced. Returns its record.
-pub fn add_zone(session: &mut EditSession, map: u32) -> Option<usize> {
+pub(crate) fn add_zone(session: &mut EditSession, map: u32) -> Option<usize> {
     let bit = next_explore_bit(session.table(area::TABLE)?);
     session.history.begin("Add zone");
     let at = push_row(
@@ -64,7 +64,7 @@ pub fn add_zone(session: &mut EditSession, map: u32) -> Option<usize> {
 /// a name to be replaced. Asked of a sub-area, it makes a sibling: the table
 /// is two levels, and no shipped row's parent has a parent. Returns the new
 /// row's record.
-pub fn add_sub_area(session: &mut EditSession, of: u32) -> Option<usize> {
+pub(crate) fn add_sub_area(session: &mut EditSession, of: u32) -> Option<usize> {
     let areas = session.table(area::TABLE)?;
     let asked = areas.row_of(of)?;
     let zone = match areas.u32_at(asked, area::PARENT)? {

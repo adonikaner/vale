@@ -89,9 +89,9 @@ pub mod flags {
     pub const HEADER: u8 = 0x08;
     /// The at-war box is greyed — one's own side, and the two battleground
     /// parents.
-    pub const PEACE_FORCED: u8 = 0x10;
+    pub(crate) const PEACE_FORCED: u8 = 0x10;
     /// The player filed it under the *Inactive* heading.
-    pub const INACTIVE: u8 = 0x20;
+    pub(crate) const INACTIVE: u8 = 0x20;
     /// Set on the two competing outland factions; unused in 1.12 and kept so
     /// the byte is documented whole.
     pub const RIVAL: u8 = 0x40;
@@ -103,7 +103,7 @@ pub mod flags {
 /// is `[rank + 1]`. vmangos' cumulative `PointsInRank`
 /// produces the identical sequence, which is two authorities on a table that
 /// never crosses the wire.
-pub const RANK_FLOORS: [i32; 9] = [-42000, -6000, -3000, 0, 3000, 9000, 21000, 42000, 43000];
+pub(crate) const RANK_FLOORS: [i32; 9] = [-42000, -6000, -3000, 0, 3000, 9000, 21000, 42000, 43000];
 
 /// The number of standings — Hated through Exalted.
 pub const RANKS: usize = 8;
@@ -147,7 +147,7 @@ pub struct Faction {
 
 mod fields {
     pub const ID: usize = 0;
-    pub const REPUTATION_LIST_ID: usize = 1;
+    pub(crate) const REPUTATION_LIST_ID: usize = 1;
     pub const RACE_MASK: usize = 2;
     pub const CLASS_MASK: usize = 6;
     pub const BASE: usize = 10;
@@ -157,7 +157,7 @@ mod fields {
     /// the description is nine fields further on and not one.
     pub const NAME: usize = 19;
     pub const DESCRIPTION: usize = 28;
-    pub const ALTERNATIVES: usize = 4;
+    pub(crate) const ALTERNATIVES: usize = 4;
 }
 
 /// `Faction.dbc`, by faction id.
@@ -265,7 +265,7 @@ impl Factions {
     /// nowhere in the shipped file, where no row has two matching alternatives
     /// for one character; it is mirrored anyway, because "mirrored" is checkable
     /// and "equivalent on this data" is a claim about data that could change.
-    pub fn fitting(row: &Faction, race: u8, class: u8) -> Option<usize> {
+    pub(crate) fn fitting(row: &Faction, race: u8, class: u8) -> Option<usize> {
         let race_bit = 1u32 << race.saturating_sub(1);
         let class_bit = 1u32 << class.saturating_sub(1);
         let mut found = None;
@@ -320,7 +320,7 @@ pub struct Row {
     pub group: i32,
     /// Filled by the recount: where `group` sits in [`Reputation::headers`], or
     /// `headers.len()` for a row whose heading is not registered.
-    pub header_slot: usize,
+    pub(crate) header_slot: usize,
 }
 
 /// One heading, and how many bars are under it.
@@ -888,10 +888,7 @@ impl Reputation {
 
 /// The faction id the *Inactive* heading carries — not a faction, and negative
 /// so that it can never collide with one.
-pub const INACTIVE_FACTION: i32 = -1;
-
-/// …and the *Other* heading's, which is `parentFactionID`'s own "none".
-pub const OTHER_FACTION: i32 = 0;
+pub(crate) const INACTIVE_FACTION: i32 = -1;
 
 #[cfg(test)]
 mod tests {

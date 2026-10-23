@@ -94,23 +94,23 @@ pub struct ItemTip {
     /// `GetItemQualityColor`.
     pub quality: u32,
     /// `ITEM_FLAG_CHARTER`: a guild charter's "<Right Click for Details>".
-    pub charter: bool,
+    pub(crate) charter: bool,
     /// The zone and the map the item is limited to (`Area`, `Map`), already
     /// named from `AreaTable.dbc` and `Map.dbc`. Empty for none.
     pub zone: String,
     pub map: String,
     /// `ITEM_FLAG_CONJURED`.
-    pub conjured: bool,
+    pub(crate) conjured: bool,
     /// Whether the copy in hand is already bound: `ITEM_FIELD_FLAGS` bit 0, so
     /// only ever true for something carried.
-    pub soulbound: bool,
+    pub(crate) soulbound: bool,
     /// `ItemPrototype::Bonding`: 1 on pickup, 2 on equip, 3 on use, 4 and 5
     /// quest.
     pub bonding: u32,
     /// `MaxCount`: 1 draws "Unique", more draws "Unique (n)", 0 nothing.
     pub unique: u32,
     /// `This Item Begins a Quest`.
-    pub starts_quest: bool,
+    pub(crate) starts_quest: bool,
     /// A carried copy with a lock that has not been picked: "Locked", red.
     pub locked: bool,
     /// The number of slots, for a bag (`INVTYPE_BAG`), whose type line is
@@ -118,12 +118,12 @@ pub struct ItemTip {
     pub container_slots: u32,
     /// `ItemClass.dbc`'s word for the class. The type line's left cell for a
     /// projectile (class 6), whose inventory type has no word.
-    pub class_name: String,
+    pub(crate) class_name: String,
     /// `ItemSubClass.dbc`'s singular word, or empty where the plate prints
     /// none: see `ItemTables::subclass_on_plate`. Also empty for a cloak.
-    pub subclass_name: String,
+    pub(crate) subclass_name: String,
     /// `ItemPrototype::Class`.
-    pub item_class: u32,
+    pub(crate) item_class: u32,
     /// `INVTYPE_*`, as the number; the word is a `GlobalStrings.lua` key.
     pub inventory_type: u32,
     /// Whether the character is proficient with the subclass. The subclass
@@ -135,7 +135,7 @@ pub struct ItemTip {
     pub speed: f32,
     /// The damage per second the plate prints under a weapon's damage, which
     /// the client computes: the sum of each entry's mean over the swing time.
-    pub dps: f32,
+    pub(crate) dps: f32,
     pub armor: i32,
     pub block: u32,
     /// The non-zero `(ITEM_MOD_*, value)` pairs, in table order.
@@ -143,15 +143,15 @@ pub struct ItemTip {
     /// Holy..arcane, in `SPELL_SCHOOL1_CAP`..`SPELL_SCHOOL6_CAP` order.
     pub resistances: [i32; 6],
     /// The enchantments on the copy in hand, one line each, in slot order.
-    pub enchantments: Vec<EnchantLine>,
+    pub(crate) enchantments: Vec<EnchantLine>,
     /// "<Random enchantment>": an item with a random property, shown with no
     /// copy in hand to say which.
-    pub random_enchantment: bool,
+    pub(crate) random_enchantment: bool,
     /// `(current, maximum)`, or `None` for something that cannot be damaged.
-    pub durability: Option<(u32, u32)>,
+    pub(crate) durability: Option<(u32, u32)>,
     /// How long the copy in hand has left, in milliseconds, for an item that
     /// expires.
-    pub duration_ms: Option<u32>,
+    pub(crate) duration_ms: Option<u32>,
     /// "%s Only." with the race and the class, for an item limited to exactly
     /// one of each, and whether the character is that race and class.
     pub race_class_only: Option<(String, bool)>,
@@ -161,11 +161,11 @@ pub struct ItemTip {
     pub level_met: bool,
     /// The races allowed, in `ChrRaces` order, or empty when the mask covers
     /// every playable race. See [`allowed`].
-    pub races_allowed: Vec<&'static str>,
+    pub(crate) races_allowed: Vec<&'static str>,
     /// Whether the character's own race is among them.
     pub race_allowed: bool,
     /// The same pair for `AllowableClass`.
-    pub classes_allowed: Vec<&'static str>,
+    pub(crate) classes_allowed: Vec<&'static str>,
     pub class_allowed: bool,
     /// `RequiredSkill`: the skill line's name, the rank (`None` when the item
     /// states none) and whether the character meets it.
@@ -197,25 +197,25 @@ pub struct ItemTip {
     pub description: String,
     /// `ITEM_FIELD_CREATOR` named, and whether the copy has written text
     /// (`ITEM_WRITTEN_BY`) rather than being made (`ITEM_CREATED_BY`).
-    pub creator: Option<(String, bool)>,
+    pub(crate) creator: Option<(String, bool)>,
     /// `ITEM_FIELD_GIFTCREATOR` named, for a wrapped gift.
-    pub gift_from: Option<String>,
+    pub(crate) gift_from: Option<String>,
     /// `<Right Click to Read>`.
     pub readable: bool,
     /// `<Right Click to Open>`, which takes precedence over the line above.
     /// See `ItemInfo::says_right_click_to_open` for the lock gate.
-    pub openable: bool,
+    pub(crate) openable: bool,
 }
 
 /// One enchantment line: the enchantment's name, its colour, and the two
 /// additions a temporary enchantment can have.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnchantLine {
+pub(crate) struct EnchantLine {
     pub name: String,
     pub ink: vale_assets::tables::enchant::EnchantInk,
     /// Milliseconds left on the clock the server started, printed through
     /// `ITEM_ENCHANT_TIME_LEFT`.
-    pub left_ms: Option<u32>,
+    pub(crate) left_ms: Option<u32>,
     /// Charges left, printed through `ITEM_SPELL_CHARGES` in brackets; 0 for
     /// none.
     pub charges: u32,
@@ -234,10 +234,10 @@ pub struct ItemSpellLine {
     pub charges: Option<i32>,
     /// A recipe's teaching spell, whose taught spell creates an item: drawn
     /// in white rather than green.
-    pub recipe: bool,
+    pub(crate) recipe: bool,
     /// For a recipe, the plate of the item the taught spell creates, drawn
     /// whole under the line. `None` until the item's template has arrived.
-    pub product: Option<Box<ItemTip>>,
+    pub(crate) product: Option<Box<ItemTip>>,
     /// For a recipe, the taught spell's reagents as the line lists them:
     /// "Linen Cloth (2), Coarse Thread". `None` when a reagent's name has not
     /// arrived yet, which leaves the line out.
@@ -268,21 +268,21 @@ pub struct SetTip {
 pub struct Wearer<'a> {
     /// The entries in the 19 worn slots, broken items left out. A set piece
     /// counts as owned when it is here.
-    pub equipped: Vec<u32>,
+    pub(crate) equipped: Vec<u32>,
     /// The character's rank in a skill line (`Skill::rank`), `None` for a
     /// line it does not have.
-    pub skill_rank: &'a dyn Fn(u32) -> Option<i32>,
+    pub(crate) skill_rank: &'a dyn Fn(u32) -> Option<i32>,
     /// Whether the character knows a spell.
-    pub knows_spell: &'a dyn Fn(u32) -> bool,
+    pub(crate) knows_spell: &'a dyn Fn(u32) -> bool,
     /// The character's standing with a `Faction.dbc` id, 0 (Hated) to 7
     /// (Exalted), `None` for a faction without a reputation bar.
     pub standing: &'a dyn Fn(u32) -> Option<u32>,
     /// Whether the character may use an item class and subclass
     /// (`SMSG_SET_PROFICIENCY`).
-    pub proficient: &'a dyn Fn(u32, u32) -> bool,
+    pub(crate) proficient: &'a dyn Fn(u32, u32) -> bool,
     /// A player's name by guid, for the "<Made by X>" line. A miss queues a
     /// name query and leaves the line out.
-    pub player_name: &'a dyn Fn(u64) -> Option<String>,
+    pub(crate) player_name: &'a dyn Fn(u64) -> Option<String>,
     /// An item's template by entry, for the item a recipe creates. A miss
     /// queues the query.
     pub template: &'a dyn Fn(u32) -> Option<vale_protocol::state::query::ItemInfo>,
@@ -290,7 +290,7 @@ pub struct Wearer<'a> {
     pub honor_rank: u32,
     /// `PLAYER_FIELD_PVP_MEDALS`: one bit per city title, bit `n - 1` for
     /// `PVP_MEDAL<n>`.
-    pub medals: u32,
+    pub(crate) medals: u32,
     /// 0 Horde, 1 Alliance, `None` before the character's faction is known.
     pub team: Option<u8>,
     pub female: bool,
@@ -582,7 +582,7 @@ fn enchantment_lines(
 /// slot 0 (green) and the random property's enchantments fill the slots after
 /// it (white), and the suffix joins the name. A link therefore never draws
 /// "<Random enchantment>".
-pub fn apply_link(
+pub(crate) fn apply_link(
     tip: &mut ItemTip,
     enchant: i32,
     random: i32,
@@ -918,7 +918,7 @@ pub struct PlateLine {
     pub right: Option<String>,
     /// The right cell's colour: white, except a subclass the character is not
     /// proficient with.
-    pub right_ink: Ink,
+    pub(crate) right_ink: Ink,
     /// Whether the left cell wraps at the plate's width. A spell sentence, a
     /// set bonus and the flavour text do.
     pub wrap: bool,
@@ -1538,7 +1538,7 @@ fn substitute(format: &str, value: &str) -> String {
 /// prefix and line of a non-combatant NPC. Each depends on a missing
 /// subsystem, so the line is omitted rather than filled with a guess; `lua::api::stubs`' first paragraph
 /// gives the same reasoning.
-pub fn unit_plate(
+pub(crate) fn unit_plate(
     tip: &super::api::UnitTip,
     word: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<PlateLine> {
@@ -1620,7 +1620,7 @@ pub fn unit_plate(
 /// each cell omitted when it has no value and each format a game global; then
 /// the reagents and the description, both already resolved by
 /// [`super::api::spell_tip`].
-pub fn spell_plate(tip: &super::api::SpellTip, word: &dyn Fn(&str) -> Option<String>) -> Vec<PlateLine> {
+pub(crate) fn spell_plate(tip: &super::api::SpellTip, word: &dyn Fn(&str) -> Option<String>) -> Vec<PlateLine> {
     let mut out = Vec::new();
     // A talent's rank is its own line, not a cell; see
     // [`super::api::SpellTip::talent_rank`], which describes how the client

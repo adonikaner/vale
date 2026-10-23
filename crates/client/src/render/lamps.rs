@@ -176,7 +176,7 @@ const BEVY_INTENSITY_UNIT: f32 = 4.0 * std::f32::consts::PI;
 /// it. See [`vale_assets::world::glow`] for which batch this is and
 /// `render::models::loader` for where the colour comes from.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ModelGlow {
+pub(crate) struct ModelGlow {
     /// Where it hangs, in the model's own space and **Bevy's axes** — converted
     /// here rather than at the placement, because every reader of it is
     /// downstream of a Bevy transform.
@@ -233,7 +233,7 @@ const FIRE_FLICKER: f32 = 0.10;
 /// a table or any state. `seed` is the lamp's own key, so two torches on one
 /// wall do not waver in step — which is the failure that would make this look
 /// worse than no flicker at all.
-pub fn flame(seed: u64, t: f32, amplitude: f32) -> f32 {
+pub(crate) fn flame(seed: u64, t: f32, amplitude: f32) -> f32 {
     if amplitude <= 0.0 {
         return 1.0;
     }
@@ -264,7 +264,7 @@ pub fn flame(seed: u64, t: f32, amplitude: f32) -> f32 {
 ///
 /// `None` for a texture with no opaque texel in it at all, which is a batch
 /// that adds nothing and is not a lamp.
-pub fn glow_colour(rgba: &[u8]) -> Option<Vec3> {
+pub(crate) fn glow_colour(rgba: &[u8]) -> Option<Vec3> {
     let mut sum = Vec3::ZERO;
     let mut weight = 0.0f32;
     for texel in rgba.chunks_exact(4) {
@@ -291,11 +291,11 @@ pub fn glow_colour(rgba: &[u8]) -> Option<Vec3> {
 /// remove. So it is the *holder's* entity plus, for a building with ten lights
 /// in one component, which of them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LampKey(u64, u16);
+pub(crate) struct LampKey(u64, u16);
 
 /// One thing that burns.
 #[derive(Clone, Copy, Debug)]
-pub struct LampLight {
+pub(crate) struct LampLight {
     /// See [`LampKey`]. Written by whichever of the three sources produced it.
     pub key: LampKey,
     /// Where it stands, in Bevy's axes — the emitter's own settled origin.
@@ -326,7 +326,7 @@ pub struct LampLight {
     /// alternative — holding a lamp dark until its building resolves — trades
     /// a couple of frames of a torch being too bright for a couple of frames of
     /// a room being unlit, and the second is the one that reads as a bug.
-    pub indoors: bool,
+    pub(crate) indoors: bool,
     /// **How much this lamp wavers**, as a fraction its brightness dips by —
     /// 0 for a light that does not burn.
     ///
@@ -341,7 +341,7 @@ pub struct LampLight {
     ///
     /// So this does not add a distinction; it spends one the module already
     /// makes.
-    pub flicker: f32,
+    pub(crate) flicker: f32,
 }
 
 /// **Which pair of multipliers a lamp is scaled by**, as `(strength, reach)`.
@@ -465,7 +465,7 @@ impl LampLight {
 /// tile is loaded. A child entity per lamp would be a transform to propagate
 /// and an archetype to walk for something that cannot change.
 #[derive(Component, Clone, Debug)]
-pub struct StaticLamps(pub Vec<LampLight>);
+pub(crate) struct StaticLamps(pub(crate) Vec<LampLight>);
 
 impl StaticLamps {
     /// **A building's own lights**, placed by one instance of it — `MOLT`, and
@@ -484,7 +484,7 @@ impl StaticLamps {
     /// rather than clamped into [`REACH_MIN`]..[`REACH_MAX`] — those bounds
     /// exist to keep a *guess* in a sane range and there is nothing to guess
     /// here. An inn's are 7 to 9 yards, which is a room.
-    pub fn of_building(
+    pub(crate) fn of_building(
         lights: &[vale_assets::world::wmo::WmoLight],
         placement: &Transform,
     ) -> Option<StaticLamps> {
@@ -560,7 +560,7 @@ impl StaticLamps {
 #[derive(Resource, Default)]
 struct LampPool(Vec<Entity>);
 
-pub struct LampPlugin;
+pub(crate) struct LampPlugin;
 
 impl Plugin for LampPlugin {
     fn build(&self, app: &mut App) {

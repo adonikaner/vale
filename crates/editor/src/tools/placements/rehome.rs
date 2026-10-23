@@ -138,7 +138,7 @@ fn settled(rows: &[Row], home: (u32, u32)) -> bool {
 ///
 /// Answers the `(tile, index)` it ended up at, or `None` when nothing needed
 /// doing or the tile it belongs in is not open.
-pub fn settle_doodad(
+pub(crate) fn settle_doodad(
     session: &mut EditSession,
     unique_id: u32,
     radius: f32,
@@ -149,7 +149,7 @@ pub fn settle_doodad(
 /// …and the same for a `MODF` one. It needs no radius: a `MODF` row carries its
 /// own box, so `add_building` works out which chunks to reference from the
 /// record itself.
-pub fn settle_building(session: &mut EditSession, unique_id: u32) -> Option<((u32, u32), usize)> {
+pub(crate) fn settle_building(session: &mut EditSession, unique_id: u32) -> Option<((u32, u32), usize)> {
     settle(session, unique_id, true, 0.0)
 }
 

@@ -31,15 +31,15 @@ pub(super) fn audition(
 /// are played one at a time and can be stopped: a second play replaces the
 /// first, and the button that started one stops it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Heard {
-    pub table: &'static str,
-    pub id: u32,
-    pub night: bool,
+pub(crate) struct Heard {
+    pub(crate) table: &'static str,
+    pub(crate) id: u32,
+    pub(crate) night: bool,
 }
 
 /// A request to [`listen`].
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Listen {
+pub(crate) enum Listen {
     /// Play the `SoundEntries` row `entry` on `channel`, as `heard`. The
     /// ambience channel loops, as the game loops it; the other two play once.
     Play {

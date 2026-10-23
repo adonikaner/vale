@@ -55,12 +55,11 @@ use crate::world::templates::TemplatesArrived;
 /// One of the three trainer packets, handed on from
 /// [`crate::world::incoming::drain_events`].
 #[derive(Message, Debug, Clone)]
-pub enum TrainerAnswer {
+pub(crate) enum TrainerAnswer {
     Show(Box<TrainerList>),
     /// `SMSG_TRAINER_BUY_SUCCEEDED` — by the **service** spell id.
     Bought { spell: u32 },
     BuyFailed {
-        spell: u32,
         reason: Option<TrainFailure>,
     },
 }
@@ -97,7 +96,7 @@ impl TrainerWindow {
 
     /// …and mutably, for the four filter verbs, which are the only writes the
     /// interface makes that do not go on the wire.
-    pub fn board_mut(&mut self) -> Option<&mut Board> {
+    pub(crate) fn board_mut(&mut self) -> Option<&mut Board> {
         self.open.as_mut().map(|open| &mut open.board)
     }
 
@@ -125,7 +124,7 @@ impl TrainerWindow {
     }
 }
 
-pub struct TrainerPlugin;
+pub(crate) struct TrainerPlugin;
 
 impl Plugin for TrainerPlugin {
     fn build(&self, app: &mut App) {

@@ -63,23 +63,23 @@ use std::time::Duration;
 /// system when the party writer was added. The grouping makes no claim that
 /// they belong together.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct SubjectAnswers<'w> {
+pub(crate) struct SubjectAnswers<'w> {
     pub loot: MessageWriter<'w, crate::interface::loot::LootAnswer>,
-    pub loot_roll: MessageWriter<'w, crate::interface::lootroll::RollAnswer>,
+    pub(crate) loot_roll: MessageWriter<'w, crate::interface::lootroll::RollAnswer>,
     pub quest: MessageWriter<'w, crate::interface::quest::QuestAnswer>,
-    pub party: MessageWriter<'w, crate::interface::party::PartyAnswer>,
+    pub(crate) party: MessageWriter<'w, crate::interface::party::PartyAnswer>,
     /// The reputation panel's four events, bundled for the same reason. See
     /// [`crate::interface::reputation`].
     pub reputation: MessageWriter<'w, crate::interface::reputation::ReputationAnswer>,
     /// The social panel's four events, bundled for the same reason. See
     /// [`crate::interface::social`].
-    pub social: MessageWriter<'w, crate::interface::social::SocialAnswer>,
+    pub(crate) social: MessageWriter<'w, crate::interface::social::SocialAnswer>,
     /// The guild's seven events. See [`crate::interface::guild`].
     pub guild: MessageWriter<'w, crate::interface::guild::GuildAnswer>,
     /// The guild charter's seven events. See [`crate::interface::petition`].
-    pub petition: MessageWriter<'w, crate::interface::petition::PetitionAnswer>,
+    pub(crate) petition: MessageWriter<'w, crate::interface::petition::PetitionAnswer>,
     /// The tabard designer's two events. See [`crate::interface::tabard`].
-    pub tabard: MessageWriter<'w, crate::interface::tabard::TabardAnswer>,
+    pub(crate) tabard: MessageWriter<'w, crate::interface::tabard::TabardAnswer>,
     /// The chat channels' two events. See [`crate::interface::channels`].
     pub channels: MessageWriter<'w, crate::interface::channels::ChannelAnswer>,
     /// A text emote. See [`crate::interface::emotetext`].
@@ -91,7 +91,7 @@ pub struct SubjectAnswers<'w> {
     /// The profession windows, bundled for the same reason. See
     /// [`crate::interface::tradeskill`]: the two SHOW events and the repeat
     /// counter both depend on which of the player's casts released or failed.
-    pub profession: MessageWriter<'w, crate::interface::tradeskill::ProfessionNews>,
+    pub(crate) profession: MessageWriter<'w, crate::interface::tradeskill::ProfessionNews>,
     /// A sound the server asked the client to play, bundled for the same reason.
     /// See [`crate::interface::events::SoundPushed`]: the three `SMSG_PLAY_*`
     /// sound opcodes have no subject in this directory. They change nothing about
@@ -99,30 +99,30 @@ pub struct SubjectAnswers<'w> {
     pub sound: MessageWriter<'w, crate::interface::events::SoundPushed>,
     /// An item arriving in a bag, bundled for the same reason. See
     /// [`crate::interface::received`].
-    pub received: MessageWriter<'w, crate::interface::received::ItemReceived>,
+    pub(crate) received: MessageWriter<'w, crate::interface::received::ItemReceived>,
     /// The pet's two sounds, bundled for the same reason as `sound`: they change
     /// nothing about the character and their only reader is `sound::combat`.
-    pub pet_talk: MessageWriter<'w, crate::interface::events::PetTalkHeard>,
-    pub pet_dismiss: MessageWriter<'w, crate::interface::events::PetDismissHeard>,
+    pub(crate) pet_talk: MessageWriter<'w, crate::interface::events::PetTalkHeard>,
+    pub(crate) pet_dismiss: MessageWriter<'w, crate::interface::events::PetDismissHeard>,
     /// A duel, a summon and `/played`. See [`crate::interface::duel`],
     /// [`crate::interface::summon`] and [`crate::interface::played`]. `/played`
     /// is written as the event itself, because the answer changes no state the
     /// client keeps.
     pub duel: MessageWriter<'w, crate::interface::duel::DuelAnswer>,
-    pub summon: MessageWriter<'w, crate::interface::summon::SummonAnswer>,
+    pub(crate) summon: MessageWriter<'w, crate::interface::summon::SummonAnswer>,
     pub played: MessageWriter<'w, crate::interface::events::TimePlayedMsg>,
     /// The inspected player's honor tab. See [`crate::interface::inspect`].
     pub inspect: MessageWriter<'w, crate::interface::inspect::InspectAnswer>,
     /// A message-table line named by a packet with no body. See
     /// [`crate::interface::messages::TableLine`], which explains why this is not
     /// `Announce`.
-    pub table_line: MessageWriter<'w, crate::interface::messages::TableLine>,
+    pub(crate) table_line: MessageWriter<'w, crate::interface::messages::TableLine>,
     /// The two statements the server makes about what the character can do. See
     /// [`CapabilityAnswers`].
-    pub caps: CapabilityAnswers<'w>,
+    pub(crate) caps: CapabilityAnswers<'w>,
     /// The server's notices, the group's shared marks, world states and
     /// tutorials. See [`NoticeAnswers`].
-    pub notices: NoticeAnswers<'w>,
+    pub(crate) notices: NoticeAnswers<'w>,
 }
 
 /// Seven subjects that arrived together: the server's notices, `/roll`, the
@@ -132,17 +132,17 @@ pub struct SubjectAnswers<'w> {
 /// Nested in [`SubjectAnswers`] for the parameter-limit reason given there; the
 /// grouping makes no claim that the subjects belong together.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct NoticeAnswers<'w> {
-    pub notices: MessageWriter<'w, crate::interface::notices::NoticeAnswer>,
+pub(crate) struct NoticeAnswers<'w> {
+    pub(crate) notices: MessageWriter<'w, crate::interface::notices::NoticeAnswer>,
     pub rolls: MessageWriter<'w, crate::interface::randomroll::RollAnswer>,
-    pub pings: MessageWriter<'w, crate::interface::minimap::PingAnswer>,
-    pub raid_targets: MessageWriter<'w, crate::interface::raidtarget::RaidTargetAnswer>,
-    pub quest_share: MessageWriter<'w, crate::interface::questshare::QuestShareAnswer>,
-    pub world_states: MessageWriter<'w, crate::interface::worldstate::WorldStateAnswer>,
-    pub tutorials: MessageWriter<'w, crate::interface::tutorial::TutorialAnswer>,
+    pub(crate) pings: MessageWriter<'w, crate::interface::minimap::PingAnswer>,
+    pub(crate) raid_targets: MessageWriter<'w, crate::interface::raidtarget::RaidTargetAnswer>,
+    pub(crate) quest_share: MessageWriter<'w, crate::interface::questshare::QuestShareAnswer>,
+    pub(crate) world_states: MessageWriter<'w, crate::interface::worldstate::WorldStateAnswer>,
+    pub(crate) tutorials: MessageWriter<'w, crate::interface::tutorial::TutorialAnswer>,
     /// `BAG_UPDATE_COOLDOWN`, raised for `SMSG_ITEM_COOLDOWN` beside the two
     /// events [`ActionEvents::cooldown_moved`] raises.
-    pub bag_cooldown: MessageWriter<'w, crate::interface::events::BagUpdateCooldown>,
+    pub(crate) bag_cooldown: MessageWriter<'w, crate::interface::events::BagUpdateCooldown>,
 }
 
 /// What the character may equip, and what their talents do to their spells.
@@ -157,11 +157,11 @@ pub struct NoticeAnswers<'w> {
 /// neither comes from a shipped file. Each keeps its own message and its own
 /// module.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct CapabilityAnswers<'w> {
+pub(crate) struct CapabilityAnswers<'w> {
     /// `SMSG_SET_PROFICIENCY` — see [`super::proficiency`].
-    pub proficiency: MessageWriter<'w, super::proficiency::ProficiencyAnswer>,
+    pub(crate) proficiency: MessageWriter<'w, super::proficiency::ProficiencyAnswer>,
     /// `SMSG_SET_*_SPELL_MODIFIER` — see [`super::spellmods`].
-    pub spell_mods: MessageWriter<'w, super::spellmods::SpellModAnswer>,
+    pub(crate) spell_mods: MessageWriter<'w, super::spellmods::SpellModAnswer>,
     /// The spell modifiers as they currently stand. One arm below reads them: a
     /// cooldown started locally when the player's own `SMSG_SPELL_GO` returns
     /// must include talent modifiers, or it is wrong for its whole duration.
@@ -185,11 +185,11 @@ pub struct CapabilityAnswers<'w> {
 /// the character is or is going. That covers the transfer, a place discovered
 /// on the way, and the point of interest a guard marks on the map.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct TransferAnswers<'w> {
-    pub aborted: MessageWriter<'w, super::areatrigger::TransferAborted>,
-    pub trigger_text: MessageWriter<'w, super::areatrigger::AreaTriggerMessage>,
+pub(crate) struct TransferAnswers<'w> {
+    pub(crate) aborted: MessageWriter<'w, super::areatrigger::TransferAborted>,
+    pub(crate) trigger_text: MessageWriter<'w, super::areatrigger::AreaTriggerMessage>,
     pub pending: MessageWriter<'w, crate::glue::loading::TransferPending>,
-    pub discovered: MessageWriter<'w, crate::interface::worldmap::Discovered>,
+    pub(crate) discovered: MessageWriter<'w, crate::interface::worldmap::Discovered>,
     pub poi: MessageWriter<'w, crate::interface::worldmap::PoiAnswer>,
 }
 
@@ -200,9 +200,9 @@ pub struct TransferAnswers<'w> {
 /// reached Bevy's sixteen-parameter limit when the seventeenth parameter was
 /// added. These writers also share a subject.
 #[derive(bevy::ecs::system::SystemParam)]
-pub struct NpcAnswers<'w> {
+pub(crate) struct NpcAnswers<'w> {
     pub gossip: MessageWriter<'w, crate::interface::gossip::GossipAnswer>,
-    pub merchant: MessageWriter<'w, crate::interface::merchant::MerchantAnswer>,
+    pub(crate) merchant: MessageWriter<'w, crate::interface::merchant::MerchantAnswer>,
     pub trainer: MessageWriter<'w, crate::interface::trainer::TrainerAnswer>,
     pub taxi: MessageWriter<'w, crate::interface::taxi::TaxiAnswer>,
     /// The fifth: the mailbox, opened the same way on an object rather than a
@@ -210,14 +210,14 @@ pub struct NpcAnswers<'w> {
     pub mail: MessageWriter<'w, crate::interface::mail::MailAnswer>,
     /// The sixth: the stable, one gossip option deeper than the others. See
     /// [`crate::interface::stable`].
-    pub stable: MessageWriter<'w, crate::interface::stable::StableAnswer>,
+    pub(crate) stable: MessageWriter<'w, crate::interface::stable::StableAnswer>,
     /// The seventh: the innkeeper's bind, a popup rather than a window. Its
     /// answer arrives after the gossip window has closed. See
     /// [`crate::interface::binder`].
-    pub binder: MessageWriter<'w, crate::interface::binder::BinderAnswer>,
+    pub(crate) binder: MessageWriter<'w, crate::interface::binder::BinderAnswer>,
     /// The eighth: the pet untrainer's question, which also arrives after its
     /// gossip window has closed. See [`crate::interface::untrainer`].
-    pub untrainer: MessageWriter<'w, crate::interface::untrainer::UntrainerAnswer>,
+    pub(crate) untrainer: MessageWriter<'w, crate::interface::untrainer::UntrainerAnswer>,
     /// The ninth: the trade window, which belongs to another player rather than
     /// an NPC but uses the same `"npc"` unit token. See
     /// [`crate::interface::trade`].
@@ -227,7 +227,7 @@ pub struct NpcAnswers<'w> {
     pub bank: MessageWriter<'w, crate::interface::bank::BankAnswer>,
     /// The eleventh: the text on a sign, a plaque or a book. See
     /// [`crate::interface::pagetext`].
-    pub pagetext: MessageWriter<'w, crate::interface::pagetext::PageTextAnswer>,
+    pub(crate) pagetext: MessageWriter<'w, crate::interface::pagetext::PageTextAnswer>,
 }
 
 /// Drains the session's event queue and forwards each event to the module
@@ -282,9 +282,7 @@ pub(crate) fn drain_events(
     let catalog = tables.as_deref().and_then(|t| t.spellbook());
     let player = active
         .live
-        .world()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .read()
         .player_guid;
 
     for event in incoming {
@@ -335,6 +333,7 @@ pub(crate) fn drain_events(
                 // and the measurement is for later analysis.
                 if reason == spells::SPELL_FAILED_OUT_OF_RANGE {
                     subjects.range.write(super::desync::RangeRefused {
+                        #[cfg(feature = "diagnostics")]
                         spell_id: Some(spell_id),
                         // The range limit the server applied. Only this system has it: the spell
                         // catalogue is already loaded here and `desync` holds no tables.
@@ -526,6 +525,7 @@ pub(crate) fn drain_events(
                     // No `range_yards`: a melee swing's limit is not a table value but depends
                     // on both units' size. See `desync::melee_reach`.
                     subjects.range.write(super::desync::RangeRefused {
+                        #[cfg(feature = "diagnostics")]
                         spell_id: None,
                         range_yards: None,
                     });
@@ -712,8 +712,8 @@ pub(crate) fn drain_events(
             PlayerEvent::LootMoneyCleared => {
                 subjects.loot.write(crate::interface::loot::LootAnswer::MoneyCleared);
             }
-            PlayerEvent::LootMoneyGained { copper } => {
-                subjects.loot.write(crate::interface::loot::LootAnswer::MoneyGained(copper));
+            PlayerEvent::LootMoneyGained { .. } => {
+                subjects.loot.write(crate::interface::loot::LootAnswer::MoneyGained);
             }
             PlayerEvent::LootRollStarted(start) => {
                 subjects
@@ -755,8 +755,8 @@ pub(crate) fn drain_events(
             PlayerEvent::QuestReward(page) => {
                 subjects.quest.write(crate::interface::quest::QuestAnswer::Reward(page));
             }
-            PlayerEvent::QuestComplete(done) => {
-                subjects.quest.write(crate::interface::quest::QuestAnswer::Complete(done));
+            PlayerEvent::QuestComplete(_) => {
+                subjects.quest.write(crate::interface::quest::QuestAnswer::Complete);
             }
             PlayerEvent::QuestTemplate(template) => {
                 subjects.quest.write(crate::interface::quest::QuestAnswer::Template(template));
@@ -774,11 +774,11 @@ pub(crate) fn drain_events(
             PlayerEvent::QuestObjectivesDone { quest_id } => {
                 subjects.quest.write(crate::interface::quest::QuestAnswer::ObjectivesDone(quest_id));
             }
-            PlayerEvent::QuestFailed { quest_id, timed_out } => {
-                subjects.quest.write(crate::interface::quest::QuestAnswer::Failed { quest_id, timed_out });
+            PlayerEvent::QuestFailed { .. } => {
+                subjects.quest.write(crate::interface::quest::QuestAnswer::Failed);
             }
-            PlayerEvent::QuestRefused { reason } => {
-                subjects.quest.write(crate::interface::quest::QuestAnswer::Refused(reason));
+            PlayerEvent::QuestRefused { .. } => {
+                subjects.quest.write(crate::interface::quest::QuestAnswer::Refused);
             }
             // The NPC windows' seven events, split between their two modules.
             PlayerEvent::GossipShow(menu) => {
@@ -810,8 +810,8 @@ pub(crate) fn drain_events(
             PlayerEvent::BinderConfirm { guid } => {
                 npc.binder.write(crate::interface::binder::BinderAnswer::Confirm { guid });
             }
-            PlayerEvent::PlayerBound { guid, area_id } => {
-                npc.binder.write(crate::interface::binder::BinderAnswer::Bound { guid, area_id });
+            PlayerEvent::PlayerBound { .. } => {
+                npc.binder.write(crate::interface::binder::BinderAnswer::Bound);
             }
             // A duel, in six packets. See [`crate::interface::duel`], which decides
             // what each one means.
@@ -857,11 +857,11 @@ pub(crate) fn drain_events(
             PlayerEvent::VendorSold { slot, left, .. } => {
                 npc.merchant.write(crate::interface::merchant::MerchantAnswer::Sold { slot, left });
             }
-            PlayerEvent::BuyFailed { entry, reason } => {
-                npc.merchant.write(crate::interface::merchant::MerchantAnswer::BuyFailed { entry, reason });
+            PlayerEvent::BuyFailed { reason, .. } => {
+                npc.merchant.write(crate::interface::merchant::MerchantAnswer::BuyFailed { reason });
             }
-            PlayerEvent::SellFailed { item, reason } => {
-                npc.merchant.write(crate::interface::merchant::MerchantAnswer::SellFailed { item, reason });
+            PlayerEvent::SellFailed { reason, .. } => {
+                npc.merchant.write(crate::interface::merchant::MerchantAnswer::SellFailed { reason });
             }
             // The trainer's three events, with the same structure.
             PlayerEvent::TrainerShow(list) => {
@@ -870,8 +870,8 @@ pub(crate) fn drain_events(
             PlayerEvent::TrainerBought { spell } => {
                 npc.trainer.write(crate::interface::trainer::TrainerAnswer::Bought { spell });
             }
-            PlayerEvent::TrainerBuyFailed { spell, reason } => {
-                npc.trainer.write(crate::interface::trainer::TrainerAnswer::BuyFailed { spell, reason });
+            PlayerEvent::TrainerBuyFailed { reason, .. } => {
+                npc.trainer.write(crate::interface::trainer::TrainerAnswer::BuyFailed { reason });
             }
             // The stable master's two events. The result byte is not routed by the
             // request it answers, because it does not say which. See
@@ -898,8 +898,8 @@ pub(crate) fn drain_events(
             PlayerEvent::TaxiShow(menu) => {
                 npc.taxi.write(crate::interface::taxi::TaxiAnswer::Show(menu));
             }
-            PlayerEvent::TaxiNodeStatus { guid, known } => {
-                npc.taxi.write(crate::interface::taxi::TaxiAnswer::NodeStatus { guid, known });
+            PlayerEvent::TaxiNodeStatus { .. } => {
+                npc.taxi.write(crate::interface::taxi::TaxiAnswer::NodeStatus);
             }
             PlayerEvent::NewTaxiPath => {
                 npc.taxi.write(crate::interface::taxi::TaxiAnswer::Discovered);
@@ -938,8 +938,8 @@ pub(crate) fn drain_events(
             PlayerEvent::MirrorTimerStopped { timer } => {
                 mirror.write(crate::interface::timers::MirrorTimerAnswer::Stopped(timer));
             }
-            PlayerEvent::MirrorTimerPaused { timer, paused } => {
-                mirror.write(crate::interface::timers::MirrorTimerAnswer::Paused { timer, paused });
+            PlayerEvent::MirrorTimerPaused { paused, .. } => {
+                mirror.write(crate::interface::timers::MirrorTimerAnswer::Paused { paused });
             }
             // The group's eight events, all forwarded to the one module that holds a
             // roster. See [`crate::interface::party`], and [`crate::interface::raid`]
@@ -1144,7 +1144,7 @@ pub(crate) fn drain_events(
 /// Registers [`drain_queues`] and the three messages it writes.
 ///
 /// [`drain_events`] is not registered here; the module note gives the reason.
-pub struct IncomingPlugin;
+pub(crate) struct IncomingPlugin;
 
 impl Plugin for IncomingPlugin {
     fn build(&self, app: &mut App) {
@@ -1158,14 +1158,14 @@ impl Plugin for IncomingPlugin {
 /// One chat line from the session, with the sender's name as the session
 /// resolved it. Read by [`crate::interface::chat`].
 #[derive(Message, Debug, Clone)]
-pub struct ChatArrived {
+pub(crate) struct ChatArrived {
     pub who: String,
     pub message: vale_protocol::play::chat::ChatMessage,
 }
 
 /// One combat log entry from the session. Read by [`crate::interface::log`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct CombatArrived(pub vale_protocol::play::combatlog::CombatEvent);
+pub(crate) struct CombatArrived(pub(crate) vale_protocol::play::combatlog::CombatEvent);
 
 /// Drains the session's three queues that are not [`PlayerEvent`]s (chat
 /// lines, combat log entries and template arrivals) and writes each as a
@@ -1183,16 +1183,12 @@ pub(crate) fn drain_queues(
     let Some(active) = session.active.as_ref() else {
         return;
     };
-    // `take_chat` takes the world lock itself, to resolve sender names, so it
-    // is called before the lock below is taken.
+    // `take_chat` takes the world lock itself, to resolve sender names, and
+    // releases it before the combat log and the arrivals are taken.
     for (who, message) in active.live.take_chat() {
         chat.write(ChatArrived { who, message });
     }
-    let (entries, arrived) = {
-        let world = active.live.world();
-        let mut world = world.lock().unwrap_or_else(|e| e.into_inner());
-        (world.take_combat(), world.take_arrivals())
-    };
+    let (entries, arrived) = active.live.take_combat_and_arrivals();
     for entry in entries {
         combat.write(CombatArrived(entry));
     }

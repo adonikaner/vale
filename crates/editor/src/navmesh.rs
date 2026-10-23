@@ -81,7 +81,7 @@ const LIFT: f32 = 0.3;
 /// How opaque a surface is.
 const ALPHA: f32 = 0.4;
 
-pub struct NavmeshPlugin;
+pub(crate) struct NavmeshPlugin;
 
 impl Plugin for NavmeshPlugin {
     fn build(&self, app: &mut App) {
@@ -91,10 +91,10 @@ impl Plugin for NavmeshPlugin {
 
 /// The overlay's switch and what it holds.
 #[derive(Resource, Default)]
-pub struct Navmesh {
+pub(crate) struct Navmesh {
     /// Whether the overlay is drawn. The view bar's button and `--navmesh`
     /// set it.
-    pub on: bool,
+    pub(crate) on: bool,
     /// `DataDir`, or why there is none. `None` until the first resolve.
     data_dir: Option<Result<PathBuf, String>>,
     /// The map the resident tiles belong to.
@@ -138,11 +138,11 @@ struct Materials {
 
 /// Marks an entity this module spawned.
 #[derive(Component)]
-pub struct NavmeshPiece;
+pub(crate) struct NavmeshPiece;
 
 impl Navmesh {
     /// The overlay already on, for `--navmesh`.
-    pub fn shown() -> Navmesh {
+    pub(crate) fn shown() -> Navmesh {
         Navmesh {
             on: true,
             ..default()
@@ -150,7 +150,7 @@ impl Navmesh {
     }
 
     /// Why the overlay cannot be drawn, or `None` when it can.
-    pub fn unavailable(&self) -> Option<&str> {
+    pub(crate) fn unavailable(&self) -> Option<&str> {
         match &self.data_dir {
             None => Some("the server's DataDir has not been read from mangosd.conf yet"),
             Some(Err(why)) => Some(why),
@@ -159,7 +159,7 @@ impl Navmesh {
     }
 
     /// One line on what is drawn, for the button's hover text.
-    pub fn summary(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         if !self.on {
             return String::new();
         }
@@ -184,7 +184,7 @@ impl Navmesh {
     }
 
     /// The colour key, one line per class, for the button's hover text.
-    pub fn legend() -> String {
+    pub(crate) fn legend() -> String {
         Surface::ALL
             .iter()
             .map(|&surface| format!("{}: {} ({})", colour_name(surface), surface.name(), surface.flags()))

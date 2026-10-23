@@ -68,11 +68,11 @@ pub struct AuthOutcome {
 /// which is how every private server's instructions spell it. The shipped
 /// `realmList` default carries the port explicitly
 /// (`us.logon.worldofwarcraft.com:3724`), so both forms reach here.
-pub const LOGON_PORT: u16 = 3724;
+pub(crate) const LOGON_PORT: u16 = 3724;
 
 /// `host` as a socket address, with [`LOGON_PORT`] filled in when it has no
 /// port of its own.
-pub fn logon_address(host: &str) -> String {
+pub(crate) fn logon_address(host: &str) -> String {
     match host.contains(':') {
         true => host.to_string(),
         false => format!("{host}:{LOGON_PORT}"),
@@ -150,7 +150,7 @@ pub fn login(host: &str, account: &str, password: &str) -> io::Result<AuthOutcom
 
 /// Log on while presenting a specific client build. Split out from [`login`] so
 /// that supporting another build is a data change, not a code change.
-pub fn login_as(
+pub(crate) fn login_as(
     host: &str,
     account: &str,
     password: &str,

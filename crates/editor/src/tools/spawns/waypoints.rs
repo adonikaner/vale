@@ -82,7 +82,7 @@ use bevy::tasks::{block_on, futures_lite::future, Task};
 /// derived `Default` set `follow_ground` to false, so the switch on the window
 /// was drawn unticked.
 #[derive(Resource, Debug)]
-pub struct Waypoints {
+pub(crate) struct Waypoints {
     /// Whether the window is open. Off by default, which is the ordinary
     /// state.
     ///
@@ -93,19 +93,19 @@ pub struct Waypoints {
     /// creature it was opened for while the template window beside it followed
     /// the selection, and the two panels showed different creatures for the
     /// same click.
-    pub showing: bool,
+    pub(crate) showing: bool,
     /// The creature the window is about. This is not the same as the table its
     /// path is in; see [`PathSubject`].
-    pub subject: Option<PathSubject>,
+    pub(crate) subject: Option<PathSubject>,
     /// Whose path is loaded, and out of which table. `None` when the window is
     /// shut, when it is open with no creature selected, and until the read that
     /// decides which table has come back.
-    pub open: Option<(Which, u64)>,
+    pub(crate) open: Option<(Which, u64)>,
     /// What the database holds for it, read once when it is opened.
     ///
     /// Kept beside the working copy so the panel can say what an edit is
     /// against, and so a path can be reverted to it without a round trip.
-    pub from_database: Option<Path>,
+    pub(crate) from_database: Option<Path>,
     /// The read, while it is running.
     task: Option<Task<Result<Path, String>>>,
     /// The `EditSession::database_writes` [`Self::from_database`] was read
@@ -117,22 +117,22 @@ pub struct Waypoints {
     /// discard or a project switch, or the database's path stays hidden.
     stands_in: bool,
     /// Why there is nothing, when there is nothing.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// Which node's form is open, as an index into the drawn path.
-    pub selected: Option<usize>,
+    pub(crate) selected: Option<usize>,
     /// Which node is under the pointer, as an index into the drawn path.
-    pub hovered: Option<usize>,
+    pub(crate) hovered: Option<usize>,
     /// A held drag, once it has travelled far enough to be one.
-    pub drag: Option<NodeDrag>,
+    pub(crate) drag: Option<NodeDrag>,
     /// Whether a click on the ground adds a node. Off by default: with it
     /// on, the pointer cannot be used to select a creature.
-    pub adding: bool,
+    pub(crate) adding: bool,
     /// Whether a node placed or moved takes the ground's height — see the
     /// module comment.
-    pub follow_ground: bool,
+    pub(crate) follow_ground: bool,
     /// What the spawn's `movement_type` is, so the panel can say whether the
     /// path is walked at all. Read with the path.
-    pub movement_type: u32,
+    pub(crate) movement_type: u32,
     /// Whether `--waypoint-add` has finished, or was never asked for.
     ///
     /// `crate::server::subject::flags::on_the_command_line` waits on it. Without
@@ -141,7 +141,7 @@ pub struct Waypoints {
     /// query have both come back — so the apply ran against an empty store and
     /// reported "nothing to apply" while the edit it was meant to apply landed
     /// afterwards. Measured: 04:42:49 against 04:42:54.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
 }
 
 impl Default for Waypoints {
@@ -182,29 +182,29 @@ impl Default for Waypoints {
 /// `creature_movement_template`) opened a window reading "This creature has no
 /// path" while walking its patrol in the game. This was reported twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PathSubject {
+pub(crate) struct PathSubject {
     /// The `creature` row's guid, which keys `creature_movement`.
-    pub guid: u64,
+    pub(crate) guid: u64,
     /// The template's entry, which keys `creature_movement_template`.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// `creature.movement_type`, so the panel can say whether the path is
     /// walked at all.
-    pub movement_type: u32,
+    pub(crate) movement_type: u32,
 }
 
 /// A node being dragged.
 #[derive(Debug, Clone, Copy)]
-pub struct NodeDrag {
-    pub index: usize,
+pub(crate) struct NodeDrag {
+    pub(crate) index: usize,
     /// Where it was when the button went down, so a status line can say how far
     /// it moved and an escape could put it back.
-    pub from: Vec3,
+    pub(crate) from: Vec3,
     /// Where the pointer was, in pixels, for the travel threshold.
-    pub pressed_at: Vec2,
+    pub(crate) pressed_at: Vec2,
     /// The offset between the node and the point the pointer met the ground,
     /// measured on the first frame the drag actually moves.
-    pub grab: Option<Vec3>,
-    pub moving: bool,
+    pub(crate) grab: Option<Vec3>,
+    pub(crate) moving: bool,
 }
 
 /// How near the pointer has to be to a node to pick it, in pixels.
@@ -235,7 +235,7 @@ const NODE: Color = Color::srgb(0.46, 0.84, 0.86);
 impl Waypoints {
     /// The path as it is drawn: the database's reading with the project's
     /// store over it.
-    pub fn path(&self, session: Option<&EditSession>) -> Option<Path> {
+    pub(crate) fn path(&self, session: Option<&EditSession>) -> Option<Path> {
         let (which, owner) = self.open?;
         let from_database = self
             .from_database
@@ -248,7 +248,7 @@ impl Waypoints {
     }
 
     /// Whether the project changes this path at all.
-    pub fn edited(&self, session: Option<&EditSession>) -> bool {
+    pub(crate) fn edited(&self, session: Option<&EditSession>) -> bool {
         let Some((which, owner)) = self.open else {
             return false;
         };
@@ -256,7 +256,7 @@ impl Waypoints {
     }
 
     /// What the open creature's movement type does with a path.
-    pub fn walk(&self) -> Walk {
+    pub(crate) fn walk(&self) -> Walk {
         Walk::of(self.movement_type)
     }
 
@@ -266,7 +266,7 @@ impl Waypoints {
     /// The window states this before anything else, for the same reason the
     /// creature panel shows "this spawn" over "its template": an edit to each
     /// reaches a different set of creatures, and the path does not show which.
-    pub fn editing_the_template(&self) -> bool {
+    pub(crate) fn editing_the_template(&self) -> bool {
         matches!(self.open, Some((Which::Template, _)))
     }
 
@@ -274,7 +274,7 @@ impl Waypoints {
     ///
     /// Which table it comes out of is not decided here: it is what the read
     /// finds, following `GetDefaultPath`'s own order. See [`PathSubject`].
-    pub fn open_for(&mut self, guid: u64, entry: u32, movement_type: u32) {
+    pub(crate) fn open_for(&mut self, guid: u64, entry: u32, movement_type: u32) {
         if self.subject.map(|subject| subject.guid) == Some(guid) {
             return;
         }
@@ -304,12 +304,12 @@ impl Waypoints {
     /// The selection is kept. It is an index into a path that is about to be
     /// read again as very nearly the same path, and dropping it would close the
     /// node form while it is being edited.
-    pub fn forget(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.from_database = None;
     }
 
     /// Shut the window and drop the open path.
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         *self = Waypoints {
             showing: false,
             subject: None,
@@ -350,7 +350,7 @@ fn height_for(follow_ground: bool, ground: Vec3, keep: f32) -> f32 {
     }
 }
 
-pub struct WaypointToolPlugin;
+pub(crate) struct WaypointToolPlugin;
 
 impl Plugin for WaypointToolPlugin {
     fn build(&self, app: &mut App) {
@@ -903,7 +903,7 @@ fn draw(
 /// The height comes out of the session's open tiles rather than the
 /// archives, which is `pick::session_ground`'s source and for its reason: a
 /// tile this project has raised is the ground a point should land on.
-pub fn on_the_command_line(
+pub(crate) fn on_the_command_line(
     args: Res<crate::args::Args>,
     mut waypoints: ResMut<Waypoints>,
     mut session: Option<ResMut<EditSession>>,

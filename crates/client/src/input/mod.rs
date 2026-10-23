@@ -19,7 +19,7 @@ use bevy::prelude::*;
 
 /// Every plugin in this directory, as one group. See
 /// [`crate::render::RenderPlugins`] for why each directory registers its own.
-pub struct InputPlugins;
+pub(crate) struct InputPlugins;
 
 impl Plugin for InputPlugins {
     fn build(&self, app: &mut App) {

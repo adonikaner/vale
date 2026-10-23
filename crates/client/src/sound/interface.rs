@@ -13,7 +13,7 @@ use super::mixer::{Channel, Place, Voices};
 use crate::lua::api::sound::SoundRequest;
 use bevy::prelude::*;
 
-pub struct InterfacePlugin;
+pub(crate) struct InterfacePlugin;
 
 impl Plugin for InterfacePlugin {
     fn build(&self, app: &mut App) {

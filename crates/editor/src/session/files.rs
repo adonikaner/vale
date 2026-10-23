@@ -15,22 +15,15 @@ impl EditSession {
     /// The file counterpart of [`Self::publish_table`], for a path that is
     /// neither a tile nor a table. Nothing on disk changes; see
     /// [`Self::save_bytes`].
-    pub fn publish_bytes(&mut self, vpath: &str, bytes: Vec<u8>) {
+    pub(crate) fn publish_bytes(&mut self, vpath: &str, bytes: Vec<u8>) {
         self.publish_scratch(vpath, bytes);
         self.republished.push(vpath.to_string());
     }
 
-    /// …and take one back out, so the archives (or the project folder) answer
-    /// for the path again.
-    pub fn unpublish_bytes(&mut self, vpath: &str) {
-        self.unpublish_scratch(vpath);
-        self.republished.push(vpath.to_string());
-    }
-
-    /// The same two, for a path minted fresh on every publish — the lab's
+    /// The same, for a path minted fresh on every publish — the lab's
     /// scratch copy, which is `custom\lab\<n>.m2` for a new `n` each time.
     ///
-    /// They differ from [`Self::publish_bytes`] and [`Self::unpublish_bytes`]
+    /// This and [`Self::unpublish_scratch`] differ from [`Self::publish_bytes`]
     /// only in recording nothing in [`Self::republished`]. There is nothing to
     /// forget: no cache can be holding a reading of a path that did not exist
     /// a moment ago.
@@ -40,13 +33,13 @@ impl EditSession {
     /// [`Self::republished_revision`]; a scratch publish that bumped that
     /// counter would make the next frame's compare differ, which re-hangs,
     /// which publishes again, on every frame the lab is open.
-    pub fn publish_scratch(&mut self, vpath: &str, bytes: Vec<u8>) {
+    pub(crate) fn publish_scratch(&mut self, vpath: &str, bytes: Vec<u8>) {
         if let Ok(mut edited) = self.edited.write() {
             edited.insert(vpath.to_ascii_lowercase(), bytes);
         }
     }
 
-    pub fn unpublish_scratch(&mut self, vpath: &str) {
+    pub(crate) fn unpublish_scratch(&mut self, vpath: &str) {
         if let Ok(mut edited) = self.edited.write() {
             edited.remove(&vpath.to_ascii_lowercase());
         }
@@ -58,7 +51,7 @@ impl EditSession {
     /// Bytes that are the archives' own file are not kept: a copy saved
     /// earlier is removed instead, as [`Self::save`] does for a tile, so the
     /// project lists no edit that changes nothing.
-    pub fn save_bytes(&mut self, vpath: &str, bytes: Vec<u8>) -> bool {
+    pub(crate) fn save_bytes(&mut self, vpath: &str, bytes: Vec<u8>) -> bool {
         self.files_revision += 1;
         if self.changes_nothing(vpath, &bytes) {
             return match self.project.revert(vpath) {
@@ -88,7 +81,7 @@ impl EditSession {
 
     /// Remove one of the project's own files, and take it out of the overlay:
     /// the archives' copy, or nothing, answers for the path again.
-    pub fn remove_file(&mut self, vpath: &str) -> bool {
+    pub(crate) fn remove_file(&mut self, vpath: &str) -> bool {
         match self.project.revert(vpath) {
             Ok(_) => {
                 self.unpublish_scratch(vpath);
@@ -116,7 +109,7 @@ impl EditSession {
     /// built from it. Its cost is a walk of the project folder, so a caller
     /// keeps what it builds and builds it again when [`Self::files_revision`]
     /// moves.
-    pub fn listed(&self, assets: &GameAssets, prefix: &str) -> Vec<String> {
+    pub(crate) fn listed(&self, assets: &GameAssets, prefix: &str) -> Vec<String> {
         let prefix = prefix.to_ascii_lowercase();
         let mut all: Vec<String> = assets
             .with_archive(|chain| Ok(chain.list_prefix(&prefix)))
@@ -132,7 +125,7 @@ impl EditSession {
 
     /// The project's own game files under `prefix`, lower case. See
     /// [`Self::listed`].
-    pub fn own_files_under(&self, prefix: &str) -> Vec<String> {
+    pub(crate) fn own_files_under(&self, prefix: &str) -> Vec<String> {
         let prefix = prefix.to_ascii_lowercase();
         self.project
             .files()

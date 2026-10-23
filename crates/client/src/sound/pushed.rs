@@ -30,7 +30,7 @@ use crate::world::entity::{EntityIndex, WorldEntity};
 use vale_protocol::play::sound::Cue;
 use bevy::prelude::*;
 
-pub struct PushedPlugin;
+pub(crate) struct PushedPlugin;
 
 impl Plugin for PushedPlugin {
     fn build(&self, app: &mut App) {

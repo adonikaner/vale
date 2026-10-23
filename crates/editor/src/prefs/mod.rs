@@ -7,5 +7,5 @@
 //! bookmarks.rs named camera positions to return to
 //! ```
 
-pub mod bookmarks;
-pub mod favourites;
+pub(crate) mod bookmarks;
+pub(crate) mod favourites;

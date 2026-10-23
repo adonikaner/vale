@@ -134,9 +134,6 @@ pub struct Tracking {
     pub stealthed: bool,
 }
 
-/// `UNIT_DYNAMIC_FLAGS` bit 1 — `UNIT_DYNFLAG_TRACK_UNIT`, a hunter's mark.
-pub const UNIT_DYNFLAG_TRACK_UNIT: u32 = 0x0002;
-
 /// What the unit rule reads off one unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Unit {
@@ -145,7 +142,7 @@ pub struct Unit {
     pub creature_type: u32,
     /// `UNIT_FIELD_BYTES_1`'s fourth byte.
     pub vis_flags: u8,
-    /// [`UNIT_DYNFLAG_TRACK_UNIT`] is set.
+    /// `UNIT_DYNFLAG_TRACK_UNIT` (`0x0002`) is set.
     pub hunters_marked: bool,
     /// `UNIT_FIELD_HEALTH > 0`.
     pub alive: bool,
@@ -168,7 +165,7 @@ pub struct Unit {
 /// The creature-type mask is read only for the local player (the client
 /// compares the asking object's guid with the player's); for anybody else it
 /// is zero, which is the branch this client never takes.
-pub fn tracked_unit(tracking: &Tracking, unit: &Unit) -> bool {
+pub(crate) fn tracked_unit(tracking: &Tracking, unit: &Unit) -> bool {
     const UNIT_VIS_FLAGS_CREEP: u8 = 0x02;
     if unit.vis_flags & UNIT_VIS_FLAGS_CREEP != 0 && tracking.stealthed {
         return true;
@@ -248,7 +245,7 @@ pub fn bearing(player: (f32, f32), other: (f32, f32)) -> f32 {
 pub const POI_SHEET: &str = r"Interface\Minimap\POIIcons";
 
 /// …and its cell count a side.
-pub const POI_GRID: u32 = 8;
+pub(crate) const POI_GRID: u32 = 8;
 
 /// The cell of [`POI_SHEET`] a marker index names, as `[u0, v0, u1, v1]`.
 pub fn poi_uv(index: u32) -> [f32; 4] {

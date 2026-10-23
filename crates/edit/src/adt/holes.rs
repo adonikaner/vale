@@ -46,7 +46,8 @@ pub fn set_holes(chunk: &mut MapChunk, mask: u16) {
 /// `cut` is which way round: `true` takes the ground out, `false` puts it back.
 /// A no-op — patching where there is no hole — answers the mask unchanged, which
 /// is what lets the caller record nothing rather than an empty change.
-pub fn with_bit_at(tile: &AdtFile, chunk: usize, x: f32, y: f32, cut: bool) -> Option<u16> {
+#[cfg(test)]
+pub(crate) fn with_bit_at(tile: &AdtFile, chunk: usize, x: f32, y: f32, cut: bool) -> Option<u16> {
     let head = tile.chunk(chunk)?.head();
     let bit = vale_assets::world::adt::hole_bit(head.position(), x, y)?;
     let mask = head.holes();

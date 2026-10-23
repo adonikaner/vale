@@ -52,14 +52,14 @@ use crate::AssetError;
 
 mod fields {
     pub const ID: usize = 0;
-    pub const TOKEN: usize = 1;
+    pub(crate) const TOKEN: usize = 1;
     pub const EMOTE: usize = 2;
-    pub const FIRST_TEXT: usize = 3;
-    pub const DATA_TEXT: usize = 1;
-    pub const SOUND_TEXT: usize = 1;
-    pub const SOUND_RACE: usize = 2;
-    pub const SOUND_GENDER: usize = 3;
-    pub const SOUND_ID: usize = 4;
+    pub(crate) const FIRST_TEXT: usize = 3;
+    pub(crate) const DATA_TEXT: usize = 1;
+    pub(crate) const SOUND_TEXT: usize = 1;
+    pub(crate) const SOUND_RACE: usize = 2;
+    pub(crate) const SOUND_GENDER: usize = 3;
+    pub(crate) const SOUND_ID: usize = 4;
 }
 
 /// One row: a token, an animation and sixteen sentences by reference.

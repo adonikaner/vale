@@ -188,7 +188,7 @@ pub fn trigger_at(table: &DbcFile, record: usize) -> Option<Trigger> {
 
 /// Where a new trigger on `map` goes: after the last row of that map, or
 /// before the first row of a higher map when the file has none of it.
-pub fn trigger_slot(table: &DbcFile, map: u32) -> usize {
+pub(crate) fn trigger_slot(table: &DbcFile, map: u32) -> usize {
     let maps: Vec<u32> = (0..table.record_count())
         .map(|record| table.u32_at(record, tf::MAP).unwrap_or(0))
         .collect();
@@ -272,7 +272,7 @@ pub fn safe_locs(table: &DbcFile) -> Vec<SafeLoc> {
 }
 
 /// The safe place at a record.
-pub fn safe_loc_at(table: &DbcFile, record: usize) -> Option<SafeLoc> {
+pub(crate) fn safe_loc_at(table: &DbcFile, record: usize) -> Option<SafeLoc> {
     let float = |field: usize| table.f32_at(record, field);
     Some(SafeLoc {
         id: table.u32_at(record, sf::ID)?,

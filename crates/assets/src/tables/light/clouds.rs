@@ -41,10 +41,10 @@ use super::celestial::{self, DayTrack};
 
 /// The texture is this many texels across at each value of the
 /// `SkyCloudLOD` CVar, which the client clamps to 0 or 1.
-pub const SIZES: [usize; 2] = [128, 256];
+pub(crate) const SIZES: [usize; 2] = [128, 256];
 
 /// How many octaves of noise a texel sums.
-pub const OCTAVES: usize = 4;
+pub(crate) const OCTAVES: usize = 4;
 
 /// Each octave's step per texel, in 1/256 of a lattice cell, for each
 /// `SkyCloudLOD`. At either level of detail the four octaves span 8, 16, 32 and
@@ -52,10 +52,10 @@ pub const OCTAVES: usize = 4;
 const STEPS: [[u32; OCTAVES]; 2] = [[16, 32, 64, 128], [8, 16, 32, 64]];
 
 /// How many rows one regeneration rewrites.
-pub const ROWS_PER_TICK: usize = 32;
+pub(crate) const ROWS_PER_TICK: usize = 32;
 
 /// How long the client waits between two regenerations, in seconds.
-pub const TICK_SECONDS: f32 = 0.1;
+pub(crate) const TICK_SECONDS: f32 = 0.1;
 
 /// How a texel's noise sum becomes a byte: `sum * NOISE_GAIN + NOISE_BIAS`.
 /// The four octaves sum to at most 1.875 either way, so the byte stays inside
@@ -87,8 +87,8 @@ const HIGHLIGHT_STORM_LOSS: f32 = 0.75;
 
 /// Between these two day fractions the clouds are lit by the sun, and outside
 /// them by the moon: 04:50 and 22:10.
-pub const SUN_FROM: f32 = 0.201_388_9;
-pub const SUN_UNTIL: f32 = 0.923_611_1;
+pub(crate) const SUN_FROM: f32 = 0.201_388_9;
+pub(crate) const SUN_UNTIL: f32 = 0.923_611_1;
 
 /// How strongly band 10 lights the clouds over the day.
 ///
@@ -415,13 +415,13 @@ impl Lattice {
 /// texture's centre, so the rim ring touches the texture's edge.
 pub mod dome {
     /// Each ring's polar angle about the dome's centre, as a fraction of pi.
-    pub const RING_POLAR: [f32; 12] = [
+    pub(crate) const RING_POLAR: [f32; 12] = [
         0.0, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.205, 0.23, 0.245, 0.25,
     ];
 
     /// Each ring's vertex alpha: opaque to ring 8, half at ring 9, clear at the
     /// last two, so the clouds fade out above the horizon.
-    pub const RING_ALPHA: [u8; 12] = [255, 255, 255, 255, 255, 255, 255, 255, 255, 128, 0, 0];
+    pub(crate) const RING_ALPHA: [u8; 12] = [255, 255, 255, 255, 255, 255, 255, 255, 255, 128, 0, 0];
 
     /// Vertices per ring.
     pub const SEGMENTS: usize = 16;
@@ -487,7 +487,7 @@ pub mod dome {
 /// The mesh's own mapping in [`dome`] spaces its rings by index rather than by
 /// angle, so the two agree exactly only in the eight evenly spaced inner rings.
 /// The client draws with the same mismatch.
-pub fn texel_toward(direction: [f32; 3]) -> [f32; 2] {
+pub(crate) fn texel_toward(direction: [f32; 3]) -> [f32; 2] {
     let len = length(direction);
     if len <= 0.0 {
         return [0.5, 0.5];

@@ -63,7 +63,7 @@ const SKYBOX_RADIUS: f32 = 800.0;
 /// [`crate::render::sky::SKYBOX_SORT`].
 const SORT_STEPS_PER_MODEL: f32 = 64.0;
 
-pub struct SkyboxPlugin;
+pub(crate) struct SkyboxPlugin;
 
 impl Plugin for SkyboxPlugin {
     fn build(&self, app: &mut App) {
@@ -91,13 +91,6 @@ pub struct Skyboxes {
 }
 
 impl Skyboxes {
-    /// Every model in force: its `LightSkybox` id, its path, its weight and
-    /// whether it is drawn yet. For the debug window and the tests.
-    pub fn in_force(&self) -> impl Iterator<Item = (u32, &str, f32, bool)> {
-        self.shown
-            .iter()
-            .map(|shown| (shown.id, shown.path.as_str(), shown.weight, matches!(shown.state, State::Drawn(_))))
-    }
 }
 
 /// One model in force.
@@ -139,7 +132,7 @@ struct Drawn {
 
 /// Read which skyboxes the light names, load them, despawn the ones no longer
 /// named, and decide [`SkyCover`].
-pub fn follow_the_light(
+pub(crate) fn follow_the_light(
     sky: Res<crate::render::sky::Sky>,
     tuning: Res<crate::render::tuning::WorldTuning>,
     assets: Res<crate::assets::GameAssets>,
@@ -301,11 +294,11 @@ fn spawn_loaded(
 
 /// Marks a skybox model's root.
 #[derive(Component)]
-pub struct SkyboxRoot;
+pub(crate) struct SkyboxRoot;
 
 /// Marks a skybox model's joints, which [`pose`] writes.
 #[derive(Component)]
-pub struct SkyboxJoint;
+pub(crate) struct SkyboxJoint;
 
 /// Put each model on the camera, pose it, and write each batch's opacity: its
 /// colour and transparency tracks times its light's weight.
@@ -383,7 +376,7 @@ fn pose(
 
 /// What a skybox batch's fragment shader reads.
 #[derive(Clone, Copy, ShaderType)]
-pub struct SkyboxParams {
+pub(crate) struct SkyboxParams {
     /// rgb: the batch's colour track. a: its transparency track times its
     /// light's weight.
     pub tint: Vec4,
@@ -396,7 +389,7 @@ pub struct SkyboxParams {
 /// draw order.
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 #[bind_group_data(SkyboxKey)]
-pub struct SkyboxMaterial {
+pub(crate) struct SkyboxMaterial {
     #[uniform(0)]
     pub params: SkyboxParams,
     #[texture(1)]
@@ -411,7 +404,7 @@ pub struct SkyboxMaterial {
 
 /// The pipeline variant: the blend mode alone.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SkyboxKey {
+pub(crate) struct SkyboxKey {
     blend: u16,
 }
 

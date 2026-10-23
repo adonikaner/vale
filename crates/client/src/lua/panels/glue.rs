@@ -99,7 +99,8 @@ pub const READS: [&str; 8] = [
 /// which this client does not implement. The test
 /// `the_registered_set_is_the_list` checks this list against what is
 /// registered.
-pub const WRITES: [&str; 52] = [
+#[cfg(test)]
+pub(crate) const WRITES: [&str; 52] = [
     "AcceptContest",
     "AcceptEULA",
     "AcceptScanning",
@@ -201,7 +202,7 @@ pub enum GlueRequest {
     Screen(String),
 }
 
-pub type GlueQueue = Rc<RefCell<Vec<GlueRequest>>>;
+pub(crate) type GlueQueue = Rc<RefCell<Vec<GlueRequest>>>;
 
 /// Registry keys holding the frame each background setter writes to; see
 /// [`register`], where the two pairs are set up.
@@ -237,7 +238,7 @@ const RACE_FILE_STRINGS: [(u8, &str); 8] = [
 ///
 /// Empty rather than a guess: `SetBackgroundModel` falls back to `Orc` for a nil
 /// race, which is what the 1.12.1 client does for a race it cannot resolve.
-pub fn race_file_string(race: u8) -> &'static str {
+pub(crate) fn race_file_string(race: u8) -> &'static str {
     RACE_FILE_STRINGS
         .iter()
         .find(|(id, _)| *id == race)
@@ -256,7 +257,7 @@ pub struct CharacterRow {
     /// for a nil, so either is safe; this uses empty.
     pub zone: String,
     /// [`race_file_string`]; see the module comment.
-    pub file_string: String,
+    pub(crate) file_string: String,
     /// 0 male, 1 female, which is what `UpdateCharacterList` compares against.
     pub gender: u8,
     /// Whether the character is dead: the `(Ghost)` suffix on the row.

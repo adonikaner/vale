@@ -139,9 +139,9 @@ pub struct EntityModel {
     /// `OBJECT_FIELD_SCALE_X` never arrived. The field and this value are not
     /// multiplied together: vmangos's `Unit::GetScaleForDisplayId` returns the
     /// product, and the field holds that product.
-    pub dbc_scale: f32,
+    pub(crate) dbc_scale: f32,
     /// The joint entities, in bone order, with the identity joint last.
-    pub joints: Vec<Entity>,
+    pub(crate) joints: Vec<Entity>,
     /// The appearance and wardrobe this was dressed from, for a player.
     ///
     /// Recorded because of equipment. A player's gear is a server query answer
@@ -262,7 +262,7 @@ pub struct EntityModel {
     /// entity, shared with every other entity using the same model.
     points: Arc<Vec<M2Attachment>>,
     /// The model's sound cues, per sequence. See `sound::cues`.
-    pub cues: Arc<vale_assets::world::m2::SoundCues>,
+    pub(crate) cues: Arc<vale_assets::world::m2::SoundCues>,
     /// Height of the entity's head above its origin, in model yards; a caller
     /// multiplies by the entity's scale. See [`head_height`].
     ///
@@ -293,11 +293,11 @@ pub struct EntityModel {
     ///
     /// Static. Read from the live pose, it would rise and fall with a
     /// galloping horse's spine and move the camera with it.
-    pub mounted_anchor: Option<f32>,
+    pub(crate) mounted_anchor: Option<f32>,
     /// The name's height once the `Mount` clip has placed the body in a
     /// saddle, or `None` for a model with no such clip. Static for the reason
     /// [`Self::mounted_anchor`] is. See [`Self::name_lift`].
-    pub mounted_name: Option<f32>,
+    pub(crate) mounted_name: Option<f32>,
     /// The model's own header sphere, in model yards. Every path in
     /// [`Self::pick_sphere`] falls back to it, and it is the whole answer for a
     /// model with no skeleton.
@@ -325,7 +325,7 @@ pub struct EntityModel {
     /// Public because the blob is not a child of this entity: every blob in the
     /// world is one mesh built by [`crate::render::shadows`], which reads the
     /// footprint from here. That module explains why.
-    pub shadow_radius: f32,
+    pub(crate) shadow_radius: f32,
     /// A sphere in model yards that covers the model's own declared box from
     /// the entity's origin (centre offset plus half-diagonal), so it encloses
     /// the same volume the part meshes are frustum-culled by. [`animate`]'s
@@ -339,7 +339,7 @@ pub struct EntityModel {
     ///
     /// `Level` for every character model in the game, so a player on foot
     /// stays upright on a hillside. The 1.12.1 client does the same.
-    pub conform: vale_assets::look::conform::Conform,
+    pub(crate) conform: vale_assets::look::conform::Conform,
     /// The room this model was dressed for. Always `None`; kept so the retag
     /// path stays one comparison.
     ///
@@ -377,7 +377,7 @@ impl EntityModel {
     /// `PlayerName` point times the entity's scale, or, for a rider, that
     /// point in the `Mount` clip above the saddle. A rider's name taken from
     /// its standing height hung at a person's height beside the horse's head.
-    pub fn name_lift(&self, mount: Option<&Mount>, scale: f32) -> f32 {
+    pub(crate) fn name_lift(&self, mount: Option<&Mount>, scale: f32) -> f32 {
         match mount {
             Some(mount) => mount.seat + self.mounted_name.unwrap_or(self.name_anchor) * scale,
             None => self.name_anchor * scale,
@@ -393,7 +393,7 @@ impl EntityModel {
     /// a yard across. See [`vale_assets::look::pick`] for the rule, and
     /// `vale pick`, which measures it: the standing sphere averages 57% of the
     /// header sphere across the bestiary.
-    pub fn pick_sphere(&self, playing: Option<&M2Sequence>) -> vale_assets::look::pick::Sphere {
+    pub(crate) fn pick_sphere(&self, playing: Option<&M2Sequence>) -> vale_assets::look::pick::Sphere {
         vale_assets::look::pick::sequence_sphere(self.model_sphere, playing)
     }
 
@@ -424,10 +424,6 @@ impl EntityModel {
         self.hung.parts.iter().map(|part| part.root).collect()
     }
 
-    /// Whether every model [`Self::hang`] asked for is up, or has failed.
-    pub fn hung_settled(&self) -> bool {
-        self.hung.wanted.is_empty()
-    }
 }
 
 /// One set of spell-effect models on a unit, from asking for them to taking
@@ -684,7 +680,7 @@ impl EffectSet {
 
 /// One attached model in place: the bone it rides, where on that bone, and the
 /// child entities drawing it.
-pub struct AttachedPart {
+pub(crate) struct AttachedPart {
     /// Index into the wearer's skeleton. Bounds-checked when it is written,
     /// because a model may name a bone it does not have, and the pose would
     /// then return another bone's matrix rather than failing.
@@ -935,7 +931,7 @@ pub struct Indoors(pub Option<RoomLight>);
 /// in one frame. The 1.12.1 client has been seen with one model at 0.81,
 /// part-way between the two values. The rate is [`SUN_SCALE_RATE`].
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
-pub struct SunScale {
+pub(crate) struct SunScale {
     /// What the batches are tagged with this frame.
     now: f32,
     /// Where it is heading: the bit under the feet.
@@ -1113,11 +1109,11 @@ pub struct NoModel;
 /// (its mount, its attachments, its effects) do not, and are written from the
 /// pass's serial lists. See [`pose::Posed`].
 #[derive(Component)]
-pub struct Joint;
+pub(crate) struct Joint;
 
 /// One batch of an entity's model.
 #[derive(Component)]
-pub struct EntityPart;
+pub(crate) struct EntityPart;
 
 /// One batch of a model attached to an entity, such as a pauldron or a helm.
 ///
@@ -1127,7 +1123,7 @@ pub struct EntityPart;
 /// What is written here is therefore the bone's pose in the model's own frame,
 /// the part a joint keeps separate for a different reason.
 #[derive(Component)]
-pub struct AttachedTo;
+pub(crate) struct AttachedTo;
 
 /// What an entity is playing, and since when.
 #[derive(Component)]
@@ -1453,6 +1449,29 @@ impl DisplayCache {
     }
 }
 
+/// Read the tables again at once when a [`crate::assets::PathsChanged`] says
+/// they changed, after [`crate::assets::forget_changed_tables`] has dropped
+/// the bank's parse. See [`DisplayCache::reread`] for why at once.
+fn reread_changed_tables(
+    mut changed: MessageReader<crate::assets::PathsChanged>,
+    assets: Res<GameAssets>,
+    mut displays: ResMut<DisplayCache>,
+) {
+    if !changed.read().fold(false, |any, change| any | change.tables) {
+        return;
+    }
+    let began = std::time::Instant::now();
+    displays.reread(&assets);
+    info!(
+        "tables re-read in {:?}{}",
+        began.elapsed(),
+        match assets.display_tables().is_ok() {
+            true => "",
+            false => " (they did not parse)",
+        }
+    );
+}
+
 /// Everything this module does to an entity's model, in one name.
 ///
 /// A pass that reads a dressing orders itself after this set rather than after
@@ -1461,14 +1480,21 @@ impl DisplayCache {
 /// [`crate::render::selection`]'s highlight uses it: it rewrites a part's
 /// material, and a rebuild in the same frame would discard the rewrite.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EntitySet;
+pub(crate) struct EntitySet;
 
-pub struct EntityPlugin;
+pub(crate) struct EntityPlugin;
 
 impl Plugin for EntityPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DisplayCache>()
             .init_resource::<PendingImpacts>()
+            .add_message::<crate::assets::PathsChanged>()
+            .add_systems(
+                Update,
+                reread_changed_tables
+                    .in_set(crate::assets::ForgetChanged)
+                    .after(crate::assets::forget_changed_tables),
+            )
             // The hull budget's requested work against the work done, which
             // the scene tab's hull count cannot show. See [`solid::HullWork`].
             .init_resource::<solid::HullWork>()
@@ -1618,7 +1644,7 @@ mod worn;
 pub(crate) use effects::*;
 use fallback::*;
 use mount::spawn_mounts;
-pub use mount::Mount;
+pub(crate) use mount::Mount;
 pub(crate) use pose::*;
 // `Sheath` is public and `SheathRequest` is not. `Sheath` is part of every
 // unit: `spawn::spawn_models` requires it in its query rather than as an

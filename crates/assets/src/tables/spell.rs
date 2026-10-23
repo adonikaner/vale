@@ -267,7 +267,7 @@ pub struct ChainVisual {
 
 /// The largest number of bolts one chain may have. The 1.12.1 client draws no
 /// more.
-pub const MAX_CHAIN_BOLTS: u32 = 3;
+pub(crate) const MAX_CHAIN_BOLTS: u32 = 3;
 
 /// The seven models the falling-impact procedural can rain, in the client's
 /// order, indexed by `charParamZero`.
@@ -290,7 +290,7 @@ pub const HARDCODED: &str = "HARDCODED ";
 /// model 'Particles\LootFX.m2'`.
 pub const LOOT_ART: &str = "HARDCODED Loot Art";
 
-pub const AREA_RAIN_MODELS: [&str; 7] = [
+pub(crate) const AREA_RAIN_MODELS: [&str; 7] = [
     "Spells\\Blizzard_Impact_Base.mdx",
     "Spells\\RainOfFire_Impact_Base.mdx",
     "Spells\\CallLightning_Impact.mdx",
@@ -856,9 +856,9 @@ pub mod fields {
     /// The timed-colour procedural, 18 kits. See [`super::ModelFlash`].
     pub const CHAR_PROC_MODEL_GLOW: u32 = 13;
     /// The weapon-trail procedural; see [`super::WeaponTrail`].
-    pub const CHAR_PROC_WEAPON_TRAIL: u32 = 8;
+    pub(crate) const CHAR_PROC_WEAPON_TRAIL: u32 = 8;
     /// The opacity procedural; see [`super::KitProcedurals::opacity`].
-    pub const CHAR_PROC_MODEL_OPACITY: u32 = 14;
+    pub(crate) const CHAR_PROC_MODEL_OPACITY: u32 = 14;
 
     /// The chain procedural: a bolt of lightning strung between units.
     ///
@@ -875,18 +875,18 @@ pub mod fields {
 
     /// `SpellChainEffects.dbc`: the seven columns after the id, in order. See
     /// [`super::ChainEffect`].
-    pub const CHAIN_AVG_SEG_LEN: usize = 1;
+    pub(crate) const CHAIN_AVG_SEG_LEN: usize = 1;
     pub const CHAIN_WIDTH: usize = 2;
-    pub const CHAIN_NOISE_SCALE: usize = 3;
-    pub const CHAIN_TEX_COORD_SCALE: usize = 4;
-    pub const CHAIN_SEG_DURATION: usize = 5;
-    pub const CHAIN_SEG_DELAY: usize = 6;
-    pub const CHAIN_TEXTURE: usize = 7;
+    pub(crate) const CHAIN_NOISE_SCALE: usize = 3;
+    pub(crate) const CHAIN_TEX_COORD_SCALE: usize = 4;
+    pub(crate) const CHAIN_SEG_DURATION: usize = 5;
+    pub(crate) const CHAIN_SEG_DELAY: usize = 6;
+    pub(crate) const CHAIN_TEXTURE: usize = 7;
 
     /// `charParamTwo[4]`, fields 27..30 — see [`super::ModelTint::params`].
-    pub const CHAR_PARAM_TWO: usize = 27;
+    pub(crate) const CHAR_PARAM_TWO: usize = 27;
     /// `charParamThree[4]`, fields 31..34.
-    pub const CHAR_PARAM_THREE: usize = 31;
+    pub(crate) const CHAR_PARAM_THREE: usize = 31;
 
     /// `Spell.dbc` fields 82..84, `EffectImplicitTargetA`, one per effect.
     ///
@@ -903,9 +903,9 @@ pub mod fields {
     /// than a unit) and Fireball reads `6, 6, 0` (`TARGET_UNIT_ENEMY`). Three
     /// spells whose targeting is known independently give three different
     /// answers, and only the self-buff reads 1.
-    pub const EFFECT_TARGET_A: std::ops::Range<usize> = 82..85;
+    pub(crate) const EFFECT_TARGET_A: std::ops::Range<usize> = 82..85;
     /// `TARGET_UNIT_CASTER` in vmangos' `SpellDefines.h`.
-    pub const TARGET_SELF: u32 = 1;
+    pub(crate) const TARGET_SELF: u32 = 1;
 
     /// `Spell.dbc` field 37, `Speed`, in yards per second.
     ///
@@ -915,7 +915,7 @@ pub mod fields {
     /// model throw it at other speeds. Measured as every other index here:
     /// `vale dbc Spell 133` reads `f32 24.000` at 37, and vmangos'
     /// `SpellEntry::speed` carries the comment `// 37`.
-    pub const SPELL_SPEED: usize = 37;
+    pub(crate) const SPELL_SPEED: usize = 37;
 
     /// `SpellVisualKit.dbc`'s six model columns, and the [`super::attach`]
     /// point each hangs from.

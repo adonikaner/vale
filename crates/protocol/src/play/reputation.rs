@@ -53,7 +53,7 @@ pub type FactionStates = [(u8, i32); SLOTS];
 ///
 /// `None` only for a body with no count in it; a short tail is *not* a failure —
 /// see the module note.
-pub fn parse_initialize_factions(body: &[u8]) -> Option<FactionStates> {
+pub(crate) fn parse_initialize_factions(body: &[u8]) -> Option<FactionStates> {
     let count = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?) as usize;
     let mut out = [(0u8, 0i32); SLOTS];
     for (slot, entry) in out.iter_mut().enumerate().take(count.min(SLOTS)) {
@@ -72,7 +72,7 @@ pub fn parse_initialize_factions(body: &[u8]) -> Option<FactionStates> {
 /// changed — a quest that spills reputation onto a parent faction arrives as a
 /// single packet naming both, and a reader that takes only the first draws one of
 /// the two bars.
-pub fn parse_set_faction_standing(body: &[u8]) -> Option<Vec<(u32, i32)>> {
+pub(crate) fn parse_set_faction_standing(body: &[u8]) -> Option<Vec<(u32, i32)>> {
     let count = u32::from_le_bytes(body.get(0..4)?.try_into().ok()?) as usize;
     let mut out = Vec::with_capacity(count.min(SLOTS));
     for i in 0..count {
@@ -94,7 +94,7 @@ pub fn parse_set_faction_standing(body: &[u8]) -> Option<Vec<(u32, i32)>> {
 /// (`ReputationMgr::SendVisible` returns early on `PlayerLoading`), so everything
 /// known at login arrives in `SMSG_INITIALIZE_FACTIONS` instead and this is only
 /// ever the mid-session case.
-pub fn parse_set_faction_visible(body: &[u8]) -> Option<u32> {
+pub(crate) fn parse_set_faction_visible(body: &[u8]) -> Option<u32> {
     Some(u32::from_le_bytes(body.get(0..4)?.try_into().ok()?))
 }
 
@@ -103,7 +103,7 @@ pub fn parse_set_faction_visible(body: &[u8]) -> Option<u32> {
 /// The second value is the slot's **whole flag byte**, not a boolean — the
 /// client masks bit 1 out of it and leaves the rest
 /// of its own copy alone.
-pub fn parse_set_faction_at_war(body: &[u8]) -> Option<(u32, u8)> {
+pub(crate) fn parse_set_faction_at_war(body: &[u8]) -> Option<(u32, u8)> {
     let bytes = body.get(0..5)?;
     Some((
         u32::from_le_bytes(bytes[0..4].try_into().ok()?),
@@ -146,7 +146,7 @@ pub fn parse_forced_reactions(body: &[u8]) -> Option<Vec<(u32, u32)>> {
 }
 
 /// `CMSG_SET_FACTION_ATWAR` (293).
-pub fn set_faction_at_war_body(reputation_list_id: u32, at_war: bool) -> Vec<u8> {
+pub(crate) fn set_faction_at_war_body(reputation_list_id: u32, at_war: bool) -> Vec<u8> {
     let mut out = reputation_list_id.to_le_bytes().to_vec();
     // vmangos reads a `uint8` and tests it against zero; the client sends the
     // whole flag byte with bit 1 set or clear, and the low bit is what matters.
@@ -155,7 +155,7 @@ pub fn set_faction_at_war_body(reputation_list_id: u32, at_war: bool) -> Vec<u8>
 }
 
 /// `CMSG_SET_FACTION_INACTIVE` (791).
-pub fn set_faction_inactive_body(reputation_list_id: u32, inactive: bool) -> Vec<u8> {
+pub(crate) fn set_faction_inactive_body(reputation_list_id: u32, inactive: bool) -> Vec<u8> {
     let mut out = reputation_list_id.to_le_bytes().to_vec();
     out.push(u8::from(inactive));
     out
@@ -167,7 +167,7 @@ pub fn set_faction_inactive_body(reputation_list_id: u32, inactive: bool) -> Vec
 /// interface's index 0 resolves to no row, and the client sends the missing
 /// row's reputation id. vmangos reads a signed `int32` and writes it straight
 /// into `PLAYER_FIELD_WATCHED_FACTION_INDEX`.
-pub fn set_watched_faction_body(reputation_list_id: i32) -> Vec<u8> {
+pub(crate) fn set_watched_faction_body(reputation_list_id: i32) -> Vec<u8> {
     reputation_list_id.to_le_bytes().to_vec()
 }
 

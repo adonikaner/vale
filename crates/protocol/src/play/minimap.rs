@@ -29,7 +29,7 @@ pub struct MinimapPing {
 }
 
 /// `MSG_MINIMAP_PING` from the server: sixteen bytes.
-pub fn parse_minimap_ping(body: &[u8]) -> Option<MinimapPing> {
+pub(crate) fn parse_minimap_ping(body: &[u8]) -> Option<MinimapPing> {
     if body.len() < 16 {
         return None;
     }
@@ -42,7 +42,7 @@ pub fn parse_minimap_ping(body: &[u8]) -> Option<MinimapPing> {
 }
 
 /// `MSG_MINIMAP_PING` to the server: the world position that was clicked.
-pub fn minimap_ping_body(x: f32, y: f32) -> Vec<u8> {
+pub(crate) fn minimap_ping_body(x: f32, y: f32) -> Vec<u8> {
     let mut w = Writer::new();
     w.f32(x).f32(y);
     w.buf

@@ -37,18 +37,18 @@ use vale_edit::ops::image::{self, HeightMap, BLEND_SIDE, HEIGHT_SIDE};
 
 /// The PNG text keyword a height map's range is written under, as
 /// `low high` in yards.
-pub const RANGE_KEY: &str = "Height range";
+pub(crate) const RANGE_KEY: &str = "Height range";
 
 /// What a picture is imported as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     Heights,
     Blends,
 }
 
 /// The block a selection covers: its north-west tile, and how many tiles
 /// across and down. `None` for no tiles.
-pub fn block(tiles: &[(u32, u32)]) -> Option<((u32, u32), (u32, u32))> {
+pub(crate) fn block(tiles: &[(u32, u32)]) -> Option<((u32, u32), (u32, u32))> {
     let x0 = tiles.iter().map(|at| at.0).min()?;
     let y0 = tiles.iter().map(|at| at.1).min()?;
     let x1 = tiles.iter().map(|at| at.0).max()?;
@@ -57,7 +57,7 @@ pub fn block(tiles: &[(u32, u32)]) -> Option<((u32, u32), (u32, u32))> {
 }
 
 /// The pixels a block's picture is, across and down.
-pub fn size_of(kind: Kind, (wide, tall): (u32, u32)) -> (usize, usize) {
+pub(crate) fn size_of(kind: Kind, (wide, tall): (u32, u32)) -> (usize, usize) {
     match kind {
         Kind::Heights => (wide as usize * (HEIGHT_SIDE - 1) + 1, tall as usize * (HEIGHT_SIDE - 1) + 1),
         Kind::Blends => (wide as usize * BLEND_SIDE, tall as usize * BLEND_SIDE),
@@ -65,7 +65,7 @@ pub fn size_of(kind: Kind, (wide, tall): (u32, u32)) -> (usize, usize) {
 }
 
 /// The block's tiles in words: `32, 48`, or `32, 48 to 33, 49`.
-pub fn block_words(((x, y), (wide, tall)): ((u32, u32), (u32, u32))) -> String {
+pub(crate) fn block_words(((x, y), (wide, tall)): ((u32, u32), (u32, u32))) -> String {
     match (wide, tall) {
         (1, 1) => format!("{x}, {y}"),
         _ => format!("{x}, {y} to {}, {}", x + wide - 1, y + tall - 1),
@@ -73,7 +73,7 @@ pub fn block_words(((x, y), (wide, tall)): ((u32, u32), (u32, u32))) -> String {
 }
 
 /// The file name an export suggests.
-pub fn suggested_name(map: &str, tiles: &[(u32, u32)], kind: Kind) -> String {
+pub(crate) fn suggested_name(map: &str, tiles: &[(u32, u32)], kind: Kind) -> String {
     let what = match kind {
         Kind::Heights => "heights",
         Kind::Blends => "blends",
@@ -102,7 +102,7 @@ fn tile_of(session: &EditSession, assets: &GameAssets, at: (u32, u32)) -> Option
 
 /// The lowest and highest vertex over the open tiles of `tiles`, which is
 /// the range a picture with none of its own is imported over.
-pub fn open_range(session: &EditSession, tiles: &[(u32, u32)]) -> Option<(f32, f32)> {
+pub(crate) fn open_range(session: &EditSession, tiles: &[(u32, u32)]) -> Option<(f32, f32)> {
     tiles
         .iter()
         .filter_map(|at| image::height_range(session.tiles.get(at)?))
@@ -110,7 +110,7 @@ pub fn open_range(session: &EditSession, tiles: &[(u32, u32)]) -> Option<(f32, f
 }
 
 /// Write the selection's picture to `path`. Returns the status line.
-pub fn export(
+pub(crate) fn export(
     session: &EditSession,
     assets: &GameAssets,
     tiles: &[(u32, u32)],
@@ -208,17 +208,17 @@ fn write_png(
 /// A picture chosen for import and not written yet: what the map window's
 /// dialog shows, and what [`import`] writes.
 #[derive(Debug, Clone)]
-pub struct Pending {
-    pub path: PathBuf,
+pub(crate) struct Pending {
+    pub(crate) path: PathBuf,
     /// Pixels across and down.
-    pub size: (usize, usize),
+    pub(crate) size: (usize, usize),
     /// What the picture looks like it is, and what it is to be used as.
-    pub found: Kind,
-    pub kind: Kind,
+    pub(crate) found: Kind,
+    pub(crate) kind: Kind,
     /// The heights black and white stand for, and whether the file said so.
-    pub low: f32,
-    pub high: f32,
-    pub range_in_file: bool,
+    pub(crate) low: f32,
+    pub(crate) high: f32,
+    pub(crate) range_in_file: bool,
     /// Grey, 0 to 1 a pixel.
     grey: Vec<f32>,
     /// Red, green and blue, 0 to 255 a channel.
@@ -227,7 +227,7 @@ pub struct Pending {
 
 impl Pending {
     /// The file's name, for the dialog's heading.
-    pub fn name(&self) -> String {
+    pub(crate) fn name(&self) -> String {
         self.path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -238,7 +238,7 @@ impl Pending {
 /// Decode any PNG for import: grey or colour, 8 or 16 bits, with or without
 /// alpha, which is dropped. A colour picture whose three channels agree is
 /// grey saved as colour and is taken as a height map.
-pub fn read(path: &Path) -> Result<Pending, String> {
+pub(crate) fn read(path: &Path) -> Result<Pending, String> {
     let file = std::fs::File::open(path).map_err(|e| said(path, e))?;
     let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
     decoder.set_transformations(png::Transformations::EXPAND);
@@ -308,7 +308,7 @@ pub fn read(path: &Path) -> Result<Pending, String> {
 
 /// Write a pending picture onto the open tiles of `tiles`, as one undo
 /// entry. Returns the status line.
-pub fn import(
+pub(crate) fn import(
     session: &mut EditSession,
     pending: &Pending,
     tiles: &[(u32, u32)],

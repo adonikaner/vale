@@ -419,14 +419,14 @@ pub fn requirement_of(locks: &Locks, lock_id: u32, state: u8, locked: bool) -> O
 /// character's skill against the node's requirement.
 pub mod difficulty {
     /// `0xff808080`, `have >= need + 100`.
-    pub const TRIVIAL: [f32; 3] = [0.5, 0.5, 0.5];
+    pub(crate) const TRIVIAL: [f32; 3] = [0.5, 0.5, 0.5];
     /// `0xff40c040`, `have >= need + 50`. This is not the interface's
     /// `GREEN_FONT_COLOR`, which is `0/1/0`.
     pub const EASY: [f32; 3] = [0.25, 0.75, 0.25];
     /// `0xffffff00`, `have >= need + 25`.
     pub const MEDIUM: [f32; 3] = [1.0, 1.0, 0.0];
     /// `0xffff8040`, `have >= need`.
-    pub const HARD: [f32; 3] = [1.0, 0.5, 0.25];
+    pub(crate) const HARD: [f32; 3] = [1.0, 0.5, 0.25];
     /// `0xffff2020`, `have < need`; the same red as `RED_FONT_COLOR_CODE`.
     pub const IMPOSSIBLE: [f32; 3] = [1.0, 32.0 / 255.0, 32.0 / 255.0];
 }

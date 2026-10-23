@@ -74,7 +74,7 @@ impl DrawCalls {
 
     /// The alpha-masked phase: blend mode 1, which is most of the game's foliage
     /// and every window lattice and railing.
-    pub fn alpha_mask(&self) -> usize {
+    pub(crate) fn alpha_mask(&self) -> usize {
         self.0.alpha_mask.load(Ordering::Relaxed)
     }
 
@@ -84,7 +84,7 @@ impl DrawCalls {
     /// at `Prepare` time, after this is read. It is counted anyway because
     /// `vale wmos` reports zero translucent batches in Stormwind, so a value
     /// well above zero here is a finding in itself.
-    pub fn transparent(&self) -> usize {
+    pub(crate) fn transparent(&self) -> usize {
         self.0.transparent.load(Ordering::Relaxed)
     }
 
@@ -97,7 +97,8 @@ impl DrawCalls {
     /// When this is false, every other number here means something different,
     /// and material interning has no effect: a bin, not a batch set, is a draw
     /// call, and a bin is one mesh. See the module note.
-    pub fn multidraw(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn multidraw(&self) -> bool {
         self.0.mode.load(Ordering::Relaxed) == 2
     }
 
@@ -111,7 +112,7 @@ impl DrawCalls {
     }
 }
 
-pub struct DrawCallPlugin;
+pub(crate) struct DrawCallPlugin;
 
 impl Plugin for DrawCallPlugin {
     fn build(&self, app: &mut App) {

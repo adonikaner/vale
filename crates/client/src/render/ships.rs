@@ -65,7 +65,7 @@ use vale_protocol::state::update::ObjectType;
 /// a `.wmo` game object is given `NoModel` by the M2 spawner, and without this
 /// marker every boat in the game would additionally carry a grey box.
 #[derive(Component)]
-pub struct ShipBody;
+pub(crate) struct ShipBody;
 
 /// Is this entity a continent transport that should be drawn as a building?
 ///
@@ -73,7 +73,7 @@ pub struct ShipBody;
 /// `GameObjectInfo::type`, which is zero until `CMSG_GAMEOBJECT_QUERY` has come
 /// back. Zero reads as `Door`, so an unresolved transport is simply not drawn
 /// yet, which is the right answer for the round trip it is waiting on.
-pub fn is_transport(entity: &WorldEntity) -> bool {
+pub(crate) fn is_transport(entity: &WorldEntity) -> bool {
     entity.kind == ObjectType::GameObject && entity.object_kind == MoTransport::TYPE
 }
 
@@ -129,7 +129,7 @@ pub(super) fn spawn_ships(
 }
 
 /// Registers [`spawn_ships`].
-pub struct ShipPlugin;
+pub(crate) struct ShipPlugin;
 
 impl Plugin for ShipPlugin {
     fn build(&self, app: &mut App) {

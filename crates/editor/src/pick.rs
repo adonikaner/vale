@@ -70,9 +70,9 @@ use bevy::prelude::*;
 
 /// Where the pointer is in the world.
 #[derive(Resource, Debug, Default, Clone, Copy)]
-pub struct Cursor {
+pub(crate) struct Cursor {
     /// The point on the ground under the pointer, in the world's own axes.
-    pub ground: Option<Vec3>,
+    pub(crate) ground: Option<Vec3>,
     /// …and the point on **whatever is under the pointer**: the ground, or the
     /// building, doodad or game object standing on it, whichever the ray meets
     /// first. Also in the world's own axes.
@@ -80,17 +80,17 @@ pub struct Cursor {
     /// The field a tool placing something in the world reads. See the module
     /// comment for which populations answer and why the ground alone will not
     /// do.
-    pub surface: Option<Vec3>,
+    pub(crate) surface: Option<Vec3>,
     /// …and which tile that is, whether or not the ground answered: a pointer
     /// over a tile the map does not have still names a coordinate.
-    pub tile: Option<(u32, u32)>,
+    pub(crate) tile: Option<(u32, u32)>,
     /// …and which of that tile's 256 map chunks, when the ground answered.
     ///
     /// A chunk and not only a tile because that is the unit most of what is left
     /// to edit is stored in: the textures it is painted with, its area id, its
     /// holes, its water. `None` wherever `ground` is, since it is found from the
     /// point the ray met.
-    pub chunk: Option<usize>,
+    pub(crate) chunk: Option<usize>,
 }
 
 /// Yards between samples along the ray. A cell is 4.17 yards across, so a step
@@ -122,7 +122,7 @@ fn range(camera: &Camera) -> f32 {
 /// this.
 const BISECTIONS: usize = 10;
 
-pub struct PickPlugin;
+pub(crate) struct PickPlugin;
 
 impl Plugin for PickPlugin {
     fn build(&self, app: &mut App) {
@@ -137,7 +137,7 @@ impl Plugin for PickPlugin {
     }
 }
 
-pub fn aim(
+pub(crate) fn aim(
     mut cursor: ResMut<Cursor>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
@@ -269,7 +269,7 @@ pub fn aim(
 /// march is five hundred height lookups and neither of its two callers is open
 /// most of the time. It is also not a flag on [`aim`]: a pick whose meaning
 /// depends on who is asking is a pick nobody can reason about.
-pub fn solid_under(
+pub(crate) fn solid_under(
     session: &EditSession,
     windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
@@ -318,7 +318,7 @@ pub fn solid_under(
 /// `None` when the plane is behind the eye, when the ray is parallel to it, or
 /// when it is met beyond [`RANGE`] — the last is the grazing case that remains,
 /// and answering nothing there is better than answering a mile away.
-pub fn on_plane(
+pub(crate) fn on_plane(
     z: f32,
     windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
@@ -334,7 +334,7 @@ pub fn on_plane(
 /// second one: the lights tool casts once and asks it about several planes,
 /// one per light height, and going back through [`on_plane`] would re-read the
 /// window and the camera for each.
-pub fn meets_plane(origin: Vec3, direction: Vec3, z: f32) -> Option<Vec3> {
+pub(crate) fn meets_plane(origin: Vec3, direction: Vec3, z: f32) -> Option<Vec3> {
     let distance = (z - origin.z) / direction.z;
     (distance.is_finite() && distance > 0.0 && distance < RANGE)
         .then(|| origin + direction * distance)
@@ -428,7 +428,7 @@ pub(crate) fn meets_upright_plane(origin: Vec3, direction: Vec3, at: Vec3) -> Op
 /// Physical pixels, for the reason [`aim`] gives beside its own copy of this
 /// conversion: `cursor_position` is logical and the world camera draws into a
 /// target measured in physical pixels.
-pub fn ray(
+pub(crate) fn ray(
     windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) -> Option<(Vec3, Vec3)> {

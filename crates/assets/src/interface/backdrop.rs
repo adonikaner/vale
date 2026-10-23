@@ -46,7 +46,7 @@
 //! file, not of the window, so it belongs in the decoder.
 
 /// The eight pieces, in the strip's own order.
-pub const PIECES: [&str; 8] = [
+pub(crate) const PIECES: [&str; 8] = [
     "LEFT",
     "RIGHT",
     "TOP",

@@ -99,7 +99,7 @@ pub const RANKS: usize = 9;
 /// How many prerequisites a row may name. Three in the file; **no 1.12 talent
 /// uses more than one**, and `GetTalentPrereqs` returns three values per
 /// populated slot regardless.
-pub const PREREQS: usize = 3;
+pub(crate) const PREREQS: usize = 3;
 
 /// The points a tier costs before the next one opens — `Row * 5` in
 /// `Player::LearnTalent`, and `(tier - 1) * 5` in `TalentFrame_Update`. Both
@@ -125,12 +125,12 @@ mod tab_fields {
 mod talent_fields {
     pub const TAB: usize = 1;
     pub const ROW: usize = 2;
-    pub const COLUMN: usize = 3;
+    pub(crate) const COLUMN: usize = 3;
     pub const RANK: usize = 4;
-    pub const PREREQ_TALENT: usize = 13;
-    pub const PREREQ_RANK: usize = 16;
+    pub(crate) const PREREQ_TALENT: usize = 13;
+    pub(crate) const PREREQ_RANK: usize = 16;
     pub const FLAGS: usize = 19;
-    pub const REQUIRED_SPELL: usize = 20;
+    pub(crate) const REQUIRED_SPELL: usize = 20;
 }
 
 /// `flags` bit 0 — the gold-bordered capstone.
@@ -166,7 +166,7 @@ pub struct TalentRow {
     /// **Zero-based**, and that is load-bearing: `Player::LearnTalent` loops
     /// `for (i = DependsOnRank; i < MAX_TALENT_RANK; ++i)`, so a stored 4 means
     /// "five points in it".
-    pub prereq_rank: [u32; PREREQS],
+    pub(crate) prereq_rank: [u32; PREREQS],
     pub flags: u32,
     pub required_spell: u32,
 }
@@ -298,7 +298,7 @@ impl Talents {
     /// `race` is passed because the mask column exists and the client tests it;
     /// every shipped row has `raceMask` 511, so it has never yet excluded
     /// anything.
-    pub fn tabs_for(&self, race: u8, class: u8) -> Vec<&TabRow> {
+    pub(crate) fn tabs_for(&self, race: u8, class: u8) -> Vec<&TabRow> {
         self.tabs
             .iter()
             .filter(|tab| covers(tab.race_mask, tab.class_mask, race, class))
@@ -306,7 +306,7 @@ impl Talents {
     }
 
     /// …and the talents on one of them, in file order.
-    pub fn talents_in(&self, tab: u32) -> impl Iterator<Item = &TalentRow> {
+    pub(crate) fn talents_in(&self, tab: u32) -> impl Iterator<Item = &TalentRow> {
         self.talents.iter().filter(move |t| t.tab == tab)
     }
 

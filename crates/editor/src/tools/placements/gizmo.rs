@@ -67,7 +67,7 @@ use bevy::prelude::*;
 
 /// Which handles are shown, and what a drag on one does.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Handles {
+pub(crate) enum Handles {
     /// Three arrows along the world's x, y and z.
     #[default]
     Move,
@@ -80,17 +80,10 @@ pub enum Handles {
 }
 
 impl Handles {
-    pub fn name(self) -> &'static str {
-        match self {
-            Handles::Move => "Move",
-            Handles::Turn => "Turn",
-            Handles::Off => "Off",
-        }
-    }
 }
 
 /// The three, as a list a panel can offer.
-pub const HANDLES: [(&str, Handles); 3] = [
+pub(crate) const HANDLES: [(&str, Handles); 3] = [
     ("Move", Handles::Move),
     ("Turn", Handles::Turn),
     ("Off", Handles::Off),
@@ -251,8 +244,8 @@ fn what(tool: Tool) -> &'static str {
 
 /// What is being dragged, if anything.
 #[derive(Resource, Debug, Default)]
-pub struct Gizmo {
-    pub handles: Handles,
+pub(crate) struct Gizmo {
+    pub(crate) handles: Handles,
     /// The axis the pointer is over, for lighting it before it is grabbed.
     hot: Option<usize>,
     grab: Option<Grab>,
@@ -261,7 +254,7 @@ pub struct Gizmo {
 impl Gizmo {
     /// Whether the gizmo has the pointer. Asked by the doodad tool, which must
     /// not pick or drag through a handle; see the module comment.
-    pub fn holding(&self) -> bool {
+    pub(crate) fn holding(&self) -> bool {
         self.grab.is_some()
     }
 }
@@ -455,7 +448,7 @@ const SPIN_SNAP: f32 = 15.0;
 /// line.
 const GRIP: f32 = 0.12;
 
-pub struct GizmoToolPlugin;
+pub(crate) struct GizmoToolPlugin;
 
 impl Plugin for GizmoToolPlugin {
     fn build(&self, app: &mut App) {

@@ -38,13 +38,13 @@ use super::dbc::Dbc;
 mod fields {
     pub const ID: usize = 0;
     pub const NAME: usize = 1;
-    pub const ITEMS: usize = 10;
-    pub const ITEM_COUNT: usize = 17;
+    pub(crate) const ITEMS: usize = 10;
+    pub(crate) const ITEM_COUNT: usize = 17;
     pub const SPELLS: usize = 27;
-    pub const THRESHOLDS: usize = 35;
-    pub const BONUS_COUNT: usize = 8;
-    pub const REQUIRED_SKILL: usize = 43;
-    pub const REQUIRED_SKILL_RANK: usize = 44;
+    pub(crate) const THRESHOLDS: usize = 35;
+    pub(crate) const BONUS_COUNT: usize = 8;
+    pub(crate) const REQUIRED_SKILL: usize = 43;
+    pub(crate) const REQUIRED_SKILL_RANK: usize = 44;
 }
 
 /// One bonus: the spell it grants and the pieces it needs.

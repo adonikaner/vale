@@ -88,13 +88,13 @@ pub struct AuraInfo {
     /// One-based; the interface draws it only above 1.
     pub applications: u8,
     /// "Magic" / "Curse" / "Disease" / "Poison", or empty.
-    pub dispel_type: String,
+    pub(crate) dispel_type: String,
     /// Seconds left, `0.0` when there is no clock — see
     /// [`crate::interface::auras::Aura::time_left`] for why not nil.
-    pub time_left: f64,
+    pub(crate) time_left: f64,
     /// Whether it runs until it is cancelled, which is `GetPlayerBuff`'s
     /// **second** return and what hides the duration text.
-    pub until_cancelled: bool,
+    pub(crate) until_cancelled: bool,
 }
 
 /// Register the reads into the scope, beside [`super::super::api::install`]'s.

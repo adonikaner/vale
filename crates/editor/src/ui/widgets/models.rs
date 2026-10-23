@@ -14,10 +14,10 @@ const MODEL_PICTURE: f32 = 40.0;
 /// What a press on a model row did.
 #[derive(Debug, Clone, Copy, Default)]
 pub(in crate::ui) struct RowHit {
-    pub clicked: bool,
-    pub double: bool,
+    pub(crate) clicked: bool,
+    pub(crate) double: bool,
     /// The star was pressed, which is not a press on the row.
-    pub starred: bool,
+    pub(crate) starred: bool,
 }
 
 /// One row of a model list: the picture, the file's name with its folder

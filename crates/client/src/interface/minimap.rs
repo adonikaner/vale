@@ -61,7 +61,7 @@ use crate::world::status::WorldStatus;
 
 /// One dot: which cell, and where it is relative to the character.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Blip {
+pub(crate) struct Blip {
     pub kind: Kind,
     /// Yards north (`+x`) and west (`+y`) of the character.
     pub north: f32,
@@ -70,7 +70,7 @@ pub struct Blip {
 
 /// The two places the map points at when they are off it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarkerKind {
+pub(crate) enum MarkerKind {
     /// `SMSG_GOSSIP_POI` — a guard's directions, with the `POIIcons` cell the
     /// packet named. See [`super::worldmap::MapLandmarks`].
     Poi { icon: u32 },
@@ -81,7 +81,7 @@ pub enum MarkerKind {
 /// A marker: inside the disc it is drawn as its icon where it is, beyond it
 /// as an arrow at the rim pointing the way.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Marker {
+pub(crate) struct Marker {
     pub kind: MarkerKind,
     pub north: f32,
     pub west: f32,
@@ -103,19 +103,19 @@ pub struct MinimapView {
     pub facing: f32,
     /// The height of the character's feet, which the building pictures are
     /// chosen and ordered by.
-    pub elevation: f32,
+    pub(crate) elevation: f32,
     /// Whether the character stands in a building group, which chooses the
     /// indoor radius table and zoom level and replaces the terrain with the
     /// building's pictures. See the module comment.
-    pub indoors: bool,
+    pub(crate) indoors: bool,
     /// The building, once its headers are read; `None` outdoors, and while
     /// they load, when the map is an empty disc.
     pub interior: Option<InteriorView>,
     /// The dots; see the module comment. Rebuilt every frame there is a world,
     /// as the 1.12.1 client rebuilds its dots on every update.
-    pub blips: Vec<Blip>,
+    pub(crate) blips: Vec<Blip>,
     /// The two places the map points at.
-    pub markers: Vec<Marker>,
+    pub(crate) markers: Vec<Marker>,
 }
 
 /// The building the character stands in, as the painter needs it.
@@ -127,8 +127,8 @@ pub struct InteriorView {
     /// The group the character stands in, where the group walk starts.
     pub group: u32,
     /// The placement and its inverse, column-major, WoW axes.
-    pub local_to_world: [f32; 16],
-    pub world_to_local: [f32; 16],
+    pub(crate) local_to_world: [f32; 16],
+    pub(crate) world_to_local: [f32; 16],
 }
 
 impl InteriorView {
@@ -161,7 +161,7 @@ impl PartialEq for InteriorView {
 /// archive path: read once on the task pool and kept for the session. One
 /// building's entry is a few kilobytes.
 #[derive(Resource, Default)]
-pub struct InteriorModels {
+pub(crate) struct InteriorModels {
     ready: HashMap<String, Option<Arc<InteriorModel>>>,
     pending: HashMap<String, Task<Option<InteriorModel>>>,
 }
@@ -197,17 +197,17 @@ impl InteriorModels {
 /// [`crate::lua::widgets::minimap::follow_pings`]. Written by
 /// [`crate::world::incoming`].
 #[derive(Message, Debug, Clone, Copy)]
-pub struct PingAnswer(pub vale_protocol::play::minimap::MinimapPing);
+pub(crate) struct PingAnswer(pub(crate) vale_protocol::play::minimap::MinimapPing);
 
 /// The packet this module answers, for `incoming::drain_events`.
-pub fn answer_of(event: &vale_protocol::state::events::PlayerEvent) -> Option<PingAnswer> {
+pub(crate) fn answer_of(event: &vale_protocol::state::events::PlayerEvent) -> Option<PingAnswer> {
     match event {
         vale_protocol::state::events::PlayerEvent::MinimapPing(ping) => Some(PingAnswer(*ping)),
         _ => None,
     }
 }
 
-pub struct MinimapPlugin;
+pub(crate) struct MinimapPlugin;
 
 impl Plugin for MinimapPlugin {
     fn build(&self, app: &mut App) {

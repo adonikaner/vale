@@ -11,7 +11,7 @@ use super::EditSession;
 
 impl EditSession {
     /// The key a tile is edited under.
-    pub fn key(&self, coord: (u32, u32)) -> TileKey {
+    pub(crate) fn key(&self, coord: (u32, u32)) -> TileKey {
         TileKey::new(self.map.clone(), coord.0, coord.1)
     }
 
@@ -21,7 +21,7 @@ impl EditSession {
     /// tile comes back as edited and a fresh one comes out of the archives.
     /// Returns false for a tile the map does not have, which is most of the 64
     /// by 64 grid on every map.
-    pub fn open(&mut self, assets: &GameAssets, coord: (u32, u32)) -> bool {
+    pub(crate) fn open(&mut self, assets: &GameAssets, coord: (u32, u32)) -> bool {
         if self.tiles.contains_key(&coord) {
             return true;
         }
@@ -49,7 +49,7 @@ impl EditSession {
     /// open at that place. `crate::map::open::open_tiles` reads tiles on the task
     /// pool and hands them over here; [`Self::open`] is the same on the
     /// calling thread.
-    pub fn insert_opened(&mut self, coord: (u32, u32), tile: AdtFile) {
+    pub(crate) fn insert_opened(&mut self, coord: (u32, u32), tile: AdtFile) {
         if self.tiles.contains_key(&coord) {
             return;
         }
@@ -65,7 +65,7 @@ impl EditSession {
     /// [`Self::tile_bytes`] — and the caller is what decides which tiles may
     /// go: `crate::map::open::close_tiles`, which keeps anything unsaved or on
     /// the history.
-    pub fn close(&mut self, coord: (u32, u32)) -> bool {
+    pub(crate) fn close(&mut self, coord: (u32, u32)) -> bool {
         match self.tiles.remove(&coord) {
             // A parsed tile is megabytes in many allocations, and a jump closes
             // a block of them at once; they are freed on the task pool rather
@@ -87,10 +87,10 @@ impl EditSession {
     /// tile edited in a previous session answers as edited. `None` for a tile
     /// the map does not have.
     ///
-    /// This is what a copy reads — see `crate::map::tiles::paste`. Copying
+    /// This is what a copy reads — see `crate::map::tiles::paste_into`. Copying
     /// from disk instead would silently take the version before whatever the
     /// person had just done to it.
-    pub fn tile_bytes(&self, assets: &GameAssets, coord: (u32, u32)) -> Option<Vec<u8>> {
+    pub(crate) fn tile_bytes(&self, assets: &GameAssets, coord: (u32, u32)) -> Option<Vec<u8>> {
         if let Some(tile) = self.tiles.get(&coord) {
             return Some(tile.write());
         }
@@ -111,7 +111,7 @@ impl EditSession {
     /// A tombstone rather than a removal, because the tile is still in the
     /// archives: dropping the override would hand the shipped bytes straight
     /// back. It is undone by `create`, which writes real bytes over it.
-    pub fn tombstone(&mut self, coord: (u32, u32)) {
+    pub(crate) fn tombstone(&mut self, coord: (u32, u32)) {
         let path = self.key(coord).vpath().to_ascii_lowercase();
         if let Ok(mut edited) = self.edited.write() {
             edited.insert(path, Vec::new());
@@ -131,7 +131,7 @@ impl EditSession {
     ///
     /// The top bar's map list and a camera bookmark on another map both come
     /// through here. Nothing happens for the map already open.
-    pub fn switch_map(&mut self, name: String, id: u32, camera: &mut crate::camera::EditorCamera) {
+    pub(crate) fn switch_map(&mut self, name: String, id: u32, camera: &mut crate::camera::EditorCamera) {
         if self.map == name {
             return;
         }
@@ -153,7 +153,7 @@ impl EditSession {
     ///
     /// After this, everything that reads the path sees the edit. It does not
     /// touch the disk: [`EditSession::save`] does that.
-    pub fn publish(&mut self, coord: (u32, u32)) {
+    pub(crate) fn publish(&mut self, coord: (u32, u32)) {
         let Some(tile) = self.tiles.get(&coord) else {
             return;
         };
@@ -170,12 +170,12 @@ impl EditSession {
 
     /// How many times a tile has changed in memory or been published. See
     /// [`Self::changes`], the field.
-    pub fn changes(&self, coord: (u32, u32)) -> u64 {
+    pub(crate) fn changes(&self, coord: (u32, u32)) -> u64 {
         self.changes.get(&coord).copied().unwrap_or_default()
     }
 
     /// Whether an open tile's bytes are ahead of what was last published.
-    pub fn is_unpublished(&self, coord: (u32, u32)) -> bool {
+    pub(crate) fn is_unpublished(&self, coord: (u32, u32)) -> bool {
         self.unpublished.contains(&coord)
     }
 
@@ -186,16 +186,10 @@ impl EditSession {
         self.unpublished.insert(coord);
     }
 
-    /// How many times this tile's bytes have been republished — see
-    /// [`Self::revision`], the field, for what reads it and why.
-    pub fn revision(&self, coord: (u32, u32)) -> u64 {
-        self.revision.get(&coord).copied().unwrap_or_default()
-    }
-
     /// Note that a chunk's heights have moved, so what stands on them can be
     /// caught up: the ground on screen this frame, and its lawn when the stroke
     /// is over.
-    pub fn touched(&mut self, coord: (u32, u32), chunk: usize) {
+    pub(crate) fn touched(&mut self, coord: (u32, u32), chunk: usize) {
         self.dirty.entry(coord).or_default().insert(chunk);
         self.regrow.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
@@ -210,7 +204,7 @@ impl EditSession {
     /// chunk's whole lawn on every shading stroke for no change at all — which
     /// is what calling [`Self::touched`] here would have done, and is the only
     /// reason this is its own method rather than that one.
-    pub fn shaded(&mut self, coord: (u32, u32), chunk: usize) {
+    pub(crate) fn shaded(&mut self, coord: (u32, u32), chunk: usize) {
         self.dirty.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
         self.changed(coord);
@@ -218,14 +212,14 @@ impl EditSession {
 
     /// …and the same for one `MDDF` entry, whose drawn copy has to be put where
     /// its record now says.
-    pub fn moved(&mut self, coord: (u32, u32), index: usize) {
+    pub(crate) fn moved(&mut self, coord: (u32, u32), index: usize) {
         self.moved.entry(coord).or_default().insert(index);
         self.unsaved.insert(coord);
         self.changed(coord);
     }
 
     /// …and the same for one `MODF` entry.
-    pub fn moved_building(&mut self, coord: (u32, u32), index: usize) {
+    pub(crate) fn moved_building(&mut self, coord: (u32, u32), index: usize) {
         self.moved_buildings.entry(coord).or_default().insert(index);
         self.unsaved.insert(coord);
         self.changed(coord);
@@ -233,7 +227,7 @@ impl EditSession {
 
     /// …and for one chunk's paint, whose blend maps on the GPU are behind the
     /// file.
-    pub fn repainted(&mut self, coord: (u32, u32), chunk: usize) {
+    pub(crate) fn repainted(&mut self, coord: (u32, u32), chunk: usize) {
         self.repaint.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
         self.changed(coord);
@@ -241,22 +235,12 @@ impl EditSession {
 
     /// Does the map claim this tile? — `MAIN`'s one bit, off
     /// [`EditSession::claimed`].
-    pub fn wdt_claims(&self, coord: (u32, u32)) -> bool {
+    pub(crate) fn wdt_claims(&self, coord: (u32, u32)) -> bool {
         self.claimed.contains(&coord)
     }
 
-    /// Note that a tile's bytes are ahead of what is written down.
-    ///
-    /// The other edits reach this through `touched` and its neighbours, which
-    /// also mark the ground or the foliage stale. A shadow rebake changes
-    /// neither — nothing on screen is drawn from `MCSH` — so it needs the
-    /// unsaved mark on its own.
-    pub fn mark_unsaved(&mut self, coord: (u32, u32)) {
-        self.unsaved.insert(coord);
-    }
-
     /// Record that a tile has been claimed or unclaimed, beside the file.
-    pub fn set_claimed(&mut self, coord: (u32, u32), claimed: bool) {
+    pub(crate) fn set_claimed(&mut self, coord: (u32, u32), claimed: bool) {
         match claimed {
             true => self.claimed.insert(coord),
             false => self.claimed.remove(&coord),
@@ -270,7 +254,7 @@ impl EditSession {
 /// A comparison rather than an event, so it cannot be forgotten by whatever
 /// changes the map next: the drop-down does not have the archives to hand and
 /// should not have to.
-pub fn refresh_claims(
+pub(crate) fn refresh_claims(
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
     mut view: ResMut<crate::ui::map::mapview::MapView>,

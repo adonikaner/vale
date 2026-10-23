@@ -8,6 +8,7 @@ use super::super::api::Answers;
 use vale_assets::tables::worldstate::WorldStateInfo;
 
 /// The reads this module registers, for the count that measures the gap.
+#[cfg(test)]
 pub const READS: [&str; 2] = ["GetNumWorldStateUI", "GetWorldStateUIInfo"];
 
 /// What the frame may ask. The defaults are an empty list, which is what the

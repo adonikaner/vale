@@ -52,13 +52,13 @@ use vale_mangos::schema::RowValue;
 /// Marks one of a tool's preview bodies, so they can be despawned together
 /// and so nothing else mistakes one for an entity the server sent.
 #[derive(Component)]
-pub struct Preview<S: SpawnSubject> {
+pub(crate) struct Preview<S: SpawnSubject> {
     /// The spawn's own guid.
-    pub guid: u64,
+    pub(crate) guid: u64,
     /// What the body was built from. A `WorldEntity`'s model is resolved once,
     /// when `spawn_models` first sees it, so a body whose display id (or a game
     /// object's state) has since changed is despawned and spawned again.
-    pub look: S::Look,
+    pub(crate) look: S::Look,
     of: PhantomData<fn() -> S>,
 }
 
@@ -67,7 +67,7 @@ pub struct Preview<S: SpawnSubject> {
 /// Not [`Preview`]: [`stand_them_up`] despawns every `Preview` that is not a
 /// spawn on the map, and a ghost is not a spawn.
 #[derive(Component)]
-pub struct Ghost<S: SpawnSubject> {
+pub(crate) struct Ghost<S: SpawnSubject> {
     /// The display id this body was built from, on [`Preview`]'s rule.
     display_id: u32,
     of: PhantomData<fn() -> S>,
@@ -434,7 +434,7 @@ pub(crate) fn lay_the_edits<S: SpawnSubject>(
 /// pointer is over, which [`aim`] found this frame. A spawn outside the
 /// selection becomes the selection, so the menu's actions apply to it; a
 /// member of the group keeps the group. See `crate::context`.
-pub fn menu_target<S: SpawnSubject>(
+pub(crate) fn menu_target<S: SpawnSubject>(
     mut tool: ResMut<SpawnTool<S>>,
     mut menu: ResMut<crate::context::ContextMenu>,
     chosen: Res<Tool>,
@@ -588,7 +588,7 @@ fn place_one<S: SpawnSubject>(
 /// until the pointer has travelled `DRAG_PIXELS`. Moving a spawn is therefore
 /// two gestures, click then drag, and the first cannot move it.
 #[allow(clippy::too_many_arguments)]
-pub fn press<S: SpawnSubject>(
+pub(crate) fn press<S: SpawnSubject>(
     mut tool: ResMut<SpawnTool<S>>,
     mut session: Option<ResMut<EditSession>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -738,7 +738,7 @@ pub(super) fn enclose<S: SpawnSubject>(
 /// height, so it is not `crate::tools::points::PointDrag`; the height is the
 /// subject's [`SpawnSubject::drag_height`].
 #[allow(clippy::too_many_arguments)]
-pub fn drag<S: SpawnSubject>(
+pub(crate) fn drag<S: SpawnSubject>(
     mut tool: ResMut<SpawnTool<S>>,
     mut session: Option<ResMut<EditSession>>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1120,7 +1120,7 @@ pub(super) fn ghost<S: SpawnSubject>(
 /// column of the template and of the spawn, for one row rather than every row
 /// on the map, so they are read when a selection is made rather than carried
 /// for every spawn.
-pub fn fetch_rows<S: SpawnSubject>(
+pub(crate) fn fetch_rows<S: SpawnSubject>(
     mut tool: ResMut<SpawnTool<S>>,
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
@@ -1192,7 +1192,7 @@ pub fn fetch_rows<S: SpawnSubject>(
                 // project's own value.
                 let mut row = vale_mangos::schema::Row::new();
                 row.insert("entry".to_string(), Some(subject.entry.to_string()));
-                tool.template = Some(TemplateRow { entry: subject.entry, patch: subject.patch, row });
+                tool.template = Some(TemplateRow { entry: subject.entry, row });
             } else {
                 // Read from where the database has it, which is not the entry
                 // the window shows while the project moves the template and
@@ -1207,7 +1207,7 @@ pub fn fetch_rows<S: SpawnSubject>(
                 tool.template_task = Some(crate::server::queue::read(async move {
                     let mut db = vale_mangos::conn::Db::open(&at)?;
                     let row = db.row(&S::template_query(read_entry, patch))?.unwrap_or_default();
-                    Ok(Some(TemplateRow { entry, patch, row }))
+                    Ok(Some(TemplateRow { entry, row }))
                 }));
             }
         }

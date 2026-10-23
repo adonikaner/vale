@@ -42,7 +42,7 @@ use vale_assets::world::wdt::MAP_TILES;
 ///
 /// The same bit `vale_assets::world::wdt` reads by; it is `pub` here because
 /// this crate writes it and the reader's copy is private.
-pub const HAS_ADT: u32 = 0x1;
+pub(crate) const HAS_ADT: u32 = 0x1;
 
 /// `MPHD` flag: the map is one building, named in `MWMO` and placed by
 /// `MODF`, and has no tiles.
@@ -59,7 +59,7 @@ const BUILDING_RECORD: usize = 64;
 pub const ENTRY: usize = 8;
 
 /// …and how long the whole chunk is.
-pub const MAIN_LEN: usize = MAP_TILES * MAP_TILES * ENTRY;
+pub(crate) const MAIN_LEN: usize = MAP_TILES * MAP_TILES * ENTRY;
 
 /// One top-level chunk, as the file wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]

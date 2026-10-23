@@ -214,7 +214,7 @@ const WATCHED: [UnitId; 11 + vale_protocol::play::group::MAX_RAID_MEMBERS] = {
     all
 };
 
-pub struct VitalsPlugin;
+pub(crate) struct VitalsPlugin;
 
 impl Plugin for VitalsPlugin {
     fn build(&self, app: &mut App) {

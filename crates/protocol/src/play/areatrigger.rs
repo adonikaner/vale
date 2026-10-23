@@ -55,7 +55,7 @@ pub const CHECK_INTERVAL: Duration = Duration::from_millis(100);
 ///
 /// The body is the matched row's id, field 0 of `AreaTrigger.dbc`, and
 /// `HandleAreaTriggerOpcode` reads exactly one `uint32`.
-pub fn area_trigger_body(trigger_id: u32) -> Vec<u8> {
+pub(crate) fn area_trigger_body(trigger_id: u32) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(trigger_id);
     w.buf
@@ -93,7 +93,7 @@ pub type TriggerTable = Box<dyn Triggers>;
 /// different trigger overlapping the first, and remembering a position would
 /// send again as soon as the character moved a yard inside the same sphere.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct TriggerWatch {
+pub(crate) struct TriggerWatch {
     /// The row last reported, held until the character leaves it.
     occupied: Option<u32>,
     /// The map the latch is about. A far teleport clears it — see [`Self::poll`].
@@ -106,6 +106,7 @@ impl TriggerWatch {
     }
 
     /// The trigger the character is being held out of, if any.
+    #[cfg(test)]
     pub fn occupied(&self) -> Option<u32> {
         self.occupied
     }
@@ -191,7 +192,7 @@ impl TransferAbort {
 /// is distinguishable from a body too short to read. The first is the server
 /// working as designed and the second is a parse error, and reporting both as
 /// `None` would hide the error.
-pub fn parse_transfer_aborted(body: &[u8]) -> Option<u8> {
+pub(crate) fn parse_transfer_aborted(body: &[u8]) -> Option<u8> {
     let mut r = Reader::new(body);
     r.has(1).then(|| r.u8())
 }
@@ -207,7 +208,7 @@ pub fn parse_transfer_aborted(body: &[u8]) -> Option<u8> {
 /// the body is cut at the end. `None` only for a body too short to hold the
 /// length. The 1.12.1 client shows the text as a `UI_INFO_MESSAGE`, the yellow
 /// line in `UIErrorsFrame`, and shows nothing for an empty one.
-pub fn parse_area_trigger_message(body: &[u8]) -> Option<String> {
+pub(crate) fn parse_area_trigger_message(body: &[u8]) -> Option<String> {
     let mut r = Reader::new(body);
     if !r.has(4) {
         return None;

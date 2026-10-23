@@ -41,61 +41,61 @@ use bevy::tasks::{block_on, futures_lite::future, Task};
 
 /// What the map window's New map form holds.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Form {
-    pub directory: String,
-    pub name: String,
+pub(crate) struct Form {
+    pub(crate) directory: String,
+    pub(crate) name: String,
     /// `Map.dbc` field 2, which is also `map_template.map_type`.
-    pub instance_type: u32,
-    pub max_players: u32,
+    pub(crate) instance_type: u32,
+    pub(crate) max_players: u32,
     /// A `LoadingScreens` row, or `None` for the open map's.
-    pub loading_screen: Option<u32>,
+    pub(crate) loading_screen: Option<u32>,
     /// Whether the form is showing the loading screen pictures to choose from.
-    pub choosing_screen: bool,
+    pub(crate) choosing_screen: bool,
     /// For a dungeon or raid reached through another, that dungeon; 0 for
     /// none. `map_template.parent`.
-    pub parent: u32,
+    pub(crate) parent: u32,
     /// For a dungeon or raid, where a dead character's ghost walks in from: a
     /// continent and a point on it, north and west in yards. `None` for none.
-    pub ghost: Option<(u32, [f32; 2])>,
+    pub(crate) ghost: Option<(u32, [f32; 2])>,
     /// Make a zone on the new map, named after it.
-    pub zone: bool,
+    pub(crate) zone: bool,
     /// Open the new map once it is made.
-    pub open_it: bool,
+    pub(crate) open_it: bool,
 
     // What the form holds when it edits a map that exists. See
     // [`Form::editing`] and [`save`].
     /// The map this form edits, or `None` for a new map.
-    pub editing: Option<u32>,
+    pub(crate) editing: Option<u32>,
     /// Whether the edited map's rows have been read into the form.
-    pub loaded: bool,
+    pub(crate) loaded: bool,
     /// `Map.dbc` field 3.
-    pub pvp: bool,
+    pub(crate) pvp: bool,
     /// `Map.dbc` fields 13 and 14.
-    pub min_level: u32,
-    pub max_level: u32,
+    pub(crate) min_level: u32,
+    pub(crate) max_level: u32,
     /// `Map.dbc` field 19, which the server's row holds as `linked_zone`.
-    pub area: u32,
+    pub(crate) area: u32,
     /// `Map.dbc` fields 20 and 29.
-    pub descriptions: [String; 2],
+    pub(crate) descriptions: [String; 2],
     /// `map_template.reset_delay`: days between a raid's resets.
-    pub reset_delay: u32,
+    pub(crate) reset_delay: u32,
     /// Whether the map is one WMO with no terrain tiles, rather than terrain:
     /// the WDT's `MPHD` flag. See `vale_edit::wdt::ONE_BUILDING`.
-    pub single_wmo: bool,
+    pub(crate) single_wmo: bool,
     /// The WMO the map is, for a single-WMO map.
-    pub wmo: String,
+    pub(crate) wmo: String,
     /// …and what it was when the form was read.
-    pub wmo_was: String,
+    pub(crate) wmo_was: String,
     /// How many tiles the map had when the form was read. Only a map with no
     /// tiles can be made a single-WMO map.
-    pub tiles: usize,
+    pub(crate) tiles: usize,
     /// The server's row, as read.
-    pub server: ServerRow,
+    pub(crate) server: ServerRow,
 }
 
 /// The edited map's `map_template` row, and where it came from.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub enum ServerRow {
+pub(crate) enum ServerRow {
     /// Not looked for yet.
     #[default]
     Unread,
@@ -147,7 +147,7 @@ impl Default for Form {
 impl Form {
     /// A form that edits map `id`, whose folder is `directory`. Its fields
     /// are read in by [`read_edited_map`].
-    pub fn editing(id: u32, directory: &str) -> Form {
+    pub(crate) fn editing(id: u32, directory: &str) -> Form {
         Form {
             directory: directory.to_string(),
             editing: Some(id),
@@ -159,7 +159,7 @@ impl Form {
 
     /// Why the form cannot make a map yet, or `None` when it can. `maps` is
     /// the session's list of maps, whose directories a new one may not repeat.
-    pub fn problem(&self, maps: &[(u32, String)]) -> Option<String> {
+    pub(crate) fn problem(&self, maps: &[(u32, String)]) -> Option<String> {
         if let Some(id) = self.editing {
             return self.edit_problem(id);
         }
@@ -218,7 +218,7 @@ impl Form {
 
     /// The server's row as these fields would leave it: `found` with the
     /// columns the form shows replaced. The script name is kept.
-    pub fn edited_template(&self, found: &Template) -> Template {
+    pub(crate) fn edited_template(&self, found: &Template) -> Template {
         let mut template = found.clone();
         template.map_type = self.instance_type;
         template.player_limit = self.max_players;
@@ -244,13 +244,13 @@ impl Form {
 
     /// Whether the map is a dungeon or a raid, which alone have a parent and a
     /// ghost entrance.
-    pub fn is_instance(&self) -> bool {
+    pub(crate) fn is_instance(&self) -> bool {
         matches!(self.instance_type, 1 | 2)
     }
 
     /// The `map_template` row the form makes for map `id`, with `zone` as its
     /// area.
-    pub fn template(&self, id: u32, zone: u32) -> Template {
+    pub(crate) fn template(&self, id: u32, zone: u32) -> Template {
         let mut template = Template::new(id, self.instance_type, &self.name);
         template.linked_zone = zone;
         template.player_limit = self.max_players;
@@ -267,7 +267,7 @@ impl Form {
 }
 
 /// Make the map the form describes. Answers the status line.
-pub fn make(
+pub(crate) fn make(
     session: &mut EditSession,
     assets: &GameAssets,
     form: &Form,
@@ -390,7 +390,7 @@ type RowRead = (u32, u64, bool, Task<Result<Option<(Template, vale_mangos::row::
 /// again when the counter moves. The first answer fills the form's server
 /// fields. A later one replaces only the row those fields are laid over, so
 /// an Apply made while the form is open does not undo what was typed into it.
-pub fn read_edited_map(
+pub(crate) fn read_edited_map(
     mut tiles: ResMut<super::tiles::Tiles>,
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
@@ -585,7 +585,7 @@ fn set_from_literal(template: &mut Template, column: &str, literal: &str) {
 /// **Write the edited map's fields**: its `Map.dbc` row and its server row
 /// as one undo entry, and its WDT's layout when that changed. Answers the
 /// status line.
-pub fn save(
+pub(crate) fn save(
     session: &mut EditSession,
     assets: &GameAssets,
     form: &Form,
@@ -700,7 +700,7 @@ pub fn save(
 
 /// Make [`EditSession::maps`] the open `Map.dbc`'s list, in
 /// `crate::places::order_maps`'s order. Nothing when the table is not open.
-pub fn refresh_maps(session: &mut EditSession) {
+pub(crate) fn refresh_maps(session: &mut EditSession) {
     let Some(table) = session.table(places::MAPS) else {
         return;
     };
@@ -714,7 +714,7 @@ pub fn refresh_maps(session: &mut EditSession) {
 /// Keep [`EditSession::maps`] in step with the open `Map.dbc` whenever a
 /// table changes, so an undone or removed map leaves the list and a map menu
 /// never offers two maps under one id.
-pub fn follow_map_table(session: Option<ResMut<EditSession>>, mut seen: Local<Option<u64>>) {
+pub(crate) fn follow_map_table(session: Option<ResMut<EditSession>>, mut seen: Local<Option<u64>>) {
     let Some(mut session) = session else { return };
     if *seen == Some(session.table_revision) {
         return;

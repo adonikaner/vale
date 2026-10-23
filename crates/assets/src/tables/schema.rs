@@ -890,7 +890,7 @@ const SPELL_VISUAL_COLUMNS: [Column; 16] = [
 /// A row holds an animation, up to eight models each hanging from a named
 /// attachment, a sound, a camera shake, and four procedural slots with four
 /// parameters each.
-pub const SPELL_VISUAL_KIT: Schema = Schema {
+pub(crate) const SPELL_VISUAL_KIT: Schema = Schema {
     table: "SpellVisualKit",
     columns: &SPELL_VISUAL_KIT_COLUMNS,
     sections: &[
@@ -1035,7 +1035,7 @@ const SPELL_VISUAL_KIT_COLUMNS: [Column; 35] = [
 
 /// `SpellVisualEffectName.dbc`: 782 rows of 5 fields. Each row is one effect
 /// model.
-pub const SPELL_VISUAL_EFFECT_NAME: Schema = Schema {
+pub(crate) const SPELL_VISUAL_EFFECT_NAME: Schema = Schema {
     table: "SpellVisualEffectName",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1069,7 +1069,7 @@ pub const SPELL_VISUAL_EFFECT_NAME: Schema = Schema {
 };
 
 /// `AnimationData.dbc`: what a pose is called.
-pub const ANIMATION_DATA: Schema = Schema {
+pub(crate) const ANIMATION_DATA: Schema = Schema {
     table: "AnimationData",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1092,7 +1092,7 @@ pub const ANIMATION_DATA: Schema = Schema {
 };
 
 /// `SpellIcon.dbc`: an id and a texture path.
-pub const SPELL_ICON: Schema = Schema {
+pub(crate) const SPELL_ICON: Schema = Schema {
     table: "SpellIcon",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1111,7 +1111,7 @@ pub const SPELL_ICON: Schema = Schema {
 };
 
 /// `SpellCastTimes.dbc`: the length of a cast, in milliseconds.
-pub const SPELL_CAST_TIMES: Schema = Schema {
+pub(crate) const SPELL_CAST_TIMES: Schema = Schema {
     table: "SpellCastTimes",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1126,7 +1126,7 @@ pub const SPELL_CAST_TIMES: Schema = Schema {
 };
 
 /// `SpellDuration.dbc`: how long an aura lasts, in milliseconds.
-pub const SPELL_DURATION: Schema = Schema {
+pub(crate) const SPELL_DURATION: Schema = Schema {
     table: "SpellDuration",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1141,7 +1141,7 @@ pub const SPELL_DURATION: Schema = Schema {
 };
 
 /// `SpellRadius.dbc`: how wide an effect reaches, in yards.
-pub const SPELL_RADIUS: Schema = Schema {
+pub(crate) const SPELL_RADIUS: Schema = Schema {
     table: "SpellRadius",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1159,7 +1159,7 @@ pub const SPELL_RADIUS: Schema = Schema {
 ///
 /// Every column is read in order by the client; see `tables::spell`, where the
 /// same seven are parsed.
-pub const SPELL_CHAIN_EFFECTS: Schema = Schema {
+pub(crate) const SPELL_CHAIN_EFFECTS: Schema = Schema {
     table: "SpellChainEffects",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1189,7 +1189,7 @@ pub const SPELL_CHAIN_EFFECTS: Schema = Schema {
 
 /// `SpellEffectCameraShakes.dbc`: nine rows. A `SpellVisualKit` row names one
 /// of them.
-pub const SPELL_EFFECT_CAMERA_SHAKES: Schema = Schema {
+pub(crate) const SPELL_EFFECT_CAMERA_SHAKES: Schema = Schema {
     table: "SpellEffectCameraShakes",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1210,7 +1210,7 @@ pub const SPELL_EFFECT_CAMERA_SHAKES: Schema = Schema {
 /// bank reads through; a test asserts each one by name. A row is up to ten
 /// files under one directory, one picked by weight; see
 /// [`super::sound::SoundEntry`].
-pub const SOUND_ENTRIES: Schema = Schema {
+pub(crate) const SOUND_ENTRIES: Schema = Schema {
     table: "SoundEntries",
     columns: &SOUND_ENTRIES_COLUMNS,
     sections: &[
@@ -1330,7 +1330,7 @@ const SPELL_RANGE_COLUMNS: [Column; 22] = [
 
 /// `SpellDispelType.dbc`: 11 rows of 12 fields: Magic, Curse, Disease, Poison
 /// and the rest.
-pub const SPELL_DISPEL_TYPE: Schema = Schema {
+pub(crate) const SPELL_DISPEL_TYPE: Schema = Schema {
     table: "SpellDispelType",
     columns: &SPELL_DISPEL_TYPE_COLUMNS,
     sections: &[Section {
@@ -1366,7 +1366,7 @@ const SPELL_DISPEL_TYPE_COLUMNS: [Column; 12] = [
 
 /// `SpellMechanic.dbc`: 27 rows of 10 fields: an id and a localised word
 /// (disoriented, disarmed, rooted).
-pub const SPELL_MECHANIC: Schema = Schema {
+pub(crate) const SPELL_MECHANIC: Schema = Schema {
     table: "SpellMechanic",
     columns: &SPELL_MECHANIC_COLUMNS,
     sections: &[Section {
@@ -1390,7 +1390,7 @@ const SPELL_MECHANIC_COLUMNS: [Column; 10] = [
 
 /// `SpellFocusObject.dbc`: 138 rows of 10 fields (Anvil, Loom, Forge), in the
 /// same shape as [`SPELL_MECHANIC`].
-pub const SPELL_FOCUS_OBJECT: Schema = Schema {
+pub(crate) const SPELL_FOCUS_OBJECT: Schema = Schema {
     table: "SpellFocusObject",
     columns: &SPELL_FOCUS_OBJECT_COLUMNS,
     sections: &[Section {
@@ -1414,7 +1414,7 @@ const SPELL_FOCUS_OBJECT_COLUMNS: [Column; 10] = [
 
 /// `SpellCategory.dbc`: 166 rows of 2 fields: an id and a flags word. A
 /// category has no name; it is the shared cooldown group a spell is in.
-pub const SPELL_CATEGORY: Schema = Schema {
+pub(crate) const SPELL_CATEGORY: Schema = Schema {
     table: "SpellCategory",
     columns: &[c(0, "Id", Kind::Id), c(1, "Flags", Kind::Flags(&[]))],
     sections: &[Section {
@@ -1492,7 +1492,7 @@ const SPELL_AURAS_TABLE: &[(u32, &str)] = &SPELL_AURAS;
 /// like every other distance in these tables. 1,180,800 is therefore the far
 /// corner, not an overflowed value. `vale light <Map>` prints the world
 /// position of each row.
-pub const LIGHT: Schema = Schema {
+pub(crate) const LIGHT: Schema = Schema {
     table: "Light",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1595,7 +1595,7 @@ pub const LIGHT: Schema = Schema {
 /// `HighlightSky`, `Skybox`, `CloudType` or `Glow` changes nothing on screen.
 /// That is a property of this renderer, not of the file, and each of those
 /// columns' notes states it.
-pub const LIGHT_PARAMS: Schema = Schema {
+pub(crate) const LIGHT_PARAMS: Schema = Schema {
     table: "LightParams",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1655,7 +1655,7 @@ pub const LIGHT_PARAMS: Schema = Schema {
 /// Which band a row holds is given by its position, not by a column: band `b`
 /// of params `p` is row `(p - 1) * 18 + b + 1`. See
 /// [`super::light::int_band_row`] and [`super::light::INT_BAND_NAMES`].
-pub const LIGHT_INT_BAND: Schema = Schema {
+pub(crate) const LIGHT_INT_BAND: Schema = Schema {
     table: "LightIntBand",
     columns: &LIGHT_INT_BAND_COLUMNS,
     sections: &[
@@ -1744,7 +1744,7 @@ const LIGHT_INT_BAND_COLUMNS: [Column; 34] = [
 ///
 /// The distances are in 1/36 of a yard, like `Light`'s own coordinates: map 0's
 /// `fogEnd` of 18,000 is 500 yards.
-pub const LIGHT_FLOAT_BAND: Schema = Schema {
+pub(crate) const LIGHT_FLOAT_BAND: Schema = Schema {
     table: "LightFloatBand",
     columns: &LIGHT_FLOAT_BAND_COLUMNS,
     sections: &[
@@ -1815,7 +1815,7 @@ const LIGHT_FLOAT_BAND_COLUMNS: [Column; 34] = [
 /// `LightSkybox.dbc`: 6 rows of 2 fields: an id and a model path.
 ///
 /// `LightParams` names only one of the six; see that schema's `Skybox` column.
-pub const LIGHT_SKYBOX: Schema = Schema {
+pub(crate) const LIGHT_SKYBOX: Schema = Schema {
     table: "LightSkybox",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1840,7 +1840,7 @@ pub const LIGHT_SKYBOX: Schema = Schema {
 /// vmangos does not read this file. It reads the same rows from its own
 /// `taxi_nodes` table, so an edit here reaches the server as a row of that
 /// table and not as a copied file.
-pub const TAXI_NODES: Schema = Schema {
+pub(crate) const TAXI_NODES: Schema = Schema {
     table: "TaxiNodes",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1890,7 +1890,7 @@ pub const TAXI_NODES: Schema = Schema {
 /// `TaxiPath.dbc`: 287 rows of 4 fields. A row is one flight between two
 /// nodes, in one direction. The indices are those of
 /// [`super::taxi::path_fields`].
-pub const TAXI_PATH: Schema = Schema {
+pub(crate) const TAXI_PATH: Schema = Schema {
     table: "TaxiPath",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1911,7 +1911,7 @@ pub const TAXI_PATH: Schema = Schema {
 
 /// `TaxiPathNode.dbc`: 9,582 rows of 9 fields. A row is one point of one path.
 /// The indices are those of [`super::taxi::path_node_fields`].
-pub const TAXI_PATH_NODE: Schema = Schema {
+pub(crate) const TAXI_PATH_NODE: Schema = Schema {
     table: "TaxiPathNode",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -1988,7 +1988,7 @@ const CLASS_BITS: &[(u32, &str, &str)] = &[
 ///
 /// vmangos reads this file from `DataDir`, so an edit reaches the server as
 /// the copied file.
-pub const SKILL_LINE: Schema = Schema {
+pub(crate) const SKILL_LINE: Schema = Schema {
     table: "SkillLine",
     columns: &SKILL_LINE_COLUMNS,
     sections: &[
@@ -2268,7 +2268,7 @@ pub const SKILL_RACE_CLASS_INFO: Schema = Schema {
 /// uses more than nine items or six bonuses.
 ///
 /// vmangos reads this file from `DataDir`.
-pub const ITEM_SET: Schema = Schema {
+pub(crate) const ITEM_SET: Schema = Schema {
     table: "ItemSet",
     columns: &ITEM_SET_COLUMNS,
     sections: &[
@@ -2364,7 +2364,7 @@ const ITEM_SET_COLUMNS: [Column; 45] = [
 /// vmangos does not read this file. It reads nine of the columns from its
 /// `area_template` table, so an edit here reaches the server as a row of that
 /// table. Fields 5 to 9 and the seven other locales are the client's alone.
-pub const AREA_TABLE: Schema = Schema {
+pub(crate) const AREA_TABLE: Schema = Schema {
     table: "AreaTable",
     columns: &AREA_TABLE_COLUMNS,
     sections: &[
@@ -2390,7 +2390,7 @@ pub const AREA_TABLE: Schema = Schema {
 };
 
 /// vmangos' `AreaFlags`, with what each bit does as its comments state it.
-pub const AREA_FLAGS: [(u32, &str, &str); 10] = [
+pub(crate) const AREA_FLAGS: [(u32, &str, &str); 10] = [
     (0x001, "Snow", "Breath is drawn. Dun Morogh, Winterspring, Naxxramas and Razorfen Downs."),
     (0x002, "Override parent snow", "Two shipped rows: in Naxxramas and Razorfen Downs."),
     (0x004, "Development", "Used on the development map only."),
@@ -2404,7 +2404,7 @@ pub const AREA_FLAGS: [(u32, &str, &str); 10] = [
 ];
 
 /// The three values the team column holds over the shipped rows.
-pub const AREA_TEAMS: [(u32, &str); 3] = [(0, "Neither"), (2, "Alliance"), (4, "Horde")];
+pub(crate) const AREA_TEAMS: [(u32, &str); 3] = [(0, "Neither"), (2, "Alliance"), (4, "Horde")];
 
 const AREA_UNUSED: &str = "Zero on all 1,081 shipped rows. No reader of this column is known.";
 
@@ -2532,7 +2532,7 @@ pub const MAP: Schema = Schema {
 };
 
 /// What field 2 of `Map.dbc` holds; see [`super::map::INSTANCE_TYPES`].
-pub const MAP_INSTANCE_TYPES: [(u32, &str); 4] = super::map::INSTANCE_TYPES;
+pub(crate) const MAP_INSTANCE_TYPES: [(u32, &str); 4] = super::map::INSTANCE_TYPES;
 
 const MAP_COLUMNS: [Column; 42] = [
     c(0, "Id", Kind::Id),
@@ -2619,7 +2619,7 @@ const MAP_COLUMNS: [Column; 42] = [
 
 /// `AreaTrigger.dbc`: 432 rows of 10 fields. The indices are those of
 /// [`super::areatrigger::fields`].
-pub const AREA_TRIGGER: Schema = Schema {
+pub(crate) const AREA_TRIGGER: Schema = Schema {
     table: "AreaTrigger",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -2647,7 +2647,7 @@ pub const AREA_TRIGGER: Schema = Schema {
 
 /// `WorldSafeLocs.dbc`: 122 rows of 14 fields. The indices are those of
 /// [`super::safeloc::fields`].
-pub const WORLD_SAFE_LOCS: Schema = Schema {
+pub(crate) const WORLD_SAFE_LOCS: Schema = Schema {
     table: "WorldSafeLocs",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -2684,7 +2684,7 @@ pub const WORLD_SAFE_LOCS: Schema = Schema {
 /// `display_fields`, the sound column its `npc_sound_id`. The names follow
 /// wowdev.wiki's layout for 1.12, and every column's values agree with it over
 /// the whole table: field 9 holds only -1 and 0 to 4, field 10 only 0 to 3.
-pub const CREATURE_DISPLAY_INFO: Schema = Schema {
+pub(crate) const CREATURE_DISPLAY_INFO: Schema = Schema {
     table: "CreatureDisplayInfo",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -2723,7 +2723,7 @@ pub const CREATURE_DISPLAY_INFO: Schema = Schema {
 /// of a creature drawn on a character model, and the skin the game baked from
 /// it. The indices are [`super::dbc`]'s `display_fields`; the ten items are in
 /// [`super::dbc::DisplayTables::EQUIPPED_SLOTS`]' order.
-pub const CREATURE_DISPLAY_INFO_EXTRA: Schema = Schema {
+pub(crate) const CREATURE_DISPLAY_INFO_EXTRA: Schema = Schema {
     table: "CreatureDisplayInfoExtra",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -2763,7 +2763,7 @@ pub const CREATURE_DISPLAY_INFO_EXTRA: Schema = Schema {
 /// `display_fields`. The other names follow wowdev.wiki's layout for 1.12,
 /// and the values agree with it: fields 7 to 9 and 14 to 15 are floats, field
 /// 10 is zero in every row.
-pub const CREATURE_MODEL_DATA: Schema = Schema {
+pub(crate) const CREATURE_MODEL_DATA: Schema = Schema {
     table: "CreatureModelData",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -2792,7 +2792,7 @@ pub const CREATURE_MODEL_DATA: Schema = Schema {
 /// `GameObjectDisplayInfo.dbc`: 1,638 rows of 12 fields. A game object's
 /// model and its ten sounds. The path index is [`super::dbc`]'s
 /// `display_fields`; the ten sounds follow wowdev.wiki's layout for 1.12.
-pub const GAME_OBJECT_DISPLAY_INFO: Schema = Schema {
+pub(crate) const GAME_OBJECT_DISPLAY_INFO: Schema = Schema {
     table: "GameObjectDisplayInfo",
     columns: &[
         c(0, "Id", Kind::Id),
@@ -2823,7 +2823,7 @@ pub const GAME_OBJECT_DISPLAY_INFO: Schema = Schema {
 /// `ItemDisplayInfo.dbc`: 29,604 rows of 23 fields. What an item looks like
 /// in the bag, in the hand and on the body. The indices are
 /// [`super::item`]'s `fields`, each with its measurement there.
-pub const ITEM_DISPLAY_INFO: Schema = Schema {
+pub(crate) const ITEM_DISPLAY_INFO: Schema = Schema {
     table: "ItemDisplayInfo",
     columns: &[
         c(0, "Id", Kind::Id),

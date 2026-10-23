@@ -165,7 +165,8 @@ impl Ware {
     }
 
     /// The stock in words: `unlimited`, or `5, one more every 10m`.
-    pub fn stock_words(&self) -> String {
+    #[cfg(test)]
+    pub(crate) fn stock_words(&self) -> String {
         match self.maxcount {
             0 => "unlimited".to_string(),
             count => format!("{count}, one more every {}", seconds_words(self.incrtime as i64, 0)),

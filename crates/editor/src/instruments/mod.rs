@@ -8,6 +8,7 @@
 //!              for when every count on the tour line is flat
 //! ```
 
-pub mod heap;
-pub mod shot;
-pub mod tour;
+#[cfg(feature = "heap-census")]
+pub(crate) mod heap;
+pub(crate) mod shot;
+pub(crate) mod tour;

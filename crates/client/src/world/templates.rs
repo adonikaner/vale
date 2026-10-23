@@ -55,11 +55,11 @@ use vale_protocol::state::objects::Arrivals;
 /// game-object entries. Written once per frame at most, and only when the
 /// batch is not empty.
 #[derive(Message, Debug, Clone)]
-pub struct TemplatesArrived(pub Arrivals);
+pub(crate) struct TemplatesArrived(pub(crate) Arrivals);
 
 impl TemplatesArrived {
     /// Whether any item entry in `wanted` arrived in this batch.
-    pub fn names_an_item_in(&self, wanted: &[u32]) -> bool {
+    pub(crate) fn names_an_item_in(&self, wanted: &[u32]) -> bool {
         self.0.items.iter().any(|entry| wanted.contains(entry))
     }
 }

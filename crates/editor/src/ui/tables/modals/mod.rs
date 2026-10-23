@@ -12,11 +12,11 @@
 //! models.rs     the model browser a model field opens
 //! ```
 
-pub mod bits;
-pub mod looks_like;
-pub mod models;
-pub mod pick;
-pub mod rows;
+pub(crate) mod bits;
+pub(crate) mod looks_like;
+pub(crate) mod models;
+pub(crate) mod pick;
+pub(crate) mod rows;
 
 use bevy_egui::egui;
 

@@ -40,10 +40,10 @@ use vale_assets::world::adt::{COLOUR_NEUTRAL, HEIGHTS_PER_CHUNK};
 
 /// The byte that means "do not shade this vertex" — `vale_assets`' own, so
 /// the writer and the reader cannot drift.
-pub const NEUTRAL: u8 = COLOUR_NEUTRAL;
+pub(crate) const NEUTRAL: u8 = COLOUR_NEUTRAL;
 
 /// Bytes per vertex: blue, green, red, alpha.
-pub const STRIDE: usize = 4;
+pub(crate) const STRIDE: usize = 4;
 
 /// …and bytes in the whole region.
 pub const BYTES: usize = HEIGHTS_PER_CHUNK * STRIDE;
@@ -56,7 +56,7 @@ pub const BYTES: usize = HEIGHTS_PER_CHUNK * STRIDE;
 pub type Colour = [u8; 4];
 
 /// The entry every vertex starts at.
-pub const NEUTRAL_COLOUR: Colour = [NEUTRAL; 4];
+pub(crate) const NEUTRAL_COLOUR: Colour = [NEUTRAL; 4];
 
 /// A chunk's 145 entries, or an empty vector when it has no `MCCV`.
 ///
@@ -92,7 +92,7 @@ fn at_in(data: &[u8], vertex: usize) -> Colour {
 /// Answers whether it had to make one, which is what a caller recording an
 /// [`crate::ops::Edit`] wants to know: the region appearing is part of the
 /// change and has to come back out on an undo.
-pub fn ensure(chunk: &mut MapChunk) -> bool {
+pub(crate) fn ensure(chunk: &mut MapChunk) -> bool {
     if chunk.region(Region::Colours).is_some() {
         return false;
     }
@@ -133,7 +133,7 @@ pub fn set(chunk: &mut MapChunk, vertex: usize, colour: Colour) {
 }
 
 /// …and all 145 at once, which is what a stroke writes.
-pub fn set_all(chunk: &mut MapChunk, colours: &[Colour]) {
+pub(crate) fn set_all(chunk: &mut MapChunk, colours: &[Colour]) {
     ensure(chunk);
     let Some(mccv) = chunk.region_mut(Region::Colours) else {
         return;
@@ -153,7 +153,7 @@ pub fn set_all(chunk: &mut MapChunk, colours: &[Colour]) {
 /// What [`crate::ops::shade::Shading`] asks before it leaves a region behind: a stroke
 /// that has been undone back to nothing should take the chunk back to having no
 /// `MCCV`, and the only way to know is to look.
-pub fn is_neutral(chunk: &MapChunk) -> bool {
+pub(crate) fn is_neutral(chunk: &MapChunk) -> bool {
     match chunk.region(Region::Colours) {
         None => true,
         Some(mccv) => mccv.data.iter().all(|&b| b == NEUTRAL),

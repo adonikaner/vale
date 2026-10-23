@@ -45,13 +45,13 @@ use vale_client::assets::GameAssets;
 /// is the file's own bytes at the size they are wanted, with no resampling at
 /// all. See [`thumbnail`], which resamples only when a texture's chain does not
 /// reach this.
-pub const SIDE: u32 = 32;
+pub(crate) const SIDE: u32 = 32;
 
 /// …and the larger size a picker's grid draws an icon at. A spell icon is a
 /// 64x64 BLP, so this is its top level at its own size, with no resampling;
 /// at [`SIDE`] it is the file's next level down, which is what a list row
 /// wants and a grid of them does not.
-pub const ICON_SIDE: u32 = 64;
+pub(crate) const ICON_SIDE: u32 = 64;
 
 /// How many are decoded in one frame.
 ///
@@ -66,7 +66,7 @@ const BUDGET: usize = 4;
 /// sizes by two panels — the list's row at [`SIDE`] and the picker's grid at
 /// [`ICON_SIDE`] — and a texture is one size once it is uploaded.
 #[derive(Resource, Default)]
-pub struct Thumbnails {
+pub(crate) struct Thumbnails {
     ready: HashMap<(String, u32), egui::TextureId>,
     /// Asked for and not yet decoded, oldest first — so a scroll that runs past
     /// a row does not leave it ahead of the row somebody stopped on.
@@ -79,25 +79,25 @@ pub struct Thumbnails {
 
 impl Thumbnails {
     /// What egui draws this path by at [`SIDE`], if it has been decoded.
-    pub fn get(&self, path: &str) -> Option<egui::TextureId> {
+    pub(crate) fn get(&self, path: &str) -> Option<egui::TextureId> {
         self.get_at(path, SIDE)
     }
 
     /// …and at any size.
-    pub fn get_at(&self, path: &str, side: u32) -> Option<egui::TextureId> {
+    pub(crate) fn get_at(&self, path: &str, side: u32) -> Option<egui::TextureId> {
         self.ready.get(&(path.to_ascii_lowercase(), side)).copied()
     }
 
     /// Ask for one at [`SIDE`]. Cheap and idempotent: a row calls this every
     /// frame it is drawn.
-    pub fn want(&mut self, path: &str) {
+    pub(crate) fn want(&mut self, path: &str) {
         self.want_at(path, SIDE);
     }
 
     /// Forget every size of one path, decoded or failed, so the next request
     /// decodes the file the path holds now. Called when the project writes a
     /// texture at a path that may already have been drawn.
-    pub fn forget(&mut self, path: &str) {
+    pub(crate) fn forget(&mut self, path: &str) {
         let path = path.to_ascii_lowercase();
         self.ready.retain(|(had, _), _| *had != path);
         self.failed.retain(|(had, _)| *had != path);
@@ -105,7 +105,7 @@ impl Thumbnails {
     }
 
     /// …and at any size.
-    pub fn want_at(&mut self, path: &str, side: u32) {
+    pub(crate) fn want_at(&mut self, path: &str, side: u32) {
         let key = (path.to_ascii_lowercase(), side);
         if self.ready.contains_key(&key) || self.failed.contains(&key) {
             return;
@@ -116,7 +116,7 @@ impl Thumbnails {
     }
 }
 
-pub struct ThumbnailPlugin;
+pub(crate) struct ThumbnailPlugin;
 
 impl Plugin for ThumbnailPlugin {
     fn build(&self, app: &mut App) {

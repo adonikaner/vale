@@ -72,7 +72,7 @@ use std::collections::HashMap;
 /// Every container id the interface can address, in the order the diff walks
 /// them. This is [`vale_protocol::play::items::CONTAINERS_FOR_REPORT`], reused
 /// so that this diff and the `bags` report of `vale live` cover the same set.
-pub const CONTAINERS: [i32; 6] = items::CONTAINERS_FOR_REPORT;
+pub(crate) const CONTAINERS: [i32; 6] = items::CONTAINERS_FOR_REPORT;
 
 /// The character's inventory and the item templates for it.
 ///
@@ -86,7 +86,7 @@ pub struct Inventory {
     /// It is not a slot. It changes only through
     /// [`vale_protocol::play::items::set_ammo_body`], and
     /// [`Self::ammo_count`] is the number the square draws under it.
-    pub ammo: u32,
+    pub(crate) ammo: u32,
     /// `PLAYER_FIELD_COINAGE`, in copper.
     pub money: u32,
     /// Item templates, by entry, copied out of the session's cache.
@@ -114,7 +114,7 @@ impl Inventory {
 
     /// The template for the item in a slot, or `None` while its reply is in
     /// flight.
-    pub fn template_of(&self, item: &ItemSlot) -> Option<&ItemInfo> {
+    pub(crate) fn template_of(&self, item: &ItemSlot) -> Option<&ItemInfo> {
         self.templates.get(&item.entry)
     }
 
@@ -122,7 +122,7 @@ impl Inventory {
     /// `GetInventoryItemCount("player", 0)`. That is `GetItemCount` of the
     /// loaded entry: the square counts what is in the bags, and shooting takes
     /// one from there. 0 with nothing loaded.
-    pub fn ammo_count(&self) -> u32 {
+    pub(crate) fn ammo_count(&self) -> u32 {
         if self.ammo == 0 {
             0
         } else {
@@ -160,7 +160,7 @@ impl Inventory {
 /// are: the queue has exactly one reader, and the subject belongs to this
 /// module.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct ItemRefused(pub vale_protocol::play::items::InventoryFailure);
+pub(crate) struct ItemRefused(pub(crate) vale_protocol::play::items::InventoryFailure);
 
 /// Use an item named by entry, wherever it is carried. The action bar can name
 /// an item only this way.
@@ -176,7 +176,7 @@ pub struct ItemRefused(pub vale_protocol::play::items::InventoryFailure);
 ///
 /// Written by [`super::action::use_action`]; read below.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct UseCarriedItem(pub u32);
+pub(crate) struct UseCarriedItem(pub(crate) u32);
 
 /// The item whose spell raised the targeting cursor, kept so that the answer
 /// can name it.
@@ -192,16 +192,16 @@ pub struct UseCarriedItem(pub u32);
 /// the single cursor in [`super::action::SpellTargeting`], and this resource is
 /// the only thing that tells them apart.
 #[derive(Resource, Default)]
-pub struct PendingItemCast(Option<PendingItem>);
+pub(crate) struct PendingItemCast(Option<PendingItem>);
 
 #[derive(Clone, Copy)]
-pub struct PendingItem {
+pub(crate) struct PendingItem {
     /// The bag and slot in the server's numbering, already converted. This is
     /// the pair `CMSG_USE_ITEM` takes.
     pub bag: u8,
     pub slot: u8,
     /// Which of the template's five spells is being aimed.
-    pub spell_index: u8,
+    pub(crate) spell_index: u8,
 }
 
 impl PendingItemCast {
@@ -219,11 +219,6 @@ impl PendingItemCast {
         self.0.take()
     }
 
-    /// Whether a cast from an item is waiting for a target.
-    pub fn is_armed(&self) -> bool {
-        self.0.is_some()
-    }
-
     /// Drop the pending item unanswered, on Escape or a fresh press. Public
     /// because [`super::action`] stands down the cursor this belongs to, and
     /// the pending item must not outlive that cursor.
@@ -239,9 +234,9 @@ impl PendingItemCast {
 /// `ResMut` here would be a second writer of the cursor, which
 /// `SpellTargetPicked` exists to avoid.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct BeginItemTargeting(pub u32);
+pub(crate) struct BeginItemTargeting(pub(crate) u32);
 
-pub struct ItemsPlugin;
+pub(crate) struct ItemsPlugin;
 
 impl Plugin for ItemsPlugin {
     fn build(&self, app: &mut App) {
@@ -782,7 +777,7 @@ fn rebuild(
     // changed) the slots and the templates that have arrived. Everything after
     // this block is local.
     let (version, cache_size, money, ammo, moved) = {
-        let world = active.live.world().lock().unwrap_or_else(|e| e.into_inner());
+        let world = active.live.read();
         let version = world.inventory_version;
         // The second half of the latch is over-sensitive by design.
         // `world.items` is keyed by entry and holds every template the session

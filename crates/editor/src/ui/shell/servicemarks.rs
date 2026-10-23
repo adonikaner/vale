@@ -31,15 +31,15 @@ use crate::ui::widgets::thumbnails::Thumbnails;
 use crate::tools::spawns::creatures::{ServiceMark, SERVICE_MARK_RANGE};
 
 /// One service a creature can offer.
-pub struct Service {
+pub(crate) struct Service {
     /// Its bit in `npc_flags`, as `vale_mangos::creature::NPC_FLAGS` has it.
-    pub bit: u32,
+    pub(crate) bit: u32,
     /// What the hover card calls it.
-    pub name: &'static str,
+    pub(crate) name: &'static str,
     /// Two letters, drawn where there is no picture.
-    pub short: &'static str,
+    pub(crate) short: &'static str,
     /// The picture's path in the archives, or `None` where 1.12 ships none.
-    pub picture: Option<&'static str>,
+    pub(crate) picture: Option<&'static str>,
 }
 
 const fn service(
@@ -56,7 +56,7 @@ const fn service(
 ///
 /// The auctioneer has no gossip icon in 1.12 and takes the banker's, which is
 /// the icon vmangos gives an auctioneer's gossip option.
-pub const SERVICES: [Service; 14] = [
+pub(crate) const SERVICES: [Service; 14] = [
     service(
         0x0000_0002,
         "Quest Giver",
@@ -139,7 +139,7 @@ pub const SERVICES: [Service; 14] = [
 ];
 
 /// The services a creature with these `npc_flags` offers, in drawing order.
-pub fn offered(npc_flags: u32) -> impl Iterator<Item = &'static Service> {
+pub(crate) fn offered(npc_flags: u32) -> impl Iterator<Item = &'static Service> {
     SERVICES
         .iter()
         .filter(move |service| npc_flags & service.bit != 0)
@@ -161,7 +161,7 @@ const FAR_OPACITY: f32 = 0.35;
 /// The marks are in physical pixels and the painter works in points, so each
 /// is divided by egui's pixels per point, which is the window's scale factor
 /// times egui's zoom.
-pub fn draw(
+pub(crate) fn draw(
     ctx: &egui::Context,
     viewport: egui::Rect,
     marks: &[ServiceMark],

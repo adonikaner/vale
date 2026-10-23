@@ -62,6 +62,7 @@ fn party_token_guid(party: &crate::interface::party::Party, token: &str) -> Opti
 }
 
 /// The **scoped reads** this file registers, sorted — see [`super::super::api::READS`].
+#[cfg(test)]
 pub const READS: [&str; 8] = [
     "CanShowResetInstances",
     "GetLootMethod",
@@ -73,25 +74,13 @@ pub const READS: [&str; 8] = [
     "UnitIsPartyLeader",
 ];
 
-/// …and the **unscoped writes**, which record. Sorted, on the same terms.
-pub const WRITES: [&str; 8] = [
-    "AcceptGroup",
-    "DeclineGroup",
-    "InviteByName",
-    "LeaveParty",
-    "PromoteByName",
-    "PromoteToPartyLeader",
-    "UninviteByName",
-    "UninviteFromParty",
-];
-
 /// What the interface asked of the party.
 ///
 /// A request rather than an [`vale_protocol::play::group::PartyVerb`] because two
 /// of the six name a *player* and the wire wants a guid for one of them — see
 /// the module comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PartyRequest {
+pub(crate) enum PartyRequest {
     Invite(String),
     Accept,
     Decline,
@@ -111,7 +100,7 @@ pub enum PartyRequest {
     PromoteUnit(String),
 }
 
-pub type Queue = Rc<RefCell<Vec<PartyRequest>>>;
+pub(crate) type Queue = Rc<RefCell<Vec<PartyRequest>>>;
 
 /// Register the six writes. Unscoped — they record.
 pub(in crate::lua) fn register(lua: &mlua::Lua) -> mlua::Result<()> {
@@ -312,7 +301,7 @@ impl PartyAnswers for super::super::api::Live<'_, '_, '_> {
         // would follow the party around as people walked in and out of range.
         let Some(guid) = UnitId::parse(token)
             .and_then(|id| self.units.get(id).map(|unit| unit.guid))
-            .or_else(|| party_token_guid(self.party, token))
+            .or_else(|| party_token_guid(&self.party, token))
         else {
             return false;
         };

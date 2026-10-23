@@ -272,7 +272,7 @@ pub struct Group {
     pub name: &'static str,
     /// Whether the second window, the combat log, subscribes to it on a
     /// fresh install.
-    pub combat_log: bool,
+    pub(crate) combat_log: bool,
 }
 
 /// How many groups the first window subscribes to. It is a count of leading
@@ -282,7 +282,7 @@ pub struct Group {
 /// Groups 0..10 are `SYSTEM SAY YELL WHISPER PARTY GUILD CREATURE CHANNEL
 /// SKILL LOOT`: conversation, the server's system lines, and skill and loot
 /// messages.
-pub const GENERAL_GROUPS: usize = 10;
+pub(crate) const GENERAL_GROUPS: usize = 10;
 
 /// Every chat message group, in the client's own order.
 ///

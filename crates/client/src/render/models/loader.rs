@@ -135,7 +135,7 @@ pub(crate) struct RawTexture {
 }
 
 impl RawTexture {
-    pub fn from_blp(blp: vale_assets::Blp) -> Self {
+    pub(crate) fn from_blp(blp: vale_assets::Blp) -> Self {
         let (width, height) = (blp.width, blp.height);
         let mut levels = Vec::with_capacity(1 + blp.mips.len());
         levels.push(blp.rgba);
@@ -153,7 +153,7 @@ impl RawTexture {
     /// `Assets::add` hands it to the render world. Building it here, including
     /// the mip chain concatenation, keeps that copy off the main thread, where
     /// it was a per-texture cost at every tile crossing.
-    pub fn into_image(self) -> Image {
+    pub(crate) fn into_image(self) -> Image {
         model_image(self.width, self.height, self.levels)
     }
 }
@@ -177,7 +177,7 @@ fn folding() -> bool {
 pub(crate) struct RawDraw {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
-    pub uvs: Vec<[f32; 2]>,
+    pub(crate) uvs: Vec<[f32; 2]>,
     /// Baked `MOCV` light, one per vertex, or empty; an M2 has none.
     ///
     /// Empty is not the same as black: Bevy sets its `VERTEX_COLORS` shader def
@@ -192,9 +192,9 @@ pub(crate) struct RawDraw {
     /// origin.
     /// These are indices into [`Self::bones`], not into the model's skeleton;
     /// see that field for why the subset exists.
-    pub joints: Vec<[u16; 4]>,
+    pub(crate) joints: Vec<[u16; 4]>,
     /// The matching weights, normalised to sum to 1.
-    pub weights: Vec<[f32; 4]>,
+    pub(crate) weights: Vec<[f32; 4]>,
     /// The model bones this batch's vertices use, sorted, with the identity
     /// joint (index `bones`) among them when any vertex is weightless. Empty on
     /// anything with no skeleton.
@@ -211,7 +211,7 @@ pub(crate) struct RawDraw {
     /// The subset is exact: the matrices are the same matrices, indexed
     /// compactly. See [`batch_draw`], which builds it in the same pass that
     /// remaps the vertices.
-    pub bones: Vec<u16>,
+    pub(crate) bones: Vec<u16>,
     /// The M2 geoset this batch belongs to; 0 for a WMO, which has no such
     /// concept and is always drawn whole.
     pub geoset: u16,
@@ -219,8 +219,8 @@ pub(crate) struct RawDraw {
     pub texture: Option<usize>,
     pub blend: u16,
     pub unlit: bool,
-    pub two_sided: bool,
-    pub no_depth_write: bool,
+    pub(crate) two_sided: bool,
+    pub(crate) no_depth_write: bool,
     /// Which of the three lighting models this draw uses; see
     /// [`vale_assets::world::wmo::BatchLight`], which explains why there are
     /// three.
@@ -255,7 +255,7 @@ pub(crate) struct RawDraw {
     /// [`vale_assets::world::m2::overlay_layers`], which holds the rule, and
     /// `M2Material::overlay_a`, which stores the result. Both `None` for every
     /// batch in the world that is not a piece of armour or a weapon.
-    pub overlays: [Option<(u32, u16)>; vale_assets::world::m2::MAX_OVERLAYS],
+    pub(crate) overlays: [Option<(u32, u16)>; vale_assets::world::m2::MAX_OVERLAYS],
     /// This batch is a flat rectangle in the model's own ground plane; see
     /// [`vale_assets::world::m2::M2::ground_quad`]. 120 batches over 34 models in
     /// the whole spell-effect population and `None` for everything else; a
@@ -290,13 +290,13 @@ pub(crate) struct RawDraw {
 pub(crate) struct MergeSource {
     pub positions: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
-    pub uvs: Vec<[f32; 2]>,
+    pub(crate) uvs: Vec<[f32; 2]>,
     /// Indices into [`Self::bones`], as [`RawDraw::joints`] is.
-    pub joints: Vec<[u16; 4]>,
-    pub weights: Vec<[f32; 4]>,
+    pub(crate) joints: Vec<[u16; 4]>,
+    pub(crate) weights: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
     /// See [`RawDraw::bones`]; the merge takes the union of the members' lists.
-    pub bones: Vec<u16>,
+    pub(crate) bones: Vec<u16>,
 }
 
 /// A [`RawDraw`] whose geometry has already been turned into a [`Mesh`], plus
@@ -318,13 +318,13 @@ pub(crate) struct PreparedDraw {
     /// See [`RawDraw::bones`]. Shared rather than cloned: every placement of a
     /// model builds a `SkinnedMesh` from this and the list is per batch, not
     /// per instance.
-    pub bones: std::sync::Arc<[u16]>,
+    pub(crate) bones: std::sync::Arc<[u16]>,
     pub geoset: u16,
     pub texture: Option<usize>,
     pub blend: u16,
     pub unlit: bool,
-    pub two_sided: bool,
-    pub no_depth_write: bool,
+    pub(crate) two_sided: bool,
+    pub(crate) no_depth_write: bool,
     /// See [`RawDraw::light`].
     pub light: BatchLight,
     /// See [`RawDraw::liquid`]; still the kind, resolved on the main thread.
@@ -338,13 +338,13 @@ pub(crate) struct PreparedDraw {
     /// See [`RawDraw::ground`].
     pub ground: Option<vale_assets::world::m2::GroundQuad>,
     /// See [`RawDraw::overlays`].
-    pub overlays: [Option<(u32, u16)>; vale_assets::world::m2::MAX_OVERLAYS],
+    pub(crate) overlays: [Option<(u32, u16)>; vale_assets::world::m2::MAX_OVERLAYS],
 }
 
 impl PreparedDraw {
     /// Consumes the draw so the vertex buffers move into the mesh instead of
     /// being cloned, which is the purpose of preparing off the main thread.
-    pub fn from_raw(draw: RawDraw) -> PreparedDraw {
+    pub(crate) fn from_raw(draw: RawDraw) -> PreparedDraw {
         let bones: std::sync::Arc<[u16]> = draw.bones.as_slice().into();
         // Which batches may be merged. Each excluded case is one where merging
         // would change the rendered result, not only the cost:

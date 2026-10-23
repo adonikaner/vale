@@ -49,8 +49,8 @@ mod keys;
 mod script;
 mod systems;
 
-pub use keys::{chosen, members, move_group, turned, SpawnKeysPlugin, Standing, PLACE_TURN, STEP, TURN};
-pub use systems::{drag, fetch_rows, menu_target, press, Preview};
+pub(crate) use keys::{chosen, members, turned, SpawnKeysPlugin, Standing};
+pub(crate) use systems::{fetch_rows, menu_target, press, Preview};
 pub(crate) use systems::{lay_the_edits, NEW};
 
 use crate::server::fresh::Fresh;
@@ -65,7 +65,7 @@ use vale_mangos::row::{Assignment, Edits, Key, Life, Numbering, RowEdit, Table};
 
 /// One spawn row, as the viewport needs it: the columns every spawn has, read
 /// through one interface. The subject's own type carries the rest.
-pub trait Spawned: Clone + std::fmt::Debug + Send + Sync + 'static {
+pub(crate) trait Spawned: Clone + std::fmt::Debug + Send + Sync + 'static {
     fn guid(&self) -> u64;
     /// The template entry the project says the spawn has.
     fn entry(&self) -> u32;
@@ -105,7 +105,7 @@ pub trait Spawned: Clone + std::fmt::Debug + Send + Sync + 'static {
 
 /// One template row's brief columns: what a marker, a model, a heading and
 /// the workspace's list need.
-pub trait Template: Listed + PartialEq {
+pub(crate) trait Template: Listed + PartialEq {
     /// [`Life::Insert`] for a template this project creates.
     fn claim(&self) -> Life;
     /// Give the row the entry the database has it at. Only a created row,
@@ -123,53 +123,53 @@ pub trait Template: Listed + PartialEq {
 
 /// The words a subject's labels, status lines and log lines are made of.
 #[derive(Debug, Clone, Copy)]
-pub struct Words {
+pub(crate) struct Words {
     /// One row of the subject: `creature`, `game object`.
-    pub noun: &'static str,
+    pub(crate) noun: &'static str,
     /// More than one: `creatures`, `game objects`.
-    pub nouns: &'static str,
+    pub(crate) nouns: &'static str,
     /// One spawn, in the spawn's own undo labels and status lines: `spawn`
     /// for a creature, `game object` for a game object.
-    pub spawn: &'static str,
+    pub(crate) spawn: &'static str,
     /// More than one spawn.
-    pub spawns: &'static str,
+    pub(crate) spawns: &'static str,
     /// The name a new template starts with.
-    pub new_name: &'static str,
+    pub(crate) new_name: &'static str,
     /// The undo label of a column edit to either row: `Edit creature`.
-    pub edit: &'static str,
+    pub(crate) edit: &'static str,
 }
 
 /// The command-line flags a subject's scripted gestures are spelled with.
 #[derive(Debug, Clone, Copy)]
-pub struct Flags {
+pub(crate) struct Flags {
     /// Select a spawn and fly to it.
-    pub open: &'static str,
+    pub(crate) open: &'static str,
     /// Place a spawn of an entry.
-    pub add: &'static str,
+    pub(crate) add: &'static str,
     /// Remove a spawn.
-    pub delete: &'static str,
+    pub(crate) delete: &'static str,
     /// Choose an entry in the picker and place nothing.
-    pub pick: &'static str,
+    pub(crate) pick: &'static str,
     /// Make a new template.
-    pub new: &'static str,
+    pub(crate) new: &'static str,
     /// Renumber the template the window is about.
-    pub entry: &'static str,
+    pub(crate) entry: &'static str,
 }
 
 /// The values of a subject's [`Flags`] on this run.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Script {
-    pub open: Option<u64>,
-    pub add: Option<u32>,
-    pub delete: Option<u64>,
-    pub pick: Option<u32>,
-    pub new: bool,
-    pub entry: Option<u32>,
+pub(crate) struct Script {
+    pub(crate) open: Option<u64>,
+    pub(crate) add: Option<u32>,
+    pub(crate) delete: Option<u64>,
+    pub(crate) pick: Option<u32>,
+    pub(crate) new: bool,
+    pub(crate) entry: Option<u32>,
 }
 
 /// What the creature tool and the game object tool differ in. The rest of the
 /// mechanism is [`SpawnTool`] and its systems; see the module comment.
-pub trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
+pub(crate) trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     /// One spawn row as the viewport needs it.
     type Spawn: Spawned;
     /// One template row's brief columns.
@@ -187,8 +187,6 @@ pub trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     const WORKSPACE: Tool;
     const SPAWN_TABLE: Table;
     const TEMPLATE_TABLE: Table;
-    /// Both tables, for a discard.
-    const TABLES: &'static [Table];
     const NUMBERING: Numbering;
     const RESERVED_GUID_BASE: u64;
     const MAX_SPAWN_GUID_QUERY: &'static str;
@@ -216,9 +214,6 @@ pub trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     const MODEL_BUDGET: usize;
     /// How far out a spawn is drawn at first, in yards.
     const RANGE: f32;
-    /// Whether a discard of this subject's edits also discards the waypoint
-    /// paths, which only creatures have.
-    const DISCARDS_PATHS: bool;
 
     /// The table names, from the two tables.
     const SPAWN: &'static str = Self::SPAWN_TABLE.name;
@@ -309,7 +304,7 @@ pub trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
 }
 
 /// The writes a [`Standing`] makes, through the subject it was read from.
-pub trait SpawnWrites: std::fmt::Debug + Send + Sync {
+pub(crate) trait SpawnWrites: std::fmt::Debug + Send + Sync {
     /// One row, in an undo label and a status line.
     fn noun(&self) -> &'static str;
     /// More than one.
@@ -373,46 +368,45 @@ pub(crate) fn stored_number(row: &RowEdit, column: &str) -> Option<f32> {
 /// the store's own; a spawn's template is always a row the database holds.
 /// See [`SpawnTool::template_subject`].
 #[derive(Debug, Clone, PartialEq)]
-pub struct TemplateSubject {
+pub(crate) struct TemplateSubject {
     /// The entry the project says the template has.
-    pub entry: u32,
+    pub(crate) entry: u32,
     /// The entry the database has it at, which differs while the project moves
     /// it and has not applied the move.
-    pub read_entry: u32,
-    pub patch: u32,
+    pub(crate) read_entry: u32,
+    pub(crate) patch: u32,
     /// What this project says of the row: [`Life::Insert`] for one it creates,
     /// [`Life::Update`] otherwise.
-    pub claim: Life,
+    pub(crate) claim: Life,
     /// The template's name and entry, for the window's title.
-    pub label: String,
+    pub(crate) label: String,
 }
 
 impl TemplateSubject {
     /// The key an edit to the row is written under. Both template tables are
     /// keyed by `entry` and `patch`.
-    pub fn key(&self) -> Key {
+    pub(crate) fn key(&self) -> Key {
         Key::two(("entry", u64::from(self.entry)), ("patch", u64::from(self.patch)))
     }
 
     /// Whether this project creates the template.
-    pub fn is_new(&self) -> bool {
+    pub(crate) fn is_new(&self) -> bool {
         self.claim == Life::Insert
     }
 }
 
 /// One template row, whole.
 #[derive(Debug, Clone)]
-pub struct TemplateRow {
-    pub entry: u32,
-    pub patch: u32,
-    pub row: vale_mangos::schema::Row,
+pub(crate) struct TemplateRow {
+    pub(crate) entry: u32,
+    pub(crate) row: vale_mangos::schema::Row,
 }
 
 /// One spawn row, whole.
 #[derive(Debug, Clone)]
-pub struct SpawnRow {
-    pub guid: u64,
-    pub row: vale_mangos::schema::Row,
+pub(crate) struct SpawnRow {
+    pub(crate) guid: u64,
+    pub(crate) row: vale_mangos::schema::Row,
 }
 
 /// The picker behind Place, and the template a click on the ground will
@@ -427,23 +421,23 @@ pub struct SpawnRow {
 /// creates the spawn; in Select, a click picks what is there. See
 /// [`SpawnTool::mode`].
 #[derive(Debug)]
-pub struct NewSpawn<K> {
+pub(crate) struct NewSpawn<K> {
     /// What has been typed.
-    pub search: String,
+    pub(crate) search: String,
     /// Which type the matches are narrowed to, or `None` for every type. Only
     /// the game object picker sets it.
-    pub of_type: Option<u32>,
+    pub(crate) of_type: Option<u32>,
     /// The search and type last sent, so a redraw does not re-query every
     /// frame.
     pub(crate) ran: Option<(String, Option<u32>)>,
-    pub matches: Vec<K>,
+    pub(crate) matches: Vec<K>,
     task: Option<Task<Result<Vec<K>, String>>>,
     /// The template a click will place. The ghost on the cursor and the
     /// preview pane both show it. `None` means nothing is chosen, which is the
     /// state `Escape` leaves.
-    pub chosen: Option<K>,
+    pub(crate) chosen: Option<K>,
     /// Why the search found nothing, when it is not that nothing matched.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// The `EditSession::database_writes` the matches were read at.
     searched_at: Option<u64>,
 }
@@ -465,12 +459,12 @@ impl<K> Default for NewSpawn<K> {
 
 impl<K> NewSpawn<K> {
     /// Whether a search is in flight, for the panel.
-    pub fn searching(&self) -> bool {
+    pub(crate) fn searching(&self) -> bool {
         self.task.is_some()
     }
 
     /// Forget the matches, which a map change or an apply makes stale.
-    pub fn forget(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.ran = None;
         self.matches.clear();
     }
@@ -493,24 +487,24 @@ const MATCHES: usize = 50;
 /// Armed only by a press on the already-selected spawn, and it moves nothing
 /// until the pointer has travelled `DRAG_PIXELS`. See [`press`].
 #[derive(Debug, Clone, Copy)]
-pub struct Drag {
-    pub guid: u64,
+pub(crate) struct Drag {
+    pub(crate) guid: u64,
     /// Where the spawn was when the button went down, so the status line can
     /// say how far it moved.
-    pub from: Vec3,
+    pub(crate) from: Vec3,
     /// Where the pointer was when the button went down.
-    pub pressed_at: Vec2,
+    pub(crate) pressed_at: Vec2,
     /// How far the spawn is from the pointer, so a press near the edge of the
     /// marker does not snap it under the cursor on the first frame. `None`
     /// until the first frame the drag is actually moving.
-    pub grab: Option<Vec3>,
+    pub(crate) grab: Option<Vec3>,
     /// Whether the pointer has travelled far enough to be a drag rather than
     /// a click. While it is false the drag moves nothing.
-    pub moving: bool,
+    pub(crate) moving: bool,
     /// Whether the press landed on a spawn in a group of several. Released
     /// without moving, it selects that spawn alone; see
     /// [`crate::tools::placements::group`].
-    pub collapse: bool,
+    pub(crate) collapse: bool,
 }
 
 /// The result of one read of the map: its spawns, the highest guid the whole
@@ -521,10 +515,10 @@ pub struct Drag {
 /// placing a spawn or creating a template, which need them, is only possible
 /// once the map has been read.
 #[derive(Debug)]
-pub struct MapRead<P> {
-    pub spawns: Vec<P>,
-    pub highest: Option<u64>,
-    pub highest_entry: Option<u32>,
+pub(crate) struct MapRead<P> {
+    pub(crate) spawns: Vec<P>,
+    pub(crate) highest: Option<u64>,
+    pub(crate) highest_entry: Option<u32>,
 }
 
 /// The near spawns as they are drawn, built when what they depend on changes
@@ -557,9 +551,9 @@ impl<P> Default for Overlay<P> {
 
 /// What the pointer is doing with one subject's spawns on the open map.
 #[derive(Resource, Debug)]
-pub struct SpawnTool<S: SpawnSubject> {
+pub(crate) struct SpawnTool<S: SpawnSubject> {
     /// Every spawn on the open map, as the database has it.
-    pub spawns: Vec<S::Spawn>,
+    pub(crate) spawns: Vec<S::Spawn>,
     /// Where each of [`Self::spawns`] is, by guid, built with each read. See
     /// [`SpawnTool::read_one`].
     spawn_index: HashMap<u64, usize>,
@@ -574,7 +568,7 @@ pub struct SpawnTool<S: SpawnSubject> {
     /// that list is what a read returned and the next read replaces it whole.
     /// Everything that draws, picks or counts walks both; see
     /// [`SpawnTool::base_spawn`].
-    pub created: Vec<S::Spawn>,
+    pub(crate) created: Vec<S::Spawn>,
     /// Which `ServerRows::revision` [`Self::created`] and
     /// [`Self::templates`] were built for.
     created_for: Option<u64>,
@@ -582,31 +576,31 @@ pub struct SpawnTool<S: SpawnSubject> {
     /// changes, sorted by entry. They are in no database, so no query returns
     /// them; the picker lists them above its search, and a spawn of one is
     /// labelled and drawn from here through [`Self::known`].
-    pub templates: Vec<S::Known>,
+    pub(crate) templates: Vec<S::Known>,
     /// The highest entry the template table holds, at any patch, read with
     /// the map. One of the inputs to a new template's entry; see
     /// [`SpawnTool::next_entry`]. `None` until the read completes.
-    pub max_entry: Option<u32>,
+    pub(crate) max_entry: Option<u32>,
     /// Whether the template flags have been acted on, or were not asked for.
     /// The scripted apply waits on it beside [`Self::scripted_done`].
-    pub scripted_template_done: bool,
+    pub(crate) scripted_template_done: bool,
     /// The highest guid the spawn table holds, read with the map.
     ///
     /// One of the inputs to a new spawn's guid; see
     /// [`SpawnTool::next_guid`]. `None` until the read completes, so placing
     /// waits for it.
-    pub max_guid: Option<u64>,
+    pub(crate) max_guid: Option<u64>,
     /// What an entry is, for the spawns of it this project creates.
     ///
     /// Filled from the map query, which already carries these columns for
     /// every spawn on the map; from the picker's matches; and, for an entry
     /// neither knows, from a read of its own.
-    pub known: Fresh<HashMap<u32, S::Known>>,
+    pub(crate) known: Fresh<HashMap<u32, S::Known>>,
     /// The read of [`Self::known`]'s own, while it is running.
     known_task: Option<Task<Result<Vec<S::Known>, String>>>,
     /// The display id picker, while it is open on one of the template's
     /// display columns. See `crate::subjects::displays`.
-    pub display_pick: Option<crate::subjects::displays::DisplayPick>,
+    pub(crate) display_pick: Option<crate::subjects::displays::DisplayPick>,
     /// Which half of the panel is showing, which also decides what a click in
     /// the world does.
     ///
@@ -614,9 +608,9 @@ pub struct SpawnTool<S: SpawnSubject> {
     /// a third enumeration with the same meaning: choosing what to put down and
     /// editing what is there are one subject, and the user switches between
     /// them often. See `crate::tools::placements::place::Mode`.
-    pub mode: crate::tools::placements::place::Mode,
+    pub(crate) mode: crate::tools::placements::place::Mode,
     /// The picker shown in the Place half, and what a click will put down.
-    pub new_spawn: NewSpawn<S::Known>,
+    pub(crate) new_spawn: NewSpawn<S::Known>,
     /// The direction the template on the cursor faces, in radians, which is
     /// what a click writes as `orientation`. `None` while nothing is on the
     /// cursor. Set toward the camera when the placer is armed, kept from one
@@ -635,10 +629,10 @@ pub struct SpawnTool<S: SpawnSubject> {
     loaded: Option<(u32, u64)>,
     /// Why there is nothing, when there is nothing: no database, a refused
     /// connection, a query that failed.
-    pub trouble: Option<String>,
+    pub(crate) trouble: Option<String>,
     /// Indices over both lists that are near enough to draw, nearest first.
     /// Rebuilt when the focus crosses a tile, not per frame.
-    pub near: Vec<usize>,
+    pub(crate) near: Vec<usize>,
     /// The tile [`Self::near`] was built around.
     built_at: Option<(u32, u32)>,
     /// How many times [`Self::near`] has been built, which the overlay is
@@ -649,9 +643,9 @@ pub struct SpawnTool<S: SpawnSubject> {
     /// The near spawns as they are drawn.
     overlay: Overlay<S::Spawn>,
     /// The spawn under the pointer, by guid.
-    pub hovered: Option<u64>,
+    pub(crate) hovered: Option<u64>,
     /// The spawn whose form is open, by guid: the primary of the selection.
-    pub selected: Option<u64>,
+    pub(crate) selected: Option<u64>,
     /// The rest of the selection, by guid — see
     /// [`crate::tools::placements::group`]. The form is the primary's; a move,
     /// a turn or a removal acts on every one.
@@ -660,12 +654,12 @@ pub struct SpawnTool<S: SpawnSubject> {
     /// creation was undone) is skipped by everything that reads the group, as
     /// [`SpawnTool::edited`] finds nothing for it. It is not pruned every
     /// frame, because pruning is a walk of every spawn on the map.
-    pub also: Vec<u64>,
+    pub(crate) also: Vec<u64>,
     /// Where each member stood when a drag's button went down, so each moves
     /// by the drag's step from where it began, as the primary does.
     group_from: Vec<(u64, Vec3)>,
     /// The selected spawn's whole template row, read on demand.
-    pub template: Option<TemplateRow>,
+    pub(crate) template: Option<TemplateRow>,
     /// The template read, while it is running.
     template_task: Option<Task<Result<Option<TemplateRow>, String>>>,
     /// What [`Self::template`] was made at: `EditSession::database_writes`,
@@ -676,26 +670,26 @@ pub struct SpawnTool<S: SpawnSubject> {
     template_at: Option<(u64, bool)>,
     /// The selected spawn's whole spawn row. The map query reads only the
     /// columns the drawing needs.
-    pub spawn_row: Option<SpawnRow>,
+    pub(crate) spawn_row: Option<SpawnRow>,
     spawn_task: Option<Task<Result<Option<SpawnRow>, String>>>,
     /// …and the same for [`Self::spawn_row`].
     spawn_at: Option<(u64, bool)>,
     /// Draw the near ones as models, or as markers only.
-    pub show_models: bool,
+    pub(crate) show_models: bool,
     /// Mark every near spawn, or only the selected, hovered and grouped ones.
     /// Off is for a place with so many spawns near the camera that their
     /// markers slow the frame. Picking does not depend on it: the tool picks
     /// by arithmetic on the pointer's ray, so an unmarked spawn can still be
     /// clicked.
-    pub show_markers: bool,
+    pub(crate) show_markers: bool,
     /// How many models at once.
-    pub model_budget: usize,
+    pub(crate) model_budget: usize,
     /// How far out a spawn is drawn at all, in yards.
-    pub range: f32,
+    pub(crate) range: f32,
     /// Whether the template window is open.
-    pub template_window: bool,
+    pub(crate) template_window: bool,
     /// Where a drag is moving the selected spawn to, and where it began.
-    pub drag: Option<Drag>,
+    pub(crate) drag: Option<Drag>,
     /// Whether the scripted placements and removals have finished.
     ///
     /// The scripted apply runs on the first frame there is a session and the
@@ -703,12 +697,12 @@ pub struct SpawnTool<S: SpawnSubject> {
     /// search and the tile under the camera have all completed. Without this
     /// flag the apply ran against an empty store and reported "nothing to
     /// apply", and the edit arrived afterwards.
-    pub scripted_done: bool,
+    pub(crate) scripted_done: bool,
     /// Every template row, for the subject's workspace. See
     /// [`crate::subjects::templates`].
-    pub listed: Listing<S::Known>,
+    pub(crate) listed: Listing<S::Known>,
     /// What only this subject's tool keeps.
-    pub own: S::Own,
+    pub(crate) own: S::Own,
 }
 
 impl<S: SpawnSubject> Default for SpawnTool<S> {
@@ -769,7 +763,7 @@ const APART: f32 = 2.0;
 impl<S: SpawnSubject> SpawnTool<S> {
     /// How many spawns there are to draw: the database's and this project's
     /// own.
-    pub fn spawn_count(&self) -> usize {
+    pub(crate) fn spawn_count(&self) -> usize {
         self.spawns.len() + self.created.len()
     }
 
@@ -779,7 +773,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// [`Self::spawns`], which holds only what the last read returned. This
     /// keeps a created spawn drawable, pickable and counted on the same terms
     /// as a read one.
-    pub fn base_spawn(&self, index: usize) -> Option<&S::Spawn> {
+    pub(crate) fn base_spawn(&self, index: usize) -> Option<&S::Spawn> {
         match self.spawns.get(index) {
             Some(spawn) => Some(spawn),
             None => self.created.get(index - self.spawns.len()),
@@ -787,7 +781,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// The chosen spawn, if it is still on this map.
-    pub fn chosen(&self) -> Option<&S::Spawn> {
+    pub(crate) fn chosen(&self) -> Option<&S::Spawn> {
         self.find(self.selected?)
     }
 
@@ -910,7 +904,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// The near spawn at `rank` in [`Self::near`] as it is drawn: with the
     /// project's edits over it where it changes it. Borrowed, as nothing is
     /// built here; see [`Self::lay_edits`].
-    pub fn near_drawn(&self, rank: usize) -> Option<&S::Spawn> {
+    pub(crate) fn near_drawn(&self, rank: usize) -> Option<&S::Spawn> {
         let base = self.base_spawn(*self.near.get(rank)?)?;
         let edited = match self.overlay.slots.get(rank) {
             Some(&slot) if slot > 0 => self.overlay.edited.get(slot as usize - 1),
@@ -920,7 +914,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Whether the store holds the own row of the near spawn at `rank`.
-    pub fn near_touched(&self, rank: usize) -> bool {
+    pub(crate) fn near_touched(&self, rank: usize) -> bool {
         self.overlay.touched.get(rank).copied().unwrap_or(false)
     }
 
@@ -929,36 +923,36 @@ impl<S: SpawnSubject> SpawnTool<S> {
     ///
     /// Returns an owned spawn rather than a reference, because an edited one
     /// is built here and there is nothing to borrow it from.
-    pub fn spawn_at(&self, index: usize, edits: Option<&Edits>) -> Option<S::Spawn> {
+    pub(crate) fn spawn_at(&self, index: usize, edits: Option<&Edits>) -> Option<S::Spawn> {
         let base = self.base_spawn(index)?;
         Some(edits.and_then(|edits| base.with_edits(edits)).unwrap_or_else(|| base.clone()))
     }
 
     /// The chosen spawn, with the project's edits over it.
-    pub fn chosen_edited(&self, edits: Option<&Edits>) -> Option<S::Spawn> {
+    pub(crate) fn chosen_edited(&self, edits: Option<&Edits>) -> Option<S::Spawn> {
         let base = self.chosen()?;
         Some(edits.and_then(|edits| base.with_edits(edits)).unwrap_or_else(|| base.clone()))
     }
 
     /// The spawn under the pointer, with the project's edits over it.
-    pub fn hovered_edited(&self, edits: Option<&Edits>) -> Option<S::Spawn> {
+    pub(crate) fn hovered_edited(&self, edits: Option<&Edits>) -> Option<S::Spawn> {
         self.edited(self.hovered?, edits)
     }
 
     /// Any spawn on this map by guid, with the project's edits over it.
-    pub fn edited(&self, guid: u64, edits: Option<&Edits>) -> Option<S::Spawn> {
+    pub(crate) fn edited(&self, guid: u64, edits: Option<&Edits>) -> Option<S::Spawn> {
         let base = self.find(guid)?;
         Some(edits.and_then(|edits| base.with_edits(edits)).unwrap_or_else(|| base.clone()))
     }
 
     /// The chosen spawn as a [`Standing`], as the project's edits leave it.
-    pub fn standing(&self, edits: Option<&Edits>) -> Option<Standing> {
+    pub(crate) fn standing(&self, edits: Option<&Edits>) -> Option<Standing> {
         self.chosen_edited(edits).map(|spawn| Standing::of::<S>(&spawn))
     }
 
     /// The rest of the selection as [`Standing`]s. A member no longer on the
     /// map is left out.
-    pub fn member_standings(&self, edits: Option<&Edits>) -> Vec<Standing> {
+    pub(crate) fn member_standings(&self, edits: Option<&Edits>) -> Vec<Standing> {
         self.also
             .iter()
             .filter_map(|&guid| self.edited(guid, edits))
@@ -967,7 +961,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Whether a spawn is selected, as the primary or as a member.
-    pub fn holds(&self, guid: u64) -> bool {
+    pub(crate) fn holds(&self, guid: u64) -> bool {
         self.selected == Some(guid) || self.also.contains(&guid)
     }
 
@@ -982,14 +976,14 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Select one spawn, or none, and drop the rest of the group.
-    pub fn select_only(&mut self, guid: Option<u64>) {
+    pub(crate) fn select_only(&mut self, guid: Option<u64>) {
         self.make_primary(guid);
         self.also.clear();
     }
 
     /// Shift+click: take a spawn out of the group, or add one and make it the
     /// primary. See [`crate::tools::placements::group`].
-    pub fn toggle(&mut self, guid: u64) {
+    pub(crate) fn toggle(&mut self, guid: u64) {
         if self.selected == Some(guid) {
             let next = self.also.pop();
             self.make_primary(next);
@@ -1006,7 +1000,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Make a member the primary, keeping the group.
-    pub fn promote(&mut self, guid: u64) {
+    pub(crate) fn promote(&mut self, guid: u64) {
         let Some(at) = self.also.iter().position(|&had| had == guid) else {
             return;
         };
@@ -1030,7 +1024,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     ///
     /// See `vale_mangos::creature::RESERVED_GUID_BASE` for where the number
     /// comes from and what it costs.
-    pub fn next_guid(&self, edits: &Edits) -> u64 {
+    pub(crate) fn next_guid(&self, edits: &Edits) -> u64 {
         let in_database = self.max_guid.map(|highest| highest + 1).unwrap_or(0);
         let claimed = edits
             .rows()
@@ -1048,7 +1042,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// entry; the values come from [`SpawnSubject::new_spawn`]. The guid is
     /// [`Self::next_guid`]'s and is returned, because the caller selects what
     /// it just placed.
-    pub fn create(&mut self, session: &mut EditSession, known: &S::Known, at: Vec3, orientation: f32, now: f64) -> u64 {
+    pub(crate) fn create(&mut self, session: &mut EditSession, known: &S::Known, at: Vec3, orientation: f32, now: f64) -> u64 {
         let guid = self.next_guid(&session.rows.edits);
         let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
         for change in S::new_spawn(known.entry(), session.map_id, (at.x, at.y, at.z), orientation) {
@@ -1083,7 +1077,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// `None` when the whole row has not been read yet, which is the first
     /// frame or two after a spawn is clicked. Copying from a partly read row
     /// would take the table's defaults for the columns not yet read.
-    pub fn duplicate(&mut self, session: &mut EditSession, now: f64) -> Option<u64> {
+    pub(crate) fn duplicate(&mut self, session: &mut EditSession, now: f64) -> Option<u64> {
         let spawn = self.chosen_edited(Some(&session.rows.edits))?;
         let from = self.spawn_row.as_ref().filter(|held| held.guid == spawn.guid())?;
         let key = S::spawn_key(spawn.guid());
@@ -1134,7 +1128,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// * A spawn the database holds is marked [`Life::Delete`], keeping the
     ///   columns the project had edited, so undoing the removal restores
     ///   those edits instead of losing them.
-    pub fn remove(session: &mut EditSession, guid: u64, now: f64) {
+    pub(crate) fn remove(session: &mut EditSession, guid: u64, now: f64) {
         let key = S::spawn_key(guid);
         let held = session.rows.edits.row(S::SPAWN, &key).cloned();
         let subject = format!("{} {guid} removal", S::SPAWN);
@@ -1156,7 +1150,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Cancel a removal. The column edits the spawn had are kept.
-    pub fn keep(session: &mut EditSession, guid: u64, now: f64) {
+    pub(crate) fn keep(session: &mut EditSession, guid: u64, now: f64) {
         let key = S::spawn_key(guid);
         let mut row = session.rows.edits.row(S::SPAWN, &key).cloned().unwrap_or_default();
         row.life = Life::Update;
@@ -1176,7 +1170,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// The two whole rows the form draws go with it, so after an apply or a
     /// revert the form and the markers show the same reading, and the
     /// picker's matches, which an apply can change.
-    pub fn forget(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.loaded = None;
         self.built_at = None;
         self.template = None;
@@ -1184,30 +1178,12 @@ impl<S: SpawnSubject> SpawnTool<S> {
         self.new_spawn.forget();
     }
 
-    /// Discard every edit this project makes to this subject.
-    ///
-    /// The store is the project's claim on those rows, and it survives both an
-    /// apply and a revert: reverting restores the database and leaves the
-    /// project still changing the same columns, so the next Apply writes them
-    /// again. A revert undoes what reached the server and keeps the work; this
-    /// function abandons the work in one action rather than a field at a time.
-    ///
-    /// Only this subject's tables, not the whole store, which every subject
-    /// shares. The waypoint paths go with the creatures, which alone have any;
-    /// see `EditSession::forget_server_edits`.
-    pub fn discard(session: &mut EditSession) -> (usize, usize) {
-        session.forget_server_edits(
-            |table| vale_mangos::row::table_named(S::TABLES, table).is_some(),
-            S::DISCARDS_PATHS,
-        )
-    }
-
     /// The entry a new template gets.
     ///
     /// The highest of three: the reserved base, one past what the table holds
     /// at any patch, and one past the highest this project has already
     /// claimed. See [`Numbering::next_entry`].
-    pub fn next_entry(&self, edits: &Edits) -> u32 {
+    pub(crate) fn next_entry(&self, edits: &Edits) -> u32 {
         S::NUMBERING.next_entry(self.max_entry, edits)
     }
 
@@ -1222,7 +1198,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// The tool is put into Place with the new template chosen, and the
     /// template window is opened on it: a new template is named and given a
     /// model in the window, then placed in the world with a click.
-    pub fn create_template(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
+    pub(crate) fn create_template(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
         let (entry, known) = self.write_new_template(session, name, patch, now);
         if let Some(known) = known {
             self.open_template(known);
@@ -1232,7 +1208,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
 
     /// Make a new template and open it in the subject's workspace. The tool's
     /// picker and window are left as they are.
-    pub fn create_listed_template(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
+    pub(crate) fn create_listed_template(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
         let (entry, _) = self.write_new_template(session, name, patch, now);
         self.open_listed(entry);
         entry
@@ -1274,7 +1250,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// `None` when the whole row has not been read yet, which is the frame or
     /// two after a template is chosen. Copying from a half-read row would take
     /// the table's defaults for the columns that had not arrived.
-    pub fn copy_template(
+    pub(crate) fn copy_template(
         &mut self,
         session: &mut EditSession,
         subject: &TemplateSubject,
@@ -1290,7 +1266,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
 
     /// A copy of the open row in the subject's workspace, opened there. `None`
     /// on the terms of [`Self::copy_template`].
-    pub fn copy_listed_template(
+    pub(crate) fn copy_listed_template(
         &mut self,
         session: &mut EditSession,
         subject: &TemplateSubject,
@@ -1341,7 +1317,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Open a template in the subject's workspace's form.
-    pub fn open_listed(&mut self, entry: u32) {
+    pub(crate) fn open_listed(&mut self, entry: u32) {
         self.listed.open = Some(entry);
         self.template = None;
         self.created_for = None;
@@ -1360,7 +1336,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// giving it up removes nothing there. A spawn of it this project created
     /// keeps its entry and is a spawn the server refuses to load until the
     /// template exists; the panel says so through the spawn's label.
-    pub fn discard_template(&mut self, session: &mut EditSession, entry: u32, now: f64) {
+    pub(crate) fn discard_template(&mut self, session: &mut EditSession, entry: u32, now: f64) {
         let Some(known) = self.templates.iter().find(|known| known.entry() == entry).cloned() else {
             return;
         };
@@ -1391,7 +1367,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     ///
     /// An entry with no spawn on this map and never searched for is not seen
     /// here and is caught at the apply, which asks the database itself.
-    pub fn entry_taken(&self, entry: u32) -> bool {
+    pub(crate) fn entry_taken(&self, entry: u32) -> bool {
         self.spawns.iter().any(|spawn| spawn.entry() == entry || spawn.read_entry() == entry)
             || self
                 .known
@@ -1414,7 +1390,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// The project's own rows that name the entry follow it here, and the
     /// database's rows follow at the apply. See `crate::server::follow` and
     /// the template table's references.
-    pub fn rekey_template(
+    pub(crate) fn rekey_template(
         &mut self,
         session: &mut EditSession,
         subject: &TemplateSubject,
@@ -1465,7 +1441,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// row back to where the database has it is always allowed: the entry is
     /// taken, and by this row. `Ok(None)` is a move to the entry the row
     /// already has.
-    pub fn plan_template_move(subject: &TemplateSubject, to: u32, taken: bool) -> Result<Option<(Key, Key)>, String> {
+    pub(crate) fn plan_template_move(subject: &TemplateSubject, to: u32, taken: bool) -> Result<Option<(Key, Key)>, String> {
         let row = vale_mangos::row::Numbered {
             entry: subject.entry,
             read_entry: subject.read_entry,
@@ -1476,7 +1452,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// What the template window is about; see [`TemplateSubject`].
-    pub fn template_subject(&self, edits: &Edits) -> Option<TemplateSubject> {
+    pub(crate) fn template_subject(&self, edits: &Edits) -> Option<TemplateSubject> {
         match self.mode {
             crate::tools::placements::place::Mode::Place => {
                 let known = self.new_spawn.chosen.as_ref()?;
@@ -1510,7 +1486,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// and its claim are two things: an unedited template at the old entry and
     /// a claim nobody can open. Every row is reset first, so a move taken back
     /// returns the row to the entry it was read at.
-    pub fn fold_template_moves(&mut self, edits: &Edits) {
+    pub(crate) fn fold_template_moves(&mut self, edits: &Edits) {
         let moves: Vec<(u32, u32, u32)> = edits
             .moves(S::TEMPLATE)
             .filter_map(|(from, to)| {
@@ -1582,7 +1558,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Whether a read is in flight, for the panel.
-    pub fn reading(&self) -> bool {
+    pub(crate) fn reading(&self) -> bool {
         self.task.is_some()
     }
 
@@ -1591,7 +1567,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     ///
     /// The counterpart of `Placing::armed()`, with the same two conditions:
     /// switching to Select or pressing `Escape` makes it false.
-    pub fn placing(&self) -> bool {
+    pub(crate) fn placing(&self) -> bool {
         self.mode == crate::tools::placements::place::Mode::Place && self.new_spawn.chosen.is_some()
     }
 
@@ -1599,7 +1575,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// placer's step when `snap`. Does nothing before the ghost has a facing.
     /// `,` and `.` call it from `keys::keys` and `Alt` with the mouse from
     /// `crate::tools::placements::gizmo::spin`.
-    pub fn turn_ghost(&mut self, degrees: f32, snap: bool) {
+    pub(crate) fn turn_ghost(&mut self, degrees: f32, snap: bool) {
         if let Some(facing) = self.ghost_facing {
             self.ghost_facing = Some(turned(facing, degrees, snap));
         }
@@ -1607,7 +1583,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
 }
 
 /// Registers one subject's [`SpawnTool`] and its systems.
-pub struct SpawnToolPlugin<S>(PhantomData<fn() -> S>);
+pub(crate) struct SpawnToolPlugin<S>(PhantomData<fn() -> S>);
 
 impl<S> Default for SpawnToolPlugin<S> {
     fn default() -> SpawnToolPlugin<S> {

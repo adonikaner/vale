@@ -73,7 +73,7 @@ impl UiTextures {
     }
 
     /// The same picture with a repeating sampler, for uv past 1.
-    pub fn tiled(
+    pub(crate) fn tiled(
         &mut self,
         images: &mut Assets<Image>,
         assets: &GameAssets,
@@ -87,7 +87,7 @@ impl UiTextures {
     }
 
     /// The eight pieces of an edge strip, cut on first use.
-    pub fn edge_pieces(
+    pub(crate) fn edge_pieces(
         &mut self,
         images: &mut Assets<Image>,
         assets: &GameAssets,
@@ -129,7 +129,7 @@ impl UiTextures {
     /// an absence: the index resolves 2,356 of 2,356 in the shipped chain, so a
     /// miss here means a broken install, not the common case the plain cache's
     /// kept misses are for.
-    pub fn minimap_texture(
+    pub(crate) fn minimap_texture(
         &mut self,
         images: &mut Assets<Image>,
         assets: &GameAssets,
@@ -153,12 +153,12 @@ impl UiTextures {
     /// so without this a picture redrawn after the first playtest was never
     /// seen again. Matched without case, since the index and the writer spell
     /// the directory differently.
-    pub fn forget_minimap(&mut self, path: &str) {
+    pub(crate) fn forget_minimap(&mut self, path: &str) {
         self.minimap.retain(|key, _| !key.eq_ignore_ascii_case(path));
     }
 
     /// …and all of them, for a host that has changed more than it can name.
-    pub fn forget_all_minimaps(&mut self) {
+    pub(crate) fn forget_all_minimaps(&mut self) {
         self.minimap.clear();
     }
 
@@ -166,7 +166,7 @@ impl UiTextures {
     /// drawn in the current pass. Inside a building one pass can draw more
     /// than sixteen pictures, and evicting those would decode them again on
     /// every rebuild.
-    pub fn trim_minimap(&mut self) {
+    pub(crate) fn trim_minimap(&mut self) {
         while self.minimap.len() > MINIMAP_CACHE {
             let Some((oldest, seen)) = self
                 .minimap
@@ -205,6 +205,23 @@ impl UiTextures {
         let handle = images.add(image([1, 1], &mut pixels, ImageAddressMode::ClampToEdge));
         self.white = Some(handle.clone());
         handle
+    }
+}
+
+/// Forget the minimap pictures a [`crate::assets::PathsChanged`] names. The
+/// other interface art is read once per session and is not forgotten.
+pub(crate) fn forget_changed_minimaps(
+    mut changed: MessageReader<crate::assets::PathsChanged>,
+    mut textures: ResMut<UiTextures>,
+) {
+    for change in changed.read() {
+        if change.all {
+            textures.forget_all_minimaps();
+            continue;
+        }
+        for path in &change.paths {
+            textures.forget_minimap(path);
+        }
     }
 }
 

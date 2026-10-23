@@ -82,49 +82,49 @@
 //!                addon in the folder, which ones each character has enabled,
 //!                and the loader `LoadAddOn` runs
 //! ```
-pub mod addons;
+pub(crate) mod addons;
 pub mod auras;
 pub mod bank;
 pub mod channels;
-pub mod charcreate;
-pub mod container;
-pub mod craft;
+pub(crate) mod charcreate;
+pub(crate) mod container;
+pub(crate) mod craft;
 pub mod glue;
 pub mod gossip;
-pub mod keybindings;
+pub(crate) mod keybindings;
 pub mod loot;
 pub mod mail;
-pub mod pagetext;
+pub(crate) mod pagetext;
 pub mod duel;
-pub mod summon;
-pub mod worldstate;
-pub mod tutorial;
-pub mod raidtarget;
-pub mod questshare;
-pub mod uioptions;
-pub mod guild;
+pub(crate) mod summon;
+pub(crate) mod worldstate;
+pub(crate) mod tutorial;
+pub(crate) mod raidtarget;
+pub(crate) mod questshare;
+pub(crate) mod uioptions;
+pub(crate) mod guild;
 pub mod inspect;
-pub mod lootroll;
-pub mod merchant;
-pub mod paperdoll;
-pub mod party;
+pub(crate) mod lootroll;
+pub(crate) mod merchant;
+pub(crate) mod paperdoll;
+pub(crate) mod party;
 pub mod pet;
-pub mod petition;
+pub(crate) mod petition;
 pub mod quest;
 pub mod raid;
 pub mod reputation;
-pub mod shapeshift;
+pub(crate) mod shapeshift;
 pub mod skills;
-pub mod stable;
-pub mod tabard;
+pub(crate) mod stable;
+pub(crate) mod tabard;
 pub mod trade;
-pub mod social;
+pub(crate) mod social;
 pub mod spellbook;
 pub mod talent;
 pub mod taxi;
-pub mod tradeskill;
+pub(crate) mod tradeskill;
 pub mod trainer;
-pub mod worldmap;
+pub(crate) mod worldmap;
 
 /// The value of type `T` in the state's app data, inserted as `T::default()`
 /// if there is none yet, and cloned out.

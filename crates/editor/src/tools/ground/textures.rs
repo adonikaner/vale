@@ -91,22 +91,22 @@ use bevy::prelude::*;
 /// and one step is clamped to all of that distance, so a large number means
 /// "immediately". Both limits were guesses before (100 yards and 10), and they
 /// refused work the tool can do.
-pub const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
-pub const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
+pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
+pub(crate) const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 
 /// The texture tool's settings.
 #[derive(Resource, Debug, Clone)]
-pub struct Textures {
-    pub brush: PaintBrush,
+pub(crate) struct Textures {
+    pub(crate) brush: PaintBrush,
     /// Every `Tileset\` path the archives and the project name, sorted. Read
     /// lazily, and again when the project's files change. See
     /// [`read_catalogue`].
-    pub catalogue: Vec<String>,
+    pub(crate) catalogue: Vec<String>,
     /// The `EditSession::files_revision` [`Self::catalogue`] was read at.
     catalogue_for: Option<u64>,
     /// What the panel's search box holds. Held here rather than in the panel so
     /// that it survives the tool being switched away from and back.
-    pub search: String,
+    pub(crate) search: String,
     /// Which folder the picker is showing, as a lower-case path prefix ending
     /// in a separator.
     ///
@@ -115,7 +115,7 @@ pub struct Textures {
     /// texture has to be found by typing. The archives' directories are the
     /// game's own grouping: `Tileset\Elwynn\` is the set a zone was painted
     /// with.
-    pub folder: String,
+    pub(crate) folder: String,
     /// The chunk the panel is about, when it is not the one under the pointer.
     ///
     /// The layer list has to be reachable. A person who wants to take a layer
@@ -132,7 +132,7 @@ pub struct Textures {
     /// [`PIN`] pins the chunk under the pointer. A stroke that is refused pins
     /// the chunk that refused it, which is the case the list exists for. The
     /// panel then already shows why the stroke stopped.
-    pub pinned: Option<((u32, u32), usize)>,
+    pub(crate) pinned: Option<((u32, u32), usize)>,
 }
 
 impl Default for Textures {
@@ -156,7 +156,7 @@ impl Textures {
     /// Put a ground texture the Import Texture dialog has just written on
     /// the brush, with the picker open on its folder. The catalogue lists it
     /// once it reads the project's files again.
-    pub fn take_imported(&mut self, vpath: &str) {
+    pub(crate) fn take_imported(&mut self, vpath: &str) {
         let path = vpath.to_ascii_lowercase();
         self.brush.effect_id = 0;
         self.folder = match path.rfind('\\') {
@@ -178,9 +178,9 @@ const PIN: KeyCode = KeyCode::Space;
 /// Where the tileset picker starts. Everything the catalogue holds is under
 /// it, because the catalogue comes from `list_prefix("Tileset\\")`. A level
 /// above would be one folder with everything in it.
-pub const ROOT: &str = "tileset\\";
+pub(crate) const ROOT: &str = "tileset\\";
 
-pub struct TextureToolPlugin;
+pub(crate) struct TextureToolPlugin;
 
 impl Plugin for TextureToolPlugin {
     fn build(&self, app: &mut App) {
@@ -878,22 +878,22 @@ fn refused(marks: &mut crate::marks::Marks, session: &EditSession, at: Vec3, rad
 
 /// One row of the chunk-under-the-pointer list, as the panel needs it.
 #[derive(Debug, Clone)]
-pub struct Layer {
-    pub texture: String,
+pub(crate) struct Layer {
+    pub(crate) texture: String,
     /// How much of the chunk this layer shows, 0 to 1. It is not the layer's
     /// own alpha. See `vale_edit::adt::alpha::Paint::coverage`.
-    pub coverage: f32,
+    pub(crate) coverage: f32,
     /// What it grows: the `GroundEffectTexture` row, zero for nothing.
-    pub effect_id: u32,
+    pub(crate) effect_id: u32,
     /// How its texture moves: `(direction 0..7, speed 0..7, on)`, which is
     /// `MCLY`'s texture animation. See
     /// `vale_assets::world::adt::layer_flags::ANIMATION_ROTATION`.
-    pub animation: (u32, u32, bool),
+    pub(crate) animation: (u32, u32, bool),
 }
 
 /// Which chunk the layer list is about: the pinned one, or the one under the
 /// pointer.
-pub fn shown(textures: &Textures, cursor: &Cursor) -> Option<((u32, u32), usize)> {
+pub(crate) fn shown(textures: &Textures, cursor: &Cursor) -> Option<((u32, u32), usize)> {
     textures.pinned.or_else(|| cursor.tile.zip(cursor.chunk))
 }
 
@@ -906,7 +906,7 @@ pub fn shown(textures: &Textures, cursor: &Cursor) -> Option<((u32, u32), usize)
 /// not change.
 ///
 /// `None` for a tile that is not open.
-pub fn layers_of(session: &EditSession, coord: (u32, u32), chunk: usize) -> Option<Vec<Layer>> {
+pub(crate) fn layers_of(session: &EditSession, coord: (u32, u32), chunk: usize) -> Option<Vec<Layer>> {
     let tile = session.tiles.get(&coord)?;
     let paint = vale_edit::adt::alpha::paint(tile.chunk(chunk)?);
     let names = tile.texture_names();
@@ -937,7 +937,7 @@ pub fn layers_of(session: &EditSession, coord: (u32, u32), chunk: usize) -> Opti
 /// texture: `GroundEffectTexture` is keyed by an id that only `MCLY` carries.
 /// A brush that takes its id from here plants what the zone plants. A person
 /// who wants something else picks from [`effect_counts`].
-pub fn usual_effect(session: &EditSession, path: &str) -> Option<u32> {
+pub(crate) fn usual_effect(session: &EditSession, path: &str) -> Option<u32> {
     effect_counts(session, path).with.first().map(|&(id, _)| id)
 }
 
@@ -948,12 +948,12 @@ pub fn usual_effect(session: &EditSession, path: &str) -> Option<u32> {
 /// It reads every chunk of every open tile (their `MCLY` records, not their
 /// blend maps), so a panel works it out once when its list opens and keeps
 /// it while the list stays open.
-pub struct EffectCounts {
-    pub with: Vec<(u32, usize)>,
-    pub elsewhere: Vec<(u32, usize)>,
+pub(crate) struct EffectCounts {
+    pub(crate) with: Vec<(u32, usize)>,
+    pub(crate) elsewhere: Vec<(u32, usize)>,
 }
 
-pub fn effect_counts(session: &EditSession, path: &str) -> EffectCounts {
+pub(crate) fn effect_counts(session: &EditSession, path: &str) -> EffectCounts {
     type Counts = bevy::platform::collections::HashMap<u32, usize>;
     let (mut with, mut elsewhere): (Counts, Counts) = Default::default();
     for tile in session.tiles.values() {
@@ -994,7 +994,7 @@ pub fn effect_counts(session: &EditSession, path: &str) -> EffectCounts {
 /// on the history. The entry is folded by `now`, so a dragged number field is
 /// one press of undo. The tile is read again, since the foliage is built from
 /// the layer.
-pub fn set_layer_effect(
+pub(crate) fn set_layer_effect(
     session: &mut EditSession,
     coord: (u32, u32),
     chunk: usize,
@@ -1045,7 +1045,7 @@ pub fn set_layer_effect(
 /// `Adt::to_mesh` groups chunks by their textures and their scroll. A chunk
 /// that starts moving therefore has to leave the group of still chunks it was
 /// grouped with. See `vale_assets::world::adt::TerrainDraw::scrolls`.
-pub fn set_layer_animation(
+pub(crate) fn set_layer_animation(
     session: &mut EditSession,
     coord: (u32, u32),
     chunk: usize,
@@ -1103,7 +1103,7 @@ pub fn set_layer_animation(
 ///
 /// It changes the chunk's texture set, so the tile is read again rather than
 /// patched. See this module's own comment on the two routes.
-pub fn drop_layer(session: &mut EditSession, coord: (u32, u32), chunk: usize, layer: usize) {
+pub(crate) fn drop_layer(session: &mut EditSession, coord: (u32, u32), chunk: usize, layer: usize) {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
         return;
@@ -1152,7 +1152,7 @@ pub fn drop_layer(session: &mut EditSession, coord: (u32, u32), chunk: usize, la
 /// is the operation. This function names the texture in the tile's own `MTEX`
 /// and records the undo entry, as [`set_base`] does. As there, the tile is
 /// read again, since the chunk's texture set changed.
-pub fn swap_layer(
+pub(crate) fn swap_layer(
     session: &mut EditSession,
     coord: (u32, u32),
     chunk: usize,
@@ -1206,7 +1206,7 @@ pub fn swap_layer(
 ///
 /// `vale_edit::adt::alpha::Paint::set_base` is the operation. This function
 /// names the texture in the tile's own `MTEX` and records the undo entry.
-pub fn set_base(session: &mut EditSession, coord: (u32, u32), chunk: usize, path: &str) {
+pub(crate) fn set_base(session: &mut EditSession, coord: (u32, u32), chunk: usize, path: &str) {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
         return;
@@ -1244,7 +1244,7 @@ pub fn set_base(session: &mut EditSession, coord: (u32, u32), chunk: usize, path
 /// With [`set_base`], this is how a chunk's paint is cleared. Dropping layers
 /// one at a time also works, but it is three presses and the index of each
 /// remaining layer shifts after every one.
-pub fn clear_paint(session: &mut EditSession, coord: (u32, u32), chunk: usize) {
+pub(crate) fn clear_paint(session: &mut EditSession, coord: (u32, u32), chunk: usize) {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
         return;
@@ -1278,7 +1278,7 @@ pub fn clear_paint(session: &mut EditSession, coord: (u32, u32), chunk: usize) {
 ///
 /// It records one undo entry for the whole tile rather than 256, because it is
 /// one action and undoing it a chunk at a time would be 256 presses.
-pub fn set_tile_base(session: &mut EditSession, coord: (u32, u32), path: &str) -> usize {
+pub(crate) fn set_tile_base(session: &mut EditSession, coord: (u32, u32), path: &str) -> usize {
     let key = session.key(coord);
     let Some(tile) = session.tiles.get_mut(&coord) else {
         return 0;
@@ -1327,7 +1327,7 @@ pub fn set_tile_base(session: &mut EditSession, coord: (u32, u32), path: &str) -
 /// how the listing is keyed. The archives answer either spelling, so a stroke
 /// writes a lower-case path into `MTEX` where Blizzard's own tools wrote mixed
 /// case. Nothing reads it case-sensitively.
-pub fn leaf(path: &str) -> &str {
+pub(crate) fn leaf(path: &str) -> &str {
     let file = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let rest = &path[..path.len() - file.len()];
     let folder = rest.trim_end_matches(['\\', '/']);
@@ -1343,13 +1343,13 @@ pub fn leaf(path: &str) -> &str {
 /// The five falloffs, as a list the panel can offer. It is the height brush's
 /// own list, named again here so the panel does not reach into the other tool's
 /// file for it.
-pub const FALLOFFS: [(&str, Falloff); 5] = super::terrain::FALLOFFS;
+pub(crate) const FALLOFFS: [(&str, Falloff); 5] = super::terrain::FALLOFFS;
 
 /// The three footprints, as a list the panel can offer. This and [`FALLOFFS`]
 /// are the height brush's own lists and not a second pair: a texture brush
 /// whose edge did not match the height brush's would make the two tools
 /// disagree about where the pointer is.
-pub const SHAPES: [(&str, vale_edit::ops::brush::Shape); 3] = super::terrain::SHAPES;
+pub(crate) const SHAPES: [(&str, vale_edit::ops::brush::Shape); 3] = super::terrain::SHAPES;
 
 #[cfg(test)]
 mod tests {

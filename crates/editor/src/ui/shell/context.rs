@@ -25,7 +25,7 @@ use vale_client::assets::GameAssets;
 const WIDTH: f32 = 230.0;
 
 /// Draw the open menu, if there is one, and carry out what is pressed.
-pub fn draw(
+pub(crate) fn draw(
     ctx: &egui::Context,
     session: &mut EditSession,
     editing: &mut Editing,

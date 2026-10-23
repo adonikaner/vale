@@ -19,22 +19,20 @@ use vale_mangos::row::{Edits, Key, Life};
 
 /// What an Apply did.
 #[derive(Debug, Default)]
-pub struct Applied {
+pub(crate) struct Applied {
     /// Rows and whole sets in the plan.
-    pub rows: usize,
+    pub(crate) rows: usize,
     /// Rows the plan's own statements affected.
-    pub affected: u64,
-    /// How many rows the revert file covers after this Apply.
-    pub newly_undoable: usize,
+    pub(crate) affected: u64,
     /// How many rows the project had applied and no longer claims, which were
     /// put back and not written again. See [`reconcile`].
-    pub taken_back: usize,
+    pub(crate) taken_back: usize,
 }
 
 /// An Apply, with everything it needs to run off the main thread: the plan,
 /// the project handle its revert file is written through, and where the
 /// database is. See [`crate::server::queue`].
-pub struct ApplyJob {
+pub(crate) struct ApplyJob {
     plan: Plan,
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
@@ -48,16 +46,16 @@ pub struct ApplyJob {
 }
 
 /// What running an [`ApplyJob`] answered, for the main thread's half.
-pub struct ApplyDone {
+pub(crate) struct ApplyDone {
     subject: &'static dyn RowSubject,
     signature: u64,
     reloads: Vec<&'static str>,
-    pub result: Result<Applied, String>,
+    pub(crate) result: Result<Applied, String>,
 }
 
 impl ApplyDone {
     /// What the status line says about it.
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         let done = match &self.result {
             Ok(done) if done.rows == 0 && done.taken_back == 0 => return "nothing to apply".to_string(),
             Ok(done) => done,
@@ -83,7 +81,7 @@ impl ApplyDone {
 /// The main thread's first half of an Apply: the plan, and whether there is
 /// anything to do. `None` when the project claims no row of the subject and
 /// has applied none.
-pub fn prepare_apply(
+pub(crate) fn prepare_apply(
     session: &EditSession,
     server: &ServerSettings,
     subject: &'static dyn RowSubject,
@@ -134,7 +132,6 @@ impl ApplyJob {
             Ok(Applied {
                 rows: self.plan.count(),
                 affected: done.affected,
-                newly_undoable: done.undoable,
                 taken_back: done.taken_back,
             })
         })();
@@ -152,7 +149,7 @@ impl ApplyJob {
 /// that finished, so the panel can tell "applied" from "applied, and changed
 /// since", and a failure leaves the project saying it has applied nothing
 /// rather than claiming a change that did not land.
-pub fn finish_apply(session: &mut EditSession, reloads: &mut Reloads, done: &ApplyDone) {
+pub(crate) fn finish_apply(session: &mut EditSession, reloads: &mut Reloads, done: &ApplyDone) {
     session.wrote_the_database();
     session.applied[done.subject.subject().index()] = done.result.as_ref().ok().map(|_| done.signature);
     for table in &done.reloads {
@@ -162,7 +159,7 @@ pub fn finish_apply(session: &mut EditSession, reloads: &mut Reloads, done: &App
 
 /// An Apply as one step of [`crate::server::stack`], which is the only way it
 /// runs. `None` when there is nothing to apply.
-pub fn apply_step(
+pub(crate) fn apply_step(
     session: &EditSession,
     server: &ServerSettings,
     subject: &'static dyn RowSubject,
@@ -216,7 +213,7 @@ fn undo_of_a_row(
 }
 
 /// A Put back, with everything it needs to run off the main thread.
-pub struct RevertJob {
+pub(crate) struct RevertJob {
     project: vale_edit::project::Project,
     at: vale_mangos::conn::Where,
     vpath: &'static str,
@@ -224,7 +221,7 @@ pub struct RevertJob {
 
 /// The main thread's first half of a Put back: `None` when this project has
 /// applied nothing of the subject.
-pub fn prepare_revert(
+pub(crate) fn prepare_revert(
     session: &EditSession,
     server: &ServerSettings,
     subject: &'static dyn RowSubject,
@@ -254,7 +251,7 @@ impl RevertJob {
 /// The main thread's second half of a Put back: nothing this project says is
 /// in the database, and every reload of the subject is asked for, since the
 /// revert file does not say which tables it touched.
-pub fn finish_revert(session: &mut EditSession, reloads: &mut Reloads, subject: &'static dyn RowSubject) {
+pub(crate) fn finish_revert(session: &mut EditSession, reloads: &mut Reloads, subject: &'static dyn RowSubject) {
     session.applied[subject.subject().index()] = None;
     session.wrote_the_database();
     for table in subject.reloads() {
@@ -264,7 +261,7 @@ pub fn finish_revert(session: &mut EditSession, reloads: &mut Reloads, subject: 
 
 /// A Put back as one step of [`crate::server::stack`]: `None` when this
 /// project has applied nothing of the subject.
-pub fn revert_step(
+pub(crate) fn revert_step(
     session: &EditSession,
     server: &ServerSettings,
     subject: &'static dyn RowSubject,
@@ -303,7 +300,7 @@ pub fn revert_step(
 ///
 /// [`OnTheServer::current`] is the half the file cannot answer: whether what
 /// the project says now is what was applied. See [`Plan::signature`].
-pub struct OnTheServer {
+pub(crate) struct OnTheServer {
     undo: Undo,
     /// Whether the plan's signature is the one the last Apply used. `false`
     /// when nothing has been applied this session, which is also what it is
@@ -314,7 +311,7 @@ pub struct OnTheServer {
 impl OnTheServer {
     /// The revert file alone, which answers [`Self::covers`]. [`Self::current`]
     /// is `false`, which is the safe reading: it only ever adds a caveat.
-    pub fn read(session: &EditSession, subject: &'static dyn RowSubject) -> OnTheServer {
+    pub(crate) fn read(session: &EditSession, subject: &'static dyn RowSubject) -> OnTheServer {
         OnTheServer {
             undo: Undo::open_at(&session.project, subject.revert_vpath()).unwrap_or(Undo { entries: Vec::new() }),
             current: false,
@@ -324,7 +321,7 @@ impl OnTheServer {
     /// The same with [`Self::current`] answered, which needs the plan. The
     /// plan is the caller's because building one walks the store and formats
     /// every statement it comes to, and the caller has already built one.
-    pub fn read_with(session: &EditSession, plan: &Plan) -> OnTheServer {
+    pub(crate) fn read_with(session: &EditSession, plan: &Plan) -> OnTheServer {
         let index = plan.subject.subject().index();
         OnTheServer {
             current: session.applied[index].is_some_and(|had| had == plan.signature()),
@@ -333,25 +330,25 @@ impl OnTheServer {
     }
 
     /// How many rows this project has applied and can take back.
-    pub fn rows(&self) -> usize {
+    pub(crate) fn rows(&self) -> usize {
         self.undo.entries.len()
     }
 
     /// Whether this project has applied that row.
-    pub fn covers(&self, table: &str, key: &Key) -> bool {
+    pub(crate) fn covers(&self, table: &str, key: &Key) -> bool {
         self.undo.covers(table, key)
     }
 
     /// Every row this project has applied, by table and key: what
     /// [`Self::covers`] answers from, for a caller that keeps it.
-    pub fn written(&self) -> Vec<(String, Key)> {
+    pub(crate) fn written(&self) -> Vec<(String, Key)> {
         self.undo.entries.iter().map(|(table, key, _)| (table.clone(), key.clone())).collect()
     }
 
     /// Whether what the project says now is what it applied. `false` after a
     /// relaunch even for a project that applied everything last session, so a
     /// caller uses it to add a caveat and never to take one away.
-    pub fn current(&self) -> bool {
+    pub(crate) fn current(&self) -> bool {
         self.current
     }
 }

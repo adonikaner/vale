@@ -216,7 +216,7 @@ pub struct Event {
     pub creature_id: u32,
     pub condition_id: u32,
     pub event_type: u32,
-    pub phase_mask: u32,
+    pub(crate) phase_mask: u32,
     pub chance: u32,
     pub flags: u32,
     pub params: [i32; 4],
