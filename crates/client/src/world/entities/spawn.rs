@@ -18,13 +18,22 @@ pub(super) fn rebuild_changed_models(
             Option<&SunScale>,
             Option<&crate::render::building_lights::UnitLamps>,
             Option<&Children>,
+            Has<Redisplay>,
         ),
         // **`Changed<Sheath>` is load-bearing.** Drawing a weapon moves it from
         // the hip to the hand, which is a different set of attached models — and
         // it is now a *client-side* decision, so nothing about `WorldEntity`
         // changes when it happens. Without this the sword stays on the back
         // until something else about the unit moves.
-        Or<(Changed<WorldEntity>, Changed<SunScale>, Changed<crate::render::building_lights::UnitLamps>, Changed<Sheath>)>,
+        // `Added<Redisplay>` is a display row edited under a standing model;
+        // see `reread_changed_tables`.
+        Or<(
+            Changed<WorldEntity>,
+            Changed<SunScale>,
+            Changed<crate::render::building_lights::UnitLamps>,
+            Changed<Sheath>,
+            Added<Redisplay>,
+        )>,
     >,
     // `AttachedTo` is in the filter for the attachment **roots**: they carry
     // no `EntityPart` (they draw nothing), and their drawn parts are
@@ -43,12 +52,12 @@ pub(super) fn rebuild_changed_models(
     displays: Res<DisplayCache>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Rebuild);
-    for (entity, world, sheath, mut model, shade, lamps, children) in &mut entities {
+    for (entity, world, sheath, mut model, shade, lamps, children, redisplay) in &mut entities {
         // A unit is dressed sun-lit wherever it stands — see `EntityModel::room`.
         let room = None;
         let sun = shade.map_or(crate::render::models::sun_scale::NEUTRAL, |s| s.now());
         let lamps = lamps.copied().unwrap_or_default();
-        if model.matches(world, room) {
+        if !redisplay && model.matches(world, room) {
             // Still the right batch list — but a different sun scale under the
             // same dressing is possible, and it is not in the materials: it
             // rides each part's `MeshTag`, so it is rewritten in place. See
@@ -113,8 +122,10 @@ pub(super) fn rebuild_changed_models(
         // **The spell effects come off the dying model rather than down with
         // it** — see [`CarriedEffects`], which is where the whole argument is.
         // Only while the skeleton underneath them is the same one, which is what
-        // an unchanged display id means and is `matches`' own first test.
-        let carried = (world.display_id == Some(model.display_id)).then(|| CarriedEffects {
+        // an unchanged display id means and is `matches`' own first test. A
+        // [`Redisplay`] keeps the id and may change the model, so it carries
+        // nothing.
+        let carried = (!redisplay && world.display_id == Some(model.display_id)).then(|| CarriedEffects {
             cast: std::mem::take(&mut model.cast),
             impact: std::mem::take(&mut model.impact),
             state: std::mem::take(&mut model.state),
@@ -160,7 +171,8 @@ pub(super) fn rebuild_changed_models(
         rebuilt
             .remove::<EntityModel>()
             .remove::<Playback>()
-            .remove::<super::pose::Posed>();
+            .remove::<super::pose::Posed>()
+            .remove::<Redisplay>();
         if let Some(carried) = carried {
             rebuilt.insert(carried);
         }

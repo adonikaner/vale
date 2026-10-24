@@ -629,7 +629,7 @@ pub(crate) fn arrange_mannequin(
                 .with_rotation(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)),
             Visibility::default(),
             vale_client::world::entities::Sheath::seeded(0),
-            RenderLayers::from_layers(&[0, crate::preview::stage::STAGE_LAYER]),
+            RenderLayers::layer(crate::preview::stage::STAGE_LAYER),
             Mannequin { display_id },
         ));
         // A new body is a new skeleton: whatever was hanging went with the old

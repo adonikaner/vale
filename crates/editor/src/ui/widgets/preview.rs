@@ -31,16 +31,17 @@ pub(in crate::ui) fn preview_pane_at(
     path: &str,
     largest: f32,
 ) {
+    let pane = crate::preview::portraits::pane_id(ui);
     ui.horizontal(|ui| {
         theme::heading(ui, "Preview");
-        if portraits.large_turned() {
+        if portraits.large_turned(pane) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button("reset")
                     .on_hover_text("Reset the preview to the camera angle the list rows use.")
                     .clicked()
                 {
-                    portraits.reset_large_turn();
+                    portraits.reset_large_turn(pane);
                 }
             });
         }
@@ -49,7 +50,7 @@ pub(in crate::ui) fn preview_pane_at(
     // one aspect, so a box of another shape would stretch the model.
     let side = ui.available_width().min(largest);
     ui.vertical_centered(|ui| {
-        crate::preview::portraits::paint_large(ui, portraits, path, side);
+        crate::preview::portraits::paint_large(ui, portraits, pane, path, side);
     });
 }
 

@@ -53,6 +53,11 @@ pub(crate) fn animate(
         (&GlobalTransform, &bevy::camera::primitives::Frustum),
         (With<crate::world::camera::WorldCamera>, Without<Joint>),
     >,
+    // A host's own cameras, for a rig on a host layer: it is culled against,
+    // and its billboards turned toward, the camera that draws it. `Option`
+    // for the headless harnesses, which build no render plugins. See
+    // [`crate::render::views`].
+    views: Option<Res<crate::render::views::HostViews>>,
     mut entities: Query<
         (
             &WorldEntity,
@@ -71,6 +76,7 @@ pub(crate) fn animate(
             Option<&mut Mount>,
             // Where this frame's joint matrices go; see [`Posed`].
             &mut Posed,
+            Option<&bevy::camera::visibility::RenderLayers>,
         ),
         (Without<Joint>, Without<AttachedTo>),
     >,
@@ -95,7 +101,8 @@ pub(crate) fn animate(
     // Global-sequence tracks run on wall-clock time rather than on the playing
     // animation: blinking eyes, a turning mill wheel.
     let now_ms = (now * 1000.0) as u32;
-    let camera = camera.iter().next().map(|(placement, frustum)| (*placement, frustum.clone()));
+    let world_camera = camera.iter().next().map(|(placement, frustum)| (*placement, frustum.clone()));
+    let views = views.as_deref();
 
     // Both parts of the emote system use one lookup; see
     // `vale_assets::tables::dbc::Emotes`, where the split is explained.
@@ -139,7 +146,13 @@ pub(crate) fn animate(
     // in the parallel half.
     let shared: &Parallel<RigWrites> = &writes;
     entities.par_iter_mut().for_each(
-        |(world, sheath, placement, model, mut play, mut stance, mut mount, mut posed)| {
+        |(world, sheath, placement, model, mut play, mut stance, mut mount, mut posed, layers)| {
+            // The camera this rig is seen from: a host's, for a rig on a host
+            // layer that a host camera draws, and otherwise the world's.
+            let host_camera = views
+                .and_then(|views| views.of(layers))
+                .map(|view| (view.placement, view.frustum));
+            let camera = host_camera.as_ref().or(world_camera.as_ref());
             // Resolved before the state is chosen, because a held emote is the
             // state. Skipped for zero, which the field almost always holds.
             let held = (world.emote_state != 0)
@@ -206,7 +219,7 @@ pub(crate) fn animate(
             // volume the part meshes are culled by, so a drawable part never
             // uses a stale pose. The far plane is not tested, which errs
             // toward posing.
-            if let Some((_, frustum)) = &camera {
+            if let Some((_, frustum)) = camera {
                 // The larger of the two rigs, because the mount is drawn from
                 // this pose too and a horse is larger than the gnome on it.
                 // Each radius is in its own model's yards, so the mount's is
@@ -232,7 +245,7 @@ pub(crate) fn animate(
                     &mut stance,
                     mount.as_deref_mut(),
                     &facing,
-                    camera.as_ref(),
+                    camera,
                     ground.as_ref(),
                     elapsed,
                     now,

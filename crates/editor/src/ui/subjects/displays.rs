@@ -233,7 +233,8 @@ fn preview(
         };
         match key {
             Some(key) => {
-                crate::preview::portraits::paint_large(ui, portraits, &key, 120.0);
+                let pane = crate::preview::portraits::pane_id(ui);
+                crate::preview::portraits::paint_large(ui, portraits, pane, &key, 120.0);
             }
             None => {
                 let (rect, _) =

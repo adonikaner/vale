@@ -322,17 +322,26 @@ fn fly_missiles(
         &GlobalTransform,
         (With<crate::world::camera::WorldCamera>, Without<Joint>, Without<Missile>),
     >,
+    // A missile on a host layer is billboarded toward the camera that draws
+    // it. See [`crate::render::views`].
+    views: Res<crate::render::views::HostViews>,
     targets: Query<(&Transform, Option<&EntityModel>), Without<Missile>>,
-    mut missiles: Query<(Entity, &mut Missile, &mut Transform)>,
+    mut missiles: Query<(
+        Entity,
+        &mut Missile,
+        &mut Transform,
+        Option<&bevy::camera::visibility::RenderLayers>,
+    )>,
     mut joints: Query<&mut GlobalTransform, With<Joint>>,
     mut tags: Query<&mut bevy::mesh::MeshTag, With<EntityPart>>,
 ) {
     let now = time.elapsed_secs();
     let now_ms = (now * 1000.0) as u32;
     let step = time.delta_secs();
-    let camera = camera.iter().next().copied();
+    let world_camera = camera.iter().next().copied();
 
-    for (entity, mut missile, mut placement) in &mut missiles {
+    for (entity, mut missile, mut placement, layers) in &mut missiles {
+        let camera = views.of(layers).map(|view| view.placement).or(world_camera);
         // A victim that is still in the world is followed; one that is not
         // leaves the last aim point standing, so the missile completes rather
         // than stopping in mid-air.
@@ -390,6 +399,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.init_resource::<crate::world::entities::PendingImpacts>();
+        app.init_resource::<crate::render::views::HostViews>();
         app.add_systems(Update, fly_missiles);
         app
     }

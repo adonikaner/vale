@@ -687,6 +687,10 @@ pub(crate) fn simulate(
     tuning: Res<crate::render::tuning::WorldTuning>,
     mut meshes: ResMut<Assets<Mesh>>,
     camera: Query<(&GlobalTransform, &Frustum), With<crate::world::camera::WorldCamera>>,
+    // A host's own cameras: an emitter on a host layer is billboarded toward,
+    // and takes its emission distance from, the camera that draws it. See
+    // [`crate::render::views`].
+    views: Res<crate::render::views::HostViews>,
     frames: Query<&GlobalTransform, Without<Emitter>>,
     mut emitters: Query<(
         &mut Emitter,
@@ -722,13 +726,12 @@ pub(crate) fn simulate(
     let Ok((cam, frustum)) = camera.single() else {
         return;
     };
-    let cam_pos = cam.translation();
-    let rotation = cam.rotation();
-    let (right, up) = (rotation * Vec3::X, rotation * Vec3::Y);
+    let world_eye = eye_of(cam);
 
     for (mut emitter, mesh3d, mut transform, mut visibility, seen, mut aabb, layers) in
         &mut emitters
     {
+        let (cam_pos, right, up) = views.of(layers).map_or(world_eye, |view| eye_of(&view.placement));
         let emitter = &mut *emitter;
         // The emitter's live frame. A joint that vanished mid-life (a rebuild
         // in progress) holds the pool where it was for a frame.
@@ -826,6 +829,12 @@ pub(crate) fn simulate(
             write_quads(quads, &mut mesh);
         }
     }
+}
+
+/// A camera's position and the two axes a quad is billboarded along.
+fn eye_of(camera: &GlobalTransform) -> (Vec3, Vec3, Vec3) {
+    let rotation = camera.rotation();
+    (camera.translation(), rotation * Vec3::X, rotation * Vec3::Y)
 }
 
 /// Advance one emitter by `dt`: age and integrate the pool, then birth what
@@ -1321,6 +1330,9 @@ fn merge_fields(
     mut meshes: ResMut<Assets<Mesh>>,
     mut fields: ResMut<ParticleFields>,
     camera: Query<(&GlobalTransform, &Frustum), With<crate::world::camera::WorldCamera>>,
+    // The members on a host layer are culled against, and billboarded toward,
+    // the camera that draws them, as in [`simulate`].
+    host_views: Res<crate::render::views::HostViews>,
     emitters: Query<(Entity, &Emitter, &Aabb, Option<&RenderLayers>)>,
     mut views: Query<(&mut Transform, &mut Visibility), With<ParticleField>>,
 ) {
@@ -1337,12 +1349,10 @@ fn merge_fields(
         }
         return;
     }
-    let Ok((cam, frustum)) = camera.single() else {
+    let Ok((cam, world_frustum)) = camera.single() else {
         return;
     };
-    let cam_pos = cam.translation();
-    let rotation = cam.rotation();
-    let (right, up) = (rotation * Vec3::X, rotation * Vec3::Y);
+    let world_eye = eye_of(cam);
 
     // Which members each material has this frame, and which of them survive
     // the cull. Membership is counted even for an empty pool, because it
@@ -1375,6 +1385,10 @@ fn merge_fields(
         if emitter.pool.is_empty() {
             continue;
         }
+        let (cam_pos, frustum) = match host_views.of(layers) {
+            Some(view) => (view.placement.translation(), &view.frustum),
+            None => (world_eye.0, world_frustum),
+        };
         let distance = emitter.origin.distance(cam_pos);
         if emitter.range.is_some_and(|range| distance > range) {
             continue;
@@ -1396,6 +1410,9 @@ fn merge_fields(
     }
 
     for (id, group) in &groups {
+        let (_, right, up) = host_views
+            .of(group.layers.as_ref())
+            .map_or(world_eye, |view| eye_of(&view.placement));
         let mut quads = QuadBuffers::default();
         for &member in &group.visible {
             if let Ok((_, emitter, _, _)) = emitters.get(member) {

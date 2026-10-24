@@ -48,11 +48,17 @@
 //! one of [`SLOTS`] slots. bevy_egui runs each window's egui pass as a
 //! schedule of its own, so each slot has its pass ([`PopoutPass`]) with
 //! `ui::shell::popout::draw` for that slot in it. There are as many slots as groups.
-//! Closing a window, or its Dock, puts its workspace in the main window when
-//! the main window is on the world, and otherwise just closes it; the
-//! workspace's state stays. A playtest docks them all as it starts, since the
-//! main window holds a workspace over a playtest. Closing the main window
-//! closes them, so the application ends as it did with one window.
+//! Closing a window closes it and leaves the main window as it is. Dock puts
+//! the window's workspace in the main window when the main window is on the
+//! world, and otherwise closes the window. In both cases the workspace's state
+//! stays. A playtest docks every window as it starts, since the main window
+//! holds a workspace over a playtest. Closing the main window closes them
+//! all, so the application ends as it did with one window.
+//!
+//! A link clicked in a window opens its workspace where that workspace's
+//! group already is: another window, or the main window. A workspace whose
+//! group is in no other window opens in the window the link was clicked in
+//! ([`Popout::navigate`]). A world tool opens in the main window.
 //!
 //! They present without waiting for the display's refresh. On a wide display
 //! the main window's frame already waits for its swapchain image, and a form
@@ -249,6 +255,37 @@ impl Popout {
         }
     }
 
+    /// Open `wanted`, which a link or a part strip in the window in `slot`
+    /// asked for. A world tool goes to the main window. A workspace goes to
+    /// the window that holds its group, or to the main window when the main
+    /// window shows a workspace of its group, and otherwise replaces the
+    /// workspace in `slot`. See the module comment.
+    pub(crate) fn navigate(&mut self, slot: usize, wanted: Tool, main: &mut Tool) {
+        if self.tool(slot) == Some(wanted) {
+            return;
+        }
+        if !wanted.covers_viewport() {
+            *main = wanted;
+            return;
+        }
+        let group = Group::of(wanted);
+        let elsewhere = group.and_then(|group| self.slot_of(group)).filter(|&other| other != slot);
+        if let Some(other) = elsewhere {
+            if let Some(held) = self.slots[other].as_mut() {
+                held.tool = wanted;
+            }
+            self.asks.push(Ask::Raise(other));
+            return;
+        }
+        if main.covers_viewport() && group.is_some() && Group::of(*main) == group {
+            *main = wanted;
+            return;
+        }
+        if let Some(held) = self.slots[slot].as_mut() {
+            held.tool = wanted;
+        }
+    }
+
     /// Which window draws the windows that follow a creature, a game object
     /// or an item: of the windows that can draw them, the one last used.
     /// `None` is the main window.
@@ -331,8 +368,10 @@ fn follow(
     if main_window.focused {
         popout.last_focused = None;
     }
-    // A window closed with its own button, a Dock, or a playtest starting:
-    // the workspace goes back to the main window if that is on the world.
+    // A window closed with its own button, a Dock, or a playtest starting.
+    // A Dock or a playtest puts the workspace back in the main window if that
+    // is on the world; a window closed with its own button leaves the main
+    // window as it is.
     let docks: Vec<usize> = popout
         .asks
         .iter()
@@ -348,7 +387,7 @@ fn follow(
             continue;
         }
         popout.slots[slot] = None;
-        let back = state.editing() || held.tool.survives_playtest();
+        let back = !closed && (state.editing() || held.tool.survives_playtest());
         if back && !tool.covers_viewport() {
             *tool = held.tool;
         }
@@ -581,6 +620,31 @@ mod tests {
         assert_eq!((popout.tool(0), popout.tool(1)), (Some(Tool::Tables), Some(Tool::Quests)));
         popout.show(1, Tool::Items, &mut main, Tool::Terrain);
         assert_eq!((popout.tool(1), main), (Some(Tool::Items), Tool::Terrain));
+    }
+
+    /// A link in a window opens its workspace where its group is: another
+    /// window, the main window, or else the window it was clicked in. A world
+    /// tool goes to the main window.
+    #[test]
+    fn a_link_opens_where_its_group_is_or_in_its_own_window() {
+        let mut popout = Popout::default();
+        popout.slots[0] = held(Tool::Quests);
+        popout.slots[1] = held(Tool::Spells);
+        let mut main = Tool::Terrain;
+        popout.navigate(0, Tool::Items, &mut main);
+        assert_eq!((popout.tool(0), main), (Some(Tool::Items), Tool::Terrain), "no window holds Items");
+
+        popout.navigate(0, Tool::Zones, &mut main);
+        assert_eq!((popout.tool(0), popout.tool(1)), (Some(Tool::Items), Some(Tool::Zones)));
+        assert_eq!(popout.asks, [Ask::Raise(1)]);
+
+        let mut main = Tool::Quests;
+        popout.navigate(0, Tool::Quests, &mut main);
+        assert_eq!((popout.tool(0), main), (Some(Tool::Items), Tool::Quests), "the main window shows Quests");
+
+        let mut main = Tool::Terrain;
+        popout.navigate(0, Tool::Creatures, &mut main);
+        assert_eq!((popout.tool(0), main), (Some(Tool::Items), Tool::Creatures), "a world tool");
     }
 
     /// The table browser is the main window's while its tool has a table, and

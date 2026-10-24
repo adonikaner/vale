@@ -221,7 +221,9 @@ impl Plugin for LabelPlugin {
 /// its name query is answered, when it is targeted and when a CVar changes.
 /// This client raises an event for none of the four, and all four change the
 /// same answer.
-#[allow(clippy::too_many_arguments)]
+// The unit query is one `Option` past clippy's complexity bar, and a type
+// alias for one system's own parameter would name nothing anything else uses.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn reconcile(
     mut commands: Commands,
     mut labels: ResMut<Labels>,
@@ -246,6 +248,9 @@ fn reconcile(
         &Transform,
         Option<&crate::world::entities::EntityModel>,
         Option<&crate::world::entities::Mount>,
+        // A unit in a host's own scene, off the world's layer, has no name in
+        // the world's mesh. See [`crate::render::views::in_world`].
+        Option<&bevy::camera::visibility::RenderLayers>,
     )>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Labels);
@@ -288,7 +293,10 @@ fn reconcile(
 
     // One bucket per tint. The module note explains why the split is by colour.
     let mut wanted: HashMap<u32, Quads> = HashMap::default();
-    for (unit, at, model, mount) in &units {
+    for (unit, at, model, mount, layers) in &units {
+        if !crate::render::views::in_world(layers) {
+            continue;
+        }
         if unit.name.is_empty() {
             // A unit with an empty name has a name query in flight; it is not a
             // unit without a name. It is skipped, because an empty quad that is

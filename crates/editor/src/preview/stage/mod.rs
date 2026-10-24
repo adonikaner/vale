@@ -6,8 +6,8 @@
 //!              backdrop spawned on it
 //! layers.rs    the stage's layer stamped on what the client spawns, and the
 //!              stage's light
-//! view.rs      the stage camera, the world camera parked on the stage, and
-//!              the pane's turn and zoom
+//! view.rs      the stage camera on its own orbit, the hover pick through it,
+//!              and the pane's turn and zoom
 //! playback.rs  the timeline played as changes to the client's counters
 //! ```
 //!
@@ -46,33 +46,26 @@
 //! no `RenderLayers` sees layer 0 and nothing else. The client's own camera
 //! therefore needs no change.
 //!
-//! ## The client's passes assume one camera
+//! ## The client's passes see the actors from the stage camera
 //!
-//! Several of the passes that draw a spell ask for the camera by name and
-//! then use it for more than culling:
+//! Several of the passes that draw a spell cull against a camera and turn
+//! billboards toward it:
 //!
 //! ```text
-//! render::particles::simulate   Query<&GlobalTransform, With<WorldCamera>>
-//!                               — the emission LOD's distance, and the basis
-//!                                 every particle quad is billboarded against
-//! render::doodads, shadows      camera.iter().next() — a frustum, a basis
+//! world::entities::animate    the frustum a rig is posed in, and the basis
+//!                             its billboarded bones face
+//! render::particles           the emission LOD's distance, and the basis
+//!                             every particle quad is billboarded against
+//! render::missiles            the basis a missile's billboards face
 //! ```
 //!
-//! That is correct in a client, which has one camera by construction. A
-//! preview breaks the assumption: a second camera looking from somewhere else
-//! gets particle quads billboarded toward the first one, so a cloud of flames
-//! is seen edge-on and spell effects draw as flat 2D sprites.
-//!
-//! The world camera is therefore parked on the stage while the preview is
-//! open. It is the editor's own camera, the user is not flying it while
-//! looking at a storyboard, and its output is behind the panels either way.
-//! Pointing it at the place the stage camera looks from costs nothing and
-//! makes each of those single-camera assumptions hold. The picture is still
-//! the stage camera's, drawn into its own image, on its own layer.
-//!
-//! The alternative is to change those passes to take a camera per view. That
-//! is a change to the client for the editor's benefit, which this crate may
-//! not make.
+//! In a session that camera is the world camera. An entity on host layers
+//! only is seen from the host camera that draws one of them
+//! (`vale_client::render::views`). The actors and everything stamped onto the
+//! stage are on [`STAGE_LAYER`] alone, so the client poses them, steps their
+//! particles and turns their quads toward the stage camera, and the world
+//! camera neither draws them nor moves. A storyboard open in a pop-out window
+//! therefore leaves the main window's viewport on the world.
 //!
 //! ## The stage is drawn into an image, not into a viewport of the window
 //!
@@ -177,7 +170,7 @@ pub(crate) mod playback;
 
 use scene::arrange;
 use layers::{light_the_stage, stamp_the_layer};
-use view::{aim_the_pick, follow_the_pane, keep_the_target, park_the_world_camera};
+use view::{aim_the_pick, follow_the_pane, keep_the_target};
 use playback::play;
 
 /// The layer the preview lives on.
@@ -729,7 +722,9 @@ pub(crate) struct StagePlugin;
 
 impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Stage>().add_systems(
+        app.init_resource::<Stage>()
+            .init_resource::<vale_client::interface::target::HoverRay>()
+            .add_systems(
             Update,
             // Before the entity passes, which read the counters `play`
             // writes: a step taken after them is a step drawn a frame late, and
@@ -739,7 +734,6 @@ impl Plugin for StagePlugin {
                 light_the_stage,
                 stamp_the_layer,
                 keep_the_target,
-                park_the_world_camera,
                 follow_the_pane,
                 aim_the_pick,
                 play,

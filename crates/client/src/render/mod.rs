@@ -38,6 +38,8 @@
 //!               the dress-up frame, the tabard designer
 //! offscreen.rs  what the portraits and the paper dolls share: one model drawn
 //!               into an image by its own camera, and the render-layer table
+//! views.rs      which camera an entity is seen from when a host draws a scene
+//!               of its own on a host layer
 //! present.rs    what a framebuffer value means, and the quad that presents it
 //! glow.rs       the one post-process 1.12 applies to the frame: the full-screen
 //!               glow, three passes in the order the 1.12.1 client applies them
@@ -139,6 +141,7 @@ pub mod stars;
 pub mod weather;
 pub mod terrain;
 pub mod tuning;
+pub mod views;
 pub mod water;
 pub mod wmos;
 
@@ -165,6 +168,8 @@ impl bevy::app::Plugin for RenderPlugins {
         // there is one, and whatever drives the view writes it otherwise, so a
         // host with no server can stream a map.
         app.init_resource::<focus::WorldFocus>();
+        // Which camera an entity on a host layer is seen from; see [`views`].
+        app.add_plugins(views::ViewsPlugin);
         app.add_plugins((
             // First, because it decides what a framebuffer value means. It
             // inserts the `WorldFrame` the world camera renders to, in

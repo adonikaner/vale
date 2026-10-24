@@ -356,7 +356,7 @@ pub(super) fn step(
             stage_area(spell, radius),
             Transform::from_translation(at),
             Visibility::default(),
-            RenderLayers::from_layers(&[0, STAGE_LAYER]),
+            RenderLayers::layer(STAGE_LAYER),
             StageArea,
         ));
     }

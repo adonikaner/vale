@@ -207,17 +207,26 @@ impl DisplayCache {
     /// are answered `None` from then on: a kit pushed onto a standing unit
     /// hangs no model and plays no animation. This is for that host, which
     /// asks for it with a [`crate::assets::PathsChanged`] naming the tables.
-    pub fn reread(&mut self, assets: &GameAssets) {
-        let known: Vec<(bool, u32)> = self.resolved.keys().copied().collect();
+    ///
+    /// Returns the displays that resolve to something different now, as
+    /// `(is_object, display_id)`: the models standing for those are out of
+    /// date.
+    pub fn reread(&mut self, assets: &GameAssets) -> Vec<(bool, u32)> {
+        let known = std::mem::take(&mut self.resolved);
         self.forget();
         self.tables_now(assets);
-        for (is_object, display_id) in known {
+        let mut changed = Vec::new();
+        for ((is_object, display_id), before) in known {
             let kind = match is_object {
                 true => ObjectType::GameObject,
                 false => ObjectType::Unit,
             };
-            self.resolve(assets, kind, display_id);
+            let now = self.resolve(assets, kind, display_id);
+            if now.as_deref() != before.as_deref() {
+                changed.push((is_object, display_id));
+            }
         }
+        changed
     }
 
     /// Which model a `DISPLAYID` means, and which skins to dress it in.
@@ -268,7 +277,7 @@ mod tests {
         cache.forget();
         assert!(!cache.tried, "a forget alone waits for the next entity");
         cache.resolved.insert((false, 49), None);
-        cache.reread(&assets);
+        assert!(cache.reread(&assets).is_empty(), "nothing resolved before or after");
         assert!(cache.tried);
         assert!(cache.resolved.contains_key(&(false, 49)));
         assert!(cache.tables().is_none(), "these archives hold no table");

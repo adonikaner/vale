@@ -58,10 +58,11 @@ pub(crate) fn stamp_the_layer(
         )>,
     >,
     // The model view hides the body and not what hangs on it. With the
-    // lab's `alone` set, the mannequin's own parts are stamped with the
-    // world's layer only, so the stage camera does not see them, and only
-    // what hangs under one of its hung roots is stamped onto the stage. The
-    // body is still there — it is what the effect is posed against.
+    // lab's `alone` set, the mannequin's own parts are put on no layer, so no
+    // camera draws them, and only what hangs under one of its hung roots is
+    // stamped onto the stage. The body is still there: it is what the effect
+    // is posed against. Its root keeps the stage's layer, because the client
+    // poses a rig against the camera that draws the root's layer.
     lab: Res<crate::preview::lab::Lab>,
     mannequins: Query<
         (Entity, &vale_client::world::entities::EntityModel),
@@ -71,8 +72,8 @@ pub(crate) fn stamp_the_layer(
     already: Query<&RenderLayers>,
     effects: Query<(Entity, &EffectOf)>,
 ) {
-    let layer = RenderLayers::from_layers(&[0, STAGE_LAYER]);
-    let world_only = RenderLayers::layer(0);
+    let layer = RenderLayers::layer(STAGE_LAYER);
+    let unseen = RenderLayers::none();
     // Everything that hangs under a stage root, and every effect owned by
     // something in the set, with its subtree.
     let mut ours: std::collections::HashSet<Entity> = std::collections::HashSet::new();
@@ -103,7 +104,6 @@ pub(crate) fn stamp_the_layer(
             }
             // The body minus the effect. The stage's other actors are not
             // touched, and neither is an effect at the world root.
-            hidden.insert(root);
             hidden.extend(
                 children
                     .iter_descendants(root)
@@ -113,7 +113,7 @@ pub(crate) fn stamp_the_layer(
     }
     for &entity in &ours {
         let wanted = match hidden.contains(&entity) {
-            true => &world_only,
+            true => &unseen,
             false => &layer,
         };
         if already.get(entity).is_ok_and(|had| had == wanted) {

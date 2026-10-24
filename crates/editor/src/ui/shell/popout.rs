@@ -17,10 +17,12 @@
 //! whose workspace asked for it (`Popout::import_window`).
 //!
 //! A request a panel here makes of the shell (a part of the workspace, a row
-//! of another table, a quest) is carried out by the main window's shell as it
-//! is for its own panels, and a workspace it chooses comes to the window
-//! holding its group through `Popout::redirect`. The state and the windows
-//! themselves are [`crate::popout`].
+//! of another table, a quest) is carried out at the end of this window's
+//! pass, by the functions the main window's shell uses
+//! (`shell::asks::carry_out_since`). The workspace it chooses opens where its
+//! group is, or in this window when no other window has it
+//! (`Popout::navigate`). The state and the windows themselves are
+//! [`crate::popout`].
 
 use crate::ui::*;
 use super::{popover, rail};
@@ -61,6 +63,7 @@ pub(crate) fn draw<const SLOT: usize>(
     }
     mark_dialog_owner(&ctx, editing.popout.last_focused == Some(SLOT));
     let now = time.elapsed_secs_f64();
+    let mark = editing.asks.mark();
     let mut root = egui::Ui::new(
         ctx.clone(),
         "popout".into(),
@@ -198,11 +201,24 @@ pub(crate) fn draw<const SLOT: usize>(
     if editing.popout.import_window(*tool, asked_by_field) == Some(SLOT) {
         assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
     }
-    // A tool a panel here asked for: a world tool goes to the main window, and
-    // a workspace to the window holding its group.
-    if let Some(wanted) = switch_to {
-        *tool = wanted;
-        viewing.rail.follow(wanted);
+    // A tool a panel here asked for: a world tool goes to the main window,
+    // and a workspace to where its group is, or to this window. See
+    // `Popout::navigate`.
+    let mut wanted = workspace_tool;
+    let in_world = !editing.popout.editing;
+    crate::ui::shell::asks::carry_out_since(
+        mark,
+        &mut editing,
+        session,
+        &assets,
+        &mut wanted,
+        &mut viewing.rail,
+        in_world,
+    );
+    if let Some(asked) = switch_to.filter(|asked| !in_world || asked.survives_playtest()) {
+        wanted = asked;
+        viewing.rail.follow(asked);
     }
+    editing.popout.navigate(SLOT, wanted, &mut tool);
     editing.popout.redirect(&mut tool, viewing.rail.last_world);
 }

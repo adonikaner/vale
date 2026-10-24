@@ -134,12 +134,11 @@ pub(crate) fn arrange(
         }
     }
 
-    // Both layers, and the world's layer is required. The stage camera
-    // draws the picture from `STAGE_LAYER`; the client's own per-frame work —
-    // the particle simulation, the LOD, the UV scroll — keys on what the world
-    // camera can see, so the effects of an actor it cannot see never advance.
-    // See the module comment.
-    let layer = RenderLayers::from_layers(&[0, STAGE_LAYER]);
+    // The stage's layer alone, so the world camera does not draw the actors
+    // in the viewport. The client poses them, steps their effects and turns
+    // their billboards against the stage camera, the one camera that draws
+    // this layer. See the module comment.
+    let layer = RenderLayers::layer(STAGE_LAYER);
     let middle = home(&camera, &playing, &focus);
     stage.middle = middle;
     let first_time = fixtures.is_empty();
@@ -197,9 +196,9 @@ pub(crate) fn arrange(
 /// open.
 fn spawn_fixtures(commands: &mut Commands) {
     // The camera sees `STAGE_LAYER` and nothing else, which is what keeps the
-    // world out of the picture. The actors are on both layers and the camera
-    // must not copy them: a camera sharing the actors' `RenderLayers` also
-    // sees layer 0 and draws the surrounding world in the preview.
+    // world out of the picture. A camera on layer 0 as well would draw the
+    // surrounding world in the preview, and would not be the camera the
+    // client's passes see the actors from (`vale_client::render::views`).
     let only_the_stage = RenderLayers::layer(STAGE_LAYER);
     commands.spawn((
         StageCamera,

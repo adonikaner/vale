@@ -1567,7 +1567,8 @@ fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) 
         match look.as_ref().and_then(|look| look.models.first()) {
             Some(worn) => {
                 let key = work.portraits.want_large_worn(worn);
-                crate::preview::portraits::paint_large(ui, work.portraits, &key, 120.0);
+                let pane = crate::preview::portraits::pane_id(ui);
+                crate::preview::portraits::paint_large(ui, work.portraits, pane, &key, 120.0);
             }
             None => {
                 let (rect, _) =

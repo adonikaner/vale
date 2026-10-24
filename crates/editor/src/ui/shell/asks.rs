@@ -5,8 +5,9 @@
 //! A panel is drawn with the tool borrowed and with only its own state to
 //! hand, so it cannot switch the tool or open a row in another workspace
 //! itself. It pushes a [`ShellAsk`] onto [`ShellAsks`], and the shell carries
-//! every ask out in [`carry_out`] after the egui pass, in the main window and
-//! for the pop-out windows alike.
+//! every ask out after the egui pass: the main window's in [`carry_out`], and
+//! a pop-out window's in [`carry_out_since`], against that window's
+//! workspace, so a link clicked in a window can open in that window.
 //!
 //! ## The order asks are carried out in
 //!
@@ -81,6 +82,12 @@ impl ShellAsks {
     pub(crate) fn push(&mut self, ask: ShellAsk) {
         self.0.push(ask);
     }
+
+    /// How many asks are waiting. A pop-out window reads it before its panels
+    /// are drawn, and passes it to [`carry_out_since`].
+    pub(crate) fn mark(&self) -> usize {
+        self.0.len()
+    }
 }
 
 /// Carry out every ask pushed since the last call, and what the Import
@@ -108,6 +115,26 @@ pub(crate) fn carry_out(
     }
     imported(editing, session, *tool, now);
     for ask in late {
+        carry_out_one(ask, editing, session, assets, tool, rail, in_world);
+    }
+}
+
+/// Carry out the asks pushed after `mark`, which a pop-out window's panels
+/// pushed, with `tool` the window's workspace. What the Import Texture dialog
+/// finished is left for [`carry_out`], which knows the main window's tool.
+pub(crate) fn carry_out_since(
+    mark: usize,
+    editing: &mut Editing<'_>,
+    session: &mut EditSession,
+    assets: &GameAssets,
+    tool: &mut Tool,
+    rail: &mut crate::ui::shell::rail::Rail,
+    in_world: bool,
+) {
+    let mark = mark.min(editing.asks.0.len());
+    let mut asks = editing.asks.0.split_off(mark);
+    asks.sort_by_key(ShellAsk::rank);
+    for ask in asks {
         carry_out_one(ask, editing, session, assets, tool, rail, in_world);
     }
 }

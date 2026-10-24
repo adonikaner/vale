@@ -103,6 +103,13 @@ pub(crate) struct UnitClicked {
     pub guid: u64,
 }
 
+/// A ray a host app has [`hover`] pick along in place of the pointer's ray
+/// through the world camera, for a pointer over a scene the host draws with a
+/// camera of its own (see [`crate::render::views`]). `None`, the default, is
+/// the pointer.
+#[derive(Resource, Default, Debug, Clone, Copy)]
+pub struct HoverRay(pub Option<Ray3d>);
+
 /// The unit under the cursor this frame, for the mouseover highlight the UI
 /// draws and for the click that follows.
 #[derive(Resource, Default)]
@@ -798,6 +805,9 @@ pub(crate) fn hover(
     // position is read here and the real mouse is not moved, because a window
     // without focus cannot move its cursor and a scripted run has no focus.
     probe: Res<crate::HoverProbe>,
+    // A host's own ray, which replaces the pointer's. `Option`, so an app
+    // that never inserts it picks as before.
+    host_ray: Option<Res<HoverRay>>,
     mut candidates: Local<Vec<(f32, Entity, u64)>>,
     mut hovered: ResMut<Hovered>,
     // The game-object result of the same pick. [`super::object::HoveredObject`]
@@ -805,28 +815,36 @@ pub(crate) fn hover(
     // split into two rays.
     mut object: ResMut<super::object::HoveredObject>,
 ) {
-    let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera.single()) else {
-        return;
-    };
-    let Some(cursor) = probe
-        .instead_of(window.cursor_position())
-        .filter(|_| !interface.over_interface)
-    else {
-        hovered.guid = None;
-        hovered.entity = None;
-        object.guid = None;
-        object.entity = None;
-        return;
-    };
-    // Physical pixels, not logical. `cursor_position` is logical. The world
-    // camera's target is `render::present`'s frame image, which is created at
-    // the window's physical size with `scale_factor: 1.0`, so its viewport is
-    // measured in physical pixels. On a 125% display the two differ by a
-    // quarter of the screen, and a pick in logical pixels lands up and left of
-    // the cursor.
-    let viewport = cursor * window.scale_factor();
-    let Ok(ray) = camera.viewport_to_world(camera_transform, viewport) else {
-        return;
+    let host_ray = host_ray.and_then(|ray| ray.0);
+    let ray = match host_ray {
+        Some(ray) => ray,
+        None => {
+            let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera.single())
+            else {
+                return;
+            };
+            let Some(cursor) = probe
+                .instead_of(window.cursor_position())
+                .filter(|_| !interface.over_interface)
+            else {
+                hovered.guid = None;
+                hovered.entity = None;
+                object.guid = None;
+                object.entity = None;
+                return;
+            };
+            // Physical pixels, not logical. `cursor_position` is logical. The
+            // world camera's target is `render::present`'s frame image, which
+            // is created at the window's physical size with `scale_factor:
+            // 1.0`, so its viewport is measured in physical pixels. On a 125%
+            // display the two differ by a quarter of the screen, and a pick in
+            // logical pixels lands up and left of the cursor.
+            let viewport = cursor * window.scale_factor();
+            let Ok(ray) = camera.viewport_to_world(camera_transform, viewport) else {
+                return;
+            };
+            ray
+        }
     };
 
     // Stage one. The list is reused across frames and not allocated per frame:

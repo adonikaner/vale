@@ -89,18 +89,22 @@
 //! one larger preview under its list, showing the chosen model, and dragging
 //! the preview turns the model.
 //!
-//! The preview is a single slot, not a second size in the cache, which is why
-//! it is written separately from the rows. A second size per path would double
-//! the images kept for the session (a 256-pixel square is four times a row's)
-//! to show one model at a time. So there is one camera and one image, reused
-//! for the life of the resource, and the model in front of the camera is
-//! swapped when the choice changes. Nothing is cached: returning to a model
-//! draws it again, which costs the settle frames and no memory.
+//! The large previews are [`PANES`] rigs, not a second size in the cache, which
+//! is why they are written separately from the rows. A second size per path
+//! would double the images kept for the session (a 256-pixel square is four
+//! times a row's) to show a few models at a time. Each rig is one camera and
+//! one image, reused for the life of the resource. A pane on screen, in any
+//! window, is identified by [`pane_id`] and holds a rig while it asks for one
+//! on every frame; the model in front of the rig's camera is swapped when the
+//! pane's choice changes. Nothing is cached: returning to a model draws it
+//! again, which costs the settle frames and no memory. A pane that finds every
+//! rig taken says it is rendering until one is free.
 //!
 //! Dragging orbits the camera rather than rotating the model, so the lamp does
-//! not move and the model's lighting is the same whichever side is shown. At
-//! rest the camera is exactly on [`EYE`], the direction the rows use, so the
-//! large preview and its row show the same view until the user drags.
+//! not move and the model's lighting is the same whichever side is shown. The
+//! turn belongs to the pane. At rest the camera is exactly on [`EYE`], the
+//! direction the rows use, so the large preview and its row show the same view
+//! until the user drags.
 //!
 //! ## Particle emitters are not drawn
 //!
@@ -109,14 +113,12 @@
 //! whatever static geometry it carries. For `Bloodlust_State_Hand.m2` that is
 //! a dim smudge where the game shows a ring of fire.
 //!
-//! This is a limitation, and `crate::preview::stage`'s module comment records the
-//! reason: the client's particle pass billboards every quad against the world
-//! camera and takes its emission LOD from that camera's distance, so a second
-//! view that runs particles sees them edge-on. The stage works around this by
-//! parking the world camera at the stage, and two views cannot both do that.
-//! The pickers therefore show geometry only, and the model view (`crate::preview::lab`,
-//! which is the stage) is where an effect is checked with its particles
-//! running. The browser's dialog is drawn over that stage on purpose, which is
+//! This is a limitation. A picture here is a model's batches and no client
+//! entity, so the client's particle pass, which runs emitters only for the
+//! entities it spawned, has nothing to run. The stage's actors are client
+//! entities, seen from the stage camera (`crate::preview::stage`'s module
+//! comment), so the model view (`crate::preview::lab`, which is the stage) is
+//! where an effect is checked with its particles running. The browser's dialog is drawn over that stage on purpose, which is
 //! why its backdrop is lighter.
 //!
 //! A still of an effect shows its first instant, which is often empty.
@@ -153,8 +155,12 @@ pub(crate) const LARGE_SIDE: u32 = 384;
 /// How many models are drawn at once. Each is a camera and a render layer.
 const SLOTS: usize = 4;
 
+/// How many large previews can be shown at once, across every window. Each is
+/// a camera, a render layer and a [`LARGE_SIDE`] image.
+const PANES: usize = 4;
+
 /// The first render layer the slots use; slot `i` is on `FIRST_LAYER + i`, and
-/// the large preview on the layer after the last slot.
+/// large preview `j` on `FIRST_LAYER + SLOTS + j`.
 ///
 /// The layers come from the client's table of host layers
 /// ([`vale_client::render::offscreen::layers::HOST`]), after the one the stage
@@ -246,10 +252,11 @@ struct Job {
     frames_left: u8,
 }
 
-/// The one big preview's camera and the image it always draws into.
+/// One large preview's camera and the image it always draws into, and the
+/// pane it is drawing for.
 ///
-/// Built once and kept: see the module comment on why the big picture is a
-/// slot rather than a second size in the cache.
+/// Built once and kept: see the module comment on why the large pictures are
+/// rigs rather than a second size in the cache.
 struct LargeRig {
     camera: Entity,
     layer: usize,
@@ -259,6 +266,28 @@ struct LargeRig {
     #[allow(dead_code)]
     image: Handle<Image>,
     texture: egui::TextureId,
+    /// The pane this rig draws for, or `None` while it is free.
+    pane: Option<egui::Id>,
+    shown: Option<LargeShown>,
+    /// Whether this rig has ever drawn anything, for the long first settle.
+    /// This is a separate flag from [`Portraits::started`], which the slots
+    /// increment: a large preview is another camera at another size, so a
+    /// slot having compiled its pipelines says nothing about this one.
+    /// Reading the slots' counter gave the pane ten frames while a slot was
+    /// taking sixty, and the pane captured a building with half its batches
+    /// uploaded.
+    started: bool,
+}
+
+/// What one pane on screen asks of the large previews: the model, the frame
+/// it last asked on, and the turn its drag has put on the model, as offsets
+/// from [`EYE`]'s own.
+#[derive(Debug, Clone, Default)]
+struct PaneView {
+    key: String,
+    asked: u64,
+    yaw: f32,
+    pitch: f32,
 }
 
 /// The model standing in front of the large preview's camera.
@@ -343,9 +372,11 @@ impl Hung {
 impl Worn {
     /// The key this picture is stored under.
     ///
-    /// The path followed by the skins, because two display ids of one model
-    /// are two pictures. A model wearing nothing is keyed by its path alone,
-    /// so a doodad's picture keeps the key it always had.
+    /// The path followed by the skins, the hair and the geosets, because two
+    /// display ids of one model are two pictures, and so is one display before
+    /// and after an edit to its race or hairstyle. A model wearing nothing is
+    /// keyed by its path alone, so a doodad's picture keeps the key it always
+    /// had.
     pub(crate) fn key(&self) -> String {
         // A composed body is keyed by its look, because its skins are empty:
         // two garments on one race are one model with the same empty skin
@@ -377,6 +408,17 @@ impl Worn {
             true => key_of(&self.path),
             false => format!("{}|{}", key_of(&self.path), self.skins.join("|")),
         };
+        // A character-model NPC's hair and geosets come from its Extra row,
+        // not from the skins, so an edit to the row changes only these.
+        if let Some(a) = &self.hair {
+            key.push_str(&format!(
+                "|hair:{},{},{},{},{},{},{}",
+                a.race, a.gender, a.skin, a.face, a.hair_style, a.hair_colour, a.facial_hair
+            ));
+        }
+        if self.dress != Dress::Creature {
+            key.push_str(&format!("|dress:{:?}", self.dress));
+        }
         // A guard with a helm and one without are two pictures.
         for hung in &self.hung {
             key.push_str(&format!(
@@ -489,22 +531,10 @@ pub(crate) struct Portraits {
     frame: u64,
     /// How many pictures have been started, for the first job's long settle.
     started: usize,
-    /// The big preview: its rig, what is standing in it, and what the panel
-    /// asked for this frame — see the module comment.
-    large: Option<LargeRig>,
-    shown: Option<LargeShown>,
-    large_wanted: Option<String>,
-    /// Whether this rig has ever drawn anything, for the long first settle.
-    /// This is a separate flag from [`Self::started`], which the slots
-    /// increment: the large preview is a second camera at a second size, so a
-    /// slot having compiled its pipelines says nothing about this one.
-    /// Reading the slots' counter gave the pane ten frames while a slot was
-    /// taking sixty, and the pane captured a building with half its batches
-    /// uploaded.
-    large_started: bool,
-    /// The orbit the drag has put on it, as offsets from [`EYE`]'s own.
-    large_yaw: f32,
-    large_pitch: f32,
+    /// The large previews' rigs, and what each pane on screen asks of them,
+    /// by [`pane_id`]. See the module comment.
+    large: Vec<LargeRig>,
+    panes: HashMap<egui::Id, PaneView>,
     /// What each key that is not a plain path stands for; see [`Worn`].
     ///
     /// A side table rather than a field on the job, because every entry point
@@ -548,11 +578,11 @@ impl Portraits {
         key
     }
 
-    /// [`Self::want_worn`] for the large preview.
+    /// Record what `worn` is wearing and return its key, for a large preview.
+    /// The pane asks for the picture when it is painted ([`paint_large`]).
     pub(crate) fn want_large_worn(&mut self, worn: &Worn) -> String {
         let key = worn.key();
         self.worn.entry(key.clone()).or_insert_with(|| worn.clone());
-        self.want_large(&key);
         key
     }
 
@@ -573,56 +603,70 @@ impl Portraits {
         }
     }
 
-    /// Ask for the large preview to show this model. The panel calls this on
-    /// every frame it draws the pane, as rows call [`Self::want`].
+    /// Ask for the large preview in `pane` to show this model. The panel calls
+    /// this on every frame it draws the pane, as rows call [`Self::want`].
     ///
-    /// A model different from last frame's resets the turn: a drag applies to
-    /// the model it was made on, and carrying it over would show the next
-    /// model from behind without the user asking for that.
-    pub(crate) fn want_large(&mut self, path: &str) {
+    /// A model different from the pane's last one resets the pane's turn: a
+    /// drag applies to the model it was made on, and carrying it over would
+    /// show the next model from behind without the user asking for that.
+    pub(crate) fn want_large(&mut self, pane: egui::Id, path: &str) {
         let key = key_of(path);
-        let changed = self.shown.as_ref().is_none_or(|shown| shown.path != key)
-            && self.large_wanted.as_deref() != Some(key.as_str());
-        if changed {
-            self.large_yaw = 0.0;
-            self.large_pitch = 0.0;
+        let frame = self.frame;
+        let view = self.panes.entry(pane).or_default();
+        if view.key != key {
+            *view = PaneView {
+                key,
+                ..PaneView::default()
+            };
         }
-        self.large_wanted = Some(key);
+        view.asked = frame;
     }
 
-    /// What egui draws the big preview by, once it has been drawn at least
-    /// once and is of the model asked for.
-    pub(crate) fn large_texture(&self, path: &str) -> Option<egui::TextureId> {
-        let shown = self.shown.as_ref()?;
+    /// What egui draws the large preview in `pane` by, once it has been drawn
+    /// at least once and is of the model asked for.
+    pub(crate) fn large_texture(&self, pane: egui::Id, path: &str) -> Option<egui::TextureId> {
+        let rig = self.large.iter().find(|rig| rig.pane == Some(pane))?;
+        let shown = rig.shown.as_ref()?;
         if shown.path != key_of(path) || !shown.settled {
             return None;
         }
-        Some(self.large.as_ref()?.texture)
+        Some(rig.texture)
     }
 
-    /// Turn the big preview by a drag, in points.
-    pub(crate) fn turn_large(&mut self, by: egui::Vec2) {
+    /// Turn the large preview in `pane` by a drag, in points.
+    pub(crate) fn turn_large(&mut self, pane: egui::Id, by: egui::Vec2) {
         if by == egui::Vec2::ZERO {
             return;
         }
-        self.large_yaw -= by.x * TURN_RATE;
-        self.large_pitch = (self.large_pitch + by.y * TURN_RATE).clamp(-PITCH_LIMIT, PITCH_LIMIT);
-        // Re-aimed and re-rendered on the next run of the pass.
-        if let Some(shown) = self.shown.as_mut() {
-            shown.frames_left = shown.frames_left.max(TURN_FRAMES);
+        let view = self.panes.entry(pane).or_default();
+        view.yaw -= by.x * TURN_RATE;
+        view.pitch = (view.pitch + by.y * TURN_RATE).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        self.rerender(pane);
+    }
+
+    /// Whether the large preview in `pane` has been turned off its resting
+    /// view.
+    pub(crate) fn large_turned(&self, pane: egui::Id) -> bool {
+        self.panes
+            .get(&pane)
+            .is_some_and(|view| view.yaw != 0.0 || view.pitch != 0.0)
+    }
+
+    /// Put the large preview in `pane` back to the view the rows are drawn
+    /// from.
+    pub(crate) fn reset_large_turn(&mut self, pane: egui::Id) {
+        if let Some(view) = self.panes.get_mut(&pane) {
+            view.yaw = 0.0;
+            view.pitch = 0.0;
         }
+        self.rerender(pane);
     }
 
-    /// Whether the big preview has been turned off its resting view.
-    pub(crate) fn large_turned(&self) -> bool {
-        self.large_yaw != 0.0 || self.large_pitch != 0.0
-    }
-
-    /// Put it back to the view the rows are drawn from.
-    pub(crate) fn reset_large_turn(&mut self) {
-        self.large_yaw = 0.0;
-        self.large_pitch = 0.0;
-        if let Some(shown) = self.shown.as_mut() {
+    /// Re-aim and re-render the model in `pane`'s rig on the next run of the
+    /// pass.
+    fn rerender(&mut self, pane: egui::Id) {
+        let rig = self.large.iter_mut().find(|rig| rig.pane == Some(pane));
+        if let Some(shown) = rig.and_then(|rig| rig.shown.as_mut()) {
             shown.frames_left = shown.frames_left.max(TURN_FRAMES);
         }
     }
@@ -691,8 +735,8 @@ fn take_pictures(
         .retain(|_, asked| frame.saturating_sub(*asked) <= STALE_FRAMES);
     let idle = portraits.wanted.is_empty()
         && portraits.slots.iter().all(|slot| slot.job.is_none())
-        && portraits.large_wanted.is_none()
-        && portraits.shown.is_none();
+        && portraits.panes.is_empty()
+        && portraits.large.iter().all(|rig| rig.pane.is_none());
     if idle {
         return;
     }
@@ -711,30 +755,35 @@ fn take_pictures(
                 job: None,
             });
         }
-        // The large preview's rig goes on the layer after the slots'. Its
-        // image is made once and reused for every model it shows; see the
-        // module comment.
-        let layer = FIRST_LAYER + SLOTS;
-        let camera = spawn_rig(
-            &mut commands,
-            layer,
-            FIRST_ORDER - SLOTS as isize,
-            ClearColorConfig::Custom(LARGE_CLEAR),
-        );
-        let image = images.add(target_image(LARGE_SIDE));
-        let texture = egui.add_image(EguiTextureHandle::Strong(image.clone()));
-        commands
-            .entity(camera)
-            .insert(RenderTarget::Image(ImageRenderTarget {
-                handle: image.clone(),
-                scale_factor: 1.0,
-            }));
-        portraits.large = Some(LargeRig {
-            camera,
-            layer,
-            image,
-            texture,
-        });
+        // The large previews' rigs go on the layers after the slots'. Each
+        // image is made once and reused for every model its rig shows; see
+        // the module comment.
+        for j in 0..PANES {
+            let layer = FIRST_LAYER + SLOTS + j;
+            let camera = spawn_rig(
+                &mut commands,
+                layer,
+                FIRST_ORDER - (SLOTS + j) as isize,
+                ClearColorConfig::Custom(LARGE_CLEAR),
+            );
+            let image = images.add(target_image(LARGE_SIDE));
+            let texture = egui.add_image(EguiTextureHandle::Strong(image.clone()));
+            commands
+                .entity(camera)
+                .insert(RenderTarget::Image(ImageRenderTarget {
+                    handle: image.clone(),
+                    scale_factor: 1.0,
+                }));
+            portraits.large.push(LargeRig {
+                camera,
+                layer,
+                image,
+                texture,
+                pane: None,
+                shown: None,
+                started: false,
+            });
+        }
         // The cameras exist from the next frame; nothing to point them at yet.
         return;
     }
@@ -840,12 +889,8 @@ fn take_pictures(
     );
 }
 
-/// Keep the one big preview showing whatever the panel last asked for.
-///
-/// It works like a slot, with two differences explained in the module comment:
-/// nothing is cached, so a model that goes off screen is removed and drawn
-/// again if it returns; and the camera is re-aimed while the model is turned,
-/// which is what the [`TURN_FRAMES`] budget is for.
+/// Give each pane that asked on the last frame a rig, free the rigs of panes
+/// that did not ask, and keep every rig showing its pane's model.
 #[allow(clippy::too_many_arguments)]
 fn keep_the_large(
     commands: &mut Commands,
@@ -857,32 +902,88 @@ fn keep_the_large(
     cameras: &mut Query<(&mut Camera, &mut Transform, &mut Projection), With<PortraitCamera>>,
     stand: Vec3,
 ) {
-    let Some(rig) = portraits.large.as_ref() else {
-        return;
-    };
-    let (camera_entity, layer) = (rig.camera, rig.layer);
-    // Taken rather than read: the panel asks again on every frame it draws
-    // the pane, so a frame with no ask means the pane is not on screen.
-    let wanted = portraits.large_wanted.take();
+    let frame = portraits.frame;
+    // The panes ask during the egui passes, which run after this system in
+    // the same frame, so an ask made on the last frame is current. A pane
+    // that has not asked since then is not on screen.
+    let current = |view: &PaneView| frame.saturating_sub(view.asked) <= 1;
+    portraits
+        .panes
+        .retain(|_, view| frame.saturating_sub(view.asked) <= STALE_FRAMES);
+    let Portraits { large, panes, .. } = &mut *portraits;
+    for rig in large.iter_mut() {
+        let free = rig
+            .pane
+            .is_some_and(|pane| !panes.get(&pane).is_some_and(current));
+        if !free {
+            continue;
+        }
+        rig.pane = None;
+        if let Some(root) = rig.shown.take().and_then(|shown| shown.root) {
+            commands.entity(root).despawn();
+        }
+        if let Ok((mut cam, _, _)) = cameras.get_mut(rig.camera) {
+            cam.is_active = false;
+        }
+    }
+    // The newest asks first, as for the rows.
+    let mut waiting: Vec<(egui::Id, u64)> = panes
+        .iter()
+        .filter(|(pane, view)| current(view) && !large.iter().any(|rig| rig.pane == Some(**pane)))
+        .map(|(pane, view)| (*pane, view.asked))
+        .collect();
+    waiting.sort_by_key(|(_, asked)| std::cmp::Reverse(*asked));
+    for (pane, _) in waiting {
+        let Some(rig) = large.iter_mut().find(|rig| rig.pane.is_none()) else {
+            break;
+        };
+        rig.pane = Some(pane);
+    }
+    for at in 0..portraits.large.len() {
+        let view = portraits.large[at]
+            .pane
+            .and_then(|pane| portraits.panes.get(&pane))
+            .cloned();
+        if let Some(view) = view {
+            keep_one_large(commands, portraits, at, &view, models, buildings, meshes, materials, cameras, stand);
+        }
+    }
+}
 
-    // --- nothing is asked for, or a different model is: remove the current one ---
-    let keep = portraits
-        .shown
-        .as_ref()
-        .zip(wanted.as_ref())
-        .is_some_and(|(shown, wanted)| shown.path == *wanted);
+/// Keep the large preview rig `at` showing the model its pane asks for.
+///
+/// It works like a slot, with two differences explained in the module comment:
+/// nothing is cached, so a model that goes off screen is removed and drawn
+/// again if it returns; and the camera is re-aimed while the model is turned,
+/// which is what the [`TURN_FRAMES`] budget is for.
+#[allow(clippy::too_many_arguments)]
+fn keep_one_large(
+    commands: &mut Commands,
+    portraits: &mut Portraits,
+    at: usize,
+    view: &PaneView,
+    models: &mut ModelCache,
+    buildings: &mut WmoCache,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Materials,
+    cameras: &mut Query<(&mut Camera, &mut Transform, &mut Projection), With<PortraitCamera>>,
+    stand: Vec3,
+) {
+    let Portraits { large, worn, failed, .. } = portraits;
+    let rig = &mut large[at];
+    let (camera_entity, layer) = (rig.camera, rig.layer);
+
+    // --- a different model is asked for: remove the current one ---
+    let keep = rig.shown.as_ref().is_some_and(|shown| shown.path == view.key);
     if !keep {
-        if let Some(shown) = portraits.shown.take() {
-            if let Some(root) = shown.root {
-                commands.entity(root).despawn();
-            }
+        if let Some(root) = rig.shown.take().and_then(|shown| shown.root) {
+            commands.entity(root).despawn();
         }
         if let Ok((mut cam, _, _)) = cameras.get_mut(camera_entity) {
             cam.is_active = false;
         }
-        let Some(path) = wanted else { return };
-        portraits.shown = Some(LargeShown {
-            path,
+        rig.shown = Some(LargeShown {
+            path: view.key.clone(),
             root: None,
             bounds: None,
             at: stand,
@@ -890,7 +991,7 @@ fn keep_the_large(
             settled: false,
         });
     }
-    let (yaw, pitch) = (portraits.large_yaw, portraits.large_pitch);
+    let (yaw, pitch) = (view.yaw, view.pitch);
     // The first picture through this rig renders for the long settle. The
     // budget is an estimate of how long the render world takes to compile a
     // pipeline for a view nothing has drawn before. A budget that is too short
@@ -898,12 +999,12 @@ fn keep_the_large(
     // zero and does not come back on. It was too short twice, giving an empty
     // pane in the browser's dialog and half a building in the placement
     // picker, both times because it was keyed on a counter that belongs to
-    // the rows. See [`Portraits::large_started`].
-    let settle = match portraits.large_started {
+    // the rows. See [`LargeRig::started`].
+    let settle = match rig.started {
         false => FIRST_SETTLE_FRAMES,
         true => LARGE_SETTLE_FRAMES,
     };
-    let Some(shown) = portraits.shown.as_mut() else {
+    let Some(shown) = rig.shown.as_mut() else {
         return;
     };
 
@@ -930,7 +1031,7 @@ fn keep_the_large(
     }
 
     // --- no model placed yet: ask the caches, as a slot does ---
-    let draws = match look_up(&shown.path, &portraits.worn, models, buildings, meshes, materials) {
+    let draws = match look_up(&shown.path, worn, models, buildings, meshes, materials) {
         Drawn::Ready(draws) => Some(draws),
         Drawn::Failed => None,
         Drawn::Loading => return,
@@ -940,8 +1041,8 @@ fn keep_the_large(
         // Record the failure in the rows' failure set, so the row and the
         // pane report the same failure.
         let path = shown.path.clone();
-        portraits.shown = None;
-        portraits.failed.insert(path);
+        rig.shown = None;
+        failed.insert(path);
         return;
     };
     // Place the model where the pane was opened, and aim there for as long
@@ -952,7 +1053,7 @@ fn keep_the_large(
     shown.root = Some(root);
     shown.bounds = Some((lo, hi));
     shown.frames_left = settle;
-    portraits.large_started = true;
+    rig.started = true;
 }
 
 /// Ask the caches for the picture a key names: a building, a [`Worn`] with
@@ -1244,22 +1345,37 @@ pub(crate) fn paint(ui: &egui::Ui, portraits: &mut Portraits, path: &str, rect: 
     }
 }
 
+/// The id a large preview pane is known by: the `Ui` it is drawn in, and the
+/// window. Two windows can draw a pane at the same place in the same
+/// workspace, so the window is part of the id.
+pub(crate) fn pane_id(ui: &egui::Ui) -> egui::Id {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let window = ui.ctx().data_mut(|data| {
+        *data.get_temp_mut_or_insert_with(egui::Id::new("portraits-window"), || {
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        })
+    });
+    ui.id().with(("large-preview", window))
+}
+
 /// The large preview under a picker's list: the chosen model, drawn large
 /// enough to judge and turned by dragging it.
 ///
-/// `side` is the box's width and height, in points. Returns the pane's
-/// response, so a caller can draw something over it.
+/// `pane` is the pane's [`pane_id`], and `side` the box's width and height, in
+/// points. Returns the pane's response, so a caller can draw something over
+/// it.
 pub(crate) fn paint_large(
     ui: &mut egui::Ui,
     portraits: &mut Portraits,
+    pane: egui::Id,
     path: &str,
     side: f32,
 ) -> egui::Response {
     let side = side.max(48.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::drag());
-    portraits.want_large(path);
+    portraits.want_large(pane, path);
     if response.dragged() {
-        portraits.turn_large(response.drag_delta());
+        portraits.turn_large(pane, response.drag_delta());
     }
     if !ui.is_rect_visible(rect) {
         return response;
@@ -1272,7 +1388,7 @@ pub(crate) fn paint_large(
         egui::Stroke::new(1.0, crate::ui::widgets::theme::LINE),
         egui::StrokeKind::Inside,
     );
-    match (portraits.large_texture(path), portraits.status(path)) {
+    match (portraits.large_texture(pane, path), portraits.status(path)) {
         (Some(id), _) => {
             painter.image(
                 id,
@@ -1431,46 +1547,44 @@ mod tests {
         assert!(framing.eye.is_finite() && framing.far > framing.near);
     }
 
-    /// A different model puts the turn back, and the same one does not.
+    /// A different model puts the turn back, and the same one does not. Each
+    /// pane has its own turn.
     #[test]
     fn asking_for_another_model_puts_the_turn_back() {
+        let (one, two) = (egui::Id::new("one"), egui::Id::new("two"));
         let mut portraits = Portraits::default();
-        portraits.want_large("World\\A.m2");
-        portraits.large_yaw = 1.0;
-        portraits.large_pitch = 0.2;
-        portraits.want_large("world\\a.m2");
-        assert_eq!(
-            (portraits.large_yaw, portraits.large_pitch),
-            (1.0, 0.2),
-            "the same model keeps it"
-        );
-        assert!(portraits.large_turned());
-        portraits.want_large("World\\B.mdx");
-        assert_eq!((portraits.large_yaw, portraits.large_pitch), (0.0, 0.0));
-        assert!(!portraits.large_turned());
-        assert_eq!(portraits.large_wanted.as_deref(), Some("world\\b.m2"));
+        portraits.want_large(one, "World\\A.m2");
+        portraits.want_large(two, "World\\A.m2");
+        portraits.turn_large(one, egui::vec2(-100.0, 20.0));
+        portraits.want_large(one, "world\\a.m2");
+        assert!(portraits.large_turned(one), "the same model keeps it");
+        assert!(!portraits.large_turned(two), "another pane's turn is its own");
+        portraits.want_large(one, "World\\B.mdx");
+        assert!(!portraits.large_turned(one));
+        assert_eq!(portraits.panes[&one].key, "world\\b.m2");
         // Nothing is shown until the pass has drawn the new model.
-        assert_eq!(portraits.large_texture("World\\B.mdx"), None);
+        assert_eq!(portraits.large_texture(one, "World\\B.mdx"), None);
     }
 
     /// A drag turns it, and the pitch is clamped at both ends.
     #[test]
     fn a_drag_turns_it_within_the_pitch_limit() {
+        let pane = egui::Id::new("pane");
         let mut portraits = Portraits::default();
-        portraits.turn_large(egui::vec2(0.0, 0.0));
-        assert!(!portraits.large_turned(), "a still pointer is not a turn");
-        portraits.turn_large(egui::vec2(50.0, 0.0));
-        assert!((portraits.large_yaw + 50.0 * TURN_RATE).abs() < 1e-6);
+        portraits.turn_large(pane, egui::vec2(0.0, 0.0));
+        assert!(!portraits.large_turned(pane), "a still pointer is not a turn");
+        portraits.turn_large(pane, egui::vec2(50.0, 0.0));
+        assert!((portraits.panes[&pane].yaw + 50.0 * TURN_RATE).abs() < 1e-6);
         for _ in 0..100 {
-            portraits.turn_large(egui::vec2(0.0, 40.0));
+            portraits.turn_large(pane, egui::vec2(0.0, 40.0));
         }
-        assert_eq!(portraits.large_pitch, PITCH_LIMIT);
+        assert_eq!(portraits.panes[&pane].pitch, PITCH_LIMIT);
         for _ in 0..200 {
-            portraits.turn_large(egui::vec2(0.0, -40.0));
+            portraits.turn_large(pane, egui::vec2(0.0, -40.0));
         }
-        assert_eq!(portraits.large_pitch, -PITCH_LIMIT);
-        portraits.reset_large_turn();
-        assert!(!portraits.large_turned());
+        assert_eq!(portraits.panes[&pane].pitch, -PITCH_LIMIT);
+        portraits.reset_large_turn(pane);
+        assert!(!portraits.large_turned(pane));
     }
 
     /// The newest ask is served first, an ask is a set, and a failure is
@@ -1578,13 +1692,12 @@ mod tests {
     /// the app, and distinct from each other.
     #[test]
     fn the_slots_are_alone_on_their_layers_and_draw_before_the_world() {
-        let layers: Vec<usize> = (0..SLOTS).map(|i| FIRST_LAYER + i).collect();
+        let layers: Vec<usize> = (0..SLOTS + PANES).map(|i| FIRST_LAYER + i).collect();
         assert!(layers
             .iter()
-            .chain(std::iter::once(&(FIRST_LAYER + SLOTS)))
             .all(|layer| vale_client::render::offscreen::layers::HOST.contains(layer)
                 && *layer != crate::preview::stage::STAGE_LAYER));
-        let orders: Vec<isize> = (0..SLOTS).map(|i| FIRST_ORDER - i as isize).collect();
+        let orders: Vec<isize> = (0..SLOTS + PANES).map(|i| FIRST_ORDER - i as isize).collect();
         assert!(orders.iter().all(|order| *order < -15));
         let mut sorted = orders.clone();
         sorted.sort_unstable();

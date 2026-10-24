@@ -222,7 +222,9 @@ fn field(
     session: Res<Session>,
     solids: Res<Solids>,
     camera: Query<(&GlobalTransform, &Frustum), With<crate::world::camera::WorldCamera>>,
-    units: Query<(Entity, &Transform, &EntityModel)>,
+    // A unit in a host's own scene, off the world's layer, has no blob in the
+    // world's mesh. See [`crate::render::views::in_world`].
+    units: Query<(Entity, &Transform, &EntityModel, Option<&bevy::camera::visibility::RenderLayers>)>,
     mut scratch: Local<Scratch>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Shadows);
@@ -239,7 +241,10 @@ fn field(
     let mut indices: Vec<u32> = Vec::new();
     scratch.blobs.clear();
     if wanted {
-        for (unit, placement, model) in &units {
+        for (unit, placement, model, layers) in &units {
+            if !crate::render::views::in_world(layers) {
+                continue;
+            }
             // The footprint in world yards: the model's own declared
             // half-extent times whatever the entity is scaled by.
             let radius = model.shadow_radius * placement.scale.max_element() * BLOB_HALF;

@@ -1094,6 +1094,12 @@ fn is_interior_floor(flags: u32) -> bool {
     flags & (group_flags::EXTERIOR | group_flags::EXTERIOR_LIT) == 0
 }
 
+/// An entity whose model is out of date because its display row changed under
+/// it. See [`reread_changed_tables`]; [`spawn::rebuild_changed_models`] builds
+/// the model again and removes the marker.
+#[derive(Component)]
+pub struct Redisplay;
+
 /// An entity whose display id resolves to nothing, or whose model will not read.
 ///
 /// Marked so the lookup is not retried every frame, and so the fallback shape
@@ -1452,16 +1458,40 @@ impl DisplayCache {
 /// Read the tables again at once when a [`crate::assets::PathsChanged`] says
 /// they changed, after [`crate::assets::forget_changed_tables`] has dropped
 /// the bank's parse. See [`DisplayCache::reread`] for why at once.
+///
+/// An entity whose display now resolves differently is built again: one with
+/// a model is marked [`Redisplay`] for [`spawn::rebuild_changed_models`], and
+/// one that had none loses [`NoModel`] and its box, so [`spawn::spawn_models`]
+/// tries it again.
 fn reread_changed_tables(
+    mut commands: Commands,
     mut changed: MessageReader<crate::assets::PathsChanged>,
     assets: Res<GameAssets>,
     mut displays: ResMut<DisplayCache>,
+    standing: Query<(Entity, &WorldEntity, Has<EntityModel>), Or<(With<EntityModel>, With<NoModel>)>>,
 ) {
     if !changed.read().fold(false, |any, change| any | change.tables) {
         return;
     }
     let began = std::time::Instant::now();
-    displays.reread(&assets);
+    let redisplayed = displays.reread(&assets);
+    for (entity, world, modelled) in &standing {
+        let Some(display_id) = world.display_id else { continue };
+        let is_object = matches!(world.kind, ObjectType::GameObject);
+        if !redisplayed.contains(&(is_object, display_id)) {
+            continue;
+        }
+        match modelled {
+            true => {
+                commands.entity(entity).insert(Redisplay);
+            }
+            false => {
+                commands
+                    .entity(entity)
+                    .remove::<(NoModel, fallback::FallbackReason, Mesh3d, MeshMaterial3d<StandardMaterial>)>();
+            }
+        }
+    }
     info!(
         "tables re-read in {:?}{}",
         began.elapsed(),
