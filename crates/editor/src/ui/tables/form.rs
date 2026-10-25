@@ -357,8 +357,9 @@ fn head(
     let mut open_lab = false;
     let mut clone_chain = false;
     let mut copy_id = false;
-    // An area's two commands, which its right-click menu also lists.
-    let mut area_command: Option<Command> = None;
+    // The table's own commands drawn as buttons, which its right-click menu
+    // also lists: an area's two and a display's rebake.
+    let mut own_command: Option<Command> = None;
     ui.horizontal(|ui| {
         if !work.browser.back.is_empty() && ui.button("< back").clicked() {
             work.browser.go_back();
@@ -395,8 +396,12 @@ fn head(
                             )
                             .clicked();
                     }
-                    "AreaTable" => {
-                        for command in [Command::PaintArea, Command::AddSubArea] {
+                    "AreaTable" | "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" => {
+                        let own: &[Command] = match table_name.as_str() {
+                            "AreaTable" => &[Command::PaintArea, Command::AddSubArea],
+                            _ => &[Command::RebakeSkin],
+                        };
+                        for &command in own {
                             let Some(said) = tables::commands::command_label(
                                 work.browser,
                                 work.session,
@@ -411,7 +416,7 @@ fn head(
                                 .on_hover_text(tables::commands::command_about(command))
                                 .clicked()
                             {
-                                area_command = Some(command);
+                                own_command = Some(command);
                             }
                         }
                     }
@@ -449,7 +454,7 @@ fn head(
     if clone_chain {
         run_command(&ctx, work, &table_name, record, Command::CloneChain);
     }
-    if let Some(command) = area_command {
+    if let Some(command) = own_command {
         run_command(&ctx, work, &table_name, record, command);
     }
     if copy_id {

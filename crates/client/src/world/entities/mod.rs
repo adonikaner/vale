@@ -966,6 +966,38 @@ impl SunScale {
     }
 }
 
+/// What the floor under an entity last answered for its sun scale, and where
+/// and how long ago it was asked.
+///
+/// The floor query is the expensive half of [`light_entities`]: inside a city
+/// the building under every unit is tested triangle by triangle, every frame,
+/// and most units are standing still. It is asked again when the feet have
+/// moved [`FLOOR_REASK_YARDS`] or the answer is [`FLOOR_REASK_SECS`] old. The
+/// second is for the world changing under a unit that does not move: a tile's
+/// terrain or a building's hull arriving after the unit did.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct FloorProbe {
+    feet: [f32; 3],
+    target: f32,
+    age: f32,
+}
+
+/// How far the feet move before [`FloorProbe`] is asked again, in yards: a
+/// fifth of an `MCSH` texel, which is half a yard.
+const FLOOR_REASK_YARDS: f32 = 0.1;
+
+/// How old a [`FloorProbe`] answer is before it is asked again, in seconds.
+/// Shorter than the 0.6 s [`SunScale`] takes to blend across its whole range.
+const FLOOR_REASK_SECS: f32 = 0.5;
+
+impl FloorProbe {
+    /// Whether this answer still holds for feet at `feet`.
+    fn holds_for(&self, feet: [f32; 3]) -> bool {
+        let moved = Vec3::from(feet).distance_squared(Vec3::from(self.feet));
+        moved < FLOOR_REASK_YARDS * FLOOR_REASK_YARDS && self.age < FLOOR_REASK_SECS
+    }
+}
+
 /// How far above an entity's feet the interiority test is taken, in yards.
 ///
 /// Not at the feet, where the position is. A room's box is its own geometry,
@@ -987,13 +1019,14 @@ const INDOOR_PROBE: f32 = 1.0;
 /// and an entity standing still is not re-dressed sixty times a second.
 fn light_entities(
     mut commands: Commands,
-    entities: Query<
+    mut entities: Query<
         (
             Entity,
             &Transform,
             Option<&Indoors>,
             Option<&SunScale>,
             Option<&crate::render::building_lights::UnitLamps>,
+            Option<&mut FloorProbe>,
         ),
         With<WorldEntity>,
     >,
@@ -1014,7 +1047,7 @@ fn light_entities(
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::LightEntities);
     let active = session.as_ref().and_then(|s| s.active.as_ref());
     let dt = time.as_ref().map_or(f32::MAX, |t| t.delta_secs());
-    for (entity, transform, current, scale, lamps) in &entities {
+    for (entity, transform, current, scale, lamps, probe) in &mut entities {
         let feet = crate::render::axes::to_wow(transform.translation);
         let mut point = feet;
         point[2] += INDOOR_PROBE;
@@ -1032,16 +1065,32 @@ fn light_entities(
         // with no shadow test, and on the terrain 0.5 in a baked shadow and
         // 2.5 out of one.
         use crate::render::models::sun_scale;
-        let target = match active {
-            Some(a) => match building_under(a, solids.as_deref(), feet) {
+        let ask = |a: &crate::world::session::ActiveSession| {
+            match building_under(a, solids.as_deref(), feet) {
                 Some(flags) if is_interior_floor(flags) => sun_scale::NEUTRAL,
                 Some(_) => sun_scale::LIT_GROUND,
                 None if a.terrain_shadowed(a.map_id, feet[0], feet[1]) => {
                     sun_scale::SHADOWED_GROUND
                 }
                 None => sun_scale::LIT_GROUND,
-            },
-            None => sun_scale::LIT_GROUND,
+            }
+        };
+        let target = match (active, probe) {
+            (Some(_), Some(mut probe)) if probe.holds_for(feet) => {
+                probe.age += dt;
+                probe.target
+            }
+            (Some(a), probe) => {
+                let fresh = FloorProbe { feet, target: ask(a), age: 0.0 };
+                match probe {
+                    Some(mut probe) => *probe = fresh,
+                    None => {
+                        commands.entity(entity).insert(fresh);
+                    }
+                }
+                fresh.target
+            }
+            (None, _) => sun_scale::LIT_GROUND,
         };
         let sun = match scale {
             Some(scale) => scale.toward(target, dt),

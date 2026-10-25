@@ -427,6 +427,10 @@ pub(crate) struct Items {
     /// [`Self::looks`] because it answers a different question with the same
     /// key: what the row paints, as against what the row is.
     bodies: HashMap<(u32, u32, u8, u8), Option<crate::preview::portraits::Worn>>,
+    /// The body wearing a whole outfit, for an item set's picture, and the
+    /// outfit, race and gender it was dressed for. One, because one set is
+    /// shown at a time. See [`Items::outfit_body`].
+    outfit: Option<(Outfit, u8, u8, Option<crate::preview::portraits::Worn>)>,
     /// Which body a preview is drawn on. A helm is cut per race and gender,
     /// and a garment is painted on a body, so both kinds of preview have
     /// one to stand on.
@@ -484,6 +488,7 @@ impl Default for Items {
             row_at: None,
             looks: HashMap::new(),
             bodies: HashMap::new(),
+            outfit: None,
             // A human male, which is the body `vale attach` reports against
             // and the one whose helms are in every archive.
             race: 1,
@@ -947,6 +952,24 @@ impl Items {
         found
     }
 
+    /// [`Self::body`] for a whole outfit: the body an item set's picture is
+    /// drawn on, wearing every piece of the set and nothing else.
+    pub(crate) fn outfit_body(
+        &mut self,
+        assets: &GameAssets,
+        outfit: &Outfit,
+    ) -> Option<crate::preview::portraits::Worn> {
+        self.follow_generation(assets);
+        if let Some((had, race, gender, worn)) = &self.outfit {
+            if had == outfit && *race == self.race && *gender == self.gender {
+                return worn.clone();
+            }
+        }
+        let found = resolve_dressed(assets, outfit, self.race, self.gender);
+        self.outfit = Some((outfit.clone(), self.race, self.gender, found.clone()));
+        found
+    }
+
     /// Drop what was resolved from the display tables when they have been
     /// published again since, so an edited row is drawn as it now is.
     fn follow_generation(&mut self, assets: &GameAssets) {
@@ -955,6 +978,7 @@ impl Items {
             self.display_facts = None;
             self.looks.clear();
             self.bodies.clear();
+            self.outfit = None;
             self.display_facts_at = generation;
         }
     }
@@ -1277,6 +1301,70 @@ pub(crate) fn resolve_body(
     race: u8,
     gender: u8,
 ) -> Option<crate::preview::portraits::Worn> {
+    let outfit = Outfit {
+        equipment: vec![(display_id, inventory_type)],
+        ..Outfit::default()
+    };
+    resolve_dressed(assets, &outfit, race, gender)
+}
+
+/// What a preview body wears: the pieces, as `(display id, inventory type)`
+/// pairs as a player's arrive, and what is in its three hands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Outfit {
+    pub(crate) equipment: Vec<(u32, u32)>,
+    /// Main hand, off hand, ranged: `vale_assets::look::dress::Wearer`'s order.
+    pub(crate) weapons: [vale_assets::tables::item::Weapon; 3],
+}
+
+impl Outfit {
+    /// Every item of a set, each where a character would wear it.
+    ///
+    /// A weapon goes to the hand its inventory type names: a main-hand or
+    /// two-handed weapon to the main hand, a shield, an off-hand weapon or a
+    /// held item to the off hand, a bow, gun, wand, thrown weapon or relic to
+    /// the ranged slot. A one-handed weapon takes the main hand when it is
+    /// free and the off hand after it. A hand that two pieces want keeps the
+    /// first. Everything else is worn, and a piece that shows nothing (a ring,
+    /// a trinket, a neck) changes nothing on the body.
+    pub(crate) fn of_set(items: &[crate::subjects::quests::ItemName]) -> Outfit {
+        let mut outfit = Outfit::default();
+        for item in items.iter().filter(|item| item.display_id != 0) {
+            let hand = match item.inventory_type {
+                13 if outfit.weapons[0].display_id == 0 => Some(0),
+                13 => Some(1),
+                17 | 21 => Some(0),
+                14 | 22 | 23 => Some(1),
+                15 | 25 | 26 | 28 => Some(2),
+                _ => None,
+            };
+            match hand {
+                Some(hand) if outfit.weapons[hand].display_id == 0 => {
+                    outfit.weapons[hand] = vale_assets::tables::item::Weapon {
+                        display_id: item.display_id,
+                        class: item.class as u8,
+                        subclass: item.subclass as u8,
+                        inventory_type: item.inventory_type as u8,
+                        sheath: item.sheath as u8,
+                        ..Default::default()
+                    };
+                }
+                Some(_) => {}
+                None => outfit.equipment.push((item.display_id, item.inventory_type)),
+            }
+        }
+        outfit
+    }
+}
+
+/// The body an [`Outfit`] is shown on, dressed in it: [`resolve_body`]'s body,
+/// with every piece worn and the weapons held drawn.
+pub(crate) fn resolve_dressed(
+    assets: &GameAssets,
+    outfit: &Outfit,
+    race: u8,
+    gender: u8,
+) -> Option<crate::preview::portraits::Worn> {
     let tables = assets.display_tables().ok()?;
     let body = crate::preview::lab::BODIES
         .iter()
@@ -1296,9 +1384,15 @@ pub(crate) fn resolve_body(
         &display,
         &vale_assets::look::dress::Wearer {
             appearance: Some(appearance),
-            equipment: &[(display_id, inventory_type)],
-            weapons: Default::default(),
-            sheath_state: vale_assets::look::sheath::UNARMED,
+            equipment: &outfit.equipment,
+            weapons: outfit.weapons,
+            // Drawn where there is a weapon to draw: in the hands for melee,
+            // and the bow in hand where there is only a bow.
+            sheath_state: match outfit.weapons.map(|weapon| weapon.display_id != 0) {
+                [true, _, _] | [_, true, _] => vale_assets::look::sheath::MELEE,
+                [false, false, true] => vale_assets::look::sheath::RANGED,
+                _ => vale_assets::look::sheath::UNARMED,
+            },
         },
     );
     Some(crate::preview::portraits::Worn {
@@ -2253,6 +2347,32 @@ mod tests {
         // A slot that is neither geometry nor paint is `Other`, which the
         // filter passes everything for.
         assert_eq!(slot_of(11), Slot::Other);
+    }
+
+    /// A set's armour is worn and its weapons are held: two one-handers in
+    /// both hands, a bow in the ranged slot, a third one-hander nowhere, and
+    /// an item with no display not at all.
+    #[test]
+    fn a_set_is_worn_and_its_weapons_are_held() {
+        let piece = |display_id: u32, inventory_type: u32| crate::subjects::quests::ItemName {
+            display_id,
+            inventory_type,
+            class: 2,
+            ..Default::default()
+        };
+        let outfit = Outfit::of_set(&[
+            piece(10, 1),
+            piece(11, 3),
+            piece(12, 13),
+            piece(13, 13),
+            piece(14, 13),
+            piece(15, 15),
+            piece(0, 5),
+            piece(16, 20),
+        ]);
+        assert_eq!(outfit.equipment, vec![(10, 1), (11, 3), (16, 20)]);
+        assert_eq!(outfit.weapons.map(|weapon| weapon.display_id), [12, 13, 15]);
+        assert_eq!(outfit.weapons[0].inventory_type, 13);
     }
 
     /// The search takes an entry and any word of the line, and is cached until

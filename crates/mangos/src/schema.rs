@@ -83,12 +83,18 @@ pub enum Kind {
     /// Copper, signed. `quest_template.RewOrReqMoney` is what the quest pays
     /// when it is positive and what it costs to hand in when it is negative.
     SignedMoney,
+    /// Ids of rows of another table, separated by spaces, in a text column.
+    ///
+    /// `creature_template.auras` is the one: `"18950 12544"` is two spells
+    /// the creature spawns with. A form draws it as a list of named rows to
+    /// add to and remove from; the stored value is still the text.
+    RefList(&'static str),
 }
 
 impl Kind {
     /// Whether the column holds a string, and so is written as a quoted literal.
     pub fn is_text(self) -> bool {
-        matches!(self, Kind::Text | Kind::Paragraph)
+        matches!(self, Kind::Text | Kind::Paragraph | Kind::RefList(_))
     }
 
     /// What the kind is called in a census of a table's columns.
@@ -109,6 +115,7 @@ impl Kind {
             Kind::Subclass => "one of the class's subclasses".to_string(),
             Kind::Money => "copper".to_string(),
             Kind::SignedMoney => "copper, signed".to_string(),
+            Kind::RefList(table) => format!("rows of {table}, space separated"),
             Kind::Millis => "milliseconds".to_string(),
             Kind::Seconds => "seconds".to_string(),
         }

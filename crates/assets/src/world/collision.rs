@@ -782,6 +782,15 @@ struct Tile {
     /// reason: the one caller that reads it is filtering thousands of hulls and
     /// wants the answer beside the box it has just tested. See [`Surfaces`].
     kinds: Vec<Solid>,
+    /// The indices into `solids` of the [`Solid::Building`] hulls, ascending.
+    ///
+    /// [`CollisionWorld::building_floor`] is answered only by a hull with
+    /// groups, which on a tile is a `MODF` building, and it is asked for every
+    /// unit in the world every frame. Walking `boxes` for it rejected a city
+    /// tile's thousands of doodads per unit to find its dozen buildings: 4.5 ms
+    /// a frame for 290 units in a debug build. Written by the same two places as
+    /// `kinds`.
+    buildings: Vec<usize>,
     /// Which `MODF` placements the caller has finished deciding about, by
     /// `unique_id` — hull placed, hull absent, or the file refused.
     ///
@@ -830,8 +839,28 @@ impl Tile {
             self.boxes.push(boxes[index]);
             self.kinds.push(kinds[index]);
         }
+        self.index_buildings();
         self.settled.retain(|placement| keep_settled(*placement));
         before - self.solids.len()
+    }
+
+    /// Rebuild [`Self::buildings`] from `kinds`.
+    fn index_buildings(&mut self) {
+        self.buildings.clear();
+        self.buildings.extend(
+            self.kinds.iter().enumerate().filter(|(_, &kind)| kind == Solid::Building).map(|(i, _)| i),
+        );
+    }
+
+    /// [`Self::candidates`] narrowed to the buildings, walking only their
+    /// boxes. See [`Self::buildings`].
+    fn building_candidates<'a>(
+        &'a self,
+        keep: impl Fn(&[[f32; 3]; 2]) -> bool + 'a,
+    ) -> impl Iterator<Item = &'a Arc<Collider>> + 'a {
+        self.buildings
+            .iter()
+            .filter_map(move |&i| keep(&self.boxes[i]).then_some(&self.solids[i]))
     }
 
     /// The hulls whose box the caller's own test admits, as `Arc`s it may then
@@ -1150,8 +1179,11 @@ impl CollisionWorld {
             // position none.
             Some(&index) => {
                 placed.boxes[index] = collider.bounds();
-                placed.kinds[index] = kind;
                 placed.solids[index] = collider;
+                if placed.kinds[index] != kind {
+                    placed.kinds[index] = kind;
+                    placed.index_buildings();
+                }
             }
             None => {
                 // The box and the kind first and in lockstep: `Tile::boxes`
@@ -1159,6 +1191,9 @@ impl CollisionWorld {
                 // length and the same order as `solids`, and this and
                 // `Tile::retain_hulls` are the only places any of the three
                 // is written.
+                if kind == Solid::Building {
+                    placed.buildings.push(placed.solids.len());
+                }
                 placed.ids.insert(id, placed.solids.len());
                 placed.boxes.push(collider.bounds());
                 placed.kinds.push(kind);
@@ -1501,7 +1536,10 @@ impl CollisionWorld {
                 && ceiling >= bounds[0][2]
         };
         let mut best: Option<(f32, u32)> = None;
-        for collider in inner.candidates(over) {
+        // A tile's doodads have no groups and cannot answer, so only its
+        // buildings are walked. A game object can be a WMO, so they all are.
+        let buildings = inner.tiles.values().flat_map(|tile| tile.building_candidates(over));
+        for collider in buildings.chain(inner.objects.candidates(over, Surfaces::ALL)) {
             if let Some((z, flags)) = collider.building_floor(x, y, ceiling) {
                 if best.is_none_or(|(b, _)| z > b) {
                     best = Some((z, flags));
@@ -2466,6 +2504,7 @@ mod tests {
             let tile = &inner.tiles[&(32, 32)];
             assert_eq!(tile.boxes.len(), tile.solids.len(), "a hull with no box");
             assert_eq!(tile.kinds.len(), tile.solids.len(), "a hull with no kind");
+            assert_eq!(tile.buildings, (0..tile.solids.len()).collect::<Vec<_>>(), "a building not indexed");
             for (bounds, collider) in tile.boxes.iter().zip(&tile.solids) {
                 assert_eq!(*bounds, collider.bounds(), "a box that is not its hull's");
             }

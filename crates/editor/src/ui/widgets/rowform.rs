@@ -678,8 +678,10 @@ pub(in crate::ui) fn server_field(
         .get(field.table, field.key, field.column.name)
         .map(str::to_string);
     let in_database = field.column.literal(field.row);
+    // A list's `NULL` is a list with nothing in it, which can be added to.
+    let null_is_empty = field.null_is_empty || matches!(field.kind, Kind::RefList(_));
     let showing = edited.clone().or_else(|| in_database.clone()).or_else(|| {
-        field.null_is_empty.then(|| match field.kind.is_text() {
+        null_is_empty.then(|| match field.kind.is_text() {
             true => "''".to_string(),
             false => "0".to_string(),
         })
@@ -753,6 +755,7 @@ pub(in crate::ui) fn value_cell(
             let later = reference::cell(ui, resolver, table, showing, target).map(|id| (table, id));
             (written, later)
         }
+        Kind::RefList(table) => (reference::list_cell(ui, resolver, table, showing, target), None),
         kind => {
             let written = number_cell(ui, kind, showing);
             if let Some(means) = number_means(kind, showing) {

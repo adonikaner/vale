@@ -1,6 +1,6 @@
 //! The previews of a row: which tables have one, the stage pane beside a
-//! visual's or a kit's fields and inside a dialog, and a display row's
-//! picture.
+//! visual's or a kit's fields and inside a dialog, a display row's picture,
+//! and an item set worn by one body.
 
 use bevy_egui::egui;
 
@@ -28,6 +28,70 @@ pub(crate) fn display_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     // As wide as the inspector, as the item workspace's preview is.
     let side = ui.available_width();
     super::appearance::pane(ui, work, table, id, side);
+}
+
+/// The inspector's picture of the open `ItemSet` row: one body wearing every
+/// item of the set, helm and shoulders included, with nothing in a slot the
+/// set does not fill. It is the item workspace's body, chosen by the same
+/// race and gender, dressed by the client's own `dress`. Nothing for any other
+/// table.
+///
+/// A set names `item_template` entries, and only the world database says
+/// which display each one wears and in which slot, so the picture needs it.
+/// A piece whose row has not arrived yet is left off and counted.
+pub(crate) fn set_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+    if work.browser.table != "ItemSet" {
+        return;
+    }
+    let Some(record) = work.browser.open else { return };
+    let Some(sets) = work.session.table("ItemSet") else { return };
+    let entries: Vec<u32> = crate::tables::rows::SET_ITEMS
+        .filter_map(|field| sets.u32_at(record, field))
+        .filter(|&entry| entry != 0)
+        .collect();
+    theme::heading(ui, "Appearance");
+    let Some(quests) = work.quests.as_deref_mut() else {
+        theme::note(
+            ui,
+            "No world database is connected. The set names item_template entries, and \
+             without the database their appearances cannot be read.",
+        );
+        return;
+    };
+    if entries.is_empty() {
+        theme::note(ui, "The set lists no items.");
+        return;
+    }
+    let edits = &work.session.rows.edits;
+    let (mut pieces, mut waiting, mut missing) = (Vec::new(), 0, 0);
+    for &entry in &entries {
+        match quests.item(entry, edits) {
+            Some(found) => pieces.push(found),
+            None if quests.item_known(entry, edits) => missing += 1,
+            None => waiting += 1,
+        }
+    }
+    if waiting > 0 {
+        theme::waiting(ui, format!("reading {waiting} of the set's {} items\u{2026}", entries.len()));
+    }
+    let outfit = crate::subjects::items::Outfit::of_set(&pieces);
+    match work.items.outfit_body(work.assets, &outfit) {
+        Some(worn) => {
+            let key = work.portraits.want_large_worn(&worn);
+            let side = ui.available_width();
+            crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &key, side);
+            theme::note(
+                ui,
+                "Every item of the set on one body in its bind pose. A slot the set does \
+                 not fill is left empty.",
+            );
+        }
+        None => theme::note(ui, "The tables resolve no body model for the race chosen below."),
+    }
+    if missing > 0 {
+        theme::note(ui, format!("{missing} of the set's items are in no item_template row, so they are not drawn."));
+    }
+    crate::ui::subjects::items::body_choice(ui, work.items);
 }
 
 /// The size of the preview inside a picker's dialog, in points.

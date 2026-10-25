@@ -14,6 +14,7 @@
 //!              race and class rows
 //! zones.rs     `AreaTable`'s zones and sub-areas
 //! commands.rs  what can be done to a row other than editing a field
+//! bake.rs      an NPC's baked skin made again from its appearance row
 //! visuals.rs   the spell chain's rows found and pictured by their models, and
 //!              a kit's effect slots by attachment point
 //! sounds.rs    playing a `SoundEntries` row for the panel
@@ -176,6 +177,7 @@ pub(crate) mod learning;
 pub(crate) mod zones;
 pub(crate) mod rows;
 pub(crate) mod commands;
+pub(crate) mod bake;
 pub(crate) mod visuals;
 pub(crate) mod sounds;
 pub(crate) mod open;

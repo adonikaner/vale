@@ -15,7 +15,7 @@
 //! zones.rs      an area's sub-areas, on an `AreaTable` row's form
 //! unschemad.rs  a table with no schema: every field as its number
 //! previews.rs   the previews of a row: the stage beside a form and in a
-//!               dialog, and a display row's picture
+//!               dialog, a display row's picture, and an item set worn
 //! sounds.rs     the buttons that play a sound column's sounds
 //! modals/       the dialogs a form opens: the reference pickers, a table's
 //!               rows, a mask, a texture and a model
@@ -243,6 +243,10 @@ pub(crate) struct Workspace<'a> {
     /// reference picker an item column uses. `None` when there is no world
     /// database to name an item from, and in the inspector.
     pub(crate) quests: Option<&'a mut crate::subjects::quests::Quests>,
+    /// The item workspace's state, which an item set's picture shares: the
+    /// body it is drawn on and the bodies already dressed. See
+    /// [`previews::set_preview`].
+    pub(crate) items: &'a mut crate::subjects::items::Items,
     /// The time of day the world is showing, in half-minutes past midnight, so
     /// a band's strip can mark the viewport's current time on it.
     /// `vale_assets::tables::light::NOON` when the caller has no clock.
@@ -311,6 +315,7 @@ impl<'a> Workspace<'a> {
             particles: None,
             lights: lights.then_some(&mut *editing.lights),
             quests: quests.then_some(&mut *editing.quests),
+            items: &mut editing.items,
             hour: editing.clock.half_minutes,
             asks: &mut editing.asks,
             fly: &mut editing.fly,
@@ -558,8 +563,9 @@ pub(in crate::ui) fn table(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     }
     ui.add_space(4.0);
 
-    // A display table's open row, drawn.
+    // A display table's open row, drawn, and an item set worn.
     previews::display_preview(ui, &mut work);
+    previews::set_preview(ui, &mut work);
     ui.add_space(4.0);
 
     reference::references(ui, &mut work);
@@ -569,8 +575,11 @@ pub(in crate::ui) fn table(ui: &mut egui::Ui, mut work: Workspace<'_>) {
 /// itself is in the middle, where the viewport would be ([`workspace`]),
 /// following the shell's rule that the inspector shows the selection.
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
-    let crate::ui::tools::Subject { tool, session, assets, now, .. } = subject;
-    table(ui, Workspace::new(tool, session, editing, assets, now, false, false));
+    let crate::ui::tools::Subject { tool, session, assets, now, server, .. } = subject;
+    // The item names, which an item set's picture dresses its body from, need
+    // the database, as the workspace's item columns do.
+    let named = server.resolve().is_some();
+    table(ui, Workspace::new(tool, session, editing, assets, now, false, named));
 }
 
 /// A table workspace in the middle of a window: the table browser on the

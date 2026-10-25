@@ -1248,6 +1248,12 @@ fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_bo
     if !on_a_body && known.inventory_type != 1 {
         return;
     }
+    body_choice(ui, work.items);
+}
+
+/// The race and gender a preview body is drawn as, which the item's picture
+/// and an item set's share. Changes no row.
+pub(crate) fn body_choice(ui: &mut egui::Ui, items: &mut crate::subjects::items::Items) {
     const RACES: [(u8, &str); 8] = [
         (1, "Human"),
         (2, "Orc"),
@@ -1260,7 +1266,7 @@ fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_bo
     ];
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("on").small().color(theme::INK_DIM));
-        let was = work.items.race;
+        let was = items.race;
         let mut race = was;
         egui::ComboBox::from_id_salt("item-race")
             .selected_text(
@@ -1275,7 +1281,7 @@ fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_bo
                     ui.selectable_value(&mut race, id, name);
                 }
             });
-        let mut gender = work.items.gender;
+        let mut gender = items.gender;
         egui::ComboBox::from_id_salt("item-gender")
             .selected_text(match gender {
                 0 => "male",
@@ -1285,9 +1291,9 @@ fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_bo
                 ui.selectable_value(&mut gender, 0, "male");
                 ui.selectable_value(&mut gender, 1, "female");
             });
-        if race != was || gender != work.items.gender {
-            work.items.race = race;
-            work.items.gender = gender;
+        if race != was || gender != items.gender {
+            items.race = race;
+            items.gender = gender;
         }
     })
     .response

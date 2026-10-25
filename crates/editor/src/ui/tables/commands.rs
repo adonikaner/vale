@@ -101,6 +101,18 @@ pub(super) fn run_command(
         }
         // The shell gives the area to the Areas tool and switches to it.
         Command::PaintArea => work.asks.push(crate::ui::shell::asks::ShellAsk::PaintArea(id)),
+        Command::RebakeSkin => {
+            let extra = match table {
+                tables::bake::EXTRA => Some(id),
+                _ => tables::bake::extra_of(work.session, record),
+            };
+            let Some(extra) = extra else { return };
+            work.session.status = match tables::bake::rebake(work.session, work.assets, extra, work.now) {
+                Ok(done) | Err(done) => done,
+            };
+            work.browser.forget_buffers();
+            show(work);
+        }
         // A `LightParams` row is copied with its bands, which no column
         // points at; see `tables::rows::copy_light_params`.
         Command::Clone if table == "LightParams" => {

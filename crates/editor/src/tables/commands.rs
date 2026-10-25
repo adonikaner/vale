@@ -24,6 +24,10 @@ pub(crate) enum Command {
     AddSubArea,
     /// Give the area to the Areas tool's brush and switch to that tool.
     PaintArea,
+    /// Compose an NPC's skin again from its appearance and worn items, and
+    /// point `BakeName` at the new file. Offered on a `CreatureDisplayInfoExtra`
+    /// row and on a display that names one. See [`super::bake`].
+    RebakeSkin,
     Clone,
     Delete,
     CopyId,
@@ -41,6 +45,7 @@ pub(crate) fn commands(table: &str) -> Vec<Command> {
         "SpellVisual" => vec![Command::CloneChain],
         "SkillLine" => vec![Command::GiveToRacesAndClasses],
         "AreaTable" => vec![Command::AddSubArea, Command::PaintArea],
+        "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" => vec![Command::RebakeSkin],
         _ => Vec::new(),
     };
     all.extend([Command::Clone, Command::Delete, Command::CopyId]);
@@ -84,6 +89,11 @@ pub(crate) fn command_label(
             "Add a sub-area".to_string()
         }
         Command::PaintArea => "Paint on map".to_string(),
+        // On a display, the appearance row it names, which is what is baked.
+        Command::RebakeSkin => match table {
+            super::bake::EXTRA => "Rebake skin".to_string(),
+            _ => format!("Rebake skin of appearance {}", super::bake::extra_of(session, record)?),
+        },
         Command::Clone => "Clone".to_string(),
         Command::Delete => match browser.used_by(session, table, id).len() {
             0 => "Delete".to_string(),
@@ -126,6 +136,12 @@ pub(crate) fn command_about(command: Command) -> &'static str {
         Command::PaintArea => {
             "Switches to the Areas tool with this area on the brush. An area covers the map \
              chunks that carry its id; a new area covers no chunks until it is painted."
+        }
+        Command::RebakeSkin => {
+            "Composes the NPC's skin from the appearance's race, skin, face, hair and worn \
+             items, writes it into the project under Textures\\BakedNpcTextures\\ and sets it \
+             as BakeName. One undo entry; undo names the previous file again. Pauldrons, \
+             helms and boot shapes are models and geosets, which the bake does not hold."
         }
         Command::Clone => "Copies the row under the next id and appends \" (copy)\" to its name.",
         Command::Delete => "Removes the row. One undo entry.",

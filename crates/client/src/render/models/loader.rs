@@ -860,25 +860,9 @@ fn compose_character(
         return None;
     }
 
-    let mut composite = Composite::new();
-    let mut painted = 0;
-    for layer in &recipe.layers {
-        let Some(image) = archive
-            .read(&layer.path)
-            .ok()
-            .and_then(|raw| blp::decode(&raw).ok())
-        else {
-            continue;
-        };
-        composite.paint(layer.region, image.width, image.height, &image.rgba);
-        painted += 1;
-    }
-    if painted == 0 {
-        return None;
-    }
+    let top = vale_assets::look::character::paint_skin(&recipe, |path| archive.read(path).ok())?;
 
     let side = vale_assets::look::character::COMPOSITE_SIDE;
-    let top = composite.into_rgba();
     let mut levels = vec![top.clone()];
     levels.extend(vale_assets::look::character::generate_mips(side, side, &top));
     Some(RawTexture {

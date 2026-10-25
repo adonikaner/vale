@@ -551,6 +551,9 @@ fn a_row_s_commands_are_its_table_s_and_are_worded_for_the_row() {
         commands("Faction"),
         vec![Command::Clone, Command::Delete, Command::CopyId]
     );
+    for table in ["CreatureDisplayInfo", "CreatureDisplayInfoExtra"] {
+        assert_eq!(commands(table)[0], Command::RebakeSkin, "{table}");
+    }
 
     let (mut session, install) = session("commands");
     let mut spells = empty(173);
@@ -576,6 +579,25 @@ fn a_row_s_commands_are_its_table_s_and_are_worded_for_the_row() {
         Some("Create a teaching spell")
     );
     assert_eq!(label("Spell", 9, Command::Clone), None, "no such row");
+    // A display's rebake is its appearance row's, and a display with none has
+    // nothing to bake.
+    let mut displays = empty(21);
+    add(&mut displays, 40, &[(3, 17)], &[]);
+    add(&mut displays, 41, &[], &[]);
+    let mut extras = empty(19);
+    add(&mut extras, 17, &[], &[]);
+    session.tables.insert("CreatureDisplayInfo".to_string(), displays);
+    session.tables.insert("CreatureDisplayInfoExtra".to_string(), extras);
+    let mut browser = Browser::default();
+    let mut label = |table: &str, record: usize, command: Command| {
+        command_label(&mut browser, &session, table, record, command)
+    };
+    assert_eq!(
+        label("CreatureDisplayInfo", 0, Command::RebakeSkin).as_deref(),
+        Some("Rebake skin of appearance 17")
+    );
+    assert_eq!(label("CreatureDisplayInfo", 1, Command::RebakeSkin), None);
+    assert_eq!(label("CreatureDisplayInfoExtra", 0, Command::RebakeSkin).as_deref(), Some("Rebake skin"));
 
     let made = add_teaching_spell(&mut session, 133).expect("a teaching spell");
     assert!(session.tables["Spell"].row_of(made).is_some());

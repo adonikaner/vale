@@ -463,7 +463,7 @@ pub const TEMPLATE_COLUMNS: [Column; 75] = [
     Column { name: "pet_spell_list_id", kind: Kind::Ref(crate::creaturespells::TABLE), group: Group::Combat, about: "creature_spells entry of the spells it has as a hunter pet" },
     Column { name: "spawn_spell_id", kind: Kind::Ref("Spell"), group: Group::Behaviour, about: "spell cast on spawn; it cannot be attacked until the cast finishes" },
     Column { name: "totem_spell_id", kind: Kind::Ref("Spell"), group: Group::Combat, about: "the spell a totem casts" },
-    Column { name: "auras", kind: Kind::Text, group: Group::Behaviour, about: "spell ids of the auras it spawns with, space separated" },
+    Column { name: "auras", kind: Kind::RefList("Spell"), group: Group::Behaviour, about: "spell ids of the auras it spawns with, space separated" },
     Column { name: "ai_name", kind: Kind::Text, group: Group::Behaviour, about: "the AI that controls it, or empty for the default" },
     Column { name: "movement_type", kind: Kind::Choice(&MOVEMENT_TYPES), group: Group::Behaviour, about: "the default movement type its spawns inherit" },
     Column { name: "inhabit_type", kind: Kind::Flags(&INHABIT_TYPES), group: Group::Behaviour, about: "where it can move: ground, water, air" },

@@ -310,6 +310,26 @@ pub fn skin_recipe(
     recipe
 }
 
+/// [`skin_recipe`] for a wardrobe given by slot rather than by inventory type:
+/// an NPC's `CreatureDisplayInfoExtra` row, whose ten columns are slots (see
+/// `DisplayTables::EQUIPPED_SLOTS`). What a bake of that NPC's skin paints.
+/// No emblem: an NPC's tabard is the file its display row names.
+pub fn worn_skin_recipe(
+    sections: &crate::look::character::CharSections,
+    items: Option<&item::ItemDisplays>,
+    appearance: &Appearance,
+    worn: &[Equipped],
+    exists: impl FnMut(&str) -> bool,
+) -> crate::look::character::CharacterSkin {
+    let mut recipe = sections.skin(appearance);
+    if let Some(table) = items {
+        recipe
+            .layers
+            .extend(item::item_layers_with_emblem(table, appearance.gender, worn, None, exists));
+    }
+    recipe
+}
+
 /// Whether a worn chest, robe or leg piece sets the third of its three
 /// geoset numbers, which is the skirt of a robe or a kilt. The tabard
 /// designer's preview leaves the tabard's geometry off over one.

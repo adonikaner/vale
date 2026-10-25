@@ -1965,6 +1965,7 @@ pub(in crate::ui) fn picker(
             }
             PickFor::QuestOf { role, .. } => format!("Choose a quest the selection {}", role.word()),
             PickFor::ServerColumn(target) => format!("Choose {}", target.column),
+            PickFor::ListAdd(target) => format!("Add to {}", target.column),
             PickFor::LootItem { table, entry } => format!("Choose an item for {table} {entry}"),
             PickFor::VendorItem { table, entry } => format!("Choose an item for {table} {entry}"),
             PickFor::TrainerSpell { table, entry } => format!("Choose a spell for {table} {entry}"),
@@ -2096,6 +2097,10 @@ pub(in crate::ui) fn picker(
                 .map(|hit| hit.id.to_string())
                 .unwrap_or_else(|| "0".to_string());
             target.write(session, written, now);
+            close = true;
+        }
+        (PickFor::ListAdd(target), Some(hit), _) => {
+            target.add_to_list(session, hit.id, now);
             close = true;
         }
         (PickFor::Relation { holder, role }, Some(hit), _) => {

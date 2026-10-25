@@ -672,6 +672,26 @@ impl Composite {
     }
 }
 
+/// Paint a skin recipe's layers into one composite, in order, and answer the
+/// 256x256 RGBA texture, or `None` when no layer could be painted.
+///
+/// `read` answers a layer's file, or `None` where there is none. A layer that
+/// is missing or will not decode costs that layer and nothing else, for the
+/// reason [`crate::look::dress::skin_recipe`] gives. The one compositor: the
+/// client paints a player's skin with it and the editor an NPC's bake.
+pub fn paint_skin(recipe: &CharacterSkin, mut read: impl FnMut(&str) -> Option<Vec<u8>>) -> Option<Vec<u8>> {
+    let mut composite = Composite::new();
+    let mut painted = 0;
+    for layer in &recipe.layers {
+        let Some(image) = read(&layer.path).and_then(|raw| crate::world::blp::decode(&raw).ok()) else {
+            continue;
+        };
+        composite.paint(layer.region, image.width, image.height, &image.rgba);
+        painted += 1;
+    }
+    (painted > 0).then(|| composite.into_rgba())
+}
+
 /// A box-filtered mip chain for a texture this client generated.
 ///
 /// The BLPs in the archive carry Blizzard's own mips and nothing here has to

@@ -2,7 +2,8 @@
 //! button that chooses one by name, and the name the number resolves to,
 //! as a link to where that row is edited.
 //!
-//! Every server-row form draws a `Kind::Ref` column through [`cell`], by way
+//! Every server-row form draws a `Kind::Ref` column through [`cell`], and a
+//! `Kind::RefList` column (a creature's `auras`) through [`list_cell`], by way
 //! of `crate::ui::widgets::rowform::server_field`. The quest form's signed
 //! references, whose sign picks the table, draw their name through [`name`].
 //! The picker is [`crate::ui::subjects::quests::picker`], and the tables it can
@@ -39,7 +40,7 @@ use bevy_egui::egui;
 
 use crate::ui::shell::asks::{ShellAsk, ShellAsks};
 use crate::ui::subjects::quests::{name_in, open_for_names, target_of};
-use super::rowform::{meaning, FORM_ROW};
+use super::rowform::{meaning, FORM_ROW, FORM_VALUE};
 use super::theme;
 use crate::session::EditSession;
 use crate::subjects::quests::{ColumnTarget, Holder, PickFor, Picker, Quests, Target};
@@ -102,6 +103,57 @@ pub(crate) fn cell(
     }
     name(ui, resolver, table, id);
     None
+}
+
+/// A list column (`Kind::RefList`): one line per id, with the id, a button
+/// that removes it and the name it resolves to, then a button that adds one
+/// through the reference picker. `target` is where both write; `None` draws
+/// the lines alone, for a column that is read and not edited.
+///
+/// Answers the literal a removal wrote. An addition is written by the picker
+/// when a row is chosen in it; see [`ColumnTarget::add_to_list`]. A word of
+/// the text that is not an id is listed as it is and can be removed.
+pub(crate) fn list_cell(
+    ui: &mut egui::Ui,
+    resolver: &mut Resolver<'_>,
+    table: &'static str,
+    showing: &str,
+    target: Option<ColumnTarget>,
+) -> Option<String> {
+    let text = vale_mangos::sql::unquote(showing);
+    let items = crate::subjects::quests::list_items(&text);
+    let mut written = None;
+    ui.vertical(|ui| {
+        if items.is_empty() {
+            ui.add_sized(
+                egui::vec2(FORM_VALUE, FORM_ROW),
+                egui::Label::new(egui::RichText::new("none").small().color(theme::INK_FAINT)),
+            );
+        }
+        for (at, item) in items.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add_sized(egui::vec2(FORM_VALUE, FORM_ROW), egui::Label::new(theme::number(*item)));
+                if target.is_some() && ui.small_button("x").on_hover_text(format!("Remove {item}.")).clicked() {
+                    let mut kept = items.clone();
+                    kept.remove(at);
+                    written = Some(vale_mangos::sql::text(&kept.join(" ")));
+                }
+                match item.parse::<u32>() {
+                    Ok(id) => name(ui, resolver, table, id),
+                    Err(_) => {
+                        ui.label(egui::RichText::new("not an id").small().color(theme::BAD));
+                    }
+                }
+            });
+        }
+        if let (Some(kind), Some(target)) = (target_of(table), target) {
+            let about = format!("Add a {table} row to {}, chosen by name or id.", target.column);
+            if ui.small_button("add\u{2026}").on_hover_text(about).clicked() {
+                resolver.quests.picker = Some(Picker::new(kind, PickFor::ListAdd(target)));
+            }
+        }
+    });
+    written
 }
 
 /// How much of a row a name needs beside the number, in points. Below this

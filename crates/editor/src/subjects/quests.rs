@@ -219,7 +219,7 @@ impl Relation {
 }
 
 /// What the form needs of an item a quest names.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct ItemName {
     pub(crate) name: String,
     pub(crate) quality: u32,
@@ -234,6 +234,13 @@ pub(crate) struct ItemName {
     /// `set_id` as the database holds it, which is what choosing that value
     /// clears the edit against. `None` for an item this project creates.
     pub(crate) set_in_database: Option<u32>,
+    /// The slot, class, subclass and sheath, which a set's picture dresses a
+    /// body by: the slot decides where a piece is worn, and the other three
+    /// how a weapon is held.
+    pub(crate) inventory_type: u32,
+    pub(crate) class: u32,
+    pub(crate) subclass: u32,
+    pub(crate) sheath: u32,
 }
 
 /// A change to a set's item list made in the set's form, waiting for the
@@ -392,6 +399,35 @@ impl ColumnTarget {
             }
         }
     }
+
+    /// Add `id` to the end of a list column (`Kind::RefList`), unless the list
+    /// already holds it. The list is the project's value when it has one and
+    /// the database's otherwise; a `NULL` is an empty list.
+    pub(crate) fn add_to_list(&self, session: &mut EditSession, id: u32, now: f64) {
+        let held = session
+            .rows
+            .edits
+            .get(self.table, &self.key, self.column)
+            .map(str::to_string)
+            .or_else(|| self.in_database.clone())
+            .map(|literal| vale_mangos::sql::unquote(&literal))
+            .unwrap_or_default();
+        let mut items = list_items(&held);
+        if items.iter().any(|item| item.parse() == Ok(id)) {
+            session.status = format!("{} already holds {id}", self.column);
+            return;
+        }
+        let added = id.to_string();
+        items.push(&added);
+        self.write(session, vale_mangos::sql::text(&items.join(" ")), now);
+    }
+}
+
+/// The ids of a list column's text, in order, each as it is written. A word
+/// that is not a number is kept, so a write that removes one id leaves the
+/// rest of the text as it was.
+pub(crate) fn list_items(text: &str) -> Vec<&str> {
+    text.split_whitespace().collect()
 }
 
 /// Where a chosen row is written.
@@ -410,6 +446,9 @@ pub(crate) enum PickFor {
     /// object forms' use of the same dialog. The target says which row and
     /// column, and [`ColumnTarget::write`] is what a choice becomes.
     ServerColumn(ColumnTarget),
+    /// An id to add to a list column of another server table's row: a spell
+    /// added to a creature's `auras`. See [`ColumnTarget::add_to_list`].
+    ListAdd(ColumnTarget),
     /// An item to add to a loot set, which is the loot window's use of the
     /// same dialog. The choice is answered into [`Quests::loot_pick`] rather
     /// than written here, because adding a row is `crate::subjects::loot`'s
@@ -1081,9 +1120,9 @@ impl Quests {
     /// written; see `crate::server::fresh`.
     pub(crate) fn item(&mut self, entry: u32, edits: &Edits) -> Option<ItemName> {
         let name = claimed(edits, vale_mangos::item::TEMPLATE, entry, "name");
-        let quality = claimed(edits, vale_mangos::item::TEMPLATE, entry, "quality").and_then(|v| v.parse().ok());
-        let display = claimed(edits, vale_mangos::item::TEMPLATE, entry, "display_id").and_then(|v| v.parse().ok());
-        let set = claimed(edits, vale_mangos::item::TEMPLATE, entry, "set_id").and_then(|v| v.parse().ok());
+        let number = |column: &str| -> Option<u32> {
+            claimed(edits, vale_mangos::item::TEMPLATE, entry, column).and_then(|v| v.parse().ok())
+        };
         let read = match self.items.get(&entry) {
             Some(found) => found.clone(),
             None => {
@@ -1091,25 +1130,25 @@ impl Quests {
                 None
             }
         };
-        match (read, name) {
-            (Some(read), name) => Some(ItemName {
-                name: name.unwrap_or(read.name),
-                quality: quality.unwrap_or(read.quality),
-                display_id: display.unwrap_or(read.display_id),
-                patch: read.patch,
-                set_id: set.unwrap_or(read.set_id),
-                set_in_database: read.set_in_database,
-            }),
-            (None, Some(name)) => Some(ItemName {
-                name,
-                quality: quality.unwrap_or(0),
-                display_id: display.unwrap_or(0),
-                patch: None,
-                set_id: set.unwrap_or(0),
-                set_in_database: None,
-            }),
-            (None, None) => None,
-        }
+        let read = match (read, name) {
+            (Some(read), name) => ItemName {
+                name: name.unwrap_or_else(|| read.name.clone()),
+                ..read
+            },
+            // An item this project creates: nothing of it is in a database.
+            (None, Some(name)) => ItemName { name, ..ItemName::default() },
+            (None, None) => return None,
+        };
+        Some(ItemName {
+            quality: number("quality").unwrap_or(read.quality),
+            display_id: number("display_id").unwrap_or(read.display_id),
+            set_id: number("set_id").unwrap_or(read.set_id),
+            inventory_type: number("inventory_type").unwrap_or(read.inventory_type),
+            class: number("class").unwrap_or(read.class),
+            subclass: number("subclass").unwrap_or(read.subclass),
+            sheath: number("sheath").unwrap_or(read.sheath),
+            ..read
+        })
     }
 
     /// Write the `set_id` side of each pending change to a set's item list,
@@ -1646,6 +1685,10 @@ fn fetch_the_names(
                     patch: row.integer("patch").map(|patch| patch as u32),
                     set_id,
                     set_in_database: Some(set_id),
+                    inventory_type: row.integer("inventory_type").unwrap_or(0) as u32,
+                    class: row.integer("class").unwrap_or(0) as u32,
+                    subclass: row.integer("subclass").unwrap_or(0) as u32,
+                    sheath: row.integer("sheath").unwrap_or(0) as u32,
                 };
                 if let Some(slot) = out.items.iter_mut().find(|(had, _)| *had == entry as u32) {
                     slot.1 = Some(found);
@@ -2436,6 +2479,7 @@ mod tests {
             patch: Some(2),
             set_id,
             set_in_database: Some(set_id),
+            ..ItemName::default()
         };
         let mut quests = Quests::default();
         quests.items.renew(session.database_writes);
@@ -2488,6 +2532,7 @@ mod tests {
                 patch: Some(0),
                 set_id: 0,
                 set_in_database: Some(0),
+                ..ItemName::default()
             }),
         );
         let mut edits = Edits::default();
@@ -2495,6 +2540,35 @@ mod tests {
         edits.set(vale_mangos::item::TEMPLATE, &key, "name", Some("'Fine Linen'".into()));
         let found = quests.item(2589, &edits).expect("named");
         assert_eq!((found.name.as_str(), found.quality, found.display_id), ("Fine Linen", 1, 7090));
+    }
+
+    /// A chosen aura goes on the end of the list, once; adding it again
+    /// writes nothing and says so.
+    #[test]
+    fn an_id_is_added_to_the_end_of_a_list_once() {
+        assert_eq!(list_items("  18950 x  12544 "), vec!["18950", "x", "12544"]);
+        let install = std::env::temp_dir().join(format!("vale-list-column-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        let key = vale_mangos::creature::template_key(46, 0);
+        let target = ColumnTarget {
+            table: vale_mangos::creature::TEMPLATE,
+            key: key.clone(),
+            column: "auras",
+            in_database: Some("'18950'".to_string()),
+            label: "Edit creature",
+            subject: "creature_template 46 auras".to_string(),
+        };
+        target.add_to_list(&mut session, 12544, 0.0);
+        let held = |session: &EditSession| {
+            session.rows.edits.get(vale_mangos::creature::TEMPLATE, &key, "auras").map(str::to_string)
+        };
+        assert_eq!(held(&session).as_deref(), Some("'18950 12544'"));
+        target.add_to_list(&mut session, 18950, 0.0);
+        assert_eq!(held(&session).as_deref(), Some("'18950 12544'"));
+        assert_eq!(session.status, "auras already holds 18950");
+        let _ = std::fs::remove_dir_all(&install);
     }
 }
 

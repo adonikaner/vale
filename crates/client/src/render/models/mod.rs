@@ -77,7 +77,7 @@ use crate::axes;
 // is the asset store, and both are in scope here.
 use vale_assets::{
     world::blp,
-    look::character::{Appearance, CharSections, Composite},
+    look::character::{Appearance, CharSections},
     // `CharacterLook` is the asset crate's, because what a player is dressed
     // as is a game rule and not a rendering decision; see `vale_assets::look::dress`.
     // This crate only turns it into a cache key and a texture.
