@@ -11,36 +11,34 @@
 //!            and the picture drawn behind the nodes
 //! ops/       the edit operations: how each is applied, inverted and named
 //! undo.rs    the undo stack, from which edits are undone and redone
-//! m2.rs      a rigid transform baked into a copy of a model, which is how 1.12
-//!            positions a spell effect: the tables carry no offset, so the
-//!            offset lives in the file
+//! m2/        writing models: a rigid transform baked into a copy of a model,
+//!            which is how 1.12 positions a spell effect, and a whole model
+//!            written from a glTF file with its skeleton and animations
 //! project.rs where an edit is written, and how it reaches a client
 //! manifest.rs what a project changes, file by file, against the files it
 //!            was edited from
 //! ```
 //!
-//! This crate opens no window and needs none. The split against
-//! `vale-ide` is the same one `vale-assets` keeps against
-//! `vale-client`: a decision that could be made with no renderer running is
-//! made here, where it can be unit-tested and where a command-line check can
-//! call the same copy the editor calls.
+//! This crate opens no window. It is split from `vale-ide` the way
+//! `vale-assets` is split from `vale-client`: a decision that can be made with
+//! no renderer running is made here, where it can be unit-tested and where a
+//! command-line check can call the same code the editor calls.
 //!
 //! ## What this crate may not decide
 //!
 //! Every rule about what a file means belongs to `vale-assets` and is
 //! called from here rather than restated: the 145-vertex layout of a map chunk,
 //! the tile grid, the world axes, the chunk origin sitting at the maximum x and
-//! y corner. An editor with its own copy of any of those places a doodad a unit
-//! off the ground the client walks on, and neither side is visibly wrong.
+//! y corner. An editor with its own copy of any of those can place a doodad a
+//! unit off the ground the client walks on, with neither copy visibly wrong.
 //!
 //! ## Why an edit leaves every unedited byte as it was
 //!
 //! An editor that rewrites a file it only partly understands destroys the parts
 //! it does not. [`adt::AdtFile`] is therefore a container rather than a model:
 //! every region of the file is carried as it was written, and only the regions
-//! an edit names are replaced. The check that this holds is
-//! [`adt::tests`]' round trip — parse a real tile, write it back, and compare
-//! the bytes.
+//! an edit names are replaced. [`adt::tests`] checks this with a round trip:
+//! it parses a real tile, writes it back, and compares the bytes.
 
 pub mod adt;
 pub mod dbc;

@@ -6677,6 +6677,8 @@ dependencies = [
 name = "vale-edit"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "gltf",
  "thiserror 2.0.19",
  "vale-assets",
  "wow-mpq",

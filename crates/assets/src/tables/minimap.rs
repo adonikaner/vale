@@ -1,13 +1,13 @@
-//! **The little round map**: which picture covers which tile, how far it sees,
+//! The minimap: which picture covers which tile, how far the minimap sees,
 //! and where a world position lands inside it.
 //!
-//! Three rules, none of them on the wire and none of them stated by any file
-//! this project already reads — so all three are the client's own.
+//! The three rules below are not sent by the server and are not stated by any
+//! file this project already reads. All three are the client's own.
 //!
 //! ## The pictures are keyed by an MD5, not by a name
 //!
-//! The world's minimap art is one 256x256 BLP per ADT tile, and it does **not**
-//! live under a readable path. `textures\Minimap\md5translate.trs` is a plain
+//! The world's minimap art is one 256x256 BLP per ADT tile, and it is not
+//! stored under a readable path. `textures\Minimap\md5translate.trs` is a plain
 //! text index shipped beside it:
 //!
 //! ```text
@@ -15,19 +15,19 @@
 //! Azeroth\map32_48.blp  <TAB>  7fc0d0b4d9b3f6e9c1a0…blp
 //! ```
 //!
-//! …and the file that actually exists is `textures\Minimap\<that md5>.blp`.
-//! `MINIMAPCHUNKNOTFOUND|%d|%d` and `No minimap texture: "%s"` are the client's
-//! own two complaints about a miss, which is what says the lookup can
-//! legitimately fail: **the
-//! index is sparse**, and a tile with no picture is black rather than an error.
+//! The file that exists is `textures\Minimap\<that md5>.blp`. The client has
+//! two messages for a tile the index does not carry,
+//! `MINIMAPCHUNKNOTFOUND|%d|%d` and `No minimap texture: "%s"`, so a failed
+//! lookup is expected: the index is sparse, and a tile with no picture is drawn
+//! black, not reported as an error.
 //!
-//! The `dir:` name is the `Map.dbc` directory — the same string
-//! `MapTerrain::directory` answers with — and `map<col>_<row>` is the ADT's own
-//! numbering, so [`crate::world::terrain::tile_for_position`] is the join.
+//! The `dir:` name is the `Map.dbc` directory, the same string
+//! `MapTerrain::directory` returns, and `map<col>_<row>` is the ADT's own
+//! numbering, so [`crate::world::terrain::tile_for_position`] joins the two.
 //!
-//! ## How far it sees is a table of chunks, and the indoor one is yards
+//! ## View radius: an outdoor table in chunks, an indoor table in yards
 //!
-//! The whole rule:
+//! The rule:
 //!
 //! ```text
 //!   is the character indoors?
@@ -44,17 +44,16 @@
 //! indoor          150    120     90     60     40     25    yards
 //! ```
 //!
-//! Both tables are the client's own; the two
-//! multipliers are `0.5` and `33.33333`, which is [`crate::world::adt::CHUNK_SIZE`].
-//! There are **six** zoom levels, which is what
-//! `Minimap:GetZoomLevels()` answers — and the client clamps a `SetZoom` to 5.
-//! The `minimapZoom` CVar's default is the string `"3"`, so a
-//! session opens at a 133-yard radius outdoors.
+//! Both tables are the client's own. The two multipliers are `0.5` and
+//! `33.33333`; the second is [`crate::world::adt::CHUNK_SIZE`]. There are six
+//! zoom levels, which is what `Minimap:GetZoomLevels()` returns, and the client
+//! clamps a `SetZoom` argument to 5. The `minimapZoom` CVar's default is the
+//! string `"3"`, so a session opens at a 133-yard radius outdoors.
 //!
-//! ## …and the shape it is cut to is a hard disc
+//! ## The minimap is cut to a disc with a hard edge
 //!
-//! `Textures\MinimapMask` is 64x64 DXT3, and its alpha bucketed by
-//! radius from the centre reads
+//! `Textures\MinimapMask` is 64x64 DXT3. Its alpha, grouped by radius from the
+//! centre, reads:
 //!
 //! ```text
 //! r <= 29   255       every texel
@@ -62,18 +61,18 @@
 //! r >= 32   0
 //! ```
 //!
-//! — a circle inscribed in the square, one texel of rim, no feathering. The
-//! same measurement `Interface\CharacterFrame\TempPortraitAlphaMask` gives, and
-//! the same conclusion: cutting the quad to a disc is not an approximation of
-//! the mask, it *is* the mask, and it costs no second texture.
+//! The mask is a circle inscribed in the square, with a rim one texel wide and
+//! no feathering. `Interface\CharacterFrame\TempPortraitAlphaMask` measures the
+//! same. Cutting the quad to a disc therefore reproduces the mask exactly, not
+//! approximately, and needs no second texture.
 //!
-//! ## Inside a building the map is the building's own pictures
+//! ## Inside a WMO, the minimap draws the WMO's own pictures
 //!
 //! While the character stands in a group of a WMO, the 1.12.1 client draws
-//! none of the terrain. It draws that WMO's pictures over a black disc, and
-//! the radius comes from the indoor table and the indoor zoom level
-//! (`minimapInsideZoom`). The pictures are also in `md5translate.trs`, one per
-//! cell of a grid over each group:
+//! none of the terrain. It draws that WMO's pictures over a black disc, with
+//! the radius from the indoor table and the indoor zoom level
+//! (`minimapInsideZoom`). The pictures are also listed in `md5translate.trs`,
+//! one per cell of a grid over each group:
 //!
 //! ```text
 //! WMO\Dungeon\MD_Goldmine\MD_Goldmine_003_01_00.blp   <TAB>  <md5>.blp
@@ -94,75 +93,77 @@ use crate::world::wmo::{group_flags, WmoGroupHeader, WmoPortals};
 /// The index that says which picture covers which tile.
 pub const MD5_TRANSLATE: &str = r"textures\Minimap\md5translate.trs";
 
-/// …and the directory the pictures themselves are in.
+/// The directory the pictures are in.
 pub const TEXTURE_DIR: &str = r"textures\Minimap";
 
 /// How many zoom levels the minimap has.
 pub const ZOOM_LEVELS: usize = 6;
 
-/// …and which one a session starts on: the `minimapZoom` CVar's shipped default
-/// (the string `"3"`).
+/// The zoom level a session starts on: the `minimapZoom` CVar's shipped
+/// default (the string `"3"`).
 pub const DEFAULT_ZOOM: usize = 3;
 
-/// The **outdoor** radii, as the client's table states them: a count of
-/// `MCNK` chunks across the *diameter*.
+/// The outdoor radii as the 1.12.1 client states them: a count of `MCNK`
+/// chunks across the diameter.
 const OUTDOOR_CHUNKS: [f32; ZOOM_LEVELS] = [14.0, 12.0, 10.0, 8.0, 6.0, 4.0];
 
-/// …and the **indoor** ones, which the client's table states in yards
-/// outright — already a radius, with no arithmetic on top.
+/// The indoor radii. The 1.12.1 client states these in yards, and they are
+/// already radii, so no conversion is applied.
 const INDOOR_YARDS: [f32; ZOOM_LEVELS] = [150.0, 120.0, 90.0, 60.0, 40.0, 25.0];
 
-/// **How far the minimap sees, in yards from the character**.
+/// How far the minimap sees, in yards from the character.
 ///
-/// A zoom past the last level is clamped rather than refused, which is the
-/// client's own handling (it writes `5` over anything larger before it ever
-/// reaches this table).
+/// A zoom past the last level is clamped, not refused. The client does the
+/// same: it writes `5` over any larger value before it reads this table.
 pub fn radius_yards(zoom: usize, indoors: bool) -> f32 {
     let zoom = zoom.min(ZOOM_LEVELS - 1);
     if indoors {
         INDOOR_YARDS[zoom]
     } else {
-        // `* 0.5` then `* 33.3333` — a diameter in chunks into a radius in yards.
+        // `* 0.5` turns the diameter into a radius, and `* 33.3333` turns
+        // chunks into yards.
         OUTDOOR_CHUNKS[zoom] * 0.5 * crate::world::adt::CHUNK_SIZE
     }
 }
 
 /// One tile's picture, and where it lands in the widget.
 ///
-/// The rectangle is in the widget's own `0..1` space, **y down** — the space a
-/// painter draws in — and it is deliberately allowed to fall outside `0..1` on
-/// every side: a tile is 533 yards and the view is at most 466 across, so the
-/// common case is two or four tiles each showing a corner. Whoever draws it
-/// clips; whoever tests it does not have to reason about the clip.
+/// The rectangle is in the widget's own `0..1` space, y down, which is the
+/// space a painter draws in. It may fall outside `0..1` on every side: a tile
+/// is 533 yards and the view is at most 466 across, so in the common case two
+/// or four tiles each show a corner. The code that draws it clips, so a test
+/// of the placement does not have to account for the clip.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TileView {
-    /// The ADT column and row — [`crate::world::terrain::tile_for_position`]'s pair.
+    /// The ADT column and row, as [`crate::world::terrain::tile_for_position`]
+    /// returns them.
     pub tile: (u32, u32),
     /// Where this tile's whole picture sits: `(left, top, right, bottom)`.
     pub rect: [f32; 4],
 }
 
-/// **Which tiles a view covers, and where each one goes** — the geometry half of
+/// Which tiles a view covers, and where each one goes. This is the geometry of
 /// the minimap, with no archive and no window.
 ///
 /// `x` and `y` are the character's world position and `radius` is
 /// [`radius_yards`]'s. The view is the square that circumscribes the circle,
-/// because that is what has to be sampled; the disc is cut out of it afterwards.
+/// because that square is what has to be sampled; the disc is cut out of it
+/// afterwards.
 ///
-/// **North is up and the view does not turn.** 1.12 registers no `rotateMinimap`
-/// CVar, where `minimapZoom` and `minimapInsideZoom` are both registered —
-/// so the only rotation
-/// on this widget is the arrow standing in the middle of it.
+/// North is up and the view does not rotate. 1.12 registers no
+/// `rotateMinimap` CVar, while it does register `minimapZoom` and
+/// `minimapInsideZoom`, so the only rotating element on this widget is the
+/// arrow at its centre.
 ///
-/// **And a picture's own `(0, 0)` texel is its tile's north-west corner,
-/// measured** rather than assumed. The same tile states its water twice — once
-/// as `MCLQ`'s grid of wet chunks and once as the picture's own blue — so
-/// `vale minimap <Map>` correlates the two under all four readings of the
-/// file. Voted over 25 coastline tiles it is north-west first **on Azeroth by
-/// 18.8 points of mean agreement and 18 of 25 tiles, and on Kalimdor by 9.7 and
-/// 12 of 25**, against east-west mirrored, north-south mirrored and transposed.
-/// It is worth a check of its own because a mirrored minimap draws, moves and
-/// reads as a map: a picture cannot settle it.
+/// A picture's `(0, 0)` texel is its tile's north-west corner. This is
+/// measured, not assumed. Each tile states its water twice, once as `MCLQ`'s
+/// grid of wet chunks and once as blue in the picture, so `vale minimap <Map>`
+/// correlates the two under all four orientations of the file. Over 25
+/// coastline tiles, north-west first wins against east-west mirrored,
+/// north-south mirrored and transposed: on Azeroth by 18.8 points of mean
+/// agreement and in 18 of 25 tiles, and on Kalimdor by 9.7 points and in 12 of
+/// 25. The orientation needs its own check because a mirrored minimap still
+/// draws, moves and reads as a map, so looking at the result cannot decide it.
 pub fn tiles_in_view(x: f32, y: f32, radius: f32) -> Vec<TileView> {
     if radius.is_nan() || radius <= 0.0 || !x.is_finite() || !y.is_finite() {
         return Vec::new();
@@ -179,7 +180,7 @@ pub fn tiles_in_view(x: f32, y: f32, radius: f32) -> Vec<TileView> {
     for row in top_row..=bottom_row {
         for col in left_col..=right_col {
             // This tile's own north-west corner, which is where its picture's
-            // (0, 0) texel sits — see the module comment.
+            // (0, 0) texel sits; see the module comment.
             let tile_north = MAP_ORIGIN - row as f32 * TILE_SIZE;
             let tile_west = MAP_ORIGIN - col as f32 * TILE_SIZE;
             let left = (west - tile_west) / span;
@@ -202,8 +203,8 @@ pub fn tiles_in_view(x: f32, y: f32, radius: f32) -> Vec<TileView> {
 #[derive(Debug, Default)]
 pub struct MinimapTiles {
     /// Keyed by `(lowercased map directory, column, row)`, because the `.trs`
-    /// spells `Azeroth` and a caller may hold `AZEROTH` — the archives are
-    /// case-insensitive and this index has to be too.
+    /// spells `Azeroth` and a caller may hold `AZEROTH`. The archives are
+    /// case-insensitive, so this index must be too.
     tiles: HashMap<(String, u32, u32), String>,
     /// The WMO pictures, keyed by `(lowercased stem, group, x, y)`; the stem is
     /// [`interior_stem`]'s.
@@ -211,16 +212,16 @@ pub struct MinimapTiles {
 }
 
 impl MinimapTiles {
-    /// Parse the index. **Never fails**: a chain without the file, or with a
-    /// damaged one, yields an empty index, and an empty index is a black
-    /// minimap rather than a dead one — which is the client's own answer to
-    /// `MINIMAPCHUNKNOTFOUND` and not a new degradation.
+    /// Parse the index. This never fails: a chain without the file, or with a
+    /// damaged one, yields an empty index. An empty index draws a black
+    /// minimap, not a failed one. The client handles `MINIMAPCHUNKNOTFOUND`
+    /// the same way, so this is not a new degradation.
     ///
-    /// The file is `dir: <name>` lines interleaved with tab-separated pairs, CRLF
-    /// throughout. A pair's left half already carries the directory, so the
-    /// `dir:` lines are not needed to read it — but they are what says the file
-    /// is the shape this expects, and a line that is neither is skipped rather
-    /// than guessed at.
+    /// The file is `dir: <name>` lines interleaved with tab-separated pairs,
+    /// with CRLF line endings. A pair's left half already carries the
+    /// directory, so the `dir:` lines are not needed to read it. They do
+    /// confirm that the file has the expected format, and a line that is
+    /// neither is skipped, not guessed at.
     pub fn parse(raw: &[u8]) -> MinimapTiles {
         let text = String::from_utf8_lossy(raw);
         let mut tiles = HashMap::new();
@@ -289,14 +290,25 @@ impl MinimapTiles {
         out
     }
 
-    /// **The archive path of one tile's picture**, or `None` for a tile the
-    /// index does not carry — which is most of the world, since only tiles a map
-    /// actually ships get one.
+    /// The archive path of one tile's picture, or `None` for a tile the index
+    /// does not carry. That is most of the world, since only the tiles a map
+    /// ships have a picture.
     pub fn texture(&self, directory: &str, col: u32, row: u32) -> Option<String> {
         let key = (directory.to_ascii_lowercase(), col, row);
         self.tiles
             .get(&key)
             .map(|file| format!("{TEXTURE_DIR}\\{file}"))
+    }
+
+    /// The tile whose picture is the file `name` (`<md5>.blp`, without a
+    /// folder), as `(lowercased map directory, column, row)`, or `None` for a
+    /// file the index names for no tile. A linear search, for a caller that
+    /// asks about a few files.
+    pub fn tile_of(&self, name: &str) -> Option<(String, u32, u32)> {
+        self.tiles
+            .iter()
+            .find(|(_, file)| file.eq_ignore_ascii_case(name))
+            .map(|((dir, col, row), _)| (dir.clone(), *col, *row))
     }
 
     /// How many tiles the index carries, for the checks.
@@ -308,9 +320,8 @@ impl MinimapTiles {
         self.tiles.is_empty()
     }
 
-    /// The map directories it names, sorted — the census `vale minimap`
-    /// prints, and the one thing that says whether the `dir:` names really are
-    /// `Map.dbc`'s.
+    /// The map directories it names, sorted. `vale minimap` prints this list,
+    /// and it is the only check that the `dir:` names are `Map.dbc`'s.
     pub fn directories(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .tiles
@@ -323,7 +334,7 @@ impl MinimapTiles {
         names
     }
 
-    /// Every tile one directory carries, sorted — for the same check.
+    /// Every tile one directory carries, sorted, for the same check.
     pub fn tiles_of(&self, directory: &str) -> Vec<(u32, u32)> {
         let directory = directory.to_ascii_lowercase();
         let mut out: Vec<(u32, u32)> = self
@@ -375,10 +386,10 @@ fn normalise_stem(stem: &str) -> String {
     stem.replace('/', "\\").to_ascii_lowercase()
 }
 
-/// **The `.trs` stem of a WMO's pictures**, from the WMO's archive path: the
-/// path with its first six characters (`World\`) and everything from the first
-/// `.` after them removed, so `World\wmo\Dungeon\MD_Goldmine\MD_Goldmine.wmo`
-/// is `wmo\dungeon\md_goldmine\md_goldmine`. The 1.12.1 client removes the six
+/// The `.trs` stem of a WMO's pictures, from the WMO's archive path: the path
+/// with its first six characters (`World\`) and everything from the first `.`
+/// after them removed, so `World\wmo\Dungeon\MD_Goldmine\MD_Goldmine.wmo` is
+/// `wmo\dungeon\md_goldmine\md_goldmine`. The 1.12.1 client removes the six
 /// characters without checking what they are; every `MODF` path starts with
 /// `World\`.
 pub(crate) fn interior_stem(wmo_path: &str) -> String {
@@ -394,7 +405,7 @@ pub(crate) const INTERIOR_YARDS_PER_TEXEL: f32 = 0.5;
 /// into: 256 texels at half a yard is 128 yards.
 const INTERIOR_MAX_TEXELS: u32 = 256;
 
-/// …and the narrowest.
+/// The narrowest a WMO picture is, in texels.
 const INTERIOR_MIN_TEXELS: u32 = 32;
 
 /// How far a group's outermost cells are widened past the group's box on its
@@ -425,7 +436,8 @@ pub struct InteriorTile {
 /// [`INTERIOR_YARDS_PER_TEXEL`] that covers the extent, clamped to 32..256, and
 /// the count is the extent over 128 yards rounded up. Both roundings go up. An
 /// extent of under half a yard asks for a negative power, which the 1.12.1
-/// client turns into the widest picture; it is reproduced rather than tidied.
+/// client turns into the widest picture. This function reproduces that result
+/// instead of correcting it.
 fn grid_axis(extent: f32) -> (f32, u32) {
     let texels = extent / (INTERIOR_MAX_TEXELS as f32 * INTERIOR_YARDS_PER_TEXEL)
         * INTERIOR_MAX_TEXELS as f32;
@@ -444,8 +456,8 @@ fn grid_axis(extent: f32) -> (f32, u32) {
     (texels as f32 * INTERIOR_YARDS_PER_TEXEL, count)
 }
 
-/// **The picture grid over one group's box**, rows outer and columns inner,
-/// which is the order the 1.12.1 client lists them in.
+/// The picture grid over one group's box, rows outer and columns inner, which
+/// is the order the 1.12.1 client lists them in.
 pub fn group_tiles(bounds: &[[f32; 3]; 2]) -> Vec<InteriorTile> {
     let [min, max] = *bounds;
     let (width, columns) = grid_axis(max[0] - min[0]);
@@ -474,8 +486,8 @@ pub fn group_tiles(bounds: &[[f32; 3]; 2]) -> Vec<InteriorTile> {
     out
 }
 
-/// **The world box the client searches for pictures**, from the character's
-/// world position and the indoor radius `radius`.
+/// The world box the client searches for pictures, from the character's world
+/// position and the indoor radius `radius`.
 ///
 /// The position is snapped to a grid of `radius`-sized cells, so the set of
 /// pictures changes only when the character crosses a cell edge or the zoom
@@ -543,7 +555,7 @@ impl InteriorModel {
         Some(InteriorModel { stem: interior_stem(path), groups, portals })
     }
 
-    /// **The group a point stands in**, given the flags of the floor under it:
+    /// The group a point stands in, given the flags of the floor under it:
     /// among the groups whose box holds the point (WMO-local) and whose flags
     /// are the floor's, the one with the smallest box. Boxes overlap where
     /// rooms sit inside a district, and the flags are what tie the answer to
@@ -568,7 +580,7 @@ pub(crate) struct InteriorPicture {
     pub tile: InteriorTile,
 }
 
-/// **Which pictures are drawn**: a walk through the WMO's portals from the
+/// Which pictures are drawn: a walk through the WMO's portals from the
 /// group the character stands in, inside the WMO-local search box `query`
 /// ([`interior_query`] through [`box_to_local`]).
 ///
@@ -654,11 +666,12 @@ fn walk(
     }
 }
 
-/// **The order the pictures are drawn in**, bottom first: by the height of a
-/// cell's group above the character (`local_z`, WMO-local), lowest first, with
-/// every cell of the first listed picture's group — the group the walk began
-/// in, when it gave any — drawn last. A floor below shows only through the
-/// gaps in the floor the character is on, and a floor above never covers it.
+/// The order the pictures are drawn in, bottom first: by the height of a
+/// cell's group above the character (`local_z`, WMO-local), lowest first.
+/// Every cell of the first listed picture's group is drawn last; that group is
+/// the one the walk began in, when that group gave any pictures. A floor below
+/// therefore shows only through the gaps in the floor the character is on, and
+/// a floor above never covers it.
 pub(crate) fn draw_order(pictures: &mut [InteriorPicture], local_z: f32) {
     let Some(top) = pictures.first().map(|p| p.group) else {
         return;
@@ -670,10 +683,11 @@ pub(crate) fn draw_order(pictures: &mut [InteriorPicture], local_z: f32) {
 /// The texture coordinate at each of [`PlacedPicture::corners`]: texel column
 /// 0 at the cell's least `x` and row 0 at its greatest `y`.
 ///
-/// Measured as well as stated: `vale minimap <path>.wmo` scores each picture's
-/// opaque texels against its group's floor under four readings, and this one
-/// wins 101 of 107 pictures of Ironforge (97.4% agreement against 82.6% for
-/// the best other), 268 of 310 of Stormwind and all ten of the Goldshire inn.
+/// This is measured as well as stated. `vale minimap <path>.wmo` scores each
+/// picture's opaque texels against its group's floor under four orientations,
+/// and this one wins 101 of 107 pictures of Ironforge (97.4% agreement against
+/// 82.6% for the best other), 268 of 310 of Stormwind and all ten of the
+/// Goldshire inn.
 pub const PICTURE_UV: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
 
 /// One picture, placed on the widget.
@@ -694,8 +708,8 @@ fn transform(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
     std::array::from_fn(|axis| m[axis] * p[0] + m[4 + axis] * p[1] + m[8 + axis] * p[2] + m[12 + axis])
 }
 
-/// **The pictures of the building a character stands in, in draw order and
-/// placed on the widget**: [`interior_query`], [`box_to_local`],
+/// The pictures of the WMO a character stands in, in draw order and placed on
+/// the widget: [`interior_query`], [`box_to_local`],
 /// [`interior_pictures`] and [`draw_order`] in turn, then each cell carried to
 /// the world by the placement and onto the north-up widget.
 ///
@@ -733,7 +747,7 @@ pub fn place_pictures(
         .collect()
 }
 
-/// **The part of a picture inside the minimap's disc**, as a convex polygon of
+/// The part of a picture inside the minimap's disc, as a convex polygon of
 /// `(point, uv)` pairs; empty when nothing of it is inside.
 ///
 /// `corners` and `uvs` are the picture's four corners and their texture
@@ -813,7 +827,7 @@ mod tests {
         assert_eq!(tiles.tiles_of("vale"), vec![(10, 11)]);
     }
 
-    /// A chain without the file is an empty index and not a failure — see
+    /// A chain without the file is an empty index, not a failure; see
     /// [`MinimapTiles::parse`].
     #[test]
     fn a_missing_index_is_empty_rather_than_an_error() {
@@ -822,8 +836,8 @@ mod tests {
         assert_eq!(tiles.texture("Azeroth", 32, 48), None);
     }
 
-    /// **The two zoom tables, as the client states them** — the outdoor one in
-    /// chunks and the indoor one in yards, with the default landing on 133.
+    /// The two zoom tables as the client states them: the outdoor one in
+    /// chunks and the indoor one in yards, with the default at 133 yards.
     #[test]
     fn the_zoom_radii_are_the_clients_two_tables() {
         let outdoor: Vec<f32> = (0..ZOOM_LEVELS).map(|z| radius_yards(z, false)).collect();
@@ -833,16 +847,16 @@ mod tests {
         }
         assert_eq!(indoor, vec![150.0, 120.0, 90.0, 60.0, 40.0, 25.0]);
         assert!((radius_yards(DEFAULT_ZOOM, false) - 133.33).abs() < 0.01);
-        // Past the last level clamps, which is what the client already did.
+        // A zoom past the last level is clamped, as the client clamps it.
         assert_eq!(radius_yards(99, false), radius_yards(5, false));
     }
 
-    /// **A character standing on a tile centre sees that tile and only it, dead
-    /// centre** — the case that pins every sign in [`tiles_in_view`] at once.
+    /// A character standing on a tile centre sees only that tile, centred in
+    /// the widget. This case checks every sign in [`tiles_in_view`] at once.
     #[test]
     fn a_tile_centre_puts_its_own_picture_in_the_middle() {
         let centre = crate::world::terrain::tile_centre(32, 48);
-        // 66 yards is zoom 5, comfortably inside one 533-yard tile.
+        // 66 yards is zoom 5, well inside one 533-yard tile.
         let view = tiles_in_view(centre[0], centre[1], 66.0);
         assert_eq!(view.len(), 1, "{view:?}");
         assert_eq!(view[0].tile, (32, 48));
@@ -853,11 +867,11 @@ mod tests {
         assert!((right - left - TILE_SIZE / 132.0).abs() < 0.01);
     }
 
-    /// **North is up and west is left**, which is the one thing about this that
-    /// is easy to get backwards and impossible to see in a still picture.
+    /// North is up and west is left. This is easy to get backwards, and a
+    /// still picture does not show the error.
     ///
-    /// Standing a little north-west of a tile corner must put the tile *south
-    /// and east* of the middle — so its picture's top-left goes to the right of
+    /// Standing a little north-west of a tile corner must put the tile south
+    /// and east of the middle, so its picture's top-left corner goes right of
     /// and below the centre.
     #[test]
     fn north_is_up_and_west_is_left() {
@@ -873,28 +887,28 @@ mod tests {
         let [left, top, ..] = target.rect;
         assert!(left > 0.5, "west of the character is left, so the tile starts right: {left}");
         assert!(top > 0.5, "north of the character is up, so the tile starts low: {top}");
-        // …and the tile that owns the character is up and to the left of it.
+        // The tile the character stands on is up and to the left of it.
         assert!(view.iter().any(|t| t.tile == (31, 47)), "{view:?}");
         assert_eq!(view.len(), 4, "a corner sees four tiles: {view:?}");
     }
 
-    /// **The character stands in the middle of their own map**, walked all the
-    /// way back through the texture's own uv — which is the one property that
-    /// ties [`tiles_in_view`]'s placement to what is *in* the pictures, and the
-    /// whole of what the painter does with a `TileView`.
+    /// The character stands in the middle of their own map, checked back
+    /// through the texture's uv. This property ties [`tiles_in_view`]'s
+    /// placement to the content of the pictures, and it covers everything the
+    /// painter does with a `TileView`.
     ///
-    /// The round trip is: take the widget's centre, find where it falls inside
-    /// the placement of the tile the character is standing on, read that as a
-    /// texel coordinate on that tile's picture, and turn the texel back into a
-    /// world position. It has to come back to the character. Any sign, any
-    /// transposition and any half-tile offset anywhere in the chain breaks it.
+    /// The round trip: take the widget's centre, find where it falls inside the
+    /// placement of the tile the character stands on, read that as a texel
+    /// coordinate on that tile's picture, and turn the texel back into a world
+    /// position. The result must be the character's position. A wrong sign, a
+    /// transposition or a half-tile offset anywhere in the chain breaks it.
     #[test]
     fn the_character_lands_in_the_middle_of_their_own_picture() {
         let goldshire = crate::world::terrain::tile_centre(32, 48);
         for (x, y) in [
-            // The origin, a tile centre, somewhere well off it, and a point a
-            // few yards inside a tile corner — which is the case that puts four
-            // pictures on the widget at once.
+            // The origin, a tile centre, a point far from it, and a point a
+            // few yards inside a tile corner, which puts four pictures on the
+            // widget at once.
             (0.0, 0.0),
             (goldshire[0], goldshire[1]),
             (-8000.0, 1500.0),
@@ -910,10 +924,10 @@ mod tests {
                     .unwrap_or_else(|| panic!("the tile under the character at {x},{y}: {view:?}"));
                 let [left, top, right, bottom] = placed.rect;
                 // Where the widget's centre falls in this picture, 0..1 from its
-                // north-west corner — exactly the uv the painter hands egui.
+                // north-west corner. This is the uv the painter passes to egui.
                 let u = (0.5 - left) / (right - left);
                 let v = (0.5 - top) / (bottom - top);
-                // The slack is a float epsilon and not a tolerance: the origin
+                // The slack is a float epsilon, not a tolerance: the origin
                 // sits exactly on tile (32, 32)'s north-west seam, where the
                 // placement puts the character at `v == 0` and `MAP_ORIGIN -
                 // 32 * TILE_SIZE` cancels to a few ten-millionths rather than
@@ -921,8 +935,8 @@ mod tests {
                 const SEAM: f32 = 1e-5;
                 assert!((-SEAM..=1.0 + SEAM).contains(&u), "u {u}");
                 assert!((-SEAM..=1.0 + SEAM).contains(&v), "v {v}");
-                // …and that texel read back as a world position. `u` runs west
-                // to east across the picture and `v` north to south.
+                // Read that texel back as a world position. `u` runs west to
+                // east across the picture and `v` north to south.
                 let back_y = MAP_ORIGIN - (here.0 as f32 + u) * TILE_SIZE;
                 let back_x = MAP_ORIGIN - (here.1 as f32 + v) * TILE_SIZE;
                 assert!((back_x - x).abs() < 0.05, "north at zoom {zoom}: {back_x} vs {x}");
@@ -950,7 +964,7 @@ mod tests {
         assert_eq!(parse_interior_name(r"Azeroth\map32_48.blp"), None);
     }
 
-    /// **The grid over a group**: a power-of-two picture at half a yard a texel,
+    /// The grid over a group: a power-of-two picture at half a yard a texel,
     /// 32..256 texels, as many cells as 128-yard steps cover the extent, and the
     /// outer edges widened by a yard.
     #[test]
@@ -1118,8 +1132,8 @@ mod tests {
         assert!((t[0] - p[0] / 20.0).abs() < 1e-4, "uv follows the cut");
     }
 
-    /// The widest zoom is 466 yards across and a tile is 533, so it can never
-    /// need more than a 2x2 — which is what bounds the draw at four quads.
+    /// The widest zoom is 466 yards across and a tile is 533, so a view never
+    /// needs more than a 2x2 block of tiles. That bounds the draw at four quads.
     #[test]
     fn the_widest_view_never_needs_more_than_four_tiles() {
         let radius = radius_yards(0, false);

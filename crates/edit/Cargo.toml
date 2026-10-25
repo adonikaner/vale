@@ -20,3 +20,10 @@ vale-assets.workspace = true
 # through, so what the editor writes and what the client reads cannot drift.
 wow-mpq.workspace = true
 thiserror.workspace = true
+# Reading a glTF 2.0 file for `src/m2/gltf.rs`: models with skeletons and
+# animations, made in any tool that exports the format. The version and the
+# features are the ones Bevy's own glTF loader already builds, so this adds no
+# new build of it; `base64` is the version Bevy's loader uses too, for a
+# buffer embedded in the JSON as a `data:` URI.
+gltf = { version = "1.4", default-features = false, features = ["names", "utils", "KHR_materials_unlit"] }
+base64 = "0.22"

@@ -9,11 +9,11 @@
 //! ```
 //!
 //! This is a port of an earlier JavaScript implementation, which is known to
-//! render this game's models correctly. The same rule as `blp.rs`
-//! applies: the format is simple and its corner cases are not, so the working
-//! implementation is transcribed rather than rewritten from a wiki page.
+//! render this game's models correctly. As with `blp.rs`, the working
+//! implementation is transcribed rather than rewritten from a wiki page,
+//! because the format's layout is simple and its corner cases are not.
 //!
-//! Vanilla M2 (version 256..264) is **not** chunked — it is a flat header of
+//! Vanilla M2 (version 256..264) is not chunked. It is a flat header of
 //! `M2Array { u32 count, u32 offset }` pairs at fixed offsets, with everything
 //! else reached through those offsets. Only the arrays this renderer needs are
 //! read:
@@ -35,12 +35,12 @@
 //!
 //! ## Every optional block is validated, and a failed block is dropped
 //!
-//! Not "the parse fails". A model whose material table does not validate is
-//! still perfectly good geometry, and rendering it untextured beats not
-//! rendering it at all. The validations are the reference implementation's:
-//! they exist because a wrong *offset* in this format does not read as garbage,
-//! it reads as plausible numbers, and the cheapest way to notice is to check
-//! that the numbers are in range.
+//! A failed block does not fail the parse. A model whose material table does
+//! not validate still has usable geometry, and it is drawn untextured rather
+//! than not drawn. The validations are the reference implementation's. They
+//! exist because a wrong offset in this format reads as plausible numbers, not
+//! as garbage, and a range check on those numbers is the cheapest way to
+//! detect it.
 
 use crate::AssetError;
 
@@ -58,101 +58,125 @@ const M2_MAGIC: &[u8; 4] = b"MD20";
 pub mod offsets {
     pub const NAME: usize = 0x08;
     /// `GlobalModelFlags` — the header word the client masks with `3` to decide
-    /// whether the model **conforms to the ground it stands on**. See
+    /// whether the model conforms to the ground it stands on. See
     /// [`crate::look::conform`], which is the rule; this parser only reads the word.
-    pub(crate) const GLOBAL_FLAGS: usize = 0x10;
-    pub(crate) const GLOBAL_SEQUENCES: usize = 0x14;
-    pub(crate) const SEQUENCES: usize = 0x1C;
+    pub const GLOBAL_FLAGS: usize = 0x10;
+    pub const GLOBAL_SEQUENCES: usize = 0x14;
+    pub const SEQUENCES: usize = 0x1C;
     pub const BONES: usize = 0x34;
     pub const VERTICES: usize = 0x44;
-    pub(crate) const VIEWS: usize = 0x4C;
-    /// `M2Color` — the per-batch **colour** animation: a 3-float RGB track and
+    pub const VIEWS: usize = 0x4C;
+    /// `M2Color` — the per-batch colour animation: a 3-float RGB track and
     /// a fixed-16 alpha track, back to back. See [`super::M2Tints`].
-    pub(crate) const COLORS: usize = 0x54;
+    pub const COLORS: usize = 0x54;
     pub const TEXTURES: usize = 0x5C;
-    /// `M2TextureWeight` — the per-batch **transparency** animation, one
-    /// fixed-16 track each. Separate from [`COLORS`] and reached through a
-    /// different lookup, which is why an effect can fade without changing hue.
-    pub(crate) const TEXTURE_WEIGHTS: usize = 0x64;
-    /// `M2TextureTransform` — the per-batch **texture matrix**: a translation
+    /// `M2TextureWeight` — the per-batch transparency animation, one
+    /// fixed-16 track each. It is separate from [`COLORS`] and reached through
+    /// a different lookup, so an effect can fade without changing hue.
+    pub const TEXTURE_WEIGHTS: usize = 0x64;
+    /// `M2TextureTransform` — the per-batch texture matrix: a translation
     /// track, a rotation track and a scale track, back to back.
     ///
-    /// **`0x74`, and the reason it is not `0x6C` is a vanilla-only array.**
-    /// The 5875 header carries `texture_flipbooks` at `0x6C` which every later
-    /// version drops, so a layout copied forward from a TBC reference lands one
-    /// array early and reads the flipbooks as transforms. What pins it here is
-    /// the same arithmetic that pins the rest of this block: the arrays either
-    /// side of it are already resolving — [`RENDER_FLAGS`] at `0x84`,
+    /// The offset is `0x74`, not `0x6C`, because of a vanilla-only array.
+    /// The 5875 header carries `texture_flipbooks` at `0x6C`, which every later
+    /// version drops, so a layout copied from a TBC reference lands one array
+    /// early and reads the flipbooks as transforms. The offset is confirmed the
+    /// same way as the rest of this block: the arrays on either side of it
+    /// already read correctly — [`RENDER_FLAGS`] at `0x84`,
     /// [`TEXTURE_LOOKUP`] at `0x94`, [`TEXTURE_WEIGHT_LOOKUP`] at `0xA4` — and
-    /// the JavaScript parser this one was ported from states the same eight
+    /// the JavaScript parser this one was ported from gives the same eight
     /// offsets in a row.
-    pub(crate) const TEXTURE_TRANSFORMS: usize = 0x74;
-    pub(crate) const RENDER_FLAGS: usize = 0x84;
-    pub(crate) const TEXTURE_LOOKUP: usize = 0x94;
-    /// The transparency **lookup**: a batch names a slot here and this names
+    pub const TEXTURE_TRANSFORMS: usize = 0x74;
+    pub const RENDER_FLAGS: usize = 0x84;
+    pub const TEXTURE_LOOKUP: usize = 0x94;
+    /// The transparency lookup: a batch names a slot here and this names
     /// the [`TEXTURE_WEIGHTS`] track. The colour index has no such indirection
-    /// and reads [`COLORS`] directly — the asymmetry is the file's, and reading
-    /// either one the other's way lands on a track belonging to some other
-    /// batch.
-    pub(crate) const TEXTURE_WEIGHT_LOOKUP: usize = 0xA4;
-    /// The texture-transform **lookup**, the same indirection
+    /// and reads [`COLORS`] directly. The format defines the two differently,
+    /// and reading either one the other's way lands on a track belonging to
+    /// another batch.
+    pub const TEXTURE_WEIGHT_LOOKUP: usize = 0xA4;
+    /// The texture-transform lookup, the same indirection
     /// [`TEXTURE_WEIGHT_LOOKUP`] is: a batch names a slot here and this names
     /// the [`TEXTURE_TRANSFORMS`] record.
-    pub(crate) const TEXTURE_TRANSFORM_LOOKUP: usize = 0xAC;
+    pub const TEXTURE_TRANSFORM_LOOKUP: usize = 0xAC;
     pub const BOUNDING_BOX: usize = 0xB4;
     pub const BOUNDING_RADIUS: usize = 0xCC;
     /// The collision hull. `0xB4` starts `float floats[14]` — the bounding box
-    /// (6), its radius (1), the *collision* box (6) and its radius (1) — so the
-    /// three arrays after it land at `0xB4 + 56`. Pinned by the fact that
-    /// [`ATTACHMENTS`] then falls exactly on `0x104`, which this parser has been
-    /// resolving items through since before any of these existed.
-    pub(crate) const COLLISION_INDICES: usize = 0xEC;
+    /// (6), its radius (1), the collision box (6) and its radius (1) — so the
+    /// three arrays after it land at `0xB4 + 56`. The arithmetic is confirmed
+    /// by [`ATTACHMENTS`], which then falls on `0x104`, an offset this parser
+    /// read correctly before the collision arrays were added.
+    pub const COLLISION_INDICES: usize = 0xEC;
     pub const COLLISION_VERTICES: usize = 0xF4;
-    /// Per-triangle face normals. Read by nothing here — [`crate::world::collision`]
-    /// computes its own from the winding, so that a hull and a triangle can
-    /// never disagree about which way it faces.
+    /// Per-triangle face normals. Nothing here reads them:
+    /// [`crate::world::collision`] computes its own from the winding, so a hull
+    /// and a triangle always agree about which way the triangle faces.
     #[allow(dead_code)]
     pub const COLLISION_NORMALS: usize = 0xFC;
     pub const ATTACHMENTS: usize = 0x104;
     /// The animation events — `$SND` and its siblings; see [`super::M2Event`].
     pub const EVENTS: usize = 0x114;
-    /// **The model's own lights** — see [`super::M2Light`], which is where the
-    /// measurement is. `0x11C`, immediately before [`CAMERAS`] at `0x124`, and
-    /// that adjacency is what pins it: the camera array has been resolving
-    /// since the glue round.
-    pub(crate) const LIGHTS: usize = 0x11C;
-    /// The **ribbon** emitters — the weapon trails, wisp streamers and missile
-    /// tails. `0x134`, immediately before [`PARTICLE_EMITTERS`], which is what
-    /// pins it: the two arrays are adjacent and the second has been resolving
-    /// since the particle round.
+    /// The model's own lights. See [`super::M2Light`] for the measurement.
+    /// `0x11C` sits immediately before [`CAMERAS`] at `0x124`, and the camera
+    /// array reads correctly, which confirms this offset.
+    pub const LIGHTS: usize = 0x11C;
+    /// The ribbon emitters: weapon trails, wisp streamers and missile tails.
+    /// `0x134` sits immediately before [`PARTICLE_EMITTERS`], and the particle
+    /// array reads correctly, which confirms this offset.
     pub const RIBBON_EMITTERS: usize = 0x134;
     pub const PARTICLE_EMITTERS: usize = 0x13C;
-    /// **The model's own cameras** — where to stand to look at it, in its own
+    /// The model's own cameras: where to stand to look at it, in its own
     /// space.
     ///
-    /// `0x124`, between `M2Light` at `0x11C` and the camera *lookup* at `0x12C`;
-    /// [`RIBBON_EMITTERS`] at `0x134` is the array after that, and it has been
-    /// resolving since the trails round, so this offset is bracketed on both
-    /// sides by arrays this parser already reads.
+    /// `0x124`, between `M2Light` at `0x11C` and the camera lookup at `0x12C`.
+    /// [`RIBBON_EMITTERS`] at `0x134` is the array after that, so arrays this
+    /// parser already reads correctly sit on both sides of this offset.
     ///
-    /// Unread for the life of the project until the glue screens needed one, and
-    /// the reason is that nothing in the *world* has a camera: a doodad is placed
-    /// by its `MDDF` and a creature is looked at by the player. It is the
-    /// `<Model>` widget that cannot be drawn without one — `AccountLogin_OnLoad`
-    /// says `this:SetCamera(0)` and the file is the only thing that knows what
-    /// camera 0 is.
-    pub(crate) const CAMERAS: usize = 0x124;
+    /// Only the glue screens read this array. Nothing in the world uses a model
+    /// camera: a doodad is placed by its `MDDF`, and the player's camera looks
+    /// at a creature. The `<Model>` widget cannot be drawn without one:
+    /// `AccountLogin_OnLoad` calls `this:SetCamera(0)`, and only the file
+    /// defines camera 0.
+    pub const CAMERAS: usize = 0x124;
+
+    /// The arrays this parser does not read, which a writer of the format
+    /// still has to fill. Each sits between two arrays above, so its offset
+    /// is the gap they leave.
+    ///
+    /// `SEQUENCE_LOOKUP` is indexed by `AnimationData.dbc` id and names the
+    /// first sequence of that id, or -1.
+    pub const SEQUENCE_LOOKUP: usize = 0x24;
+    /// One `(fallback id, flags)` pair per `AnimationData.dbc` id: what the
+    /// model plays for an id it has no sequence of. See
+    /// [`crate::tables::dbc::AnimationData::playable`].
+    pub const PLAYABLE_LOOKUP: usize = 0x2C;
+    /// Indexed by [`super::key_bone`] id, naming the bone that plays it, or -1.
+    pub const KEY_BONE_LOOKUP: usize = 0x3C;
+    /// Indexed by texture type, naming the texture of that type, or -1.
+    pub const REPLACEABLE_TEXTURE_LOOKUP: usize = 0x7C;
+    /// The bone palettes of the views' skin sections, end to end. A section
+    /// names its slice by start and count; a view's per-vertex bone indices
+    /// index the slice.
+    pub const BONE_LOOKUP: usize = 0x8C;
+    pub const TEXTURE_UNIT_LOOKUP: usize = 0x9C;
+    /// The collision box and its radius, after the bounding box and its
+    /// radius in the same block of floats.
+    pub const COLLISION_BOX: usize = 0xD0;
+    pub const COLLISION_RADIUS: usize = 0xE8;
+    /// Indexed by attachment id, naming the attachment, or -1.
+    pub const ATTACHMENT_LOOKUP: usize = 0x10C;
+    pub const CAMERA_LOOKUP: usize = 0x12C;
 }
 
 /// Bytes per vertex: position, bone weights and indices, normal, UV, padding.
 pub const VERTEX_STRIDE: usize = 48;
 /// `M2View` in vanilla: six `M2Array`s and a `u32` LOD field.
-const VIEW_SIZE: usize = 44;
+pub const VIEW_SIZE: usize = 44;
 /// `M2SkinSection` — 32 bytes in vanilla (the sort centre and radius arrive in
 /// WotLK).
-const SUBMESH_SIZE: usize = 32;
+pub const SUBMESH_SIZE: usize = 32;
 /// `M2Batch`.
-const BATCH_SIZE: usize = 24;
+pub const BATCH_SIZE: usize = 24;
 /// `M2Bone`: keyBoneId, flags, parent, submesh, three tracks, pivot.
 pub const BONE_SIZE: usize = 0x6C;
 /// `M2Track`: `u16 interpolation, s16 globalSequence`, then three `M2Array`s —
@@ -163,19 +187,19 @@ const COLOR_SIZE: usize = TRACK_SIZE * 2;
 /// `M2TextureTransform`: three tracks back to back — translation, rotation,
 /// scale, in that order.
 const TEXTURE_TRANSFORM_SIZE: usize = TRACK_SIZE * 3;
-/// `M2Sequence` in vanilla. WotLK's is 64 and TBC's differs again, so this is
-/// one of the numbers that quietly mis-reads every field if copied forward.
-const SEQUENCE_SIZE: usize = 68;
+/// `M2Sequence` in vanilla. WotLK's is 64 and TBC's differs again, so a size
+/// copied from a later version mis-reads every field without an error.
+pub const SEQUENCE_SIZE: usize = 68;
 /// Refuse a skeleton bigger than this. Vanilla's largest is well under 200, and
 /// a wrong `bones` offset yields a count in the millions rather than a small
-/// wrong number — which is exactly the tell.
+/// wrong number, so this limit detects it.
 const MAX_BONES: usize = 512;
 
 /// The smallest header that can be read at all.
-const MIN_HEADER: usize = 0x144;
+pub const MIN_HEADER: usize = 0x144;
 
-/// `M2ParticleOld` in vanilla. Later versions append to it, so this is another
-/// of the numbers that quietly mis-reads every field if copied forward.
+/// `M2ParticleOld` in vanilla. Later versions append to it, so a size copied
+/// from a later version mis-reads every field without an error.
 pub const PARTICLE_SIZE: usize = 0x1F8;
 
 /// `M2Ribbon` in vanilla — see [`M2Ribbon`] for the field-by-field layout.
@@ -183,13 +207,13 @@ pub const RIBBON_SIZE: usize = 0xDC;
 
 /// `M2Camera` in vanilla — see [`M2Camera`] for the field-by-field layout.
 ///
-/// `0x7C`. Later versions replace the two `C3Vector` bases with nothing and the
-/// tracks with splines, so this is another of the numbers that quietly mis-reads
-/// every field if copied forward from a TBC reference.
+/// `0x7C`. Later versions drop the two `C3Vector` bases and replace the
+/// tracks with splines, so a size copied from a TBC reference mis-reads every
+/// field without an error.
 const CAMERA_SIZE: usize = 0x7C;
 
 /// `M2Light` in vanilla — see [`M2Light`] for the layout and for why the stride
-/// is the number worth checking. 16 bytes of header and seven 28-byte tracks.
+/// needs checking. 16 bytes of header and seven 28-byte tracks.
 const LIGHT_SIZE: usize = 0xD4;
 
 /// `M2Attachment` in vanilla: `u32 id, u16 bone, u16 unknown, C3Vector position`
@@ -199,7 +223,28 @@ pub const ATTACHMENT_SIZE: usize = 48;
 /// The record sizes a writer needs beside [`offsets`], and where inside each
 /// record the positions it has to move sit. See `vale_edit::m2`.
 pub mod layout {
-    pub use super::{ATTACHMENT_SIZE, BONE_SIZE, PARTICLE_SIZE, RIBBON_SIZE, TRACK_SIZE, VERTEX_STRIDE};
+    pub use super::{
+        ATTACHMENT_SIZE, BATCH_SIZE, BONE_SIZE, MIN_HEADER as HEADER_SIZE, PARTICLE_SIZE, RIBBON_SIZE,
+        SEQUENCE_SIZE, SUBMESH_SIZE, TRACK_SIZE, VERTEX_STRIDE, VIEW_SIZE,
+    };
+    /// `M2Texture`: a type, flags, and the file name as an array.
+    pub const TEXTURE_SIZE: usize = 16;
+    /// A material: `u16` flags, `u16` blend mode.
+    pub const MATERIAL_SIZE: usize = 4;
+    /// A playable-lookup entry: `i16` fallback id, `u16` flags.
+    pub const PLAYABLE_SIZE: usize = 4;
+    /// A sequence's box, corner to corner, and its sphere's radius.
+    pub const SEQUENCE_BOUNDS: usize = 0x24;
+    pub const SEQUENCE_RADIUS: usize = 0x3C;
+    /// A track's three arrays: the per-sequence key ranges, the times and the
+    /// values.
+    pub const TRACK_RANGES: usize = 0x04;
+    pub const TRACK_TIMES: usize = 0x0C;
+    pub const TRACK_VALUES: usize = 0x14;
+    /// A bone's three tracks: translation, rotation, scale.
+    pub const BONE_TRANSLATION: usize = 0x0C;
+    pub const BONE_ROTATION: usize = 0x28;
+    pub const BONE_SCALE: usize = 0x44;
     /// A vertex's normal, after its position and its four bone weights and
     /// four bone indices.
     pub const VERTEX_NORMAL: usize = 20;
@@ -224,17 +269,17 @@ pub mod layout {
 /// the timestamps array) — `4 + 4 + 4 + 12 + 20`.
 const EVENT_SIZE: usize = 44;
 
-/// **An animation event**: something the client does at a moment of a
+/// An animation event: something the client does at a moment of a
 /// sequence, named by a four-character identifier the client switches on
 /// (`$SND`, `$CSD`, `$CSL`, `$CAH`, `$WGG`, `$TRD`, `$DSL`,
 /// `$DSO`, `$SHK` are the ones it knows).
 ///
-/// `$SND` is a **sound**: `data` is a `SoundEntries` id, and this is how a
-/// character laughs, cries and kisses — `HumanMale.m2`'s `EmoteLaugh` carries
-/// the human male laugh's own id at its own moment, so no table has to map
-/// an emote to a race and a gender: the model does. The timestamps are on
-/// the model's shared timeline, like every other track, so an event belongs
-/// to whichever sequence's window each one falls in.
+/// `$SND` is a sound: `data` is a `SoundEntries` id. Character emote voices
+/// come from these events. `HumanMale.m2`'s `EmoteLaugh` carries the human
+/// male laugh's id at the moment it plays, so no table maps an emote to a
+/// race and a gender; the model holds the mapping. The timestamps are on
+/// the model's shared timeline, like every other track, so each timestamp
+/// belongs to the sequence whose window it falls in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct M2Event {
     /// The identifier, as the four bytes read: `"$SND"`.
@@ -262,12 +307,11 @@ impl M2Event {
     }
 }
 
-/// **The sound cues of a model, sorted per sequence** — what
-/// [`M2Event::sound`] answers for, placed in the window each timestamp falls
-/// in, as milliseconds into that sequence. Built once when a model loads,
-/// so the per-frame question "which cues fell between the last frame's
-/// clock and this one's" is a scan of a short sorted list rather than of
-/// every event's every timestamp.
+/// The sound cues of a model, sorted per sequence: the events
+/// [`M2Event::sound`] returns a sound for, placed in the window each timestamp
+/// falls in, as milliseconds into that sequence. Built once when a model
+/// loads, so finding the cues between the last frame's clock and this one's
+/// scans a short sorted list rather than every timestamp of every event.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SoundCues {
     /// Indexed by sequence: `(milliseconds into the sequence, SoundEntries id)`,
@@ -308,7 +352,7 @@ impl SoundCues {
         self.by_sequence.get(sequence).map_or(&[], Vec::as_slice)
     }
 
-    /// **The cues a frame crossed**: the sounds at times in `(from, to]` of
+    /// The cues a frame crossed: the sounds at times in `(from, to]` of
     /// `sequence` — or `[0, to]` when `fresh`, the first frame of a sequence,
     /// so a cue at its very first millisecond is not missed — and, when the
     /// clock wrapped (`to < from`, a loop), those past `from` and those up
@@ -341,13 +385,13 @@ impl M2 {
 /// A point on a model that another model hangs from — a pauldron on a shoulder,
 /// a helm on a head, a sword in a hand.
 ///
-/// The position is in the **bone's own** frame, so the attached model's
+/// The position is in the bone's own frame, so the attached model's
 /// placement is `bone_matrix * T(position)` and nothing else: an M2's bone
 /// matrices already map bind-pose model space onto the posed model, which is
-/// exactly what the bind-pose point recorded here needs.
+/// the transform the bind-pose point recorded here needs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct M2Attachment {
-    /// The slot this point *is*, from the client's own attachment enum — see
+    /// The slot this point is, from the client's own attachment enum — see
     /// [`attach`]. Not an index: a model carries only the points it has, so the
     /// list is searched by id rather than indexed by it.
     pub id: u32,
@@ -360,18 +404,18 @@ pub struct M2Attachment {
 
 /// The attachment ids this client asks for by name.
 ///
-/// The enum is the *client's*, not the file's, so these are the well-known
-/// numbers — and they are checkable rather than taken on trust: every character
-/// model in the game carries 5, 6 and 11, and `vale attach` asserts that the
-/// point named right-shoulder really is on the model's right by measuring its
-/// position (WoW model space is +Y **left**, so the right shoulder is the one
-/// with negative Y).
+/// The enum is the client's, not the file's, so these are the well-known
+/// numbers. They are checked against the models: every character model in the
+/// game carries 5, 6 and 11, and `vale attach` measures the position of the
+/// point named right-shoulder and asserts that it is on the model's right
+/// (WoW model space is +Y left, so the right shoulder is the one with
+/// negative Y).
 pub mod attach {
-    /// **The shield point, and it is not the left hand.** A shield hangs off
-    /// the forearm, which is a different place from the palm an off-hand
-    /// weapon is gripped in — `Item\ObjectComponents\Shield\`'s models are
-    /// authored around it, so hanging one from [`HAND_LEFT`] puts the boss
-    /// through the wrist and the rim through the body.
+    /// The shield point. It is not the left hand: a shield hangs off the
+    /// forearm, a different place from the palm an off-hand weapon is gripped
+    /// in. `Item\ObjectComponents\Shield\`'s models are authored around this
+    /// point, so hanging one from [`HAND_LEFT`] puts the boss through the
+    /// wrist and the rim through the body.
     ///
     /// The client's weapon attacher takes the equipment slot and
     /// an `isShield` flag and is unambiguous about it: the off-hand slot (16)
@@ -381,54 +425,54 @@ pub mod attach {
     /// is also why this client already had the directory right and the point
     /// wrong.
     pub const SHIELD: u32 = 0;
-    /// **…and the same numeric id on a *mount* is the saddle**, which is the
-    /// third meaning of point 0 beside the shield forearm above and the glue
+    /// The same numeric id on a mount is the saddle. That is the third
+    /// meaning of point 0, beside the shield forearm above and the glue
     /// backdrop's plinth.
     ///
-    /// Measured by walking three creature models' attachment blocks:
+    /// Measured from three creature models' attachment blocks:
     /// `Creature\Horse\Horse.m2` carries it on bone 29 at (0.21, 0.00, 1.87)
     /// and `Creature\Ram\Ram.m2` on bone 30 at (0.01, 0.00, 1.87) — both on the
     /// spine, both on the midline, both at the same height — while
-    /// `Creature\Tiger\Tiger.m2`, which nothing rides, carries **no point 0 at
-    /// all**. That absence is the check on the reading, and it is the same
-    /// shape of evidence that named the plinth and the sheath points.
+    /// `Creature\Tiger\Tiger.m2`, which nothing rides, carries no point 0 at
+    /// all. The absence on the tiger confirms the reading. The plinth and the
+    /// sheath points were identified the same way.
     ///
-    /// An alias rather than a second number because there is only one number:
-    /// what tells the three apart is what the model *is*, which is why a
+    /// It is an alias rather than a second number because the file has only
+    /// one number. The type of model tells the three meanings apart, so a
     /// caller asking for this one has already decided it is looking at a mount.
     pub const SADDLE: u32 = 0;
     /// The right hand, which holds the main-hand weapon when it is drawn.
     pub const HAND_RIGHT: u32 = 1;
-    /// The left hand: an off-hand *weapon*. A shield takes [`SHIELD`] instead.
+    /// The left hand: an off-hand weapon. A shield takes [`SHIELD`] instead.
     pub const HAND_LEFT: u32 = 2;
     pub const SHOULDER_RIGHT: u32 = 5;
     pub const SHOULDER_LEFT: u32 = 6;
     pub const HELM: u32 = 11;
 
-    /// The four points a **spell effect** hangs from, as distinct from the four
-    /// an item does.
+    /// The points a spell effect hangs from, as distinct from the ones an
+    /// item does.
     ///
     /// `SpellVisualKit` names its models by body part — head, chest, base, and a
-    /// hand each — and the enum has points that exist for nothing else: 21 and
-    /// 22 are *SpellLeftHand* and *SpellRightHand*, beside but not the same as
+    /// hand each — and the enum has points used for nothing else: 21 and
+    /// 22 are `SpellLeftHand` and `SpellRightHand`, beside but not the same as
     /// the 1 and 2 a weapon is gripped in.
     ///
-    /// **Pinned by the models, the way the sheath points were.** `vale spell`
-    /// measures every id the 18 character models carry and where it sits: 19 is
-    /// at the feet (a Base effect is a ring on the ground), 20 is at head
-    /// height, 34 is at the sternum, and 21/22 sit either side of the midline
-    /// within a few centimetres of the palms — which is the same shape of
-    /// evidence that named 26..33 as the sheath points.
+    /// The ids are confirmed by measurement, as the sheath points were.
+    /// `vale spell` measures every id the 18 character models carry and where
+    /// it sits: 19 is at the feet (a Base effect is a ring on the ground), 20
+    /// is at head height, 34 is at the sternum, and 21/22 sit either side of
+    /// the midline within a few centimetres of the palms. The same measurement
+    /// identified 26..33 as the sheath points.
     pub const BASE: u32 = 19;
     pub const HEAD: u32 = 20;
     pub const SPELL_HAND_LEFT: u32 = 21;
     pub const SPELL_HAND_RIGHT: u32 = 22;
     pub const CHEST: u32 = 34;
 
-    /// The seven places a **put-away** weapon hangs.
+    /// The seven places a sheathed weapon hangs.
     ///
-    /// Which of them one uses is the item's `Sheath` field **and which hand it
-    /// came out of**, a client-side rule that never crosses the wire and that
+    /// Which of them one uses depends on the item's `Sheath` field and on which
+    /// hand it came out of, a client-side rule that never crosses the wire and that
     /// no DBC states — see [`crate::tables::item::sheath_point`], which is transcribed
     /// from the client's own five-value table rather than from vmangos'
     /// seven-value enum, because the two disagree and the enum is the one that
@@ -452,12 +496,12 @@ pub mod attach {
         HIP_WEAPON_RIGHT,
     ];
 
-    /// Every point anything held can hang from — the three for a *drawn* weapon
-    /// and the seven for a put-away one.
+    /// Every point a held item can hang from: the three for a drawn weapon
+    /// and the seven for a sheathed one.
     ///
-    /// Surveyed together because the drawn and sheathed halves are the same
-    /// question asked twice, and because the shield point only means anything
-    /// beside the left hand it is not.
+    /// Surveyed together because both sets answer where a held item hangs, and
+    /// because the shield point is only checked meaningfully beside the left
+    /// hand, which it must differ from.
     pub const WEAPON_POINTS: [u32; 10] = [
         SHIELD,
         HAND_RIGHT,
@@ -477,7 +521,7 @@ pub mod attach {
 pub struct M2Texture {
     /// 0 = a filename in the model; anything else is supplied by the client
     /// (1 = body/skin, 2 = cape, 11..13 = creature skins 1..3). Only type 0
-    /// carries a path, which is why a creature's skin is *not* in its M2.
+    /// carries a path, which is why a creature's skin is not in its M2.
     pub kind: u32,
     /// Archive path, empty unless `kind == 0`.
     pub file_name: String,
@@ -487,20 +531,20 @@ pub struct M2Texture {
 ///
 /// One M2 holds every variant a character or creature can wear, and drawing all
 /// of them stacks every hairstyle, boot and robe the model has on top of each
-/// other. What picks between them is *not* a property of the file — it is the
-/// entity, which is why this is an argument and not a field.
+/// other. The entity picks between them, not the file, so this is an argument
+/// and not a field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Dress {
-    /// Scenery and creatures: the **lowest** variant present in each group.
+    /// Scenery and creatures: the lowest variant present in each group.
     ///
     /// They reuse the numbering without the `x01`-is-default convention —
     /// Banshee's only group-4 geoset is 402, and it is 1008 of her 1626
     /// triangles. Doodads are all geoset 0, so this is a no-op on scenery.
     ///
-    /// The default, because it is the rule that applies to anything this client
-    /// has not established is a character — and it is a no-op on the models that
-    /// number their geosets some other way, where the character rule would drop
-    /// most of the mesh.
+    /// This is the default because it applies to anything this client has not
+    /// established is a character. It is also a no-op on models that number
+    /// their geosets some other way, where the character rule would drop most
+    /// of the mesh.
     #[default]
     Creature,
     /// A character model wearing nothing: the body, `x01` in every equipment
@@ -513,54 +557,53 @@ pub enum Dress {
 ///
 /// Both come out of DBCs keyed by race, gender and a variation index — see
 /// [`crate::look::character::CharGeosets`] — and both differ between two NPCs sharing
-/// one model, which is the whole reason the batch list cannot be baked per file.
+/// one model, so the batch list cannot be baked per file.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CharacterGeosets {
-    /// The group-0 geoset for the hairstyle. **0 is bald**, and it is a real
-    /// answer: `CharHairGeosets` gives human male style 0 exactly that.
+    /// The group-0 geoset for the hairstyle. 0 is bald, and it is a valid
+    /// value: `CharHairGeosets` gives human male style 0 exactly that.
     pub hair: u16,
     /// The variants for groups 1, 2 and 3 — the three facial-hair pieces. 0
     /// draws nothing for that group, which is most characters.
     pub facial: [u16; 3],
-    /// Whole geoset ids the wearer's **equipment** asks for, zero-padded.
+    /// Whole geoset ids the wearer's equipment asks for, zero-padded.
     ///
     /// A cuff, a bootleg, the skirt of a robe: geometry that stands proud of
     /// the body, where the rest of an item is painted flat into the skin. A
-    /// group named here **replaces** its unequipped default rather than adding
-    /// to it — a robe's skirt is instead of the bare legs, not over them — and
-    /// that is the whole reason this is a list of ids rather than a set of
-    /// extras.
+    /// group named here replaces its unequipped default rather than adding
+    /// to it — a robe's skirt is instead of the bare legs, not over them — so
+    /// this is a list of ids rather than a set of extras.
     ///
     /// Twelve is what the slots can produce at once: a shirt, a robe's three,
     /// two for legs, and one each for boots, gloves, bracers, cloak and tabard.
     pub equipment: [u16; 12],
-    /// Draw the *hidden* ears rather than the ears — group 7's other variant.
+    /// Draw the hidden ears rather than the ears — group 7's other variant.
     ///
     /// Set by a helmet, through `HelmetGeosetVisData`, and only for the races
     /// that row hides them on: a night elf's and a troll's stick out of a helm
     /// and the table says so. The hair and beard are hidden by zeroing the
     /// fields above, which have "none" as a legal value; the ears do not, since
-    /// 701 *is* the hidden variant.
+    /// 701 is the hidden variant.
     pub hide_ears: bool,
 }
 
 impl CharacterGeosets {
-    /// Add one equipment geoset, **replacing whatever was already in its
-    /// group**.
+    /// Add one equipment geoset, replacing whatever was already in its
+    /// group.
     ///
     /// A group holds one variant, because the variants of a group are
     /// alternatives to each other: 802 and 803 are two different cuffs on the
     /// same arm, and drawing both puts two cuffs in the same place, z-fighting.
-    /// Two items really do compete for one group — a bracer and a sleeve both
+    /// Two items can compete for one group — a bracer and a sleeve both
     /// state group 8, and a robe's skirt and a pair of trousers both state 13 —
-    /// so the last caller wins and [`crate::tables::item::item_geosets`] therefore adds
-    /// them in paint order, outermost last — a bracer's cuff over a sleeve's, a
-    /// robe's skirt over trousers. That is the same rule the texture composite
-    /// already follows, for the same reason.
+    /// so the last caller wins, and [`crate::tables::item::item_geosets`] adds
+    /// them in paint order, outermost last: a bracer's cuff over a sleeve's, a
+    /// robe's skirt over trousers. The texture composite follows the same
+    /// rule for the same reason.
     ///
-    /// (This mattered less than it looks while `geosetGroup` was being read one
-    /// field high: every value came out 0, so every item asked for its group's
-    /// `x01` and the duplicate check hid the collision.)
+    /// While `geosetGroup` was read one field too high, every value came out 0,
+    /// every item asked for its group's `x01`, and the duplicate check hid the
+    /// collision.
     pub fn equip(&mut self, geoset: u16) {
         if geoset == 0 {
             return;
@@ -583,10 +626,10 @@ impl CharacterGeosets {
 /// "ears" rather than "no ears".
 ///
 /// Every other equipment group's default is `x01` — bare hands are 401, bare
-/// feet 501 — but group 7 inverts it: 701 is the *hidden* ears a helmet asks
+/// feet 501 — but group 7 inverts it: 701 is the hidden ears a helmet asks
 /// for and 702 is the ears themselves. Taking the `x01` default there leaves
-/// every character in the world earless, which on a human reads as a bad model
-/// and on a troll or an elf is unmissable.
+/// every character in the world without ears, which on a human looks like a
+/// broken model and on a troll or an elf is obvious.
 const EARS_GROUP: u16 = 7;
 const EARS_SHOWN: u16 = 702;
 
@@ -634,7 +677,7 @@ pub fn visible_geosets(all: &[u16], dress: Dress) -> Vec<u16> {
                 }
             }
             // Equipment first, because a group it names is a group whose
-            // unequipped default must *not* also be drawn: a robe's skirt is
+            // unequipped default must not also be drawn: a robe's skirt is
             // instead of the bare legs and a boot instead of the bare foot, and
             // drawing both leaves the body poking through its own armour.
             for geoset in look.equipment.iter().copied().filter(|g| *g != 0) {
@@ -666,7 +709,7 @@ pub struct GroundQuad {
     /// quad's authored slide, spin and scale ride this one joint, so a consumer
     /// poses the corners through it and nothing else.
     pub bone: u16,
-    /// The corners in **model space** (WoW axes, `z ≈ 0`), in bilinear rectangle
+    /// The corners in model space (WoW axes, `z ≈ 0`), in bilinear rectangle
     /// order: `(min x, min y)`, `(max x, min y)`, `(min x, max y)`,
     /// `(max x, max y)`.
     pub corners: [[f32; 3]; 4],
@@ -694,14 +737,13 @@ impl GroundQuad {
     }
 }
 
-/// Why a batch is **not** a [`GroundQuad`] — the shape test's own answer, so
-/// that "this spell clips through the hillside" is a question with a printed
-/// reason rather than a dig.
+/// Why a batch is not a [`GroundQuad`]: the reason the shape test gives, so
+/// that a spell clipping through a hillside has a printed cause.
 ///
-/// It exists because the detection is deliberately strict and the failure is
-/// silent: a batch that misses by one test is drawn as free geometry and looks
-/// *plausibly* wrong, which is the class of bug this repo keeps paying for.
-/// `vale model <path>` prints one of these per rejected batch.
+/// The detection is deliberately strict and its failure is silent: a batch
+/// that fails one test is drawn as free geometry and looks plausible but
+/// wrong, which is hard to notice. `vale model <path>` prints one of these per
+/// rejected batch.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NotGround {
     /// Not two triangles — the index run is some other length.
@@ -745,20 +787,20 @@ pub struct M2Batch {
     /// Material flag 0x10 — do not write depth.
     pub no_depth_write: bool,
     /// Which of [`M2Tints`]' tracks colour and fade this batch, when it has
-    /// any. `None` for the overwhelming majority — a wall, a tree, a wolf.
+    /// any. `None` for most batches — a wall, a tree, a wolf.
     pub tint: Option<BatchTint>,
     /// Which of [`M2TextureAnims`]' matrices moves this batch's texture,
-    /// **already through the lookup table** — the batch's own field names a slot
-    /// in [`offsets::TEXTURE_TRANSFORM_LOOKUP`], not the record. `None` for
-    /// everything whose texture stands still, which is again most of the world.
+    /// already resolved through the lookup table: the batch's own field names a
+    /// slot in [`offsets::TEXTURE_TRANSFORM_LOOKUP`], not the record. `None` for
+    /// every batch whose texture stands still, which is most of the world.
     pub uv: Option<u16>,
 }
 
-/// **Which batches are an *overlay* of an earlier one, and of which.**
+/// Which batches are an overlay of an earlier one, and of which.
 ///
 /// Nearly every piece of armour and every weapon in the game is authored as a
-/// base batch plus one or two environment-map layers drawn over **exactly the
-/// same triangles**:
+/// base batch plus one or two environment-map layers drawn over the same
+/// triangles:
 ///
 /// ```text
 /// Helm_Robe_RaidMage_B_01_huf.m2   200 tris  blend 0 opaque
@@ -768,33 +810,33 @@ pub struct M2Batch {
 ///                                   68 tris  blend 4 add-alpha   [no-depth-write]
 /// ```
 ///
-/// That is a metal sheen and a soft glow, and it is the single most expensive
-/// thing a crowd draws: the base is opaque and batches for free, while each
-/// overlay is its own item in the *sorted* phase at ~18 µs a draw. Four worn
-/// models on a geared character came to **173 of the ~195 draw calls forty
-/// players added**.
+/// The layers are a metal sheen and a soft glow, and they are the most
+/// expensive thing a crowd draws: the base is opaque and batches for free,
+/// while each overlay is its own item in the sorted phase at ~18 µs a draw.
+/// Four worn models on a geared character came to 173 of the ~195 draw calls
+/// that forty players added.
 ///
-/// **They fold.** The overlay covers the same triangles at the same depth, does
-/// not write depth, and is drawn immediately after its base — so the
-/// destination its blend reads *is* the base's own output, and one fragment
-/// shader with two or three texture layers computes the identical pixel. This
-/// answers which batches may be treated that way; the renderer does the
-/// folding.
+/// An overlay can be folded into its base. The overlay covers the same
+/// triangles at the same depth, does not write depth, and is drawn immediately
+/// after its base, so the destination its blend reads is the base's own
+/// output, and one fragment shader with two or three texture layers computes
+/// the identical pixel. This function decides which batches may be folded;
+/// the renderer does the folding.
 ///
-/// Every condition below is a way the fold would change the picture rather than
-/// only the cost, which is why they are stated one at a time:
+/// Each condition below guards against a fold that would change the picture
+/// rather than only the cost:
 ///
-/// * **the same index range**, or the layers cover different triangles;
-/// * **the base writes depth and the overlay does not**, which is what makes
-///   the overlay's destination its base and nothing else — a depth-writing
-///   overlay occludes, and a non-writing *base* is not a base;
-/// * **the base is opaque or alpha-keyed and the overlay is not**, or there is
+/// * the same index range, or the layers cover different triangles;
+/// * the base writes depth and the overlay does not, which makes the
+///   overlay's destination its base and nothing else — a depth-writing
+///   overlay occludes, and a base that does not write depth is not a base;
+/// * the base is opaque or alpha-keyed and the overlay is not, or there is
 ///   no base to fold into;
-/// * **the same geoset**, or the dressing could keep one and drop the other;
-/// * **the same lighting and the same culling** (`unlit`, `two_sided`), because
+/// * the same geoset, or the dressing could keep one and drop the other;
+/// * the same lighting and the same culling (`unlit`, `two_sided`), because
 ///   the fold evaluates one lighting term and one face test for the whole
 ///   stack;
-/// * **neither animated** — a tint or a texture matrix is per batch and rides
+/// * neither animated — a tint or a texture matrix is per batch and rides
 ///   the instance's own tag or its own material, so two folded into one would
 ///   have to share a value neither of them holds.
 ///
@@ -842,7 +884,7 @@ pub const MAX_OVERLAYS: usize = 2;
 
 /// Where a batch's animated colour and opacity come from.
 ///
-/// Two independent answers, and either may be absent: `Fireball_Missile_Low`
+/// The two are independent, and either may be absent: `Fireball_Missile_Low`
 /// fades without changing hue and a fire glow reddens without fading. Kept as
 /// resolved indices rather than as the tracks themselves so that a batch stays
 /// `Clone` and cheap, and so that the tracks live once per model in
@@ -851,8 +893,8 @@ pub const MAX_OVERLAYS: usize = 2;
 pub struct BatchTint {
     /// Index into [`M2Tints::colors`].
     pub color: Option<u16>,
-    /// Index into [`M2Tints::transparencies`], **already through the lookup
-    /// table** — the batch's own field names a slot in
+    /// Index into [`M2Tints::transparencies`], already resolved through the
+    /// lookup table: the batch's own field names a slot in
     /// [`offsets::TEXTURE_WEIGHT_LOOKUP`], not the track.
     pub transparency: Option<u16>,
 }
@@ -860,7 +902,7 @@ pub struct BatchTint {
 /// One `M2Color`: an RGB track and an opacity track, sharing the model's
 /// timeline.
 ///
-/// The alpha is a **fixed-16** track (`32767` is 1.0), which is the one place
+/// The alpha is a fixed-16 track (`32767` is 1.0), which is the one place
 /// in the format where a value is not a float — read as floats it decodes to
 /// denormals and every effect in the game is invisible.
 #[derive(Debug, Clone)]
@@ -869,7 +911,7 @@ pub struct M2Color {
     pub alpha: Option<M2Track>,
 }
 
-/// The animated colour of a model's batches: what makes an effect **fade**.
+/// The animated colour of a model's batches: what makes an effect fade.
 ///
 /// Separate from [`M2Skeleton`] although it shares the timeline, because the
 /// two are independent — a model can fade without a bone moving, and a model
@@ -892,24 +934,24 @@ impl M2Tints {
         self.colors.is_empty() && self.transparencies.is_empty()
     }
 
-    /// **Whether this batch is authored invisible for the whole timeline** —
+    /// Whether this batch is authored invisible for the whole timeline:
     /// every key of every opacity track it names is zero.
     ///
-    /// A batch like that carries no pixels in any client. It exists as a
-    /// *carrier*: `world\khazmodan\ironforge\passivedoodads\lavasteam\lavasteam.m2`
+    /// A batch like that draws no pixels in any client. It exists to carry
+    /// emitters: `world\khazmodan\ironforge\passivedoodads\lavasteam\lavasteam.m2`
     /// is 98 vertices in one blend-0 batch with a single transparency key of
-    /// 0.000, whose whole job is to hold the eight particle emitters that make
-    /// the Great Forge's steam. Drawn, it is a 60-yard slab, which is what the
-    /// report about columns rising out of Ironforge's lava was.
+    /// 0.000, and it holds the eight particle emitters that make the Great
+    /// Forge's steam. Drawn, it is a 60-yard slab; drawing it produced the
+    /// columns reported rising out of Ironforge's lava.
     ///
-    /// **Every key rather than the first**, so a batch that fades *in* from
+    /// Every key is tested rather than the first, so a batch that fades in from
     /// nothing is not mistaken for one that is never there. Both tracks are
     /// tested because [`Self::sample`] multiplies them: either one flat at zero
     /// is enough to make the batch invisible for the whole timeline, whatever
     /// the other does.
     ///
     /// A batch naming no opacity track at all is opaque, not invisible — the
-    /// identity is white and 1.0, which is what an absent track answers.
+    /// identity is white and 1.0, which is what an absent track returns.
     pub fn never_visible(&self, tint: BatchTint) -> bool {
         let flat_zero = |track: &M2Track| {
             !track.values.is_empty() && track.values.iter().all(|v| *v <= 0.0)
@@ -929,8 +971,8 @@ impl M2Tints {
     /// This batch's `(r, g, b, a)` at time `t` inside the `[start, end]` window
     /// of the animation being played.
     ///
-    /// **White and opaque is the identity**, and it is what an absent track
-    /// answers: the two halves are independent, so a batch with only a
+    /// White and opaque is the identity, and it is what an absent track
+    /// returns. The two halves are independent, so a batch with only a
     /// transparency track keeps its texel's own colour rather than going black.
     pub fn sample(&self, tint: BatchTint, t: u32, start: u32, end: u32, now_ms: u32) -> [f32; 4] {
         let mut out = [1.0f32; 4];
@@ -945,9 +987,10 @@ impl M2Tints {
                 out[3] = track.sample(t, start, end, &self.global_sequences, now_ms)[0];
             }
         }
-        // **The two multiply.** A batch can name both, and the client applies
-        // the colour block's own alpha *and* the transparency track — an effect
-        // that states 1.0 in one and ramps the other would otherwise never fade.
+        // The two alphas multiply. A batch can name both, and the client
+        // applies the colour block's own alpha and the transparency track; an
+        // effect that states 1.0 in one and ramps the other would otherwise
+        // never fade.
         if let Some(track) = tint
             .transparency
             .and_then(|i| self.transparencies.get(i as usize))
@@ -957,16 +1000,16 @@ impl M2Tints {
         out.map(|v| if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 })
     }
 
-    /// The same, on a sequence's own clock: `elapsed_ms` is time **into** the
-    /// window and is clamped onto it, not wrapped — the identical convention
-    /// [`M2Skeleton::pose`] takes, so a fade and the bones it colours cannot
-    /// end up a window apart. A caller that wants a looping tint wraps with
+    /// The same, on a sequence's own clock: `elapsed_ms` is time into the
+    /// window and is clamped onto it, not wrapped. [`M2Skeleton::pose`] uses
+    /// the same convention, so a fade and the bones it colours cannot end up a
+    /// window apart. A caller that wants a looping tint wraps with
     /// [`M2Skeleton::phase`] first, as it does for the pose.
     ///
-    /// This exists because the raw [`Self::sample`] takes absolute timeline
-    /// milliseconds and every renderer clock is relative — doing the `start +`
-    /// at each call site is exactly the arithmetic that goes wrong once and
-    /// then reads as an effect stuck on its first frame.
+    /// The raw [`Self::sample`] takes absolute timeline milliseconds and every
+    /// renderer clock is relative. Adding `start` at each call site is easy to
+    /// get wrong, and the result looks like an effect stuck on its first frame,
+    /// so this function does it once.
     pub fn sample_in(
         &self,
         tint: BatchTint,
@@ -986,8 +1029,8 @@ impl M2Tints {
 /// they sample.
 ///
 /// Three tracks in file order — translation, rotation, scale — and each may be
-/// absent, which is the common case: the population is overwhelmingly a lone
-/// translation track. See [`M2TextureAnims::matrix`] for what is done with
+/// absent, which is the common case: most transforms in the game data are a
+/// lone translation track. See [`M2TextureAnims::matrix`] for what is done with
 /// them.
 #[derive(Debug, Clone, Default)]
 pub struct M2TextureTransform {
@@ -1000,20 +1043,20 @@ pub struct M2TextureTransform {
     pub scale: Option<M2Track>,
 }
 
-/// The **texture matrices** of a model's batches: what makes a spell effect
-/// *move* rather than merely appear.
+/// The texture matrices of a model's batches: what makes a spell effect
+/// move rather than only appear.
 ///
 /// This is the third of the three animated things an M2 batch carries, beside
 /// its bones ([`M2Skeleton`]) and its colour ([`M2Tints`]), and it is the one
-/// that never touches a vertex: the geometry stands still and the *texture*
+/// that never touches a vertex: the geometry stands still and the texture
 /// slides across it. `Spells\ArcaneExplosion_Base.m2`'s dome is three of these,
 /// each scrolling a full tile of its texture over 18.7, 26.7 and 26.6 seconds on
-/// three separate global sequences — which is the swirl. Frozen, the dome is a
-/// smooth painted shell.
+/// three separate global sequences, which produces the swirl. Without them,
+/// the dome is a smooth painted shell.
 ///
 /// Carries its own `global_sequences` for the same reason [`M2Tints`] does: a
-/// texture matrix has to be samplable with no skeleton to hand, and these tracks
-/// in particular are *mostly* on a global sequence — a scroll runs on wall-clock
+/// texture matrix has to be samplable with no skeleton to hand, and these
+/// tracks are mostly on a global sequence — a scroll runs on wall-clock
 /// time and ignores whatever animation is playing.
 #[derive(Debug, Clone, Default)]
 pub struct M2TextureAnims {
@@ -1024,9 +1067,9 @@ pub struct M2TextureAnims {
 /// A batch's texture matrix as a 2x3 affine, row-major: `[a, b, tx, c, d, ty]`,
 /// so `u' = a*u + b*v + tx` and `v' = c*u + d*v + ty`.
 ///
-/// Two rows rather than a `Mat3` because that is exactly what a 2D sampler
-/// needs and exactly what the renderer ships to the GPU — the third row of the
-/// 4x4 the client sets is `0 0 1` and carries nothing.
+/// Two rows rather than a `Mat3` because that is what a 2D sampler needs and
+/// what the renderer sends to the GPU. The third row of the 4x4 the client
+/// sets is `0 0 1` and carries nothing.
 pub type UvMatrix = [f32; 6];
 
 /// `u' = u`, `v' = v`: what a batch with no transform gets, and what every
@@ -1043,25 +1086,24 @@ impl M2TextureAnims {
     /// Transform `index`'s matrix at time `t` inside the `[start, end]` window
     /// of the animation being played, with `now_ms` driving any global sequence.
     ///
-    /// **The composition is `P · R · S · P⁻¹ · T`, with the pivot at the middle
-    /// of the tile** — the translation moves the coordinate *first* and the
+    /// The composition is `P · R · S · P⁻¹ · T`, with the pivot at the middle
+    /// of the tile: the translation moves the coordinate first and the
     /// rotation turns the moved one.
     ///
-    /// **The order is measured, and what measures it is the cooldown clock.**
+    /// The order is measured on the cooldown clock.
     /// `Interface\Cooldown\UI-Cooldown-Indicator.m2` is four quadrant quads
     /// sampling a 32x32 sheet that is clear left of `u = 0.125` and half-black
     /// right of it, each quadrant carrying a transform that turns 90° and
     /// translates by `-0.91` over its own quarter of the animation. Under
-    /// `T · R` every quadrant stays dark for ever and a finished cooldown never
-    /// clears its icon; under `R · T` the coverage of the four goes
-    /// **100% → 0%, one quadrant per quarter, with a diagonal boundary halfway
-    /// through each** — which is a clock hand, and is the only reading that
-    /// produces one. The two orders are identical for a pure scroll (`R` is the
-    /// identity) and for a pure spin (`T` is), which is why the whole of the
-    /// spell-effect population could not tell them apart.
+    /// `T · R` every quadrant stays dark and a finished cooldown never clears
+    /// its icon. Under `R · T` the coverage of the four goes 100% → 0%, one
+    /// quadrant per quarter, with a diagonal boundary halfway through each,
+    /// which is a clock hand; no other order produces one. The two orders are
+    /// identical for a pure scroll (`R` is the identity) and for a pure spin
+    /// (`T` is), so no spell effect distinguishes them.
     ///
     /// That rotation and scale act about `(0.5, 0.5)` rather than about the
-    /// origin remains a **reading** rather than a measurement: the 1.12 client
+    /// origin is an inference, not a measurement: the 1.12 client
     /// builds a fixed-function texture matrix (`Model2.bls` passes
     /// `vertex.texcoord[0]` through untouched, so the transform is not in the
     /// vertex program at all) and nothing this project can read states its
@@ -1099,7 +1141,7 @@ impl M2TextureAnims {
             None => (0.0, 0.0),
         };
 
-        // R·S about the pivot, applied **after** the translation — see the note
+        // R·S about the pivot, applied after the translation — see the note
         // on the order above, which the cooldown clock measures.
         let (a, b) = (cos * sx, -sin * sy);
         let (c, d) = (sin * sx, cos * sy);
@@ -1122,10 +1164,10 @@ impl M2TextureAnims {
         }
     }
 
-    /// The same, on a sequence's own clock — the identical convention
-    /// [`M2Tints::sample_in`] takes, and it exists for the same reason: every
-    /// renderer clock is relative and doing the `start +` at each call site is
-    /// the arithmetic that goes wrong once and reads as a texture stuck still.
+    /// The same, on a sequence's own clock. It uses the convention
+    /// [`M2Tints::sample_in`] uses, for the same reason: every renderer clock
+    /// is relative, and adding `start` at each call site is easy to get wrong,
+    /// which shows as a texture that does not move.
     pub(crate) fn matrix_in(
         &self,
         index: u16,
@@ -1141,7 +1183,7 @@ impl M2TextureAnims {
     }
 
     /// Whether transform `index` runs on wall-clock time rather than on the
-    /// playing animation — true when **any** of its three tracks names a global
+    /// playing animation — true when any of its three tracks names a global
     /// sequence, which is how a scroll is authored.
     ///
     /// The renderer asks because it decides whether one sampled value is right
@@ -1162,14 +1204,14 @@ impl M2TextureAnims {
     }
 }
 
-/// One animated property of one bone: keyframes on the model's **single**
+/// One animated property of one bone: keyframes on the model's single
 /// timeline.
 ///
 /// Vanilla tracks are flat. There is one array of times and one of values
-/// covering *every* sequence in the file, which is why an [`M2Sequence`] is a
-/// `[start, end]` window into them rather than an index — WotLK is the version
-/// that splits a track per sequence, and reading one format with the other's
-/// assumption yields keys belonging to some other animation entirely.
+/// covering every sequence in the file, which is why an [`M2Sequence`] is a
+/// `[start, end]` window into them rather than an index. WotLK splits a track
+/// per sequence, and reading one format with the other's assumption yields
+/// keys belonging to another animation.
 #[derive(Debug, Clone, Default)]
 pub struct M2Track {
     /// 0 = hold the key until the next one, 1 = linear. 2 and 3 are Bézier and
@@ -1188,26 +1230,26 @@ pub struct M2Track {
     /// Vanilla stores rotations as four plain `f32`s; the packed `M2CompQuat`
     /// of later versions is the same four fields as `i16`s, so a client that
     /// assumes the compressed form reads a quarter of the keys and every bone
-    /// snaps to nonsense.
+    /// gets a wrong transform.
     pub dim: usize,
 }
 
 /// One bone: a pivot, a parent, and up to three animated properties.
 #[derive(Debug, Clone, Default)]
 pub struct M2Bone {
-    /// Which of the client's **named** bones this is, or -1 for the great
-    /// majority that are not named at all.
+    /// Which of the client's named bones this is, or -1 for the large
+    /// majority that are not named.
     ///
-    /// The client addresses a handful of bones by role rather than by index —
-    /// it has to, because every model numbers its own skeleton differently —
-    /// and this is the whole of how. See [`key_bone`] for the two this client
-    /// reads and what they are for.
+    /// The client addresses a few bones by role rather than by index, because
+    /// every model numbers its own skeleton differently. This field is how it
+    /// finds them. See [`key_bone`] for the two this client reads and what
+    /// they are for.
     pub key_bone: i16,
-    /// What makes a bone behave unlike a bone — see [`bone_flags`], whose four
-    /// billboard bits are read by [`Billboard`] and are the whole of why a
-    /// glow is never seen edge-on.
+    /// Special bone behaviour — see [`bone_flags`]. Its four billboard bits
+    /// are read by [`Billboard`], and they are why a glow is never seen
+    /// edge-on.
     pub flags: u32,
-    /// -1 for a root bone. Bones are *usually* ordered parent-first but nothing
+    /// -1 for a root bone. Bones are usually ordered parent-first but nothing
     /// in the format promises it, so [`M2Skeleton::pose`] does not assume it.
     pub parent: i16,
     /// The point the bone rotates about, in model space.
@@ -1221,10 +1263,10 @@ pub struct M2Bone {
 ///
 /// Measured rather than copied from a reference: `vale model` counts every
 /// bit over the `SpellVisualEffectName` population — 3,702 bones in 503 models
-/// carry [`TRANSFORMED`], 781 in 248 carry [`BILLBOARD_SPHERICAL`], **107 in 76
-/// carry [`BILLBOARD_LOCK_Z`]**, and 0x10, 0x20, 0x80, 0x400 and everything
-/// above appear on no bone at all. So the four billboard bits are, in practice,
-/// two.
+/// carry [`TRANSFORMED`], 781 in 248 carry [`BILLBOARD_SPHERICAL`], 107 in 76
+/// carry [`BILLBOARD_LOCK_Z`], and 0x10, 0x20, 0x80, 0x400 and everything
+/// above appear on no bone at all. Of the four billboard bits, only two are
+/// used.
 pub mod bone_flags {
     /// The parent's translation is not inherited.
     pub const IGNORE_PARENT_TRANSLATE: u32 = 0x1;
@@ -1232,19 +1274,19 @@ pub mod bone_flags {
     pub const IGNORE_PARENT_SCALE: u32 = 0x2;
     /// …nor its rotation.
     pub const IGNORE_PARENT_ROTATE: u32 = 0x4;
-    /// **Spherical**: the bone's whole basis is the camera's, so its geometry
+    /// Spherical: the bone's whole basis is the camera's, so its geometry
     /// is seen face-on from everywhere. A torch flame, a pair of eyes.
     pub const BILLBOARD_SPHERICAL: u32 = 0x8;
-    /// **Cylindrical about the bone's own local X**: that axis is kept and the
+    /// Cylindrical about the bone's own local X: that axis is kept and the
     /// other two turn about it toward the viewer.
     pub const BILLBOARD_LOCK_X: u32 = 0x10;
     /// …about local Y.
     pub const BILLBOARD_LOCK_Y: u32 = 0x20;
-    /// …about local Z, which is the one the archives actually use: every worn
+    /// …about local Z, the only cylindrical one the archives use: every worn
     /// aura in the game — Mana Shield, Divine Shield, Frost Armor, the eight
     /// warlock curses, the paladin auras, both warrior stances — is a flat
     /// sheet on a bone flagged this way, standing upright and turning about its
-    /// own vertical to face you.
+    /// own vertical to face the camera.
     pub const BILLBOARD_LOCK_Z: u32 = 0x40;
     /// Every billboard bit. The client's own switch matches this masked value
     /// **exactly** — see [`super::Billboard::of`].
@@ -1305,68 +1347,85 @@ pub struct M2Sequence {
     /// anything that does not travel.
     pub move_speed: f32,
     pub flags: u32,
-    /// **How likely this variation is against its siblings**, out of 0x7FFF.
+    /// How likely this variation is against its siblings, out of 0x7FFF.
     ///
     /// `+0x14` of the 68-byte record, between `flags` and the replay pair. The
-    /// client picks among the rows sharing an animation id by this weight, which
-    /// is the whole of why a courtyard of gryphon roosts is mostly still with
-    /// the occasional stretch: the plain idle carries nearly all the weight and
-    /// the flourishes divide the rest.
+    /// client picks among the rows sharing an animation id by this weight. In
+    /// a courtyard of gryphon roosts the plain idle carries nearly all the
+    /// weight and the flourishes divide the rest, so the birds are mostly still
+    /// with an occasional stretch.
     ///
-    /// Reading it is what separates *variety* from *a loop*. Without it every
-    /// variation is equally likely, which plays the flourishes four times out of
-    /// five and reads as a bird with a twitch.
+    /// Without this weight every variation is equally likely, which plays the
+    /// flourishes four times out of five and makes the bird look like it
+    /// twitches.
     pub probability: u16,
-    /// **The box this one animation keeps the model inside**, corner to corner,
+    /// The box this one animation keeps the model inside, corner to corner,
     /// model space — the `CAaBox` at `+0x24` of the 68-byte record.
     ///
-    /// Not the same thing as [`M2::bounds`], which is the union over *every*
+    /// Not the same thing as [`M2::bounds`], which is the union over every
     /// sequence and every emitter the file has: a wisp's header box is a 12.8
     /// yard cube covering the dust it sprays and its `Stand` box is the wisp.
-    /// That difference is the whole of the mouse pick — see [`crate::look::pick`].
+    /// The mouse pick depends on that difference — see [`crate::look::pick`].
     pub bounds: [[f32; 3]; 2],
     /// …and the sphere beside it, `+0x3C`, in the same space.
     ///
-    /// **Zero is a real and common value**, and the client reads it as "this
+    /// Zero is a valid and common value, and the client reads it as "this
     /// sequence states nothing, use the model's own" rather than as a
-    /// zero-radius sphere — see [`crate::look::pick::sequence_sphere`], which is that
-    /// branch.
+    /// zero-radius sphere — see [`crate::look::pick::sequence_sphere`], which
+    /// implements that case.
     pub radius: f32,
 }
 
-/// The client's **named** bones, by `M2Bone::key_bone`.
+/// The client's named bones, by `M2Bone::key_bone`.
 ///
-/// The client cannot address a bone by index — every model numbers its own
-/// skeleton — so the handful it has rules about are named here instead. Two of
-/// them carry those rules today, and both belong to the same subject: **the
-/// body faces somewhere other than where it is going.**
+/// The client cannot address a bone by index, because every model numbers its
+/// own skeleton, so the few bones it has rules about are named here instead.
+/// Two of them carry rules today, and both concern a body that faces somewhere
+/// other than where it is going.
 pub mod key_bone {
     /// The base of the spine, and the joint the upper body hangs off.
     ///
-    /// Two things are rooted here. The **counter-twist**: when a strafing
+    /// Two things are rooted here. The counter-twist: when a strafing
     /// character's hips are turned into the slide, this takes half the gap back
     /// toward where the character is aiming (capped at 45°) and [`HEAD`] takes
-    /// the rest. And the **masked overlay**: a swing or an emote played over a
+    /// the rest. The masked overlay: a swing or an emote played over a
     /// gait replaces this subtree and leaves the legs running.
     pub const SPINE_LOW: i16 = 4;
     /// The head, which takes whatever [`SPINE_LOW`] could not — so a pure 90°
     /// strafe composes 45° + 45° and the head lands exactly on the aim.
     pub const HEAD: i16 = 6;
+
+    /// Every key bone's name, indexed by id. The names follow the wowdev M2
+    /// key-bone table; [`SPINE_LOW`] and [`HEAD`] are the two this client
+    /// reads. Every shipped creature's key-bone lookup has this many entries.
+    pub const NAMES: [&str; 27] = [
+        "ArmL", "ArmR", "ShoulderL", "ShoulderR", "SpineLow", "Waist", "Head", "Jaw",
+        "IndexFingerR", "MiddleFingerR", "PinkyFingerR", "RingFingerR", "ThumbR",
+        "IndexFingerL", "MiddleFingerL", "PinkyFingerL", "RingFingerL", "ThumbL",
+        "$BTH", "$CSR", "$CSL", "_Breath", "_Name", "_NameMount", "$CHD", "$CCH", "Root",
+    ];
+
+    /// The key bone a bone named `name` is, ignoring case and a leading `$`
+    /// or `_`, or `None`.
+    pub fn of_name(name: &str) -> Option<i16> {
+        let bare = |text: &str| text.trim_start_matches(['$', '_']).to_ascii_lowercase();
+        let wanted = bare(name.trim());
+        NAMES.iter().position(|known| bare(known) == wanted).map(|id| id as i16)
+    }
 }
 
 /// How far, and which way, the upper body is turned back toward what a unit is
 /// aiming at.
 ///
-/// **This is not an animation.** 1.12 has no strafe clip on the ground — the
-/// legs play Run — and what makes a strafe read as one is that the *rendered
-/// root* is turned into the slide while two key bones twist back. `gap` is
-/// `aim - rendered heading` in radians, which is zero for everything that is
-/// facing where it is going.
+/// This is not an animation. 1.12 has no strafe clip on the ground — the
+/// legs play Run — and a strafe is shown by turning the rendered root into
+/// the slide while two key bones twist back. `gap` is `aim - rendered heading`
+/// in radians, which is zero for everything that is facing where it is going.
 ///
 /// The split is the client's: `SpineLow` takes half the gap capped at 45° and
 /// `Head` takes the remainder capped at 45°, so a pure ±90° strafe puts the
 /// hips on the strafe heading, the shoulders half way back, and the head on the
-/// aim, with nothing tuned — the arithmetic closes on its own.
+/// aim, with no tuned constants.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BodyTwist {
     pub gap: f32,
@@ -1397,20 +1456,19 @@ pub struct M2Skeleton {
     plan: std::sync::OnceLock<PosePlan>,
 }
 
-/// What [`M2Skeleton::pose`] used to re-derive per call, frozen.
+/// The per-skeleton values [`M2Skeleton::pose`] needs, computed once.
 ///
-/// The pose is the client's largest per-entity per-frame cost, and before this
-/// existed every call re-ran the parent-resolution worklist (O(bones x depth)),
+/// The pose is the client's largest per-entity per-frame cost. Without this
+/// plan every call re-ran the parent-resolution worklist (O(bones x depth)),
 /// re-scanned for the two key bones, re-propagated the `SpineLow` subtree for
-/// an overlay, and allocated a scratch `Vec` for each. None of those answers
+/// an overlay, and allocated a scratch `Vec` for each. None of those values
 /// can change after parse, so they are computed once per skeleton; `pose` keeps
-/// exactly one allocation, the matrices it returns.
+/// one allocation, the matrices it returns.
 #[derive(Debug, Clone)]
 struct PosePlan {
     /// Bone indices, parents strictly before children — the worklist's own
-    /// visit order, frozen. A bone absent here (an out-of-range parent, a
-    /// cycle in a corrupt file) stays at identity, exactly as the worklist
-    /// left it.
+    /// visit order, stored. A bone absent here (an out-of-range parent, a
+    /// cycle in a corrupt file) stays at identity, as the worklist left it.
     order: Vec<u32>,
     /// Which bones sit at or under `SpineLow` — the mask an [`Overlay`]
     /// replaces. Empty when the model has no `SpineLow`.
@@ -1447,7 +1505,7 @@ struct PosePlan {
 pub struct M2Particle {
     /// See [`particle_flags`] for the bits this client acts on.
     pub flags: u32,
-    /// Where the emitter sits, in the **bone's** frame — the same convention
+    /// Where the emitter sits, in the bone's frame — the same convention
     /// as [`M2Attachment::position`].
     pub position: [f32; 3],
     /// Index into [`M2Skeleton::bones`]; the emitter rides this bone. Bounds-
@@ -1455,12 +1513,11 @@ pub struct M2Particle {
     pub bone: u16,
     /// Index into [`M2::textures`].
     ///
-    /// **Not drawn at all when [`Self::geometry_model`] is set** — see that
+    /// Not drawn at all when [`Self::geometry_model`] is set — see that
     /// field. Eight of Cone of Cold's eleven emitters name
-    /// `SPELLS\CLOUDS.BLP` here and none of them ever puts a texel of it on
-    /// screen.
+    /// `SPELLS\CLOUDS.BLP` here and none of them draws it.
     pub texture: u16,
-    /// The **geometry model** this emitter's particles *are*, at +0x18 — an
+    /// The geometry model each of this emitter's particles is drawn as, at +0x18 — an
     /// `M2Array<char>` naming another file, `.mdx` in the record and `.m2` in
     /// the archive (normalised here through [`model_path`]).
     ///
@@ -1470,22 +1527,21 @@ pub struct M2Particle {
     /// the particle's own quaternion, scaled by the over-life size ramp and
     /// tinted by the over-life colour — and [`Self::texture`] is not read.
     ///
-    /// **This is the field whose absence drew Cone of Cold and Evocation as
-    /// slabs.** Their cloud emitters name `Spells\ConeofCold_Geo.mdx` and
-    /// `Spells\CycloneGeo*_Additive.mdx`; taking them as quads instead puts
+    /// Without this field Cone of Cold and Evocation drew as slabs. Their
+    /// cloud emitters name `Spells\ConeofCold_Geo.mdx` and
+    /// `Spells\CycloneGeo*_Additive.mdx`; drawing them as quads instead puts
     /// the emitter's own `SPELLS\CLOUDS.BLP` — a 256x256 fully opaque grey
     /// noise sheet with no alpha channel at all, mean luminance 85 of 255 and
-    /// nothing black anywhere in it — on a 14-yard additive billboard. There
-    /// is no blend mode, alpha reference or size rule that makes that texture
-    /// into a cloud, because it was never meant to be drawn: it is the wrong
-    /// question, and three rounds were spent answering it.
+    /// nothing black anywhere in it — on a 14-yard additive billboard. No
+    /// blend mode, alpha reference or size rule makes that texture into a
+    /// cloud, because it is not meant to be drawn.
     pub geometry_model: Option<String>,
-    /// The **recursion model** at +0x20, on the same terms: a model whose own
-    /// emitters are spawned as *children* of each live particle.
+    /// The recursion model at +0x20, on the same terms: a model whose own
+    /// emitters are spawned as children of each live particle.
     ///
-    /// Parsed so the census can count it and unimplemented in the renderer —
+    /// Parsed so the census can count it, and not implemented in the renderer —
     /// see `crate::render::particles`' deviation list. Nothing in the shipped
-    /// 1.12 data names one, which is why it costs nothing to leave.
+    /// 1.12 data names one, so leaving it out changes nothing.
     pub recursion_model: Option<String>,
     /// Same table as [`M2Batch::blend`]: 0 opaque, 1 alpha-key, 2 alpha
     /// blend, 3 additive, 4 add-alpha, 5 modulate, 6 modulate2x. A `u8` in
@@ -1543,10 +1599,10 @@ pub struct M2Particle {
     /// Where on a particle's life (0..1) the middle colour/scale key sits.
     pub mid_point: f32,
     /// RGBA at birth, at [`Self::mid_point`], and at death — stored BGRA in
-    /// the file (`CImVector`), unpacked to RGBA here. The alpha **is** the
+    /// the file (`CImVector`), unpacked to RGBA here. The alpha is the
     /// particle's opacity ramp; there is no separate alpha array.
     pub colors: [[u8; 4]; 3],
-    /// Quad **half**-extent at the same three moments, model yards — the
+    /// Quad half-extent at the same three moments, model yards — the
     /// client's reference corners are ±1, so the drawn edge is `2 x scale`.
     pub scales: [f32; 3],
     /// Atlas cell ranges, `[begin, end]`, one pair per over-life segment:
@@ -1558,7 +1614,7 @@ pub struct M2Particle {
     /// screen is `|velocity| * tail_time`.
     pub tail_time: f32,
     /// The scintillation band: while `twinkle_percent < 1`, a particle whose
-    /// per-frame noise sample exceeds the percent draws **no quad at all**,
+    /// per-frame noise sample exceeds the percent draws no quad at all,
     /// and the survivors scale within `twinkle_scale`.
     pub twinkle_speed: f32,
     pub twinkle_percent: f32,
@@ -1567,7 +1623,7 @@ pub struct M2Particle {
     pub inherit_scale: f32,
     /// Velocity decay, applied per frame as `v -= min(dt * drag, 1) * v`.
     /// A plain scalar, not a track — a candle flame is speed 0.56 with drag
-    /// 10, which is what keeps it a flicker instead of a 3-yard plume.
+    /// 10, which keeps it a flicker instead of a 3-yard plume.
     pub drag: f32,
     /// In-plane quad rotation, radians/second: the angle at age `t` is
     /// `spin * t`.
@@ -1586,7 +1642,7 @@ pub struct M2Particle {
     /// Control points of a type-3 emitter's Bézier chain, bone-local.
     pub spline: Vec<[f32; 3]>,
     /// The emission ON/OFF gate — a step track of bytes on the same
-    /// timeline. A cleared gate stops **new** emission only; live particles
+    /// timeline. A cleared gate stops new emission only; live particles
     /// finish their lifespan. No keys means always on, which is most.
     pub enabled: Option<M2Track>,
 }
@@ -1599,15 +1655,15 @@ pub struct M2Particle {
 /// quad writer), not wiki lore; the ones this renderer does not implement yet are still named
 /// so the survey can count them.
 pub mod particle_flags {
-    /// Fog **applies** to this emitter; clear — the default — draws it
-    /// unfogged. As the 5875 client has it, and **inverted from
-    /// the wiki's reading**: the client's emitter creation builds
+    /// Fog applies to this emitter; clear — the default — draws it
+    /// unfogged. This follows the 5875 client and is inverted from
+    /// the wiki's reading: the client's emitter creation builds
     /// the emitter's material flags as `UNFOGGED = NOT(file 0x8)`, so the
-    /// 2,376 emitters carrying this bit are the ones that fog — which is the
-    /// sane majority, where the other reading had 90% of the world's
-    /// particles opting out of the air.
+    /// 2,376 emitters carrying this bit are the ones that fog. They are the
+    /// majority; the wiki's reading drew 90% of the world's particles
+    /// without fog.
     pub const FOGGED: u32 = 0x8;
-    /// The cloud renders through the emitter's **live bone matrix** every
+    /// The cloud renders through the emitter's live bone matrix every
     /// frame — model space. Clear (the common case) bakes the emitter's
     /// placement at each particle's birth, so a moving torch leaves its
     /// smoke behind.
@@ -1640,16 +1696,16 @@ pub mod particle_flags {
     pub const BURST: u32 = 0x8000;
 }
 
-/// One **ribbon** emitter — the vanilla `M2Ribbon`, 0xDC bytes.
+/// One ribbon emitter — the vanilla `M2Ribbon`, 0xDC bytes.
 ///
-/// A ribbon is not a cloud of quads. It is a *strip*: the emitter's origin is
-/// carried by a bone, and every frame the client drops an **edge** — a vertex
+/// A ribbon is not a cloud of quads. It is a strip: the emitter's origin is
+/// carried by a bone, and every frame the client drops an edge — a vertex
 /// pair spanning `height_above` above and `height_below` below that point,
 /// across the bone's own local +Y — into a ring buffer, ages the old ones out
-/// and draws the whole ring as one triangle strip. That is what a weapon trail,
-/// a wisp's streamer and a fireball's tail all are, and none of them is
-/// expressible as a particle: a particle has no memory of where its emitter
-/// was a moment ago, and a trail is nothing *but* that memory.
+/// and draws the whole ring as one triangle strip. Weapon trails, wisp
+/// streamers and fireball tails are ribbons. None of them can be drawn as
+/// particles: a particle does not record where its emitter was a moment ago,
+/// and a trail is that record.
 ///
 /// ```text
 /// +0x04 boneIndex u16          +0x08 position C3Vector (the bone's own frame)
@@ -1657,7 +1713,7 @@ pub mod particle_flags {
 /// +0x1c materialIndices M2Array<u16> -> the render-flags table at 0x84, which
 ///       is the same {u16 flags, u16 blend} pair a batch resolves through
 /// +0x24 colorTrack   M2Track<C3Vector>
-/// +0x40 alphaTrack   M2Track<fixed16>     <- the fixed16 trap again
+/// +0x40 alphaTrack   M2Track<fixed16>     <- fixed16, not f32, as in M2Color
 /// +0x5c heightAbove  M2Track<f32>   +0x78 heightBelow M2Track<f32>
 /// +0x94 edgesPerSecond f32  +0x98 edgeLifetime f32  +0x9c gravity f32
 /// +0xa0 textureRows u16     +0xa2 textureCols u16
@@ -1668,12 +1724,11 @@ pub mod particle_flags {
 /// particle record beside it, and for the same reason: a wrongly strided ribbon does not fail, it produces
 /// plausible widths and lifetimes.
 ///
-/// **The look tracks are keyed and must be sampled, not baked.** This is the
-/// mistake that costs the whole effect: `Spells\HolySmite_Low_Chest.m2` keys
-/// its slash's height `0 -> 0.167 -> 0` over the first 267 ms of its clip, so
-/// reading `values[0]` — the obvious "constant property" shortcut the particle
-/// emitters get away with — reads a permanent **zero** height and the slash
-/// never draws at all.
+/// The appearance tracks are keyed and must be sampled, not baked.
+/// `Spells\HolySmite_Low_Chest.m2` keys its slash's height `0 -> 0.167 -> 0`
+/// over the first 267 ms of its clip, so reading `values[0]`, as the particle
+/// emitters do for their constant properties, reads a permanent zero height
+/// and the slash never draws at all.
 #[derive(Debug, Clone)]
 pub struct M2Ribbon {
     /// Index into [`M2Skeleton::bones`]; the strip's node rides this bone.
@@ -1688,11 +1743,11 @@ pub struct M2Ribbon {
     /// render-flags table. Trails are near-always additive; an unresolved
     /// material takes 3 for that reason rather than 0, since an opaque trail is
     /// a black band across the screen and an additive one that should have been
-    /// opaque is merely bright.
+    /// opaque is only too bright.
     pub blend: u16,
     /// Material flag 0x04 from the same render-flags entry. A strip is a ribbon
     /// seen from both sides by construction, so this is usually set; when it is
-    /// not, the file means it.
+    /// clear, the file intends one-sided drawing.
     pub two_sided: bool,
     /// The strip's tint over the clip, RGB. `None` is white.
     pub color: Option<M2Track>,
@@ -1703,7 +1758,7 @@ pub struct M2Ribbon {
     pub height_above: Option<M2Track>,
     pub height_below: Option<M2Track>,
     /// Edges committed per second. Zero is a ribbon that never lays anything
-    /// down, which is how a file says *off*.
+    /// down, which is how a file turns a ribbon off.
     pub edges_per_second: f32,
     /// How long an edge survives. The client clamps this up to a quarter of a
     /// second at load, so a file asking for less gets a quarter anyway.
@@ -1717,21 +1772,21 @@ pub struct M2Ribbon {
     /// is taken from the track's first key like the particle emitters' constant
     /// properties.
     pub tex_slot: u16,
-    /// The ON/OFF gate, keyed on the model's own timeline. This is what makes a
-    /// **thrown weapon** work: `Thrown_1H_Dagger_A_01.m2` keys its trail off in
+    /// The ON/OFF gate, keyed on the model's own timeline. Thrown weapons
+    /// depend on it: `Thrown_1H_Dagger_A_01.m2` keys its trail off in
     /// Stand — the dagger worn at the hip — and on in `InFlight`, so the same
-    /// file is both the item and the missile. `None` is always on, which is the
-    /// enchant trails and the wisps.
+    /// file is both the item and the missile. `None` is always on, which is
+    /// the case for the enchant trails and the wisps.
     pub visibility: Option<M2Track>,
 }
 
 impl M2Ribbon {
     /// The widest this strip ever gets, over every key it states.
     ///
-    /// The **peak** rather than the first value, and that is the whole point:
-    /// a one-shot slash is authored starting at zero, so a spawn-time test
-    /// against `values[0]` rejects exactly the ribbons whose height is the
-    /// animated part. Used to drop the ribbons that genuinely never draw.
+    /// The peak rather than the first value, because a one-shot slash is
+    /// authored starting at zero, so a spawn-time test against `values[0]`
+    /// rejects the ribbons whose height is animated. Used to drop the ribbons
+    /// that never draw.
     pub fn peak_height(&self) -> f32 {
         let peak = |track: &Option<M2Track>| {
             track
@@ -1743,20 +1798,20 @@ impl M2Ribbon {
     }
 }
 
-/// **A camera the model carries**: where to stand, what to look at, and how
+/// A camera the model carries: where to stand, what to look at, and how
 /// wide.
 ///
-/// Nothing in the *world* uses one — a doodad is placed by its `MDDF` and a
-/// creature is looked at by the player — so this block sat unread until the
-/// screens before the world needed it. There, it is the whole framing: the login
-/// scene is `UI_MainMenu.mdx` and `AccountLogin_OnLoad`'s second line is
-/// `this:SetCamera(0)`, so the portal, the two cloaked figures and the sky are
-/// composed entirely by a camera inside the file. Guess at it and the picture is
-/// of the same geometry from the wrong place.
+/// Nothing in the world uses one — a doodad is placed by its `MDDF`, and the
+/// player's camera looks at a creature — so only the screens before the world
+/// read this block. There, it sets the framing: the login scene is
+/// `UI_MainMenu.mdx` and `AccountLogin_OnLoad`'s second line is
+/// `this:SetCamera(0)`, so a camera inside the file composes the portal, the
+/// two cloaked figures and the sky. Any other camera shows the same geometry
+/// from the wrong place.
 ///
 /// ```text
 /// 0x00 u32     type          0 portrait, 1 character info, -1 otherwise
-/// 0x04 f32     fov           radians, **vertical**
+/// 0x04 f32     fov           radians, vertical
 /// 0x08 f32     far_clip
 /// 0x0C f32     near_clip
 /// 0x10 M2Track<C3Vector> positions
@@ -1766,20 +1821,20 @@ impl M2Ribbon {
 /// 0x60 M2Track<f32>      roll
 /// ```
 ///
-/// **The `_base` vectors are what a keyless track means**, and both glue cameras
-/// are keyless — the scene animates, the camera does not. The two tracks and the
-/// roll are deliberately unread rather than parsed and ignored: nothing in the
-/// two screens this exists for keys any of them, so reading them would be three
-/// fields whose correctness nothing could check.
+/// The `_base` vectors are the value of a track with no keys, and both glue
+/// cameras have no keys: the scene animates, the camera does not. The two
+/// tracks and the roll are deliberately not read: nothing in the two screens
+/// that use cameras keys any of them, so nothing could check that the three
+/// fields were read correctly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct M2Camera {
     /// `0` is the portrait camera, `1` the character-info one, `-1` anything
     /// else. Recorded rather than acted on: `SetCamera(n)` indexes the array
     /// directly, which is what both glue screens do.
     pub kind: i32,
-    /// **Vertical**, in radians. `UI_MainMenu.mdx` states its own, and using a
-    /// default instead is a login screen framed a little too wide or too tight
-    /// in a way nothing but the reference client would settle.
+    /// Vertical, in radians. `UI_MainMenu.mdx` states its own. A default
+    /// instead frames the login screen slightly too wide or too tight, by an
+    /// amount only a comparison with the reference client shows.
     pub fov: f32,
     pub far_clip: f32,
     pub near_clip: f32,
@@ -1790,29 +1845,28 @@ pub struct M2Camera {
     pub target: [f32; 3],
 }
 
-/// **A light the model carries**, and the whole of how the screens before the
-/// world are shaded.
+/// A light the model carries. The screens before the world are shaded only
+/// by these.
 ///
-/// Nothing in the *world* reads one: outdoors a model is lit by `Light.dbc`'s
-/// sun and fill, indoors by the room's baked `MOCV`, and neither has any use for
-/// a lamp inside an `.m2`. The glue scenes are the case that does — and the case
-/// where it is not a nicety:
+/// Nothing in the world reads one: outdoors a model is lit by `Light.dbc`'s
+/// sun and fill, indoors by the room's baked `MOCV`, and neither uses a lamp
+/// inside an `.m2`. The glue scenes do, and without them they draw wrong:
 ///
 /// ```text
 /// UI_MainMenu, four lights
-///   ambient   (0.298, 0.200, 0.200) x 0.400   <- the whole of the fill
+///   ambient   (0.298, 0.200, 0.200) x 0.400   <- the only fill
 ///   point     (0.843, 0.498, 0.192) x 2.000   3.00 .. 6.47   the brazier
 ///   point     (0.310, 0.482, 0.329) x 0.800   5.81 ..17.47
 ///   point     (0.224, 0.325, 0.584) x 1.350   6.22 ..11.22
 /// ```
 ///
 /// That ambient is `(0.119, 0.080, 0.080)` once multiplied out — a near-black
-/// warm fill — and the model is authored *for* it: the far scenery (the sky, the
+/// warm fill — and the model is authored for it: the far scenery (the sky, the
 /// valley, the mountains) is flagged `unlit` and draws at full texture, and the
 /// near stone is lit and expects to be dark except where the fire reaches it.
 /// Shaded by the world's daylight instead, that stone is drawn at nearly its own
-/// texture value — `DARKPORTAL_STONE_01` is a pale 156/122/95 — which is the
-/// washed-out, flat login screen this block was read to fix.
+/// texture value — `DARKPORTAL_STONE_01` is a pale 156/122/95 — and the login
+/// screen looks washed out and flat. Reading this block fixed that.
 ///
 /// ```text
 /// 0x00 u16 type            1 point, 0 the other kind — see `kind`
@@ -1828,32 +1882,31 @@ pub struct M2Camera {
 /// 0xD4 = the record size
 /// ```
 ///
-/// **The stride is the thing to get right and the one nothing warns about.**
-/// `0xD4` is 16 bytes of header and seven 28-byte tracks; guessing `0x9C`
-/// reads the first light correctly and turns every one after it into garbage,
-/// which is a scene lit by one lamp and three nonsense values.
+/// The stride must be right, and a wrong one produces no error.
+/// `0xD4` is 16 bytes of header and seven 28-byte tracks; a stride of `0x9C`
+/// reads the first light correctly and every one after it as garbage, which
+/// gives a scene lit by one lamp and three meaningless values.
 ///
-/// **Every track here is sampled at its first key and the rest is dropped**,
-/// which is a simplification with a measurement beside it rather than an
-/// assumption: over the 13 glue models' **23 lights, exactly one is animated**
-/// — `UI_Scourge`'s second lamp, a warm one that pulses — and `vale glue`
-/// reports that count so it cannot drift. That light holds its first value here.
-/// See [`Self::keys`], which is what makes the claim checkable at all.
+/// Every track here is sampled at its first key and the rest is dropped.
+/// The simplification is measured: of the 13 glue models' 23 lights, exactly
+/// one is animated — `UI_Scourge`'s second lamp, a warm one that pulses — and
+/// `vale glue` reports that count so a change is noticed. That light holds its
+/// first value here. See [`Self::keys`], which makes the count checkable.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct M2Light {
-    /// **`1` is a point light and `0` is a directional one**, and the
-    /// distinction decides the whole picture rather than a detail of it.
+    /// `1` is a point light and `0` is a directional one. The distinction
+    /// changes the whole picture.
     ///
-    /// The files settle it outright, without needing the client: `UI_Human`'s
-    /// two lights are **92 and 127 yards** from the plinth its character stands
-    /// on, and that screen is plainly lit in the reference client. No falloff
-    /// keeps a lamp alive at 127 yards, so those are not lamps — and their bone
-    /// axes (below) make a two-light portrait rig, one from each side and both
-    /// above, aimed from the camera's own side. The authored attenuation pair on
-    /// a directional light is simply unread, which is what makes the same 2.22
-    /// and 5.556 appear on nearly every one of them.
+    /// The files show this without reference to the client: `UI_Human`'s
+    /// two lights are 92 and 127 yards from the plinth its character stands
+    /// on, and that screen is visibly lit in the reference client. No falloff
+    /// reaches 127 yards, so those are not lamps. Their bone axes (below) make
+    /// a two-light portrait rig, one from each side and both above, aimed from
+    /// the camera's own side. The authored attenuation pair on a directional
+    /// light is not read, which is why the same 2.22 and 5.556 appear on nearly
+    /// every one of them.
     ///
-    /// What is checked here is the arithmetic above and the picture.
+    /// The arithmetic above and the rendered picture are what check this.
     pub kind: u16,
     /// The bone it rides, or `-1`. The position below is in that bone's frame,
     /// exactly as an [`M2Attachment`]'s is.
@@ -1866,12 +1919,12 @@ pub struct M2Light {
     /// …and the light it throws, which does depend on the normal.
     pub diffuse: [f32; 3],
     pub diffuse_intensity: f32,
-    /// **Where a *directional* light shines from**: the light bone's own local
-    /// `+Z` axis, in model space, already a unit vector pointing *toward* the
+    /// Where a directional light shines from: the light bone's own local
+    /// `+Z` axis, in model space, already a unit vector pointing toward the
     /// light.
     ///
-    /// Resolved at parse time out of the bone's rotation, because it is the
-    /// bone and not the position that aims one — `UI_Orc`'s two directionals sit
+    /// Resolved at parse time from the bone's rotation, because the bone, not
+    /// the position, aims a directional light. `UI_Orc`'s two directionals sit
     /// six yards away in almost the same direction and their axes are 100
     /// degrees apart, so reading the position instead gives two lights from one
     /// side and a flat face. Identity for a bone with no rotation, which is
@@ -1881,18 +1934,17 @@ pub struct M2Light {
     pub direction: [f32; 3],
     /// The two distances the file states, in model yards.
     ///
-    /// **Read and deliberately not used**, which is a claim rather than an
-    /// oversight: nearly every light in the glue scenes carries the same
-    /// `2.222 .. 5.556`, a directional one carries it as meaninglessly as a
+    /// Read and deliberately not used. Nearly every light in the glue scenes
+    /// carries the same `2.222 .. 5.556`, including directional lights and a
     /// lamp 127 yards from what it lights, and the client's own falloff is a
-    /// fixed `1 / (0.7d + 0.03d²)` with no radius in it. Kept because they are what the file says and because `vale
-    /// glue` prints them.
+    /// fixed `1 / (0.7d + 0.03d²)` with no radius in it. Kept because they are
+    /// what the file says and because `vale glue` prints them.
     pub attenuation_start: f32,
     pub attenuation_end: f32,
-    /// **The most keys any one of the six tracks above has**, which is what
-    /// makes the first-key sampling a checkable claim rather than an assumption:
-    /// `1` everywhere means nothing was dropped, and `vale glue` reports the
-    /// count of lights above it. Not a value the renderer reads.
+    /// The most keys any one of the six tracks above has. This makes the
+    /// first-key sampling checkable: `1` everywhere means nothing was dropped,
+    /// and `vale glue` reports the count of lights above it. Not a value the
+    /// renderer reads.
     pub keys: u32,
 }
 
@@ -1910,22 +1962,22 @@ impl M2Light {
         [self.diffuse[0] * k, self.diffuse[1] * k, self.diffuse[2] * k]
     }
 
-    /// Whether this light throws anything at all, which is what separates the
-    /// scene's lamps from its ambient-only entry. Every glue scene has one of
-    /// the latter and two to three of the former.
+    /// Whether this light throws any diffuse light, which separates the
+    /// scene's lamps from its ambient-only entry. Every glue scene has one
+    /// ambient-only entry and two to three lamps.
     pub fn is_lamp(&self) -> bool {
         self.diffuse_intensity > 0.0
     }
 
-    /// A **point** light — placed, and falling off with distance. The other kind
+    /// A point light — placed, and falling off with distance. The other kind
     /// is directional; see [`Self::kind`], where the measurement is.
     pub fn is_point(&self) -> bool {
         self.kind == 1
     }
 
-    /// Whether anything about it *moves* — see [`Self::keys`]. False for every
-    /// light in the game's own glue scenes, which is what the first-key
-    /// sampling rests on.
+    /// Whether anything about it is animated — see [`Self::keys`]. False for
+    /// every light in the game's own glue scenes, which is the basis of the
+    /// first-key sampling.
     pub fn is_animated(&self) -> bool {
         self.keys > 1
     }
@@ -1938,33 +1990,33 @@ impl M2Light {
 /// playing "Stand" says so.
 ///
 /// The table has 208 rows and a model may carry any of them; these are the ones
-/// this client asks for. Id 6 ("Dead") is in the table but **no 1.12 creature
-/// model has a sequence for it** — a corpse holds the last frame of Death
-/// instead, which is why it is here only to be documented.
+/// this client asks for. Id 6 ("Dead") is in the table but no 1.12 creature
+/// model has a sequence for it — a corpse holds the last frame of Death
+/// instead, so it is listed here only for documentation.
 pub mod anim {
     pub const STAND: u16 = 0;
     pub const DEATH: u16 = 1;
     /// `Spell` — the generic cast, which almost nothing carries. The character
     /// models have the directed/omni pair below instead, and the fallback chain
-    /// is what joins them.
+    /// connects the two.
     pub const SPELL: u16 = 2;
     pub const WALK: u16 = 4;
     pub const RUN: u16 = 5;
-    /// **The ground's reverse gait, and there is only one of it.** There is no
-    /// `RunBackwards`: the wire carries a separate `run_back` *speed*
+    /// The only reverse gait on the ground. There is no
+    /// `RunBackwards`: the wire carries a separate `run_back` speed
     /// (`Unit::GetSpeedForMovementInfo`) and the art carries one sequence, so a
     /// character reversing at any speed plays this. The sideways pair is
     /// [`SHUFFLE_LEFT`]/[`SHUFFLE_RIGHT`], on the same one-per-direction terms.
     ///
     /// The file spells it `Walkbackwards`, lower-case b — see `vale anim`.
     pub const WALK_BACKWARDS: u16 = 13;
-    /// Id 6 in `AnimationData.dbc`. **No 1.12 creature model carries a sequence
-    /// for it**, which is why a corpse holds the last frame of Death instead.
+    /// Id 6 in `AnimationData.dbc`. No 1.12 creature model carries a sequence
+    /// for it, which is why a corpse holds the last frame of Death instead.
     pub const DEAD: u16 = 6;
-    /// **The cower, and it is not reached from any unit state.** Nothing on the
+    /// The cower. No unit state selects it. Nothing on the
     /// wire says "play Stun": `UNIT_FLAG_STUNNED` says a unit may not act and
     /// `MOVEFLAG_ROOT` says it may not move, and the client's own idle cascade
-    /// mentions neither. What states it is the *spell* — the state
+    /// mentions neither. The spell selects it — the state
     /// kit's `animID`, held for as long as the aura is on its bearer, which is
     /// 257 of the 308 spells that state a pose there at all. See
     /// [`crate::tables::spell::SpellVisuals::aura_pose`]; `HumanMale.m2` carries it as
@@ -1974,13 +2026,13 @@ pub mod anim {
     /// in a combat stance; models carry one, the other or neither.
     pub const STAND_WOUND: u16 = 8;
     pub const COMBAT_WOUND: u16 = 9;
-    /// The **critical** swing — a bigger version of whatever the unit was
+    /// The critical swing — a bigger version of whatever the unit was
     /// already doing, chosen by `HITINFO_CRITICALHIT` on the swing's own
     /// `SMSG_ATTACKERSTATEUPDATE` rather than by anything about the weapon.
     ///
-    /// Its neighbours in this table are the flinch, not the attacks, and that
-    /// is the file's own ordering rather than a mistake: `AnimationData.dbc`
-    /// row 10 is `CombatCritical`, between `CombatWound` (9) and the walks.
+    /// Its neighbours in this table are the flinch, not the attacks. That is
+    /// the file's own ordering: `AnimationData.dbc` row 10 is
+    /// `CombatCritical`, between `CombatWound` (9) and the walks.
     pub const COMBAT_CRITICAL: u16 = 10;
     /// The swing, one family per thing that can be in the hands. Which family a
     /// weapon belongs to is [`crate::tables::item::WeaponAnim`].
@@ -1990,7 +2042,7 @@ pub mod anim {
     /// `Attack2HL` — the long two-hander, a polearm or a staff. A distinct
     /// sequence with a distinct grip, not a variant of [`ATTACK_2H`].
     pub const ATTACK_2HL: u16 = 19;
-    /// The parry, per family. A weapon is what is parried *with*, so these run
+    /// The parry, per family. A weapon is what is parried with, so these run
     /// alongside the attacks rather than with the flinch.
     pub(crate) const PARRY_UNARMED: u16 = 20;
     pub(crate) const PARRY_1H: u16 = 21;
@@ -1999,35 +2051,33 @@ pub mod anim {
     /// The shield goes up. Chosen by `VICTIMSTATE_BLOCKS` rather than by what
     /// is in the hands: the server has already decided a block happened.
     pub const SHIELD_BLOCK: u16 = 24;
-    /// **The reach into a corpse — and it is the *down* half of a triple whose
-    /// other two halves 1.12 does not ship.**
+    /// The reach into a corpse. It is the down part of a set of three whose
+    /// other two parts 1.12 does not ship.
     ///
     /// `AnimationData.dbc` carries `Loot` (50), `LootHold` (188) and `LootUp`
     /// (189), and 188/189 both name 50 in their fallback column — the same
-    /// shape `SitGroundDown`/`SitGround`/`SitGroundUp` and
-    /// `KneelStart`/`KneelLoop`/`KneelEnd` have. **All sixteen character models
-    /// carry 50 and none of them carries 188 or 189**, at exactly 500 ms and
+    /// structure `SitGroundDown`/`SitGround`/`SitGroundUp` and
+    /// `KneelStart`/`KneelLoop`/`KneelEnd` have. All sixteen character models
+    /// carry 50 and none of them carries 188 or 189; 50 is exactly 500 ms with
     /// flags `0x1` in every one of the sixteen.
     ///
-    /// So there is no held loot pose in the art, and the clip is a pure
-    /// descent rather than a there-and-back: posed at nine phases,
-    /// `HumanMale`'s skinned height goes
-    /// `2.01 → 2.01 → 2.01 → 1.97 → 1.85 → 1.67 → 1.51 → 1.35 → 1.25` and never
-    /// returns. Its last frame *is* the crouch with the arm out, which is why
-    /// holding it stands in for the missing `LootHold` — see
-    /// `Playback::advance`, which holds it the way it holds `Death`.
+    /// So there is no held loot pose in the art, and the clip only descends
+    /// and does not return: posed at nine phases, `HumanMale`'s skinned height
+    /// goes `2.01 → 2.01 → 2.01 → 1.97 → 1.85 → 1.67 → 1.51 → 1.35 → 1.25`.
+    /// Its last frame is the crouch with the arm out, so holding it replaces
+    /// the missing `LootHold` — see `Playback::advance`, which holds it the
+    /// way it holds `Death`.
     ///
-    /// **Flags `0x1` is what "one-shot" looks like in this file**, and the
-    /// grouping is unambiguous: on `HumanMale` the 55 clips at flags `0x0` are
-    /// `Stand`, `Walk`, `Run`, every `Ready*`, `Swim*`, `KneelLoop`,
-    /// `SitGround`, `Stun` — the loops — and the 84 at `0x1` are every attack,
-    /// every parry, every emote one-shot, `JumpStart`/`JumpEnd`,
+    /// Flags `0x1` marks a one-shot in this file. On `HumanMale` the 55 clips
+    /// at flags `0x0` are `Stand`, `Walk`, `Run`, every `Ready*`, `Swim*`,
+    /// `KneelLoop`, `SitGround`, `Stun` — the loops — and the 84 at `0x1` are
+    /// every attack, every parry, every emote one-shot, `JumpStart`/`JumpEnd`,
     /// `KneelStart`/`KneelEnd`, `SitGroundDown`/`SitGroundUp` and this.
     ///
-    /// **Nothing on the wire states it.** There is no loot row in `Emotes.dbc`
+    /// Nothing on the wire states it. There is no loot row in `Emotes.dbc`
     /// — the two nearest are `ONESHOT_KNEEL` (16) and `STATE_KNEEL` (68), and
     /// neither is this — so a looting character is one of the client's own
-    /// rules, played off a window being open. See
+    /// rules, played while the loot window is open. See
     /// `crate::world::entities::pose::wanted_animation`.
     pub const LOOT: u16 = 50;
     /// The between-swings stance.
@@ -2036,7 +2086,7 @@ pub mod anim {
     pub const READY_2H: u16 = 27;
     pub(crate) const READY_2HL: u16 = 28;
     pub(crate) const READY_BOW: u16 = 29;
-    /// The whole-body sidestep. One sequence for every kind of dodge.
+    /// The whole-body sidestep. One sequence for every dodge.
     pub const DODGE: u16 = 30;
     /// The cast, in two halves: [`SPELL_PRECAST`] is the wind-up held for as
     /// long as the cast bar runs, [`SPELL_CAST`] the release. Almost no model
@@ -2045,15 +2095,16 @@ pub mod anim {
     pub const SPELL_CAST: u16 = 32;
     /// Jumping, in three parts, plus the fall in between and the run-out.
     ///
-    /// [`JUMP_START`] and [`JUMP_END`] are **one-shots at the two ends of the
-    /// arc** and [`JUMP`] is the loop between them; [`FALL`] is the loop for an
-    /// arc nobody jumped into. See [`JUMP_LAND_RUN`] for the fourth.
+    /// [`JUMP_START`] and [`JUMP_END`] are one-shots at the two ends of the
+    /// arc and [`JUMP`] is the loop between them; [`FALL`] is the loop for a
+    /// fall that did not start with a jump. See [`JUMP_LAND_RUN`] for the
+    /// fourth.
     pub const JUMP_START: u16 = 37;
     pub const JUMP: u16 = 38;
     pub const JUMP_END: u16 = 39;
     pub const FALL: u16 = 40;
-    /// **`Fly` — the gait of anything on a flying spline**, and the one clip in
-    /// this list a *player* only ever sees from a taxi.
+    /// `Fly` — the gait of anything on a flying spline. A player sees this
+    /// clip only on a taxi.
     ///
     /// The rule is the client's animation cascade, the same one the swim ids
     /// below come out of, and it is a spline test rather than a unit-state one:
@@ -2064,76 +2115,76 @@ pub mod anim {
     ///   MoveSplineFlag::Flying (0x200)    -> 135, Fly
     /// ```
     ///
-    /// **Its authored speed is what makes it matter.** The gryphon's `Fly` is
-    /// declared at 30.0 y/s against `Run`'s 6.9, and a taxi flies at 32 — so
-    /// the right clip plays at 1.07x and the wrong one at 4.6x, which is a
-    /// gryphon whose wings blur while it crosses a zone. See
-    /// [`M2Skeleton::playback_rate`], which is where that division is.
+    /// Its authored speed is why the right clip matters. The gryphon's `Fly`
+    /// is declared at 30.0 y/s against `Run`'s 6.9, and a taxi flies at 32, so
+    /// the right clip plays at 1.07x and the wrong one at 4.6x, which blurs
+    /// the gryphon's wings for the whole flight. See
+    /// [`M2Skeleton::playback_rate`], which does that division.
     pub const FLY: u16 = 135;
     pub const SWIM_IDLE: u16 = 41;
     pub const SWIM: u16 = 42;
-    /// **The water has all four directions, and so — after a retraction — does
-    /// the ground.** `SwimLeft` and `SwimRight` carry the same body flag Swim
+    /// The water has gaits in all four directions, and so does the ground.
+    /// `SwimLeft` and `SwimRight` carry the same body flag Swim
     /// does (`AnimationData.dbc` field 3, bit 0x40) where
     /// [`SHUFFLE_LEFT`]/[`SHUFFLE_RIGHT`] carry Stand's, and `vale anim`
     /// puts 4.7 y/s in `HumanMale`'s Swim and 2.5 in each of these against 0.0
-    /// in either Shuffle. Both true; neither means the ground has no strafe.
-    /// See [`SHUFFLE_LEFT`] for what those two numbers actually say.
+    /// in either Shuffle. Both facts are true, and neither means the ground has
+    /// no strafe. See [`SHUFFLE_LEFT`] for what those two numbers mean.
     pub const SWIM_LEFT: u16 = 43;
     pub const SWIM_RIGHT: u16 = 44;
     pub const SWIM_BACKWARDS: u16 = 45;
-    /// **What a rider does, and the only thing it does.** `AnimationData.dbc`
+    /// The only sequence a rider plays. `AnimationData.dbc`
     /// record 91 is `Mount`, and all eighteen character models carry it
     /// (`Character\Human\Male\HumanMale.m2` carries three sequences for it).
     ///
-    /// Its policy column — field 2, the one [`crate::look::sheath`] reads — is **4**,
-    /// `STOW_HANDS_BUSY`, which is why a rider's weapons go away and is one of
-    /// the two draw-blocks a mount imposes. Its fallback column is 0, `Stand`.
+    /// Its policy column — field 2, the one [`crate::look::sheath`] reads — is 4,
+    /// `STOW_HANDS_BUSY`, which is why a rider's weapons are put away; it is
+    /// one of the two draw-blocks a mount imposes. Its fallback column is 0,
+    /// `Stand`.
     ///
     /// Id 94 is `MountSpecial`, the trick the spacebar plays on a mount, and it
     /// has no trigger in this client.
     pub const MOUNT: u16 = 91;
-    /// **`AnimationData.dbc` names a sideways run and no 1.12 model has one.**
+    /// `AnimationData.dbc` names a sideways run and no 1.12 model has one.
     /// Rows 92 `RunRight` and 93 `RunLeft` are in the table and `vale anim`
-    /// counts 0 of 411 models carrying either — the same shape as [`DEAD`]: a
-    /// row the table has and the art does not.
+    /// counts 0 of 411 models carrying either — like [`DEAD`], a row the table
+    /// has and the art does not.
     ///
-    /// **Their body flags are the counter-example that retracted the round
-    /// before this one**, so they earn their place here twice over. They sit in
-    /// group `0x001` beside `Stand`, `SwimIdle` and the two Shuffles; a pair
-    /// named *RunLeft* and *RunRight* is a sideways gait by construction, so
-    /// the absence of the `0x40` bit from that group cannot mean "not a gait".
+    /// Their body flags show that a missing `0x40` bit does not mean "not a
+    /// gait". They sit in group `0x001` beside `Stand`, `SwimIdle` and the two
+    /// Shuffles, and a pair named `RunLeft` and `RunRight` is a sideways gait by
+    /// definition.
     pub const RUN_RIGHT: u16 = 92;
     pub const RUN_LEFT: u16 = 93;
-    /// **The strafe, and the ground's only sideways art.** 500 ms apiece on
-    /// `HumanMale`, carried by 104 of the 411 models — which is the humanoids,
-    /// and humanoids are the only things that ever send a strafe flag. One
-    /// sequence per side and no walk/run pair, so it is played at either speed.
+    /// The strafe, and the only sideways animation on the ground. 500 ms
+    /// apiece on `HumanMale`, carried by 104 of the 411 models — the humanoids,
+    /// which are the only units that send a strafe flag. One sequence per side
+    /// and no walk/run pair, so it is played at either speed.
     ///
-    /// **This was read as "an in-place shift of the feet, not a strafe" for one
-    /// round, on two measurements that were both real and neither of which said
-    /// it.** The `0.0 y/s` is the sequence header's *declared* `movespeed` —
-    /// the number the client scales playback by — and an animation authored in
-    /// place has none to declare, because the client translates the character
-    /// itself; `JumpEnd` and every emote read 0.0 for the same reason. And the
-    /// missing `0x40` body flag groups them with [`RUN_LEFT`]/[`RUN_RIGHT`],
-    /// which refutes the reading outright. What settled it was the screen.
+    /// Two measurements suggest it is an in-place shift of the feet rather
+    /// than a strafe, and neither shows that. The `0.0 y/s` is the sequence
+    /// header's declared `movespeed` — the number the client scales playback
+    /// by — and an animation authored in place declares none, because the
+    /// client translates the character itself; `JumpEnd` and every emote read
+    /// 0.0 for the same reason. The missing `0x40` body flag groups them with
+    /// [`RUN_LEFT`]/[`RUN_RIGHT`], which are sideways gaits. The rendered
+    /// result confirms it is a strafe.
     pub const SHUFFLE_LEFT: u16 = 11;
     pub const SHUFFLE_RIGHT: u16 = 12;
     pub const ATTACK_BOW: u16 = 46;
     pub(crate) const READY_RIFLE: u16 = 48;
     pub const ATTACK_RIFLE: u16 = 49;
-    /// **The two clips a stealthed body plays**, and the whole of what the
-    /// client does about stealth in the art.
+    /// The two clips a stealthed body plays. They are all the client does for
+    /// stealth in the art.
     ///
     /// `AnimationData.dbc` rows 119 `StealthWalk` and 120 `StealthStand`, with
     /// fallback columns 4 (`Walk`) and 0 (`Stand`) — so a model without them
-    /// simply walks and stands, which is every creature that cannot stealth.
+    /// walks and stands, which covers every creature that cannot stealth.
     /// `HumanMale.m2` carries both, `StealthWalk` at 2.5 y/s (`vale anim`),
-    /// which is `Walk`'s own declared speed and is why a creeping character
-    /// does not moonwalk.
+    /// which is `Walk`'s own declared speed, so a creeping character's feet
+    /// do not slide.
     ///
-    /// **There is no `StealthRun`.** The table has none and the client's own
+    /// There is no `StealthRun`. The table has none and the client's own
     /// cascade does not look for one: it picks 119 for a moving
     /// stealthed unit whatever its speed, above the Sprint/Run/Walk split
     /// entirely. Stealth halves the movement rate anyway, so the case never
@@ -2145,12 +2196,12 @@ pub mod anim {
     /// column and no models to read.
     pub const STEALTH_WALK: u16 = 119;
     pub const STEALTH_STAND: u16 = 120;
-    /// **The all-out run**, `AnimationData.dbc` row 143 `Sprint`, falling back
+    /// The full-speed run, `AnimationData.dbc` row 143 `Sprint`, falling back
     /// to [`RUN`].
     ///
-    /// Chosen by **speed alone** and by nothing about the spell that caused it,
-    /// which is the whole reason it is worth writing down: a warrior's Charge, a
-    /// rogue's Sprint and any other haste that takes a unit past the threshold
+    /// Chosen by speed alone and by nothing about the spell that caused it:
+    /// a warrior's Charge, a rogue's Sprint and any other haste that takes a
+    /// unit past the threshold
     /// all reach it the same way, and none of the three states a pose anywhere
     /// in `Spell.dbc` (`vale spell 2983`: no aura pose at all). The client's
     /// own test is
@@ -2161,8 +2212,8 @@ pub mod anim {
     ///   otherwise -> 143, Sprint
     /// ```
     ///
-    /// **11.0 yards a second**, and the number is chosen tightly: 1.12's base
-    /// run is 7.0, Aspect of the Cheetah's +30% is 9.1 and does *not* sprint,
+    /// The threshold is 11.0 yards a second, and it sits between two speeds:
+    /// 1.12's base run is 7.0, Aspect of the Cheetah's +30% is 9.1 and does not sprint,
     /// and Sprint's own +70% is 11.9 and does. `HumanMale`'s clip declares
     /// 11.7 y/s, so it plays at very nearly 1.0x at the speed that selects it —
     /// see [`M2Skeleton::playback_rate`].
@@ -2170,7 +2221,7 @@ pub mod anim {
     /// The speed at or above which [`SPRINT`] is the gait, in yards a second —
     /// the client's own constant, used only by the comparison above.
     pub const SPRINT_SPEED: f32 = 11.0;
-    /// **What the character models actually carry for casting.** The directed
+    /// The casting sequences the character models carry. The directed
     /// pair is a spell aimed at a target and the omni pair one cast on the
     /// caster; `HumanMale.m2` has 51..54 and neither of 31/32, so the chain
     /// from [`SPELL_CAST`] runs through these before it gives up.
@@ -2188,13 +2239,13 @@ pub mod anim {
     pub const SIT_CHAIR_HIGH: u16 = 104;
     pub(crate) const READY_THROWN: u16 = 108;
     pub(crate) const ATTACK_THROWN: u16 = 107;
-    /// **The dagger's main-hand blow**, which is a stab and not a swing:
+    /// The dagger's main-hand blow, which is a stab and not a swing:
     /// `AnimationData.dbc` row 85 is `Attack1HPierce`, a sequence of its own
     /// that `HumanMale.m2` carries at index 100. The client picks it off the
     /// item's subclass — see [`crate::tables::item::WeaponAnim`].
     pub const ATTACK_1H_PIERCE: u16 = 85;
-    /// The **off-hand** swing, chosen by `HITINFO_LEFTSWING` on the swing's own
-    /// packet, and the family is the **off-hand item's** rather than the main
+    /// The off-hand swing, chosen by `HITINFO_LEFTSWING` on the swing's own
+    /// packet, and the family is the off-hand item's rather than the main
     /// hand's: 87 `AttackOff` for a weapon, 88 `AttackOffPierce` for a dagger,
     /// 117 `AttackUnarmedOff` for an empty hand or a shield.
     ///
@@ -2205,13 +2256,13 @@ pub mod anim {
     /// off-hand is its bite.
     pub const ATTACK_OFF: u16 = 87;
     pub const ATTACK_OFF_PIERCE: u16 = 88;
-    /// The empty left hand's punch. **Rarer in the models than its siblings** —
+    /// The empty left hand's punch. Fewer models carry it than its siblings —
     /// `HumanMale.m2` does not carry it — so its fallback chain runs through
     /// [`ATTACK_OFF`], which the file's own column agrees with (row 117 falls
     /// back to 87).
     pub const ATTACK_UNARMED_OFF: u16 = 117;
     pub const KNEEL: u16 = 115;
-    /// **Landing at a run**, which is a different one-shot from [`JUMP_END`]:
+    /// Landing at a run, which is a different one-shot from [`JUMP_END`]:
     /// it carries 6.9 y/s of travel on `HumanMale` where `JumpEnd` carries
     /// none, so a character who lands still standing and one who lands still
     /// running want different sequences. `AnimationData.dbc` falls it back to
@@ -2223,7 +2274,7 @@ pub mod anim {
     /// duration where a cast releases.
     pub const CHANNEL_CAST_DIRECTED: u16 = 124;
     pub const CHANNEL_CAST_OMNI: u16 = 125;
-    /// **A game object's whole vocabulary**, and it does not include
+    /// Every sequence a game object has. It does not include
     /// [`STAND`]. `Chest02.m2` carries exactly 146..149 and nothing else, so a
     /// client that asks a chest to stand draws it in its bind pose — which for
     /// a chest is the lid wherever the artist left it.
@@ -2235,9 +2286,8 @@ pub mod anim {
     /// `GO_STATE_ACTIVE` (0) is open, which is also why a field the server
     /// omits reads correctly: absent means zero means open.
     ///
-    /// `AnimationData.dbc` falls [`STAND`] itself back to [`CLOSED`], which is
-    /// the game's own statement that these are what a model reached for
-    /// through the idle is expected to have.
+    /// `AnimationData.dbc` falls [`STAND`] itself back to [`CLOSED`], so the
+    /// game data expects a model asked for its idle to have these.
     pub const CLOSE: u16 = 146;
     pub const CLOSED: u16 = 147;
     pub const OPEN: u16 = 148;
@@ -2247,19 +2297,19 @@ pub mod anim {
 /// A parsed model: one vertex buffer, one index buffer, and the batches that
 /// slice it up.
 ///
-/// `Default` is an **empty** model rather than a meaningful one, and it exists
+/// `Default` is an empty model rather than a meaningful one. It exists
 /// for the tests that build a two-triangle model by hand — see
-/// [`crate::interface::uimodel`], whose whole subject is a five-batch file small enough to
+/// [`crate::interface::uimodel`], whose tests use a five-batch file small enough to
 /// state in a fixture.
 #[derive(Debug, Clone, Default)]
 pub struct M2 {
     pub name: String,
     pub version: u32,
     /// The header's `GlobalModelFlags`, verbatim. Its bottom two bits are the
-    /// only thing in the game that says a model **leans with the ground** —
+    /// only thing in the game that says a model leans with the ground —
     /// see [`crate::look::conform::Conform::of`].
     pub global_flags: u32,
-    /// Model space, which is **+X forward, +Y left, +Z up** — the same handedness
+    /// Model space, which is +X forward, +Y left, +Z up — the same handedness
     /// as the world axes, so a placement is a rotation and a translation with no
     /// axis swapping. See [`crate::world::adt::placement_matrix`].
     pub positions: Vec<[f32; 3]>,
@@ -2282,31 +2332,31 @@ pub struct M2 {
     /// The particle emitters — a torch's flame, a spell's sparks. Empty for
     /// most of the world, and for a model whose table did not validate.
     pub particles: Vec<M2Particle>,
-    /// The **ribbon** emitters — a weapon's trail, a missile's tail. Empty for
+    /// The ribbon emitters — a weapon's trail, a missile's tail. Empty for
     /// most of the world, on the same terms as [`Self::particles`].
     pub ribbons: Vec<M2Ribbon>,
-    /// The model's own **cameras** — empty for everything in the world, and the
-    /// whole framing of the two screens before it. See [`M2Camera`].
+    /// The model's own cameras — empty for everything in the world; they set
+    /// the framing of the two screens before it. See [`M2Camera`].
     pub cameras: Vec<M2Camera>,
-    /// …and the model's own **lights**, on exactly the same terms: empty for
-    /// everything in the world, and the whole *shading* of those two screens.
+    /// …and the model's own lights, on the same terms: empty for everything
+    /// in the world; they are the only shading of those two screens.
     /// See [`M2Light`].
     pub lights: Vec<M2Light>,
     /// Bounding sphere radius in model space, before the placement's scale.
     pub bounding_radius: f32,
     /// Corner-to-corner bounding box, model space.
     pub bounds: [[f32; 3]; 2],
-    /// The model's *solid* triangles, in model space — a different set from the
+    /// The model's solid triangles, in model space — a different set from the
     /// drawn ones, and empty for most of the world. See [`parse_collision`].
     pub collision: crate::world::collision::CollisionMesh,
     /// `None` for scenery, which is most of the world: a tree has no bones and
-    /// nothing to play. Also `None` when the skeleton did not validate — a
-    /// model in its bind pose beats one folded inside out.
+    /// nothing to play. Also `None` when the skeleton did not validate: a
+    /// model in its bind pose is better than one folded inside out.
     pub skeleton: Option<M2Skeleton>,
     /// The animated colour and opacity of the batches, empty for everything
     /// that does not fade. See [`M2Tints`].
     pub tints: M2Tints,
-    /// The animated **texture matrices** of the batches, empty for everything
+    /// The animated texture matrices of the batches, empty for everything
     /// whose texture stands still. See [`M2TextureAnims`].
     pub uv_anims: M2TextureAnims,
 }
@@ -2325,7 +2375,7 @@ impl M2 {
         let version = u32_at(buf, 4);
         // 256..=257 is 1.12; TBC goes to 263. Anything higher has external
         // .skin files and a different vertex layout, so refuse it rather than
-        // producing confident nonsense.
+        // produce plausible but wrong geometry.
         if version > 264 {
             return Err(AssetError::malformed(
                 "M2",
@@ -2372,7 +2422,7 @@ impl M2 {
             particles: parse_particles(buf),
             // Read before the no-mesh early return with the emitters, and for
             // the same reason: `Spells\Fireball_Missile_Low.m2` is a trail and
-            // a spray with barely any geometry to speak of.
+            // a spray with almost no geometry.
             ribbons: parse_ribbons(buf, texture_count),
             // …and on the same terms again: a `<Model>` widget's file is loaded
             // for its camera as much as for its mesh, and one of them
@@ -2401,16 +2451,16 @@ impl M2 {
 
         // A model with no vertices or no view is legitimate: emitter-only
         // models (glows, sprays) are all particles and no mesh. They are not an
-        // error, they simply draw nothing here.
+        // error; they draw nothing here.
         //
-        // **They still animate.** An emitter-only model's bones are what carry
-        // its emitters — `Spells\ConeofCold_Hand.m2` is eleven emitters riding
+        // They still animate. An emitter-only model's bones carry its
+        // emitters: `Spells\ConeofCold_Hand.m2` is eleven emitters riding
         // eleven animated bones and not one vertex, and the sweep of those
-        // bones *is* the cone. Parsed before this return, or every such model
-        // loses its skeleton, its emitters collapse onto the attachment root
-        // with no rotation, and its clip windows (the emission gates are keyed
-        // on them) default to always-on. There is no vertex-bone table to
-        // cross-check, which is what the empty slice says.
+        // bones forms the cone. The skeleton is parsed before this return;
+        // otherwise every such model loses its skeleton, its emitters collapse
+        // onto the attachment root with no rotation, and its clip windows (the
+        // emission gates are keyed on them) default to always-on. The empty
+        // slice says there is no vertex-bone table to cross-check.
         if vertices.count == 0 || views.count == 0 {
             model.skeleton = parse_skeleton(buf, &[]);
             aim_lights(&mut model.lights, model.skeleton.as_ref());
@@ -2462,7 +2512,7 @@ impl M2 {
         }
 
         // Two levels of indirection: the view's triangle list indexes the
-        // view's *own* vertex lookup, which indexes the model's vertex block.
+        // view's own vertex lookup, which indexes the model's vertex block.
         // Collapsing them here means the renderer sees one plain index buffer.
         let vertex_lookup: Vec<u16> = (0..lookup.count)
             .map(|i| u16_at(buf, lookup.offset + i * 2))
@@ -2505,7 +2555,7 @@ impl M2 {
     /// The rule is [`visible_geosets`]; this is it applied to a model whose
     /// batches are to hand, which is what the CLI and the tests want. The
     /// renderer cannot use it — it caches a model's batches as GPU meshes and
-    /// selects among them per *entity*, since two NPCs sharing `HumanMale.m2`
+    /// selects among them per entity, since two NPCs sharing `HumanMale.m2`
     /// do not share a hairstyle — so it calls the rule directly.
     pub fn visible_batches(&self, dress: Dress) -> Vec<&M2Batch> {
         let all: Vec<u16> = self.batches.iter().map(|b| b.geoset).collect();
@@ -2523,24 +2573,24 @@ impl M2 {
         }
     }
 
-    /// Is this batch a single flat **ground-plane quad** — the authoring pattern
-    /// every painted-on-the-floor spell effect uses?
+    /// Whether this batch is a single flat ground-plane quad, the authoring
+    /// pattern every spell effect painted on the floor uses.
     ///
     /// Four vertices at model-space `z ≈ 0`, forming an axis-aligned rectangle in
-    /// model XY, every one of them fully weighted to a single bone. That is
-    /// Battle Shout's crescents, the paladin auras' rings, Arcane Explosion's
-    /// spiral: quads at the caster's feet that a bone slides, spins and scales
-    /// outward, authored flat because the model has no idea what it is standing
-    /// on.
+    /// model XY, every one of them fully weighted to a single bone. Battle
+    /// Shout's crescents, the paladin auras' rings and Arcane Explosion's
+    /// spiral are of this shape: quads at the caster's feet that a bone slides,
+    /// spins and scales outward, authored flat because the model does not know
+    /// what it is standing on.
     ///
-    /// **The detection is a measurement; what is done with it is not.** The 1.12
-    /// client draws these as ordinary geometry — nothing in the spell-visual
-    /// chain conforms anything — so a slope buries them per-pixel on the uphill
-    /// side and floats them on the down. Naming the shape here is what lets
-    /// `crate::render::decals` re-render them draped over the ground instead;
-    /// see that module for the honest statement of which half of that is the
-    /// game's own behaviour (the selection ring and the blob shadow *are*
-    /// projected) and which is this client's improvement on it.
+    /// The detection matches the game data; the use made of it does not match
+    /// the game. The 1.12 client draws these as ordinary geometry — nothing in
+    /// the spell-visual chain conforms anything — so a slope buries them
+    /// per-pixel on the uphill side and floats them on the downhill side.
+    /// Naming the shape here lets `crate::render::decals` re-render them draped
+    /// over the ground instead; see that module for which part of that is the
+    /// game's own behaviour (the selection ring and the blob shadow are
+    /// projected) and which is this client's change.
     ///
     /// Deliberately strict: anything that is not exactly this shape stays on the
     /// ordinary path, because a near-miss stretched through a projector is worse
@@ -2551,15 +2601,14 @@ impl M2 {
 
     /// [`M2::ground_quad`], with the reason a batch was refused.
     ///
-    /// The reason is what `vale model <path>` prints, and it is the whole
-    /// point of splitting the two: the detection is strict on purpose, so the
-    /// interesting question about a spell that clips through a hillside is
-    /// *which* test it missed.
+    /// `vale model <path>` prints the reason. The detection is strict on
+    /// purpose, so for a spell that clips through a hillside the useful
+    /// question is which test it failed.
     pub fn ground_quad_checked(&self, batch: &M2Batch) -> Result<GroundQuad, NotGround> {
         /// Further than this from the quad's own plane is not a flat quad. The
-        /// real population authors these to within float noise of exactly flat;
-        /// what varies is *which* plane, which is [`GroundQuad::corners`]' own
-        /// `z` and not a tolerance.
+        /// game's models author these to within float noise of exactly flat;
+        /// what varies is the height of the plane, which is
+        /// [`GroundQuad::corners`]' own `z` and not a tolerance.
         const FLAT_EPS: f32 = 0.01;
 
         let range = batch.index_start as usize..(batch.index_start + batch.index_count) as usize;
@@ -2578,15 +2627,14 @@ impl M2 {
         if used.iter().any(|&i| usize::from(i) >= vertices) {
             return Err(NotGround::Truncated);
         }
-        // **Flat, not flat *at the origin*.** The test was `|z| <= eps` for
-        // several rounds, which reads "in the model's ground plane" and means
-        // "in the model's ground plane **and nowhere else**" — so a quad the
-        // artist authored at `z = 0.1` to keep it out of the terrain, or at the
-        // top of a column of them, was refused and drawn as free geometry. That
-        // is the whole of the "Consecration is a flat texture" report: its two
-        // quads are perfectly flat and sit at `z = 0.05`. What a projector needs
-        // is one plane parallel to the floor; the height *of* that plane is
-        // carried in the corners and the caller's frame moves it.
+        // Flat, not flat at the origin. The test was `|z| <= eps`, which
+        // accepted only quads at height zero, so a quad the artist authored at
+        // `z = 0.1` to keep it out of the terrain, or at the top of a column of
+        // them, was refused and drawn as free geometry. Consecration drew as a
+        // flat texture for this reason: its two quads are flat and sit at
+        // `z = 0.05`. A projector needs one plane parallel to the floor; the
+        // height of that plane is carried in the corners and the caller's frame
+        // moves it.
         let mean = used
             .iter()
             .map(|&i| self.positions[usize::from(i)][2])
@@ -2672,7 +2720,7 @@ impl M2 {
     /// The same four-weight blend the vertex shader does — it lives here so the
     /// CLI can check a real model's animated extent against the bounding box
     /// the file declares, which is the only way to tell a correctly read track
-    /// from a plausible-looking wrong one without eyes on it.
+    /// from a plausible-looking wrong one without looking at a render.
     ///
     /// A vertex with no weights at all stays where it is rather than collapsing
     /// to the origin; a few models have them.
@@ -2742,21 +2790,21 @@ impl M2Skeleton {
     /// How fast to play one of this model's sequences, given how fast the unit
     /// is actually travelling.
     ///
-    /// **A locomotion clip is authored for one speed and played at whatever the
-    /// unit is doing**, which is the client's rule: `speed / moveSpeed`
-    /// for an id in [`RATE_SCALED`], 1× for everything else. A character
-    /// running at 7.6 y/s with a `Run` authored at 6.9 plays it 10% fast; one
-    /// hasted plays it much faster; and a client that plays every clip at 1×
-    /// has feet that slip against the ground the whole time it moves.
+    /// A locomotion clip is authored for one speed and played at the unit's
+    /// actual speed. The client's rule is `speed / moveSpeed` for an id in
+    /// [`RATE_SCALED`], 1× for everything else. A character running at 7.6 y/s
+    /// with a `Run` authored at 6.9 plays it 10% fast; a hasted one plays it
+    /// much faster; and a client that plays every clip at 1× has feet that
+    /// slip against the ground the whole time it moves.
     ///
-    /// `move_speed` is the sequence header's declared speed — **the number this
-    /// project twice mistook for root motion**, and this is what it is actually
-    /// for. Zero (which is every emote, every stand and both foot-shuffles)
-    /// means the animation declares no speed and plays at 1×.
+    /// `move_speed` is the sequence header's declared speed. It is not root
+    /// motion; this division is its only use. Zero (which is every emote,
+    /// every stand and both foot-shuffles) means the animation declares no
+    /// speed and plays at 1×.
     ///
-    /// A speed of zero answers 1× rather than freezing the clip. A locomotion
+    /// A speed of zero returns 1× rather than freezing the clip. A locomotion
     /// clip with nothing to divide by is a state the selector should not have
-    /// produced, and stopping a running character's legs dead while it slides
+    /// produced, and stopping a running character's legs while it slides
     /// is a worse failure than playing them at the authored rate.
     pub fn playback_rate(&self, sequence: usize, speed: f32) -> f32 {
         let Some(seq) = self.sequences.get(sequence) else {
@@ -2797,14 +2845,13 @@ impl M2Skeleton {
     /// each of the base sequence, the fade and the overlay.
     pub(crate) const HINTS_PER_BONE: usize = 9;
 
-    /// The frozen per-skeleton facts — built on the first pose, shared after.
+    /// The stored per-skeleton values — built on the first pose, shared after.
     fn plan(&self) -> &PosePlan {
         self.plan.get_or_init(|| {
             // Parents before children, however they are ordered in the file:
-            // the same work list `pose` used to run per call, run once and its
-            // visit order recorded. A cycle (a corrupt file, not a legal one)
-            // leaves its bones out of the order, which is what leaves them at
-            // identity — exactly what the per-call list did.
+            // a work list run once, with its visit order recorded. A cycle (a
+            // corrupt file, not a legal one) leaves its bones out of the order,
+            // which leaves them at identity.
             let n = self.bones.len();
             let mut order = Vec::with_capacity(n);
             let mut done = vec![false; n];
@@ -2874,13 +2921,13 @@ impl M2Skeleton {
     }
 
     /// Wrap a clock onto one sequence's window: what to pass [`Self::pose`] for
-    /// an animation that **loops**.
+    /// an animation that loops.
     ///
     /// [`Self::pose`] clamps instead of wrapping, so looping is the caller's
-    /// decision — it is the caller that knows whether the thing on screen is a
-    /// gait or a corpse. This is the arithmetic that decision needs, in one
-    /// place: a caller that reimplements it and a caller that forgets it look
-    /// identical for the length of the first cycle.
+    /// decision: only the caller knows whether the thing on screen is a
+    /// gait or a corpse. This function holds the arithmetic in one place.
+    /// A caller that forgets to wrap looks correct for the length of the
+    /// first cycle.
     pub fn phase(&self, sequence: usize, elapsed_ms: u32) -> u32 {
         let Some(seq) = self.sequences.get(sequence) else {
             return elapsed_ms;
@@ -2891,22 +2938,20 @@ impl M2Skeleton {
     /// Every bone's transform at one moment of one animation, as row-major 3x4
     /// matrices in model space: `[r00 r01 r02 tx, r10 .. ty, r20 .. tz]`.
     ///
-    /// `elapsed_ms` is time into the sequence, **clamped** to its window rather
+    /// `elapsed_ms` is time into the sequence, clamped to its window rather
     /// than wrapped onto it: past the end this holds the last frame. Looping is
-    /// therefore the caller's decision and [`Self::phase`] is how it is taken —
-    /// which is the right way round, because only the caller knows whether what
-    /// it is drawing is a gait or a corpse.
+    /// therefore the caller's decision and [`Self::phase`] does the wrap,
+    /// because only the caller knows whether what it is drawing is a gait or a
+    /// corpse.
     ///
-    /// It used to wrap here, and that quietly **undid the one caller that was
-    /// holding on purpose**. A corpse asks for `min(elapsed, duration)` so that
-    /// it stops at the end of Death — and `duration % duration` is 0, which is
-    /// frame *zero* of Death: the creature standing upright, exactly as it was
-    /// before it fell over. So the death animation played correctly and then the
-    /// body stood back up and froze there for the rest of the session. Nothing
-    /// failed, no count moved, and the layer that clamped was right; it was the
-    /// layer below that reinterpreted the number it was handed. (The test for it
-    /// asserted the clamped *value* and never asked what this function did with
-    /// it, which is why 261 passing tests had nothing to say about it.)
+    /// This function used to wrap, which broke the corpse. A corpse asks for
+    /// `min(elapsed, duration)` so that it stops at the end of Death, and
+    /// `duration % duration` is 0, which is frame zero of Death: the creature
+    /// standing upright, as it was before it fell. The death animation played
+    /// and then the body stood back up and stayed there for the rest of the
+    /// session. The caller's clamp was correct; this function reinterpreted
+    /// the value. The test checked the clamped value and not what this
+    /// function did with it, so none of the 261 tests at the time caught it.
     ///
     /// `now_ms` is wall-clock and drives global-sequence tracks only.
     ///
@@ -2918,7 +2963,7 @@ impl M2Skeleton {
     /// cross-fade, the counter-twist and the second track. See [`PoseLayers`];
     /// `PoseLayers::default()` is the plain pose the CLI checks want.
     ///
-    /// **This function and `Anim.pose` in `web/anim.js` are the same function.**
+    /// This function and `Anim.pose` in `web/anim.js` compute the same thing.
     /// The renderer cannot call across the IPC boundary sixty times a second,
     /// so the maths exists twice on purpose — here, where it is unit-tested and
     /// the CLI can measure it against real models, and there, where it runs.
@@ -2939,12 +2984,13 @@ impl M2Skeleton {
     /// crowd every frame makes no allocation per rig. The buffer is cleared
     /// and refilled; its capacity is what is reused.
     ///
-    /// `hints` is the caller's **key hints** — [`Self::HINTS_PER_BONE`] per
+    /// `hints` is the caller's key hints — [`Self::HINTS_PER_BONE`] per
     /// bone, for the base sequence, the fade and the overlay — which this
     /// grows to size on the first call and reads and writes on every one.
-    /// They are per *animated thing* rather than per skeleton, because two
+    /// They are per animated instance rather than per skeleton, because two
     /// units of one model are at two clocks; see [`M2Track::sample_hinted`].
-    /// An empty vector that is never kept is a caller that pays the search.
+    /// A caller that passes a fresh empty vector each time pays the full key
+    /// search.
     #[allow(clippy::too_many_arguments)]
     pub fn pose_into(
         &self,
@@ -2967,29 +3013,28 @@ impl M2Skeleton {
         if self.sequences.get(sequence).is_none() {
             return;
         }
-        // A fade whose other end does not exist, or has run its course, is no
-        // fade: dropping it here keeps the blended and unblended paths one code
-        // path rather than two.
+        // A fade whose other sequence does not exist, or whose weight is zero,
+        // is dropped here, so the blended and unblended cases share one code
+        // path.
         let blend = blend.filter(|b| {
             b.weight > 0.0 && b.sequence != sequence && self.sequences.get(b.sequence).is_some()
         });
         // The upper body's turn back toward the aim, resolved once — the key
         // bones are in the plan, not re-scanned.
         let twist = twist.filter(|t| t.gap != 0.0).map(|t| t.split());
-        // **This is the hottest loop in the client** — every animated entity,
-        // every frame — so everything that cannot change per call comes frozen
-        // from the [`PosePlan`]: the parent-before-child visit order, the
-        // `SpineLow` subtree mask, the key-bone indices. One pass, one
-        // allocation (the return), instead of the local/done scratch vectors
-        // and per-call worklists this used to run.
+        // This is the most frequently run loop in the client — every animated
+        // entity, every frame — so everything that cannot change per call
+        // comes precomputed from the [`PosePlan`]: the parent-before-child
+        // visit order, the `SpineLow` subtree mask, the key-bone indices. One
+        // pass and no scratch vectors or per-call worklists.
         let plan = self.plan();
 
-        // **The second track, on the `SpineLow` subtree and nothing else.** The
+        // The second track, on the `SpineLow` subtree only. The
         // torso plays its own sequence — a swing, an emote, a moving caster's
         // wind-up — while the legs below keep whatever the base is doing. It
-        // *replaces* rather than blends, which is what the client's own
+        // replaces rather than blends, which is what the client's own
         // key-bone-rooted play does: the base clip animates the whole skeleton
-        // and the mask is what decides who owns each bone.
+        // and the mask decides which sequence owns each bone.
         //
         // A model with no `SpineLow` has nothing to mask and takes no overlay;
         // the caller is expected to have routed the play full-body instead —
@@ -3002,13 +3047,13 @@ impl M2Skeleton {
         for &i in &plan.order {
             let i = i as usize;
             let bone = &self.bones[i];
-            // **A bone with no track is its parent, and is not sampled.** Its
+            // A bone with no track takes its parent's matrix and is not sampled. Its
             // local is `T(pivot) · I · T(-pivot)`, which is the identity
             // exactly — zero translation, the unit quaternion, unit scale —
             // in every sequence, in both halves of a fade and under the
             // overlay, so the three samples, the quaternion and the
             // multiply would all reproduce the parent's matrix bit for bit.
-            // Half of a character rig's bones are of this kind (56 of
+            // About half of a character rig's bones have no track (56 of
             // `HumanMale.m2`'s 119). The two twist bones are excepted while
             // a twist is on, because the yaw is applied to the local.
             let twisted = twist.is_some() && (Some(i) == plan.spine_low || Some(i) == plan.head);
@@ -3034,12 +3079,12 @@ impl M2Skeleton {
                 }
                 _ => self.local(bone, sequence, elapsed_ms, now_ms, blend, base, fade),
             };
-            // **The counter-twist, on the local and therefore on the subtree.**
+            // The counter-twist, on the local and therefore on the subtree.
             // A yaw about the model's own up axis through the bone's pivot,
-            // applied *outside* whatever the animation put there: `T(pivot) Rz
+            // applied outside whatever the animation put there: `T(pivot) Rz
             // T(-pivot) * local`. Composing it the other way round would turn
-            // the bone before the clip did and put the shoulders somewhere the
-            // animator never sent them.
+            // the bone before the clip did and put the shoulders where the
+            // animation does not place them.
             if let Some((spine, head)) = twist {
                 if spine != 0.0 && Some(i) == plan.spine_low {
                     local = yaw_about(bone.pivot, spine, local);
@@ -3067,8 +3112,8 @@ impl M2Skeleton {
     /// included.
     ///
     /// Separate from [`Self::pose`] because the masked overlay asks for the
-    /// same thing on a *different* sequence for part of the skeleton: two
-    /// tracks, one expression of what a bone's own transform is.
+    /// same thing on a different sequence for part of the skeleton: two
+    /// tracks, one computation of a bone's own transform.
     ///
     /// `hints` and `fade_hints` are the bone's key hints on its own sequence
     /// and on the one it is fading out of — see [`M2Track::sample_hinted`].
@@ -3085,11 +3130,11 @@ impl M2Skeleton {
     ) -> [f32; 12] {
         let (mut tr, mut rot, mut sc) = self.sample_bone(bone, sequence, elapsed_ms, now_ms, hints);
         if let Some(fade) = blend {
-            // Blend the *local* transform, not the finished matrix. Two
+            // Blend the local transform, not the finished matrix. Two
             // world matrices averaged element by element shorten every
             // limb — the rotation part of the average is not a rotation —
-            // and the shortening is worst exactly where the two poses
-            // differ most, which is where a fade is meant to help.
+            // and the shortening is worst where the two poses differ most,
+            // which is where a fade is needed.
             let (tr2, rot2, sc2) =
                 self.sample_bone(bone, fade.sequence, fade.elapsed_ms, now_ms, fade_hints);
             let f = fade.weight.clamp(0.0, 1.0);
@@ -3119,7 +3164,7 @@ impl M2Skeleton {
     /// as `(x, y, z, w)`, and scale.
     ///
     /// Separate from [`Self::pose`] because a cross-fade needs them twice, and
-    /// they are the level a fade has to happen at — see there.
+    /// a fade has to blend these values rather than matrices — see there.
     ///
     /// `hints` is three key hints — translation, rotation, scale — for
     /// [`M2Track::sample_hinted`], or empty for a caller that keeps none.
@@ -3134,7 +3179,7 @@ impl M2Skeleton {
         let Some(seq) = self.sequences.get(sequence) else {
             return ([0.0; 3], [0.0, 0.0, 0.0, 1.0], [1.0; 3]);
         };
-        // Onto the sequence's window, **clamped and not wrapped** — see
+        // Onto the sequence's window, clamped and not wrapped — see
         // [`M2Skeleton::pose`]. A caller that wants a gait wraps its own clock
         // with [`M2Skeleton::phase`].
         let t = seq.start + elapsed_ms.min(seq.end.saturating_sub(seq.start));
@@ -3156,41 +3201,40 @@ impl M2Skeleton {
 /// Everything [`M2Skeleton::pose`] composes on top of the one sequence it is
 /// playing.
 ///
-/// Together rather than as three arguments because they are three answers to
-/// one question — *what else is acting on this pose this frame* — and because
-/// almost every caller wants none of them: a `PoseLayers::default()` reads
-/// better at the call site than three `None`s in a row, and cannot be
-/// transposed.
+/// Together rather than as three arguments because all three describe what
+/// else acts on this pose this frame, and because almost every caller wants
+/// none of them: a `PoseLayers::default()` reads better at the call site than
+/// three `None`s in a row, and cannot be transposed.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PoseLayers {
-    /// Cross-fade *out of* another animation — see [`Blend`]. Without it a
+    /// Cross-fade out of another animation — see [`Blend`]. Without it a
     /// creature that stops running snaps to frame zero of its idle.
     pub blend: Option<Blend>,
     /// Turn the upper body back toward what the unit is aiming at, when the
     /// rendered root is not pointing there — see [`BodyTwist`], the second half
-    /// of how a strafe is drawn. Applied to the two key bones' *locals*, so
+    /// of how a strafe is drawn. Applied to the two key bones' locals, so
     /// each one's whole subtree comes with it.
     ///
     /// **A model with neither key bone takes no twist and that is the client's
     /// own gate**, not a shortcut: a wolf has no `SpineLow`, cannot strafe, and
     /// has nothing to twist.
     pub twist: Option<BodyTwist>,
-    /// The **second track**: a sequence played over the first on the `SpineLow`
+    /// The second track: a sequence played over the first on the `SpineLow`
     /// subtree only, which is how the game swings, casts and emotes without
     /// stopping the legs — see [`Overlay`].
     pub overlay: Option<Overlay>,
 }
 
-/// The **second animation track**: what the upper body is playing over the
+/// The second animation track: what the upper body is playing over the
 /// lower one.
 ///
 /// This is how 1.12 swings, casts and emotes without stopping the legs, and it
-/// is a second *track* rather than a different sequence: a base clip on bone 0
+/// is a second track rather than a different sequence: a base clip on bone 0
 /// drives the whole skeleton, and a masked play rooted at the
 /// [`key_bone::SPINE_LOW`] subtree takes the torso off it for as long as it
-/// runs. A client that has only one track plays the swing over the whole body,
-/// which stops a running character dead in its stride — which is what this one
-/// did until it grew this.
+/// runs. A client with only one track plays the swing over the whole body,
+/// which stops a running character mid-stride. This client did that before
+/// the overlay existed.
 ///
 /// Which of the two a given play lands on is decided **per play, by live
 /// state** and not by the animation id — see `entities::route_oneshot`, where
@@ -3204,7 +3248,7 @@ pub struct PoseLayers {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Overlay {
     pub sequence: usize,
-    /// Milliseconds into that sequence, on the overlay's **own** clock: a swing
+    /// Milliseconds into that sequence, on the overlay's own clock: a swing
     /// thrown mid-stride starts at zero while the run carries on where it was.
     pub elapsed_ms: u32,
 }
@@ -3217,7 +3261,7 @@ pub struct Overlay {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blend {
     pub sequence: usize,
-    /// Milliseconds since the *outgoing* animation started — it keeps running
+    /// Milliseconds since the outgoing animation started — it keeps running
     /// while it fades, so a run does not freeze mid-stride on its way out.
     pub elapsed_ms: u32,
     /// How much of the outgoing animation is still showing: 1 at the moment of
@@ -3227,11 +3271,11 @@ pub struct Blend {
 
 impl M2Track {
     /// Whether this track ever leaves 1.0 — the test that separates a batch
-    /// which **fades** from one that merely names a tint slot.
+    /// that fades from one that only names a tint slot.
     ///
     /// `dims` is how many of the track's components are read: 3 for an RGB
-    /// colour, 1 for an opacity. False for a keyless track, which is the
-    /// author having left the slot alone. See [`resolve_tint`], where this
+    /// colour, 1 for an opacity. False for a track with no keys, which means
+    /// the author left the slot unused. See [`resolve_tint`], where this
     /// decides whether the batch carries a [`BatchTint`] at all.
     pub fn tints(&self, dims: usize) -> bool {
         if self.times.is_empty() {
@@ -3247,7 +3291,7 @@ impl M2Track {
     /// The first key's value — the "sampled once" convention the client's
     /// emitter property tracks take. Nine of the ten emission tracks are
     /// constant in every model the game ships;
-    /// the tenth, the emission rate, is the one worth sampling per frame.
+    /// the tenth, the emission rate, is the one sampled per frame.
     pub fn first(&self) -> f32 {
         self.values.first().copied().unwrap_or(0.0)
     }
@@ -3255,8 +3299,8 @@ impl M2Track {
     /// This track's value at time `t`, clamped to the `[start, end]` window of
     /// the animation being played.
     ///
-    /// The window is the whole point of a vanilla track: the keys of every
-    /// animation in the model sit in one array, so the key *before* `t` may
+    /// A vanilla track needs the window because the keys of every
+    /// animation in the model sit in one array, so the key before `t` may
     /// belong to the previous animation and must not be interpolated from.
     ///
     /// Returns four floats regardless of [`M2Track::dim`]; a 3-dimensional
@@ -3272,7 +3316,7 @@ impl M2Track {
         self.sample_hinted(t, start, end, global_sequences, now_ms, &mut 0)
     }
 
-    /// [`Self::sample`] with a **key hint**: the index of the key the last
+    /// [`Self::sample`] with a key hint: the index of the key the last
     /// call found at or before its clock, which the caller keeps per track.
     ///
     /// A vanilla track is one array of keys for the model's whole timeline —
@@ -3409,9 +3453,9 @@ fn nlerp(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
 
 /// `local` turned by `angle` about the model's up axis through `pivot`.
 ///
-/// `T(pivot) * Rz(angle) * T(-pivot) * local` — the twist is applied *after*
-/// whatever the animation put in `local`, which is what makes it a correction to
-/// the pose rather than a rewrite of it. Model space is Z-up and a positive
+/// `T(pivot) * Rz(angle) * T(-pivot) * local` — the twist is applied after
+/// whatever the animation put in `local`, so it corrects the pose rather than
+/// replacing it. Model space is Z-up and a positive
 /// angle turns the same way a rising orientation does, so the sign matches every
 /// other yaw in this project.
 fn yaw_about(pivot: [f32; 3], angle: f32, local: [f32; 12]) -> [f32; 12] {
@@ -3507,9 +3551,9 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 ///   disagrees for anything else.
 fn billboard(m: &mut [f32; 12], pivot: [f32; 3], right: [f32; 3], up: [f32; 3], kind: Billboard) {
     let [px, py, pz] = pivot;
-    // The camera's third axis in model space, pointing **away** from the eye:
-    // the spherical case hands the local X axis its negation, which is what
-    // fixes the sign without having to reason about the view's handedness.
+    // The camera's third axis in model space, pointing away from the eye:
+    // the spherical case gives the local X axis its negation, which fixes the
+    // sign without having to reason about the view's handedness.
     let back = cross(right, up);
     // The columns of a row-major 3x4 are the images of the local axes, which is
     // what every rule below is written in terms of.
@@ -3561,9 +3605,9 @@ fn billboard(m: &mut [f32; 12], pivot: [f32; 3], right: [f32; 3], up: [f32; 3], 
 ///
 /// Returns `None` rather than an error for the same reason [`parse_batches`]
 /// returns an empty list: a model whose skeleton does not validate is still
-/// good geometry, and drawing it in its bind pose beats not drawing it. A
-/// *partly* trusted skeleton is the one thing worse than none — a bone read at
-/// the wrong offset folds the model inside out — so any failure drops the lot.
+/// good geometry, and drawing it in its bind pose is better than not drawing
+/// it. A partly valid skeleton is worse than none — a bone read at the wrong
+/// offset folds the model inside out — so any failure drops the whole skeleton.
 fn parse_skeleton(buf: &[u8], vertex_bones: &[[u8; 4]]) -> Option<M2Skeleton> {
     let bone_arr = array(buf, offsets::BONES);
     if bone_arr.count == 0 || bone_arr.count > MAX_BONES || !bone_arr.fits(buf, BONE_SIZE) {
@@ -3580,8 +3624,8 @@ fn parse_skeleton(buf: &[u8], vertex_bones: &[[u8; 4]]) -> Option<M2Skeleton> {
             let start = u32_at(buf, o + 4);
             let end = u32_at(buf, o + 8);
             // end < start is impossible for a real window and means the record
-            // size is wrong — which is the failure this whole check exists for,
-            // because vanilla's 68 bytes is not TBC's or WotLK's.
+            // size is wrong. This check exists for that failure, because
+            // vanilla's 68 bytes is not TBC's or WotLK's.
             if end < start {
                 return None;
             }
@@ -3642,8 +3686,8 @@ fn parse_skeleton(buf: &[u8], vertex_bones: &[[u8; 4]]) -> Option<M2Skeleton> {
     }
 
     // A vertex weighted to a bone that does not exist would read past the pose
-    // in the shader. Rare enough to be a parse failure rather than something to
-    // paper over: if it happens, the vertex block and the bone block disagree
+    // in the shader. It is rare enough to treat as a parse failure rather than
+    // work around: if it happens, the vertex block and the bone block disagree
     // and neither can be trusted.
     if vertex_bones.iter().flatten().any(|&b| b as usize >= bones.len()) {
         return None;
@@ -3667,33 +3711,32 @@ fn parse_skeleton(buf: &[u8], vertex_bones: &[[u8; 4]]) -> Option<M2Skeleton> {
 
 /// How far a track's value may sit from the identity and still be "no tint".
 ///
-/// The renderer delivers a tint as four **bytes** (`models::tint_tag`), so a
+/// The renderer delivers a tint as four bytes (`models::tint_tag`), so a
 /// value that rounds to 255 is indistinguishable from white however it is
-/// stored. Half a byte, which is the largest error that cannot resolve a step.
+/// stored. Half a byte is the largest error that cannot change the byte.
 const TINT_IDENTITY_EPSILON: f32 = 0.5 / 255.0;
 
-/// A batch's two tint indices, kept only where they name a track that actually
-/// **moves the picture**.
+/// A batch's two tint indices, kept only where they name a track that changes
+/// the rendered colour or opacity.
 ///
-/// **A slot with no keys is the same answer as no slot**, and collapsing the
-/// two here is what keeps the renderer's "is this batch tinted" test a single
-/// `Option`: 0xFFFF is the file's own "none", an index past the array is a
-/// malformed one, and an in-range index at a keyless track is a batch the
-/// author left alone. All three draw at the texel.
+/// A slot with no keys is treated as no slot. Collapsing the two here keeps
+/// the renderer's "is this batch tinted" test a single `Option`: 0xFFFF is the
+/// file's own "none", an index past the array is a malformed one, and an
+/// in-range index at a track with no keys is a slot the author left unused.
+/// All three draw at the texel.
 ///
-/// **And so is a slot whose keys never leave white and opaque**, which is the
-/// same argument one step further and is the case that mattered. *Every* batch
-/// of *every* character model and of every item model in the game names
-/// transparency track 0, and on almost all of them that track is one key
-/// holding 1.0 — `HumanMale.m2` reads `1 keys 0..0 ms, 1.000..1.000` across all
-/// 56 of its batches, and so do a plate helm and a pauldron. Read as "tinted",
-/// that costs three things and buys nothing: the batch's material sets
-/// `is_tint` (which `material_for` uses to drop `vertex_lit`, so **no character
-/// and no worn item in the game could ever be lit by the room it stood in**),
-/// the batch spends the one per-instance word there is on a constant, and
-/// `animate` rewrites that word for every part of every character in view sixty
-/// times a second. The identity is the identity; a batch that states it is a
-/// batch that states nothing.
+/// A slot whose keys never leave white and opaque is also treated as no slot,
+/// and that case affects the most batches. Every batch of every character
+/// model and of every item model in the game names transparency track 0, and
+/// on almost all of them that track is one key holding 1.0 — `HumanMale.m2`
+/// reads `1 keys 0..0 ms, 1.000..1.000` across all 56 of its batches, and so
+/// do a plate helm and a pauldron. Treated as tinted, such a batch has three
+/// costs and no effect: its material sets `is_tint` (which `material_for` uses
+/// to drop `vertex_lit`, so no character and no worn item in the game could be
+/// lit by the room it stood in), the batch spends the one per-instance word on
+/// a constant, and `animate` rewrites that word for every part of every
+/// character in view sixty times a second. A batch that states the identity
+/// tint is drawn as untinted.
 fn resolve_tint(
     tints: &M2Tints,
     weight_lookup: &[u16],
@@ -3726,12 +3769,12 @@ fn resolve_tint(
 /// This batch's texture matrix, through the lookup — or `None` for a batch
 /// whose texture stands still.
 ///
-/// **A record with no keys in any of its three tracks is the same answer as no
-/// record**, and collapsing the two here is what keeps the renderer's "does this
-/// batch move" test a single `Option`: 0xFFFF is the file's own "none", an index
-/// past the array is a malformed one, and an all-empty record is a slot the
-/// author left alone. All three sample to the identity, and the *point* of the
-/// `None` is that they then cost no per-frame work at all.
+/// A record with no keys in any of its three tracks is treated as no record.
+/// Collapsing the two here keeps the renderer's "does this batch move" test a
+/// single `Option`: 0xFFFF is the file's own "none", an index past the array
+/// is a malformed one, and an all-empty record is a slot the author left
+/// unused. All three sample to the identity, and returning `None` for them
+/// means they cost no per-frame work.
 fn resolve_uv(anims: &M2TextureAnims, uv_lookup: &[u16], uv_combo: u16) -> Option<u16> {
     let slot = uv_lookup.get(uv_combo as usize).copied()?;
     let transform = anims.transforms.get(slot as usize)?;
@@ -3756,12 +3799,12 @@ fn parse_global_sequences(buf: &[u8]) -> Vec<u32> {
 
 /// The colour and transparency blocks.
 ///
-/// **Unlike the skeleton, a failure here is per-block and not fatal.** A wrong
+/// Unlike the skeleton, a failure here is per block and not fatal. A wrong
 /// bone folds a model inside out; a missing colour track leaves a batch at its
 /// texel, which is what every batch in the game that names none already does.
 /// So each array is taken only if it validates and the rest of the model is
-/// unaffected — and the coverage is reported by `vale spell`, which is where
-/// a systematically wrong offset would show as nothing resolving.
+/// unaffected. `vale spell` reports the coverage, so a systematically wrong
+/// offset shows there as nothing resolving.
 fn parse_tints(buf: &[u8]) -> M2Tints {
     let mut tints = M2Tints {
         global_sequences: parse_global_sequences(buf),
@@ -3795,7 +3838,7 @@ fn parse_tints(buf: &[u8]) -> M2Tints {
 
 /// The texture-matrix block.
 ///
-/// Per-record and non-fatal exactly as [`parse_tints`] is: a transform that will
+/// Per record and non-fatal, as [`parse_tints`] is: a transform that does
 /// not read leaves its batch's texture standing still, which is what every batch
 /// naming none already does.
 fn parse_uv_anims(buf: &[u8]) -> M2TextureAnims {
@@ -3821,8 +3864,8 @@ fn parse_uv_anims(buf: &[u8]) -> M2TextureAnims {
 }
 
 /// A track with no keys — the placeholder a transparency slot gets when its
-/// own record will not read, so that the *indices* of the ones after it stay
-/// right. [`M2Track::sample`] answers zero for it, and [`M2Tints::sample`]
+/// own record does not read, so that the indices of the ones after it stay
+/// right. [`M2Track::sample`] returns zero for it, and [`M2Tints::sample`]
 /// never reaches it because [`resolve_tint`] only keeps a slot with keys.
 fn empty_track() -> M2Track {
     M2Track {
@@ -3835,7 +3878,8 @@ fn empty_track() -> M2Track {
 }
 
 /// One `M2Track`. `Ok(None)` is a track with no keys, which is ordinary;
-/// `None` is a track that does not fit the file, which condemns the skeleton.
+/// `None` is a track that does not fit the file, which makes the skeleton
+/// invalid.
 fn parse_track(buf: &[u8], at: usize, dim: usize) -> Option<Option<M2Track>> {
     if at + TRACK_SIZE > buf.len() {
         return None;
@@ -3870,7 +3914,7 @@ fn parse_track(buf: &[u8], at: usize, dim: usize) -> Option<Option<M2Track>> {
     }))
 }
 
-/// The `M2Track<u8>` shape — same 0x1C-byte header, one *byte* per value.
+/// The `M2Track<u8>` shape — same 0x1C-byte header, one byte per value.
 /// The particle enable gate is one; the attachment animate-track this parser
 /// skips is the other.
 fn parse_byte_track(buf: &[u8], at: usize) -> Option<Option<M2Track>> {
@@ -3895,14 +3939,14 @@ fn parse_byte_track(buf: &[u8], at: usize) -> Option<Option<M2Track>> {
     }))
 }
 
-/// The `M2Track<fixed16>` shape — same 0x1C-byte header, one **signed 16-bit**
+/// The `M2Track<fixed16>` shape — same 0x1C-byte header, one signed 16-bit
 /// value per key where `32767` is 1.0.
 ///
 /// This is the only place in the vanilla format where a value is not a float,
-/// and it is not a detail that fails loudly: read as `f32`s a ramp from opaque
+/// and reading it wrong produces no error: read as `f32`s a ramp from opaque
 /// to transparent decodes to denormals near zero, so every effect in the game
-/// draws at zero opacity and the symptom is *nothing happening* — which is
-/// indistinguishable from the block not being read at all.
+/// draws at zero opacity. The result looks the same as the block not being
+/// read at all.
 fn parse_fixed16_track(buf: &[u8], at: usize) -> Option<Option<M2Track>> {
     if at + TRACK_SIZE > buf.len() {
         return None;
@@ -3931,8 +3975,8 @@ fn parse_fixed16_track(buf: &[u8], at: usize) -> Option<Option<M2Track>> {
 ///
 /// Validated as a block, like [`parse_batches`]: a wrong offset in this format
 /// reads as plausible numbers, so each record's enums and floats are
-/// range-checked and **one bad record drops the lot** — the model still draws,
-/// it simply emits nothing, which is the same degradation an absent table is.
+/// range-checked and one bad record drops the whole table. The model still
+/// draws and emits nothing, the same result as an absent table.
 fn parse_particles(buf: &[u8]) -> Vec<M2Particle> {
     parse_particles_checked(buf).unwrap_or_default()
 }
@@ -4057,7 +4101,7 @@ fn parse_particles_checked(buf: &[u8]) -> Option<Vec<M2Particle>> {
 
 /// An emitter's `M2Array<char>` model path, or `None` where it names nothing.
 ///
-/// Every emitter in the game carries **both** arrays; the empty ones hold a
+/// Every emitter in the game carries both arrays; the empty ones hold a
 /// single `\0`, so a count of 1 is an absence and not a one-letter filename.
 /// The stored extension is `.mdx` — the archives hold `.m2` — so this is the
 /// same normalisation `CreatureModelData`'s paths take.
@@ -4085,9 +4129,9 @@ fn parse_ribbons_checked(buf: &[u8], textures: usize) -> Option<Vec<M2Ribbon>> {
     if arr.count == 0 {
         return None;
     }
-    // Eight is already generous — the shipped models carry one or two, and
-    // `Fireball_Missile_Low` is the busy end at two. A larger count is a
-    // mis-read offset rather than a model.
+    // The shipped models carry one or two, and `Fireball_Missile_Low` is the
+    // largest at two, so eight leaves a margin. A larger count is a mis-read
+    // offset rather than a model.
     if arr.count > 8 || !arr.fits(buf, RIBBON_SIZE) {
         return None;
     }
@@ -4117,9 +4161,9 @@ fn parse_ribbons_checked(buf: &[u8], textures: usize) -> Option<Vec<M2Ribbon>> {
     for i in 0..arr.count {
         let o = arr.offset + i * RIBBON_SIZE;
         let texture = first_u16(o + 0x14).filter(|&t| (t as usize) < textures);
-        // An index the table does not hold is the block misread; an *empty*
-        // array is a legal ribbon that draws nothing, which is why the two are
-        // told apart here rather than folded into one `Option`.
+        // An index the table does not hold means the block is misread; an empty
+        // array is a legal ribbon that draws nothing, so the two are told apart
+        // here rather than folded into one `Option`.
         if texture.is_none() && first_u16(o + 0x14).is_some() {
             return None;
         }
@@ -4219,25 +4263,25 @@ impl M2Array {
 /// The model's collision hull: the `BoundingTriangles` / `BoundingVertices`
 /// block, which nothing on the render path reads.
 ///
-/// This is the M2 half of [`crate::world::collision`], and it is a *simpler* rule than
-/// a WMO's: there is no `MOPY` and no per-triangle flag, because the block
-/// exists for nothing but collision. Every triangle in it is solid, so
-/// `declared_triangles` equals the triangle count by construction — where a
+/// This is the M2 half of [`crate::world::collision`], and its rule is simpler
+/// than a WMO's: there is no `MOPY` and no per-triangle flag, because the block
+/// exists only for collision. Every triangle in it is solid, so
+/// `declared_triangles` equals the triangle count by construction, whereas a
 /// building's hull is a fraction of its declared geometry.
 ///
-/// **`nBoundingTriangles` counts `u16`s, not triangles.** vmangos' extractor
-/// says so in a comment beside the field and then copies `nIndices * 2` bytes;
-/// reading it as a triangle count gives a hull three times too big to fit the
-/// vertices it indexes, which validates away to nothing here and would be a
-/// world of trees you walk through.
+/// `nBoundingTriangles` counts `u16`s, not triangles. vmangos' extractor
+/// says so in a comment beside the field and then copies `nIndices * 2` bytes.
+/// Reading it as a triangle count gives a hull three times too big to fit the
+/// vertices it indexes, which fails validation here and would leave every tree
+/// without collision.
 ///
-/// **An empty block is an answer, not a failure.** It is how the game says
-/// *walk through me*, and it is most of the grass, every bird and every torch
-/// flame. vmangos' `Model::open` returns false on exactly that case and the
-/// model never reaches a vmap at all, so the server agrees.
+/// An empty block is valid, not a failure. It marks a model with no
+/// collision, which covers most of the grass, every bird and every torch
+/// flame. vmangos' `Model::open` returns false in exactly that case and the
+/// model never reaches a vmap at all, so the server treats it the same way.
 ///
 /// Validated like every other optional block, and dropped whole if it does not
-/// hold: a wrong offset here reads as plausible coordinates, and a hull placed
+/// pass: a wrong offset here reads as plausible coordinates, and a hull placed
 /// from them is an invisible wall standing near a tree.
 fn parse_collision(buf: &[u8]) -> crate::world::collision::CollisionMesh {
     use crate::world::collision::CollisionMesh;
@@ -4269,8 +4313,9 @@ fn parse_collision(buf: &[u8]) -> crate::world::collision::CollisionMesh {
     let mut out = Vec::with_capacity(indices.count);
     for i in 0..indices.count {
         let index = u16_at(buf, indices.offset + i * 2) as u32;
-        // One index past the vertex block is the whole block misread. Nothing
-        // partial: two thirds of a hull is a shape the file never described.
+        // One index past the vertex block means the whole block is misread.
+        // No partial hull is kept: two thirds of a hull is a shape the file
+        // does not describe.
         if index as usize >= positions.len() {
             return CollisionMesh::default();
         }
@@ -4291,20 +4336,20 @@ fn parse_collision(buf: &[u8]) -> crate::world::collision::CollisionMesh {
 /// a plausible position, and an item would then hang off a bone chosen at
 /// random. So the reference implementation's guards are kept: a small count, a
 /// block that fits, ids inside the client's enum and finite positions inside a
-/// *scene*. A table that fails any of them is **dropped**, which costs the
+/// scene. A table that fails any of them is dropped, which loses the
 /// pauldrons and keeps the character.
 ///
-/// **The position bound was 100 and that was measured on the wrong population.**
-/// It is true of every character and creature in the game — a model is a couple
-/// of yards tall and its own origin is at its feet — and false of a model that
-/// is a *place*: `Interface\Glues\Models\UI_Human\UI_Human.m2` is the human
+/// The position bound was 100. That holds for every character and creature in
+/// the game — a model is a couple of yards tall and its own origin is at its
+/// feet — and fails for a model that is a place:
+/// `Interface\Glues\Models\UI_Human\UI_Human.m2` is the human
 /// character-select backdrop, authored where it stands on the map, and both of
 /// its attachment points are at about (-225, -80). The guard dropped the whole
-/// table, so the human plinth had no position and the human character screen
-/// alone showed an empty scene — with nothing in any log, because a dropped
-/// optional block is the documented degradation for five other reasons. Now
-/// 10,000, which is [`parse_cameras`]' own bound and is what `UI_Human`'s camera
-/// has always been read through.
+/// table, so the human plinth had no position and only the human character
+/// screen showed an empty scene. Nothing was logged, because dropping an
+/// optional block is the documented handling for five other reasons. The
+/// bound is now 10,000, which is [`parse_cameras`]' own bound and the one
+/// `UI_Human`'s camera is read through.
 /// The events array — see [`M2Event`]. Refused whole on the first entry that
 /// does not look like one: an identifier that is not `$` and three letters,
 /// or a timestamps array that does not fit.
@@ -4338,7 +4383,8 @@ fn parse_events(buf: &[u8]) -> Vec<M2Event> {
 fn parse_attachments(buf: &[u8]) -> Vec<M2Attachment> {
     /// How far from its own origin a point in a model may be. A scene is a
     /// place and may be anywhere on a 17,000-yard map; garbage from a wrong
-    /// offset is overwhelmingly non-finite or astronomically larger than this.
+    /// offset is almost always non-finite or many orders of magnitude larger
+    /// than this.
     const FURTHEST: f32 = 10_000.0;
     let arr = array(buf, offsets::ATTACHMENTS);
     if arr.count == 0 || arr.count > 96 || !arr.fits(buf, ATTACHMENT_SIZE) {
@@ -4361,23 +4407,22 @@ fn parse_attachments(buf: &[u8]) -> Vec<M2Attachment> {
     out
 }
 
-/// **The camera table** — where to stand to look at this model, in its own
+/// The camera table: where to stand to look at this model, in its own
 /// space.
 ///
-/// Validated on the same terms as every other optional block, and the guards
-/// matter more here than in most: a wrong offset reads as a plausible eye and a
-/// plausible target, and the login screen would then draw the *inside* of a
-/// portal from six feet underground. What is checked is that the field of view
-/// is an angle a camera could have and that both points are inside a model —
-/// the glue scenes are ~10 to 50 units across.
+/// Validated on the same terms as every other optional block. A wrong offset
+/// reads as a plausible eye and a plausible target, and the login screen would
+/// then draw the inside of a portal from six feet underground. The checks are
+/// that the field of view is an angle a camera could have and that both points
+/// are inside a model — the glue scenes are ~10 to 50 units across.
 ///
-/// A table that fails is **dropped**, which costs the authored framing and keeps
-/// the scene: [`M2Camera::eye`] answering nothing sends the renderer to its own
+/// A table that fails is dropped, which loses the authored framing and keeps
+/// the scene: [`M2Camera::eye`] returning nothing sends the renderer to its own
 /// fallback rather than to a wrong place.
 fn parse_cameras(buf: &[u8]) -> Vec<M2Camera> {
     let arr = array(buf, offsets::CAMERAS);
-    // Eight is generous — the busiest vanilla model has three, and the two glue
-    // scenes have one each.
+    // The largest vanilla camera count is three, and the two glue scenes have
+    // one each, so eight leaves a margin.
     if arr.count == 0 || arr.count > 8 || !arr.fits(buf, CAMERA_SIZE) {
         return Vec::new();
     }
@@ -4386,7 +4431,7 @@ fn parse_cameras(buf: &[u8]) -> Vec<M2Camera> {
         let o = arr.offset + i * CAMERA_SIZE;
         let fov = f32_at(buf, o + 0x04);
         // The two `*_base` vectors — the position a track with no keys means.
-        // Both glue cameras are static, so these are the whole of the framing.
+        // Both glue cameras are static, so these alone set the framing.
         let position = [
             f32_at(buf, o + 0x2C),
             f32_at(buf, o + 0x30),
@@ -4416,23 +4461,23 @@ fn parse_cameras(buf: &[u8]) -> Vec<M2Camera> {
     out
 }
 
-/// **The light table** — see [`M2Light`], where the layout, the stride and the
-/// measurement behind the first-key sampling all are.
+/// The light table — see [`M2Light`] for the layout, the stride and the
+/// measurement behind the first-key sampling.
 ///
-/// Validated on the same terms as its neighbours, and the guards are the ones
-/// that matter for a block whose every field is a small float: a wrong offset
-/// reads as a plausible colour at a plausible position, and the scene is then
-/// lit by four lamps that are not in it. What is checked is that the colours are
-/// colours (0..1 after the intensity is left off, because an *intensity* may be
-/// 2) and that the attenuation pair is an ordered, finite distance.
+/// Validated on the same terms as its neighbours, with guards suited to a
+/// block whose every field is a small float: a wrong offset reads as a
+/// plausible colour at a plausible position, and the scene is then lit by four
+/// lamps that are not in it. The checks are that the colours are in range
+/// (0..1 without the intensity, because an intensity may be 2) and that the
+/// attenuation pair is an ordered, finite distance.
 ///
-/// A table that fails any of them is **dropped**, which costs the authored
+/// A table that fails any of them is dropped, which loses the authored
 /// lighting and keeps the scene — the renderer falls back to the world's own
 /// sun, which is what it did before this block was read at all.
 fn parse_lights(buf: &[u8]) -> Vec<M2Light> {
     let arr = array(buf, offsets::LIGHTS);
-    // Sixteen is generous: every glue scene has four and nothing in the world
-    // has any.
+    // Every glue scene has four and nothing in the world has any, so sixteen
+    // leaves a margin.
     if arr.count == 0 || arr.count > 16 || !arr.fits(buf, LIGHT_SIZE) {
         return Vec::new();
     }
@@ -4442,7 +4487,7 @@ fn parse_lights(buf: &[u8]) -> Vec<M2Light> {
     let mut out = Vec::with_capacity(arr.count);
     for i in 0..arr.count {
         let o = arr.offset + i * LIGHT_SIZE;
-        // …and the greatest key count over the tracks read, which is what makes
+        // …and the greatest key count over the tracks read, which makes
         // the sampling checkable. Accumulated here rather than returned by
         // `first` so the closure stays a pure read.
         let mut keys = 0u32;
@@ -4497,18 +4542,17 @@ fn parse_lights(buf: &[u8]) -> Vec<M2Light> {
     out
 }
 
-/// **Aim every directional light along its own bone's `+Z`** — see
-/// [`M2Light::direction`], which is where the argument for reading the bone
-/// rather than the position is.
+/// Aim every directional light along its own bone's `+Z` — see
+/// [`M2Light::direction`] for why the bone is read rather than the position.
 ///
 /// A second pass rather than part of [`parse_lights`], because the skeleton is
 /// parsed after the light block and a light without its bone is still a light:
 /// a scene whose skeleton does not validate keeps its lamps and loses only the
-/// aim of its directionals, which is the same degradation every other optional
-/// block here takes.
+/// aim of its directionals, the same handling every other optional block here
+/// gets.
 ///
 /// The bones these ride are parentless roots (measured — `vale glue` checks
-/// all 23), so the bone's own first rotation key *is* its world rotation and
+/// all 23), so the bone's own first rotation key is its world rotation and
 /// there is no chain to compose.
 fn aim_lights(lights: &mut [M2Light], skeleton: Option<&M2Skeleton>) {
     let Some(skeleton) = skeleton else { return };
@@ -4537,17 +4581,18 @@ fn aim_lights(lights: &mut [M2Light], skeleton: Option<&M2Skeleton>) {
 /// The texture table: 16 bytes each, `u32 type, u32 flags, M2Array filename`.
 fn parse_textures(buf: &[u8]) -> Vec<M2Texture> {
     let arr = array(buf, offsets::TEXTURES);
-    // 64 is generous: the busiest vanilla models use a handful.
-    if arr.count == 0 || arr.count > 64 || !arr.fits(buf, 16) {
+    // The vanilla models with the most textures use a handful, so 64 leaves a
+    // margin.
+    if arr.count == 0 || arr.count > 64 || !arr.fits(buf, layout::TEXTURE_SIZE) {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(arr.count);
     for i in 0..arr.count {
-        let o = arr.offset + i * 16;
+        let o = arr.offset + i * layout::TEXTURE_SIZE;
         let kind = u32_at(buf, o);
         // A type outside the client's own enum means the offset is wrong, and
-        // a wrong offset here yields file *names*, which are unmistakably
-        // garbage — so drop the whole table rather than half-trust it.
+        // a wrong offset here yields garbage file names, so drop the whole
+        // table rather than keep part of it.
         if kind > 20 {
             return Vec::new();
         }
@@ -4589,7 +4634,7 @@ fn parse_batches(buf: &[u8], view: usize, model: &M2, vertex_count: usize) -> Ve
         }
     }
 
-    // Texture lookup: batches name a *lookup* slot, not a texture directly.
+    // Texture lookup: batches name a lookup slot, not a texture directly.
     let lookup_arr = array(buf, offsets::TEXTURE_LOOKUP);
     let mut tex_lookup: Vec<u16> = Vec::new();
     if lookup_arr.count > 0 && lookup_arr.count <= 256 && lookup_arr.fits(buf, 2) {
@@ -4668,8 +4713,8 @@ fn parse_batches(buf: &[u8], view: usize, model: &M2, vertex_count: usize) -> Ve
         let color_index = u16_at(buf, o + 0x08);
         let weight_combo = u16_at(buf, o + 0x14);
         // `textureTransformComboIndex`, the last of `M2Batch`'s twelve `u16`s
-        // and the field that ends the record — which is what says the stride
-        // is 24 and not something else.
+        // and the field that ends the record, which confirms the stride
+        // is 24.
         let uv_combo = u16_at(buf, o + 0x16);
         let Some(sub) = submeshes.get(skin_section) else {
             return Vec::new();
@@ -4701,7 +4746,7 @@ fn parse_batches(buf: &[u8], view: usize, model: &M2, vertex_count: usize) -> Ve
 /// `CreatureModelData.dbc` and `MDDF`-adjacent tables name models as `.mdx`,
 /// which is the pre-1.0 extension; the archives hold `.m2`.
 ///
-/// Not a historical curiosity — `Creature\Wolf\Wolf.mdx` is not in any MPQ, and
+/// The conversion is required: `Creature\Wolf\Wolf.mdx` is not in any MPQ, and
 /// reading the DBC path verbatim finds nothing for every creature in the game.
 /// `.mdl` appears in a few rows and means the same thing.
 pub fn model_path(name: &str) -> String {
@@ -4738,35 +4783,35 @@ fn u16_at(buf: &[u8], o: usize) -> u16 {
 }
 
 impl M2 {
-    /// **How wide this model is from above, in yards** — the radius of its drawn
+    /// How wide this model is from above, in yards: the radius of its drawn
     /// geometry about its own origin.
     ///
-    /// From [`M2::positions`] and **not** from [`M2::bounds`], which is the
+    /// From [`M2::positions`] and not from [`M2::bounds`], which is the
     /// declared box and includes animation swing: for a tree that is about three
     /// times the canopy, and for a flying bird it is the whole flight path. A
     /// minimap drawn from the declared box paints a forest over a field.
     ///
     /// The same reasoning `vale sun` uses to find a canopy, and the same
     /// source — see that command, which measures the shadow a canopy casts and
-    /// says why the declared box is no use for it.
+    /// says why the declared box cannot be used for it.
     ///
-    /// `None` for a model with no drawn geometry at all, which is a legitimate
-    /// thing to be: an emitter-only effect has particles and no vertices.
+    /// `None` for a model with no drawn geometry at all, which is valid:
+    /// an emitter-only effect has particles and no vertices.
     pub fn footprint_radius(&self) -> Option<f32> {
         if self.positions.is_empty() {
             return None;
         }
-        // **The root-mean-square distance, not the largest one.** The max is the
+        // The root-mean-square distance, not the largest one. The max is the
         // single most outlying vertex — one branch, one sprawling root — and a
-        // disc of that radius covers several times what the model actually
-        // shades from above. For a canopy, which is roughly circular, the RMS is
-        // about 0.71 of the max; for a sprawling model it is far less, which is
-        // the case the max gets most wrong.
+        // disc of that radius covers several times what the model shades from
+        // above. For a canopy, which is roughly circular, the RMS is about 0.71
+        // of the max; for a sprawling model it is far less, which is where the
+        // max is most wrong.
         //
         // Measured against the shipped minimaps: a sweep over 0.25x to 1.5x of
         // the max scored best at the small end and monotonically worse upward,
-        // which is what says the max overstates. See `vale bake <Map> <x>
-        // <y> minimap`, which is that sweep.
+        // which shows the max overstates. `vale bake <Map> <x> <y> minimap`
+        // runs that sweep.
         let mut sum = 0f64;
         for v in &self.positions {
             sum += f64::from(v[0] * v[0] + v[1] * v[1]);

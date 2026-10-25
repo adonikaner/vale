@@ -178,13 +178,14 @@ fn carry_out_one(
         }
         ShellAsk::PaintArea(_) => {}
         ShellAsk::ImportTexture { folder, target } => {
-            editing.assets.ask = Some(ImportAsk::Choose { folder, name: None, for_field: Some(target) });
+            editing.assets.ask = Some(ImportAsk::Choose { folder, name: None, for_field: Some(target), models: false });
         }
         ShellAsk::ImportGround => {
             editing.assets.ask = Some(ImportAsk::Choose {
                 folder: GROUND_FOLDER.to_string(),
                 name: None,
                 for_field: None,
+                models: false,
             });
         }
         ShellAsk::Part(part) => *tool = part,

@@ -8,34 +8,34 @@
 //! [`Tiles::asked`]. What is edited is which tiles the map has, and what is
 //! derived from each.
 //!
-//! The three operations are together because no other edit keeps any of them
-//! in step:
+//! The three operations are in one module because no other edit keeps any of
+//! them up to date:
 //!
-//! * making and unmaking a tile — `MAIN`'s one bit in the WDT, and the ADT
-//!   behind it. Nothing else in this editor can create ground;
-//! * rebaking `MCSH` — the baked shadow, which every height edit and every
-//!   placement invalidates and none of them updates;
-//! * redrawing the minimap — which every edit of any kind invalidates and
-//!   none of them updates.
+//! * making and unmaking a tile: `MAIN`'s one bit in the WDT, and the ADT
+//!   behind it. Nothing else in this editor can create ground.
+//! * rebaking `MCSH`, the baked shadow, which every height edit and every
+//!   placement invalidates and none of them updates.
+//! * redrawing the minimap, which every edit invalidates and none of them
+//!   updates.
 //!
-//! Both read the eight tiles around the one asked for. A placement is a
-//! record in the file of the tile its origin stands on, and neither a shadow
-//! nor a roof stops at the seam — so a bake or a picture of one tile's own
-//! placements is wrong along every edge a building crosses. See
-//! [`neighbours_of`]; the rule is `collision::hulls_near`'s and
-//! `minimap::render`'s.
+//! The rebake and the minimap both read the eight tiles around the one asked
+//! for. A placement is a record in the file of the tile its origin stands on,
+//! and neither a shadow nor a roof stops at the tile seam, so a bake or a
+//! picture made from one tile's own placements is wrong along every edge a
+//! building crosses. See [`neighbours_of`]; the rule is
+//! `collision::hulls_near`'s and `minimap::render`'s.
 //!
-//! The last two are derived from the tile rather than part of it, so an edit
-//! leaves them stale without changing what the viewport shows. A raised hill
-//! keeps the old shadow and the old picture, which show only in the shading
-//! and on the minimap.
+//! The shadow and the minimap are derived from the tile rather than part of
+//! it, so an edit leaves them stale without changing what the viewport shows.
+//! A raised hill keeps the old shadow and the old picture, which show only in
+//! the shading and on the minimap.
 //!
 //! ## Why the shadow and the minimap are buttons
 //!
-//! A rebake is a million rays and takes about a minute on one tile; a minimap is
-//! a million texels and takes a second or two. Neither can run on a stroke, so
-//! neither is automatic: they are buttons, and the panel says what they cost
-//! before they are pressed.
+//! A rebake is a million rays and takes about a minute on one tile; a minimap
+//! is a million texels and takes a second or two. Neither can run during a
+//! brush stroke, so neither runs automatically. They are buttons, and the
+//! panel states what each costs before it is pressed.
 
 use bevy::prelude::*;
 
@@ -50,20 +50,20 @@ pub(crate) struct Tiles {
     /// The texture a new tile is painted with.
     ///
     /// One layer, since that is the shipped shape for a chunk with a single
-    /// texture — see `vale_edit::adt::blank`. The texture tool is how it
-    /// becomes more than one.
+    /// texture; see `vale_edit::adt::blank`. The texture tool adds further
+    /// layers.
     pub(crate) texture: String,
-    /// …and how high its ground is, flat.
+    /// The height of a new tile's ground, which is flat.
     pub(crate) height: f32,
-    /// …and the `AreaTable` id every chunk gets. Zero is no area, which is
-    /// what an unassigned chunk of a real tile reads.
+    /// The `AreaTable` id every chunk of a new tile gets. Zero is no area,
+    /// which is what an unassigned chunk of a shipped tile reads.
     pub(crate) area: u32,
     /// Whether a rebake casts from the terrain as well as from the hulls.
     ///
-    /// Off, because the shipped bakes do not appear to carry it. See
-    /// `vale_edit::shadow::Ground`, where the measurement is: hull-cast
-    /// shadow lands at 1.2–1.4x the base rate of shadow in a shipped file and
-    /// terrain-cast shadow at 0.4–0.9x, which is chance or worse.
+    /// Off by default, because the shipped bakes do not appear to include it.
+    /// The measurement is at `vale_edit::shadow::Ground`: hull-cast shadow
+    /// lands at 1.2–1.4x the base rate of shadow in a shipped file and
+    /// terrain-cast shadow at 0.4–0.9x, which is no better than chance.
     pub(crate) cast_from_ground: bool,
     /// Whether an imported height map carries what stands on the ground it
     /// moves. See `crate::import::images`.
@@ -72,11 +72,11 @@ pub(crate) struct Tiles {
     pub(crate) said: String,
     /// What the map window asked for, taken by [`run_asked`] next frame.
     ///
-    /// A field rather than a call, because none of these can be done from inside
-    /// a panel: a panel holds the session shared and every one of them wants it
-    /// mutably, plus the archives, which no panel holds at all. The same shape
-    /// the rest of this editor uses — a resource says what is wanted and a
-    /// system does it.
+    /// A field rather than a call, because none of these can be done from
+    /// inside a panel: a panel holds the session shared, and every one of them
+    /// needs it mutably and also needs the archives, which no panel holds. The
+    /// rest of this editor uses the same pattern: a resource records what is
+    /// wanted and a system does it.
     pub(crate) asked: Option<crate::ui::map::mapview::Asked>,
     /// The building the map is, when it is one, read from its WDT for the
     /// map named in `building_for`. See [`read_building`]. Map properties
@@ -93,12 +93,17 @@ pub(crate) struct Tiles {
     /// tiles. See [`start_minimaps`].
     pub(crate) drawing: bool,
     pub(crate) stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// …and the same for the two derived pictures, which are asked for from the
-    /// inspector rather than from the map.
+    /// A request for one of the two derived pictures, which are asked for from
+    /// the inspector rather than from the map.
     pub(crate) derive: Option<Derived>,
+    /// Tiles of the open map whose minimaps are asked for by a list rather
+    /// than by the map's selection: the Assets workspace's out-of-date
+    /// pictures. Taken by [`run_derive`].
+    pub(crate) redraw: Vec<(u32, u32)>,
 }
 
-/// One of the two pictures a tile has that nothing else keeps in step.
+/// One of the two pictures derived from a tile that no other edit keeps up to
+/// date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Derived {
     Shadows,
@@ -126,14 +131,15 @@ impl Default for Tiles {
             drawing: false,
             stop: Default::default(),
             derive: None,
+            redraw: Vec::new(),
         }
     }
 }
 
 /// Claim a tile and put ground behind it.
 ///
-/// Two files, and both are needed: the WDT's `MAIN` bit is what makes any client
-/// ask for the tile at all, and the ADT is what it gets when it does. A claim
+/// This writes two files, and both are needed: the WDT's `MAIN` bit makes a
+/// client ask for the tile, and the ADT is what it reads when it does. A claim
 /// with no ADT behind it is a hole that draws as nothing; an ADT with no claim
 /// is a file nothing reads.
 ///
@@ -158,8 +164,8 @@ pub(crate) fn create(
         .write(&path, &tile.write())
         .map_err(|e| e.to_string())?;
     save_wdt(session, &wdt)?;
-    // And the streamer is told, or the ground stays invisible: it asked for
-    // this tile once, got nothing, and will not ask again. See [`restream`].
+    // Tell the streamer, or the ground stays invisible: it asked for this
+    // tile once, got nothing, and does not ask again. See [`restream`].
     session.publish(at);
     session.restream.insert(at);
 
@@ -171,10 +177,10 @@ pub(crate) fn create(
 
 /// Unclaim a tile.
 ///
-/// The bit goes and the ADT is left where it is. That is deliberate: clearing
-/// the claim is instantly reversible and deleting the file is not, and a tile
-/// nothing asks for costs a file on disk and nothing else. The project folder is
-/// loose files, so removing it is a `del` away for anyone who means it.
+/// The `MAIN` bit is cleared and the ADT is left in the project. Clearing the
+/// claim can be reversed at once and deleting the file cannot, and a tile that
+/// nothing asks for costs only a file on disk. The project folder holds loose
+/// files, so the ADT can be deleted by hand with `del`.
 pub(crate) fn remove(
     session: &mut EditSession,
     assets: &GameAssets,
@@ -186,8 +192,8 @@ pub(crate) fn remove(
     let mut wdt = load_wdt(session, assets)?;
     wdt.set_tile(at.0, at.1, false);
     save_wdt(session, &wdt)?;
-    // And the ground goes off the screen, which the WDT bit alone does not
-    // do — see [`restream`].
+    // Take the ground off the screen, which clearing the WDT bit alone does
+    // not do; see [`restream`].
     session.tombstone(at);
     Ok(format!(
         "removed tile {}, {} from the WDT; its ADT file stays in the project",
@@ -197,22 +203,21 @@ pub(crate) fn remove(
 
 /// Start a rebake of one tile's `MCSH`, on the task pool.
 ///
-/// About a minute: 256 chunks of 4,096 texels, each a ray against every hull
-/// whose box it crosses. There is no incremental form of this and there could
-/// not easily be one — moving one tree changes the shadow of everything the
-/// sun's ray passes on the way to it.
+/// A rebake takes about a minute: 256 chunks of 4,096 texels, each a ray
+/// against every hull whose box it crosses. There is no incremental form, and
+/// one would be hard to write: moving one tree changes the shadow of
+/// everything the sun's ray passes on the way to it.
 ///
-/// It therefore does not run on the frame. A minute on the frame is a window
-/// that stops answering, which reads as a hang. What this does is gather
-/// everything the bake needs —
-/// the tile's own bytes and the hulls standing on it, both of which want the
-/// archives and the main thread — and hand them to
-/// [`crate::jobs`]. [`collect_bakes`] puts the result back.
+/// It therefore does not run on the frame, where a minute would make the
+/// window stop responding. This function gathers everything the bake needs,
+/// the tile's own bytes and the hulls standing on it, both of which need the
+/// archives and the main thread, and hands them to [`crate::jobs`].
+/// [`collect_bakes`] puts the result back.
 ///
-/// The tile is cloned into the job rather than borrowed, which is what lets
-/// the rest of the editor go on editing it. If it was edited while the bake ran,
-/// the bake's copy is stale and is dropped on arrival rather than overwriting
-/// the newer one — see [`collect_bakes`].
+/// The tile is cloned into the job rather than borrowed, so the rest of the
+/// editor can go on editing it. If it was edited while the bake ran, the
+/// bake's copy is stale and is dropped on arrival rather than overwriting the
+/// newer one; see [`collect_bakes`].
 pub(crate) fn start_rebake(
     session: &EditSession,
     assets: &GameAssets,
@@ -227,12 +232,12 @@ pub(crate) fn start_rebake(
     // The parsed form, which is what the hull builder reads placements out of.
     let raw = tile.write();
     let adt = vale_assets::world::adt::Adt::parse(&raw).map_err(|e| e.to_string())?;
-    // And the eight tiles around it, because a building is placed by the
-    // tile its origin is on and its walls fall across the seam. Fed this tile's
-    // own file alone, a rebake of every tile a harbour stands on shadowed the
-    // one it belongs to and none of the others — reported from the window as
-    // exactly that. `casting_box` keeps the neighbours' hulls to the ones a
-    // ray from this tile can reach; see `collision::hulls_near`.
+    // The eight tiles around it are read too, because a building is placed by
+    // the tile its origin is on and its walls cross the seam. When a rebake
+    // read only this tile's own file, rebaking every tile a harbour stands on
+    // shadowed the tile the harbour belongs to and none of the others.
+    // `casting_box` limits the neighbours' hulls to the ones a ray from this
+    // tile can reach; see `collision::hulls_near`.
     let neighbours = neighbours_of(session, assets, at);
     let everything: Vec<&vale_assets::world::adt::Adt> =
         std::iter::once(&adt).chain(neighbours.iter()).collect();
@@ -291,9 +296,9 @@ pub(crate) struct Baked {
 
 /// Put finished bakes back into the session.
 ///
-/// A bake that finishes for a tile the session no longer holds — the camera
-/// moved and the streamer dropped it — is discarded, which is the right answer:
-/// the file on disk is unchanged and the work is simply wasted.
+/// A bake that finishes for a tile the session no longer holds, because the
+/// camera moved and the streamer dropped it, is discarded. The file on disk is
+/// unchanged, so discarding loses only the work.
 pub(crate) fn collect_bakes(
     mut running: ResMut<crate::jobs::Running<Baked>>,
     mut tiles: ResMut<Tiles>,
@@ -314,17 +319,17 @@ pub(crate) fn collect_bakes(
         }
         session.tiles.insert(baked.at, baked.tile);
         if baked.changed > 0 {
-            // Both calls are needed. A bake that landed only in
-            // `session.tiles` was invisible downstream: the overlay went on
-            // answering with the old bytes, so the tile on screen kept its old
-            // `MCSH` until the project was saved and the editor restarted.
+            // Both calls are needed. A bake written only into `session.tiles`
+            // was not seen downstream: the overlay went on answering with the
+            // old bytes, so the tile on screen kept its old `MCSH` until the
+            // project was saved and the editor restarted.
             //
             // `publish` puts the new bytes where the next read finds them and
             // marks the tile unsaved; `stale` asks for that read. `MCSH` is
             // folded into the ground's own vertex shading when a draw group is
-            // built, so there is nothing on screen to patch and reading the tile
-            // again is the only route — which since `terrain::swap` costs a task
-            // and no gap in the world.
+            // built, so there is nothing on screen to patch, and reading the
+            // tile again is the only way to show it. Since `terrain::swap`, that
+            // read costs a task and leaves no gap in the world.
             session.publish(baked.at);
             session.stale.insert(baked.at);
         }
@@ -355,8 +360,8 @@ fn draw_picture(
     let swatch_of = |name: &str| -> Option<minimap::Swatch> {
         let bytes = reader(name)?;
         let decoded = vale_assets::world::blp::decode_mipped(&bytes).ok()?;
-        // The smallest authored level that is still at least the swatch,
-        // which for a 256x256 tileset Blizzard already made.
+        // The smallest mip level in the file that is still at least the
+        // swatch's size. A 256x256 tileset already carries such a level.
         let mut best = 0usize;
         for (i, _) in decoded.levels().enumerate() {
             let (w, h) = decoded.level_size(i);
@@ -370,7 +375,7 @@ fn draw_picture(
         let level = decoded.levels().nth(best)?;
         minimap::Swatch::from_rgba(level, w as usize, h as usize, SWATCH as usize)
     };
-    // How wide each doodad is — from its drawn vertices, since the
+    // How wide each doodad is, measured from its drawn vertices, because the
     // declared box includes animation swing and for a tree is about three
     // times the canopy. See `vale_edit::minimap`.
     let radii = std::cell::RefCell::new(std::collections::HashMap::<String, Option<f32>>::new());
@@ -385,7 +390,7 @@ fn draw_picture(
         radii.borrow_mut().insert(key, radius);
         radius
     };
-    // And each building's drawn surface, in its textures' mean colours —
+    // Each building's drawn surface in its textures' mean colours, from
     // `minimap::wmo_shape`, read once per path and shared by every placement.
     let shapes = std::cell::RefCell::new(std::collections::HashMap::<
         String,
@@ -429,8 +434,8 @@ fn draw_picture(
         shapes.borrow_mut().insert(key, shape.clone());
         shape
     };
-    // The water's colour is the zone's, off the same chain the world tints
-    // it by — see `minimap::Sources::water_of`. A chain with no light draws
+    // The water's colour is the zone's, from the same chain the world tints
+    // it by; see `minimap::Sources::water_of`. A chain with no light draws
     // the fallback blue rather than nothing.
     let centre = vale_assets::world::terrain::tile_centre(at.0, at.1);
     let water_of = |kind: vale_assets::world::wmo::Liquid| {
@@ -459,7 +464,7 @@ fn draw_picture(
 }
 
 /// How long one minimap picture takes, in seconds, for the estimate the map
-/// window gives before a run. Nine tiles round Goldshire took 17.4 s.
+/// window gives before a run. Nine tiles around Goldshire took 17.4 s.
 pub(crate) const MINIMAP_SECONDS: f32 = 2.0;
 
 /// Start drawing the minimaps of `chosen`, one after another, on the task
@@ -544,7 +549,7 @@ pub(crate) fn start_minimaps(
 pub(crate) struct Drawn {
     /// Each tile drawn, with its picture as BLP bytes.
     pub(crate) pictures: Vec<((u32, u32), Vec<u8>)>,
-    /// …and each that could not be, with why.
+    /// Each tile that could not be drawn, with the reason.
     pub(crate) failed: Vec<((u32, u32), String)>,
     /// Whether Stop ended the run before the last tile.
     pub(crate) stopped: bool,
@@ -609,6 +614,9 @@ fn land_minimaps(session: &mut EditSession, assets: &GameAssets, drawn: Drawn) -
         session.publish_bytes(&path, blp);
         written += 1;
     }
+    // These files are written without `save_bytes`, so the lists of the
+    // project's files are notified here.
+    session.files_revision += 1;
     if !added.is_empty() {
         let index = minimap::with_entries(&index, &added);
         match session.project.write(MD5_TRANSLATE, &index) {
@@ -636,8 +644,8 @@ fn land_minimaps(session: &mut EditSession, assets: &GameAssets, drawn: Drawn) -
     said
 }
 
-/// The eight tiles around one, parsed — those that exist. An open tile
-/// answers as edited, a closed one as the chain has it; see
+/// Those of the eight tiles around one that exist, parsed. An open tile is
+/// read with its edits, a closed one as the chain has it; see
 /// `EditSession::tile_bytes`.
 fn neighbours_of(
     session: &EditSession,
@@ -647,7 +655,7 @@ fn neighbours_of(
     neighbours(at, &|near| session.tile_bytes(assets, near))
 }
 
-/// …from whatever answers a tile's bytes.
+/// The same as [`neighbours_of`], reading tiles through `bytes_of`.
 fn neighbours(
     at: (u32, u32),
     bytes_of: &dyn Fn((u32, u32)) -> Option<Vec<u8>>,
@@ -687,8 +695,8 @@ pub(crate) struct Background<'w> {
 }
 
 impl Background<'_> {
-    /// Each kind that is running: its name on the map window, what the first
-    /// job says, and how far it has got.
+    /// Each type of job that is running: its name on the map window, the
+    /// first job's label, and the fraction done.
     pub(crate) fn summaries(&self) -> Vec<(&'static str, String, f32)> {
         let mut out = Vec::new();
         if let Some((label, fraction)) = self.shadows.summary() {
@@ -701,8 +709,9 @@ impl Background<'_> {
     }
 }
 
-/// How many texels a swatch is. Four — at sixteen pixels a chunk and eight
-/// repeats across it, anything finer is below what the picture resolves.
+/// How many texels wide a swatch is. At sixteen pixels a chunk and eight
+/// repeats of the texture across it, detail finer than four texels is below
+/// what the picture resolves.
 const SWATCH: u32 = 4;
 
 /// The open map's WDT, from the project if it has been edited and the
@@ -711,7 +720,8 @@ fn load_wdt(session: &EditSession, assets: &GameAssets) -> Result<wdt::WdtFile, 
     load_wdt_of(session, assets, &session.map)
 }
 
-/// …and any map's, by its folder.
+/// Any map's WDT, by its folder, from the project if it has been edited and
+/// the archives otherwise.
 pub(crate) fn load_wdt_of(session: &EditSession, assets: &GameAssets, map: &str) -> Result<wdt::WdtFile, String> {
     let path = wdt::wdt_path(map);
     if let Some(bytes) = session.project.read(&path) {
@@ -767,12 +777,12 @@ pub(crate) fn wmo_bounds(assets: &GameAssets, path: &str) -> Result<[[f32; 3]; 2
         .map_err(|e| format!("{path} is not a valid WMO root file: {e}"))
 }
 
-/// **Make the open map the WMO at `building`, or terrain again**, in the
-/// project's copy of its WDT. Answers the status line.
+/// Make the open map the WMO at `building`, or a terrain map again, in the
+/// project's copy of its WDT. Returns the text for the status line.
 ///
 /// Only a map with no tiles is made a building, since the client draws a
 /// map as one or the other. The building's box is read from its root file.
-/// The map window's [`Tiles::building`] catches up when the map is next
+/// The map window's [`Tiles::building`] is updated when the map is next
 /// opened; see [`read_building`].
 pub(crate) fn set_layout(session: &mut EditSession, assets: &GameAssets, building: Option<&str>) -> Result<String, String> {
     let mut wdt = load_wdt(session, assets)?;
@@ -791,7 +801,7 @@ pub(crate) fn set_layout(session: &mut EditSession, assets: &GameAssets, buildin
     Ok(format!("{map} is now a single-WMO map: {path}. Reopen the map to see the change."))
 }
 
-/// Keep [`Tiles::building`] in step with the map that is open.
+/// Keep [`Tiles::building`] matching the map that is open.
 fn read_building(
     session: Option<Res<EditSession>>,
     assets: Res<GameAssets>,
@@ -805,7 +815,7 @@ fn read_building(
     tiles.building = load_wdt(&session, &assets).ok().and_then(|wdt| wdt.building());
 }
 
-/// A tile's placed hulls, as something a bake can ask.
+/// A tile's placed hulls, as the occluder a bake tests rays against.
 struct Hulls(Vec<vale_assets::world::collision::Collider>);
 
 impl shadow::Occluder for Hulls {
@@ -814,12 +824,12 @@ impl shadow::Occluder for Hulls {
     }
 }
 
-/// How long a rebake is expected to take, for the panel to say before it is
-/// pressed. Measured by `vale bake` at 52–64 seconds a tile.
+/// How long a rebake is expected to take, for the panel to state before the
+/// button is pressed. `vale bake` measured 52–64 seconds a tile.
 pub(crate) const REBAKE_SECONDS: u32 = 60;
 
-/// Whether this tile has been opened for editing at all, which both derived
-/// operations need and neither can do without.
+/// Whether this tile has been opened for editing. Both derived operations
+/// require it.
 pub(crate) fn is_open(session: &EditSession, at: (u32, u32)) -> bool {
     session.tiles.contains_key(&at)
 }
@@ -833,7 +843,7 @@ pub(crate) fn is_open(session: &EditSession, at: (u32, u32)) -> bool {
 /// building act on the map and need no selection.
 ///
 /// The work is done here rather than in the window because the window holds
-/// the session shared, every one of these wants it mutably, and most want the
+/// the session shared, every one of these needs it mutably, and most need the
 /// archives, which the window does not hold.
 pub(crate) fn run_asked(
     mut view: ResMut<crate::ui::map::mapview::MapView>,
@@ -841,8 +851,8 @@ pub(crate) fn run_asked(
     session: Option<ResMut<EditSession>>,
     assets: Res<GameAssets>,
     mut camera: ResMut<crate::camera::EditorCamera>,
-    // …and the three the server files want: where the tools are, the queue
-    // the run goes on, and the line the bar shows while it runs.
+    // The three resources the server files need: where the tools are, the
+    // queue the run goes on, and the line the bar shows while it runs.
     server: Res<crate::server::settings::ServerSettings>,
     mut queue: ResMut<crate::server::queue::ServerQueue>,
     step: Res<crate::server::datadir::Step>,
@@ -855,7 +865,8 @@ pub(crate) fn run_asked(
     };
     let Some(mut session) = session else { return };
 
-    // Flying is not an edit and wants none of the machinery below.
+    // Moving the camera to a tile is not an edit and needs none of the code
+    // below.
     if let Asked::FlyTo(at) = asked {
         let centre = vale_assets::world::terrain::tile_centre(at.0, at.1);
         camera.go_to(Vec2::new(centre[0], centre[1]));
@@ -864,7 +875,7 @@ pub(crate) fn run_asked(
         return;
     }
 
-    // A new map wants no selection either.
+    // A new map needs no selection either.
     if asked == Asked::NewMap {
         let Some(form) = tiles.new_map.clone() else {
             return;
@@ -882,7 +893,7 @@ pub(crate) fn run_asked(
         return;
     }
 
-    // …and nor does saving an existing map's properties.
+    // Saving an existing map's properties needs no selection either.
     if asked == Asked::SaveMap {
         let Some(form) = tiles.new_map.clone() else {
             return;
@@ -900,8 +911,8 @@ pub(crate) fn run_asked(
         return;
     }
 
-    // In a fixed order, so a selection spanning a map writes the same files
-    // whichever way it happened to be dragged.
+    // Sorted, so a selection across a map writes the same files whichever
+    // direction it was dragged in.
     let mut chosen: Vec<(u32, u32)> = view.selection.iter().copied().collect();
     chosen.sort_unstable();
     if chosen.is_empty() {
@@ -909,8 +920,8 @@ pub(crate) fn run_asked(
         return;
     }
 
-    // The two derived pictures go the other way: they are slow per tile and are
-    // reported per tile, so they have their own runner.
+    // The two derived pictures are handed to their own runner, because they
+    // are slow per tile and are reported per tile.
     if matches!(asked, Asked::Rebake | Asked::Minimap | Asked::MinimapsAll) {
         tiles.derive = Some(match asked {
             Asked::Rebake => Derived::Shadows,
@@ -919,8 +930,8 @@ pub(crate) fn run_asked(
         });
         return;
     }
-    // …and the server's files go on the server queue, through the same
-    // function the Server panel's button and a publish use — see
+    // The server's files go on the server queue, through the same function
+    // the Server panel's button and a publish use; see
     // `crate::server::datadir::regenerate`.
     if asked == Asked::ServerFiles {
         let present: Vec<(u32, u32)> = chosen
@@ -1016,10 +1027,11 @@ pub(crate) fn run_asked(
         Asked::Create => {
             let mut made = 0usize;
             let mut failed = None;
-            // The list is taken first. Filtering lazily would hold the
-            // session borrowed by the closure while the body wants it mutably,
-            // and the set is changing as we go anyway — a tile created on this
-            // pass must not be re-tested against the claims it just changed.
+            // The list is collected first. Filtering lazily would keep the
+            // session borrowed by the closure while the loop body needs it
+            // mutably. The claims also change during the loop, and a tile
+            // created on this pass must not be tested again against the claims
+            // it just changed.
             let empty: Vec<(u32, u32)> = chosen
                 .iter()
                 .copied()
@@ -1058,8 +1070,8 @@ pub(crate) fn run_asked(
             format!("removed {gone} tiles from the WDT; their ADT files stay in the project")
         }
         Asked::Paste => {
-            // One tile fills, several move as a block — see
-            // `MapView::clipboard`, where the rule is.
+            // One copied tile fills the selection; several move as a block.
+            // The rule is at `MapView::clipboard`.
             let moves: Vec<((u32, u32), (u32, u32))> = match view.clipboard.len() {
                 0 => Vec::new(),
                 1 => {
@@ -1072,8 +1084,9 @@ pub(crate) fn run_asked(
                         .collect()
                 }
                 _ => {
-                    // The copied region's own corner onto the selection's, so a
-                    // block keeps its shape wherever it is dropped.
+                    // The copied region's lowest corner is placed on the
+                    // selection's, so a block keeps its shape wherever it is
+                    // dropped.
                     let corner = |v: &[(u32, u32)]| {
                         (
                             v.iter().map(|a| a.0).min().unwrap_or(0),
@@ -1086,9 +1099,9 @@ pub(crate) fn run_asked(
                         .iter()
                         .copied()
                         .filter_map(|from| {
-                            // Saturating, so a block dragged off the top or left
-                            // edge is refused rather than wrapping to the far
-                            // side of the map.
+                            // Checked subtraction, so a block dragged off the
+                            // top or left edge is refused rather than wrapping
+                            // to the far side of the map.
                             let to = (from.0.checked_sub(sx)? + dx, from.1.checked_sub(sy)? + dy);
                             (to.0 < 64 && to.1 < 64 && to != from).then_some((from, to))
                         })
@@ -1110,7 +1123,8 @@ pub(crate) fn run_asked(
     session.status = tiles.said.clone();
 }
 
-/// …and the two derived pictures, which are asked for from the inspector.
+/// Do what was asked for the two derived pictures, which are asked for from
+/// the inspector, and redraw the minimaps listed in [`Tiles::redraw`].
 pub(crate) fn run_derive(
     mut tiles: ResMut<Tiles>,
     view: Res<crate::ui::map::mapview::MapView>,
@@ -1119,12 +1133,16 @@ pub(crate) fn run_derive(
     mut running: ResMut<crate::jobs::Running<Baked>>,
     mut drawing: ResMut<crate::jobs::Running<Drawn>>,
 ) {
+    if !tiles.redraw.is_empty() && tiles.derive.is_none() {
+        tiles.derive = Some(Derived::Minimap);
+    }
     let Some(what) = tiles.derive.take() else {
         return;
     };
     let Some(mut session) = session else { return };
+    let listed = std::mem::take(&mut tiles.redraw);
 
-    // Minimaps are one job for the whole list, of the tiles that exist.
+    // Minimaps are one job for every tile in the list that exists.
     if matches!(what, Derived::Minimap | Derived::MinimapsAll) {
         if tiles.drawing {
             tiles.said = "minimaps are already being drawn".into();
@@ -1134,6 +1152,7 @@ pub(crate) fn run_derive(
             Derived::MinimapsAll => (0..64u32)
                 .flat_map(|y| (0..64u32).map(move |x| (x, y)))
                 .collect(),
+            _ if !listed.is_empty() => listed,
             _ => view.selection.iter().copied().collect(),
         };
         chosen.retain(|&at| session.wdt_claims(at));
@@ -1151,8 +1170,8 @@ pub(crate) fn run_derive(
         return;
     }
 
-    // The selection, since that is what the map window is for — and one tile is
-    // the ordinary case.
+    // Shadows are rebaked for the map window's selection, which is usually
+    // one tile.
     let mut chosen: Vec<(u32, u32)> = view.selection.iter().copied().collect();
     chosen.sort_unstable();
     if chosen.is_empty() {
@@ -1164,8 +1183,9 @@ pub(crate) fn run_derive(
     let mut last = String::new();
     for at in chosen {
         let result = match what {
-            // Started, not run. The bake goes on the task pool; the status
-            // line shows it and `collect_bakes` lands it.
+            // This starts the bake and does not wait for it. The bake runs on
+            // the task pool, the status line shows it, and `collect_bakes`
+            // writes the result back.
             Derived::Shadows => match start_rebake(&session, &assets, &tiles, at) {
                 Ok(job) => {
                     let label = job.label.clone();
@@ -1195,35 +1215,34 @@ pub(crate) fn run_derive(
 /// Copy one tile onto every slot in a list, as one pass over the WDT and one
 /// parse of the source.
 ///
-/// Returns how many landed and, if one did not, why the run stopped.
+/// Returns how many tiles were written and, if one was not, why the run
+/// stopped.
 ///
-/// The bytes are read through the session's own chain, so a tile edited and not
-/// yet saved copies as it is rather than as it was on disk. Then
-/// [`vale_edit::adt::relocate::relocate`] rewrites it to sit where it is
-/// going — 256 chunk positions and every placement, in two different frames —
-/// because a tile copied and not rewritten draws at the old coordinates and
-/// overlaps whatever is really there.
+/// The bytes are read through the session's own chain, so a tile edited and
+/// not yet saved is copied with its edits rather than as it is on disk. Then
+/// [`vale_edit::adt::relocate::relocate`] rewrites the copy for its
+/// destination: 256 chunk positions and every placement, in two different
+/// frames. A tile copied without that rewrite draws at the old coordinates and
+/// overlaps the ground that is really there.
 ///
-/// ## The claim is the caller's, and the source is read once
+/// ## Why the WDT is loaded once and each source is parsed once
 ///
-/// One paste of one tile is the rare case. The gesture this is written
-/// against is a tile copied onto a selection, and a selection is however many
-/// squares somebody dragged a box around — several hundred is an ordinary
-/// thing to ask for. Two consequences, and both of them used to be inside here:
+/// The usual case is one tile copied onto a selection, and a selection is as
+/// many squares as were dragged over; several hundred is common. Two things
+/// follow, and each was once done per tile inside this function:
 ///
-/// * the WDT is the caller's. It is one 32 KB file for the whole map and it
-///   is read, parsed, bit-set and written back whole. Doing that per tile is
-///   that work times the size of the selection, for a file every one of them
-///   sets a different bit of — so this loads it once, sets every
-///   bit, and writes it once;
-/// * so is the source. Every paste in a run copies the same tile, so
-///   reading, parsing and relocating it per destination is the same few
-///   megabytes of parse repeated. The bytes are read once and
-///   [`AdtFile::clone`] is what each destination starts from.
+/// * The WDT is loaded, updated and written once for the run. It is one 32 KB
+///   file for the whole map, read, parsed, bit-set and written back whole.
+///   Doing that per tile multiplies the work by the size of the selection for
+///   a file in which each tile sets a different bit.
+/// * Each source is read and parsed once. Every paste in a run from a one-tile
+///   clipboard copies the same tile, so reading, parsing and relocating it per
+///   destination repeats a parse of a few megabytes. Each destination starts
+///   from [`AdtFile::clone`] of the parsed source.
 ///
-/// Neither is a micro-optimisation. A paste runs on the frame that asked for it,
-/// so its whole cost is a window that has stopped answering, and the multi-tile
-/// case was reported as exactly that.
+/// A paste runs on the frame that asked for it, so its whole cost is time in
+/// which the window does not respond. The per-tile version made a multi-tile
+/// paste stop the window responding.
 pub(crate) fn paste_into(
     session: &mut EditSession,
     assets: &GameAssets,
@@ -1265,9 +1284,9 @@ pub(crate) fn paste_into(
             }
         }
     }
-    // Written even when the run stopped, so the tiles that did land are
-    // claimed. A WDT left unwritten after a partial paste is ground on disk that
-    // nothing asks for.
+    // Written even when the run stopped, so the tiles that were written are
+    // claimed. If the WDT were left unwritten after a partial paste, those
+    // tiles would be ground on disk that nothing asks for.
     if done > 0 {
         if let Err(why) = save_wdt(session, &wdt) {
             failed = failed.or(Some(why));
@@ -1294,7 +1313,7 @@ fn paste_one(
         .write(&path, &tile.write())
         .map_err(|e| e.to_string())?;
 
-    // …and the claim, which is what makes any client ask for it.
+    // Set the claim, which is what makes a client ask for the tile.
     wdt.set_tile(to.0, to.1, true);
     session.set_claimed(to, true);
     session.restream.insert(to);
@@ -1310,9 +1329,10 @@ fn paste_one(
 /// what a client would ask for and nothing that this viewport already draws,
 /// so a deleted tile's ground stayed on screen.
 ///
-/// The tile is asked for once and remembered either way, so both directions need
-/// this: a tile that did not exist when the camera arrived is not asked for
-/// again when it does, and one that has gone is not dropped.
+/// The streamer asks for a tile once and remembers the answer either way, so
+/// both directions need this: a tile that did not exist when the camera
+/// arrived is not asked for again once it exists, and one that has been
+/// removed is not dropped.
 ///
 /// `LoadedTiles::reload` is the client crate's seam for this case, "for a host
 /// that has changed the bytes a tile's path reads back as". Its pairing rule
@@ -1368,7 +1388,7 @@ fn images_on_the_command_line(
         info!("images: {said}");
         session.status = said;
     }
-    // The import's dialog, open on the camera's tile, for a picture of it.
+    // Open the import dialog on the camera's tile, for the given picture.
     if let Some(path) = &args.import.import_image {
         view.open = true;
         view.selection = [at].into_iter().collect();
@@ -1444,16 +1464,16 @@ impl Plugin for TilePlugin {
 mod tests {
     use super::*;
 
-    /// The ground is not cast from by default, which is the measurement in
-    /// `shadow::Ground` turned into a default rather than left as prose.
+    /// A rebake does not cast from the ground by default. This turns the
+    /// measurement recorded at `shadow::Ground` into a checked default.
     #[test]
     fn a_rebake_does_not_cast_from_the_ground_by_default() {
         assert!(!Tiles::default().cast_from_ground);
     }
 
-    /// A blank tile made with the panel's own defaults is a tile the reader
-    /// reads — the same assertion `adt::blank` makes, through the settings a
-    /// person would actually press the button with.
+    /// A blank tile made with the panel's own defaults parses with the
+    /// reader. `adt::blank` makes the same assertion; this one uses the
+    /// settings the panel's button uses.
     #[test]
     fn the_panels_defaults_make_a_readable_tile() {
         let tiles = Tiles::default();
@@ -1464,7 +1484,8 @@ mod tests {
         assert_eq!(adt.texture_names, vec![tiles.texture]);
     }
 
-    /// …and it round-trips through the container it will be edited with.
+    /// A blank tile made with the panel's defaults round-trips through
+    /// `AdtFile`, the container it is edited with.
     #[test]
     fn the_panels_defaults_make_an_editable_tile() {
         let tiles = Tiles::default();

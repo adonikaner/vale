@@ -15,7 +15,8 @@
 //!               storyboard and what a display row looks like
 //! preview/      the attachment lab's card and pane
 //! map/          the map from above
-//! import/       the Assets workspace
+//! import/       the Assets workspace and the Import Texture and Import Model
+//!               dialogs
 //! workspace.rs  the workspace a tool puts in the middle of a window, drawn
 //!               the same in the main window and a pop-out window
 //! ```
@@ -906,13 +907,14 @@ fn draw(
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.
     shell::context::draw(&ctx, session, &mut editing, &assets, viewport.zoom, time.elapsed_secs_f64());
-    // The Import Texture dialog, under any tool: the Assets workspace opens it
-    // and so does a form's skin field. It covers the window while it is open,
-    // so a press on it is not a press on the ground.
-    // It is a pop-out window's while that window's workspace asked for it.
+    // The Import Texture and Import Model dialogs, under any tool: the Assets
+    // workspace opens them and a form's skin field opens the first. Each
+    // covers the window while it is open, so a press on it is not a press on
+    // the ground. It is a pop-out window's while that window's workspace
+    // asked for it.
     let asked_by_field = editing.assets.import.as_ref().is_some_and(|import| import.for_field.is_some());
     if editing.popout.import_window(*tool, asked_by_field).is_none() {
-        if editing.assets.import.is_some() {
+        if editing.assets.import.is_some() || editing.assets.model.is_some() {
             viewport.floating.push(ctx.content_rect());
         }
         import::assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
@@ -1141,8 +1143,8 @@ mod tests {
     /// A press over a panel does not belong to the world, and a press in the
     /// middle does.
     ///
-    /// Both egui answers got this wrong, one in each direction; the module
-    /// comment sets out why. The test is on the rectangle rather than on the
+    /// Each of the two egui answers is wrong here, in opposite directions; the
+    /// module comment explains why. The test is on the rectangle rather than on the
     /// systems because the rectangle is the part that fails silently: a tool
     /// that never fires is noticed at once, and a tool that fires through a
     /// panel shows up only as the selection changing while the inspector is

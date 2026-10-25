@@ -295,9 +295,9 @@ impl DisplayModel {
     /// baked offline and shipped, and slot 0 names it.
     ///
     /// The test is "does this display id supply a skin", not "is this a
-    /// player". A shapeshifted or disguised player wears an NPC's display id
-    /// and must be drawn with that NPC's bake, not with their own composed face
-    /// on a bear model.
+    /// player". A shapeshifted or disguised player wears an NPC's display id,
+    /// such as a bear's, and must be drawn with that NPC's bake, not with a
+    /// skin composed from the player's own appearance.
     pub(crate) fn composes_its_skin(&self) -> bool {
         self.skins.first().is_none_or(|skin| skin.is_empty())
     }
@@ -1815,12 +1815,17 @@ impl Emotes {
 /// produce. The names in the same rows agree: 17 is `Attack1H` and reads 32,
 /// 16 is `AttackUnarmed` and reads 16, 42 is `Swim` and reads 4.
 ///
-/// Column 6 is the game's own fallback for a missing clip. It is read because
-/// keeping it costs nothing, but nothing uses it yet. `look::pose::fallbacks` is
-/// a hand-written table that agrees with it in most cases. Adopting this
-/// column is separate work: the file contains a cycle
-/// (`Open -> Close -> Open`), and this client is deliberately more generous in
-/// a few places. Until then, checks compare against [`Self::fallback`].
+/// Column 6 is the game's own fallback for a missing clip. The renderer does
+/// not use it: `look::pose::fallbacks` is a hand-written table that agrees
+/// with it in most cases. The file contains a cycle (`Open -> Close -> Open`),
+/// and this client is deliberately more generous in a few places. Checks
+/// compare against [`Self::fallback`].
+///
+/// Column 6 and column 5 together decide a model's playable-animation table,
+/// which every model file carries and which [`Self::playable`] builds for a
+/// model being written. Column 5's bit 0x20 marks a clip that is held on its
+/// last frame when it is played in place of another, and bit 0x10 one that is
+/// played backwards.
 pub struct AnimationData {
     /// Animation id -> `WeaponFlags`. Only the non-zero rows, since zero is
     /// both the default and the most common value.
@@ -1829,18 +1834,27 @@ pub struct AnimationData {
     names: HashMap<u16, String>,
     /// Animation id -> the substitute the file names, for ids that name one.
     fallback: HashMap<u16, u16>,
+    /// Animation id -> `(column 6, column 5)` as the file has them, for every
+    /// row. See [`Self::playable`].
+    chain: HashMap<u16, (u16, u32)>,
 }
 
 impl AnimationData {
     const NAME: usize = 1;
     const WEAPON_FLAGS: usize = 2;
     const FALLBACK: usize = 6;
+    const PLAYBACK: usize = 5;
+
+    /// How many entries a model's playable-animation table has. Every shipped
+    /// model's table has this many, five fewer than the table has rows.
+    pub const PLAYABLE_ENTRIES: usize = 203;
 
     pub fn parse(buf: &[u8]) -> Result<AnimationData, AssetError> {
         let dbc = Dbc::parse(buf)?;
         let mut weapon_flags = HashMap::new();
         let mut names = HashMap::with_capacity(dbc.record_count);
         let mut fallback = HashMap::new();
+        let mut chain = HashMap::with_capacity(dbc.record_count);
         for record in 0..dbc.record_count {
             let Some(id) = dbc.u32_at(record, 0) else {
                 continue;
@@ -1852,6 +1866,13 @@ impl AnimationData {
             if let Some(name) = dbc.string_at(record, Self::NAME).filter(|n| !n.is_empty()) {
                 names.insert(id, name);
             }
+            chain.insert(
+                id,
+                (
+                    dbc.u32_at(record, Self::FALLBACK).unwrap_or(0) as u16,
+                    dbc.u32_at(record, Self::PLAYBACK).unwrap_or(0),
+                ),
+            );
             // Zero is `Stand`, which the file uses to mean "no substitute
             // stated", not as a substitute. A row that falls back to itself is
             // not a fallback either.
@@ -1867,7 +1888,52 @@ impl AnimationData {
             weapon_flags,
             names,
             fallback,
+            chain,
         })
+    }
+
+    /// Every animation id the table has, ascending.
+    pub fn ids(&self) -> Vec<u16> {
+        let mut ids: Vec<u16> = self.chain.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// A model's playable-animation table: for each animation id from 0, the
+    /// id the model plays for it and how. `has` is the model's sequence ids
+    /// and `first` the id of its first sequence.
+    ///
+    /// An id the model has is played as itself, flags 0. Any other id follows
+    /// column 6 until it reaches one the model has; the flags are 3 when a row
+    /// passed on the way has column 5's bit 0x20 and 1 when one has 0x10. A
+    /// chain that comes back to a row it passed, or reaches Stand when the
+    /// model has no Stand, ends at Stand, or at `first` without one, with
+    /// flags 0. This reproduces the table of every shipped model measured
+    /// (seven creatures and doodads, 203 entries each).
+    pub fn playable(&self, has: &[u16], first: u16) -> Vec<(u16, u16)> {
+        let stand = if has.contains(&0) { 0 } else { first };
+        (0..Self::PLAYABLE_ENTRIES as u16)
+            .map(|id| {
+                let mut at = id;
+                let mut flags = 0u32;
+                let mut passed = Vec::new();
+                while !has.contains(&at) {
+                    passed.push(at);
+                    let (next, playback) = self.chain.get(&at).copied().unwrap_or((0, 0));
+                    flags |= playback;
+                    if passed.contains(&next) || (next == 0 && !has.contains(&0)) {
+                        return (stand, 0);
+                    }
+                    at = next;
+                }
+                let how = match flags {
+                    f if f & 0x20 != 0 => 3,
+                    f if f & 0x10 != 0 => 1,
+                    _ => 0,
+                };
+                (at, how)
+            })
+            .collect()
     }
 
     /// The sheath policy for an animation. Zero for an unknown id, which is the
@@ -2000,7 +2066,7 @@ mod tests {
 
     #[test]
     fn a_display_id_resolves_through_two_tables_to_a_model_and_its_skins() {
-        // Strings: 1 = the model path, 31 = a skin name.
+        // Strings: 1 = the model path, 24 = a skin name.
         let strings = b"\0Creature\\Wolf\\Wolf.mdx\0WolfSkinGrey\0";
         let model_at = 1u32;
         let skin_at = 24u32;
@@ -2316,6 +2382,40 @@ mod tests {
         let without = tables(&empty_required()).expect("loads");
         assert_eq!(without.weapon_flags(17), 0);
         assert!(without.animations().is_none());
+    }
+
+    /// The playable table follows column 6 to an animation the model has,
+    /// holds or reverses it by column 5, and ends a cycle at Stand: the 5875
+    /// rows of Stand, Death, Dead, Walk, Walkbackwards, Open and Close.
+    #[test]
+    fn the_playable_table_follows_the_fallbacks() {
+        // id, name, WeaponFlags, BodyFlags, column 4, column 5, fallback.
+        let strings = b"\0Stand\0";
+        let raw = build_wide(
+            &[
+                vec![0, 1, 0, 1, 0, 3, 147],
+                vec![1, 1, 0, 768, 500, 8, 0],
+                vec![4, 1, 0, 65, 10, 4, 0],
+                vec![6, 1, 0, 2304, 500, 40, 1],
+                vec![13, 1, 0, 65, 10, 16, 4],
+                vec![146, 1, 0, 0, 0, 16, 148],
+                vec![148, 1, 0, 0, 0, 16, 146],
+            ],
+            7,
+            strings,
+        );
+        let table = AnimationData::parse(&raw).expect("parses");
+        assert_eq!(table.ids(), [0, 1, 4, 6, 13, 146, 148]);
+        let wolf = table.playable(&[0, 1, 4], 4);
+        assert_eq!(wolf.len(), AnimationData::PLAYABLE_ENTRIES);
+        assert_eq!(wolf[0], (0, 0), "an animation the model has is itself");
+        assert_eq!(wolf[6], (1, 3), "Dead holds the end of Death");
+        assert_eq!(wolf[13], (4, 1), "Walkbackwards is Walk reversed");
+        assert_eq!(wolf[146], (0, 0), "the Open and Close cycle ends at Stand");
+        assert_eq!(wolf[2], (0, 0), "a row the table lacks falls to Stand");
+        let tree = table.playable(&[169], 169);
+        assert_eq!(tree[0], (169, 0), "with no Stand, everything plays the first sequence");
+        assert_eq!(tree[13], (169, 0));
     }
 
     #[test]

@@ -1,15 +1,17 @@
-//! The Assets workspace: the files the project adds to the archives, and the
-//! Import Texture dialog.
+//! The Assets workspace: the files the project adds to the archives, what
+//! made each one, and the Import Texture dialog.
 //!
-//! ## Three parts, as the other workspaces have
+//! ## The workspace's three parts, as in the other workspaces
 //!
 //! ```text
 //! left       which file    every game file of the project but its tiles and
-//!                          tables, filtered by sort and searched by path,
-//!                          with Import
-//! middle     what it is    its path, what it is used as, a texture's
-//!                          dimensions and compression, and what can be done
-//!                          to it
+//!                          tables, filtered by where it came from and by
+//!                          sort, searched by path, with Import and what has
+//!                          fallen behind
+//! middle     what it is    its path, what it is used as, what made it and
+//!                          from what, a texture's dimensions and compression,
+//!                          a model's skeleton and sequences, and what can be
+//!                          done to it
 //! inspector  what it is like  the texture, or the model, drawn
 //! ```
 //!
@@ -18,35 +20,56 @@
 //! [`crate::import::assets`] for what an import writes and why a file listed
 //! here is in every picker.
 //!
-//! ## Sorts, not file types
+//! ## Imported and generated files
 //!
-//! The list is filtered by what a file is to the game ([`Sort`]): a ground
-//! texture, an icon, another texture, a model, a minimap picture. The sorts
-//! offered are the ones the project has, so the filter grows with the kinds of
-//! file the project adds rather than listing every kind there could be. A
-//! ground texture's `_s` file is its pair's, not a file of its own, and is
-//! shown on its plain file's row.
+//! A file is imported when the import record has it, and generated when one
+//! of the editor's generators wrote it ([`crate::import::generated`]). The
+//! list is filtered by the two. A generated file says what it was made from
+//! and whether that changed after it was made, and offers to make it again: a
+//! minimap picture is drawn again from its tile, a baked skin is baked again
+//! from the rows that name it, a flight map is drawn again from the minimap
+//! pictures. A generated file nothing names is unused and can be removed. An
+//! imported file says what it was imported from, and Re-import opens the
+//! dialog on that file with the choices it was imported with.
 //!
-//! Import takes a file and decides from what it is which dialog follows. A
-//! picture is the only kind it takes now, and the texture's purpose is chosen
-//! in that dialog, not by its folder.
+//! With no file chosen, the middle lists what has fallen behind across the
+//! project, each with the action that brings it up to date: tiles changed
+//! after their minimap was drawn, appearances changed after their skin was
+//! baked, and generated files nothing names.
 //!
-//! ## The import dialog is not the workspace's alone
+//! ## Filtering by sort: what a file is to the game, not its format
 //!
-//! A display form's texture field opens the same dialog, in the folder its
+//! Inside each, the list is filtered by what a file is to the game ([`Sort`]):
+//! a ground texture, an icon, another texture, a model, a minimap picture, a
+//! baked skin. The sorts offered are the ones the project has, so the filter
+//! grows with the sorts of file the project adds rather than listing every
+//! sort there could be. A ground texture's `_s` file belongs to its pair and
+//! is shown on its plain file's row, not as a file of its own.
+//!
+//! Import takes a picture or a glTF model and opens the dialog for what it
+//! is. A texture's purpose is chosen in its dialog, not by its folder, and so
+//! is a model's ([`super::models`]).
+//!
+//! ## What else opens the import dialogs
+//!
+//! A display form's texture field opens the texture dialog, in the folder its
 //! file is read from, and the texture tool's panel opens it for a ground
-//! texture. The dialog is drawn by the shell whatever the tool is
-//! ([`import_dialog`]), and the workspace, the field and the panel each only
-//! ask for it.
+//! texture. The shell draws both dialogs whatever the tool is
+//! ([`import_dialog`]); the workspace, the field and the panel only ask for
+//! them.
+
+use std::sync::Arc;
 
 use bevy_egui::egui;
 
-use crate::ui::subjects::listing;
-use crate::ui::widgets::theme;
-use crate::session::EditSession;
 use crate::import::assets::{
     gloss_of, Ask, Assets, Choice, Gloss, Import, Own, Purpose, GROUND_ROOT, OTHER_FOLDER,
 };
+use crate::import::generated::{flight_map_of, Generator, Standing, Survey};
+use crate::import::sources::Sources;
+use crate::session::EditSession;
+use crate::ui::subjects::listing;
+use crate::ui::widgets::theme;
 use vale_assets::world::blp::Encoding;
 use vale_edit::manifest::Kind;
 
@@ -57,10 +80,25 @@ pub(crate) struct Work<'a> {
     pub(crate) game: &'a vale_client::assets::GameAssets,
     pub(crate) thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
     pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
+    /// The map window's state, which draws minimap pictures.
+    pub(crate) tiles: &'a mut crate::map::tiles::Tiles,
+    /// The flight path tool's state, which draws flight map pictures.
+    pub(crate) flights: &'a mut crate::tools::places::flightpaths::Flightpaths,
+    /// The table browser, told when a rebake changes a row.
+    pub(crate) browser: &'a mut crate::tables::browser::Browser,
+    pub(crate) now: f64,
 }
 
 /// How large the inspector draws a texture, at most.
 const PICTURE: f32 = 256.0;
+
+/// Where a project file came from, as the list filters it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    All,
+    Imported,
+    Generated,
+}
 
 /// What a project file is to the game, as the list filters it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,23 +108,51 @@ enum Sort {
     Texture,
     Model,
     Minimap,
+    MinimapIndex,
+    NpcSkin,
+    FlightMap,
+    BakedModel,
     Other,
 }
 
 impl Sort {
-    const ALL: [Sort; 6] = [Sort::Ground, Sort::Icon, Sort::Texture, Sort::Model, Sort::Minimap, Sort::Other];
+    const ALL: [Sort; 10] = [
+        Sort::Ground,
+        Sort::Icon,
+        Sort::Texture,
+        Sort::Model,
+        Sort::Minimap,
+        Sort::MinimapIndex,
+        Sort::NpcSkin,
+        Sort::FlightMap,
+        Sort::BakedModel,
+        Sort::Other,
+    ];
 
-    fn of(own: &Own) -> Sort {
-        match own.kind {
-            Kind::Texture => match Purpose::of_path(&own.vpath) {
-                Purpose::Ground => Sort::Ground,
-                Purpose::Icon => Sort::Icon,
-                Purpose::Field | Purpose::Other => Sort::Texture,
+    /// The sort of a project file; `imported` says whether the import record
+    /// has it, which is what tells an imported model from a baked one.
+    fn of(own: &Own, imported: bool) -> Sort {
+        match Generator::of(&own.vpath, imported) {
+            Some(Generator::Minimap) => Sort::Minimap,
+            Some(Generator::MinimapIndex) => Sort::MinimapIndex,
+            Some(Generator::NpcSkin) => Sort::NpcSkin,
+            Some(Generator::FlightMap) => Sort::FlightMap,
+            Some(Generator::BakedModel) => Sort::BakedModel,
+            None => match own.kind {
+                Kind::Texture => match Purpose::of_path(&own.vpath) {
+                    Purpose::Ground => Sort::Ground,
+                    Purpose::Icon => Sort::Icon,
+                    Purpose::Field | Purpose::Other => Sort::Texture,
+                },
+                Kind::Model => Sort::Model,
+                _ => Sort::Other,
             },
-            Kind::Model => Sort::Model,
-            Kind::Minimap => Sort::Minimap,
-            _ => Sort::Other,
         }
+    }
+
+    /// Whether the editor generates files of this sort.
+    fn generated(self) -> bool {
+        matches!(self, Sort::Minimap | Sort::MinimapIndex | Sort::NpcSkin | Sort::FlightMap | Sort::BakedModel)
     }
 
     /// The filter's name for the sort.
@@ -97,6 +163,10 @@ impl Sort {
             Sort::Texture => "Textures",
             Sort::Model => "Models",
             Sort::Minimap => "Minimaps",
+            Sort::MinimapIndex => "Minimap index",
+            Sort::NpcSkin => "NPC skins",
+            Sort::FlightMap => "Flight maps",
+            Sort::BakedModel => "Baked models",
             Sort::Other => "Other",
         }
     }
@@ -109,8 +179,33 @@ impl Sort {
             Sort::Texture => "texture",
             Sort::Model => "model",
             Sort::Minimap => "minimap picture",
+            Sort::MinimapIndex => "minimap index",
+            Sort::NpcSkin => "baked NPC skin",
+            Sort::FlightMap => "flight map picture",
+            Sort::BakedModel => "baked model",
             Sort::Other => "file",
         }
+    }
+
+    /// What made a generated file of the sort.
+    fn made_by(self) -> Option<&'static str> {
+        Some(match self {
+            Sort::Minimap => "Drawn from its tile by the map window's Minimap button.",
+            Sort::MinimapIndex => {
+                "Written by the minimap drawing, with an entry for each tile the archives have no \
+                 picture of."
+            }
+            Sort::NpcSkin => {
+                "Baked by Rebake skin from a CreatureDisplayInfoExtra row's appearance and worn \
+                 items. A rebake writes a new file and leaves the one before it unused."
+            }
+            Sort::FlightMap => "Drawn from the map's minimap pictures by the flight path tool.",
+            Sort::BakedModel => {
+                "Baked in the attachment lab: a shipped model with an offset, a turn or a scale \
+                 in its vertices."
+            }
+            _ => return None,
+        })
     }
 }
 
@@ -150,7 +245,7 @@ fn shown_files(files: &[Own]) -> Vec<Own> {
         .iter()
         .filter(|own| {
             let lower = own.vpath.to_ascii_lowercase();
-            let paired = Sort::of(own) == Sort::Ground
+            let paired = Sort::of(own, false) == Sort::Ground
                 && lower.ends_with("_s.blp")
                 && has(&format!("{}.blp", &own.vpath[..own.vpath.len() - 6]));
             !paired
@@ -159,11 +254,56 @@ fn shown_files(files: &[Own]) -> Vec<Own> {
         .collect()
 }
 
-/// The left column: Import, the sorts the project has, the search and the
-/// files.
+/// The survey of what has fallen behind, taken again when the project's files
+/// or tables change. See [`crate::import::generated`].
+fn survey(work: &mut Work<'_>, all: &[Own], sources: &Sources) -> Survey {
+    work.assets.surveys.current(work.session, work.game, all, sources).clone()
+}
+
+/// What a row and the details say about a generated file: what it was made
+/// from, and how it stands.
+fn made_words(sort: Sort, made: Option<&crate::import::generated::Made>, vpath: &str) -> (String, Option<String>) {
+    let Some(made) = made else {
+        return (String::new(), None);
+    };
+    let from = match sort {
+        Sort::Minimap => match &made.tile {
+            Some((map, x, y)) => format!("tile {x}, {y} of {map}"),
+            None => "no tile: md5translate.trs does not name it".to_string(),
+        },
+        Sort::NpcSkin => rows_words("CreatureDisplayInfoExtra", &made.rows),
+        Sort::BakedModel => rows_words("SpellVisualEffectName", &made.rows),
+        Sort::FlightMap => flight_map_of(vpath).map_or_else(String::new, |map| format!("the minimap pictures of map {map}")),
+        _ => String::new(),
+    };
+    let standing = match &made.standing {
+        Standing::Current => None,
+        Standing::OutOfDate(why) => Some(format!("out of date: {why}")),
+        Standing::Unused => Some(match sort {
+            Sort::Minimap => "unused: no tile names it".to_string(),
+            _ => "unused: no row names it".to_string(),
+        }),
+    };
+    (from, standing)
+}
+
+fn rows_words(table: &str, rows: &[u32]) -> String {
+    let ids: Vec<String> = rows.iter().take(6).map(u32::to_string).collect();
+    match rows.len() {
+        0 => format!("no {table} row"),
+        n if n > 6 => format!("{table} {} and {} more", ids.join(", "), n - 6),
+        _ => format!("{table} {}", ids.join(", ")),
+    }
+}
+
+/// The left column: Import, where the files came from, the sorts the project
+/// has, what has fallen behind, the search and the files.
 fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let all: Vec<Own> = work.assets.files(work.session).to_vec();
+    let sources = work.assets.sources(work.session).clone();
+    let survey = survey(work, &all, &sources);
     let files = shown_files(&all);
+    let sort_of = |own: &Own| Sort::of(own, sources.of(&own.vpath).is_some());
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Assets").strong().size(15.0).color(theme::INK));
         ui.label(theme::number(match files.len() {
@@ -173,16 +313,18 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     })
     .response
     .on_hover_text(
-        "The project's own game files other than tiles and tables: imported textures, \
-         baked models, minimap pictures. Each is read in place of the archives' file at \
-         its path, listed in the editor's pickers, and published with the project.",
+        "The project's own game files other than tiles and tables: imported textures and \
+         models, and the files the editor generates: minimap pictures, baked NPC skins, \
+         baked models, flight maps. Each is read in place of the archives' file at its path, \
+         listed in the editor's pickers, and published with the project.",
     );
     ui.add_space(4.0);
     if ui
         .add_sized(egui::vec2(ui.available_width(), 24.0), egui::Button::new("Import\u{2026}"))
         .on_hover_text(
-            "Choose a PNG, TGA or BLP picture. The next step asks what it is for: a ground \
-             texture, an icon or another texture.",
+            "Choose a PNG, TGA or BLP picture, or a glTF 2.0 model (.glb, .gltf). The next step \
+             asks what it is for: a ground texture, an icon or another texture; a creature, a \
+             doodad or another model.",
         )
         .clicked()
     {
@@ -190,28 +332,55 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
             folder: OTHER_FOLDER.to_string(),
             name: None,
             for_field: None,
+            models: true,
         });
     }
     ui.add_space(4.0);
-    // The sorts the project has, and All. The choice is the viewer's own and
-    // is kept in egui's memory.
+
+    // Where the files came from. The choice is the viewer's own and is kept
+    // in egui's memory, as the sort's is.
+    let origin_id = egui::Id::new("assets-origin");
+    let mut origin: Origin = ui.data(|data| data.get_temp::<Origin>(origin_id)).unwrap_or(Origin::All);
+    let generated = files.iter().filter(|own| sort_of(own).generated()).count();
+    let imported = files.len() - generated;
+    if generated > 0 && imported > 0 {
+        let options = [
+            (format!("All {}", files.len()), Origin::All),
+            (format!("Imported {imported}"), Origin::Imported),
+            (format!("Generated {generated}"), Origin::Generated),
+        ];
+        let options: Vec<(&str, Origin)> = options.iter().map(|(name, o)| (name.as_str(), *o)).collect();
+        ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
+            theme::segmented(ui, &mut origin, &options, |a, b| a == b);
+        });
+        ui.add_space(4.0);
+    } else {
+        origin = Origin::All;
+    }
+    ui.data_mut(|data| data.insert_temp(origin_id, origin));
+    let in_origin = |sort: Sort| match origin {
+        Origin::All => true,
+        Origin::Imported => !sort.generated(),
+        Origin::Generated => sort.generated(),
+    };
+
+    // The sorts the project has, and All.
     let filter_id = egui::Id::new("assets-filter");
     let mut filter: Option<Sort> = ui.data(|data| data.get_temp::<Option<Sort>>(filter_id)).flatten();
     let present: Vec<(Sort, usize)> = Sort::ALL
         .iter()
-        .map(|sort| (*sort, files.iter().filter(|own| Sort::of(own) == *sort).count()))
+        .filter(|sort| in_origin(**sort))
+        .map(|sort| (*sort, files.iter().filter(|own| sort_of(own) == *sort).count()))
         .filter(|(_, count)| *count > 0)
         .collect();
     if filter.is_some_and(|sort| !present.iter().any(|(had, _)| *had == sort)) {
         filter = None;
     }
+    let in_view: usize = present.iter().map(|(_, count)| count).sum();
     if present.len() > 1 {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            if ui
-                .selectable_label(filter.is_none(), format!("All {}", files.len()))
-                .clicked()
-            {
+            if ui.selectable_label(filter.is_none(), format!("All {in_view}")).clicked() {
                 filter = None;
             }
             for (sort, count) in &present {
@@ -226,6 +395,11 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         ui.add_space(4.0);
     }
     ui.data_mut(|data| data.insert_temp(filter_id, filter));
+
+    if origin != Origin::Imported {
+        behind_summary(ui, work, &survey);
+    }
+
     let width = ui.available_width();
     ui.add(
         egui::TextEdit::singleline(&mut work.assets.query)
@@ -241,7 +415,8 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .collect();
     let shown: Vec<&Own> = files
         .iter()
-        .filter(|own| filter.is_none_or(|sort| Sort::of(own) == sort))
+        .filter(|own| in_origin(sort_of(own)))
+        .filter(|own| filter.is_none_or(|sort| sort_of(own) == sort))
         .filter(|own| {
             let path = own.vpath.to_ascii_lowercase();
             words.iter().all(|word| path.contains(word.as_str()))
@@ -262,17 +437,24 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
         for own in &shown[range] {
             let chosen = work.assets.selected.as_deref() == Some(own.vpath.as_str());
-            let sort = Sort::of(own);
+            let sort = sort_of(own);
             // A ground texture says whether its pair is there, since without it
-            // the client draws nothing. See `crate::import::assets`.
+            // the client draws the ground as a missing texture. See
+            // `crate::import::assets`.
             let unpaired = gloss_of(&own.vpath).is_some_and(|gloss| !all.iter().any(|o| o.vpath.eq_ignore_ascii_case(&gloss)));
+            let (from, standing) = made_words(sort, survey.made.get(&own.vpath.to_ascii_lowercase()), &own.vpath);
             let pair = match (sort, unpaired) {
                 (Sort::Ground, false) => " \u{b7} with _s",
                 (Sort::Ground, true) => " \u{b7} no _s file",
                 _ => "",
             };
+            let about = match (&standing, from.is_empty()) {
+                (Some(standing), _) => format!(" \u{b7} {standing}"),
+                (None, false) => format!(" \u{b7} {from}"),
+                (None, true) => String::new(),
+            };
             let sub = format!(
-                "{} \u{b7} {}{pair} \u{b7} {}",
+                "{} \u{b7} {}{pair}{about} \u{b7} {}",
                 folder(&own.vpath).trim_end_matches('\\'),
                 sort.word(),
                 size_words(own.bytes)
@@ -283,7 +465,7 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
                     title: basename(&own.vpath),
                     sub: &sub,
                     trailing: "",
-                    tint: match unpaired {
+                    tint: match unpaired || standing.is_some() {
                         true => theme::WARN,
                         false => theme::INK,
                     },
@@ -299,6 +481,148 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     });
     if clicked.is_some() {
         work.assets.selected = clicked;
+    }
+}
+
+/// The lines of what has fallen behind, in the list column, each with its
+/// action. Nothing when nothing has.
+fn behind_summary(ui: &mut egui::Ui, work: &mut Work<'_>, survey: &Survey) {
+    if survey.undrawn.is_empty() && survey.rebake.is_empty() && survey.unused.is_empty() {
+        return;
+    }
+    egui::Frame::new()
+        .fill(theme::SUNK)
+        .corner_radius(4.0)
+        .inner_margin(6.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new("Out of date").strong().color(theme::WARN));
+            catch_up(ui, work, survey);
+        });
+    ui.add_space(6.0);
+}
+
+/// What has fallen behind across the project, and the action for each: draw
+/// the minimaps of changed tiles, rebake the skins of changed appearances,
+/// remove what nothing names.
+fn catch_up(ui: &mut egui::Ui, work: &mut Work<'_>, survey: &Survey) {
+    let open_map = work.session.map.clone();
+    let here: Vec<(u32, u32)> = survey
+        .undrawn
+        .iter()
+        .filter(|(map, ..)| map.eq_ignore_ascii_case(&open_map))
+        .map(|(_, x, y)| (*x, *y))
+        .collect();
+    let elsewhere = survey.undrawn.len() - here.len();
+    if !survey.undrawn.is_empty() {
+        ui.label(match survey.undrawn.len() {
+            1 => "1 tile changed after its minimap was drawn.".to_string(),
+            n => format!("{n} tiles changed after their minimaps were drawn."),
+        })
+        .on_hover_text(
+            "A tile saved after its picture in textures\\Minimap\\, or a tile the project changed \
+             whose picture is still the archives'. The minimap and the flight map show the ground \
+             as it was.",
+        );
+        ui.horizontal_wrapped(|ui| {
+            if !here.is_empty() {
+                let seconds = here.len() as f32 * crate::map::tiles::MINIMAP_SECONDS;
+                if ui
+                    .add_enabled(!work.tiles.drawing, egui::Button::new(format!("Draw {} on {open_map}", here.len())))
+                    .on_hover_text(format!("Draws the minimaps of these tiles in the background, about {seconds:.0} s."))
+                    .on_disabled_hover_text("Minimaps are being drawn.")
+                    .clicked()
+                {
+                    work.tiles.redraw = here.clone();
+                    work.session.status = format!("drawing {} minimaps", here.len());
+                }
+            }
+            if elsewhere > 0 {
+                ui.label(
+                    egui::RichText::new(format!("{elsewhere} on other maps: open the map to draw them."))
+                        .small()
+                        .color(theme::INK_DIM),
+                );
+            }
+        });
+        ui.add_space(4.0);
+    }
+    if !survey.rebake.is_empty() {
+        ui.label(match survey.rebake.len() {
+            1 => "1 appearance changed after its skin was baked.".to_string(),
+            n => format!("{n} appearances changed after their skins were baked."),
+        })
+        .on_hover_text(
+            "CreatureDisplayInfoExtra rows whose race, face, hair, skin or worn items differ from \
+             the archives' row while BakeName still names a skin not baked from the row. The \
+             renderer draws the old skin until it is baked again.",
+        );
+        if ui
+            .button(format!("Rebake {}", survey.rebake.len()))
+            .on_hover_text("Bakes each row's skin again and points its BakeName at the new file. One undo entry per row.")
+            .clicked()
+        {
+            let mut done = 0usize;
+            let mut failed: Vec<String> = Vec::new();
+            for &id in &survey.rebake {
+                match crate::tables::bake::rebake(work.session, work.game, id, work.now) {
+                    Ok(_) => done += 1,
+                    Err(why) => failed.push(why),
+                }
+            }
+            work.browser.forget_buffers();
+            work.session.status = match failed.first() {
+                None => format!("rebaked {done} skins"),
+                Some(first) => format!("rebaked {done} skins; {} failed, first: {first}", failed.len()),
+            };
+        }
+        ui.add_space(4.0);
+    }
+    if !survey.unused.is_empty() {
+        ui.label(match survey.unused.len() {
+            1 => "1 generated file is named by nothing.".to_string(),
+            n => format!("{n} generated files are named by nothing."),
+        })
+        .on_hover_text(
+            "Baked skins no CreatureDisplayInfoExtra row names, which is what the skin before a \
+             rebake becomes, and baked models no SpellVisualEffectName row names. They are \
+             published with the project all the same.",
+        );
+        // Removal takes two presses: the files are deleted from the project
+        // folder, which no undo puts back.
+        let confirm_id = egui::Id::new("assets-remove-unused");
+        let confirming = ui.data(|data| data.get_temp::<bool>(confirm_id).unwrap_or(false));
+        ui.horizontal_wrapped(|ui| match confirming {
+            false => {
+                if ui
+                    .button(egui::RichText::new(format!("Remove {}", survey.unused.len())).color(theme::BAD))
+                    .on_hover_text("Delete them from the project. Undo does not restore them.")
+                    .clicked()
+                {
+                    ui.data_mut(|data| data.insert_temp(confirm_id, true));
+                }
+            }
+            true => {
+                if ui
+                    .button(egui::RichText::new("Confirm Remove").color(theme::BAD))
+                    .clicked()
+                {
+                    for vpath in &survey.unused {
+                        work.thumbnails.forget(vpath);
+                        work.session.remove_file(vpath);
+                    }
+                    work.session.status = format!("removed {} unused generated files", survey.unused.len());
+                    if work.assets.selected.as_ref().is_some_and(|s| survey.unused.contains(s)) {
+                        work.assets.selected = None;
+                    }
+                    work.assets.surveys.forget();
+                    ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
+                }
+                if ui.button("Cancel").clicked() {
+                    ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
+                }
+            }
+        });
     }
 }
 
@@ -322,13 +646,45 @@ fn picture(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, rect: egui::Rect) 
             }
         }
         Kind::Model => {
-            let path = own.vpath.to_ascii_lowercase();
-            work.portraits.want(&path);
-            crate::preview::portraits::paint(ui, work.portraits, &path, rect);
+            let key = model_portrait(work, &own.vpath, false);
+            crate::preview::portraits::paint(ui, work.portraits, &key, rect);
         }
         _ => {
             ui.painter().rect_filled(rect, 3.0, theme::LINE);
         }
+    }
+}
+
+/// The portrait key a model is drawn under, for a row (`large` false) or the
+/// inspector's pane. An imported creature model is drawn wearing the skins
+/// its import wrote, since it names no file for them and draws magenta bare;
+/// any other model by its path.
+fn model_portrait(work: &mut Work<'_>, vpath: &str, large: bool) -> String {
+    let path = vpath.to_ascii_lowercase();
+    let skins = work
+        .assets
+        .sources(work.session)
+        .of(vpath)
+        .map(|entry| crate::import::models::imported_skins(entry, folder(vpath), &work.session.project))
+        .unwrap_or_default();
+    if skins.iter().all(String::is_empty) {
+        if !large {
+            work.portraits.want(&path);
+        }
+        return path;
+    }
+    let worn = crate::preview::portraits::Worn {
+        path,
+        skins,
+        hair: None,
+        dress: Default::default(),
+        look: None,
+        cloak: None,
+        hung: Vec::new(),
+    };
+    match large {
+        true => work.portraits.want_large_worn(&worn),
+        false => work.portraits.want_worn(&worn),
     }
 }
 
@@ -364,6 +720,46 @@ fn header(bytes: &[u8]) -> Option<Header> {
     })
 }
 
+/// What a model file holds, as the details list it.
+#[derive(Debug, Clone)]
+struct ModelFacts {
+    vertices: usize,
+    triangles: usize,
+    bones: usize,
+    /// Each texture's type and file name.
+    textures: Vec<(u32, String)>,
+    /// Each sequence's animation id, length in milliseconds and whether it
+    /// loops.
+    sequences: Vec<(u16, u32, bool)>,
+}
+
+/// The facts of the project's model at `vpath`, read once per change of the
+/// project's files and kept in egui's memory.
+fn model_facts(ui: &egui::Ui, session: &EditSession, vpath: &str) -> Option<Arc<ModelFacts>> {
+    let key = egui::Id::new(("asset-model-facts", vpath.to_ascii_lowercase(), session.files_revision));
+    if let Some(known) = ui.data(|data| data.get_temp::<Option<Arc<ModelFacts>>>(key)) {
+        return known;
+    }
+    let facts = session.project.read(vpath).and_then(|bytes| vale_assets::world::m2::M2::parse(&bytes).ok()).map(|model| {
+        let (bones, sequences) = match &model.skeleton {
+            Some(skeleton) => (
+                skeleton.bones.len(),
+                skeleton.sequences.iter().map(|s| (s.id, s.end - s.start, s.flags & 1 == 0)).collect(),
+            ),
+            None => (0, Vec::new()),
+        };
+        Arc::new(ModelFacts {
+            vertices: model.positions.len(),
+            triangles: model.triangle_count(),
+            bones,
+            textures: model.textures.iter().map(|t| (t.kind, t.file_name.clone())).collect(),
+            sequences,
+        })
+    });
+    ui.data_mut(|data| data.insert_temp(key, facts.clone()));
+    facts
+}
+
 /// What a sort of file is used for, in the details.
 fn used_as(sort: Sort) -> &'static str {
     match sort {
@@ -372,13 +768,21 @@ fn used_as(sort: Sort) -> &'static str {
         Sort::Texture => "Read wherever a model, a table or the interface names its path.",
         Sort::Model => "Listed in the placement tools and the model browser.",
         Sort::Minimap => "Drawn by the minimap and the map for its tile.",
+        Sort::MinimapIndex => "Read by the client to find each tile's minimap picture.",
+        Sort::NpcSkin => "The body texture of the NPCs whose CreatureDisplayInfoExtra row names it as BakeName.",
+        Sort::FlightMap => "Drawn behind the nodes of the map's flight map.",
+        Sort::BakedModel => "The model of the spell effects whose SpellVisualEffectName row names it.",
         Sort::Other => "Read wherever the game asks for its path.",
     }
 }
 
-/// The middle: the selected file's path, what it is, what it holds, and what
-/// can be done to it.
+/// The middle: the selected file's path, what it is, what made it, what it
+/// holds, and what can be done to it; with no file chosen, what has fallen
+/// behind across the project.
 fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
+    let all: Vec<Own> = work.assets.files(work.session).to_vec();
+    let sources = work.assets.sources(work.session).clone();
+    let survey = survey(work, &all, &sources);
     let Some(vpath) = work.assets.selected.clone() else {
         theme::heading(ui, "No file chosen");
         theme::note(
@@ -386,26 +790,28 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             "Choose a file on the left, or import one. A file here is read in place of the \
              archives' file at its path and is published with the project.",
         );
+        ui.add_space(8.0);
+        if survey.undrawn.is_empty() && survey.rebake.is_empty() && survey.unused.is_empty() {
+            theme::note(ui, "Every generated file is up to date with what it was made from.");
+        } else {
+            theme::heading(ui, "Out of date");
+            catch_up(ui, work, &survey);
+        }
         return;
     };
-    let own = work
-        .assets
-        .files(work.session)
-        .iter()
-        .find(|own| own.vpath == vpath)
-        .cloned();
-    let Some(own) = own else {
+    let Some(own) = all.iter().find(|own| own.vpath == vpath).cloned() else {
         theme::heading(ui, "No file chosen");
         theme::note(ui, "The chosen file is no longer in the project.");
         return;
     };
-    let sort = Sort::of(&own);
+    let imported = sources.of(&own.vpath).cloned();
+    let sort = Sort::of(&own, imported.is_some());
+    let made = survey.made.get(&own.vpath.to_ascii_lowercase());
+    let (from, standing) = made_words(sort, made, &own.vpath);
     // A ground texture's pair: its `_s` file, in the project or the archives.
     let gloss = gloss_of(&own.vpath);
     let gloss_own = gloss.as_ref().and_then(|gloss| {
-        work.assets
-            .files(work.session)
-            .iter()
+        all.iter()
             .find(|other| other.vpath.eq_ignore_ascii_case(gloss))
             .cloned()
     });
@@ -413,6 +819,9 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .as_ref()
         .is_some_and(|gloss| gloss_own.is_none() && in_archives(ui.ctx(), work.game, gloss));
     let unpaired = gloss.is_some() && gloss_own.is_none() && !gloss_shipped;
+    let facts = (own.kind == Kind::Model).then(|| model_facts(ui, work.session, &own.vpath)).flatten();
+    let tables = work.game.display_tables().ok();
+    let animations = tables.as_deref().and_then(|t| t.animations());
 
     ui.label(egui::RichText::new(basename(&own.vpath)).strong().size(17.0).color(theme::INK));
     ui.label(egui::RichText::new(&own.vpath).small().color(theme::INK_DIM));
@@ -432,6 +841,28 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 None => size_words(own.bytes),
             });
             ui.end_row();
+            if let Some(entry) = &imported {
+                ui.label(egui::RichText::new("Imported from").color(theme::INK_DIM));
+                let there = entry.source.is_file();
+                ui.label(match there {
+                    true => egui::RichText::new(entry.source.display().to_string()).color(theme::INK),
+                    false => egui::RichText::new(format!("{} (not found)", entry.source.display())).color(theme::WARN),
+                });
+                ui.end_row();
+            }
+            if sort.generated() && !from.is_empty() {
+                ui.label(egui::RichText::new("Made from").color(theme::INK_DIM));
+                ui.label(&from);
+                ui.end_row();
+            }
+            if sort.generated() {
+                ui.label(egui::RichText::new("Standing").color(theme::INK_DIM));
+                match &standing {
+                    None => ui.label(egui::RichText::new("up to date").color(theme::GOOD)),
+                    Some(standing) => ui.label(egui::RichText::new(standing).color(theme::WARN)),
+                };
+                ui.end_row();
+            }
             if matches!(own.kind, Kind::Texture | Kind::Minimap) {
                 if let Some(head) = work.session.project.read(&own.vpath).and_then(|bytes| header(&bytes)) {
                     ui.label(egui::RichText::new("Dimensions").color(theme::INK_DIM));
@@ -447,6 +878,29 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                     });
                     ui.end_row();
                 }
+            }
+            if let Some(facts) = &facts {
+                ui.label(egui::RichText::new("Geometry").color(theme::INK_DIM));
+                ui.label(format!("{} vertices, {} triangles", facts.vertices, facts.triangles));
+                ui.end_row();
+                ui.label(egui::RichText::new("Bones").color(theme::INK_DIM));
+                ui.label(match facts.bones {
+                    0 => "none animated".to_string(),
+                    n => n.to_string(),
+                });
+                ui.end_row();
+                ui.label(egui::RichText::new("Textures").color(theme::INK_DIM));
+                let named: Vec<String> = facts
+                    .textures
+                    .iter()
+                    .map(|(kind, file)| match kind {
+                        0 => basename(file).to_string(),
+                        11..=13 => format!("creature skin {}", kind - 10),
+                        other => format!("type {other}"),
+                    })
+                    .collect();
+                ui.label(named.join(", "));
+                ui.end_row();
             }
             if let Some(gloss) = &gloss {
                 ui.label(egui::RichText::new("Gloss file").color(theme::INK_DIM));
@@ -467,6 +921,31 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         });
     ui.add_space(4.0);
     ui.label(egui::RichText::new(used_as(sort)).small().color(theme::INK_DIM));
+    if let Some(made_by) = sort.made_by() {
+        ui.label(egui::RichText::new(made_by).small().color(theme::INK_DIM));
+    }
+    if let Some(facts) = facts.as_ref().filter(|f| !f.sequences.is_empty()) {
+        ui.add_space(6.0);
+        theme::heading(ui, "Sequences");
+        egui::Grid::new("asset-sequences")
+            .num_columns(3)
+            .spacing([12.0, 2.0])
+            .show(ui, |ui| {
+                for (id, length, loops) in &facts.sequences {
+                    let name = animations.and_then(|a| a.name(*id)).unwrap_or("?");
+                    ui.label(format!("{id} {name}"));
+                    ui.label(theme::number(format!("{length} ms")));
+                    ui.label(
+                        egui::RichText::new(match loops {
+                            true => "loops",
+                            false => "once",
+                        })
+                        .color(theme::INK_DIM),
+                    );
+                    ui.end_row();
+                }
+            });
+    }
     if unpaired {
         ui.add_space(6.0);
         theme::note(
@@ -478,6 +957,20 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     }
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
+        made_again(ui, work, sort, made, &own.vpath);
+        if let Some(entry) = &imported {
+            if ui
+                .add_enabled(entry.source.is_file(), egui::Button::new("Re-import\u{2026}"))
+                .on_hover_text(format!(
+                    "Open the import dialog on {} again, with the choices it was imported with.",
+                    entry.source.display()
+                ))
+                .on_disabled_hover_text("The file it was imported from is no longer there.")
+                .clicked()
+            {
+                work.assets.ask = Some(Ask::Reimport(own.vpath.clone()));
+            }
+        }
         if unpaired
             && ui
                 .button("Write Its _s File\u{2026}")
@@ -515,6 +1008,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             work.session.status = format!("{} is on the clipboard", own.vpath);
         }
         if own.kind == Kind::Texture
+            && !sort.generated()
             && ui
                 .button("Replace\u{2026}")
                 .on_hover_text("Import another picture at this path, under this name.")
@@ -524,6 +1018,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 folder: folder(&own.vpath).to_string(),
                 name: Some(basename(&own.vpath).trim_end_matches(".blp").trim_end_matches(".BLP").to_string()),
                 for_field: None,
+                models: false,
             });
         }
         // Removal takes two presses: the file is deleted from the project
@@ -566,6 +1061,75 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     });
 }
 
+/// The button that makes a generated file again from what it was made from,
+/// where its generator can be asked from here.
+fn made_again(ui: &mut egui::Ui, work: &mut Work<'_>, sort: Sort, made: Option<&crate::import::generated::Made>, vpath: &str) {
+    match sort {
+        Sort::Minimap => {
+            let Some((map, x, y)) = made.and_then(|m| m.tile.clone()) else { return };
+            let here = map.eq_ignore_ascii_case(&work.session.map);
+            if ui
+                .add_enabled(here && !work.tiles.drawing, egui::Button::new("Draw Again"))
+                .on_hover_text(format!("Draw this picture again from tile {x}, {y} in the background."))
+                .on_disabled_hover_text(match here {
+                    true => "Minimaps are being drawn.".to_string(),
+                    false => format!("The tile is on {map}. Open that map to draw it again."),
+                })
+                .clicked()
+            {
+                work.tiles.redraw = vec![(x, y)];
+                work.session.status = format!("drawing the minimap of tile {x}, {y}");
+            }
+        }
+        Sort::NpcSkin => {
+            let rows = made.map(|m| m.rows.clone()).unwrap_or_default();
+            if ui
+                .add_enabled(!rows.is_empty(), egui::Button::new("Rebake"))
+                .on_hover_text(
+                    "Bake the skin again from each row that names it, and point the row at the new \
+                     file. A skin that comes out different is a new file, and this one is left \
+                     unused.",
+                )
+                .on_disabled_hover_text("No CreatureDisplayInfoExtra row names this skin.")
+                .clicked()
+            {
+                let mut said = Vec::new();
+                for id in rows {
+                    said.push(match crate::tables::bake::rebake(work.session, work.game, id, work.now) {
+                        Ok(done) => done,
+                        Err(why) => why,
+                    });
+                }
+                work.browser.forget_buffers();
+                work.session.status = said.join("; ");
+            }
+        }
+        Sort::FlightMap => {
+            let Some(map) = flight_map_of(vpath) else { return };
+            let here = map == work.session.map_id;
+            if ui
+                .add_enabled(here, egui::Button::new("Draw Again"))
+                .on_hover_text("Draw this picture again from the map's minimap pictures, with the flight map's box as it is.")
+                .on_disabled_hover_text(format!("The picture is of map {map}. Open that map to draw it again."))
+                .clicked()
+            {
+                use vale_edit::flightmap;
+                let flight = work
+                    .session
+                    .open_table(work.game, flightmap::TABLE)
+                    .then(|| work.session.table(flightmap::TABLE))
+                    .flatten()
+                    .and_then(|table| flightmap::row_of(table, map).and_then(|row| flightmap::read(table, row)));
+                work.session.status = match flight {
+                    Some(flight) => crate::tools::places::flightpaths::draw_flight_map(work.session, work.game, work.flights, &flight),
+                    None => format!("{} has no row for map {map}", flightmap::TABLE),
+                };
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The workspace's third part, in the shell's inspector: the chosen file,
 /// drawn.
 pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
@@ -598,9 +1162,9 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
             }
         }
         Kind::Model => {
-            let path = vpath.to_ascii_lowercase();
+            let key = model_portrait(work, &vpath, true);
             let side = ui.available_width();
-            crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &path, side);
+            crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &key, side);
         }
         _ => theme::note(ui, "No picture for this kind of file."),
     }
@@ -609,7 +1173,7 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
 /// Whether the archives, read past the project, hold a file at `vpath`. A
 /// whole read, so the answer is kept per path in egui's memory: the dialog
 /// asks every frame and the path changes only as it is typed.
-fn in_archives(ctx: &egui::Context, game: &vale_client::assets::GameAssets, vpath: &str) -> bool {
+pub(super) fn in_archives(ctx: &egui::Context, game: &vale_client::assets::GameAssets, vpath: &str) -> bool {
     let key = egui::Id::new(("asset-in-archives", vpath.to_ascii_lowercase()));
     if let Some(known) = ctx.data(|data| data.get_temp::<bool>(key)) {
         return known;
@@ -636,13 +1200,15 @@ pub(in crate::ui) fn checker(ui: &egui::Ui, rect: egui::Rect) {
     }
 }
 
-/// The Import Texture dialog, when one is open. Drawn by the shell under any
-/// tool, since a form field and the texture tool's panel open it too.
+/// The Import Texture and Import Model dialogs, when one is open. Drawn by
+/// the shell under any tool, since a form field and the texture tool's panel
+/// open the first too.
 ///
-/// The first choice is what the texture is for ([`Purpose`]); the folder, the
-/// size and the files written follow from it, and the rows under it are only
-/// the ones that purpose has.
+/// The texture dialog's first choice is what the texture is for
+/// ([`Purpose`]); the folder, the size and the files written follow from it,
+/// and the rows under it are only the ones that purpose has.
 pub(crate) fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSession, game: &vale_client::assets::GameAssets) {
+    super::models::model_dialog(ctx, assets, session, game);
     let Some(import) = assets.import.as_mut() else { return };
     let mut close = false;
     let mut write = false;
@@ -897,7 +1463,7 @@ fn source_picture(ui: &mut egui::Ui, import: &Import) {
 /// The Assets workspace's inspector panel, its third part: the chosen file,
 /// drawn.
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
-    let crate::ui::tools::Subject { session, assets, .. } = subject;
+    let crate::ui::tools::Subject { session, assets, now, .. } = subject;
     inspector(
         ui,
         Work {
@@ -906,13 +1472,17 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
             game: assets,
             thumbnails: &mut editing.thumbnails,
             portraits: &mut editing.portraits,
+            tiles: &mut editing.tiles,
+            flights: &mut editing.flightpaths,
+            browser: &mut editing.browser,
+            now,
         },
     );
 }
 
 /// The Assets workspace in the middle of a window: the project's own files.
 pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::ui::workspace::Bench<'_, '_, '_>) {
-    let crate::ui::workspace::Bench { session, editing, assets, .. } = bench;
+    let crate::ui::workspace::Bench { session, editing, assets, now, .. } = bench;
     draw(
         ui,
         Work {
@@ -921,6 +1491,10 @@ pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::
             game: assets,
             thumbnails: &mut editing.thumbnails,
             portraits: &mut editing.portraits,
+            tiles: &mut editing.tiles,
+            flights: &mut editing.flightpaths,
+            browser: &mut editing.browser,
+            now,
         },
     );
 }
@@ -963,7 +1537,21 @@ mod tests {
             shown,
             ["Tileset\\Custom\\Grass.blp", "Tileset\\Custom\\Moss_s.blp", "Interface\\Icons\\Sword.blp"]
         );
-        assert_eq!(Sort::of(&files[0]), Sort::Ground);
-        assert_eq!(Sort::of(&files[3]), Sort::Icon);
+        assert_eq!(Sort::of(&files[0], false), Sort::Ground);
+        assert_eq!(Sort::of(&files[3], false), Sort::Icon);
+    }
+
+    /// The generated sorts are the generators' files, and a model is the
+    /// lab's unless it was imported.
+    #[test]
+    fn the_generated_sorts() {
+        let own = |vpath: &str, kind: Kind| Own { vpath: vpath.to_string(), kind, bytes: 1 };
+        let skin = own("Textures\\BakedNpcTextures\\x5_00ff.blp", Kind::Texture);
+        assert_eq!(Sort::of(&skin, false), Sort::NpcSkin);
+        assert!(Sort::NpcSkin.generated());
+        let model = own("Creature\\Mage\\Mage.m2", Kind::Model);
+        assert_eq!(Sort::of(&model, true), Sort::Model);
+        assert_eq!(Sort::of(&model, false), Sort::BakedModel);
+        assert!(!Sort::Model.generated());
     }
 }

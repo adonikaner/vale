@@ -29,14 +29,14 @@ pub(crate) const EXTRA: &str = "CreatureDisplayInfoExtra";
 /// from 8, and the bake's file name.
 const APPEARANCE: usize = 1;
 const ITEMS: usize = 8;
-const BAKE_NAME: usize = 18;
+pub(crate) const BAKE_NAME: usize = 18;
 
 /// `CreatureDisplayInfo`'s `ExtendedDisplayInfoID`: the `Extra` row a display
 /// in a character model names.
 const EXTENDED: usize = 3;
 
 /// The folder a `BakeName` is a file of.
-const BAKED_FOLDER: &str = "Textures\\BakedNpcTextures\\";
+pub(crate) const BAKED_FOLDER: &str = "Textures\\BakedNpcTextures\\";
 
 /// The `Extra` row the `CreatureDisplayInfo` record names, or `None` for a
 /// display that names none: a creature with a skin of its own.
@@ -82,6 +82,33 @@ pub(crate) fn bake_name(id: u32, blp: &[u8]) -> String {
     format!("x{id}_{hash:016x}.blp")
 }
 
+/// Whether the `Extra` record `record` of `table` wears a skin that was not
+/// baked from it: its appearance or worn items differ from the archives' row
+/// of the same id (`original`, the archives' table and that row's record), or
+/// the archives have no such row, and its `BakeName` is not a bake of this row
+/// that the project holds.
+///
+/// A row rebaked here and edited again is not caught: its `BakeName` is a
+/// bake of the row, made from what the row was before the edit.
+pub(crate) fn needs_rebake(
+    table: &vale_edit::dbc::DbcFile,
+    record: usize,
+    original: Option<(&vale_edit::dbc::DbcFile, usize)>,
+    project: &vale_edit::project::Project,
+) -> bool {
+    let Some(id) = table.u32_at(record, 0) else { return false };
+    let bake = table.string_at(record, BAKE_NAME).unwrap_or_default();
+    let own_bake = bake.to_ascii_lowercase().starts_with(&format!("x{id}_"))
+        && project.has(&format!("{BAKED_FOLDER}{bake}"));
+    if own_bake {
+        return false;
+    }
+    let Some((original, at)) = original else {
+        return true;
+    };
+    (APPEARANCE..BAKE_NAME).any(|field| table.u32_at(record, field) != original.u32_at(at, field))
+}
+
 /// Bake the skin of the `Extra` row `id` again and point its `BakeName` at the
 /// new file. Answers what was done, for the status line, or why nothing was.
 pub(crate) fn rebake(session: &mut EditSession, assets: &GameAssets, id: u32, now: f64) -> Result<String, String> {
@@ -111,9 +138,9 @@ pub(crate) fn rebake(session: &mut EditSession, assets: &GameAssets, id: u32, no
 /// The skin an appearance wearing `worn` is baked as: how many layers the
 /// recipe has, and the 256x256 RGBA texture.
 ///
-/// The item rows are the client's, which are the project's once published,
-/// and `CharSections` and every layer are read through the overlay, so a
-/// project's own textures are painted.
+/// The item rows come from the client's display tables, which hold the
+/// project's rows once they are published. `CharSections` and every layer are
+/// read through the overlay, so a project's own textures are painted.
 fn compose(assets: &GameAssets, appearance: &Appearance, worn: &[Equipped]) -> Result<(usize, Vec<u8>), String> {
     let tables = assets.display_tables().map_err(|e| e.to_string())?;
     let (layers, rgba) = assets
@@ -182,7 +209,8 @@ mod tests {
         assert_eq!(slots, vec![(1234, Slot::Shoulders), (777, Slot::Chest)]);
     }
 
-    /// A bake is named by its row and its bytes: other bytes, another name.
+    /// A bake is named by its row and its bytes, so different bytes give a
+    /// different name.
     #[test]
     fn a_bake_is_named_by_its_row_and_its_contents() {
         let a = bake_name(12, b"one");

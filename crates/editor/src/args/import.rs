@@ -1,5 +1,6 @@
-//! The flags that move pictures in and out of the project: a tile's height map
-//! as a PNG, a PNG imported onto a tile, and a texture imported as a BLP.
+//! The flags that move pictures and models in and out of the project: a
+//! tile's height map as a PNG, a PNG imported onto a tile, a texture imported
+//! as a BLP, and a glTF model imported as an M2.
 
 use super::Arity::*;
 use super::{text, Flag};
@@ -27,8 +28,14 @@ pub(crate) struct Import {
     /// `--import-dialog <picture> [purpose]`: open the Import Texture dialog on
     /// a picture without writing anything, for `ground`, `icon` or `other` (the
     /// default). The dialog is otherwise behind the system's file dialog, which
-    /// a scripted `--shot` cannot answer.
+    /// a scripted `--shot` cannot answer. Given a `.glb` or `.gltf`, it opens
+    /// the Import Model dialog instead, for `creature`, `doodad` or `other`.
     pub(crate) import_dialog: Option<(String, String)>,
+    /// `--import-model <file> <archive path>`: import a glTF model as an M2 at
+    /// that path, with the Import Model dialog's defaults for what the path's
+    /// folder is for, and open the Assets workspace on it. See
+    /// `crate::import::models`.
+    pub(crate) import_model: Option<(String, String)>,
 }
 
 pub(super) const FLAGS: &[Flag] = &[
@@ -38,6 +45,12 @@ pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--import-texture", Two, |a, v| {
         if let [picture, vpath] = v {
             a.import.import_texture = Some((picture.clone(), vpath.clone()));
+        }
+        a.view.tool = Some(Tool::Assets);
+    }),
+    Flag::new("--import-model", Two, |a, v| {
+        if let [model, vpath] = v {
+            a.import.import_model = Some((model.clone(), vpath.clone()));
         }
         a.view.tool = Some(Tool::Assets);
     }),
