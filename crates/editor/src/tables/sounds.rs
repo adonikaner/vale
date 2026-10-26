@@ -86,7 +86,7 @@ pub(super) fn listen(
     popout: Res<crate::popout::Popout>,
     playtest: Res<crate::playtest::Playtest>,
     assets: Res<GameAssets>,
-    session: Option<Res<EditSession>>,
+    mut session: Option<ResMut<EditSession>>,
     mut voices: vale_client::sound::mixer::Voices,
     alive: Query<(), With<bevy::audio::AudioPlayer>>,
     // The voice and the volume it plays at, which a fade starts from.
@@ -153,7 +153,40 @@ pub(super) fn listen(
         }
     };
     if let Some(entity) = voice {
-        *playing = Some((entity, volume * voices.gain(channel)));
+        let gain = voices.gain(channel);
+        *playing = Some((entity, volume * gain));
+        // The game's sound settings decide what is heard, and a channel they
+        // switch off plays at no volume. Said on the status line, since the
+        // button shows Stop all the same.
+        if gain == 0.0 {
+            if let Some(session) = session.as_mut() {
+                session.status = format!("{} is silent: {}", channel_words(channel), silenced_by(channel));
+            }
+        }
+    }
+}
+
+/// What the status line calls a mixer channel.
+fn channel_words(channel: vale_client::sound::mixer::Channel) -> &'static str {
+    use vale_client::sound::mixer::Channel;
+    match channel {
+        Channel::Effects => "the sound effects channel",
+        Channel::Music => "the music channel",
+        Channel::Ambience => "the ambience channel",
+    }
+}
+
+/// The game settings that switch a channel off or turn it to zero, as
+/// `vale_client::sound::mixer::Channel::gain` reads them from
+/// `WTF\Config.wtf`.
+fn silenced_by(channel: vale_client::sound::mixer::Channel) -> &'static str {
+    use vale_client::sound::mixer::Channel;
+    match channel {
+        Channel::Effects => "MasterSoundEffects is 0, or MasterVolume or SoundVolume is 0, in WTF\\Config.wtf",
+        Channel::Music => "EnableMusic is 0, or MasterVolume or MusicVolume is 0, in WTF\\Config.wtf",
+        Channel::Ambience => {
+            "EnableAmbience or MasterSoundEffects is 0, or MasterVolume or AmbienceVolume is 0, in WTF\\Config.wtf"
+        }
     }
 }
 

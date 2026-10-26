@@ -229,10 +229,10 @@ pub(crate) enum Tool {
     /// `SoundEntries.dbc`: every sound the client plays. See
     /// [`crate::tables::sound_files`].
     ///
-    /// The first part of the Sound workspace. Its other parts are the five
+    /// The first part of the Sound workspace. Its other parts are the six
     /// tables whose columns hold a `SoundEntries` id, one each: [`Tool::CreatureSounds`],
-    /// [`Tool::NpcSounds`], [`Tool::ZoneMusic`], [`Tool::ZoneIntros`] and
-    /// [`Tool::Ambience`]. Each is a DBC edited in the table browser, and
+    /// [`Tool::NpcSounds`], [`Tool::ZoneMusic`], [`Tool::ZoneIntros`],
+    /// [`Tool::Ambience`] and [`Tool::ItemSounds`]. Each is a DBC edited in the table browser, and
     /// a client file the server does not read, so each survives a playtest.
     Sounds,
     /// `CreatureSoundData.dbc`: a creature's combat, movement and pet sounds.
@@ -250,6 +250,10 @@ pub(crate) enum Tool {
     /// `SoundAmbience.dbc`: the sound under an area's music, by day and by
     /// night. A part of the Sound workspace.
     Ambience,
+    /// `ItemGroupSounds.dbc`: the sounds an item makes when it is picked up
+    /// and put down, which `ItemDisplayInfo`'s `GroupSoundIndex` names. A
+    /// part of the Sound workspace.
+    ItemSounds,
     /// `AreaTrigger.dbc`: the spheres and boxes the client reports standing
     /// in, and what the server does when it is told. See [`places::triggers`].
     ///
@@ -460,15 +464,16 @@ const CREATURE_PARTS: [(&str, Tool); 2] = [
     ("Displays", Tool::CreatureDisplays),
 ];
 
-/// The Sound workspace's parts: `SoundEntries`, then the five tables whose
-/// columns hold a `SoundEntries` id.
-const SOUND_PARTS: [(&str, Tool); 6] = [
+/// The Sound workspace's parts: `SoundEntries`, then the six tables whose
+/// columns hold a `SoundEntries` id. Seven, so the strip draws two rows.
+const SOUND_PARTS: [(&str, Tool); 7] = [
     ("Sounds", Tool::Sounds),
     ("Creatures", Tool::CreatureSounds),
     ("NPCs", Tool::NpcSounds),
     ("Music", Tool::ZoneMusic),
     ("Intros", Tool::ZoneIntros),
     ("Ambience", Tool::Ambience),
+    ("Items", Tool::ItemSounds),
 ];
 
 /// The Assets workspace's parts: the project's own files, then the
@@ -899,9 +904,9 @@ pub(crate) const SPECS: &[Spec] = &[
             // `--tool sound` names the workspace's first part.
             "Sound",
             Place::Bar("Sound"),
-            "SoundEntries.dbc and the five tables whose columns hold a SoundEntries id: \
-             CreatureSoundData, NPCSounds, ZoneMusic, ZoneIntroMusicTable and SoundAmbience. \
-             Client files; they need no database.",
+            "SoundEntries.dbc and the six tables whose columns hold a SoundEntries id: \
+             CreatureSoundData, NPCSounds, ZoneMusic, ZoneIntroMusicTable, SoundAmbience and \
+             ItemGroupSounds. Client files; they need no database.",
             "SoundEntries",
             &crate::tables::tabs::SOUND_ENTRY_TABS,
         )
@@ -973,6 +978,24 @@ pub(crate) const SPECS: &[Spec] = &[
                     database.",
         }),
         ..browsed(Tool::Ambience, "Ambience", Place::Part, "", "SoundAmbience", &crate::tables::tabs::AMBIENCE_TABS)
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "Item Group Sounds",
+            about: "ItemGroupSounds.dbc: the sounds an item makes when it is picked up and put \
+                    down, which an ItemDisplayInfo row's GroupSoundIndex column holds. A client \
+                    file; it needs no database.",
+        }),
+        ..browsed(
+            Tool::ItemSounds,
+            "Item Sounds",
+            Place::Part,
+            "",
+            "ItemGroupSounds",
+            &crate::tables::tabs::ITEM_SOUND_TABS,
+        )
     },
     // No one table: the workspace starts on the list of them.
     Spec {
@@ -1100,9 +1123,10 @@ impl Tool {
             Tool::ZoneMusic => 33,
             Tool::ZoneIntros => 34,
             Tool::Ambience => 35,
-            Tool::Tables => 36,
-            Tool::Assets => 37,
-            Tool::GameFiles => 38,
+            Tool::ItemSounds => 36,
+            Tool::Tables => 37,
+            Tool::Assets => 38,
+            Tool::GameFiles => 39,
         }
     }
 
@@ -1741,6 +1765,7 @@ mod tests {
             ("ZoneMusic", Tool::ZoneMusic),
             ("ZoneIntroMusicTable", Tool::ZoneIntros),
             ("SoundAmbience", Tool::Ambience),
+            ("ItemGroupSounds", Tool::ItemSounds),
         ] {
             assert_eq!(Tool::for_table(table), part, "{table}");
             assert_eq!(part.workspace(), Tool::Sounds, "{table}");

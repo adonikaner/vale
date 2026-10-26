@@ -1099,8 +1099,13 @@ pub struct BindingPressed(pub Binding);
 
 /// The set this dispatch runs in, so every verb can order itself after all of
 /// it rather than after the one system it reads.
+///
+/// A host with keys of its own orders itself before this set, and clears a
+/// key it acts on from `ButtonInput<KeyCode>`, so the game's binding for the
+/// same key does not also fire: `CTRL-S` is `TOGGLESOUND` in the shipped
+/// `WTF\DefaultBindings.wtf`.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct BindingSet;
+pub struct BindingSet;
 
 pub(crate) struct BindingsPlugin;
 

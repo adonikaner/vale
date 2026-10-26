@@ -17,6 +17,9 @@ use super::{Tool, open_on, placements};
 /// `KeyboardFocus` says whether an edit box or an `enableKeyboard` frame took
 /// the keystroke. Without that check, a `Ctrl+P` typed into the chat line
 /// would end the session it was typed in.
+///
+/// The three keys that work during a playtest are read from [`Taken`], which
+/// [`take`] fills before the game's bindings run.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn shortcuts(
     mut session: Option<ResMut<EditSession>>,
@@ -26,8 +29,7 @@ pub(crate) fn shortcuts(
     login: Res<crate::playtest::Login>,
     mut auto: ResMut<vale_client::glue::autologin::AutoLogin>,
     keys: Res<ButtonInput<KeyCode>>,
-    typing: Res<vale_client::lua::api::keyboard::KeyboardFocus>,
-    wants: Res<bevy_egui::input::EguiWantsInput>,
+    mut taken: ResMut<Taken>,
     mut tool: ResMut<Tool>,
     assets: Res<vale_client::assets::GameAssets>,
     doodads: Res<placements::doodads::Selection>,
@@ -39,13 +41,14 @@ pub(crate) fn shortcuts(
     // parameter because this system is at Bevy's limit of sixteen.
     mut reach: crate::server::Reach,
 ) {
+    let taken = std::mem::take(&mut *taken);
     let Some(session) = session.as_mut() else {
         return;
     };
-    if wants.wants_keyboard_input() || !keys.pressed(KeyCode::ControlLeft) {
+    if !taken.ctrl {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyP) && !typing.active {
+    if taken.p {
         match state.editing() {
             true => crate::playtest::start(
                 &mut state,
@@ -63,7 +66,7 @@ pub(crate) fn shortcuts(
     }
     // The shell over a playtest. This is the only shortcut here that does
     // nothing while editing, because the panels are already drawn then.
-    if keys.just_pressed(KeyCode::KeyE) && !typing.active && state.playing() {
+    if taken.e {
         shell.0 = !shell.0;
         if shell.0 {
             *tool = open_on(*tool);
@@ -75,7 +78,7 @@ pub(crate) fn shortcuts(
     // folder and [`crate::playtest::republish`] puts it where the running
     // client reads it, so the next cast, the next entity and the next model
     // are the edited ones.
-    if keys.just_pressed(KeyCode::KeyS) && !typing.active {
+    if taken.s {
         session.save_all();
         session.save_all_tables();
         // The server half of the same key press: every subject's SQL, and,
@@ -133,6 +136,52 @@ pub(crate) fn shortcuts(
             session.status = format!("duplicating {}", placements::place::leaf(&placing_path(&placing)));
         }
     }
+}
+
+/// The editor's keys taken this frame, by [`take`], for [`shortcuts`].
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub(crate) struct Taken {
+    /// `Ctrl` is held and egui does not want the keyboard: the editor's other
+    /// `Ctrl` keys, undo, redo and duplicate, may act.
+    ctrl: bool,
+    /// `Ctrl+S`, `Ctrl+P`, and during a playtest `Ctrl+E`, pressed with the
+    /// game's keyboard free as well.
+    s: bool,
+    p: bool,
+    e: bool,
+}
+
+/// Take the editor's `Ctrl+S`, `Ctrl+P` and `Ctrl+E` before the game's key
+/// bindings read the keyboard, and clear each one's press, so the binding the
+/// game has for the same key does not also fire. `CTRL-S` is `TOGGLESOUND`
+/// in the shipped `WTF\DefaultBindings.wtf`, `CTRL-P`
+/// `RESETPERFORMANCEVALUES` and `CTRL-E` `TOGGLECOLLISION`. A save during a
+/// playtest also switched the game's sound effects off, and the client wrote
+/// `MasterSoundEffects 0` to `WTF\Config.wtf`, which silenced every sound
+/// effect the editor plays from then on.
+///
+/// A system of its own because [`shortcuts`] runs after the pointer's pick,
+/// which runs after the game's bindings; this has no other ordering, and
+/// runs before `vale_client::input::bindings::BindingSet`.
+pub(crate) fn take(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    typing: Res<vale_client::lua::api::keyboard::KeyboardFocus>,
+    wants: Res<bevy_egui::input::EguiWantsInput>,
+    state: Res<crate::playtest::Playtest>,
+    mut taken: ResMut<Taken>,
+) {
+    let ctrl = !wants.wants_keyboard_input() && keys.pressed(KeyCode::ControlLeft);
+    let mut press = |key: KeyCode, allowed: bool| {
+        let pressed = ctrl && allowed && !typing.active && keys.just_pressed(key);
+        if pressed {
+            keys.clear_just_pressed(key);
+        }
+        pressed
+    };
+    let s = press(KeyCode::KeyS, true);
+    let p = press(KeyCode::KeyP, true);
+    let e = press(KeyCode::KeyE, state.playing());
+    *taken = Taken { ctrl, s, p, e };
 }
 
 /// The armed path, for the status line.

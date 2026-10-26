@@ -194,6 +194,13 @@ pub fn describe(
             };
             (title, sub.unwrap_or_default())
         }
+        // An `ItemGroupSounds` row has no name, so it is labelled by the name
+        // of the `SoundEntries` row it plays on pick-up, with the put-down
+        // one under it.
+        "ItemGroupSounds" => (
+            sound_name(tables, num(1)).unwrap_or_default(),
+            sound_name(tables, num(2)).unwrap_or_default(),
+        ),
         // A `ZoneIntroMusicTable` row is labelled by its Name, with the name
         // of the `SoundEntries` row it plays under it.
         "ZoneIntroMusicTable" => {

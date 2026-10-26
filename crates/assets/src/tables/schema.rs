@@ -295,9 +295,12 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
             "CreatureModelData",
             "GameObjectDisplayInfo",
             "SpellVisualKit",
+            "ItemGroupSounds",
         ],
-        // The visual an item's glow is.
-        "ItemDisplayInfo" => &["SpellVisual"],
+        // The visual an item's glow is, and its pick-up and put-down sounds
+        // with the `SoundEntries` rows they name, so the sound column reads
+        // as the sound's name.
+        "ItemDisplayInfo" => &["SpellVisual", "ItemGroupSounds", "SoundEntries"],
         // The skill tables, read without the spell chain: each is labelled
         // from the others.
         "SkillLine" => &["SkillLineCategory", "SpellIcon"],
@@ -312,6 +315,8 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         "ZoneMusic" => &["SoundEntries", "AreaTable"],
         // The same two tables, for the same reason.
         "ZoneIntroMusicTable" | "SoundAmbience" => &["SoundEntries", "AreaTable"],
+        // An item's sounds, and the item displays that refer to them.
+        "ItemGroupSounds" => &["SoundEntries", "ItemDisplayInfo"],
         "AreaTable" => &[
             "Map",
             "ZoneMusic",
@@ -434,6 +439,7 @@ pub const ALL: &[&Schema] = &[
     &ZONE_MUSIC,
     &ZONE_INTRO_MUSIC,
     &SOUND_AMBIENCE,
+    &ITEM_GROUP_SOUNDS,
     &MAP,
     &AREA_TRIGGER,
     &WORLD_SAFE_LOCS,
@@ -2592,6 +2598,42 @@ pub(crate) const SOUND_AMBIENCE: Schema = Schema {
     sections: &[Section { name: "Ambience", fields: &[0, 1, 2] }],
 };
 
+/// `ItemGroupSounds.dbc`: 24 rows of 5 fields. The sounds an item makes when
+/// it is picked up and put down. `ItemDisplayInfo`'s `GroupSoundIndex` refers
+/// to a row; 20,513 of the 29,604 display rows hold one of 22 rows, and no
+/// display row holds row 1 or 2. The indices are
+/// [`super::itemsound::fields`]'s.
+pub(crate) const ITEM_GROUP_SOUNDS: Schema = Schema {
+    table: "ItemGroupSounds",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "SoundPickUp",
+            Kind::Reference("SoundEntries"),
+            "Played when the item is picked up onto the cursor or looted (PickUpCloth_Leather). \
+             Rows 7 to 24 resolve, each to SoundType 9; rows 1 and 3 hold 273, which is not a \
+             SoundEntries row. Row 13 holds PutDownWoodSmall.",
+        ),
+        ca(
+            2,
+            "SoundPutDown",
+            Kind::Reference("SoundEntries"),
+            "Played when the item is put down off the cursor (PutDownClothLeather). Rows 7 to 24 \
+             resolve, each to SoundType 9; row 1 holds 274, which is not a SoundEntries row.",
+        ),
+        ca(
+            3,
+            "Sound3",
+            Kind::Reference("SoundEntries"),
+            "Set on rows 1, 2, 4, 5 and 6, to 273, 274 or 275, none of which is a SoundEntries \
+             row. The 1.12.1 client does not read it.",
+        ),
+        ca(4, "Unused", Kind::Unused, "0 in every shipped row."),
+    ],
+    sections: &[Section { name: "Sounds", fields: &[0, 1, 2, 3, 4] }],
+};
+
 /// vmangos' `AreaFlags`, with what each bit does as its comments state it.
 pub(crate) const AREA_FLAGS: [(u32, &str, &str); 10] = [
     (0x001, "Snow", "Breath is drawn. Dun Morogh, Winterspring, Naxxramas and Razorfen Downs."),
@@ -3263,6 +3305,19 @@ mod tests {
         assert_eq!(AREA_TABLE.references_to("ZoneIntroMusicTable"), [area::INTRO_MUSIC]);
     }
 
+    /// The item sound schema names the columns `tables::itemsound` reads, and
+    /// `ItemDisplayInfo` refers to a row of it through field 11.
+    #[test]
+    fn the_item_sound_schema_agrees_with_the_module_that_reads_it() {
+        use super::super::itemsound::fields as f;
+        assert_eq!(ITEM_GROUP_SOUNDS.columns.len(), f::COUNT);
+        assert_eq!(ITEM_GROUP_SOUNDS.columns[f::PICK_UP].name, "SoundPickUp");
+        assert_eq!(ITEM_GROUP_SOUNDS.columns[f::PUT_DOWN].name, "SoundPutDown");
+        assert_eq!(ITEM_GROUP_SOUNDS.columns[f::THIRD].name, "Sound3");
+        assert_eq!(ITEM_GROUP_SOUNDS.columns[f::UNUSED].kind, Kind::Unused);
+        assert_eq!(ITEM_DISPLAY_INFO.references_to("ItemGroupSounds"), [11]);
+    }
+
     /// Every `SoundType` is named once, in order.
     #[test]
     fn every_sound_type_is_named_once() {
@@ -3695,10 +3750,9 @@ mod tests {
         // These are referenced deliberately without a schema of their own.
         // Each opens as numbered fields, which is better than a reference the
         // browser refuses to follow.
-        const UNDESCRIBED: [&str; 11] = [
+        const UNDESCRIBED: [&str; 10] = [
             "ChrRaces",
             "HelmetGeosetVisData",
-            "ItemGroupSounds",
             "ItemVisuals",
             "Faction",
             "LiquidType",

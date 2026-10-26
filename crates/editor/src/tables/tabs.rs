@@ -66,12 +66,13 @@ pub(crate) const ITEM_DISPLAY_TABS: [(&str, &str); 1] = [("Display Info", "ItemD
 /// [`ZONE_MUSIC_TABS`], [`ZONE_INTRO_TABS`] and [`AMBIENCE_TABS`].
 pub(crate) const ZONE_TABS: [(&str, &str); 1] = [("Areas", "AreaTable")];
 
-/// The tables of the Sound workspace's six parts, one table to a part, so no
-/// tab is drawn. `SoundEntries` comes first, then the five tables whose
+/// The tables of the Sound workspace's seven parts, one table to a part, so
+/// no tab is drawn. `SoundEntries` comes first, then the six tables whose
 /// columns hold a `SoundEntries` id: `CreatureSoundData` (a creature's combat,
 /// movement and pet sounds), `NPCSounds` (its greeting, farewell and annoyed
-/// lines), and `ZoneMusic`, `ZoneIntroMusicTable` and `SoundAmbience` (an
-/// area's music, intro and ambience). The top bar's Sound menu and the strip
+/// lines), `ZoneMusic`, `ZoneIntroMusicTable` and `SoundAmbience` (an area's
+/// music, intro and ambience), and `ItemGroupSounds` (an item's pick-up and
+/// put-down sounds). The top bar's Sound menu and the strip
 /// at the head of the list switch between the parts.
 pub(crate) const SOUND_ENTRY_TABS: [(&str, &str); 1] = [("Sounds", "SoundEntries")];
 pub(crate) const CREATURE_SOUND_TABS: [(&str, &str); 1] = [("Creature Sounds", "CreatureSoundData")];
@@ -79,6 +80,7 @@ pub(crate) const NPC_SOUND_TABS: [(&str, &str); 1] = [("NPC Sounds", "NPCSounds"
 pub(crate) const ZONE_MUSIC_TABS: [(&str, &str); 1] = [("Zone Music", "ZoneMusic")];
 pub(crate) const ZONE_INTRO_TABS: [(&str, &str); 1] = [("Zone Intros", "ZoneIntroMusicTable")];
 pub(crate) const AMBIENCE_TABS: [(&str, &str); 1] = [("Ambience", "SoundAmbience")];
+pub(crate) const ITEM_SOUND_TABS: [(&str, &str); 1] = [("Item Sounds", "ItemGroupSounds")];
 
 /// The table the Tables workspace starts on: none. Its list is the tables
 /// themselves until one is chosen. See [`crate::tools::Tool::Tables`].

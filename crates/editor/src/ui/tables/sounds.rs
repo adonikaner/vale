@@ -10,7 +10,7 @@ use crate::ui::tables::Workspace;
 pub(super) fn plays_sounds(table: &str) -> bool {
     matches!(
         table,
-        "SoundEntries" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience" | "NPCSounds"
+        "SoundEntries" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience" | "NPCSounds" | "ItemGroupSounds"
     )
 }
 
@@ -46,7 +46,17 @@ fn sounds_of(work: &Workspace<'_>, table: &str, id: u32) -> [u32; 2] {
         "ZoneIntroMusicTable" => [at(intro::SOUND), 0],
         "SoundAmbience" => [at(ambience::SOUND), at(ambience::SOUND + 1)],
         "NPCSounds" => [at(1), 0],
+        "ItemGroupSounds" => [at(1), at(2)],
         _ => [0, 0],
+    }
+}
+
+/// What a row's two sounds are called on their buttons: by day and by night,
+/// or for an item's sounds, picked up and put down.
+fn pair_words(table: &str) -> [&'static str; 2] {
+    match table {
+        "ItemGroupSounds" => ["pick up", "put down"],
+        _ => ["day", "night"],
     }
 }
 
@@ -72,7 +82,8 @@ pub(super) fn sound_buttons(
     };
     let [day, night] = sounds_of(work, table, id);
     let two = both && night != 0 && night != day;
-    for (at_night, entry, when) in [(false, day, "day"), (true, night, "night")] {
+    let [first, second] = pair_words(table);
+    for (at_night, entry, when) in [(false, day, first), (true, night, second)] {
         if at_night && !two {
             break;
         }
@@ -103,7 +114,7 @@ pub(super) fn sound_buttons(
         let hover = match (on, two || night == 0 || night == day) {
             (true, _) => format!("Stop {name}"),
             (false, true) => format!("Play {name}"),
-            (false, false) => format!("Play {name} (day)"),
+            (false, false) => format!("Play {name} ({first})"),
         };
         if ui
             .add_enabled(entry != 0, egui::Button::new(text).small())

@@ -422,7 +422,20 @@ impl Plugin for PanelPlugin {
             // as every tool's input is; a tool whose order against them
             // matters states it in its own plugin (the height brush, the
             // doodad and WMO picks, the group clipboard).
-            .add_systems(Update, crate::tools::shortcuts::shortcuts.after(crate::pick::aim))
+            // Its three playtest keys are taken before the game's key
+            // bindings, which must not see a key the editor acts on; see
+            // `crate::tools::shortcuts::take`.
+            .init_resource::<crate::tools::shortcuts::Taken>()
+            .add_systems(
+                Update,
+                crate::tools::shortcuts::take.before(vale_client::input::bindings::BindingSet),
+            )
+            .add_systems(
+                Update,
+                crate::tools::shortcuts::shortcuts
+                    .after(crate::pick::aim)
+                    .after(crate::tools::shortcuts::take),
+            )
             .add_systems(EguiPrimaryContextPass, draw)
             // One pass per pop-out window slot; see `crate::popout`.
             .add_systems(crate::popout::PopoutPass(0), shell::popout::draw::<0>)

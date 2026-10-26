@@ -554,7 +554,8 @@ pub(super) fn plural(table: &str, count: usize) -> String {
         // These table names are not nouns, so their rows are counted as
         // rows: `3 CreatureSoundData rows`.
         "CreatureSoundData" | "NPCSounds" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience"
-        | "GameObjectDisplayInfo" | "CreatureDisplayInfo" | "CreatureModelData" => {
+        | "GameObjectDisplayInfo" | "CreatureDisplayInfo" | "CreatureModelData" | "ItemDisplayInfo"
+        | "ItemGroupSounds" => {
             return match count {
                 1 => format!("{table} row"),
                 _ => format!("{table} rows"),
