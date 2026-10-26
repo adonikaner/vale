@@ -482,6 +482,64 @@ fn a_table_with_no_schema_is_named_by_its_first_column_of_strings() {
     let _ = std::fs::remove_dir_all(&install);
 }
 
+/// A `CreatureSoundData` row is labelled by its death sound's name, with the
+/// count of its nonzero sound columns under it. An `NPCSounds` row is
+/// labelled by its greeting's name, with its farewell's under it.
+#[test]
+fn the_sound_tables_are_labelled_by_their_sounds() {
+    use vale_assets::tables::sound::fields::entry;
+    let mut sounds = empty(29);
+    add(&mut sounds, 569, &[], &[(entry::NAME, "BasiliskDeath")]);
+    add(&mut sounds, 570, &[], &[(entry::NAME, "BasiliskAttack")]);
+    add(&mut sounds, 100, &[], &[(entry::NAME, "DwarfMaleStandardNPCGreetings")]);
+    add(&mut sounds, 101, &[], &[(entry::NAME, "DwarfMaleStandardNPCFarewells")]);
+    let mut creature = empty(30);
+    // Death and attack, and a footstep key, which is not a sound.
+    add(&mut creature, 1, &[(6, 569), (1, 570), (9, 6)], &[]);
+    let mut npc = empty(5);
+    add(&mut npc, 7, &[(1, 100), (2, 101)], &[]);
+
+    let (mut session, install) = session("sounds");
+    session.tables.insert("SoundEntries".to_string(), sounds);
+    session.tables.insert("CreatureSoundData".to_string(), creature);
+    session.tables.insert("NPCSounds".to_string(), npc);
+    let mut browser = Browser::default();
+    let label = describe(&mut browser, &session, "CreatureSoundData", 0);
+    assert_eq!((label.title.as_str(), label.sub.as_str()), ("BasiliskDeath", "2 sounds"));
+    let label = describe(&mut browser, &session, "NPCSounds", 0);
+    assert_eq!(
+        (label.title.as_str(), label.sub.as_str()),
+        ("DwarfMaleStandardNPCGreetings", "DwarfMaleStandardNPCFarewells")
+    );
+    let _ = std::fs::remove_dir_all(&install);
+}
+
+/// A `ZoneMusic` row is labelled by its SetName, with its day and night
+/// sounds' names under it, and by its day sound's name when SetName is empty.
+#[test]
+fn a_music_set_is_labelled_by_its_name_and_its_sounds() {
+    use vale_assets::tables::sound::fields::entry;
+    let mut sounds = empty(29);
+    add(&mut sounds, 2527, &[], &[(entry::NAME, "Zone-Mountain Day")]);
+    add(&mut sounds, 2528, &[], &[(entry::NAME, "Zone-Mountain Night")]);
+    add(&mut sounds, 8890, &[], &[(entry::NAME, "AhnQirajKingRoom")]);
+    let mut music = empty(8);
+    add(&mut music, 8, &[(6, 2527), (7, 2528)], &[(1, "Zone-Mountain")]);
+    add(&mut music, 251, &[(6, 8890), (7, 8890)], &[]);
+    let (mut session, install) = session("music");
+    session.tables.insert("SoundEntries".to_string(), sounds);
+    session.tables.insert("ZoneMusic".to_string(), music);
+    let mut browser = Browser::default();
+    let label = describe(&mut browser, &session, "ZoneMusic", 0);
+    assert_eq!(
+        (label.title.as_str(), label.sub.as_str()),
+        ("Zone-Mountain", "Zone-Mountain Day \u{b7} night: Zone-Mountain Night")
+    );
+    let label = describe(&mut browser, &session, "ZoneMusic", 1);
+    assert_eq!((label.title.as_str(), label.sub.as_str()), ("AhnQirajKingRoom", "AhnQirajKingRoom"));
+    let _ = std::fs::remove_dir_all(&install);
+}
+
 /// A table is opened under one name whatever case it is asked for in,
 /// and a name that is no table is refused.
 #[test]
@@ -697,5 +755,100 @@ fn a_kit_and_a_visual_are_pictured_and_found_by_their_models() {
     assert_eq!(found("SpellVisual", "frost_nova"), vec![0, 1]);
     assert_eq!(found("SpellVisual", "fireball"), vec![0]);
     assert!(found("SpellVisual", "arcane").is_empty());
+    let _ = std::fs::remove_dir_all(&install);
+}
+
+/// A sound imported for a `CreatureSoundData` field copies SoundType, Volume,
+/// Flags, the distances and Directory from a `SoundEntries` row that the
+/// field's row already refers to. It adds a `SoundEntries` row with the file
+/// in File 1 at Weight 1 and sets the field to the new row's id, and one undo
+/// removes the row and resets the field.
+#[test]
+fn a_sound_import_adds_its_row_and_points_the_field_at_it() {
+    use crate::import::assets::FieldTarget;
+    use crate::import::sounds::{add_entry, rows_naming, suggested, EntryValues};
+    use vale_assets::tables::sound::fields::entry;
+    let mut sounds = empty(29);
+    add(
+        &mut sounds,
+        569,
+        &[(entry::KIND, 10), (entry::VOLUME, 0.7f32.to_bits()), (entry::FLAGS, 0x20), (entry::CUTOFF, 45f32.to_bits())],
+        &[(entry::NAME, "BasiliskDeath"), (entry::DIRECTORY, "Sound\\Creature\\Basilisk")],
+    );
+    let mut creature = empty(30);
+    add(&mut creature, 1, &[(6, 569)], &[]);
+    let (mut session, install) = session("sound-import");
+    session.tables.insert("SoundEntries".to_string(), sounds);
+    session.tables.insert("CreatureSoundData".to_string(), creature);
+
+    // The wound column is 0, so the values come from the death column's
+    // `SoundEntries` row.
+    let target = FieldTarget { table: "CreatureSoundData".to_string(), record: 0, field: 3, suffix: "" };
+    let (values, directory) = suggested(&session, &target).expect("a sound of the row");
+    assert_eq!((values.kind, values.volume, values.flags), (10, 0.7, 0x20));
+    assert_eq!(directory, "Sound\\Creature\\Basilisk");
+    let values = EntryValues { name: "BasiliskWound".to_string(), ..values };
+    let id = add_entry(&mut session, &values, &directory, &["BasiliskWound.wav".to_string()], Some(&target)).expect("a row");
+    assert_eq!(id, 570);
+    let table = session.table("SoundEntries").expect("open");
+    let row = table.row_of(570).expect("the new row");
+    assert_eq!(table.string_at(row, entry::FILE).as_deref(), Some("BasiliskWound.wav"));
+    assert_eq!(table.u32_at(row, entry::FREQ), Some(1));
+    assert_eq!(table.f32_at(row, entry::VOLUME), Some(0.7));
+    assert_eq!(rows_naming(table, "Sound\\Creature\\Basilisk\\BasiliskWound.wav"), [570]);
+    assert_eq!(session.table("CreatureSoundData").and_then(|t| t.u32_at(0, 3)), Some(570));
+
+    undo(&mut session);
+    assert_eq!(session.table("CreatureSoundData").and_then(|t| t.u32_at(0, 3)), Some(0));
+    assert!(session.table("SoundEntries").expect("open").row_of(570).is_none());
+    let _ = std::fs::remove_dir_all(&install);
+}
+
+/// A file added to a `SoundEntries` row goes in the first empty File column
+/// at Weight 1. A removed file's later files move up one slot. A file in
+/// another folder than Directory is refused while the row has another file;
+/// in a row with no file it is taken and Directory is set to its folder. Each
+/// change is one undo entry.
+#[test]
+fn a_sound_row_s_files_are_added_moved_up_and_kept_in_one_folder() {
+    use super::sound_files::{chance, place, put_file, remove_file, slots, Slot};
+    use vale_assets::tables::sound::fields::entry;
+    let mut sounds = empty(29);
+    add(
+        &mut sounds,
+        569,
+        &[(entry::FREQ, 1), (entry::FREQ + 1, 3)],
+        &[(entry::FILE, "A.wav"), (entry::FILE + 1, "B.wav"), (entry::DIRECTORY, "Sound\\Creature\\Basilisk\\")],
+    );
+    add(&mut sounds, 570, &[], &[(entry::NAME, "Empty")]);
+    let (mut session, install) = session("sound-files");
+    session.tables.insert("SoundEntries".to_string(), sounds);
+    let names = |session: &EditSession, record: usize| -> Vec<(String, u32)> {
+        slots(session.table("SoundEntries").expect("open"), record).into_iter().map(|slot| (slot.file, slot.weight)).collect()
+    };
+
+    let two = slots(session.table("SoundEntries").expect("open"), 0);
+    assert_eq!(chance(&two, 3), 0.75);
+    assert_eq!(chance(&[Slot { at: 0, file: "A.wav".into(), weight: 0 }, Slot { at: 1, file: "B.wav".into(), weight: 0 }], 0), 0.5);
+
+    put_file(&mut session, 0, 2, "Sound\\Creature\\Basilisk\\C.wav").expect("same folder");
+    assert_eq!(names(&session, 0), [("A.wav".into(), 1), ("B.wav".into(), 3), ("C.wav".into(), 1)]);
+    let refused = place(session.table("SoundEntries").expect("open"), 0, 3, "Sound\\Spells\\D.wav");
+    assert!(refused.is_err(), "{refused:?}");
+
+    remove_file(&mut session, 0, 0);
+    assert_eq!(names(&session, 0), [("B.wav".into(), 3), ("C.wav".into(), 1)]);
+    undo(&mut session);
+    assert_eq!(names(&session, 0).len(), 3, "one undo puts the file back");
+
+    // A row with no file takes the file's folder.
+    put_file(&mut session, 1, 0, "Sound\\Spells\\Fizzle.wav").expect("no other file");
+    let table = session.table("SoundEntries").expect("open");
+    assert_eq!(table.string_at(1, entry::DIRECTORY).as_deref(), Some("Sound\\Spells"));
+    assert_eq!(names(&session, 1), [("Fizzle.wav".into(), 1)]);
+    undo(&mut session);
+    let table = session.table("SoundEntries").expect("open");
+    assert_eq!(table.string_at(1, entry::DIRECTORY).as_deref(), Some(""));
+    assert!(names(&session, 1).is_empty(), "one undo takes out the file and the folder");
     let _ = std::fs::remove_dir_all(&install);
 }

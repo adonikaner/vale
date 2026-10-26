@@ -1,9 +1,14 @@
-//! Playing a `SoundEntries` row: the audition a panel asks for, and the play
-//! and stop buttons beside a sound column.
+//! Playing sounds for the panels: a `SoundEntries` row a kit's sound column
+//! names, a row or a file a play button names, and a converted file the
+//! Import Sound dialog has not written yet; and stopping what plays.
 
+use std::sync::Arc;
+
+use vale_assets::tables::sound::SoundBank;
 use vale_client::assets::GameAssets;
 use bevy::prelude::*;
 use super::browser::Browser;
+use crate::session::EditSession;
 
 /// Play the sounds the panels queued, through the client's own voices; see
 /// [`Browser::audition`].
@@ -38,13 +43,28 @@ pub(crate) struct Heard {
 }
 
 /// A request to [`listen`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Listen {
     /// Play the `SoundEntries` row `entry` on `channel`, as `heard`. The
     /// ambience channel loops, as the game loops it; the other two play once.
     Play {
         heard: Heard,
         entry: u32,
+        channel: vale_client::sound::mixer::Channel,
+    },
+    /// Play the file at archive path `path` once, on `channel`, as the Assets
+    /// workspace plays one of the project's sounds.
+    File {
+        path: String,
+        channel: vale_client::sound::mixer::Channel,
+    },
+    /// Play a sound's bytes once, on `channel` at `volume`: a file the Import
+    /// Sound dialog has converted and not yet written. `key` is what
+    /// [`Browser::hearing_file`] holds while it plays.
+    Bytes {
+        key: String,
+        bytes: Vec<u8>,
+        volume: f32,
         channel: vale_client::sound::mixer::Channel,
     },
     Stop,
@@ -57,18 +77,22 @@ const STOP_SECS: f32 = 0.25;
 /// Play or stop what a panel asked for in [`Browser::listen`], through the
 /// client's mixer and at its channel volumes.
 ///
-/// The sound stops by itself when the browser's tools are left or a
-/// playtest begins, since a looping ambience has no other end.
+/// The sound is stopped when the tool shown is neither one with a table nor
+/// the Assets workspace, and when a playtest begins, because a looping
+/// ambience has no other end.
 pub(super) fn listen(
     browser: Option<ResMut<Browser>>,
     tool: Res<crate::tools::Tool>,
     popout: Res<crate::popout::Popout>,
     playtest: Res<crate::playtest::Playtest>,
     assets: Res<GameAssets>,
+    session: Option<Res<EditSession>>,
     mut voices: vale_client::sound::mixer::Voices,
     alive: Query<(), With<bevy::audio::AudioPlayer>>,
     // The voice and the volume it plays at, which a fade starts from.
     mut playing: Local<Option<(Entity, f32)>>,
+    // The edited `SoundEntries` table's bank and the revision it was read at.
+    mut edited: Local<Option<(u64, Arc<SoundBank>)>>,
 ) {
     use vale_client::sound::mixer::{Channel, Place};
     let Some(mut browser) = browser else { return };
@@ -76,9 +100,11 @@ pub(super) fn listen(
         if alive.get(entity).is_err() {
             *playing = None;
             browser.hearing = None;
+            browser.hearing_file = None;
         }
     }
-    let away = popout.browser_tool(*tool).table().is_none() || !playtest.editing();
+    let shown = popout.browser_tool(*tool).table().is_some() || *tool == crate::tools::Tool::Assets;
+    let away = !shown || !playtest.editing();
     let ask = match away {
         true => {
             browser.listen = None;
@@ -91,24 +117,76 @@ pub(super) fn listen(
         voices.fade_out(entity, volume, STOP_SECS);
     }
     browser.hearing = None;
-    let Listen::Play {
-        heard,
-        entry,
-        channel,
-    } = ask
-    else {
-        return;
+    browser.hearing_file = None;
+    let once = bevy::audio::PlaybackSettings::DESPAWN;
+    let (voice, volume, channel) = match ask {
+        Listen::Stop => return,
+        Listen::File { path, channel } => {
+            let voice = voices.play_file(&path, 1.0, channel, Place::Flat, once);
+            if voice.is_some() {
+                browser.hearing_file = Some(path);
+            }
+            (voice, 1.0, channel)
+        }
+        Listen::Bytes { key, bytes, volume, channel } => {
+            let voice = voices.play_bytes(bytes, volume, channel, once);
+            if voice.is_some() {
+                browser.hearing_file = Some(key);
+            }
+            (voice, volume, channel)
+        }
+        Listen::Play { heard, entry, channel } => {
+            let bank = bank_of(session.as_deref(), &assets, &mut edited);
+            let Some((path, volume)) = voices.pick(&bank, entry) else {
+                return;
+            };
+            let settings = match channel {
+                Channel::Ambience => bevy::audio::PlaybackSettings::LOOP,
+                _ => once,
+            };
+            let voice = voices.play_file(&path, volume, channel, Place::Flat, settings);
+            if voice.is_some() {
+                browser.hearing = Some(heard);
+            }
+            (voice, volume, channel)
+        }
     };
-    let bank = assets.sounds();
-    let Some((path, volume)) = voices.pick(&bank, entry) else {
-        return;
-    };
-    let settings = match channel {
-        Channel::Ambience => bevy::audio::PlaybackSettings::LOOP,
-        _ => bevy::audio::PlaybackSettings::DESPAWN,
-    };
-    if let Some(entity) = voices.play_file(&path, volume, channel, Place::Flat, settings) {
+    if let Some(entity) = voice {
         *playing = Some((entity, volume * voices.gain(channel)));
-        browser.hearing = Some(heard);
+    }
+}
+
+/// The sound bank a button plays from. While the session has `SoundEntries`
+/// open, the bank is built from the open table, cached by
+/// `EditSession::table_revision`, so a row just added or changed plays as it
+/// is now, saved or not. A save writes the table into the project but does
+/// not make `GameAssets` parse it again. With the table not open, the bank is
+/// `GameAssets::sounds`.
+fn bank_of(
+    session: Option<&EditSession>,
+    assets: &GameAssets,
+    edited: &mut Option<(u64, Arc<SoundBank>)>,
+) -> Arc<SoundBank> {
+    const TABLE: &str = "SoundEntries";
+    let Some(session) = session.filter(|session| session.table(TABLE).is_some()) else {
+        return assets.sounds();
+    };
+    if let Some((at, bank)) = edited.as_ref() {
+        if *at == session.table_revision {
+            return Arc::clone(bank);
+        }
+    }
+    let bytes = session.table(TABLE).map(|table| table.write());
+    let read = SoundBank::load(|table| match table == TABLE {
+        true => bytes.clone(),
+        false => None,
+    });
+    match read {
+        Ok(bank) => {
+            let bank = Arc::new(bank);
+            *edited = Some((session.table_revision, Arc::clone(&bank)));
+            bank
+        }
+        Err(_) => assets.sounds(),
     }
 }

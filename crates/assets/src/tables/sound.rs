@@ -1,130 +1,132 @@
-//! **What the world sounds like** — the sound half of the DBC chain, from the
-//! id a table carries to the file an archive holds.
+//! The sound tables of the DBC chain, from the sound entry id a table carries
+//! to the file an archive holds.
 //!
-//! Nothing about sound crosses the wire. The server never says "play this";
-//! every sound in the game is the client's own decision, driven by tables in
-//! the archives — which makes this module the same kind of thing as
-//! [`crate::tables::light`]: a rulebook the renderer (here: the mixer) consults, with
-//! no opinion about how a decoded buffer reaches a speaker.
+//! No sound data crosses the wire. The server never sends a request to play a
+//! sound; the client chooses every sound itself, from tables in the archives.
+//! This module therefore has the same role as [`crate::tables::light`]: it
+//! holds rules that the mixer consults, and it does not handle how a decoded
+//! buffer reaches a speaker.
 //!
-//! ## The hub: `SoundEntries.dbc`
+//! ## `SoundEntries.dbc`, the table every other sound table refers to
 //!
-//! Every other table below answers with a **sound entry id**, and this table is
-//! what an id means: a directory, up to ten candidate files with pick weights,
-//! a volume, and the two distances. 4,623 rows.
+//! Every other table below answers with a sound entry id, and a row of this
+//! table defines what the id means: a directory, up to ten candidate files with
+//! pick weights, a volume, and two distances. 4,623 rows.
 //!
 //! ```text
 //! SoundEntries.dbc   4,623 rows x 29 fields
 //!   [ 0]     id
-//!   [ 1]     soundType        1 spells, 2 UI, … — kept raw, grouped by the census
+//!   [ 1]     soundType        1 spells, 2 UI, …; kept raw, grouped by the census
 //!   [ 2]     name             "Invisibility Impact", "gsTitleOptionOK", …
 //!   [ 3..12] file[10]         "Dispel_Low_Base.wav"
 //!   [13..22] freq[10]         pick weight per file, usually 1
 //!   [23]     directoryBase    "Sound\Spells"
 //!   [24]     volume           f32, 0..1
 //!   [25]     flags
-//!   [26]     minDistance      f32, 8.0 — inside it, full volume
-//!   [27]     distanceCutoff   f32, 45.0 — beyond it, nothing
+//!   [26]     minDistance      f32, 8.0; full volume inside it
+//!   [27]     distanceCutoff   f32, 45.0; not played beyond it
 //!   [28]     EAXDef           unread (environmental reverb preset)
 //! ```
 //!
 //! Measured on record 0 (id 3, "Invisibility Impact", one file, volume 1.0,
 //! 8/45 yards) and record 1 (id 7, "BlizzardImpactVariations", six files).
-//! **The name column is an API**: `PlaySound("gsTitleOptionOK")` in the game's
-//! own GlueXML/FrameXML is a lookup into it — 99 of the `gs*`/`ig*` interface
-//! names are rows here, which is what [`SoundBank::entry_named`] is for.
+//! Interface code looks rows up by the name column: `PlaySound("gsTitleOptionOK")`
+//! in the game's own GlueXML and FrameXML resolves against it. 99 of the
+//! `gs*`/`ig*` interface names are rows here. [`SoundBank::entry_named`] does
+//! this lookup.
 //!
-//! ## The tables that point into it
+//! ## Tables that refer to `SoundEntries`
 //!
-//! * **`AreaTable.dbc`** carries three sound columns this module reads and
-//!   [`crate::tables::area`] deliberately does not: `[7]` ambience, `[8]` zone music,
-//!   `[9]` intro music (columns pinned by the ids resolving in their own
-//!   tables — Dun Morogh reads ambience 42, music 8, intro 0). `[5]`/`[6]` are
-//!   the EAX provider preferences, unread.
-//! * **`ZoneMusic.dbc`** (99 x 8): id, set name, then **day/night pairs** —
+//! * `AreaTable.dbc` carries three sound columns. This module reads them and
+//!   [`crate::tables::area`] does not: `[7]` ambience, `[8]` zone music, `[9]`
+//!   intro music. The column indices are pinned by the ids resolving in their
+//!   own tables: Dun Morogh reads ambience 42, music 8, intro 0. `[5]` and `[6]`
+//!   are the EAX provider preferences, unread.
+//! * `ZoneMusic.dbc` (99 x 8): id, set name, then day/night pairs:
 //!   silence-min ms `[2,3]`, silence-max ms `[4,5]`, sound entry `[6,7]`. Music
 //!   is a track, then a silence drawn from `min..max`, then another track.
-//! * **`SoundAmbience.dbc`** (68 x 3): id, day entry, night entry. Ambience
-//!   loops; there is no silence interval.
-//! * **`ZoneIntroMusicTable.dbc`** (43 x 5): id, name, sound entry, priority,
-//!   min-delay minutes — the fanfare a zone plays on entry, at most once per
-//!   delay window.
-//! * **`CreatureSoundData.dbc`** (406 x 30): what a *unit* sounds like. Columns
-//!   used here: `[1]` exertion (the attack grunt), `[3]` wound, `[4]` critical
-//!   wound, `[5]` crushing wound, `[6]` death, `[9]` **footstep — not a sound
-//!   entry id** but a key into `FootstepTerrainLookup`, `[10]` aggro, `[13]`
-//!   alert, `[19..22]` the four **custom attacks** (a creature's natural
-//!   weapon), `[25]` **`CreatureImpactType` — not a sound id either**, but what
-//!   the unit is made of. Each passes its structural
-//!   pin (`vale sound`: every nonzero value resolves in the table it
-//!   should); **column 8, believed to be the stand sound, fails its pin at
-//!   10/19 and is deliberately not read.** Reached from a
-//!   display id: `CreatureDisplayInfo[2]` overrides, else
-//!   `CreatureModelData[13]` (the model's own; pinned by Basilisk — display 1
-//!   -> model 1 -> sound data 1, whose death entry 569 resolves).
+//! * `SoundAmbience.dbc` (68 x 3): id, day entry, night entry. Ambience loops;
+//!   there is no silence interval.
+//! * `ZoneIntroMusicTable.dbc` (43 x 5): id, name, sound entry, priority,
+//!   min-delay minutes. A row is the fanfare a zone plays on entry, at most
+//!   once per delay window.
+//! * `CreatureSoundData.dbc` (406 x 30): the sounds of a unit. Columns used
+//!   here: `[1]` exertion (the attack grunt), `[3]` wound, `[4]` critical
+//!   wound, `[5]` crushing wound, `[6]` death, `[9]` footstep, `[10]` aggro,
+//!   `[13]` alert, `[19..22]` the four custom attacks (a creature's natural
+//!   weapon), `[25]` `CreatureImpactType`. Column 9 is not a sound entry id; it
+//!   is a key into `FootstepTerrainLookup`. Column 25 is not a sound id either;
+//!   it is the unit's material. Each column passes its structural pin in
+//!   `vale sound`: every nonzero value resolves in the table it should.
+//!   Column 8, believed to be the stand sound, fails its pin at 10/19 and is
+//!   not read. A row is reached from a display id: `CreatureDisplayInfo[2]`
+//!   overrides, else `CreatureModelData[13]` (the model's own; pinned by
+//!   Basilisk: display 1 -> model 1 -> sound data 1, whose death entry 569
+//!   resolves).
 //!
-//!   **The whole row is pinned by name on one creature**, which is worth more
-//!   than a range check on a column of small integers: the basilisk's are
-//!   `BasiliskAttack` `[1]`, `BasiliskWound` `[3]`, `BasiliskWoundCritical`
-//!   `[4]`, `BasiliskDeath` `[6]`, `BasiliskAggro` `[10]` and — the one that
-//!   settles the custom-attack block — `BiteMedium` at `[19]`.
-//! * **`FootstepTerrainLookup.dbc`** (179 x 5): (creatureFootstep `[1]`,
-//!   terrain `[2]`) -> sound entry `[3]`, splash entry `[4]`. The terrain key
-//!   comes from the texture layer under the foot — `MCLY`'s own `effectId`
+//!   The whole row is also pinned by name on one creature, which is stronger
+//!   evidence than a range check on a column of small integers. The basilisk's
+//!   entries are `BasiliskAttack` `[1]`, `BasiliskWound` `[3]`,
+//!   `BasiliskWoundCritical` `[4]`, `BasiliskDeath` `[6]`, `BasiliskAggro`
+//!   `[10]`, and `BiteMedium` at `[19]`, which confirms the custom-attack
+//!   block.
+//! * `FootstepTerrainLookup.dbc` (179 x 5): (creatureFootstep `[1]`, terrain
+//!   `[2]`) -> sound entry `[3]`, splash entry `[4]`. The terrain key comes
+//!   from the texture layer under the foot: `MCLY`'s `effectId`
 //!   ([`crate::world::adt::TextureLayer`]) -> `GroundEffectTexture.dbc[6]` -> a
-//!   **`TerrainType.dbc` row** -> that row's own field `[4]`.
-//!   **`TerrainType` is a hop and not a glossary**, which this module read it
-//!   as for a round: its row ids are 0-based and its footstep column is not, so
-//!   using a row id as a key answers the terrain one along — grass as wood. See
+//!   `TerrainType.dbc` row -> that row's field `[4]`. `TerrainType` is an
+//!   intermediate step, not a list of keys: its row ids are 0-based and its
+//!   footstep column is not, so a row id used as a key selects the next
+//!   terrain along, and grass plays as wood. See
 //!   [`SoundBank::terrain_of_ground_effect`].
-//! * **`WeaponSwingSounds2.dbc`** (6 x 4): (swing size `[1]` 0/1/2, crit `[2]`)
-//!   -> the whoosh `[3]`. Read and censused; **nothing plays it** — see
-//!   [`SoundBank::swing`], and [`COMBAT_MISS_1H`] for what a miss actually is.
-//! * **`WeaponImpactSounds.dbc`** (30 x 23): **(weapon subclass `[1]`, metal
-//!   `[2]`)**, then ten impact entries `[3..12]` and ten crit entries
-//!   `[13..22]`. Both halves of that key matter — 11 subclasses carry two rows
-//!   — and the ten columns are the ten things a blow can *meet*, named by the
-//!   file: see [`impact_slot`].
-//! * **`NPCSounds.dbc`** (156 x 5): id then hello/goodbye/pissed/ack, pointed
-//!   at by `CreatureDisplayInfo`'s last column.
-//! * **The spell chain** re-walked for its sound columns: `Spell[115]` ->
+//! * `WeaponSwingSounds2.dbc` (6 x 4): (swing size `[1]` 0/1/2, crit `[2]`) ->
+//!   the whoosh `[3]`. Read and included in the census; nothing plays it. See
+//!   [`SoundBank::swing`], and [`COMBAT_MISS_1H`] for the sound a miss plays.
+//! * `WeaponImpactSounds.dbc` (30 x 23): key (weapon subclass `[1]`, metal
+//!   `[2]`), then ten impact entries `[3..12]` and ten crit entries
+//!   `[13..22]`. Both parts of the key are needed because 11 subclasses carry
+//!   two rows. The ten columns are the ten surfaces a blow can meet, named by
+//!   the files they resolve to: see [`impact_slot`].
+//! * `NPCSounds.dbc` (156 x 5): id then hello/goodbye/pissed/ack, referenced
+//!   by `CreatureDisplayInfo`'s last column.
+//! * The spell chain, read again for its sound columns: `Spell[115]` ->
 //!   `SpellVisual`, whose kits `[1..5]` each carry a sound at
 //!   `SpellVisualKit[13]`, and whose missile block ends in its own sound at
-//!   `SpellVisual[10]`. [`crate::tables::spell`] reads *past* both on purpose (they pin
-//!   its model block); this module is where they are finally read.
+//!   `SpellVisual[10]`. [`crate::tables::spell`] skips both columns (they pin
+//!   the position of its model block); this module reads them.
 //!
-//! Every column above is validated structurally by `vale sound`: a column
-//! believed to hold sound entry ids is checked against the id set, the footstep
-//! column against the lookup's own key set, and every referenced file against
-//! the archives. **Which sound plays when is a game rule and lives here; *when*
-//! the client asks is the client's half** — see `crates/client/src/sound/`.
+//! `vale sound` validates every column above structurally: a column believed
+//! to hold sound entry ids is checked against the id set, the footstep column
+//! against the lookup's own key set, and every referenced file against the
+//! archives. Which sound plays for an event is a game rule and lives here.
+//! When the client requests a sound is decided in `crates/client/src/sound/`.
 //!
-//! ## Day against night
+//! ## Day and night hours
 //!
-//! The day/night pairs switch on the hour, and **the switch hours are an
-//! interpretation, not a measurement**: dawn 6:00 and dusk 21:00, matching the
-//! light table's own sunrise and sunset bands ([`crate::tables::light`]) so the
-//! crickets start when the stars come out. The client's own switch is not
-//! known; if it is found, it replaces [`is_night`].
+//! The day/night pairs switch on the hour. The switch hours are an
+//! interpretation, not a measurement: dawn 6:00 and dusk 21:00, matching the
+//! sunrise and sunset bands of the light table ([`crate::tables::light`]), so
+//! the night sounds start when the night sky appears. The hours the 1.12.1
+//! client uses are not known; if they are found, they replace [`is_night`].
 
 use crate::tables::dbc::{dbc_path, Dbc};
 use crate::AssetError;
 use std::collections::HashMap;
 
-/// Column indices, one block per table — see the module comment for how each
+/// Column indices, one module per table. The module comment says how each
 /// was pinned.
 pub mod fields {
     pub mod entry {
-        pub(crate) const KIND: usize = 1;
+        pub const KIND: usize = 1;
         pub const NAME: usize = 2;
         pub const FILE: usize = 3;
-        pub(crate) const FILE_COUNT: usize = 10;
-        pub(crate) const FREQ: usize = 13;
+        pub const FILE_COUNT: usize = 10;
+        pub const FREQ: usize = 13;
         pub const DIRECTORY: usize = 23;
         pub const VOLUME: usize = 24;
         pub const FLAGS: usize = 25;
-        pub(crate) const MIN_DISTANCE: usize = 26;
-        pub(crate) const CUTOFF: usize = 27;
+        pub const MIN_DISTANCE: usize = 26;
+        pub const CUTOFF: usize = 27;
     }
     pub mod area {
         pub(crate) const AMBIENCE: usize = 7;
@@ -148,31 +150,32 @@ pub mod fields {
         pub(crate) const EXERTION: usize = 1;
         pub(crate) const WOUND: usize = 3;
         pub(crate) const WOUND_CRITICAL: usize = 4;
-        /// `SoundInjuryCrushingBlowID` — the third injury column, for
+        /// `SoundInjuryCrushingBlowID`: the third injury column, used for
         /// `HITINFO_CRUSHING`.
         pub(crate) const WOUND_CRUSHING: usize = 5;
         pub const DEATH: usize = 6;
         pub(crate) const FOOTSTEP: usize = 9;
         pub const AGGRO: usize = 10;
-        /// `SoundAlertID` — the pre-aggro bark, `AI_REACTION_ALERT`'s.
+        /// `SoundAlertID`: the sound played before aggro, for
+        /// `AI_REACTION_ALERT`.
         pub const ALERT: usize = 13;
-        /// `CustomAttack[4]`, `[19..22]` — **the natural weapon's own impact**,
-        /// played instead of a `WeaponImpactSounds` row by a creature that is
-        /// biting rather than swinging. Pinned by name: the basilisk's first is
+        /// `CustomAttack[4]`, `[19..22]`: the natural weapon's own impact,
+        /// played instead of a `WeaponImpactSounds` row by a creature that
+        /// bites rather than swings. Pinned by name: the basilisk's first is
         /// entry 7374, `BiteMedium`.
         pub(crate) const CUSTOM_ATTACK: usize = 19;
         pub(crate) const CUSTOM_ATTACK_COUNT: usize = 4;
-        /// `CreatureImpactType` — **what this unit is made of**, and therefore
-        /// which of a weapon row's ten slots a blow on it lands in. Not a sound
-        /// id: 0..2 over flesh, chain and plate. See [`super::super::impact_slot`].
+        /// `CreatureImpactType`: the unit's material, which selects the slot
+        /// of a weapon row's ten that a blow on the unit uses. Not a sound id:
+        /// 0..2 over flesh, chain and plate. See [`super::super::impact_slot`].
         pub(crate) const IMPACT_TYPE: usize = 25;
-        /// **The three pet-talk columns**, pinned twice over: by name — the
-        /// only rows that state them are the four warlock demons, and they
-        /// resolve to `A_IMP_KILL` / `A_IMP_ORDER` / `A_Imp_Dismiss` and their
-        /// three siblings — and by the client. `SMSG_PET_ACTION_SOUND`'s
-        /// handler routes talk 1 (attack) to `+0x6c` and talk 0
-        /// (a special-spell order) to `+0x70`, and `SMSG_PET_DISMISS_SOUND`'s
-        /// reads `+0x74` directly.
+        /// The three pet-talk columns, pinned two ways. By name: the only rows
+        /// that state them are the four warlock demons, and they resolve to
+        /// `A_IMP_KILL`, `A_IMP_ORDER` and `A_Imp_Dismiss` and the matching
+        /// rows of the other three demons. By the client's behaviour:
+        /// `SMSG_PET_ACTION_SOUND` talk 1 (attack) plays column 27, talk 0
+        /// (a special-spell order) plays column 28, and
+        /// `SMSG_PET_DISMISS_SOUND` plays column 29.
         pub const PET_ATTACK: usize = 27;
         pub const PET_ORDER: usize = 28;
         pub(crate) const PET_DISMISS: usize = 29;
@@ -184,10 +187,11 @@ pub mod fields {
         pub(crate) const SPLASH: usize = 4;
     }
     pub mod display {
-        /// `CreatureDisplayInfo`: the per-display override…
+        /// `CreatureDisplayInfo`: the per-display override.
         pub(crate) const SOUND_OVERRIDE: usize = 2;
         pub(crate) const MODEL_ID: usize = 1;
-        /// …and `CreatureModelData`: the model's own.
+        /// `CreatureModelData`: the model's own sound data id, used when the
+        /// display has no override.
         pub(crate) const MODEL_SOUND: usize = 13;
     }
     pub mod swing {
@@ -197,26 +201,26 @@ pub mod fields {
     }
     pub mod impact {
         pub(crate) const SUBCLASS: usize = 1;
-        /// **The second half of the key**, and the reason this table is not a
-        /// map from subclass alone: 11 of the 21 subclasses have two rows here,
-        /// one metal and one not. Pinned by name — subclass 4 is
-        /// `Mace1H_ArmorFlesh` at 0 and `Mace1HMetal_ArmorFlesh` at 1.
+        /// The second part of the key. The table is not a map from subclass
+        /// alone because 11 of the 21 subclasses have two rows here, one metal
+        /// and one not. Pinned by name: subclass 4 is `Mace1H_ArmorFlesh` at 0
+        /// and `Mace1HMetal_ArmorFlesh` at 1.
         pub(crate) const METAL: usize = 2;
         pub(crate) const HIT: usize = 3; // [3..12]
         pub const CRIT: usize = 13; // [13..22]
         pub const COUNT: usize = 10;
     }
     pub mod ground {
-        /// **A `TerrainType.dbc` *row id*, not a footstep key.** See
-        /// [`super::super::SoundBank::terrain_of_ground_effect`], which is where
-        /// the hop those two need between them is written up.
+        /// A `TerrainType.dbc` row id, not a footstep key. The step that
+        /// converts one to the other is described at
+        /// [`super::super::SoundBank::terrain_of_ground_effect`].
         pub const TERRAIN_TYPE: usize = 6;
     }
-    /// `TerrainType.dbc`: 11 rows x 6 — id, the name, two spray effects, **the
-    /// footstep key**, flags.
+    /// `TerrainType.dbc`, 11 rows x 6: id, name, two spray effects, the
+    /// footstep key, flags.
     pub mod terrain {
-        /// Field 4. The column that makes `GroundEffectTexture` and
-        /// `FootstepTerrainLookup` speak the same language.
+        /// Field 4, the footstep key. It connects a `GroundEffectTexture` row
+        /// to a `FootstepTerrainLookup` key.
         pub const SOUND: usize = 4;
     }
     pub mod spell {
@@ -232,8 +236,8 @@ pub mod fields {
     }
 }
 
-/// Day or night, as an index into the `[2]`-wide columns. See the module
-/// comment: the switch hours are an interpretation.
+/// Whether an hour is night, for the `[2]`-wide day/night columns. The
+/// switch hours are an interpretation; see the module comment.
 pub fn is_night(hour: u32) -> bool {
     !(6..21).contains(&hour)
 }
@@ -243,11 +247,11 @@ pub fn day_index(hour: u32) -> usize {
     usize::from(is_night(hour))
 }
 
-/// One `SoundEntries` row: what a sound entry id *is*.
+/// One `SoundEntries` row: the definition of a sound entry id.
 #[derive(Debug, Clone, Default)]
 pub struct SoundEntry {
     pub id: u32,
-    /// `soundType`, kept raw — the census groups by it.
+    /// `soundType`, kept raw; the census groups by it.
     pub kind: u32,
     pub name: String,
     /// The candidate files with their pick weights, empty slots dropped.
@@ -255,22 +259,21 @@ pub struct SoundEntry {
     pub directory: String,
     pub volume: f32,
     pub flags: u32,
-    /// Inside this range the sound is at full volume…
+    /// Inside this range the sound plays at full volume.
     pub min_distance: f32,
-    /// …and beyond this one it is not started at all.
+    /// Beyond this range the sound is not started.
     pub cutoff_distance: f32,
 }
 
 impl SoundEntry {
     /// The archive path of one candidate file.
     ///
-    /// **The directory's own trailing separator is trimmed**, and that is a
-    /// bug fix rather than tidiness: three of the shipped rows end
-    /// `directoryBase` with a `\` — 1519's is `Sound\interface\` — and the
-    /// naive join produced `Sound\interface\\igNewTaxiNodeDiscovered.wav`,
-    /// which the archive does not have. The failure is silence, which for a
-    /// sound is indistinguishable from not having asked, and `vale sound`
-    /// counted all three among its missing files.
+    /// The directory's trailing separator is trimmed. Three of the shipped
+    /// rows end `directoryBase` with a `\` (1519's is `Sound\interface\`), and
+    /// a plain join gives `Sound\interface\\igNewTaxiNodeDiscovered.wav`,
+    /// which the archive does not have. The sound then does not play and no
+    /// error is reported. `vale sound` counted all three among its missing
+    /// files.
     pub fn path(&self, file: &str) -> String {
         let directory = self.directory.trim_end_matches(['\\', '/']);
         if directory.is_empty() {
@@ -280,9 +283,10 @@ impl SoundEntry {
         }
     }
 
-    /// Pick a file, weighted by the freq column. `roll` is any external
-    /// randomness — deterministic here so the pick is testable; a zero-weight
-    /// set falls back to equal weights rather than picking nothing.
+    /// Pick a file, weighted by the freq column. The caller supplies `roll`
+    /// as its source of randomness, so the pick is deterministic and testable.
+    /// A set whose weights are all zero falls back to equal weights rather
+    /// than picking nothing.
     pub fn pick(&self, roll: u32) -> Option<String> {
         if self.files.is_empty() {
             return None;
@@ -303,7 +307,7 @@ impl SoundEntry {
     }
 }
 
-/// A zone's three sound ids, off `AreaTable`'s own row — or off a
+/// A zone's three sound ids, read from its `AreaTable` row or from a
 /// [`crate::tables::wmoarea`] row, which carries the same three columns for a building.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AreaSounds {
@@ -316,21 +320,20 @@ pub struct AreaSounds {
 }
 
 impl AreaSounds {
-    /// **Fall back a column at a time, never a row at a time.**
+    /// Fall back one column at a time, never a whole row at a time.
     ///
-    /// A zero in any of the three means "not stated here", and the answer is
-    /// whatever the next place down states — so a subzone that names music and
-    /// no ambience keeps its music *and* gets its zone's bed, which is the
-    /// commonest shape in the table rather than an edge case. Measured over the
-    /// shipped `AreaTable.dbc`: of the 495 rows that state anything at all,
-    /// **316 state no ambience and 306 of those have one on their parent**, and
-    /// 48 state no music with 34 answered by the parent. Falling back per *row*
-    /// — which is what this client did until this was written — silences every
-    /// one of them.
+    /// A zero in any of the three columns means "not stated here", and the
+    /// answer is whatever the parent area states. A subzone that names music
+    /// and no ambience therefore keeps its music and takes its zone's
+    /// ambience. This is the commonest shape in the table. Measured over the
+    /// shipped `AreaTable.dbc`: of the 495 rows that state any sound, 316 state
+    /// no ambience and 306 of those have one on their parent, and 48 state no
+    /// music with 34 answered by the parent. A per-row fallback silences all of
+    /// them.
     ///
-    /// The parent chain does not need walking, incidentally: all 1,081 rows are
-    /// at depth 0 or 1 (122 roots, 959 children), so "the area, then its zone"
-    /// **is** the whole chain in 1.12.
+    /// The parent chain does not need walking: all 1,081 rows are at depth 0
+    /// or 1 (122 roots, 959 children), so the area and then its zone is the
+    /// whole chain in 1.12.
     #[must_use]
     pub fn or(self, fallback: AreaSounds) -> AreaSounds {
         AreaSounds {
@@ -365,14 +368,15 @@ pub struct IntroMusic {
     pub min_delay_minutes: u32,
 }
 
-/// One `SoundAmbience` row: the loop under everything.
+/// One `SoundAmbience` row: the ambience loop that plays under music and
+/// other sounds.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Ambience {
     /// Day/night sound entries.
     pub sounds: [u32; 2],
 }
 
-/// The columns of `CreatureSoundData` this client acts on. All sound entry
+/// The columns of `CreatureSoundData` that this module reads. All sound entry
 /// ids except `footstep`, which keys `FootstepTerrainLookup`, and
 /// `impact_type`, which is a material.
 #[derive(Debug, Clone, Copy, Default)]
@@ -385,48 +389,52 @@ pub struct CreatureSounds {
     pub footstep: u32,
     pub aggro: u32,
     pub alert: u32,
-    /// **What a creature's own attack sounds like**, `$AH0..3` — played
-    /// *instead of* a weapon impact by anything that bites, claws or gores.
-    /// Without it every creature in the game lands its blows in silence, since
-    /// nothing with no item in its hand reaches `WeaponImpactSounds` at all.
+    /// The creature's own attack sounds, `$AH0..3`, played instead of a weapon
+    /// impact by a creature that bites, claws or gores. Without them every
+    /// creature's blows are silent, because a unit with no item in its hand
+    /// never reaches `WeaponImpactSounds`.
     pub custom_attack: [u32; CUSTOM_ATTACKS],
-    /// The victim's material, 0..2 — which of a weapon row's ten slots a blow
+    /// The victim's material, 0..2, which selects the weapon row slot a blow
     /// on this unit lands in. See [`impact_slot`].
     pub impact_type: u32,
-    /// **What the pet says when ordered to attack** — `SMSG_PET_ACTION_SOUND`
-    /// talk 1, `A_IMP_KILL` and its three siblings. Stated by the four warlock
-    /// demons and nothing else in 1.12.
+    /// What the pet says when ordered to attack: `SMSG_PET_ACTION_SOUND`
+    /// talk 1, `A_IMP_KILL` and the matching rows of the other three demons.
+    /// Only the four warlock demons state it in 1.12.
     pub pet_attack: u32,
-    /// …when ordered to cast a special spell — talk 0, `A_IMP_ORDER`.
+    /// What the pet says when ordered to cast a special spell: talk 0,
+    /// `A_IMP_ORDER`.
     pub pet_order: u32,
-    /// …and when dismissed — `SMSG_PET_DISMISS_SOUND`, `A_Imp_Dismiss`.
+    /// What the pet says when dismissed: `SMSG_PET_DISMISS_SOUND`,
+    /// `A_Imp_Dismiss`.
     pub pet_dismiss: u32,
 }
 
 /// How many `$AHn` columns a creature has.
 pub(crate) const CUSTOM_ATTACKS: usize = fields::creature::CUSTOM_ATTACK_COUNT;
 
-/// **The ten slots of a `WeaponImpactSounds` row, named by the file itself.**
+/// The ten slots of a `WeaponImpactSounds` row, named after the files they
+/// resolve to.
 ///
-/// Not an interpretation and not a guess: the ids in the Axe1H row resolve to
+/// The names are read from the data: the ids in the Axe1H row resolve to
 /// `Axe1H_ArmorFlesh`, `Axe1H_ArmorChain`, `Axe1H_ArmorPlate`, `Shield Metal
 /// Impact`, `(DONOTRENAME)ShieldWoodImpact`, `1hParryMetalHitMetal`,
 /// `1hParryMetalHitWood`, `Axe1H_HitWood`, `Axe1H_HitStone`, `Ethereal_1H`, in
-/// that order. So the slot is **what the blow met**, and four of the ten are
-/// the defended cases — which is why a parry and a block used to be silent
-/// here: this client only ever read slot 0.
+/// that order. The slot is therefore the surface the blow met, and four of the
+/// ten are the defended cases (block and parry). Reading only slot 0 leaves
+/// every parry and block silent.
 pub mod impact_slot {
     pub const ARMOR_FLESH: usize = 0;
     pub const ARMOR_CHAIN: usize = 1;
     pub const ARMOR_PLATE: usize = 2;
-    /// A block on a metal shield…
+    /// A block on a metal shield.
     pub const SHIELD_METAL: usize = 3;
-    /// …and on a wooden one.
+    /// A block on a wooden shield.
     pub const SHIELD_WOOD: usize = 4;
-    /// A parry, by what the *victim* parried with.
+    /// A parry, by the material the victim parried with.
     pub const PARRY_METAL: usize = 5;
     pub const PARRY_WOOD: usize = 6;
-    /// The two the world takes rather than a unit: a door, a tree, a wall.
+    /// Slots 7 and 8 are hits on world objects rather than units: a door, a
+    /// tree, a wall.
     pub const HIT_WOOD: usize = 7;
     pub const HIT_STONE: usize = 8;
     pub const ETHEREAL: usize = 9;
@@ -434,26 +442,25 @@ pub mod impact_slot {
     pub const COUNT: usize = 10;
 }
 
-/// **The subclass a weaponless swing is keyed on.** `ITEM_SUBCLASS_WEAPON_FIST`
+/// The weapon subclass a weaponless swing is keyed on. `ITEM_SUBCLASS_WEAPON_FIST`
 /// is 13, and row 13 of `WeaponImpactSounds` resolves to entry 1014,
-/// `Unarmed_Generic` — so the fist row *is* the bare-hands row, which is what
-/// makes a creature's or an unarmed player's blow audible at all.
+/// `Unarmed_Generic`, so the fist row is also the bare-hands row. Without it a
+/// blow from a creature or an unarmed player has no impact sound.
 pub const UNARMED_SUBCLASS: u32 = 13;
 
-/// **The two whooshes the client caches by name**: it walks the loaded
-/// `SoundEntries` rows comparing each name against six literals and keeping
-/// the matching row's *id*. These are two of the six.
+/// The two miss whooshes, which the 1.12.1 client looks up by name. When
+/// `SoundEntries` loads, the client resolves six entry names to row ids and
+/// keeps the ids. These are two of the six.
 ///
-/// The choice they are used for is one flag: the 1H entry when it is set
-/// and the 2H one when it is clear, played at volume 1.0. **There is no crit
-/// variant and no third size**, which is what this client had before: it was choosing among
-/// `WeaponSwingSounds2`' six light/medium/heavy × normal/critical rows on a
-/// hand-written size table. That table is loaded by the real client too and its
-/// own names confirm the reading, but it is not the miss whoosh, and where it
-/// *is* played has not been pinned — see [`SoundBank::swing`].
+/// One flag selects between them: the 1H entry when it is set and the 2H
+/// entry when it is clear, played at volume 1.0. There is no crit variant and
+/// no third size. `WeaponSwingSounds2`' six light/medium/heavy ×
+/// normal/critical rows are not the miss whoosh. The 1.12.1 client loads that
+/// table too, and its entry names confirm the size and crit reading, but
+/// where it is played has not been pinned. See [`SoundBank::swing`].
 pub const COMBAT_MISS_1H: &str = "(DONOTRENAME)Combat Miss 1H";
 
-/// The `SoundEntries` row the 1.12.1 client loops on the ambience channel
+/// The `SoundEntries` row the 1.12.1 client repeats on the ambience channel
 /// while the player is a ghost, in place of the zone's own ambience.
 pub const GHOST_AMBIENCE: &str = "Ghost (DONOTRENAME)";
 
@@ -462,19 +469,17 @@ pub const GHOST_AMBIENCE: &str = "Ghost (DONOTRENAME)";
 pub const GHOST_MUSIC: &str = "GhostMusic (DONOTRENAME)";
 pub const COMBAT_MISS_2H: &str = "(DONOTRENAME)Combat Miss 2H";
 
-/// …and a third of the six: **the noise a shield makes when it eats a blow.**
-/// `HITINFO_ABSORB`'s own comment in vmangos' `UnitDefines.h` is "plays absorb
-/// sound", and this is the sound it means — a positioned play of this one
-/// entry and nothing else.
+/// A third of the six names: the sound a shield makes when it absorbs a blow.
+/// `HITINFO_ABSORB`'s comment in vmangos' `UnitDefines.h` is "plays absorb
+/// sound", and this is that sound: a positioned play of this one entry only.
 pub const ABSORB_GET_HIT: &str = "(DONOTRENAME)AbsorbGetHit";
 
-/// **The footstep key for plain dirt — `TerrainType` row 0's own field 4.**
+/// The footstep key for plain dirt: field 4 of `TerrainType` row 0.
 ///
-/// One rather than zero, and that is the whole point of naming it: zero is the
-/// key `TerrainType`'s *"None"* row (10) carries, and it is a real key with real
-/// sounds behind it rather than an absence. What a texture with no ground-effect
-/// row should sound like is dirt, so the fallback has to be this and not the
-/// zero that a `unwrap_or` reaches for.
+/// The key is 1, not 0. Key 0 is carried by `TerrainType`'s "None" row (10),
+/// and it is a real key with sounds behind it, not an absence. A texture with
+/// no ground-effect row should sound like dirt, so the fallback is this
+/// constant and not the 0 that `unwrap_or` would default to.
 pub(crate) const FOOTSTEP_KEY_DIRT: u32 = 1;
 
 /// One `(creatureFootstep, terrain)` cell of `FootstepTerrainLookup`.
@@ -491,19 +496,19 @@ pub struct WeaponImpact {
     pub crit: [u32; 10],
 }
 
-/// The sound columns of a spell's visual chain — each already resolved to a
-/// sound entry id, so a cast asks one question.
+/// The sound columns of a spell's visual chain, each already resolved to a
+/// sound entry id, so a cast needs one lookup.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CastSounds {
-    /// The wind-up's kit sound, held while the cast bar runs.
+    /// The precast kit's sound, held while the cast bar runs.
     pub precast: u32,
-    /// The release's.
+    /// The cast kit's sound, played on release.
     pub cast: u32,
-    /// The impact kit's, at the victim.
+    /// The impact kit's sound, played at the victim.
     pub impact: u32,
-    /// The channel kit's, held for the channel.
+    /// The channel kit's sound, held for the duration of the channel.
     pub channel: u32,
-    /// The missile's own, from `SpellVisual` itself.
+    /// The missile's own sound, from `SpellVisual` itself.
     pub missile: u32,
 }
 
@@ -528,31 +533,33 @@ pub struct SoundBank {
     intro_music: HashMap<u32, IntroMusic>,
     ambience: HashMap<u32, Ambience>,
     creatures: HashMap<u32, CreatureSounds>,
-    /// Display id -> (override sound data id, model id), and model id -> its
-    /// own — the two halves of [`SoundBank::unit_sounds`].
+    /// Display id -> (override sound data id, model id). With `model_sound`
+    /// (model id -> the model's own sound data id) it forms the two halves of
+    /// [`SoundBank::unit_sounds`].
     display_sound: HashMap<u32, (u32, u32)>,
     model_sound: HashMap<u32, u32>,
     footsteps: HashMap<(u32, u32), Footstep>,
-    /// `GroundEffectTexture` id -> **`TerrainType` row id** (0..10).
+    /// `GroundEffectTexture` id -> `TerrainType` row id (0..10).
     ground_terrain: HashMap<u32, u32>,
-    /// …and `TerrainType` row id -> the **footstep key** the lookup is keyed on
-    /// (its own field 4). The hop between the two, without which grass sounds
-    /// like wood — see [`SoundBank::terrain_of_ground_effect`].
+    /// `TerrainType` row id -> the footstep key the lookup is keyed on (the
+    /// row's field 4). Without this step between the two, grass sounds like
+    /// wood; see [`SoundBank::terrain_of_ground_effect`].
     terrain_footstep_key: HashMap<u32, u32>,
     /// (size 0/1/2, crit) -> the whoosh.
     swings: HashMap<(u32, bool), u32>,
-    /// **(weapon subclass, metal) -> the impacts.** Two-part on purpose; see
+    /// (weapon subclass, metal) -> the impacts. The key has two parts; see
     /// [`fields::impact::METAL`].
     impacts: HashMap<(u32, bool), WeaponImpact>,
     /// NPCSounds id -> hello/goodbye/pissed/ack.
     npc: HashMap<u32, [u32; 4]>,
     spell_sounds: HashMap<u32, CastSounds>,
-    /// **`SpellVisualKit` id -> its own sound**, kept rather than consumed.
+    /// `SpellVisualKit` id -> the kit's sound, kept after the spell chain is
+    /// resolved.
     ///
-    /// The same keeping [`crate::tables::spell::SpellVisuals::kit`] does and for
-    /// the same reason: `SMSG_PLAY_SPELL_VISUAL` carries a kit id and no spell,
-    /// so the spell-keyed map above cannot answer it. Kit 406 reads sound 45
-    /// and kit 438 reads 3373 — the two halves of eating and drinking.
+    /// [`crate::tables::spell::SpellVisuals::kit`] keeps kits for the same
+    /// reason: `SMSG_PLAY_SPELL_VISUAL` carries a kit id and no spell, so the
+    /// spell-keyed map above cannot answer it. Kit 406 reads sound 45 and kit
+    /// 438 reads 3373: the eating and drinking sounds.
     ///
     /// Silent kits are absent rather than present as zero, so a caller does not
     /// have to know that 0 means silence in this table.
@@ -560,14 +567,14 @@ pub struct SoundBank {
 }
 
 impl SoundBank {
-    /// Read every table off `read`, which answers by **bare table name** — the
-    /// same contract as `DisplayTables::load`, for the same reason.
+    /// Read every table through `read`, which takes a bare table name. This
+    /// is the same contract as `DisplayTables::load`, for the same reason.
     ///
     /// `SoundEntries` is required: without it no id in any other table means
-    /// anything. **Every other table is optional and its absence is a
-    /// documented degradation**: no `ZoneMusic` is a silent world, no
-    /// `FootstepTerrainLookup` is silent feet, no `CreatureSoundData` is mute
-    /// creatures — each of which is what this client was before this module.
+    /// anything. Every other table is optional, and a missing table has a
+    /// defined result: no `ZoneMusic` gives a world with no music, no
+    /// `FootstepTerrainLookup` silent footsteps, no `CreatureSoundData` silent
+    /// creatures.
     pub fn load(mut read: impl FnMut(&str) -> Option<Vec<u8>>) -> Result<SoundBank, AssetError> {
         let raw = read("SoundEntries")
             .ok_or_else(|| AssetError::NotFound(dbc_path("SoundEntries")))?;
@@ -757,8 +764,8 @@ impl SoundBank {
             }
         }
 
-        // **`TerrainType` before `GroundEffectTexture`**, because the second is
-        // resolved *through* the first — see
+        // `TerrainType` is loaded before `GroundEffectTexture` because the
+        // second is resolved through the first; see
         // [`SoundBank::terrain_of_ground_effect`].
         if let Some(raw) = read("TerrainType") {
             if let Ok(dbc) = Dbc::parse(&raw) {
@@ -775,11 +782,11 @@ impl SoundBank {
                 for r in 0..dbc.record_count {
                     let Some(id) = dbc.u32_at(r, 0) else { continue };
                     let terrain_type = dbc.u32_at(r, fields::ground::TERRAIN_TYPE).unwrap_or(0);
-                    // **Row 0 of `TerrainType` is Dirt and is a real answer**, so
-                    // the store keeps every texture that names a row — including
-                    // 0 — and only a texture that names none is absent. The old
-                    // `!= 0` filter here was reading a row id as though it were
-                    // a "no sound" sentinel.
+                    // Row 0 of `TerrainType` is Dirt and is a real answer, so
+                    // the store keeps every texture that names a row, including
+                    // 0. Only a texture that names no row is absent. A `!= 0`
+                    // filter here would treat a row id as a "no sound"
+                    // sentinel.
                     bank.ground_terrain.insert(id, terrain_type);
                 }
             }
@@ -808,9 +815,10 @@ impl SoundBank {
                         row.hit[i] = dbc.u32_at(r, HIT + i).unwrap_or(0);
                         row.crit[i] = dbc.u32_at(r, CRIT + i).unwrap_or(0);
                     }
-                    // **Keyed on both**, or 11 of the game's 21 weapon
-                    // subclasses lose a row to whichever of their two the
-                    // iteration reached last.
+                    // Keyed on both parts. A key of subclass alone would lose
+                    // one row for 11 of the game's 21 weapon subclasses,
+                    // overwritten by whichever of the two the loop reached
+                    // last.
                     bank.impacts.insert((subclass, metal), row);
                 }
             }
@@ -833,9 +841,9 @@ impl SoundBank {
             }
         }
 
-        // The spell chain, re-walked for the columns `crate::tables::spell` reads
-        // past. All three tables or nothing: a chain with kits but no spells
-        // resolves every cast to silence indistinguishably from a game whose
+        // The spell chain, read again for the columns `crate::tables::spell`
+        // skips. All three tables or none: with kits but no spells every cast
+        // resolves to silence, which cannot be told apart from a game whose
         // spells are silent.
         if let (Some(spell), Some(visual), Some(kit)) =
             (read("Spell"), read("SpellVisual"), read("SpellVisualKit"))
@@ -849,11 +857,11 @@ impl SoundBank {
                     let Some(id) = kit.u32_at(r, 0) else { continue };
                     kit_sound.insert(id, kit.u32_at(r, KIT_SOUND).unwrap_or(0));
                 }
-                // **Kept as well as consumed**, for the two packets that name a
-                // kit and no spell — see [`SoundBank::kit_sound`]. The silent
-                // rows are dropped rather than stored as zeros: `kit_sound` is
-                // built over every row because the loop below indexes it for a
-                // kit column that may be anything, and the kept copy answers a
+                // Kept as well as used here, for the two packets that name a
+                // kit and no spell; see [`SoundBank::kit_sound`]. The kept copy
+                // drops silent rows rather than storing zeros. `kit_sound`
+                // holds every row because the loop below indexes it with a kit
+                // column that may hold any value; the kept copy answers a
                 // question where "no sound" and "no such kit" are the same
                 // answer.
                 bank.kit_sounds = kit_sound
@@ -898,14 +906,15 @@ impl SoundBank {
         self.entries.get(&id)
     }
 
-    /// `PlaySound`'s lookup: by the name column, case-insensitively — which is
+    /// `PlaySound`'s lookup: by the name column, case-insensitively. This is
     /// how `"igMainMenuOption"` and `"gsTitleOptionOK"` resolve.
     pub fn entry_named(&self, name: &str) -> Option<&SoundEntry> {
         self.entries.get(self.by_name.get(&name.to_ascii_lowercase())?)
     }
 
-    /// A zone's ambience/music/intro ids. `None` for an area with none of the
-    /// three, which most sub-areas are — the caller walks up to the zone.
+    /// A zone's ambience, music and intro ids. `None` for an area with none of
+    /// the three, which is true of most sub-areas; the caller then reads the
+    /// zone.
     pub fn area_sounds(&self, area_id: u32) -> Option<&AreaSounds> {
         self.area_sounds.get(&area_id)
     }
@@ -943,30 +952,30 @@ impl SoundBank {
         self.creatures.get(&sound_data)
     }
 
-    /// …and the same row asked by **`CreatureModelData` id**, which is the only
-    /// way in for `SMSG_PET_DISMISS_SOUND`: the packet carries a model-data id
-    /// and a position, no guid and no display id. The reference walks the
-    /// model's own sound column (`+0x34`, field 13) into `CreatureSoundData`
-    /// and never consults a display's override.
+    /// The same row, looked up by `CreatureModelData` id.
+    /// `SMSG_PET_DISMISS_SOUND` needs this lookup because the packet carries a
+    /// model-data id and a position, with no guid and no display id. The
+    /// 1.12.1 client resolves the model's own sound column (field 13) into
+    /// `CreatureSoundData` and does not consult a display's override.
     pub fn model_data_sounds(&self, model_id: u32) -> Option<&CreatureSounds> {
         self.creatures.get(self.model_sound.get(&model_id)?)
     }
 
     /// The footstep for a creature-footstep key on a terrain, falling back to
-    /// [`FOOTSTEP_KEY_DIRT`] — the ground a texture with no ground effect
-    /// reads as.
+    /// [`FOOTSTEP_KEY_DIRT`], which is the ground a texture with no ground
+    /// effect reads as.
     pub fn footstep(&self, creature_footstep: u32, terrain: u32) -> Option<&Footstep> {
         self.footsteps
             .get(&(creature_footstep, terrain))
             .or_else(|| self.footsteps.get(&(creature_footstep, FOOTSTEP_KEY_DIRT)))
     }
 
-    /// **`MCLY`'s `effectId` -> the footstep key, through `TerrainType`.**
+    /// `MCLY`'s `effectId` -> the footstep key, through `TerrainType`.
     ///
-    /// The hop in the middle is the whole of this function and it was missing:
-    /// `GroundEffectTexture[6]` is a `TerrainType` **row id** and
-    /// `FootstepTerrainLookup[2]` is that row's **own field 4**, and the two
-    /// numberings are off by one because `TerrainType` is 0-based and its sound
+    /// The `TerrainType` step is what this function adds:
+    /// `GroundEffectTexture[6]` is a `TerrainType` row id and
+    /// `FootstepTerrainLookup[2]` is that row's field 4. The two numberings
+    /// are off by one because `TerrainType` row ids are 0-based and its sound
     /// column is not:
     ///
     /// ```text
@@ -984,19 +993,19 @@ impl SoundBank {
     ///  10  None            0
     /// ```
     ///
-    /// So a grass texture (row 5) used as a lookup key directly resolves
-    /// terrain 5, which is **Wood** — which is what a walk across Northshire
-    /// sounded like. `DustyGrass` is the second proof: it is its own row and it
-    /// deliberately shares Grass's key, which a straight-through reading cannot
-    /// express at all (it would resolve Soggy).
+    /// A grass texture (row 5) used directly as a lookup key resolves terrain
+    /// 5, which is Wood, so a walk across Northshire plays wood footsteps.
+    /// `DustyGrass` confirms the mapping: it is its own row and shares Grass's
+    /// key, which using its row id as the key cannot express (row 9 would
+    /// resolve Soggy).
     ///
-    /// The structural check that let this stand is worth naming, because it is
-    /// the failure mode this whole module is written against: both columns hold
-    /// small integers in overlapping ranges, so "every value lands in the
-    /// lookup's key set" passed at 1,827 of 1,830. **The three that missed were
-    /// the tell** — they are exactly the `None` rows at id 10, which is one past
-    /// the largest key the lookup has, and a column that can exceed its
-    /// supposed key space is not that key space.
+    /// A range check does not catch a row id used as a key. Both columns hold
+    /// small integers in overlapping ranges, so "every `GroundEffectTexture[6]`
+    /// value is a key of `FootstepTerrainLookup`" passed for 1,827 of 1,830
+    /// values. The three that failed are the `None` rows at id 10, one past the
+    /// largest key the lookup has, which shows that the column holds row ids
+    /// and not keys. A range check on any column of small integers in this
+    /// module has the same weakness.
     ///
     /// Falls back to [`FOOTSTEP_KEY_DIRT`] for a texture with no ground-effect
     /// row and for a chain with no `TerrainType`.
@@ -1010,8 +1019,8 @@ impl SoundBank {
             .unwrap_or(FOOTSTEP_KEY_DIRT)
     }
 
-    /// **The whoosh a swing that met nothing makes** — the two entries the
-    /// client caches by name, chosen by handedness and nothing else. See
+    /// The whoosh of a swing that met nothing: one of the two entries the
+    /// client caches by name, chosen by handedness only. See
     /// [`COMBAT_MISS_1H`].
     pub fn miss_whoosh(&self, two_handed: bool) -> Option<u32> {
         let name = if two_handed {
@@ -1023,27 +1032,27 @@ impl SoundBank {
     }
 
     /// `WeaponSwingSounds2`'s six rows: size 0/1/2 (light/medium/heavy) crossed
-    /// with crit, and the table's own entry names say exactly that
+    /// with crit. The table's own entry names say the same
     /// (`LightWeaponNormal`, `HeavyWeaponCritical`).
     ///
-    /// **Nothing in this client plays it and that is deliberate.** The real
-    /// client loads the table, so it is played by *something*, but the swing
-    /// sounds this project has been able to pin (on the `$CSS` animation tag)
-    /// are the two named
-    /// whooshes above and not these. Kept read, kept censused, and left
-    /// uncalled rather than being wired to a trigger that would be a guess.
+    /// Nothing in this project's client plays it, on purpose. The 1.12.1
+    /// client loads the table, so some event plays it, but the swing sounds
+    /// this project has pinned (on the `$CSS` animation tag) are the two named
+    /// whooshes above and not these rows. The table is read and included in
+    /// the census, and this function is not called, because any trigger for it
+    /// would be a guess.
     pub fn swing(&self, size: u32, crit: bool) -> Option<u32> {
         self.swings.get(&(size, crit)).copied().filter(|&s| s != 0)
     }
 
-    /// **What a blow sounds like**: a weapon subclass and its material crossed
-    /// with what the blow *met* — one of [`impact_slot`]'s ten — and whether it
+    /// The sound of a blow: a weapon subclass and its material, crossed with
+    /// the surface the blow met (one of [`impact_slot`]'s ten) and whether it
     /// was critical.
     ///
-    /// The material falls back to the other row rather than to nothing: four
+    /// The material falls back to the other row rather than to nothing. Four
     /// subclasses state only one of the two (bow, gun, the exotics and the fist
-    /// row every unarmed blow uses), so a caller that insisted on an exact
-    /// match would silence exactly the weapons with no choice to make.
+    /// row every unarmed blow uses), so requiring an exact match would silence
+    /// exactly the weapons that have only one row.
     pub fn impact(&self, subclass: u32, metal: bool, slot: usize, crit: bool) -> Option<u32> {
         let row = self
             .impacts
@@ -1059,13 +1068,13 @@ impl SoundBank {
     }
 
     /// A spell's five sound columns, resolved. `None` for a spell whose whole
-    /// chain is silent — 0 is not an id in `SoundEntries`.
+    /// chain is silent; 0 is not an id in `SoundEntries`.
     pub fn cast_sounds(&self, spell_id: u32) -> Option<&CastSounds> {
         self.spell_sounds.get(&spell_id)
     }
 
-    /// …and the same column asked by **kit** rather than by spell, which is the
-    /// only way in for the two packets that carry one. See [`Self::kit_sounds`].
+    /// The same column looked up by kit rather than by spell, for the two
+    /// packets that carry a kit id and no spell. See [`Self::kit_sounds`].
     pub fn kit_sound(&self, kit_id: u32) -> Option<u32> {
         self.kit_sounds.get(&kit_id).copied()
     }
@@ -1086,9 +1095,9 @@ impl SoundBank {
 
     /// Every display id `CreatureDisplayInfo` names, with the two halves of the
     /// join behind it: the display's own override and its model. The census
-    /// crosses these with [`Self::unit_sounds`] to say **how many of the game's
-    /// units have a voice at all**, which is the only number that says whether
-    /// a silent fight is a missing table or a missing caller.
+    /// crosses these with [`Self::unit_sounds`] to count how many of the
+    /// game's units have any sounds. That count shows whether a silent fight
+    /// comes from a missing table or from a missing caller.
     pub fn displays_iter(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
         self.display_sound
             .iter()
@@ -1159,11 +1168,10 @@ mod tests {
     use super::*;
     use crate::tables::dbc::testing::dbc;
 
-    /// **A column at a time, not a row at a time.** The shape this exists for is
-    /// a subzone that names its own music and no ambience: it must keep the
-    /// music *and* pick up the bed from underneath it. Falling back per row
-    /// answers one of the two and silences the other, which is 306 of the
-    /// game's areas.
+    /// Fallback is per column, not per row. The case this covers is a subzone
+    /// that names its own music and no ambience: it keeps the music and takes
+    /// the ambience from its zone. A per-row fallback answers one of the two
+    /// and silences the other, which affects 306 of the game's areas.
     #[test]
     fn a_missing_column_falls_through_while_the_others_stay() {
         let subzone = AreaSounds {
@@ -1237,9 +1245,9 @@ mod tests {
         dbc(&[row], 29, &block)
     }
 
-    /// The entry is the hub: files with weights, a directory that prefixes
-    /// them, and a name that resolves case-insensitively — which is how the
-    /// interface's `PlaySound("igMainMenuOption")` strings reach a row.
+    /// A sound entry has files with weights, a directory that prefixes them,
+    /// and a name that resolves case-insensitively. The interface's
+    /// `PlaySound("igMainMenuOption")` strings reach a row through that name.
     #[test]
     fn an_entry_is_files_with_weights_under_a_directory() {
         let bank = bank_with(vec![("SoundEntries", entries_table())]);
@@ -1250,7 +1258,8 @@ mod tests {
         assert_eq!(entry.min_distance, 8.0);
         assert_eq!(entry.cutoff_distance, 45.0);
 
-        // Weighted pick: weights 1 and 3, so rolls 0 and 1.. split 1:3.
+        // Weighted pick: weights 1 and 3, so roll 0 picks the first file and
+        // rolls 1 to 3 pick the second.
         assert_eq!(
             entry.pick(0).as_deref(),
             Some("Sound\\Spells\\Dispel_Low_Base.wav")
@@ -1269,14 +1278,13 @@ mod tests {
         assert!(bank.entry_named("no such name").is_none());
     }
 
-    /// **A directory column that ends in its own separator does not double
-    /// it**, which three of the shipped rows need and which nothing would ever
-    /// have reported: the join produced `Sound\interface\\igNew….wav`, the
-    /// archive answered "no such file", and a sound that does not play is
-    /// indistinguishable from one nobody asked for.
+    /// A directory column that ends in its own separator is not doubled.
+    /// Three of the shipped rows need this. A doubled join gives
+    /// `Sound\interface\\igNew….wav`, the archive answers "no such file", and
+    /// the sound does not play, with no error reported.
     ///
-    /// Row 1519 is the real case — it is the sound `ERR_NEWTAXIPATH` names, so
-    /// this is what stands between "New flight path discovered!" and its noise.
+    /// Row 1519 is the shipped case: it is the sound `ERR_NEWTAXIPATH` names,
+    /// the one that plays with "New flight path discovered!".
     #[test]
     fn a_directory_that_already_ends_in_a_separator_is_not_doubled() {
         let mut entry = SoundEntry {
@@ -1288,7 +1296,8 @@ mod tests {
             entry.pick(0).as_deref(),
             Some(r"Sound\interface\igNewTaxiNodeDiscovered.wav")
         );
-        // …and the ordinary row, which is every other one, is untouched.
+        // A directory without a trailing separator, as in every other row, is
+        // joined unchanged.
         entry.directory = r"Sound\Spells".to_string();
         assert_eq!(
             entry.pick(0).as_deref(),
@@ -1350,15 +1359,14 @@ mod tests {
         assert!(bank.unit_sounds(9).is_none(), "unknown display");
     }
 
-    /// **The footstep join, and the hop in the middle of it**: a ground effect
-    /// names a `TerrainType` *row*, the row names the *key*, and the key
-    /// crosses the creature's own to reach a cell.
+    /// The footstep join and the `TerrainType` step in it: a ground effect
+    /// names a `TerrainType` row, the row names the key, and the key, crossed
+    /// with the creature's own key, selects a cell.
     ///
-    /// The fixture keeps the shipped table's own shape — row ids 0-based, the
-    /// footstep column one along, and `DustyGrass` deliberately sharing Grass's
-    /// key — because that shape is the whole bug: reading a row id as a key
-    /// answers the terrain next door, and for grass the terrain next door is
-    /// wood.
+    /// The fixture keeps the shipped table's shape: row ids 0-based, the
+    /// footstep column one higher, and `DustyGrass` sharing Grass's key. That
+    /// shape causes the error this test covers: reading a row id as a key
+    /// selects the next terrain, and for grass the next terrain is wood.
     #[test]
     fn a_footstep_is_a_creature_key_crossed_with_a_terrain() {
         // (creature 8, key) -> sound. The keys are `TerrainType`'s field 4:
@@ -1372,8 +1380,8 @@ mod tests {
             5,
             b"\0",
         );
-        // id, name, sprayRun, sprayWalk, **footstep key**, flags — the shipped
-        // rows for Dirt, Wood, Grass and DustyGrass.
+        // id, name, sprayRun, sprayWalk, footstep key, flags: the shipped rows
+        // for Dirt, Wood, Grass and DustyGrass.
         let terrain = dbc(
             &[
                 vec![0, 0, 0, 0, 1, 0],
@@ -1399,7 +1407,7 @@ mod tests {
             ("TerrainType", terrain),
             ("GroundEffectTexture", ground),
         ]);
-        // **The whole of the bug in one line**: grass is key 6, not row 5.
+        // Grass is key 6, not row 5.
         assert_eq!(bank.terrain_of_ground_effect(100), 6);
         assert_eq!(
             bank.footstep(8, bank.terrain_of_ground_effect(100))
@@ -1413,8 +1421,8 @@ mod tests {
         );
         // Row 0 is Dirt and is a real row, not a "no sound" sentinel.
         assert_eq!(bank.terrain_of_ground_effect(101), FOOTSTEP_KEY_DIRT);
-        // DustyGrass is its own row and shares Grass's key — which a
-        // straight-through reading cannot express at all.
+        // DustyGrass is its own row and shares Grass's key, which using its
+        // row id as the key cannot express.
         assert_eq!(bank.terrain_of_ground_effect(102), 6);
         // A texture with no ground-effect row at all is dirt.
         assert_eq!(bank.terrain_of_ground_effect(9999), FOOTSTEP_KEY_DIRT);
@@ -1472,8 +1480,8 @@ mod tests {
         assert_eq!(day_index(21), 1);
     }
 
-    /// The spell chain re-walked: each kit column resolved to its kit's sound,
-    /// the missile's own kept, and an all-silent chain dropped.
+    /// The spell chain: each kit column resolves to its kit's sound, the
+    /// missile's own sound is kept, and an all-silent chain is dropped.
     #[test]
     fn a_casts_sounds_are_the_kits_resolved() {
         let mut spell_row = vec![0u32; 120];
@@ -1538,20 +1546,20 @@ mod tests {
         assert!(bank.cast_sounds(133).is_none());
         assert!(bank.swing(0, false).is_none());
         assert!(bank.impact(0, true, impact_slot::ARMOR_FLESH, false).is_none());
-        // The whoosh is a *name* lookup, so it degrades with the entries
+        // The whoosh is a name lookup, so it degrades with the entries
         // themselves rather than with a table of its own.
         assert!(bank.miss_whoosh(false).is_none());
     }
 
-    /// **The impact table is keyed on two things, and the ten columns are ten
-    /// materials.**
+    /// The impact table is keyed on two values, and its ten columns are ten
+    /// materials.
     ///
-    /// The fixture is the shipped table's own shape: subclass 4 twice, once
-    /// non-metal and once metal, with different sounds — which is what a key of
-    /// subclass alone loses. The unarmed row (13) is there because it is the one
-    /// every creature in the game and every bare-handed player lands on, and it
-    /// states only the non-metal variant, which is why the lookup falls back to
-    /// the other row rather than answering nothing.
+    /// The fixture has the shipped table's shape: subclass 4 twice, once
+    /// non-metal and once metal, with different sounds. A key of subclass alone
+    /// loses one of them. The unarmed row (13) is included because every
+    /// creature in the game and every bare-handed player uses it, and it states
+    /// only the non-metal variant, so the lookup falls back to the other row
+    /// rather than answering nothing.
     #[test]
     fn an_impact_is_a_weapon_a_material_and_what_it_met() {
         let row = |id: u32, subclass: u32, metal: u32, base: u32| {
@@ -1569,7 +1577,7 @@ mod tests {
             &[
                 row(5, 4, 0, 941),  // Mace1H
                 row(14, 4, 1, 969), // Mace1HMetal
-                row(13, 13, 0, 1014), // Unarmed_Generic — one row only
+                row(13, 13, 0, 1014), // Unarmed_Generic, one row only
             ],
             23,
             b"\0",
@@ -1579,7 +1587,7 @@ mod tests {
             ("WeaponImpactSounds", impacts),
         ]);
         use impact_slot::*;
-        // **The whole of the key bug in two lines**: one subclass, two rows.
+        // The key needs both parts: one subclass, two rows.
         assert_eq!(bank.impact(4, false, ARMOR_FLESH, false), Some(941));
         assert_eq!(bank.impact(4, true, ARMOR_FLESH, false), Some(969));
         // The slot is what the blow met, and the defended ones are real slots.
@@ -1597,9 +1605,9 @@ mod tests {
         );
     }
 
-    /// **The miss whoosh is two entries looked up by name**, which is the
-    /// client's own mechanism (it caches them out of the loaded table)
-    /// and not a row of `WeaponSwingSounds2`.
+    /// The miss whoosh is one of two entries looked up by name, not a row of
+    /// `WeaponSwingSounds2`. The 1.12.1 client resolves both names when
+    /// `SoundEntries` loads and keeps the ids.
     #[test]
     fn a_miss_is_one_of_two_named_whooshes() {
         let (block, off) = strings(&[COMBAT_MISS_1H, COMBAT_MISS_2H, "MissWhoosh1Handed.wav"]);

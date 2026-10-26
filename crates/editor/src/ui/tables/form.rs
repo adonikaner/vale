@@ -327,6 +327,14 @@ pub(in crate::ui) fn fields(
                     sphere_block(ui, work, record);
                     continue;
                 }
+                // `SoundEntries`' File 1 to File 10 and Weight 1 to Weight 10
+                // are twenty columns, and most rows fill one or two of each.
+                // `files_block` draws one line per slot that holds a file,
+                // with its play button, its Weight and the file dialog.
+                if schema.table == crate::tables::sound_files::TABLE && section.name == "Files" {
+                    super::sound_files::files_block(ui, work, record);
+                    continue;
+                }
                 section_block(ui, work, record, schema, section);
             }
             // …and so are the rows that say who has a skill line.
@@ -396,6 +404,7 @@ fn head(
                             )
                             .clicked();
                     }
+                    crate::tables::sound_files::TABLE => super::sound_files::head_buttons(ui, work, record),
                     "AreaTable" | "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" => {
                         let own: &[Command] = match table_name.as_str() {
                             "AreaTable" => &[Command::PaintArea, Command::AddSubArea],
@@ -542,6 +551,15 @@ pub(super) fn plural(table: &str, count: usize) -> String {
         "SpellVisual" => "visual",
         "SpellVisualKit" => "kit",
         "AreaTable" => "area",
+        // These table names are not nouns, so their rows are counted as
+        // rows: `3 CreatureSoundData rows`.
+        "CreatureSoundData" | "NPCSounds" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience"
+        | "GameObjectDisplayInfo" | "CreatureDisplayInfo" | "CreatureModelData" => {
+            return match count {
+                1 => format!("{table} row"),
+                _ => format!("{table} rows"),
+            };
+        }
         other => other,
     };
     match count {

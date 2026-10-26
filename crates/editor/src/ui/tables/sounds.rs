@@ -10,7 +10,7 @@ use crate::ui::tables::Workspace;
 pub(super) fn plays_sounds(table: &str) -> bool {
     matches!(
         table,
-        "SoundEntries" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience"
+        "SoundEntries" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience" | "NPCSounds"
     )
 }
 
@@ -29,7 +29,8 @@ fn channel_of(table: &str) -> vale_client::sound::mixer::Channel {
 
 /// The `SoundEntries` rows a row of a sound table plays by day and by night,
 /// read from the edited table; 0 where there is none. A `SoundEntries` row is
-/// its own sound, and an intro has one for both.
+/// its own sound, and an intro has one for both. An `NPCSounds` row plays its
+/// greeting, field 1.
 fn sounds_of(work: &Workspace<'_>, table: &str, id: u32) -> [u32; 2] {
     use vale_assets::tables::sound::fields::{ambience, intro, zone_music};
     let at = |field: usize| {
@@ -44,6 +45,7 @@ fn sounds_of(work: &Workspace<'_>, table: &str, id: u32) -> [u32; 2] {
         "ZoneMusic" => [at(zone_music::SOUND), at(zone_music::SOUND + 1)],
         "ZoneIntroMusicTable" => [at(intro::SOUND), 0],
         "SoundAmbience" => [at(ambience::SOUND), at(ambience::SOUND + 1)],
+        "NPCSounds" => [at(1), 0],
         _ => [0, 0],
     }
 }

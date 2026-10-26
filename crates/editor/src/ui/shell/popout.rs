@@ -197,9 +197,9 @@ pub(crate) fn draw<const SLOT: usize>(
             },
         );
     }
-    let asked_by_field = editing.assets.import.as_ref().is_some_and(|import| import.for_field.is_some());
+    let asked_by_field = editing.assets.asked_by_field();
     if editing.popout.import_window(*tool, asked_by_field) == Some(SLOT) {
-        assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
+        assets::import_dialog(&ctx, &mut editing.assets, &mut editing.browser, session, &assets);
     }
     // A tool a panel here asked for: a world tool goes to the main window,
     // and a workspace to where its group is, or to this window. See

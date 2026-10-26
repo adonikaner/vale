@@ -453,9 +453,14 @@ pub(crate) fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
         return None;
     }
     let mut chosen = tool;
-    ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
-        theme::segmented(ui, &mut chosen, parts, |a, b| a == b);
-    });
+    // At most `TAB_ROW` (four) parts to a row, as the tabs are drawn. The
+    // segments share the row's width, so the Sound workspace's six names on
+    // one row would be truncated.
+    for row in parts.chunks(crate::tables::tabs::TAB_ROW) {
+        ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
+            theme::segmented(ui, &mut chosen, row, |a, b| a == b);
+        });
+    }
     ui.add_space(6.0);
     (chosen != tool).then_some(chosen)
 }

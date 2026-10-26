@@ -260,15 +260,42 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         // A set's bonuses are spells and its requirement is a skill line.
         "ItemSet" => &["Spell", "SkillLine"],
         // The creature display chain: what a display's model and extra
-        // columns name, and the items an extra row dresses the creature in.
-        "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" | "CreatureModelData" => &[
+        // columns name, the items an extra row dresses the creature in, and
+        // the two sound tables with the sounds they name, so a sound column
+        // reads as the sound's name.
+        "CreatureDisplayInfo"
+        | "CreatureDisplayInfoExtra"
+        | "CreatureModelData"
+        | "CreatureSoundData"
+        | "NPCSounds" => &[
             "CreatureDisplayInfo",
             "CreatureDisplayInfoExtra",
             "CreatureModelData",
             "ItemDisplayInfo",
+            "CreatureSoundData",
+            "NPCSounds",
+            "SoundEntries",
         ],
         // A game object's ten sounds.
         "GameObjectDisplayInfo" => &["SoundEntries"],
+        // Every table with a column of `SoundEntries` ids, so the reverse
+        // references of a `SoundEntries` row are complete: `CreatureSoundData`
+        // and `NPCSounds` with the displays and models that refer to them,
+        // `ZoneMusic`, `ZoneIntroMusicTable` and `SoundAmbience` with the
+        // areas that refer to them, `GameObjectDisplayInfo` and
+        // `SpellVisualKit`.
+        "SoundEntries" => &[
+            "CreatureSoundData",
+            "NPCSounds",
+            "ZoneMusic",
+            "ZoneIntroMusicTable",
+            "SoundAmbience",
+            "AreaTable",
+            "CreatureDisplayInfo",
+            "CreatureModelData",
+            "GameObjectDisplayInfo",
+            "SpellVisualKit",
+        ],
         // The visual an item's glow is.
         "ItemDisplayInfo" => &["SpellVisual"],
         // The skill tables, read without the spell chain: each is labelled
@@ -280,6 +307,11 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         //
         // `SoundEntries` as well, which the music, intro and ambience rows
         // name, so a sound reference reads as the sound's name.
+        // `SoundEntries`, which a `ZoneMusic` row's two sound columns refer
+        // to, and `AreaTable`, whose rows refer to the `ZoneMusic` row.
+        "ZoneMusic" => &["SoundEntries", "AreaTable"],
+        // The same two tables, for the same reason.
+        "ZoneIntroMusicTable" | "SoundAmbience" => &["SoundEntries", "AreaTable"],
         "AreaTable" => &[
             "Map",
             "ZoneMusic",
@@ -354,6 +386,8 @@ pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
 ///
 /// `AreaTable` stands alone too: an area refers to its `Map`, to the zone
 /// that encloses it in the same table, and to the sound and music tables.
+/// Three of those follow it: `ZoneMusic`, `ZoneIntroMusicTable` and
+/// `SoundAmbience`, each of which refers to `SoundEntries`.
 ///
 /// The place group: `Map`, the maps themselves; `AreaTrigger`, the volumes a
 /// character reports standing in; and `WorldSafeLocs`, the places a spirit
@@ -363,6 +397,9 @@ pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
 /// The display group: what a creature, a game object and an item look like.
 /// `CreatureDisplayInfo` refers to `CreatureModelData` and
 /// `CreatureDisplayInfoExtra`, which refers to `ItemDisplayInfo` ten times.
+/// A creature's sounds are `CreatureSoundData`, which both the display and its
+/// model refer to, and `NPCSounds`, which the display refers to; both refer
+/// to `SoundEntries`.
 pub const ALL: &[&Schema] = &[
     &SPELL,
     &SPELL_VISUAL,
@@ -394,12 +431,17 @@ pub const ALL: &[&Schema] = &[
     &SKILL_RACE_CLASS_INFO,
     &ITEM_SET,
     &AREA_TABLE,
+    &ZONE_MUSIC,
+    &ZONE_INTRO_MUSIC,
+    &SOUND_AMBIENCE,
     &MAP,
     &AREA_TRIGGER,
     &WORLD_SAFE_LOCS,
     &CREATURE_DISPLAY_INFO,
     &CREATURE_DISPLAY_INFO_EXTRA,
     &CREATURE_MODEL_DATA,
+    &CREATURE_SOUND_DATA,
+    &NPC_SOUNDS,
     &GAME_OBJECT_DISPLAY_INFO,
     &ITEM_DISPLAY_INFO,
 ];
@@ -1225,14 +1267,50 @@ pub(crate) const SOUND_ENTRIES: Schema = Schema {
     ],
 };
 
+/// `SoundEntries`' `SoundType` values. Each name describes the shipped rows of
+/// that value, from the folder most of them are in and from their names: 1 is
+/// 302 rows in `Sound\Spells`, and 28 is all 110 rows in `Sound\Music`. What a
+/// value changes in the client is not established, so a name says what the
+/// rows hold, not what the client does with them. The list holds every value
+/// a shipped row has; a value not in it is drawn as its number.
+pub(crate) const SOUND_TYPES: [(u32, &str); 26] = [
+    (0, "None"),
+    (1, "Spells"),
+    (2, "Interface"),
+    (3, "Character on terrain"),
+    (4, "Weapon impacts"),
+    (6, "Weapon swings"),
+    (9, "Item handling"),
+    (10, "Creature and character combat"),
+    (12, "Character errors"),
+    (14, "Doodad loops"),
+    (16, "Death thuds"),
+    (17, "NPC greetings"),
+    (18, "Tests"),
+    (19, "Armour foley"),
+    (20, "Footstep splashes"),
+    (21, "Character splashes"),
+    (22, "Water"),
+    (23, "Gathering"),
+    (25, "Objects"),
+    (26, "Spell fizzles"),
+    (27, "Creature loops"),
+    (28, "Music"),
+    (29, "Emote voices"),
+    (30, "Fly-by music"),
+    (31, "Cinematic voices"),
+    (50, "Ambience"),
+];
+
 const SOUND_ENTRIES_COLUMNS: [Column; 29] = [
     c(0, "Id", Kind::Id),
     ca(
         1,
         "SoundType",
-        Kind::Int,
-        "The sound's category, shown as a number. `vale sound` counts sounds \
-         by it.",
+        Kind::Enum(&SOUND_TYPES),
+        "The sound's type. Each value is named after the folder and the names of its \
+         shipped rows; what a value changes in the client is not established. `vale sound` \
+         counts sounds by it.",
     ),
     c(2, "Name", Kind::Text),
     c(3, "File 1", Kind::Text),
@@ -2389,6 +2467,131 @@ pub(crate) const AREA_TABLE: Schema = Schema {
     ],
 };
 
+/// `ZoneMusic.dbc`: 99 rows of 8 fields. A row is a zone's music: a
+/// `SoundEntries` row played by day and one by night, and the silence after
+/// each track, a random length between a shortest and a longest, by day and by
+/// night. `AreaTable`'s `ZoneMusic` column refers to a row: 447 areas refer to
+/// one of 41 rows, and no area refers to the other 58. The indices are
+/// [`super::sound::fields::zone_music`]'s, and each column's note gives its
+/// measured counts.
+pub(crate) const ZONE_MUSIC: Schema = Schema {
+    table: "ZoneMusic",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "SetName",
+            Kind::Text,
+            "The set's name, such as Zone-Forest. Shipped row 251 has none, and row 36's is \
+             GhostMusic (DONOTRENAME).",
+        ),
+        ca(
+            2,
+            "SilenceIntervalMinDay",
+            Kind::Int,
+            "The shortest silence after a track by day, in milliseconds. 95 of the 99 shipped \
+             rows wait 180,000 to 300,000 (3 to 5 minutes).",
+        ),
+        ca(
+            3,
+            "SilenceIntervalMinNight",
+            Kind::Int,
+            "The shortest silence after a track by night, in milliseconds. Equal to the day's in \
+             98 shipped rows. Row 225's is 1,800,000, more than its SilenceIntervalMaxNight of \
+             300,000.",
+        ),
+        ca(
+            4,
+            "SilenceIntervalMaxDay",
+            Kind::Int,
+            "The longest silence after a track by day, in milliseconds.",
+        ),
+        ca(
+            5,
+            "SilenceIntervalMaxNight",
+            Kind::Int,
+            "The longest silence after a track by night, in milliseconds.",
+        ),
+        ca(
+            6,
+            "SoundDay",
+            Kind::Reference("SoundEntries"),
+            "The music by day: a SoundEntries row whose files are the tracks; each play picks \
+             one file by weight (Zone-Mountain Day). Set on 98 rows, 97 of which resolve. Every \
+             row it resolves to is SoundType 28 (Music).",
+        ),
+        ca(
+            7,
+            "SoundNight",
+            Kind::Reference("SoundEntries"),
+            "The music by night (Zone-Mountain Night). Set on 97 rows, 96 of which resolve. The \
+             same SoundEntries row as SoundDay in 89 of the 99 shipped rows.",
+        ),
+    ],
+    sections: &[
+        Section { name: "Music", fields: &[0, 1, 6, 7] },
+        Section { name: "Silence between tracks", fields: &[2, 4, 3, 5] },
+    ],
+};
+
+/// `ZoneIntroMusicTable.dbc`: 43 rows of 5 fields. A row is a piece played
+/// once on entering an area: a name, a `SoundEntries` row, a priority and the
+/// minimum time before it plays again. `AreaTable`'s `IntroMusic` column
+/// refers to a row: 62 areas hold one of 25 values, 4 of those areas hold 65,
+/// 67, 68 or 71, which are not rows of this table, and no area refers to 22
+/// of its rows. The indices are
+/// [`super::sound::fields::intro`]'s.
+pub(crate) const ZONE_INTRO_MUSIC: Schema = Schema {
+    table: "ZoneIntroMusicTable",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "Name", Kind::Text, "The piece's name, such as Orgrimmar Intro or Spooky01."),
+        ca(
+            2,
+            "SoundId",
+            Kind::Reference("SoundEntries"),
+            "The music: a SoundEntries row (Moment-Orgrimmar Intro). Set on all 43 shipped rows; \
+             every value resolves, and every row it resolves to is SoundType 28 (Music).",
+        ),
+        ca(3, "Priority", Kind::Int, "1 in every shipped row."),
+        ca(
+            4,
+            "MinDelayMinutes",
+            Kind::Int,
+            "The minimum time before the piece plays again, in minutes. 27 shipped rows wait \
+             10, 8 wait 3, 7 wait 60 and one waits 120.",
+        ),
+    ],
+    sections: &[Section { name: "Intro", fields: &[0, 1, 2, 3, 4] }],
+};
+
+/// `SoundAmbience.dbc`: 68 rows of 3 fields. A row is an area's looping
+/// background sound, played under its music: one `SoundEntries` row by day and
+/// one by night. `AreaTable`'s `Ambience` column refers to a row: 179 areas
+/// refer to one of 27 rows, and no area refers to the other 41. The indices are
+/// [`super::sound::fields::ambience`]'s.
+pub(crate) const SOUND_AMBIENCE: Schema = Schema {
+    table: "SoundAmbience",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "AmbienceDay",
+            Kind::Reference("SoundEntries"),
+            "The ambience by day (BeachDay). Set on all 68 shipped rows; every value resolves, \
+             and every row it resolves to is SoundType 50 (Ambience).",
+        ),
+        ca(
+            2,
+            "AmbienceNight",
+            Kind::Reference("SoundEntries"),
+            "The ambience by night (BeachNight). The same SoundEntries row as AmbienceDay in 45 \
+             of the 68 shipped rows.",
+        ),
+    ],
+    sections: &[Section { name: "Ambience", fields: &[0, 1, 2] }],
+};
+
 /// vmangos' `AreaFlags`, with what each bit does as its comments state it.
 pub(crate) const AREA_FLAGS: [(u32, &str, &str); 10] = [
     (0x001, "Snow", "Breath is drawn. Dun Morogh, Winterspring, Naxxramas and Razorfen Downs."),
@@ -2789,6 +2992,148 @@ pub(crate) const CREATURE_MODEL_DATA: Schema = Schema {
     ],
 };
 
+/// `CreatureSoundData.dbc`: 406 rows of 30 fields. A row is a creature's
+/// combat, movement and pet sounds. `CreatureDisplayInfo.SoundId` refers to a
+/// row; when it is 0, `CreatureModelData.SoundId` does. The indices
+/// [`super::sound`] reads are its `fields::creature`, each pinned there.
+///
+/// The other columns are named after what their values resolve to over the
+/// whole table, with the counts in each column's note: a column of
+/// `SoundEntries` ids is named after the sounds it holds (`WingFlapSmall`,
+/// `TrexStomp`, `WaterElementalLoop`). Some sound columns hold ids that
+/// `SoundEntries` does not have; each column's note gives how many of its
+/// values resolve.
+pub(crate) const CREATURE_SOUND_DATA: Schema = Schema {
+    table: "CreatureSoundData",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "SoundExertion", Kind::Reference("SoundEntries"), "The attack grunt. 263 rows; every value resolves (BasiliskAttack)."),
+        ca(2, "SoundExertionCritical", Kind::Reference("SoundEntries"), "27 rows; 18 resolve (HumanMaleCombatExertionCritical)."),
+        ca(3, "SoundInjury", Kind::Reference("SoundEntries"), "The wound. 275 rows; 273 resolve (BasiliskWound)."),
+        ca(4, "SoundInjuryCritical", Kind::Reference("SoundEntries"), "259 rows; 257 resolve (BasiliskWoundCritical)."),
+        ca(
+            5,
+            "SoundInjuryCrushingBlow",
+            Kind::Reference("SoundEntries"),
+            "The wound of a crushing blow. Zero in every shipped row.",
+        ),
+        ca(6, "SoundDeath", Kind::Reference("SoundEntries"), "278 rows; every value resolves (BasiliskDeath)."),
+        ca(7, "SoundStun", Kind::Reference("SoundEntries"), "4 rows; 1 resolves (OrcFemaleCombatStun). Not read by this project."),
+        ca(
+            8,
+            "SoundStand",
+            Kind::Reference("SoundEntries"),
+            "19 rows; 10 resolve (OrcFemaleStand, GnollStand). Not read by this project.",
+        ),
+        ca(
+            9,
+            "SoundFootstep",
+            Kind::Int,
+            "Not a sound: a creature key of FootstepTerrainLookup, which pairs it with the \
+             ground under the foot. All 244 nonzero values are keys there.",
+        ),
+        ca(10, "SoundAggro", Kind::Reference("SoundEntries"), "233 rows; every value resolves (BasiliskAggro)."),
+        ca(11, "SoundWingFlap", Kind::Reference("SoundEntries"), "26 rows; every value resolves (WingFlapSmall). Not read by this project."),
+        ca(12, "SoundWingGlide", Kind::Reference("SoundEntries"), "1 row (GenericWingGlide). Not read by this project."),
+        ca(13, "SoundAlert", Kind::Reference("SoundEntries"), "The bark before aggro. 150 rows; every value resolves."),
+        ca(14, "SoundFidget1", Kind::Reference("SoundEntries"), "39 rows; 23 resolve (GhoulFidget1). Not read by this project."),
+        ca(15, "SoundFidget2", Kind::Reference("SoundEntries"), "15 rows; 13 resolve (TarantulaFidget2). Not read by this project."),
+        ca(16, "SoundFidget3", Kind::Reference("SoundEntries"), "30 rows; every value resolves (BasiliskStand2). Not read by this project."),
+        ca(17, "SoundFidget4", Kind::Reference("SoundEntries"), "8 rows; every value resolves (BasiliskStand3). Not read by this project."),
+        ca(
+            18,
+            "SoundFidget5",
+            Kind::Reference("SoundEntries"),
+            "3 rows (the wolf's, the horse's, the T-rex's), each the same sound as CustomAttack1 \
+             beside it. Not read by this project.",
+        ),
+        ca(
+            19,
+            "CustomAttack1",
+            Kind::Reference("SoundEntries"),
+            "A natural weapon's impact, played in place of a weapon's. 12 rows; every value \
+             resolves (BiteMedium on the basilisk).",
+        ),
+        ca(20, "CustomAttack2", Kind::Reference("SoundEntries"), "1 row (WolfCustomAttack0)."),
+        ca(21, "CustomAttack3", Kind::Reference("SoundEntries"), "1 row (WolfCustomAttack0)."),
+        ca(22, "CustomAttack4", Kind::Reference("SoundEntries"), "Zero in every shipped row."),
+        ca(
+            23,
+            "SoundLoop",
+            Kind::Reference("SoundEntries"),
+            "34 rows; every value resolves, and every name ends in Loop (WaterElementalLoop, \
+             WispLoop). Not read by this project.",
+        ),
+        ca(
+            24,
+            "Unknown 24",
+            Kind::Int,
+            "Two rows set it, both to 1: 24, the Infernal's, and 84, the Stone Golem's. \
+             Zero elsewhere.",
+        ),
+        ca(
+            25,
+            "CreatureImpactType",
+            Kind::Int,
+            "The creature's material, which selects a blow's impact sound, as tables::sound \
+             reads it: 0 flesh, 1 chain, 2 plate. Zero in every shipped row; field 24 beside it \
+             is the one two rows set.",
+        ),
+        ca(26, "Unknown 26", Kind::Int, "Zero in every shipped row."),
+        ca(27, "SoundPetAttack", Kind::Reference("SoundEntries"), "What a pet says when sent to attack. The four warlock demons' rows (A_IMP_KILL)."),
+        ca(
+            28,
+            "SoundPetOrder",
+            Kind::Reference("SoundEntries"),
+            "What a pet says when ordered to cast a special spell. The same four rows (A_IMP_ORDER).",
+        ),
+        ca(
+            29,
+            "SoundPetDismiss",
+            Kind::Reference("SoundEntries"),
+            "What a pet says when dismissed. The same four rows (A_Imp_Dismiss).",
+        ),
+    ],
+    sections: &[
+        Section { name: "Combat", fields: &[0, 1, 2, 3, 4, 5, 6, 7, 10, 13] },
+        Section { name: "Natural weapon", fields: &[19, 20, 21, 22, 25, 24, 26] },
+        Section { name: "Movement and idle", fields: &[9, 11, 12, 23, 8, 14, 15, 16, 17, 18] },
+        Section { name: "Pet", fields: &[27, 28, 29] },
+    ],
+};
+
+/// `NPCSounds.dbc`: 156 rows of 5 fields. A row is what a creature says when
+/// it is spoken to. `CreatureDisplayInfo.NpcSoundId` refers to a row: 4,509 of
+/// the 10,534 shipped displays hold one, and every value resolves.
+pub(crate) const NPC_SOUNDS: Schema = Schema {
+    table: "NPCSounds",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "Greeting",
+            Kind::Reference("SoundEntries"),
+            "The greeting, such as DwarfMaleStandardNPCGreetings. Set on all 156 rows; every \
+             value resolves.",
+        ),
+        ca(
+            2,
+            "Farewell",
+            Kind::Reference("SoundEntries"),
+            "The farewell, such as DwarfMaleStandardNPCFarewells. 118 rows; 116 resolve.",
+        ),
+        ca(
+            3,
+            "Pissed",
+            Kind::Reference("SoundEntries"),
+            "The annoyed line, such as DwarfMaleStandardNPCPissed. 120 rows; every value \
+             resolves.",
+        ),
+        ca(4, "Unknown 4", Kind::Int, "Zero in every shipped row. tables::sound keeps it as a fourth sound."),
+    ],
+    sections: &[Section { name: "Sounds", fields: &[0, 1, 2, 3, 4] }],
+};
+
 /// `GameObjectDisplayInfo.dbc`: 1,638 rows of 12 fields. A game object's
 /// model and its ten sounds. The path index is [`super::dbc`]'s
 /// `display_fields`; the ten sounds follow wowdev.wiki's layout for 1.12.
@@ -2870,6 +3215,8 @@ mod tests {
             (&CREATURE_DISPLAY_INFO, 12),
             (&CREATURE_DISPLAY_INFO_EXTRA, 19),
             (&CREATURE_MODEL_DATA, 16),
+            (&CREATURE_SOUND_DATA, 30),
+            (&NPC_SOUNDS, 5),
             (&GAME_OBJECT_DISPLAY_INFO, 12),
             (&ITEM_DISPLAY_INFO, 23),
         ] {
@@ -2882,6 +3229,79 @@ mod tests {
             assert_eq!(drawn, (0..width).collect::<Vec<_>>(), "{}", schema.table);
             assert!(for_table(schema.table).is_some(), "{} is in ALL", schema.table);
         }
+    }
+
+    /// The `ZoneMusic` schema names the columns `tables::sound` reads, at the
+    /// indices it reads them, and `AreaTable` refers to it from the column the
+    /// sound bank reads.
+    #[test]
+    fn the_zone_music_schema_agrees_with_the_module_that_reads_it() {
+        use super::super::sound::fields::zone_music as f;
+        let column = |field: usize| ZONE_MUSIC.columns[field];
+        assert_eq!(ZONE_MUSIC.columns.len(), 8, "ZoneMusic.dbc is 8 fields");
+        assert_eq!(column(f::SET_NAME).name, "SetName");
+        assert_eq!(column(f::SILENCE_MIN).name, "SilenceIntervalMinDay");
+        assert_eq!(column(f::SILENCE_MIN + 1).name, "SilenceIntervalMinNight");
+        assert_eq!(column(f::SILENCE_MAX).name, "SilenceIntervalMaxDay");
+        assert_eq!(column(f::SILENCE_MAX + 1).name, "SilenceIntervalMaxNight");
+        assert_eq!(ZONE_MUSIC.references_to("SoundEntries"), [f::SOUND, f::SOUND + 1]);
+        assert_eq!(column(f::SOUND).name, "SoundDay");
+        assert_eq!(AREA_TABLE.references_to("ZoneMusic"), [super::super::sound::fields::area::ZONE_MUSIC]);
+    }
+
+    /// The intro and ambience schemas name the columns `tables::sound` reads,
+    /// and `AreaTable` names a row of each.
+    #[test]
+    fn the_intro_and_ambience_schemas_agree_with_the_module_that_reads_them() {
+        use super::super::sound::fields::{ambience, area, intro};
+        assert_eq!(ZONE_INTRO_MUSIC.columns.len(), 5, "ZoneIntroMusicTable.dbc is 5 fields");
+        assert_eq!(ZONE_INTRO_MUSIC.references_to("SoundEntries"), [intro::SOUND]);
+        assert_eq!(ZONE_INTRO_MUSIC.columns[intro::MIN_DELAY_MINUTES].name, "MinDelayMinutes");
+        assert_eq!(SOUND_AMBIENCE.columns.len(), 3, "SoundAmbience.dbc is 3 fields");
+        assert_eq!(SOUND_AMBIENCE.references_to("SoundEntries"), [ambience::SOUND, ambience::SOUND + 1]);
+        assert_eq!(AREA_TABLE.references_to("SoundAmbience"), [area::AMBIENCE]);
+        assert_eq!(AREA_TABLE.references_to("ZoneIntroMusicTable"), [area::INTRO_MUSIC]);
+    }
+
+    /// Every `SoundType` is named once, in order.
+    #[test]
+    fn every_sound_type_is_named_once() {
+        assert!(SOUND_TYPES.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert_eq!(SOUND_TYPES.iter().find(|(value, _)| *value == 28).map(|(_, name)| *name), Some("Music"));
+    }
+
+    /// The creature sound schema names the columns `tables::sound` reads, as
+    /// what that module reads them as: sound ids where it reads a sound, and
+    /// the footstep key and the impact type as numbers.
+    #[test]
+    fn the_creature_sound_schema_agrees_with_the_module_that_reads_it() {
+        use super::super::sound::fields::creature as f;
+        let column = |field: usize| CREATURE_SOUND_DATA.columns[field];
+        for (field, name) in [
+            (f::EXERTION, "SoundExertion"),
+            (f::WOUND, "SoundInjury"),
+            (f::WOUND_CRITICAL, "SoundInjuryCritical"),
+            (f::WOUND_CRUSHING, "SoundInjuryCrushingBlow"),
+            (f::DEATH, "SoundDeath"),
+            (f::AGGRO, "SoundAggro"),
+            (f::ALERT, "SoundAlert"),
+            (f::CUSTOM_ATTACK, "CustomAttack1"),
+            (f::PET_ATTACK, "SoundPetAttack"),
+            (f::PET_ORDER, "SoundPetOrder"),
+            (f::PET_DISMISS, "SoundPetDismiss"),
+        ] {
+            assert_eq!(column(field).name, name);
+            assert_eq!(column(field).kind, Kind::Reference("SoundEntries"), "{name}");
+        }
+        assert_eq!(column(f::CUSTOM_ATTACK + f::CUSTOM_ATTACK_COUNT - 1).name, "CustomAttack4");
+        assert_eq!(column(f::FOOTSTEP).kind, Kind::Int, "a footstep key is not a sound");
+        assert_eq!(column(f::IMPACT_TYPE).name, "CreatureImpactType");
+        assert_eq!(CREATURE_DISPLAY_INFO.references_to("CreatureSoundData"), [2]);
+        assert_eq!(CREATURE_MODEL_DATA.references_to("CreatureSoundData"), [13]);
+        assert_eq!(CREATURE_DISPLAY_INFO.references_to("NPCSounds"), [11]);
+        assert_eq!(NPC_SOUNDS.references_to("SoundEntries"), [1, 2, 3]);
+        assert!(chain_for("CreatureDisplayInfo").contains(&"SoundEntries"));
+        assert_eq!(chain_for("NPCSounds"), chain_for("CreatureSoundData"));
     }
 
     /// The three place schemas are the width their files are, put each field in
@@ -3275,23 +3695,18 @@ mod tests {
         // These are referenced deliberately without a schema of their own.
         // Each opens as numbered fields, which is better than a reference the
         // browser refuses to follow.
-        const UNDESCRIBED: [&str; 16] = [
+        const UNDESCRIBED: [&str; 11] = [
             "ChrRaces",
-            "CreatureSoundData",
             "HelmetGeosetVisData",
             "ItemGroupSounds",
             "ItemVisuals",
-            "NPCSounds",
             "Faction",
             "LiquidType",
             "LoadingScreens",
             "SkillCostsData",
             "SkillLineCategory",
             "SkillTiers",
-            "SoundAmbience",
             "SoundProviderPreferences",
-            "ZoneIntroMusicTable",
-            "ZoneMusic",
         ];
         for target in UNDESCRIBED {
             assert!(TABLE_NAMES.contains(&target), "{target} is not a table");

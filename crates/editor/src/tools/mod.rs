@@ -76,43 +76,43 @@ pub(crate) enum Tool {
     /// The pointer picks and reports and changes nothing.
     #[default]
     Select,
-    /// What is at a clicked point, and the distance and facing between two —
-    /// see [`measure`]. Changes nothing.
+    /// What is at a clicked point, and the distance and facing between two.
+    /// See [`measure`]. Changes nothing.
     Measure,
     /// The height brush. What it does to the ground is [`ground::terrain::Terrain`].
     Terrain,
-    /// A ramp between two points, which the height brush cannot make — see
+    /// A ramp between two points, which the height brush cannot make. See
     /// [`ground::grade`]. Two clicks and a button rather than a stroke.
     Grade,
     /// A road along a run of points: the ground graded along it and its
-    /// textures painted — see [`ground::road`].
+    /// textures painted. See [`ground::road`].
     Road,
-    /// The shading brush: the colour painted onto the terrain's vertices —
-    /// see [`ground::shading`].
+    /// The shading brush: the colour painted onto the terrain's vertices.
+    /// See [`ground::shading`].
     Shading,
-    /// The texture brush — see [`ground::textures`].
+    /// The texture brush. See [`ground::textures`].
     Textures,
-    /// Where the terrain is cut away entirely — see [`ground::holes`].
+    /// Where the terrain is cut away entirely. See [`ground::holes`].
     Holes,
-    /// Which place in the world each chunk is — see [`ground::areas`].
+    /// Which place in the world each chunk is. See [`ground::areas`].
     Areas,
-    /// A selection of chunks, and one value written to all of them — see
+    /// A selection of chunks, and one value written to all of them. See
     /// [`ground::chunks`].
     Chunks,
-    /// The water standing on the terrain — see [`ground::water`].
+    /// The water standing on the terrain. See [`ground::water`].
     Water,
-    /// The placed models standing on the terrain — see [`placements::doodads`].
+    /// The placed models standing on the terrain. See [`placements::doodads`].
     Doodads,
-    /// The placed buildings, which are a different list — see [`placements::wmos`].
+    /// The placed buildings, which are a different list. See [`placements::wmos`].
     Wmos,
-    /// `Spell.dbc` and every table it points at — see [`crate::tables`].
+    /// `Spell.dbc` and every table it points at. See [`crate::tables`].
     ///
     /// The first entry of the rail's Data group, and the first subject whose
     /// document is not the world: the workspace replaces the viewport rather
     /// than drawing over it.
     Spells,
     /// `Light.dbc` and its chain: the sun, the fill, the sky dome, the fog and
-    /// the water's colour, per map and per zone — see [`crate::tables`].
+    /// the water's colour, per map and per zone. See [`crate::tables`].
     ///
     /// A `Light` row is both a table row and a place: it is a sphere at a
     /// position on the open map, so the workspace sits beside the viewport
@@ -121,7 +121,7 @@ pub(crate) enum Tool {
     /// For the same reason it is on the rail's World half with the doodads
     /// rather than in the Data group beside Spells. See [`crate::ui::shell::rail`].
     Lights,
-    /// The server's creatures: where each one stands, and what it is — see
+    /// The server's creatures: where each one stands, and what it is. See
     /// [`spawns::creatures`].
     ///
     /// The first subject whose document is a row in vmangos' database rather
@@ -130,28 +130,28 @@ pub(crate) enum Tool {
     /// world, and the world shows whether it stands in the right place.
     ///
     /// The tool needs a database connection. With none, the tool opens, says
-    /// so and lists nothing — see [`crate::server::settings`], and
+    /// so and lists nothing. See [`crate::server::settings`], and
     /// [`crate::ui::shell::rail`], which greys the row rather than hiding it.
     Creatures,
     /// The server's game objects (chests, doors, veins, mailboxes): where each
-    /// one stands, and what it is — see [`spawns::gameobjects`].
+    /// one stands, and what it is. See [`spawns::gameobjects`].
     ///
     /// The same as [`Tool::Creatures`] over the next table: it keeps the
     /// viewport, needs a connection and is disabled during a playtest on the
     /// same terms.
     GameObjects,
     /// The server's items: what each one is, what it does and what it looks
-    /// like — see [`crate::subjects::items`].
+    /// like. See [`crate::subjects::items`].
     ///
     /// A row in vmangos' database like [`Tool::Creatures`], and a workspace
     /// like [`Tool::Spells`]: an item has no place in the world, so the
     /// middle of the screen holds the form rather than the ground.
     ///
     /// It works during a playtest, which no other server subject except
-    /// `Tool::Quests` does — see [`Tool::survives_playtest`].
+    /// `Tool::Quests` does. See [`Tool::survives_playtest`].
     Items,
     /// `ItemSet.dbc`: which items make up a set, and the bonuses it grants at
-    /// how many pieces — see [`crate::tables`].
+    /// how many pieces. See [`crate::tables`].
     ///
     /// A DBC table, edited in the table browser, and a part of the Items
     /// workspace: the top bar shows Items for both and a strip at the head of
@@ -159,7 +159,7 @@ pub(crate) enum Tool {
     /// it needs no database; the item names beside its item columns do.
     ItemSets,
     /// The server's quests: what each asks for, says and gives, and who hands
-    /// it out — see [`crate::subjects::quests`].
+    /// it out. See [`crate::subjects::quests`].
     ///
     /// A row in vmangos' database and a workspace, as [`Tool::Items`] is. It
     /// survives a playtest for the same reason: `LoadQuests` and the relation
@@ -168,7 +168,7 @@ pub(crate) enum Tool {
     Quests,
     /// The Creatures workspace: every `creature_template` row as a list,
     /// searched by name, subname or entry, and edited in the middle of the
-    /// screen — see [`crate::subjects::templates`].
+    /// screen. See [`crate::subjects::templates`].
     ///
     /// The same row the creature tool's template window edits, reached by
     /// name rather than by clicking a spawn. A template has no place in the
@@ -176,7 +176,7 @@ pub(crate) enum Tool {
     /// playtest, because the server reads `creature_template` at startup.
     CreatureData,
     /// The Game Objects workspace: every `gameobject_template` row, on
-    /// [`Tool::CreatureData`]'s terms — see [`crate::subjects::templates`].
+    /// [`Tool::CreatureData`]'s terms. See [`crate::subjects::templates`].
     GameObjectData,
     /// `CreatureDisplayInfo.dbc` with `CreatureDisplayInfoExtra` and
     /// `CreatureModelData` as two more tabs: what a creature looks like. A
@@ -189,11 +189,11 @@ pub(crate) enum Tool {
     /// part of the Items workspace.
     ItemDisplays,
     /// The files the project adds to the archives: imported textures, baked
-    /// models and the rest — see [`crate::import::assets`]. A workspace, since a file has no
+    /// models and the rest. See [`crate::import::assets`]. A workspace, since a file has no
     /// place in the world; it has no table, because its subject is the
     /// project folder.
     Assets,
-    /// A find-and-replace over every tile of the map — see [`crate::map::sweep`].
+    /// A find-and-replace over every tile of the map. See [`crate::map::sweep`].
     ///
     /// The second subject whose document is not a place: it edits the map's
     /// tiles, most of which are not open and none of which the pointer can
@@ -201,7 +201,7 @@ pub(crate) enum Tool {
     /// it.
     Sweep,
     /// The flight paths: `TaxiNodes.dbc`, `TaxiPath.dbc` and
-    /// `TaxiPathNode.dbc` — see [`places::flightpaths`].
+    /// `TaxiPathNode.dbc`. See [`places::flightpaths`].
     ///
     /// Client tables whose rows are places, as `Light` is: a node stands on the
     /// ground and a path's points are in the air over it, so they are picked
@@ -210,7 +210,7 @@ pub(crate) enum Tool {
     /// with the data editors on the top bar.
     Flightpaths,
     /// `AreaTable.dbc`: the zones and the sub-areas inside them, what each
-    /// is called and how the game treats a character standing in it — see
+    /// is called and how the game treats a character standing in it. See
     /// [`crate::tables`].
     ///
     /// A DBC table edited in the table browser, and the row [`Tool::Areas`]
@@ -218,8 +218,32 @@ pub(crate) enum Tool {
     /// one says where it is. The server reads its copy from `area_template`
     /// at startup, so it is not available during a playtest.
     Zones,
+    /// `SoundEntries.dbc`: every sound the client plays. See
+    /// [`crate::tables::sound_files`].
+    ///
+    /// The first part of the Sound workspace. Its other parts are the five
+    /// tables whose columns hold a `SoundEntries` id, one each: [`Tool::CreatureSounds`],
+    /// [`Tool::NpcSounds`], [`Tool::ZoneMusic`], [`Tool::ZoneIntros`] and
+    /// [`Tool::Ambience`]. Each is a DBC edited in the table browser, and
+    /// a client file the server does not read, so each survives a playtest.
+    Sounds,
+    /// `CreatureSoundData.dbc`: a creature's combat, movement and pet sounds.
+    /// A part of the Sound workspace.
+    CreatureSounds,
+    /// `NPCSounds.dbc`: a creature's greeting, farewell and annoyed lines. A
+    /// part of the Sound workspace.
+    NpcSounds,
+    /// `ZoneMusic.dbc`: a zone's music by day and by night and the silence
+    /// between tracks. A part of the Sound workspace.
+    ZoneMusic,
+    /// `ZoneIntroMusicTable.dbc`: the piece played once on entering an area.
+    /// A part of the Sound workspace.
+    ZoneIntros,
+    /// `SoundAmbience.dbc`: the sound under an area's music, by day and by
+    /// night. A part of the Sound workspace.
+    Ambience,
     /// `AreaTrigger.dbc`: the spheres and boxes the client reports standing
-    /// in, and what the server does when it is told — see [`places::triggers`].
+    /// in, and what the server does when it is told. See [`places::triggers`].
     ///
     /// A client table whose rows are places, as `Light` is, so it keeps the
     /// viewport and puts its form in the inspector. The server half is three
@@ -227,12 +251,12 @@ pub(crate) enum Tool {
     /// set and leaves out when none is.
     Triggers,
     /// `WorldSafeLocs.dbc`: where a released spirit appears, and which zones
-    /// each place serves — see [`places::graveyards`].
+    /// each place serves. See [`places::graveyards`].
     ///
     /// On `Tool::Triggers`' terms: the places are a client table picked in the
     /// viewport, and the links to zones are rows of vmangos' database.
     Graveyards,
-    /// Any DBC table, by name — see [`crate::tables`].
+    /// Any DBC table, by name. See [`crate::tables`].
     ///
     /// The workspace's list is the files of `DBFilesClient\`. Choosing one
     /// opens it in the browser the spell workspace uses: as named, typed
@@ -241,7 +265,7 @@ pub(crate) enum Tool {
     Tables,
 }
 
-/// Where a tool's controls are drawn — see [`Tool::surface`].
+/// Where a tool's controls are drawn. See [`Tool::surface`].
 ///
 /// The surface is also the line between the two sorts of entry [`Tool`]
 /// holds: a pointer tool on the world ([`Surface::World`] and
@@ -428,6 +452,17 @@ const CREATURE_PARTS: [(&str, Tool); 2] = [
     ("Displays", Tool::CreatureDisplays),
 ];
 
+/// The Sound workspace's parts: `SoundEntries`, then the five tables whose
+/// columns hold a `SoundEntries` id.
+const SOUND_PARTS: [(&str, Tool); 6] = [
+    ("Sounds", Tool::Sounds),
+    ("Creatures", Tool::CreatureSounds),
+    ("NPCs", Tool::NpcSounds),
+    ("Music", Tool::ZoneMusic),
+    ("Intros", Tool::ZoneIntros),
+    ("Ambience", Tool::Ambience),
+];
+
 /// The Game Objects workspace's parts.
 const OBJECT_PARTS: [(&str, Tool); 2] = [
     ("Templates", Tool::GameObjectData),
@@ -547,7 +582,7 @@ pub(crate) const SPECS: &[Spec] = &[
         Tool::Wmos,
         // "WMO" rather than "Buildings": it is what `MWMO` names, what
         // `MODF` places and what `vale wmos` checks, and half of what a
-        // `.wmo` holds is not a building — a bridge, a gate, a canal.
+        // `.wmo` holds is not a building: a bridge, a gate, a canal.
         "WMO",
         Place::Rail("World"),
         "MODF: one record per placed WMO building. Select, move, rotate, \
@@ -770,8 +805,8 @@ pub(crate) const SPECS: &[Spec] = &[
             name: "Creature Display Info",
             about: "CreatureDisplayInfo.dbc: a creature's model, scale and skins, with \
                     CreatureDisplayInfoExtra and CreatureModelData as two more tabs. A new skin \
-                    for an existing model is a copied row with another texture. Client files; \
-                    they need no database.",
+                    for an existing model is a copied row with another texture. Its sounds are \
+                    in the Sound workspace. Client files; they need no database.",
         }),
         ..browsed(
             Tool::CreatureDisplays,
@@ -832,10 +867,101 @@ pub(crate) const SPECS: &[Spec] = &[
         "AreaTable.dbc: zones and their sub-areas. Each row's name, parent zone, \
          music and ambience, duel and rest flags, area level and exploration bit. \
          Create a zone or sub-area here, then paint it onto the ground with the \
-         Areas tool. The server loads its copy from area_template at startup.",
+         Areas tool. The server loads its copy from area_template at startup. \
+         The ZoneMusic, ZoneIntroMusicTable and SoundAmbience rows an area's columns \
+         hold are edited in the Sound workspace.",
         crate::tables::zones::area::TABLE,
         &crate::tables::tabs::ZONE_TABS,
     ),
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "Sound Entries",
+            about: "SoundEntries.dbc: every sound the client plays. A row holds up to ten files \
+                    in one Directory, each with a Weight; each file is played and chosen here, \
+                    and Import Sound adds a row. A client file; it needs no database.",
+        }),
+        ..browsed(
+            Tool::Sounds,
+            // `--tool sound` names the workspace's first part.
+            "Sound",
+            Place::Bar("Sound"),
+            "SoundEntries.dbc and the five tables whose columns hold a SoundEntries id: \
+             CreatureSoundData, NPCSounds, ZoneMusic, ZoneIntroMusicTable and SoundAmbience. \
+             Client files; they need no database.",
+            "SoundEntries",
+            &crate::tables::tabs::SOUND_ENTRY_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "Creature Sounds",
+            about: "CreatureSoundData.dbc: a creature's attack, wound, death, aggro and pet \
+                    sounds. A CreatureDisplayInfo or CreatureModelData column holds a row's id. A \
+                    client file; it needs no database.",
+        }),
+        ..browsed(
+            Tool::CreatureSounds,
+            "Creature Sounds",
+            Place::Part,
+            "",
+            "CreatureSoundData",
+            &crate::tables::tabs::CREATURE_SOUND_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "NPC Sounds",
+            about: "NPCSounds.dbc: a creature's greeting, farewell and annoyed lines. A \
+                    CreatureDisplayInfo column holds a row's id. A client file; it needs no database.",
+        }),
+        ..browsed(Tool::NpcSounds, "NPC Sounds", Place::Part, "", "NPCSounds", &crate::tables::tabs::NPC_SOUND_TABS)
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "Zone Music",
+            about: "ZoneMusic.dbc: the music an area plays by day and by night, and the silence \
+                    between tracks. AreaTable's ZoneMusic column holds a row's id. A client file; \
+                    it needs no database.",
+        }),
+        ..browsed(Tool::ZoneMusic, "Zone Music", Place::Part, "", "ZoneMusic", &crate::tables::tabs::ZONE_MUSIC_TABS)
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "Zone Intro Music",
+            about: "ZoneIntroMusicTable.dbc: the piece played once on entering an area, and how \
+                    long before it plays again. AreaTable's IntroMusic column holds a row's id. A \
+                    client file; it needs no database.",
+        }),
+        ..browsed(
+            Tool::ZoneIntros,
+            "Zone Intros",
+            Place::Part,
+            "",
+            "ZoneIntroMusicTable",
+            &crate::tables::tabs::ZONE_INTRO_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SOUND_PARTS,
+        menu: Some(Entry {
+            name: "Zone Ambience",
+            about: "SoundAmbience.dbc: the sound under an area's music, by day and by night, \
+                    AreaTable's Ambience column holds a row's id. A client file; it needs no \
+                    database.",
+        }),
+        ..browsed(Tool::Ambience, "Ambience", Place::Part, "", "SoundAmbience", &crate::tables::tabs::AMBIENCE_TABS)
+    },
     // No one table: the workspace starts on the list of them.
     Spec {
         survives_playtest: true,
@@ -870,10 +996,10 @@ pub(crate) const SPECS: &[Spec] = &[
 /// Every tool, listed once, in the order of [`SPECS`].
 ///
 /// Three places enumerate the tools: `--tool`, the rail's own check, and any
-/// later caller. Each kept, or would have kept, its own list. `--tool` had
-/// eight entries when a ninth tool was added, and it was not updated, so the
-/// flag, which exists for photographing panels, could not select the new tool
-/// and reported nothing.
+/// later caller. When each kept its own list, `--tool` had eight entries and
+/// was not updated when a ninth tool was added. The flag exists for
+/// photographing panels, and it could not select the new tool and reported
+/// nothing.
 ///
 /// A fieldless enum cannot enumerate itself without a derive crate, so
 /// [`Tool::at`] enforces the list: an exhaustive `match` that does not compile
@@ -901,7 +1027,7 @@ impl Tool {
             Tool::Measure => 1,
             Tool::Terrain => 2,
             // Beside the height brush, because it is the shape that brush
-            // cannot make — see `SPECS`, whose order this must match.
+            // cannot make. See `SPECS`, whose order this must match.
             Tool::Grade => 3,
             Tool::Road => 4,
             Tool::Shading => 5,
@@ -929,8 +1055,14 @@ impl Tool {
             Tool::GameObjectData => 27,
             Tool::ObjectDisplays => 28,
             Tool::Zones => 29,
-            Tool::Tables => 30,
-            Tool::Assets => 31,
+            Tool::Sounds => 30,
+            Tool::CreatureSounds => 31,
+            Tool::NpcSounds => 32,
+            Tool::ZoneMusic => 33,
+            Tool::ZoneIntros => 34,
+            Tool::Ambience => 35,
+            Tool::Tables => 36,
+            Tool::Assets => 37,
         }
     }
 
@@ -991,9 +1123,9 @@ impl Tool {
     /// reads both template tables at startup, so an edit made during a
     /// playtest is not seen in it.
     ///
-    /// The three display tables are client files like `Spell.dbc`, and the
-    /// Assets workspace edits files, so the four survive for the spells'
-    /// reason.
+    /// The three display tables and the six sound tables are client files
+    /// like `Spell.dbc`, and the Assets workspace edits files, so each of
+    /// those survives for the spells' reason.
     pub(crate) fn survives_playtest(self) -> bool {
         self.spec().survives_playtest
     }
@@ -1199,8 +1331,8 @@ pub(crate) enum Wheel {
     Radius,
     /// How strongly each application of the brush acts.
     Strength,
-    /// How much of the radius is at full strength — the inner ring the preview
-    /// draws. See `vale_edit::ops::brush::Falloff::over`.
+    /// How much of the radius is at full strength. The preview draws it as the
+    /// inner ring. See `vale_edit::ops::brush::Falloff::over`.
     Core,
 }
 
@@ -1354,9 +1486,9 @@ mod tests {
 
     /// A data subject's tabs are its own chain, starting at its own table.
     ///
-    /// The tab list was once one constant, the spell chain's, read by two call
-    /// sites; the second chain made it a per-tool answer. A wrong list fails
-    /// silently: the lights workspace would draw the spell chain's four tabs,
+    /// The tab list was one constant, the spell chain's, read by two call
+    /// sites, until the second chain made it a per-tool answer. A wrong list
+    /// raises no error: the lights workspace would draw the spell chain's four tabs,
     /// and pressing one would leave the subject the rail shows as open.
     #[test]
     fn a_data_subjects_tabs_are_its_own_chain() {
@@ -1406,7 +1538,7 @@ mod tests {
     /// somewhere, so a browser can follow a row into it. `LightIntBand` and
     /// `LightFloatBand` are named by nothing: a band is found by arithmetic on
     /// its `LightParams` row. Without a tab there would be no route to either
-    /// table at all.
+    /// table.
     #[test]
     fn the_band_tables_are_named_by_no_reference_column() {
         use vale_assets::tables::schema::{self, Kind};
@@ -1560,6 +1692,19 @@ mod tests {
             assert_eq!(Tool::for_table(table), Tool::Tables, "{table}");
         }
         assert_eq!(Tool::for_table("AreaTable"), Tool::Zones);
+        // Each sound table is a part of the Sound workspace.
+        for (table, part) in [
+            ("SoundEntries", Tool::Sounds),
+            ("CreatureSoundData", Tool::CreatureSounds),
+            ("NPCSounds", Tool::NpcSounds),
+            ("ZoneMusic", Tool::ZoneMusic),
+            ("ZoneIntroMusicTable", Tool::ZoneIntros),
+            ("SoundAmbience", Tool::Ambience),
+        ] {
+            assert_eq!(Tool::for_table(table), part, "{table}");
+            assert_eq!(part.workspace(), Tool::Sounds, "{table}");
+        }
+        assert_eq!(Tool::for_table("CreatureDisplayInfo"), Tool::CreatureDisplays);
         assert_eq!(Tool::Zones.table(), Some("AreaTable"));
         assert!(Tool::Zones.covers_viewport());
         // The skill tables are the spell workspace's second row of tabs.

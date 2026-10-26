@@ -27,3 +27,7 @@ thiserror.workspace = true
 # buffer embedded in the JSON as a `data:` URI.
 gltf = { version = "1.4", default-features = false, features = ["names", "utils", "KHR_materials_unlit"] }
 base64 = "0.22"
+# rodio with only its WAV and MP3 decoders, as the workspace declares it, for
+# reading a WAV or MP3 in `src/sound.rs`. The client crate plays through the
+# same decoder, so a sound this crate writes is one the client crate can play.
+rodio.workspace = true

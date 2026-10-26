@@ -5,7 +5,10 @@
 //!               imported and which generated, what each is and what made
 //!               it, and the Import Texture dialog any form can open
 //! models.rs     the Import Model dialog
+//! sounds.rs     the Import Sound dialog, and a sound's details, waveform and
+//!               play button in the Assets workspace
 //! ```
 
 pub(crate) mod assets;
 pub(crate) mod models;
+pub(crate) mod sounds;

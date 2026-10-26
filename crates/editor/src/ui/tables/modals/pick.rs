@@ -324,6 +324,26 @@ pub(super) fn pick(
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
+            // A sound with no `SoundEntries` row yet is imported from disk.
+            // The Import Sound dialog writes the files into the project, adds
+            // a `SoundEntries` row whose File columns hold their names, and
+            // sets this field to the new row's id.
+            if points_at == "SoundEntries"
+                && ui
+                    .button("Import\u{2026}")
+                    .on_hover_text("Opens the Import Sound dialog. The WAV or MP3 files go into a new SoundEntries row, and this field is set to its id.")
+                    .clicked()
+            {
+                work.asks.push(crate::ui::shell::asks::ShellAsk::ImportSound {
+                    target: Some(crate::import::assets::FieldTarget {
+                        table: table.clone(),
+                        record,
+                        field,
+                        suffix: "",
+                    }),
+                });
+                close = true;
+            }
             if ui.button("Cancel").clicked() {
                 close = true;
             }

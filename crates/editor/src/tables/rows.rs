@@ -34,7 +34,7 @@ pub(super) fn rows_naming(
 
 /// A new row of `table_name` under the next id with `numbers` and `texts`
 /// written, recorded in the history entry that is open. Returns its record.
-pub(super) fn push_row(
+pub(crate) fn push_row(
     session: &mut EditSession,
     table_name: &str,
     numbers: &[(usize, u32)],

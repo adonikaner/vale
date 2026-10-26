@@ -17,6 +17,8 @@
 //! previews.rs   the previews of a row: the stage beside a form and in a
 //!               dialog, a display row's picture, and an item set worn
 //! sounds.rs     the buttons that play a sound column's sounds
+//! sound_files.rs the Files section of a `SoundEntries` row's form, its Play
+//!               and Import sound… buttons, and the file dialog
 //! modals/       the dialogs a form opens: the reference pickers, a table's
 //!               rows, a mask, a texture and a model
 //! storyboard.rs the one view of a row that is not a form: a spell's visual
@@ -171,6 +173,7 @@ pub(crate) mod modals;
 pub(crate) mod previews;
 pub(crate) mod reference;
 pub(crate) mod sounds;
+pub(crate) mod sound_files;
 pub(crate) mod storyboard;
 pub(crate) mod unschemad;
 pub(crate) mod zones;

@@ -1,6 +1,7 @@
-//! The flags that move pictures and models in and out of the project: a
-//! tile's height map as a PNG, a PNG imported onto a tile, a texture imported
-//! as a BLP, and a glTF model imported as an M2.
+//! The flags that move pictures, models and sounds in and out of the
+//! project: a tile's height map as a PNG, a PNG imported onto a tile, a
+//! texture imported as a BLP, a glTF model imported as an M2, and a WAV or
+//! MP3 imported as a sound file with the `SoundEntries` row that plays it.
 
 use super::Arity::*;
 use super::{text, Flag};
@@ -29,13 +30,21 @@ pub(crate) struct Import {
     /// a picture without writing anything, for `ground`, `icon` or `other` (the
     /// default). The dialog is otherwise behind the system's file dialog, which
     /// a scripted `--shot` cannot answer. Given a `.glb` or `.gltf`, it opens
-    /// the Import Model dialog instead, for `creature`, `doodad` or `other`.
+    /// the Import Model dialog instead, for `creature`, `doodad` or `other`;
+    /// given a `.wav` or `.mp3`, the Import Sound dialog, for `creature`,
+    /// `spell`, `object`, `interface`, `music`, `ambience` or `other`.
     pub(crate) import_dialog: Option<(String, String)>,
     /// `--import-model <file> <archive path>`: import a glTF model as an M2 at
     /// that path, with the Import Model dialog's defaults for what the path's
     /// folder is for, and open the Assets workspace on it. See
     /// `crate::import::models`.
     pub(crate) import_model: Option<(String, String)>,
+    /// `--import-sound <file> <archive path>`: write a WAV or MP3 at that
+    /// path with the Import Sound dialog's defaults for the purpose the path's
+    /// folder implies, add a `SoundEntries` row whose `Directory` and
+    /// `File 1` hold it, and open the Assets workspace on it. See
+    /// `crate::import::sounds`.
+    pub(crate) import_sound: Option<(String, String)>,
 }
 
 pub(super) const FLAGS: &[Flag] = &[
@@ -54,7 +63,14 @@ pub(super) const FLAGS: &[Flag] = &[
         }
         a.view.tool = Some(Tool::Assets);
     }),
-    // The purpose is optional, so a following flag is not eaten.
+    Flag::new("--import-sound", Two, |a, v| {
+        if let [sound, vpath] = v {
+            a.import.import_sound = Some((sound.clone(), vpath.clone()));
+        }
+        a.view.tool = Some(Tool::Assets);
+    }),
+    // The purpose is optional, so a flag that follows the picture is not taken
+    // as the purpose.
     Flag::new("--import-dialog", OneThenOptional, |a, v| {
         if let Some(picture) = v.first() {
             let purpose = v.get(1).cloned().unwrap_or_default();

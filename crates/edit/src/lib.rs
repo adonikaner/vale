@@ -14,6 +14,8 @@
 //! m2/        writing models: a rigid transform baked into a copy of a model,
 //!            which is how 1.12 positions a spell effect, and a whole model
 //!            written from a glTF file with its skeleton and animations
+//! sound.rs   a WAV or MP3 file read to samples, and samples written as the
+//!            16-bit PCM WAV the shipped sounds are
 //! project.rs where an edit is written, and how it reaches a client
 //! manifest.rs what a project changes, file by file, against the files it
 //!            was edited from
@@ -49,6 +51,7 @@ pub mod ops;
 pub mod minimap;
 pub mod project;
 pub mod shadow;
+pub mod sound;
 pub mod undo;
 pub mod wdt;
 

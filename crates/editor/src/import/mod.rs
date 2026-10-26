@@ -10,6 +10,8 @@
 //!                client reads
 //! models.rs      a glTF model turned into an M2 with its skeleton and
 //!                animations, and its pictures into BLP files beside it
+//! sounds.rs      WAV and MP3 files written at archive paths the client
+//!                reads, and the SoundEntries row that plays them
 //! sources.rs     the record of where each imported file came from, which
 //!                tells an import from a generated file and is what
 //!                Re-import reads
@@ -21,4 +23,5 @@ pub(crate) mod assets;
 pub(crate) mod generated;
 pub(crate) mod images;
 pub(crate) mod models;
+pub(crate) mod sounds;
 pub(crate) mod sources;

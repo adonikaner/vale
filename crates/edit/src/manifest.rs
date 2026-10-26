@@ -1,11 +1,11 @@
 //! What a project changes, file by file, against the files it was edited
 //! from.
 //!
-//! [`project::Summary`] counts a project's files by kind, which is enough to
-//! tell two projects apart in a list. This module says what each file does:
+//! [`project::Summary`] counts a project's files by type, which is enough to
+//! tell two projects apart in a list. This module says what each file changes:
 //! a tile is compared against the archives' tile chunk by chunk
 //! ([`adt::diff`]), a table against the archives' table row by row
-//! ([`dbc::diff`]), and every other file is named with its kind and size.
+//! ([`dbc::diff`]), and every other file is named with its type and size.
 //!
 //! The originals come from a reader the caller supplies, because this crate
 //! does not open the archives. The editor passes a read that steps over the
@@ -20,7 +20,7 @@ use crate::dbc::{self, DbcFile};
 use crate::project::Project;
 use crate::TileKey;
 
-/// The kind of file a virtual path names, by its extension and its first
+/// The type of file a virtual path names, by its extension and its first
 /// path component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -34,6 +34,8 @@ pub enum Kind {
     Minimap,
     /// Any other `.blp`.
     Texture,
+    /// `.wav` or `.mp3`: a sound.
+    Sound,
     /// `.wdt`: a map's tile index.
     Wdt,
     /// Anything under `sql\`: statements for the server and what puts them
@@ -61,6 +63,7 @@ impl Kind {
             Some("m2") => Kind::Model,
             Some("blp") if lower.starts_with("textures\\minimap\\") => Kind::Minimap,
             Some("blp") => Kind::Texture,
+            Some("wav" | "mp3") => Kind::Sound,
             Some("wdt") => Kind::Wdt,
             _ => Kind::Other,
         }
@@ -74,6 +77,7 @@ impl Kind {
             Kind::Model => ("model", "models"),
             Kind::Minimap => ("minimap", "minimaps"),
             Kind::Texture => ("texture", "textures"),
+            Kind::Sound => ("sound", "sounds"),
             Kind::Wdt => ("WDT", "WDTs"),
             Kind::Sql => ("SQL file", "SQL files"),
             Kind::Server => ("server record", "server records"),

@@ -15,8 +15,8 @@
 //!               storyboard and what a display row looks like
 //! preview/      the attachment lab's card and pane
 //! map/          the map from above
-//! import/       the Assets workspace and the Import Texture and Import Model
-//!               dialogs
+//! import/       the Assets workspace and the Import Texture, Import Model and
+//!               Import Sound dialogs
 //! workspace.rs  the workspace a tool puts in the middle of a window, drawn
 //!               the same in the main window and a pop-out window
 //! ```
@@ -907,17 +907,17 @@ fn draw(
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.
     shell::context::draw(&ctx, session, &mut editing, &assets, viewport.zoom, time.elapsed_secs_f64());
-    // The Import Texture and Import Model dialogs, under any tool: the Assets
-    // workspace opens them and a form's skin field opens the first. Each
-    // covers the window while it is open, so a press on it is not a press on
-    // the ground. It is a pop-out window's while that window's workspace
-    // asked for it.
-    let asked_by_field = editing.assets.import.as_ref().is_some_and(|import| import.for_field.is_some());
+    // The Import Texture, Import Model and Import Sound dialogs, under any
+    // tool: the Assets workspace opens them, a form's skin field opens the
+    // first and a form's sound field the last. Each covers the window while
+    // it is open, so a press on it is not a press on the ground. It is a
+    // pop-out window's while that window's workspace asked for it.
+    let asked_by_field = editing.assets.asked_by_field();
     if editing.popout.import_window(*tool, asked_by_field).is_none() {
-        if editing.assets.import.is_some() || editing.assets.model.is_some() {
+        if editing.assets.dialog_open() {
             viewport.floating.push(ctx.content_rect());
         }
-        import::assets::import_dialog(&ctx, &mut editing.assets, session, &assets);
+        import::assets::import_dialog(&ctx, &mut editing.assets, &mut editing.browser, session, &assets);
     }
 
     // The creature template's own window, drawn on the root context like the

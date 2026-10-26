@@ -18,6 +18,8 @@
 //! visuals.rs   the spell chain's rows found and pictured by their models, and
 //!              a kit's effect slots by attachment point
 //! sounds.rs    playing a `SoundEntries` row for the panel
+//! sound_files.rs  a `SoundEntries` row's File and Weight columns: read, and
+//!              a file added, changed or removed
 //! open.rs      opening the tables a workspace needs, one per frame
 //! tests.rs     the rows each operation makes and the labels they get
 //! ```
@@ -180,6 +182,7 @@ pub(crate) mod commands;
 pub(crate) mod bake;
 pub(crate) mod visuals;
 pub(crate) mod sounds;
+pub(crate) mod sound_files;
 pub(crate) mod open;
 #[cfg(test)]
 mod tests;
@@ -255,6 +258,11 @@ pub(crate) enum Modal {
         column: &'static str,
         bits: &'static [(u32, &'static str, &'static str)],
     },
+    /// Choose the WAV or MP3 file for `slot` of the `SoundEntries` row at
+    /// `record`, from the archives and the project: a file in the row's
+    /// Directory, or in any folder when no other slot holds a file. See
+    /// [`sound_files::put_file`].
+    SoundFile { record: usize, slot: usize },
     /// Choose the visual of the `Spell` row at `record` by another spell,
     /// which is played, and either share that spell's visual or clone it.
     LooksLike { record: usize },

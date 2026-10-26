@@ -117,6 +117,10 @@ pub(crate) struct Browser {
     /// The sound [`listen`] is playing, until it ends or is stopped, so the
     /// button that started it can be drawn as a stop button.
     pub(crate) hearing: Option<Heard>,
+    /// The file [`listen`] is playing, until it ends or is stopped: the
+    /// archive path of a `Listen::File`, or the key of a `Listen::Bytes`. The
+    /// button that started it is drawn as a stop button while it is set.
+    pub(crate) hearing_file: Option<String>,
     /// Whether `--row` has been applied. It names a row of a table that is not
     /// yet open on the frame the flag is read, so it is applied when the table
     /// has been opened rather than at startup.

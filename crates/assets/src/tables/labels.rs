@@ -184,13 +184,8 @@ pub fn describe(
         // An ambience row has no name, so it is called by its sounds' names:
         // the day one, and the night one under it when it differs.
         "SoundAmbience" => {
-            use crate::tables::sound::fields::{ambience, entry};
-            let name = |sound: u32| {
-                tables
-                    .table("SoundEntries")
-                    .and_then(|sounds| sounds.string_at(sounds.row_of(sound)?, entry::NAME))
-                    .filter(|name| !name.is_empty())
-            };
+            use crate::tables::sound::fields::ambience;
+            let name = |sound: u32| sound_name(tables, sound);
             let (day, night) = (num(ambience::SOUND), num(ambience::SOUND + 1));
             let title = name(day).unwrap_or_default();
             let sub = match night != day {
@@ -198,6 +193,12 @@ pub fn describe(
                 false => None,
             };
             (title, sub.unwrap_or_default())
+        }
+        // A `ZoneIntroMusicTable` row is labelled by its Name, with the name
+        // of the `SoundEntries` row it plays under it.
+        "ZoneIntroMusicTable" => {
+            use crate::tables::sound::fields::intro;
+            (text(1), sound_name(tables, num(intro::SOUND)).unwrap_or_default())
         }
         "SpellCastTimes" => (
             format!("{} ms", table.i32_at(record, 1).unwrap_or(0)),
@@ -255,6 +256,53 @@ pub fn describe(
                 }
             ),
             text(18),
+        ),
+        // `CreatureSoundData` and `NPCSounds` have no name column either, so a
+        // row is labelled by the names of the `SoundEntries` rows it refers
+        // to. A `CreatureSoundData` row takes the first nonzero of its death,
+        // exertion, wound and aggro columns, with the count of its nonzero
+        // sound columns under it. An `NPCSounds` row takes its greeting, with
+        // its farewell under it.
+        "CreatureSoundData" => {
+            use crate::tables::sound::fields::creature as f;
+            let stated = schema::CREATURE_SOUND_DATA
+                .columns
+                .iter()
+                .filter(|column| column.kind == Kind::Reference("SoundEntries"))
+                .filter(|column| num(column.field) != 0)
+                .count();
+            let title = [f::DEATH, f::EXERTION, f::WOUND, f::AGGRO]
+                .into_iter()
+                .find_map(|field| sound_name(tables, num(field)))
+                .unwrap_or_default();
+            let sub = match stated {
+                0 => "no sounds".to_string(),
+                1 => "1 sound".to_string(),
+                n => format!("{n} sounds"),
+            };
+            (title, sub)
+        }
+        // A `ZoneMusic` row is labelled by its SetName, or by its day sound's
+        // name when SetName is empty. Under it is the day sound's name, and
+        // the night sound's when the two columns differ.
+        "ZoneMusic" => {
+            use crate::tables::sound::fields::zone_music as f;
+            let (day, night) = (num(f::SOUND), num(f::SOUND + 1));
+            let day_name = sound_name(tables, day);
+            let title = Some(text(f::SET_NAME)).filter(|name| !name.is_empty()).or_else(|| day_name.clone());
+            let sub = match (day_name, night != day) {
+                (Some(day), true) => match sound_name(tables, night) {
+                    Some(night) => format!("{day} \u{b7} night: {night}"),
+                    None => day,
+                },
+                (Some(day), false) => day,
+                (None, _) => String::new(),
+            };
+            (title.unwrap_or_default(), sub)
+        }
+        "NPCSounds" => (
+            sound_name(tables, num(1)).unwrap_or_default(),
+            sound_name(tables, num(2)).unwrap_or_default(),
         ),
         "GameObjectDisplayInfo" => (stem(&text(1)).to_string(), String::new()),
         "ItemDisplayInfo" => (text(5), stem(&text(1)).to_string()),
@@ -451,6 +499,15 @@ fn spell_label(tables: &dyn Tables, index: &mut dyn Index, id: u32) -> Option<(S
 }
 
 /// A skill line's name out of the open `SkillLine` table.
+/// The Name column of `SoundEntries` row `id`. `None` when the table is not
+/// open, no row has that id (0 is never a row), or the name is empty.
+fn sound_name(tables: &dyn Tables, id: u32) -> Option<String> {
+    let sounds = tables.table("SoundEntries")?;
+    sounds
+        .string_at(sounds.row_of(id)?, crate::tables::sound::fields::entry::NAME)
+        .filter(|name| !name.is_empty())
+}
+
 fn skill_name(tables: &dyn Tables, id: u32) -> Option<String> {
     let lines = tables.table("SkillLine")?;
     lines

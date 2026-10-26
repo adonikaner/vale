@@ -10,9 +10,11 @@
 //!                          fallen behind
 //! middle     what it is    its path, what it is used as, what made it and
 //!                          from what, a texture's dimensions and compression,
-//!                          a model's skeleton and sequences, and what can be
-//!                          done to it
-//! inspector  what it is like  the texture, or the model, drawn
+//!                          a model's skeleton and sequences, a sound's
+//!                          format, length and the SoundEntries rows that
+//!                          hold it, and what can be done to it
+//! inspector  what it is like  the texture or the model drawn, or the sound's
+//!                          waveform and a button that plays it
 //! ```
 //!
 //! The list is the project folder, so a file the lab bakes, a minimap the
@@ -40,22 +42,29 @@
 //! ## Filtering by sort: what a file is to the game, not its format
 //!
 //! Inside each, the list is filtered by what a file is to the game ([`Sort`]):
-//! a ground texture, an icon, another texture, a model, a minimap picture, a
-//! baked skin. The sorts offered are the ones the project has, so the filter
+//! a ground texture, an icon, another texture, a model, a sound, music, a
+//! minimap picture, a baked skin. The sorts offered are the ones the project
+//! has, so the filter
 //! grows with the sorts of file the project adds rather than listing every
 //! sort there could be. A ground texture's `_s` file belongs to its pair and
 //! is shown on its plain file's row, not as a file of its own.
 //!
-//! Import takes a picture or a glTF model and opens the dialog for what it
-//! is. A texture's purpose is chosen in its dialog, not by its folder, and so
-//! is a model's ([`super::models`]).
+//! Import takes one picture, one glTF model, or one or more WAV or MP3 files,
+//! and opens the dialog for that file type. A texture's purpose is chosen in
+//! its dialog, not by its folder, and so is a model's ([`super::models`]) and
+//! a sound's ([`super::sounds`]). The game does not play a sound file that no
+//! `SoundEntries` row holds; such a file's details say so and offer Add a
+//! SoundEntries Row.
 //!
 //! ## What else opens the import dialogs
 //!
 //! A display form's texture field opens the texture dialog, in the folder its
 //! file is read from, and the texture tool's panel opens it for a ground
-//! texture. The shell draws both dialogs whatever the tool is
-//! ([`import_dialog`]); the workspace, the field and the panel only ask for
+//! texture. Import… in a `SoundEntries` reference picker opens the sound
+//! dialog, and the field is set to the row it adds; Import sound… on a
+//! `SoundEntries` row's form opens it for no field. The shell draws the
+//! dialogs whatever the tool is
+//! ([`import_dialog`]); the workspace, the fields and the panel only ask for
 //! them.
 
 use std::sync::Arc;
@@ -66,10 +75,12 @@ use crate::import::assets::{
     gloss_of, Ask, Assets, Choice, Gloss, Import, Own, Purpose, GROUND_ROOT, OTHER_FOLDER,
 };
 use crate::import::generated::{flight_map_of, Generator, Standing, Survey};
+use crate::import::sounds::SoundPurpose;
 use crate::import::sources::Sources;
 use crate::session::EditSession;
 use crate::ui::subjects::listing;
 use crate::ui::widgets::theme;
+use super::sounds;
 use vale_assets::world::blp::Encoding;
 use vale_edit::manifest::Kind;
 
@@ -107,6 +118,8 @@ enum Sort {
     Icon,
     Texture,
     Model,
+    Sound,
+    Music,
     Minimap,
     MinimapIndex,
     NpcSkin,
@@ -116,11 +129,13 @@ enum Sort {
 }
 
 impl Sort {
-    const ALL: [Sort; 10] = [
+    const ALL: [Sort; 12] = [
         Sort::Ground,
         Sort::Icon,
         Sort::Texture,
         Sort::Model,
+        Sort::Sound,
+        Sort::Music,
         Sort::Minimap,
         Sort::MinimapIndex,
         Sort::NpcSkin,
@@ -145,6 +160,10 @@ impl Sort {
                     Purpose::Field | Purpose::Other => Sort::Texture,
                 },
                 Kind::Model => Sort::Model,
+                Kind::Sound => match SoundPurpose::of_path(&own.vpath) {
+                    SoundPurpose::Music => Sort::Music,
+                    _ => Sort::Sound,
+                },
                 _ => Sort::Other,
             },
         }
@@ -162,6 +181,8 @@ impl Sort {
             Sort::Icon => "Icons",
             Sort::Texture => "Textures",
             Sort::Model => "Models",
+            Sort::Sound => "Sounds",
+            Sort::Music => "Music",
             Sort::Minimap => "Minimaps",
             Sort::MinimapIndex => "Minimap index",
             Sort::NpcSkin => "NPC skins",
@@ -178,6 +199,8 @@ impl Sort {
             Sort::Icon => "icon",
             Sort::Texture => "texture",
             Sort::Model => "model",
+            Sort::Sound => "sound",
+            Sort::Music => "music track",
             Sort::Minimap => "minimap picture",
             Sort::MinimapIndex => "minimap index",
             Sort::NpcSkin => "baked NPC skin",
@@ -313,8 +336,8 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     })
     .response
     .on_hover_text(
-        "The project's own game files other than tiles and tables: imported textures and \
-         models, and the files the editor generates: minimap pictures, baked NPC skins, \
+        "The project's own game files other than tiles and tables: imported textures, \
+         models and sounds, and the files the editor generates: minimap pictures, baked NPC skins, \
          baked models, flight maps. Each is read in place of the archives' file at its path, \
          listed in the editor's pickers, and published with the project.",
     );
@@ -322,9 +345,11 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     if ui
         .add_sized(egui::vec2(ui.available_width(), 24.0), egui::Button::new("Import\u{2026}"))
         .on_hover_text(
-            "Choose a PNG, TGA or BLP picture, or a glTF 2.0 model (.glb, .gltf). The next step \
+            "Choose a PNG, TGA or BLP picture, a glTF 2.0 model (.glb, .gltf), or one or more WAV \
+             or MP3 files, which become the files of one SoundEntries row. The import dialog then \
              asks what it is for: a ground texture, an icon or another texture; a creature, a \
-             doodad or another model.",
+             doodad or another model; a creature's, a spell's, an object's or the interface's \
+             sound, a zone's music or ambience, or another sound.",
         )
         .clicked()
     {
@@ -332,7 +357,7 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
             folder: OTHER_FOLDER.to_string(),
             name: None,
             for_field: None,
-            models: true,
+            any: true,
         });
     }
     ui.add_space(4.0);
@@ -649,6 +674,16 @@ fn picture(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, rect: egui::Rect) 
             let key = model_portrait(work, &own.vpath, false);
             crate::preview::portraits::paint(ui, work.portraits, &key, rect);
         }
+        Kind::Sound => {
+            ui.painter().rect_filled(rect, 3.0, theme::SUNK);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "\u{266a}",
+                egui::FontId::proportional(16.0),
+                theme::INK_DIM,
+            );
+        }
         _ => {
             ui.painter().rect_filled(rect, 3.0, theme::LINE);
         }
@@ -767,6 +802,10 @@ fn used_as(sort: Sort) -> &'static str {
         Sort::Icon => "Named by an item's display or a spell's icon row.",
         Sort::Texture => "Read wherever a model, a table or the interface names its path.",
         Sort::Model => "Listed in the placement tools and the model browser.",
+        Sort::Sound => {
+            "Played through a SoundEntries row whose File columns hold it, which a creature, spell or object table names."
+        }
+        Sort::Music => "Played through a SoundEntries row that a ZoneMusic or ZoneIntroMusicTable row names.",
         Sort::Minimap => "Drawn by the minimap and the map for its tile.",
         Sort::MinimapIndex => "Read by the client to find each tile's minimap picture.",
         Sort::NpcSkin => "The body texture of the NPCs whose CreatureDisplayInfoExtra row names it as BakeName.",
@@ -820,6 +859,14 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .is_some_and(|gloss| gloss_own.is_none() && in_archives(ui.ctx(), work.game, gloss));
     let unpaired = gloss.is_some() && gloss_own.is_none() && !gloss_shipped;
     let facts = (own.kind == Kind::Model).then(|| model_facts(ui, work.session, &own.vpath)).flatten();
+    let heard = (own.kind == Kind::Sound).then(|| sounds::facts(ui, work.session, &own.vpath)).flatten();
+    let played_by = match own.kind {
+        Kind::Sound => {
+            work.session.open_table(work.game, crate::import::sounds::TABLE);
+            sounds::rows_playing(ui, work.session, &own.vpath)
+        }
+        _ => None,
+    };
     let tables = work.game.display_tables().ok();
     let animations = tables.as_deref().and_then(|t| t.animations());
 
@@ -902,6 +949,42 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 ui.label(named.join(", "));
                 ui.end_row();
             }
+            if let Some(heard) = &heard {
+                ui.label(egui::RichText::new("Format").color(theme::INK_DIM));
+                match heard.format {
+                    Some(format) if format.is_shipped_wav() || matches!(format, vale_edit::sound::Format::Mp3 { .. }) => {
+                        ui.label(format.words())
+                    }
+                    Some(format) => ui
+                        .label(egui::RichText::new(format.words()).color(theme::WARN))
+                        .on_hover_text("Not the encoding of the shipped WAVs: all 6,845 are 16-bit PCM at 22,050 or 44,100 Hz."),
+                    None => ui.label(egui::RichText::new("not a WAV or an MP3").color(theme::BAD)),
+                };
+                ui.end_row();
+                ui.label(egui::RichText::new("Length").color(theme::INK_DIM));
+                match &heard.seconds {
+                    Ok(seconds) => ui.label(sounds::seconds_words(*seconds)),
+                    Err(why) => ui.label(egui::RichText::new(format!("does not decode: {why}")).color(theme::BAD)),
+                };
+                ui.end_row();
+            }
+            if let Some(rows) = &played_by {
+                ui.label(egui::RichText::new("Played by").color(theme::INK_DIM));
+                let named: Vec<String> = rows
+                    .iter()
+                    .take(6)
+                    .map(|id| match work.browser.describe_id(work.session, crate::import::sounds::TABLE, *id) {
+                        Some(label) if !label.title.is_empty() => format!("{id} {}", label.title),
+                        _ => id.to_string(),
+                    })
+                    .collect();
+                match rows.len() {
+                    0 => ui.label(egui::RichText::new("no SoundEntries row holds it").color(theme::WARN)),
+                    n if n > 6 => ui.label(format!("SoundEntries {} and {} more", named.join(", "), n - 6)),
+                    _ => ui.label(format!("SoundEntries {}", named.join(", "))),
+                };
+                ui.end_row();
+            }
             if let Some(gloss) = &gloss {
                 ui.label(egui::RichText::new("Gloss file").color(theme::INK_DIM));
                 match (&gloss_own, gloss_shipped) {
@@ -955,8 +1038,28 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
              Write Its _s File writes both again.",
         );
     }
+    if played_by.as_ref().is_some_and(Vec::is_empty) {
+        ui.add_space(6.0);
+        theme::note(
+            ui,
+            "The game plays a sound file only through a SoundEntries row, and no row holds this one. \
+             Add a SoundEntries Row adds one whose Directory and File 1 hold it, with the commonest \
+             SoundType, Volume, Flags and distances of shipped rows for the purpose its folder gives.",
+        );
+    }
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
+        if own.kind == Kind::Sound {
+            sounds::play_button(ui, work.browser, &own.vpath);
+            if played_by.as_ref().is_some_and(Vec::is_empty)
+                && ui
+                    .button("Add a SoundEntries Row")
+                    .on_hover_text("Add a SoundEntries row whose Directory and File 1 hold this file, as one undo entry.")
+                    .clicked()
+            {
+                work.assets.ask = Some(Ask::AddEntry(own.vpath.clone()));
+            }
+        }
         made_again(ui, work, sort, made, &own.vpath);
         if let Some(entry) = &imported {
             if ui
@@ -1018,7 +1121,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 folder: folder(&own.vpath).to_string(),
                 name: Some(basename(&own.vpath).trim_end_matches(".blp").trim_end_matches(".BLP").to_string()),
                 for_field: None,
-                models: false,
+                any: false,
             });
         }
         // Removal takes two presses: the file is deleted from the project
@@ -1166,7 +1269,19 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
             let side = ui.available_width();
             crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &key, side);
         }
-        _ => theme::note(ui, "No picture for this kind of file."),
+        Kind::Sound => {
+            let facts = sounds::facts(ui, work.session, &vpath);
+            let peaks = facts.as_ref().map(|f| f.peaks.clone()).unwrap_or_default();
+            sounds::waveform(ui, &peaks, egui::vec2(ui.available_width(), 96.0));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                sounds::play_button(ui, work.browser, &vpath);
+                if let Some(Ok(seconds)) = facts.as_ref().map(|f| f.seconds.clone()) {
+                    ui.label(theme::number(sounds::seconds_words(seconds)));
+                }
+            });
+        }
+        _ => theme::note(ui, "No picture for this type of file."),
     }
 }
 
@@ -1200,15 +1315,24 @@ pub(in crate::ui) fn checker(ui: &egui::Ui, rect: egui::Rect) {
     }
 }
 
-/// The Import Texture and Import Model dialogs, when one is open. Drawn by
-/// the shell under any tool, since a form field and the texture tool's panel
-/// open the first too.
+/// The Import Texture, Import Model and Import Sound dialogs, when one is
+/// open. The shell draws them under any tool, because a display form's
+/// texture field and the texture tool's panel open the texture dialog, and a
+/// `SoundEntries` picker or a `SoundEntries` row's form opens the sound
+/// dialog.
 ///
 /// The texture dialog's first choice is what the texture is for
 /// ([`Purpose`]); the folder, the size and the files written follow from it,
 /// and the rows under it are only the ones that purpose has.
-pub(crate) fn import_dialog(ctx: &egui::Context, assets: &mut Assets, session: &EditSession, game: &vale_client::assets::GameAssets) {
+pub(crate) fn import_dialog(
+    ctx: &egui::Context,
+    assets: &mut Assets,
+    browser: &mut crate::tables::browser::Browser,
+    session: &EditSession,
+    game: &vale_client::assets::GameAssets,
+) {
     super::models::model_dialog(ctx, assets, session, game);
+    super::sounds::sound_dialog(ctx, assets, browser, session, game);
     let Some(import) = assets.import.as_mut() else { return };
     let mut close = false;
     let mut write = false;

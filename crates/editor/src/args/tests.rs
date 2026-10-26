@@ -12,9 +12,9 @@ fn parse(list: &[&str]) -> Args {
 
 /// Every flag spelling the parse accepted when it was one `match`, before the
 /// tables. A spelling taken out of a table fails this test.
-const EVERY_FLAG: [&str; 120] = [
+const EVERY_FLAG: [&str; 121] = [
     "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu",
-    "--export-heights", "--import-image", "--import-confirm", "--import-model", "--minimaps", "--tilt",
+    "--export-heights", "--import-image", "--import-confirm", "--import-model", "--import-sound", "--minimaps", "--tilt",
     "--vertices", "--view", "--reach", "--tool", "--spawn", "--waypoint-add", "--spawn-add",
     "--pick", "--spawn-delete", "--waypoints", "--place", "--row", "--find", "--table", "--lab",
     "--browse", "--pop-out", "--story", "--seek", "--projects", "--doom", "--tiles", "--new-map",
@@ -294,6 +294,9 @@ fn the_import_flags_take_their_arguments() {
     assert_eq!(args.view.tool, Some(tools::Tool::Assets));
     let args = parse(&["--import-model", "mage.glb", "Creature\\Mage\\Mage.m2"]);
     assert_eq!(args.import.import_model, Some(("mage.glb".into(), "Creature\\Mage\\Mage.m2".into())));
+    assert_eq!(args.view.tool, Some(tools::Tool::Assets));
+    let args = parse(&["--import-sound", "howl.wav", "Sound\\Creature\\Wolf\\Howl.wav"]);
+    assert_eq!(args.import.import_sound, Some(("howl.wav".into(), "Sound\\Creature\\Wolf\\Howl.wav".into())));
     assert_eq!(args.view.tool, Some(tools::Tool::Assets));
     let args = parse(&["--pick-display", "--item-display", "41"]);
     assert!(args.spawns.pick_display);

@@ -302,7 +302,7 @@ impl Popout {
         }
     }
 
-    /// Which window draws the Import Texture dialog: the window holding the
+    /// Which window draws an import dialog: the window holding the
     /// table workspaces when a form field asked, else the one holding Assets,
     /// unless the main window's texture tool asked. `None` is the main
     /// window.

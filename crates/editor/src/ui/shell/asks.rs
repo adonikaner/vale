@@ -1,6 +1,6 @@
 //! What a panel asks the shell to do once the frame is drawn: open another
-//! workspace on a row, switch tools, open the Import Texture dialog, make an
-//! area.
+//! workspace on a row, switch tools, open the Import Texture or Import Sound
+//! dialog, make an area.
 //!
 //! A panel is drawn with the tool borrowed and with only its own state to
 //! hand, so it cannot switch the tool or open a row in another workspace
@@ -42,6 +42,9 @@ pub(crate) enum ShellAsk {
     /// Open the Import Texture dialog in a folder, for the table field that
     /// asked; the field is set to the texture's name once it is written.
     ImportTexture { folder: String, target: FieldTarget },
+    /// Open the Import Sound dialog. With a target, the import sets that table
+    /// field to the id of the `SoundEntries` row it adds.
+    ImportSound { target: Option<FieldTarget> },
     /// Open the Import Texture dialog for a ground texture: the texture
     /// tool's Import Ground Texture.
     ImportGround,
@@ -66,10 +69,11 @@ impl ShellAsk {
             ShellAsk::Area(_) => 2,
             ShellAsk::PaintArea(_) => 3,
             ShellAsk::ImportTexture { .. } => 4,
-            ShellAsk::ImportGround => 5,
-            ShellAsk::Part(_) => 6,
-            ShellAsk::Link(_) => 7,
-            ShellAsk::ShowQuest(_) => 8,
+            ShellAsk::ImportSound { .. } => 5,
+            ShellAsk::ImportGround => 6,
+            ShellAsk::Part(_) => 7,
+            ShellAsk::Link(_) => 8,
+            ShellAsk::ShowQuest(_) => 9,
         }
     }
 }
@@ -178,14 +182,17 @@ fn carry_out_one(
         }
         ShellAsk::PaintArea(_) => {}
         ShellAsk::ImportTexture { folder, target } => {
-            editing.assets.ask = Some(ImportAsk::Choose { folder, name: None, for_field: Some(target), models: false });
+            editing.assets.ask = Some(ImportAsk::Choose { folder, name: None, for_field: Some(target), any: false });
+        }
+        ShellAsk::ImportSound { target } => {
+            editing.assets.ask = Some(ImportAsk::ChooseSounds { for_field: target });
         }
         ShellAsk::ImportGround => {
             editing.assets.ask = Some(ImportAsk::Choose {
                 folder: GROUND_FOLDER.to_string(),
                 name: None,
                 for_field: None,
-                models: false,
+                any: false,
             });
         }
         ShellAsk::Part(part) => *tool = part,

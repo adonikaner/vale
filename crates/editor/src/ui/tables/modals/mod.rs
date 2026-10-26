@@ -11,6 +11,9 @@
 //! bits.rs       a mask as one checkbox per bit
 //! models.rs     the model browser a model field opens
 //! ```
+//!
+//! The file dialog of a `SoundEntries` row's Files section is in
+//! `super::sound_files`, with the section that opens it.
 
 pub(crate) mod bits;
 pub(crate) mod looks_like;
@@ -29,8 +32,8 @@ use pick::pick_previewing;
 /// How wide a reference picker's dialog is, and how many rows a page of it
 /// holds. A search over 22,360 spells is paged rather than cut off, so every
 /// row is reachable; a page is what one scroll of the list comfortably is.
-const PICKER_WIDTH: f32 = 380.0;
-const PICKER_PAGE: usize = 100;
+pub(in crate::ui::tables) const PICKER_WIDTH: f32 = 380.0;
+pub(in crate::ui::tables) const PICKER_PAGE: usize = 100;
 
 /// The dialog that is up, if one is: a reference picker or the model browser.
 /// Drawn once per frame from the form, whichever field opened it.
@@ -100,6 +103,7 @@ pub(in crate::ui) fn modals(
             }
         }
         Modal::Models { record, field } => close = models::models(ui, work, table_name, record, field),
+        Modal::SoundFile { record, slot } => close = crate::ui::tables::sound_files::pick_file(ui, work, record, slot),
     }
     if close {
         work.browser.modal = None;

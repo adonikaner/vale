@@ -38,7 +38,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::assets::{folder_of, Import, Purpose};
+use super::assets::{clean_name, folder_of, name_problems, Import, Purpose};
 use super::sources::Imported;
 use vale_assets::tables::dbc::AnimationData;
 use vale_assets::world::m2::anim;
@@ -196,7 +196,7 @@ impl ModelImport {
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let source = gltf::open(&bytes, &|file| std::fs::read(dir.join(file)).ok()).map_err(|e| said(&e))?;
         let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Model");
-        let name = name.unwrap_or_else(|| clean_name(stem));
+        let name = name.unwrap_or_else(|| clean_name(stem, "Model"));
         let clips = source
             .clips
             .iter()
@@ -291,7 +291,7 @@ impl ModelImport {
     /// file each named after the model and the material.
     pub(crate) fn name_textures(&mut self) {
         let model = self.name.trim().to_string();
-        let slots: Vec<String> = self.source.slots.iter().map(|s| clean_name(&s.name)).collect();
+        let slots: Vec<String> = self.source.slots.iter().map(|s| clean_name(&s.name, "Model")).collect();
         let one = slots.len() == 1;
         for (index, slot) in self.textures.iter_mut().enumerate() {
             let skin = self.purpose == ModelPurpose::Creature && index < 3;
@@ -351,16 +351,10 @@ impl ModelImport {
 
     /// Why it cannot be written as it stands, or nothing.
     pub(crate) fn problems(&self) -> Vec<String> {
-        let mut out = Vec::new();
         let name = self.name.trim();
-        if name.is_empty() {
-            out.push("The name is empty.".to_string());
-        }
-        if name.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) {
-            out.push("The name may not contain \\ / : * ? \" < > |.".to_string());
-        }
+        let mut out = name_problems(name);
         if folder_of(&self.folder).is_empty() {
-            out.push("The folder is empty: a model at the archives' root is found by nothing.".to_string());
+            out.push("The folder is empty. No shipped model is at the archive root; choose a folder.".to_string());
         }
         if !Project::is_game_data(&self.vpath()) {
             out.push("The folder is one of the project's own (sql, server, publish, editor), which is not published.".to_string());
@@ -527,20 +521,6 @@ pub(crate) fn guess(name: &str, animations: Option<&AnimationData>) -> Option<u1
     WORDS.iter().find(|(word, _)| clip.contains(word)).map(|(_, id)| *id)
 }
 
-/// A name usable as a file name: the characters a path may not hold removed.
-fn clean_name(text: &str) -> String {
-    let cleaned: String = text
-        .chars()
-        .filter(|c| !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
-        .collect::<String>()
-        .trim()
-        .replace(' ', "_");
-    match cleaned.is_empty() {
-        true => "Model".to_string(),
-        false => cleaned,
-    }
-}
-
 fn collision_word(collision: Collision) -> &'static str {
     match collision {
         Collision::None => "none",
@@ -589,7 +569,7 @@ mod tests {
         assert_eq!(ModelPurpose::of_path("Creature\\Mage\\"), ModelPurpose::Creature);
         assert_eq!(ModelPurpose::of_path("World\\Custom\\"), ModelPurpose::Doodad);
         assert_eq!(ModelPurpose::of_path("Spells\\"), ModelPurpose::Other);
-        assert_eq!(clean_name("hooded mage: v2"), "hooded_mage_v2");
+        assert_eq!(clean_name("hooded mage: v2", "Model"), "hooded_mage_v2");
         assert!(is_model_file(Path::new("a.GLB")) && !is_model_file(Path::new("a.png")));
     }
 }

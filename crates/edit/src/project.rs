@@ -33,9 +33,9 @@
 //! ## Publishing does not reach the server
 //!
 //! A tile in a patch archive changes what a client draws and what it walks on
-//! locally. The server keeps its own collision — vmangos reads `vmaps` and
-//! `mmaps` built from the same ADTs — so ground raised here is ground the server
-//! still thinks is at the old height, and a character standing on it is
+//! locally. The server keeps its own collision: vmangos reads `vmaps` and
+//! `mmaps` built from the same ADTs. Ground raised here is therefore still at
+//! the old height on the server, and a character standing on it is
 //! corrected back down. Terrain edits are for looking at until the server's maps
 //! are rebuilt from the same files.
 
@@ -55,15 +55,15 @@ pub struct Project {
 /// the install, beside `Data\` and `WTF\`.
 pub const PROJECTS_DIR: &str = "Edit";
 
-/// The folder under a project that holds its virtual paths — see the module
-/// comment.
+/// The folder under a project that holds its virtual paths. The module
+/// comment describes the layout.
 pub(crate) const FILES_DIR: &str = "project";
 
-/// …and the one that holds what a publish wrote.
+/// The folder under a project that holds what a publish wrote.
 pub(crate) const PUBLISH_DIR: &str = "publish";
 
-/// …and the editor's own switches for the project, a file beside the two.
-/// Not a virtual path, so never packed into an archive.
+/// The file beside those two folders that holds the editor's own switches for
+/// the project. Not a virtual path, so never packed into an archive.
 pub const SETTINGS_FILE: &str = "settings.txt";
 
 /// The project the editor last opened, as a file under `Edit\` holding
@@ -79,8 +79,8 @@ pub fn last_opened(install: impl AsRef<Path>) -> Option<String> {
     (is_a_name(&name) && root.join(&name).is_dir()).then_some(name)
 }
 
-/// …and write it. A failure is not an error: the next launch opens the
-/// default.
+/// Record `name` as the project last opened on this install. A failed write
+/// is not an error: the next launch opens the default.
 pub fn remember_opened(install: impl AsRef<Path>, name: &str) {
     if !is_a_name(name) {
         return;
@@ -92,11 +92,10 @@ pub fn remember_opened(install: impl AsRef<Path>, name: &str) {
 
 /// Every project under an install folder, by name, sorted.
 ///
-/// A folder under `Edit\` is a project — there is no manifest and nothing to
-/// parse, which is the same decision as the loose files inside it: what is on
-/// disk is the whole of the state. A folder that has just been made and holds
-/// nothing is a project with no edits in it, which is exactly what a new one
-/// is.
+/// A folder under `Edit\` is a project. There is no manifest and nothing to
+/// parse, for the same reason as the loose files inside it: what is on disk
+/// is the whole of the state. A folder that has just been made and holds
+/// nothing is a project with no edits in it, the same as a new project.
 pub fn projects(install: impl AsRef<Path>) -> Vec<String> {
     let root = install.as_ref().join(PROJECTS_DIR);
     let Ok(entries) = std::fs::read_dir(&root) else {
@@ -111,8 +110,8 @@ pub fn projects(install: impl AsRef<Path>) -> Vec<String> {
     found
 }
 
-/// What a project folder holds, counted by kind, for a list that has to say
-/// which of several projects is which. The kinds are
+/// What a project folder holds, counted by type, for a list that has to say
+/// which of several projects is which. The types are
 /// [`crate::manifest::Kind`]'s; [`crate::manifest::manifest`] describes the
 /// same files one by one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -127,6 +126,8 @@ pub struct Summary {
     pub minimaps: usize,
     /// Any other `.blp`.
     pub textures: usize,
+    /// `.wav` and `.mp3` files.
+    pub sounds: usize,
     /// `.wdt` files.
     pub wdts: usize,
     /// Files under `sql\`.
@@ -144,8 +145,8 @@ impl Summary {
         self.counts().iter().map(|(count, _)| count).sum()
     }
 
-    /// Every count with its kind, in the order [`Self::line`] prints them.
-    fn counts(&self) -> [(usize, crate::manifest::Kind); 9] {
+    /// Every count with its type, in the order [`Self::line`] prints them.
+    fn counts(&self) -> [(usize, crate::manifest::Kind); 10] {
         use crate::manifest::Kind;
         [
             (self.tiles, Kind::Tile),
@@ -153,6 +154,7 @@ impl Summary {
             (self.models, Kind::Model),
             (self.minimaps, Kind::Minimap),
             (self.textures, Kind::Texture),
+            (self.sounds, Kind::Sound),
             (self.wdts, Kind::Wdt),
             (self.sql, Kind::Sql),
             (self.server, Kind::Server),
@@ -184,7 +186,8 @@ pub fn summary(install: impl AsRef<Path>, name: &str) -> Summary {
     summary_at(install.as_ref().join(PROJECTS_DIR).join(name), name)
 }
 
-/// …by folder rather than by name, for the two callers that already have one.
+/// [`summary`] given the project's folder rather than its name, for the two
+/// callers that already have the folder.
 fn summary_at(root: impl AsRef<Path>, name: &str) -> Summary {
     let project = Project {
         root: root.as_ref().to_path_buf(),
@@ -199,6 +202,7 @@ fn summary_at(root: impl AsRef<Path>, name: &str) -> Summary {
             Kind::Model => out.models += 1,
             Kind::Minimap => out.minimaps += 1,
             Kind::Texture => out.textures += 1,
+            Kind::Sound => out.sounds += 1,
             Kind::Wdt => out.wdts += 1,
             Kind::Sql => out.sql += 1,
             Kind::Server => out.server += 1,
@@ -215,18 +219,19 @@ fn summary_at(root: impl AsRef<Path>, name: &str) -> Summary {
 
 /// The project every install has, and the one name [`delete`] refuses.
 ///
-/// It is where the editor's edits go when nobody has said otherwise, so a
-/// session that deleted it would be a session with nowhere to write. Its
-/// files can go, see [`clear`], which reaches the same end and keeps the folder.
+/// The editor writes edits to it when no other project is named, so deleting
+/// it would leave the session nowhere to write. Its files can be removed with
+/// [`clear`], which empties the project and keeps the folder.
 pub const DEFAULT: &str = "default";
 
 /// Delete a project: the folder and everything under it.
 ///
-/// Returns how many files went. Irreversible, and the caller is the one that
-/// has to have asked: nothing here confirms anything.
+/// Returns how many files were deleted. The deletion cannot be undone, and
+/// this function asks for no confirmation: the caller must already have
+/// asked.
 ///
-/// Refused for [`DEFAULT`] and for a name that is not a project's — see
-/// [`is_a_name`], which is what keeps this inside `Edit\`. Whether a
+/// Refused for [`DEFAULT`] and for a name that is not a project's. The name
+/// check is [`is_a_name`], which keeps this inside `Edit\`. Whether a
 /// project is open is the caller's business: this crate has no session
 /// and cannot know.
 pub fn delete(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> {
@@ -239,7 +244,7 @@ pub fn delete(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError>
     let went = summary_at(&root, name).total();
     match root.exists() {
         true => std::fs::remove_dir_all(&root)?,
-        // Nothing there is not a failure: the end state is the one asked for.
+        // A missing folder is not a failure: the end state is the one asked for.
         false => return Ok(0),
     }
     Ok(went)
@@ -247,12 +252,11 @@ pub fn delete(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError>
 
 /// Empty a project, keeping the folder.
 ///
-/// [`DEFAULT`]'s stand-in for [`delete`], and it works for any project: what
-/// a project is is the files under it, so one with none is a new one. The
-/// folder is left there, so nothing that holds the path is left naming
-/// nothing.
+/// Used for [`DEFAULT`] in place of [`delete`], and it works for any project:
+/// a project is the files under it, so one with no files is a new one. The
+/// folder stays, so anything that holds its path still names a folder.
 ///
-/// Returns how many files went.
+/// Returns how many files were deleted.
 pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> {
     let root = folder(install, name)?;
     let held = summary_at(&root, name).total();
@@ -261,11 +265,10 @@ pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> 
         return Ok(0);
     }
     // Every entry is attempted, and the first failure does not end the
-    // walk. The loop used to be `?` on each removal, so one file the
-    // filesystem would not remove (Windows refuses a `remove_dir_all` over
-    // a tree holding anything open) stopped the clear where it stood and left
-    // the rest of the project in place. The count then said how many files
-    // there had been, and nothing said which were still there.
+    // walk. Windows refuses a `remove_dir_all` over a tree holding anything
+    // open. A walk that stopped at the first such failure left the rest of
+    // the project in place, and its count, taken before the walk, did not
+    // say which files were still there.
     let mut trouble: Option<std::io::Error> = None;
     for entry in std::fs::read_dir(&root)?.flatten() {
         let path = entry.path();
@@ -282,8 +285,8 @@ pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> 
             trouble.get_or_insert(e);
         }
     }
-    // …and the count is what is gone, measured afterwards, rather than what
-    // was there before. A clear that removed half the project now says so.
+    // The count is the files removed, measured after the walk rather than
+    // before it, so a clear that removed half the project reports that.
     let left = summary_at(&root, name).total();
     if left > 0 {
         let why = match trouble {
@@ -301,7 +304,7 @@ pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> 
 
 /// The folder a named project is in, refusing a name that is not one.
 ///
-/// The one place either of the two above turns a name into a path, so the
+/// The one place [`delete`] and [`clear`] turn a name into a path, so the
 /// check that it cannot climb out of `Edit\` is made once.
 fn folder(install: impl AsRef<Path>, name: &str) -> Result<PathBuf, EditError> {
     if !is_a_name(name) {
@@ -310,7 +313,7 @@ fn folder(install: impl AsRef<Path>, name: &str) -> Result<PathBuf, EditError> {
     Ok(install.as_ref().join(PROJECTS_DIR).join(name.trim()))
 }
 
-/// Is this a name a project may have?
+/// Whether `name` is a name a project may have.
 ///
 /// It becomes a folder name, so the refusals are the filesystem's: nothing
 /// empty, nothing with a separator or a drive letter in it, and none of the two
@@ -421,9 +424,9 @@ impl Project {
     /// The folders a project keeps that are not game data, and so are not
     /// packed into a patch archive.
     ///
-    /// A project folder holds two different kinds of thing. Most of it is files
-    /// the client reads, under the virtual paths the archives use —
-    /// `World\\Maps\\…`, `DBFilesClient\\…`, `textures\\Minimap\\…` — and
+    /// A project folder holds two sets of files. Most of it is files the
+    /// client reads, under the virtual paths the archives use
+    /// (`World\\Maps\\…`, `DBFilesClient\\…`, `textures\\Minimap\\…`), and
     /// those are what [`Self::publish`] packs. The rest is the project's own
     /// bookkeeping: SQL for the server, and the record of which rows it
     /// changes. Neither is a path the client would ever ask for, and an archive
@@ -449,7 +452,7 @@ impl Project {
 
     /// Every virtual path this project carries, in a stable order.
     ///
-    /// Everything, including the bookkeeping — this is what a clear counts
+    /// Everything, including the bookkeeping: this is what a clear counts
     /// and what a summary describes. [`Self::publish`] filters it through
     /// [`Self::is_game_data`].
     pub fn files(&self) -> Vec<String> {
@@ -488,8 +491,8 @@ impl Project {
     /// added to: the load order is decided by the file name and an archive that
     /// is rebuilt each time cannot accumulate a file the project no longer has.
     pub fn publish(&self, to: impl AsRef<Path>) -> Result<usize, EditError> {
-        // The client's files and not the project's own bookkeeping — see
-        // [`Self::NOT_GAME_DATA`]. A patch archive is read by the game, and
+        // The client's files and not the project's own bookkeeping (see
+        // [`Self::NOT_GAME_DATA`]). A patch archive is read by the game, and
         // `sql\\world.sql` is not a path the game has ever asked for.
         let files: Vec<String> = self
             .files()
@@ -572,8 +575,8 @@ impl Project {
     /// per publish.
     ///
     /// Only an archive the record names and whose bytes still match it is
-    /// replaced or removed. One that cannot be — the game has it open, or the
-    /// file has changed — is reported in [`PublishReport::left`] and stays in
+    /// replaced or removed. One that cannot be (the game has it open, or the
+    /// file has changed) is reported in [`PublishReport::left`] and stays in
     /// the record, so the next publish tries again.
     ///
     /// A project with no game data publishes nothing, and removes what it
@@ -651,8 +654,8 @@ impl Project {
     }
 }
 
-/// Where a project records the archives it published — see
-/// [`Project::published`]. Under `publish\`, which is not game data.
+/// Where a project records the archives it published, which
+/// [`Project::published`] reads. Under `publish\`, which is not game data.
 pub(crate) const PUBLISHED_VPATH: &str = "publish\\archives.txt";
 
 /// One patch archive a project wrote: its file name in `Data\`, and what
@@ -703,7 +706,8 @@ pub struct PublishReport {
     pub files: usize,
     /// Archives this project published before and has now removed.
     pub removed: Vec<String>,
-    /// …and ones it could not remove, with why. Still in the record.
+    /// Archives it could not remove, each with the reason. They stay in the
+    /// record.
     pub left: Vec<(String, String)>,
 }
 
@@ -718,8 +722,8 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// The lettered patch archive that wins in `data_dir` — `Patch-D.MPQ` in an
-/// install holding `Patch-A` and `Patch-D` — by its name as it is on disk.
+/// The lettered patch archive that wins in `data_dir` (`Patch-D.MPQ` in an
+/// install holding `Patch-A` and `Patch-D`), by its name as it is on disk.
 fn highest_lettered_patch(data_dir: &Path) -> Option<String> {
     let mut highest: Option<(char, String)> = None;
     for entry in std::fs::read_dir(data_dir).ok()?.flatten() {
@@ -742,7 +746,7 @@ fn highest_lettered_patch(data_dir: &Path) -> Option<String> {
 /// What a temporary file written by [`write_replacing`] ends in.
 const TEMPORARY: &str = ".vale-tmp";
 
-/// Whether a file is one of those.
+/// Whether a file is a temporary file written by [`write_replacing`].
 fn is_temporary(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| name.to_string_lossy().ends_with(TEMPORARY))
@@ -836,7 +840,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
     }
 
-    /// A project's summary counts its files by kind, and a project that is
+    /// A project's summary counts its files by type, and a project that is
     /// not there is an empty one.
     #[test]
     fn a_summary_counts_a_projects_files_by_kind() {
@@ -870,8 +874,8 @@ mod tests {
 
     /// A project is deleted folder and all, and the default never is.
     ///
-    /// The one name that cannot go is where edits land when nobody has said
-    /// otherwise: deleting it would leave the session with nowhere to write.
+    /// The default is where edits land when no other project is named, so
+    /// deleting it would leave the session nowhere to write.
     #[test]
     fn a_project_is_deleted_folder_and_all() {
         let install = std::env::temp_dir().join(format!("vale-delete-{}", std::process::id()));
@@ -893,8 +897,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
     }
 
-    /// …and clearing takes the files and leaves the project, which is what
-    /// the default gets instead.
+    /// Clearing removes the files and keeps the project. The default is
+    /// cleared in place of being deleted.
     #[test]
     fn clearing_empties_a_project_and_keeps_it() {
         let install = std::env::temp_dir().join(format!("vale-clear-{}", std::process::id()));
@@ -908,7 +912,8 @@ mod tests {
         assert!(project.files().is_empty(), "and is empty");
         assert_eq!(summary(&install, DEFAULT).line(), "empty");
         assert_eq!(projects(&install), vec![DEFAULT]);
-        // …including the folders the virtual paths made, not just the files.
+        // The clear removes the folders the virtual paths made, not just the
+        // files.
         assert!(!project.path_for("World").unwrap().exists());
         assert_eq!(clear(&install, DEFAULT).unwrap(), 0, "clearing twice is not a failure");
         let _ = std::fs::remove_dir_all(&install);
@@ -976,8 +981,8 @@ mod tests {
     /// Clearing a project takes the subfolders with it.
     ///
     /// A project is `World\Maps\<map>\*.adt`, `textures\Minimap\*.blp`,
-    /// `DBFilesClient\*.dbc` and `sql\*.sql` — four levels of nesting and not
-    /// one file at the root. A clear that walked only the root's files would
+    /// `DBFilesClient\*.dbc` and `sql\*.sql`: up to four levels of nesting and
+    /// no file at the root. A clear that walked only the root's files would
     /// report a count and leave the tiles and the minimap pictures where they
     /// were.
     #[test]
