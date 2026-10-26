@@ -551,6 +551,9 @@ pub(super) fn plural(table: &str, count: usize) -> String {
         "SpellVisual" => "visual",
         "SpellVisualKit" => "kit",
         "AreaTable" => "area",
+        "Faction" => "faction",
+        "FactionTemplate" => "faction template",
+        "FactionGroup" => "faction group",
         // These table names are not nouns, so their rows are counted as
         // rows: `3 CreatureSoundData rows`.
         "CreatureSoundData" | "NPCSounds" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience"

@@ -540,6 +540,45 @@ fn a_music_set_is_labelled_by_its_name_and_its_sounds() {
     let _ = std::fs::remove_dir_all(&install);
 }
 
+/// A `Faction` row is labelled by its name, with its reputation slot and its
+/// heading under it, and a `FactionTemplate` row by its faction's name with
+/// its groups under it.
+#[test]
+fn a_faction_is_labelled_by_its_name_and_a_template_by_its_faction_s() {
+    let mut factions = empty(37);
+    add(&mut factions, 469, &[(1, u32::MAX), (14, 8)], &[(19, "Alliance")]);
+    add(&mut factions, 47, &[(1, 5), (18, 469)], &[(19, "Ironforge")]);
+    add(&mut factions, 14, &[(1, u32::MAX)], &[(19, "Monster")]);
+    let mut templates = empty(14);
+    add(&mut templates, 55, &[(1, 47), (3, 3), (5, 4)], &[]);
+    add(&mut templates, 16, &[(1, 14), (3, 8), (5, 7)], &[]);
+    add(&mut templates, 1700, &[(1, 9999)], &[]);
+    let (mut session, install) = session("factions");
+    session.tables.insert("Faction".to_string(), factions);
+    session.tables.insert("FactionTemplate".to_string(), templates);
+    let mut browser = Browser::default();
+    let label = describe(&mut browser, &session, "Faction", 1);
+    assert_eq!(
+        (label.title.as_str(), label.sub.as_str()),
+        ("Ironforge", "reputation slot 5 \u{b7} under Alliance")
+    );
+    let label = describe(&mut browser, &session, "Faction", 2);
+    assert_eq!((label.title.as_str(), label.sub.as_str()), ("Monster", "no reputation slot"));
+    let label = describe(&mut browser, &session, "FactionTemplate", 0);
+    assert_eq!(
+        (label.title.as_str(), label.sub.as_str()),
+        ("Ironforge", "Player, Alliance \u{b7} hostile to Horde")
+    );
+    let label = describe(&mut browser, &session, "FactionTemplate", 1);
+    assert_eq!(
+        (label.title.as_str(), label.sub.as_str()),
+        ("Monster", "Monster \u{b7} hostile to Player, Alliance, Horde")
+    );
+    let label = describe(&mut browser, &session, "FactionTemplate", 2);
+    assert_eq!((label.title.as_str(), label.sub.as_str()), ("faction 9999", "no group \u{b7} hostile to no group"));
+    let _ = std::fs::remove_dir_all(&install);
+}
+
 /// A table is opened under one name whatever case it is asked for in,
 /// and a name that is no table is refused.
 #[test]
@@ -874,4 +913,11 @@ fn a_followed_reference_moves_the_tool_to_the_table_s_workspace() {
     // During a playtest Zones cannot be used, and the Sound parts can.
     assert_eq!(owner_after_follow(Tool::ZoneMusic, "AreaTable", false), None);
     assert_eq!(owner_after_follow(Tool::Spells, "SoundEntries", false), Some(Tool::Sounds));
+    // A template's faction opens the Factions part, and a spell's minimum
+    // faction opens it from Spells, while editing; the Factions part does
+    // not survive a playtest, and the Groups part does.
+    assert_eq!(owner_after_follow(Tool::FactionTemplates, "Faction", true), Some(Tool::Factions));
+    assert_eq!(owner_after_follow(Tool::Spells, "Faction", true), Some(Tool::Factions));
+    assert_eq!(owner_after_follow(Tool::Spells, "Faction", false), None);
+    assert_eq!(owner_after_follow(Tool::Factions, "FactionGroup", false), Some(Tool::FactionGroups));
 }

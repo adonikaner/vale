@@ -84,8 +84,9 @@ pub(crate) fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<
             });
         }
     }
-    // The client-table rows (spells, flight nodes, skill line abilities, areas
-    // and area triggers), whose revert file holds one statement per entry.
+    // The client-table rows (spells, flight nodes, skill line abilities,
+    // areas, area triggers, factions and faction templates), whose revert
+    // file holds one statement per entry.
     let undo = Undo::open_at(project, rows::REVERT_VPATH)?;
     for row in rows::plan(session, assets)?.rows {
         let put_back: Vec<String> = undo
@@ -100,6 +101,8 @@ pub(crate) fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<
                 vale_mangos::skills::TABLE => "skill line abilities",
                 vale_mangos::area::TABLE => "areas",
                 vale_mangos::trigger::TEMPLATE => "area triggers",
+                vale_mangos::faction::TABLE => "factions",
+                vale_mangos::faction::TEMPLATE => "faction templates",
                 _ => "spells",
             }
             .to_string(),

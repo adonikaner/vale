@@ -25,6 +25,10 @@
 //! area.rs      `area_template`, the server's copy of `AreaTable.dbc`: an
 //!              edited or new area written as a row keyed by its entry alone,
 //!              nine columns of the file's 25, read at startup
+//! faction.rs   `faction` and `faction_template`, the server's copies of
+//!              `Faction.dbc` and `FactionTemplate.dbc`: an edited row of
+//!              either written at build 5875 on `skill_line_ability`'s terms,
+//!              both read at startup
 //! creature.rs  two tables with no client file behind them: `creature_template`,
 //!              what an NPC is, and `creature`, where one stands
 //! gameobject.rs the matching pair for game objects: `gameobject_template`,
@@ -143,6 +147,7 @@ pub mod creature;
 pub mod creaturespells;
 pub mod datadir;
 pub mod eventai;
+pub mod faction;
 pub mod gameobject;
 pub mod gossip;
 pub mod graveyard;

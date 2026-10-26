@@ -4,11 +4,13 @@
 //! ```text
 //! reload.rs      the chat wire: a GM command sent on the playtest's own
 //!                session, and the server's answer matched back to it
-//! rows.rs        the rows the server keeps of five client tables, written as
+//! rows.rs        the rows the server keeps of seven client tables, written as
 //!                a diff of the project's DBC against the archives': Spell.dbc
 //!                to spell_template, TaxiNodes.dbc to taxi_nodes,
 //!                SkillLineAbility.dbc to skill_line_ability, AreaTable.dbc to
-//!                area_template, AreaTrigger.dbc to areatrigger_template
+//!                area_template, AreaTrigger.dbc to areatrigger_template,
+//!                Faction.dbc to faction, FactionTemplate.dbc to
+//!                faction_template
 //! mod.rs         `save`, the one function every subject's SQL is written by,
 //!                and the statements run when the Server panel's switch is on
 //! subject/       what the twelve row subjects share: the RowSubject trait,
@@ -104,6 +106,7 @@
 //! taxi_nodes           a restart; it has no reload
 //! skill_line_ability   a restart; it has no reload
 //! area_template        a restart; it has no reload
+//! faction              a restart; neither it nor faction_template has a reload
 //! DataDir\5875\dbc     a restart; its files, TaxiPath and TaxiPathNode among
 //!                      them
 //! item_template        .reload item_template, live for every copy of the item

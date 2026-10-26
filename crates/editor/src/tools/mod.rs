@@ -254,6 +254,23 @@ pub(crate) enum Tool {
     /// and put down, which `ItemDisplayInfo`'s `GroupSoundIndex` names. A
     /// part of the Sound workspace.
     ItemSounds,
+    /// `Faction.dbc`: what the reputation panel lists, and what a template
+    /// belongs to. See [`crate::tables`].
+    ///
+    /// The first part of the Factions workspace; the others are
+    /// [`Tool::FactionTemplates`] and [`Tool::FactionGroups`]. A DBC edited in
+    /// the table browser. The server reads its copy from `faction` at
+    /// startup, so it is not available during a playtest, on
+    /// [`Tool::Zones`]' terms.
+    Factions,
+    /// `FactionTemplate.dbc`: how a unit stands to every other unit, which is
+    /// what `UNIT_FIELD_FACTIONTEMPLATE` holds. A part of the Factions
+    /// workspace. The server reads its copy from `faction_template` at
+    /// startup.
+    FactionTemplates,
+    /// `FactionGroup.dbc`: the four sides a template's masks name. A part of
+    /// the Factions workspace, and a client file the server does not read.
+    FactionGroups,
     /// `AreaTrigger.dbc`: the spheres and boxes the client reports standing
     /// in, and what the server does when it is told. See [`places::triggers`].
     ///
@@ -474,6 +491,14 @@ const SOUND_PARTS: [(&str, Tool); 7] = [
     ("Intros", Tool::ZoneIntros),
     ("Ambience", Tool::Ambience),
     ("Items", Tool::ItemSounds),
+];
+
+/// The Factions workspace's parts: the factions, the templates that belong
+/// to them, and the groups the templates' masks name.
+const FACTION_PARTS: [(&str, Tool); 3] = [
+    ("Factions", Tool::Factions),
+    ("Templates", Tool::FactionTemplates),
+    ("Groups", Tool::FactionGroups),
 ];
 
 /// The Assets workspace's parts: the project's own files, then the
@@ -997,6 +1022,62 @@ pub(crate) const SPECS: &[Spec] = &[
             &crate::tables::tabs::ITEM_SOUND_TABS,
         )
     },
+    Spec {
+        parts: &FACTION_PARTS,
+        menu: Some(Entry {
+            name: "Factions",
+            about: "Faction.dbc: every faction the reputation panel can list, with its race and \
+                    class alternatives, base standings, starting flags and heading. The server \
+                    loads its copy from faction at startup.",
+        }),
+        ..browsed(
+            Tool::Factions,
+            "Factions",
+            Place::Bar("Factions"),
+            "Faction.dbc, FactionTemplate.dbc and FactionGroup.dbc: the factions the \
+             reputation panel lists, the templates that decide how units stand to each \
+             other, and the four sides the templates' masks name. The server loads its \
+             copies from faction and faction_template at startup.",
+            "Faction",
+            &crate::tables::tabs::FACTION_TABS,
+        )
+    },
+    Spec {
+        parts: &FACTION_PARTS,
+        menu: Some(Entry {
+            name: "Faction Templates",
+            about: "FactionTemplate.dbc: the row a unit's UNIT_FIELD_FACTIONTEMPLATE names. Its \
+                    faction, the groups it is in, is friendly to and is hostile to, and the \
+                    factions it names as enemies and friends. The server loads its copy from \
+                    faction_template at startup.",
+        }),
+        ..browsed(
+            Tool::FactionTemplates,
+            "Faction Templates",
+            Place::Part,
+            "",
+            "FactionTemplate",
+            &crate::tables::tabs::FACTION_TEMPLATE_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &FACTION_PARTS,
+        menu: Some(Entry {
+            name: "Faction Groups",
+            about: "FactionGroup.dbc: Player, Alliance, Horde and Monster, the bit each is in a \
+                    template's masks, and the name the interface shows. A client file; it \
+                    needs no database.",
+        }),
+        ..browsed(
+            Tool::FactionGroups,
+            "Faction Groups",
+            Place::Part,
+            "",
+            "FactionGroup",
+            &crate::tables::tabs::FACTION_GROUP_TABS,
+        )
+    },
     // No one table: the workspace starts on the list of them.
     Spec {
         survives_playtest: true,
@@ -1124,9 +1205,12 @@ impl Tool {
             Tool::ZoneIntros => 34,
             Tool::Ambience => 35,
             Tool::ItemSounds => 36,
-            Tool::Tables => 37,
-            Tool::Assets => 38,
-            Tool::GameFiles => 39,
+            Tool::Factions => 37,
+            Tool::FactionTemplates => 38,
+            Tool::FactionGroups => 39,
+            Tool::Tables => 40,
+            Tool::Assets => 41,
+            Tool::GameFiles => 42,
         }
     }
 
@@ -1165,7 +1249,9 @@ impl Tool {
     /// world, which was despawned when the playtest started. [`Tool::Zones`]
     /// is a workspace that does not: the server reads `area_template` at
     /// startup only, and an area is put on the ground with a tool that keeps
-    /// the viewport.
+    /// the viewport. [`Tool::Factions`] and [`Tool::FactionTemplates`] do
+    /// not for the first of those reasons: the server reads `faction` and
+    /// `faction_template` at startup only.
     ///
     /// A DBC is the same file whoever reads it, so a spell or any other table
     /// can be edited while a character stands in the world. [`Tool::Items`] is
@@ -1455,13 +1541,18 @@ mod tests {
 
     /// The tools that work during a playtest are four workspaces, with the
     /// Sets part of Items, and nothing that keeps the viewport. Zones,
-    /// Creatures and Game Objects are the workspaces that do not.
+    /// Creatures, Game Objects, Factions and Faction Templates are the
+    /// workspaces that do not: the server reads each one's table at startup.
     #[test]
     fn only_the_workspaces_survive_a_playtest() {
         for tool in ALL {
             let read_at_startup = matches!(
                 tool,
-                Tool::Zones | Tool::CreatureData | Tool::GameObjectData
+                Tool::Zones
+                    | Tool::CreatureData
+                    | Tool::GameObjectData
+                    | Tool::Factions
+                    | Tool::FactionTemplates
             );
             assert_eq!(
                 tool.survives_playtest(),
@@ -1753,10 +1844,22 @@ mod tests {
         for table in ["Spell", "SpellVisualKit", "SpellIcon", "SkillLine", "SkillLineAbility"] {
             assert_eq!(Tool::for_table(table), Tool::Spells, "{table}");
         }
-        for table in ["Faction", "Map", "Lock"] {
+        for table in ["LiquidType", "Map", "Lock"] {
             assert_eq!(Tool::for_table(table), Tool::Tables, "{table}");
         }
         assert_eq!(Tool::for_table("AreaTable"), Tool::Zones);
+        // Each faction table is a part of the Factions workspace, and the
+        // two the server reads at startup do not survive a playtest.
+        for (table, part) in [
+            ("Faction", Tool::Factions),
+            ("FactionTemplate", Tool::FactionTemplates),
+            ("FactionGroup", Tool::FactionGroups),
+        ] {
+            assert_eq!(Tool::for_table(table), part, "{table}");
+            assert_eq!(part.workspace(), Tool::Factions, "{table}");
+        }
+        assert!(!Tool::Factions.survives_playtest() && !Tool::FactionTemplates.survives_playtest());
+        assert!(Tool::FactionGroups.survives_playtest());
         // Each sound table is a part of the Sound workspace.
         for (table, part) in [
             ("SoundEntries", Tool::Sounds),

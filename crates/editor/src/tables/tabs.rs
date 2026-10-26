@@ -82,6 +82,16 @@ pub(crate) const ZONE_INTRO_TABS: [(&str, &str); 1] = [("Zone Intros", "ZoneIntr
 pub(crate) const AMBIENCE_TABS: [(&str, &str); 1] = [("Ambience", "SoundAmbience")];
 pub(crate) const ITEM_SOUND_TABS: [(&str, &str); 1] = [("Item Sounds", "ItemGroupSounds")];
 
+/// The tables of the Factions workspace's three parts, one table to a part,
+/// so no tab is drawn: `Faction` (what the reputation panel lists),
+/// `FactionTemplate` (how a unit stands to every other unit, which names a
+/// `Faction` row) and `FactionGroup` (the four sides a template's masks
+/// name). The top bar's Factions menu and the strip at the head of the list
+/// switch between the parts.
+pub(crate) const FACTION_TABS: [(&str, &str); 1] = [("Factions", "Faction")];
+pub(crate) const FACTION_TEMPLATE_TABS: [(&str, &str); 1] = [("Templates", "FactionTemplate")];
+pub(crate) const FACTION_GROUP_TABS: [(&str, &str); 1] = [("Groups", "FactionGroup")];
+
 /// The table the Tables workspace starts on: none. Its list is the tables
 /// themselves until one is chosen. See [`crate::tools::Tool::Tables`].
 pub(crate) const ANY: &str = "";

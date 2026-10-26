@@ -467,6 +467,42 @@ pub fn describe(
         // and `in Elwynn Forest · Azeroth` for a sub-area. The search index
         // is built from the label, so a zone's name finds its sub-areas and
         // the word `zone` finds the zones.
+        // A `Faction` row is labelled by its name, with its reputation slot
+        // and the heading it is listed under beneath it. Field 1 is the
+        // slot, -1 for none, 18 the parent and 19 the name, as
+        // `tables::reputation` reads them.
+        "Faction" => {
+            let slot = match num(1) as i32 {
+                n if n >= 0 => format!("reputation slot {n}"),
+                _ => "no reputation slot".to_string(),
+            };
+            let sub = match num(18) {
+                0 => slot,
+                parent => {
+                    let heading = table
+                        .row_of(parent)
+                        .and_then(|row| table.string_at(row, 19))
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| format!("faction {parent}"));
+                    format!("{slot} \u{b7} under {heading}")
+                }
+            };
+            (text(19), sub)
+        }
+        // A `FactionTemplate` row has no name, so it is labelled by its
+        // faction's name, with the groups it is in and is hostile to under
+        // it, since a faction has up to ten templates that differ in those.
+        // Field 1 is the faction, 3 the template's own groups and 5 the
+        // groups it is hostile to, as `tables::faction` reads them.
+        "FactionTemplate" => {
+            let faction = num(1);
+            let title = faction_name(tables, faction).unwrap_or_else(|| format!("faction {faction}"));
+            let groups = |mask: u32| match schema::named_bits(mask, &schema::FACTION_GROUP_BITS).as_slice() {
+                [] => "no group".to_string(),
+                names => names.join(", "),
+            };
+            (title, format!("{} \u{b7} hostile to {}", groups(num(3)), groups(num(5))))
+        }
         "AreaTable" => {
             let map = num(area::MAP_ID);
             let map_name = tables
@@ -512,6 +548,14 @@ fn sound_name(tables: &dyn Tables, id: u32) -> Option<String> {
     let sounds = tables.table("SoundEntries")?;
     sounds
         .string_at(sounds.row_of(id)?, crate::tables::sound::fields::entry::NAME)
+        .filter(|name| !name.is_empty())
+}
+
+/// A faction's name out of the open `Faction` table, by field 19.
+fn faction_name(tables: &dyn Tables, id: u32) -> Option<String> {
+    let factions = tables.table("Faction")?;
+    factions
+        .string_at(factions.row_of(id)?, 19)
         .filter(|name| !name.is_empty())
 }
 

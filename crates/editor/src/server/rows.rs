@@ -3,8 +3,9 @@
 //! reads from its own SQL tables. [`MAPPED`] lists them: `Spell.dbc` becomes
 //! `spell_template`, `TaxiNodes.dbc` becomes `taxi_nodes`,
 //! `SkillLineAbility.dbc` becomes `skill_line_ability`, `AreaTable.dbc`
-//! becomes `area_template`, and `AreaTrigger.dbc` becomes
-//! `areatrigger_template`.
+//! becomes `area_template`, `AreaTrigger.dbc` becomes
+//! `areatrigger_template`, `Faction.dbc` becomes `faction` and
+//! `FactionTemplate.dbc` becomes `faction_template`.
 //!
 //! ## The file is rewritten whole on every save
 //!
@@ -57,10 +58,12 @@
 //! only for a row this project added. An area is an `area_template` row
 //! keyed by its entry alone, with no build, on the same terms. An area trigger
 //! is an `areatrigger_template` dev row at build 5875, on the flight node's
-//! terms. See [`super::reconcile::Undo`], and `vale_mangos::spell::undo`,
+//! terms. A faction and a faction template are `faction` and
+//! `faction_template` rows at build 5875 on the skill line ability's terms.
+//! See [`super::reconcile::Undo`], and `vale_mangos::spell::undo`,
 //! `vale_mangos::taxi::undo`, `vale_mangos::skills::undo`,
-//! `vale_mangos::area::undo` and `vale_mangos::trigger::undo`, which hold the
-//! rule.
+//! `vale_mangos::area::undo`, `vale_mangos::trigger::undo` and
+//! `vale_mangos::faction::Mirror::undo`, which hold the rule.
 //!
 //! There is no permanent apply. The durable output is the SQL file in the
 //! project folder, which can be reviewed, and Publish hands it over as a
@@ -84,6 +87,7 @@ use vale_edit::dbc::DbcFile;
 use vale_mangos::conn::Db;
 use vale_mangos::row::Key;
 use vale_mangos::area;
+use vale_mangos::faction;
 use vale_mangos::skills;
 use vale_mangos::spell::{self, Assignment};
 use vale_mangos::taxi;
@@ -104,17 +108,20 @@ pub(crate) const REVERT_VPATH: &str = "sql\\revert.sql";
 ///
 /// Every other DBC the server reads, it reads as a file in `DataDir\5875\dbc\`, and
 /// a publish copies it there; see `super::publish::release::copy_server_dbcs`.
-pub(crate) const MAPPED: [(&str, &str); 5] = [
+pub(crate) const MAPPED: [(&str, &str); 7] = [
     ("Spell", spell::TABLE),
     ("TaxiNodes", taxi::TABLE),
     ("SkillLineAbility", skills::TABLE),
     ("AreaTable", area::TABLE),
     ("AreaTrigger", trigger::TEMPLATE),
+    ("Faction", faction::TABLE),
+    ("FactionTemplate", faction::TEMPLATE),
 ];
 
 /// Whether the server has a `.reload` for a mapped table. `spell_template` has
-/// one; `taxi_nodes`, `skill_line_ability`, `area_template` and
-/// `areatrigger_template` are read once at startup and have none.
+/// one; `taxi_nodes`, `skill_line_ability`, `area_template`,
+/// `areatrigger_template`, `faction` and `faction_template` are read once at
+/// startup and have none.
 pub(crate) fn reloadable(table: &str) -> bool {
     table == spell::TABLE
 }
@@ -142,6 +149,23 @@ pub(crate) fn refusal(dbc: &str, id: u32) -> String {
             "area trigger {id} cannot be written to the server: the highest trigger id is {}, since \
              areatrigger_template.id is a smallint",
             trigger::MAX_ID
+        ),
+        "Faction" => format!(
+            "faction {id} cannot be written to the server: its id must be at most {}, its masks, \
+             flags and parent at most {}, its base standings within {} to {}, its name at most {} \
+             bytes and its description at most {}",
+            faction::MAX_ID,
+            faction::MAX_MEDIUMINT,
+            faction::MEDIUMINT_RANGE.start(),
+            faction::MEDIUMINT_RANGE.end(),
+            faction::MAX_NAME,
+            faction::MAX_DESCRIPTION
+        ),
+        "FactionTemplate" => format!(
+            "faction template {id} cannot be written to the server: its id must be at most {}, and \
+             its faction, flags, masks, enemies and friends at most {}",
+            faction::MAX_ID,
+            faction::MAX_MEDIUMINT
         ),
         _ => format!(
             "spell {id} cannot be written to the server: ids above {} do not fit \
@@ -542,6 +566,28 @@ pub(crate) fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, S
                     });
                 }
             }
+            "Faction" | "FactionTemplate" => {
+                let Some(mirror) = faction::for_dbc(table) else {
+                    continue;
+                };
+                for entry in changed_entries(&shipped, &edited) {
+                    let changes = mirror.changes(&shipped, &edited, entry);
+                    if changes.is_empty() {
+                        continue;
+                    }
+                    if !mirror.fits(&edited, entry) {
+                        out.refused.push((table, entry));
+                        continue;
+                    }
+                    any = true;
+                    out.rows.push(Row {
+                        table: server_table,
+                        key: faction::key(entry),
+                        statements: mirror.statements(&shipped, &edited, entry),
+                        changes,
+                    });
+                }
+            }
             _ => {
                 for entry in changed_entries(&shipped, &edited) {
                     let changes = spell::changes(&shipped, &edited, entry);
@@ -690,6 +736,13 @@ pub(crate) fn apply_at(
                 let now = db.row(&trigger::dev_row_query(entry))?;
                 trigger::undo(entry, &row.changes, now.as_ref())
             }
+            faction::TABLE | faction::TEMPLATE => {
+                let Some(mirror) = faction::for_table(row.table) else {
+                    continue;
+                };
+                let now = db.row(&mirror.dev_row_query(entry))?;
+                mirror.undo(entry, &row.changes, now.as_ref())
+            }
             _ => {
                 let now = db.row(&spell::dev_row_query(entry))?;
                 spell::undo(entry, &row.changes, now.as_ref())
@@ -781,7 +834,8 @@ pub(crate) fn revert(
 /// reloadable table, but only when a change reaches a column the server reads:
 /// a reload sent for an edited tooltip would report as live a change that
 /// never reached the server. A table with no reload (`taxi_nodes`,
-/// `skill_line_ability`) gets a restart notice on the status line instead.
+/// `skill_line_ability`, `faction`) gets a restart notice on the status line
+/// instead.
 pub(crate) fn apply_work(
     session: &EditSession,
     plan: Plan,
@@ -1041,6 +1095,14 @@ mod tests {
         assert_eq!(areas.read_at_startup(), vec![area::TABLE]);
         assert!(!reloadable(area::TABLE));
         assert!(refusal("AreaTable", 3487).contains("area 3487"));
+        let factions = Plan {
+            rows: vec![row(faction::TEMPLATE), row(faction::TABLE)],
+            ..Plan::default()
+        };
+        assert_eq!(factions.read_at_startup(), vec![faction::TABLE, faction::TEMPLATE]);
+        assert!(!reloadable(faction::TABLE) && !reloadable(faction::TEMPLATE));
+        assert!(refusal("Faction", 70_000).contains("faction 70000"));
+        assert!(refusal("FactionTemplate", 70_000).contains("faction template 70000"));
     }
 
     /// The byte comparison finds a record whose bytes changed, and no other.

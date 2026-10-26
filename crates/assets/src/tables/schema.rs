@@ -317,6 +317,13 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         "ZoneIntroMusicTable" | "SoundAmbience" => &["SoundEntries", "AreaTable"],
         // An item's sounds, and the item displays that refer to them.
         "ItemGroupSounds" => &["SoundEntries", "ItemDisplayInfo"],
+        // The templates that belong to a faction, so a faction row lists
+        // them, and the group table whose MaskID the templates' masks name.
+        "Faction" => &["FactionTemplate", "FactionGroup"],
+        // The faction a template belongs to and names as enemies and
+        // friends, so each of those columns reads as the faction's name.
+        "FactionTemplate" => &["Faction", "FactionGroup"],
+        "FactionGroup" => &["FactionTemplate", "Faction"],
         "AreaTable" => &[
             "Map",
             "ZoneMusic",
@@ -440,6 +447,9 @@ pub const ALL: &[&Schema] = &[
     &ZONE_INTRO_MUSIC,
     &SOUND_AMBIENCE,
     &ITEM_GROUP_SOUNDS,
+    &FACTION,
+    &FACTION_TEMPLATE,
+    &FACTION_GROUP,
     &MAP,
     &AREA_TRIGGER,
     &WORLD_SAFE_LOCS,
@@ -2634,6 +2644,285 @@ pub(crate) const ITEM_GROUP_SOUNDS: Schema = Schema {
     sections: &[Section { name: "Sounds", fields: &[0, 1, 2, 3, 4] }],
 };
 
+/// vmangos' `FactionFlags` (`ReputationMgr.h`): the state a reputation
+/// panel row starts in, held per race-and-class alternative in
+/// `Faction.dbc`'s four `ReputationFlags` fields, and sent per slot in
+/// `SMSG_INITIALIZE_FACTIONS`.
+const REPUTATION_FLAGS: [(u32, &str, &str); 7] = [
+    (0x01, "Visible", "Listed in the reputation panel from the start, or once a unit of the faction is met."),
+    (0x02, "At war", "The At war box starts ticked. A character may change it unless Peace forced is set."),
+    (0x04, "Hidden", "Not listed in the reputation panel; reputation is still gained."),
+    (
+        0x08,
+        "Header",
+        "The row is a heading of the reputation panel, and never listed as a faction. Five shipped \
+         rows carry it: Alliance, Horde, Steamwheedle Cartel, Alliance Forces and Horde Forces. \
+         vmangos calls the bit INVISIBLE_FORCED.",
+    ),
+    (0x10, "Peace forced", "The At war box cannot be ticked; set on a character's own side's factions."),
+    (0x20, "Inactive", "Marked inactive by the character; the panel lists it under Inactive."),
+    (0x40, "Rival", "Set on no shipped row; vmangos keeps the bit for two later factions."),
+];
+
+/// vmangos' `FactionTemplateFlags` (`DBCEnums.h`): what a unit of the
+/// template does about the units around it.
+const FACTION_TEMPLATE_FLAGS: [(u32, &str, &str); 13] = [
+    (0x0001, "Respond to call for help", "Comes to the aid of a unit of a friendly faction that is attacked."),
+    (0x0002, "Broadcast to enemies, low priority", ""),
+    (0x0004, "Broadcast to enemies, medium priority", ""),
+    (0x0008, "Broadcast to enemies, high priority", ""),
+    (0x0010, "Search for enemies, low priority", ""),
+    (0x0020, "Search for enemies, medium priority", ""),
+    (0x0040, "Search for enemies, high priority", ""),
+    (0x0080, "Search for friends, low priority", ""),
+    (0x0100, "Search for friends, medium priority", ""),
+    (0x0200, "Search for friends, high priority", ""),
+    (0x0400, "Flee from call for help", ""),
+    (0x0800, "Assist players", "Helps a player flagged for PvP."),
+    (
+        0x1000,
+        "Attack PvP-active players",
+        "Hostile to a player who has been in a fight recently, whatever the standing: a city guard. \
+         The 1.12.1 client reads the same bit to colour such a unit.",
+    ),
+];
+
+/// The four groups a `FactionTemplate` row's three masks name, one bit per
+/// `FactionGroup` row: `1 << MaskID`. The names are the group table's
+/// internal names; vmangos' `FactionMasks` agrees.
+pub(crate) const FACTION_GROUP_BITS: [(u32, &str, &str); 4] = [
+    (0x1, "Player", "Any player character."),
+    (0x2, "Alliance", "A player or creature of the Alliance."),
+    (0x4, "Horde", "A player or creature of the Horde."),
+    (0x8, "Monster", "A creature that attacks on sight. A template in no group is a passive creature."),
+];
+
+const FACTION_RACE_MASK: &str =
+    "The races this alternative applies to; zero is every race. A faction states up to four \
+     (race mask, class mask) alternatives, and a character takes the first whose two masks \
+     fit it, which decides its base standing and its starting flags.";
+
+const FACTION_CLASS_MASK: &str = "The classes this alternative applies to; zero is every class.";
+
+const FACTION_BASE: &str =
+    "The standing a character of this alternative starts at, in points: -42,000 is Hated, 0 \
+     Neutral, 3,000 Friendly. The standing the server sends is a change from this base, and \
+     the client adds the two.";
+
+const FACTION_REPUTATION_FLAGS: &str =
+    "The reputation panel's starting state for this alternative, as bits.";
+
+/// `Faction.dbc`: 190 rows of 37 fields. A row is a faction: what the
+/// reputation panel lists, and what a `FactionTemplate` row belongs to. The
+/// indices are those `super::reputation` and `super::faction` read; the flag
+/// names follow vmangos' `FactionFlags` in `ReputationMgr.h`.
+///
+/// 54 rows have a reputation slot and are the ones a character can have a
+/// bar for; the other 136 are creature factions. 18 rows are listed under one
+/// of the five heading rows.
+///
+/// vmangos does not read this file. It reads twenty of the columns from its
+/// `faction` table, so an edit here reaches the server as a row of that
+/// table. The seven other locales of the name and the description are the
+/// client's alone.
+pub(crate) const FACTION: Schema = Schema {
+    table: "Faction",
+    columns: &FACTION_COLUMNS,
+    sections: &[
+        Section {
+            name: "Faction",
+            fields: &[0, 19, 20, 21, 22, 23, 24, 25, 26, 27, 18, 1],
+        },
+        Section {
+            name: "Reputation",
+            fields: &[2, 6, 10, 14, 3, 7, 11, 15, 4, 8, 12, 16, 5, 9, 13, 17],
+        },
+        Section {
+            name: "Description",
+            fields: &[28, 29, 30, 31, 32, 33, 34, 35, 36],
+        },
+    ],
+};
+
+const FACTION_COLUMNS: [Column; 37] = [
+    c(0, "Id", Kind::Id),
+    ca(
+        1,
+        "ReputationListId",
+        Kind::Signed,
+        "The slot of the character's 64-slot reputation list this faction has a bar in, 0 to 54 \
+         on 54 shipped rows, and -1 on the other 136, which have no bar. SMSG_INITIALIZE_FACTIONS \
+         sends the slots in this order, so two factions must not share a slot.",
+    ),
+    ca(2, "BaseRepRaceMask 1", Kind::Flags(RACE_BITS), FACTION_RACE_MASK),
+    ca(3, "BaseRepRaceMask 2", Kind::Flags(RACE_BITS), FACTION_RACE_MASK),
+    ca(4, "BaseRepRaceMask 3", Kind::Flags(RACE_BITS), FACTION_RACE_MASK),
+    ca(5, "BaseRepRaceMask 4", Kind::Flags(RACE_BITS), FACTION_RACE_MASK),
+    ca(6, "BaseRepClassMask 1", Kind::Flags(CLASS_BITS), FACTION_CLASS_MASK),
+    ca(7, "BaseRepClassMask 2", Kind::Flags(CLASS_BITS), FACTION_CLASS_MASK),
+    ca(8, "BaseRepClassMask 3", Kind::Flags(CLASS_BITS), FACTION_CLASS_MASK),
+    ca(9, "BaseRepClassMask 4", Kind::Flags(CLASS_BITS), FACTION_CLASS_MASK),
+    ca(10, "BaseRepValue 1", Kind::Signed, FACTION_BASE),
+    ca(11, "BaseRepValue 2", Kind::Signed, FACTION_BASE),
+    ca(12, "BaseRepValue 3", Kind::Signed, FACTION_BASE),
+    ca(13, "BaseRepValue 4", Kind::Signed, FACTION_BASE),
+    ca(14, "ReputationFlags 1", Kind::Flags(&REPUTATION_FLAGS), FACTION_REPUTATION_FLAGS),
+    ca(15, "ReputationFlags 2", Kind::Flags(&REPUTATION_FLAGS), FACTION_REPUTATION_FLAGS),
+    ca(16, "ReputationFlags 3", Kind::Flags(&REPUTATION_FLAGS), FACTION_REPUTATION_FLAGS),
+    ca(17, "ReputationFlags 4", Kind::Flags(&REPUTATION_FLAGS), FACTION_REPUTATION_FLAGS),
+    ca(
+        18,
+        "Parent",
+        Kind::Reference("Faction"),
+        "The heading this faction is listed under in the reputation panel, or none for the Other \
+         heading. 18 shipped rows have one, and every parent is one of the five Header rows. \
+         vmangos calls the column team, and reads it to pick a character's side's factions.",
+    ),
+    ca(19, "Name", Kind::Text, "What the reputation panel and a unit's tooltip call the faction."),
+    c(20, "Name koKR", Kind::Locale(LOCALES[1])),
+    c(21, "Name frFR", Kind::Locale(LOCALES[2])),
+    c(22, "Name deDE", Kind::Locale(LOCALES[3])),
+    c(23, "Name enCN", Kind::Locale(LOCALES[4])),
+    c(24, "Name enTW", Kind::Locale(LOCALES[5])),
+    c(25, "Name esES", Kind::Locale(LOCALES[6])),
+    c(26, "Name esMX", Kind::Locale(LOCALES[7])),
+    c(27, "NameFlags", Kind::LocaleFlags),
+    ca(
+        28,
+        "Description",
+        Kind::Text,
+        "The paragraph the reputation panel shows for the faction. 35 shipped rows have one; \
+         the longest is 164 bytes.",
+    ),
+    c(29, "Description koKR", Kind::Locale(LOCALES[1])),
+    c(30, "Description frFR", Kind::Locale(LOCALES[2])),
+    c(31, "Description deDE", Kind::Locale(LOCALES[3])),
+    c(32, "Description enCN", Kind::Locale(LOCALES[4])),
+    c(33, "Description enTW", Kind::Locale(LOCALES[5])),
+    c(34, "Description esES", Kind::Locale(LOCALES[6])),
+    c(35, "Description esMX", Kind::Locale(LOCALES[7])),
+    c(36, "DescriptionFlags", Kind::LocaleFlags),
+];
+
+const FACTION_ENEMY: &str =
+    "A faction whose units this template is hostile to whatever the groups say. The named \
+     enemies and friends are checked before the three masks.";
+
+const FACTION_FRIEND: &str =
+    "A faction whose units this template is friendly to whatever the groups say.";
+
+/// `FactionTemplate.dbc`: 314 rows of 14 fields. A row is what
+/// `UNIT_FIELD_FACTIONTEMPLATE` holds: how a unit stands to every other unit,
+/// through the groups it is in, is friendly to and is hostile to, and the
+/// factions it names as enemies and friends. The indices are those
+/// `super::faction` reads; the flag names follow vmangos'
+/// `FactionTemplateFlags` in `DBCEnums.h`.
+///
+/// Every shipped row names a faction, a faction has up to ten templates, and
+/// 33 factions have none.
+///
+/// vmangos does not read this file. It reads every column from its
+/// `faction_template` table, so an edit here reaches the server as a row of
+/// that table.
+pub(crate) const FACTION_TEMPLATE: Schema = Schema {
+    table: "FactionTemplate",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "Faction",
+            Kind::Reference("Faction"),
+            "The faction the template belongs to, which decides a character's standing with its \
+             units. Set and resolving on all 314 shipped rows.",
+        ),
+        ca(
+            2,
+            "Flags",
+            Kind::Flags(&FACTION_TEMPLATE_FLAGS),
+            "vmangos' FactionTemplateFlags. 94 shipped rows hold Respond to call for help alone, \
+             82 nothing, and 53 that with Search for enemies, medium priority.",
+        ),
+        ca(
+            3,
+            "OurMask",
+            Kind::Flags(&FACTION_GROUP_BITS),
+            "The groups the template is in. Monster on 123 shipped rows, none on 67, Alliance on \
+             43 and Horde on 25; a player race's template is Player with its side.",
+        ),
+        ca(
+            4,
+            "FriendlyMask",
+            Kind::Flags(&FACTION_GROUP_BITS),
+            "The groups the template is friendly to. None on 188 shipped rows, Alliance on 59, \
+             Horde on 45.",
+        ),
+        ca(
+            5,
+            "HostileMask",
+            Kind::Flags(&FACTION_GROUP_BITS),
+            "The groups the template is hostile to. Player on 110 shipped rows, none on 82, Horde \
+             on 38, Alliance on 27.",
+        ),
+        ca(6, "EnemyFaction 1", Kind::Reference("Faction"), FACTION_ENEMY),
+        ca(7, "EnemyFaction 2", Kind::Reference("Faction"), FACTION_ENEMY),
+        ca(8, "EnemyFaction 3", Kind::Reference("Faction"), FACTION_ENEMY),
+        ca(9, "EnemyFaction 4", Kind::Reference("Faction"), FACTION_ENEMY),
+        ca(10, "FriendFaction 1", Kind::Reference("Faction"), FACTION_FRIEND),
+        ca(11, "FriendFaction 2", Kind::Reference("Faction"), FACTION_FRIEND),
+        ca(12, "FriendFaction 3", Kind::Reference("Faction"), FACTION_FRIEND),
+        ca(13, "FriendFaction 4", Kind::Reference("Faction"), FACTION_FRIEND),
+    ],
+    sections: &[
+        Section { name: "Template", fields: &[0, 1, 2] },
+        Section { name: "Groups", fields: &[3, 4, 5] },
+        Section { name: "Enemies", fields: &[6, 7, 8, 9] },
+        Section { name: "Friends", fields: &[10, 11, 12, 13] },
+    ],
+};
+
+/// `FactionGroup.dbc`: 4 rows of 12 fields. A row names a group, the side a
+/// bit of a template's three masks stands for: Player, Alliance, Horde and
+/// Monster. The indices are those `super::faction` reads.
+///
+/// vmangos does not read this file; its `FactionMasks` enum fixes the same
+/// four bits. A fifth row would name a bit the server does not know.
+pub(crate) const FACTION_GROUP: Schema = Schema {
+    table: "FactionGroup",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "MaskId",
+            Kind::Int,
+            "The bit of a template's masks this group is: 1 shifted left by it. 0 Player, 1 \
+             Alliance, 2 Horde, 3 Monster.",
+        ),
+        ca(
+            2,
+            "InternalName",
+            Kind::Text,
+            "Player, Alliance, Horde or Monster. UnitFactionGroup returns it, and the interface \
+             builds the PvP icon's path from it.",
+        ),
+        ca(
+            3,
+            "Name",
+            Kind::Text,
+            "The name the interface shows. Empty for Player and Monster in the shipped file, which \
+             the client's choice of a unit's side depends on.",
+        ),
+        c(4, "Name koKR", Kind::Locale(LOCALES[1])),
+        c(5, "Name frFR", Kind::Locale(LOCALES[2])),
+        c(6, "Name deDE", Kind::Locale(LOCALES[3])),
+        c(7, "Name enCN", Kind::Locale(LOCALES[4])),
+        c(8, "Name enTW", Kind::Locale(LOCALES[5])),
+        c(9, "Name esES", Kind::Locale(LOCALES[6])),
+        c(10, "Name esMX", Kind::Locale(LOCALES[7])),
+        c(11, "NameFlags", Kind::LocaleFlags),
+    ],
+    sections: &[Section { name: "Group", fields: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }],
+};
+
 /// vmangos' `AreaFlags`, with what each bit does as its comments state it.
 pub(crate) const AREA_FLAGS: [(u32, &str, &str); 10] = [
     (0x001, "Snow", "Breath is drawn. Dun Morogh, Winterspring, Naxxramas and Razorfen Downs."),
@@ -3318,6 +3607,29 @@ mod tests {
         assert_eq!(ITEM_DISPLAY_INFO.references_to("ItemGroupSounds"), [11]);
     }
 
+    /// The three faction schemas have the shapes the shipped files have, the
+    /// template's faction columns point at `Faction`, and a group row is
+    /// named by its internal name.
+    #[test]
+    fn the_faction_schemas_have_the_shipped_shapes() {
+        assert_eq!(FACTION.columns.len(), 37);
+        assert_eq!(FACTION.columns[1].kind, Kind::Signed);
+        assert_eq!(FACTION.name_field(), Some(19));
+        assert_eq!(FACTION.columns[28].kind, Kind::Text);
+        assert_eq!(FACTION.references_to("Faction"), [18]);
+        assert_eq!(FACTION_TEMPLATE.columns.len(), 14);
+        assert_eq!(FACTION_TEMPLATE.references_to("Faction"), [1, 6, 7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(FACTION_GROUP.columns.len(), 12);
+        assert_eq!(FACTION_GROUP.name_field(), Some(2));
+        assert_eq!(SPELL.references_to("Faction"), [170]);
+        assert_eq!(
+            named_bits(0x1001, &FACTION_TEMPLATE_FLAGS),
+            ["Respond to call for help", "Attack PvP-active players"]
+        );
+        assert_eq!(unnamed_bits(0x3, &FACTION_GROUP_BITS), 0);
+        assert!(chain_for("FactionTemplate").contains(&"Faction"));
+    }
+
     /// Every `SoundType` is named once, in order.
     #[test]
     fn every_sound_type_is_named_once() {
@@ -3750,11 +4062,10 @@ mod tests {
         // These are referenced deliberately without a schema of their own.
         // Each opens as numbered fields, which is better than a reference the
         // browser refuses to follow.
-        const UNDESCRIBED: [&str; 10] = [
+        const UNDESCRIBED: [&str; 9] = [
             "ChrRaces",
             "HelmetGeosetVisData",
             "ItemVisuals",
-            "Faction",
             "LiquidType",
             "LoadingScreens",
             "SkillCostsData",
