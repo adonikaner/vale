@@ -17,6 +17,10 @@ use vale_assets::{
 use bevy::prelude::*;
 use std::sync::{Arc, Mutex};
 
+/// A reader of archive paths that another thread can hold: the bytes at a
+/// path, or `None`. See [`GameAssets::shared_reader`].
+pub type SharedReader = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+
 /// Where the game archives are, and whatever has been read out of them.
 ///
 /// `archive` is behind a `Mutex` because `Assets::read` needs `&mut` (the MPQ
@@ -290,7 +294,7 @@ impl GameAssets {
     /// [`Self::reader`] for another thread: the same chain and overlay behind
     /// the same lock, so reads from a worker queue behind the main thread's
     /// rather than opening the archives a second time.
-    pub fn shared_reader(&self) -> Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync> {
+    pub fn shared_reader(&self) -> SharedReader {
         let archive = Arc::clone(&self.archive);
         let overlay = Arc::clone(&self.overlay);
         let gamedata = self.gamedata_dir.clone();
@@ -298,6 +302,23 @@ impl GameAssets {
         Arc::new(move |path: &str| {
             with_chain(&archive, &gamedata, &root, &overlay, |chain| {
                 Ok(chain.read(path).ok())
+            })
+            .ok()
+            .flatten()
+        })
+    }
+
+    /// [`Self::shared_reader`] that reads past the overlay, as
+    /// [`Self::read_past_overlay`] does: the bytes the archives carry at a
+    /// path, whatever the overlay holds there.
+    pub fn shared_reader_past_overlay(&self) -> SharedReader {
+        let archive = Arc::clone(&self.archive);
+        let overlay = Arc::clone(&self.overlay);
+        let gamedata = self.gamedata_dir.clone();
+        let root = self.root.clone();
+        Arc::new(move |path: &str| {
+            with_chain(&archive, &gamedata, &root, &overlay, |chain| {
+                Ok(chain.read_past_overlay(path).ok())
             })
             .ok()
             .flatten()
@@ -537,10 +558,16 @@ impl GameAssets {
 /// ```text
 /// GameAssets    the tables and the banks parsed with them, when `tables`
 /// DisplayCache  its Arc of the display tables, read again at once, when `tables`
-/// ModelCache    every model, skin and texture read by one of `paths`, or all
-/// UiTextures    every minimap picture read by one of `paths`, or all
+/// ModelCache    every model, skin and texture read by one of `paths`, every
+///               model build whose own textures include one, and every
+///               dressing over those or wearing one; or all
+/// UiTextures    every interface and minimap picture read by one of `paths`,
+///               or all
 /// Mixer         every sound file read by one of `paths`, or all
 /// ```
+///
+/// A path is matched without case, since the archives find a path without
+/// case and a sender cannot know how the reader spelled it.
 ///
 /// Nothing drawn is rebuilt. What is standing keeps its handles, and the next
 /// thing to ask reads the file.

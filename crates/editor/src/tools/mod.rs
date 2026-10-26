@@ -192,7 +192,15 @@ pub(crate) enum Tool {
     /// models and the rest. See [`crate::import::assets`]. A workspace, since a file has no
     /// place in the world; it has no table, because its subject is the
     /// project folder.
+    ///
+    /// The Project Files part of the Assets workspace, whose other part is
+    /// [`Tool::GameFiles`].
     Assets,
+    /// Every file the archives list, browsed by folder, previewed, exported
+    /// and replaced. See [`crate::import::files`]. The Game Files part of the
+    /// Assets workspace; like [`Tool::Assets`] it has no table, because its
+    /// subject is the archives' files.
+    GameFiles,
     /// A find-and-replace over every tile of the map. See [`crate::map::sweep`].
     ///
     /// The second subject whose document is not a place: it edits the map's
@@ -462,6 +470,10 @@ const SOUND_PARTS: [(&str, Tool); 6] = [
     ("Intros", Tool::ZoneIntros),
     ("Ambience", Tool::Ambience),
 ];
+
+/// The Assets workspace's parts: the project's own files, then the
+/// archives' files.
+const ASSET_PARTS: [(&str, Tool); 2] = [("Project Files", Tool::Assets), ("Game Files", Tool::GameFiles)];
 
 /// The Game Objects workspace's parts.
 const OBJECT_PARTS: [(&str, Tool); 2] = [
@@ -777,7 +789,7 @@ pub(crate) const SPECS: &[Spec] = &[
         server_table: Some(vale_mangos::creature::TEMPLATE),
         parts: &CREATURE_PARTS,
         menu: Some(Entry {
-            name: "Creature Templates",
+            name: "Creatures",
             about: "creature_template: every creature the server loads, searched by name, \
                     subname or entry, with every column of the open row, its model, and its \
                     quests, loot, events, spells, gossip, vendor and trainer windows. Rows in \
@@ -821,7 +833,7 @@ pub(crate) const SPECS: &[Spec] = &[
         server_table: Some(vale_mangos::gameobject::TEMPLATE),
         parts: &OBJECT_PARTS,
         menu: Some(Entry {
-            name: "Game Object Templates",
+            name: "Game Objects",
             about: "gameobject_template: every game object the server loads, searched by name, \
                     type or entry, with every column of the open row, its model, and its quest \
                     and loot windows. Rows in vmangos' database, so this needs a database \
@@ -979,16 +991,43 @@ pub(crate) const SPECS: &[Spec] = &[
     Spec {
         survives_playtest: true,
         window: Some(crate::popout::Group::Assets),
+        parts: &ASSET_PARTS,
+        menu: Some(Entry {
+            name: "Project Files",
+            about: "The files this project adds to the archives: imported textures, models \
+                    and sounds, and the minimap pictures, skins, flight maps and models the \
+                    editor generates. Each is read in place of the archives' file at its path \
+                    and published with the project.",
+        }),
         ..middle(
             Tool::Assets,
             "Assets",
             Place::Bar("Assets"),
-            "The files this project adds to the archives: imported textures, baked \
-             models and the rest. Import Texture turns a PNG, TGA or BLP picture into a \
-             BLP the 1.12.1 client reads. Every file here is listed in the editor's \
-             pickers and published with the project.",
+            "The project's own files and the archives' files. Project Files lists what the \
+             project imports and generates; Game Files lists every file the archives hold, \
+             with Export, and Replace, which imports a file at the same path.",
             crate::ui::import::assets::inspect,
             crate::ui::import::assets::workspace,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        window: Some(crate::popout::Group::Assets),
+        parts: &ASSET_PARTS,
+        menu: Some(Entry {
+            name: "Game Files",
+            about: "Every file the archives list, by folder: a texture, model or sound \
+                    previewed, any file or folder exported to disk (a BLP texture as PNG if \
+                    asked), and Replace, which imports a file at the same path so the \
+                    project's copy is read in place of the archives'.",
+        }),
+        ..middle(
+            Tool::GameFiles,
+            "Game Files",
+            Place::Part,
+            "",
+            crate::ui::import::files::inspect,
+            crate::ui::import::files::workspace,
         )
     },
 ];
@@ -1063,6 +1102,7 @@ impl Tool {
             Tool::Ambience => 35,
             Tool::Tables => 36,
             Tool::Assets => 37,
+            Tool::GameFiles => 38,
         }
     }
 
@@ -1581,9 +1621,9 @@ mod tests {
     #[test]
     fn only_a_placeless_subject_covers_the_viewport() {
         for tool in ALL {
-            // The Assets workspace's subject is the project folder, not a
-            // table.
-            if tool.covers_viewport() && tool != Tool::Assets {
+            // The Assets workspace's subjects are the project folder and the
+            // archives' files, not a table.
+            if tool.covers_viewport() && !matches!(tool, Tool::Assets | Tool::GameFiles) {
                 assert!(
                     tool.table().is_some() || tool.server_table().is_some(),
                     "{} covers the viewport with no table to put there",
@@ -1630,8 +1670,9 @@ mod tests {
                     tool.name(),
                     tool.table()
                 ),
-                // The Assets workspace's subject is the project folder.
-                Surface::Middle if tool == Tool::Assets => {}
+                // The Assets workspace's subjects are the project folder and
+                // the archives' files.
+                Surface::Middle if matches!(tool, Tool::Assets | Tool::GameFiles) => {}
                 // A client table or a server one. The subject has to be a row
                 // either way. `server_table` says which side of the wire it
                 // lives on, and that decides whether the tool survives a

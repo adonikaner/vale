@@ -35,6 +35,32 @@ pub(crate) fn forget_what_changed(
     changed.write(PathsChanged { paths, all, tables });
 }
 
+/// Forget the editor's own pictures of what a [`PathsChanged`] names: a
+/// texture's thumbnail and a model's portrait, so a file replaced or removed
+/// is drawn as it is now in every list and picker. Runs with the client's
+/// caches, in `ForgetChanged`.
+pub(crate) fn forget_changed_previews(
+    mut changed: MessageReader<PathsChanged>,
+    thumbnails: Option<ResMut<crate::ui::widgets::thumbnails::Thumbnails>>,
+    portraits: Option<ResMut<crate::preview::portraits::Portraits>>,
+) {
+    let (Some(mut thumbnails), Some(mut portraits)) = (thumbnails, portraits) else {
+        changed.clear();
+        return;
+    };
+    for change in changed.read() {
+        if change.all {
+            thumbnails.forget_all();
+            portraits.forget_all();
+            continue;
+        }
+        for path in &change.paths {
+            thumbnails.forget(path);
+            portraits.forget(path);
+        }
+    }
+}
+
 /// Show the stage an edit to the tables, once the client has read them again.
 ///
 /// The effect pass hangs a kit when a counter changes, so a playing stage

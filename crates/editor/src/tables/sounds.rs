@@ -103,7 +103,8 @@ pub(super) fn listen(
             browser.hearing_file = None;
         }
     }
-    let shown = popout.browser_tool(*tool).table().is_some() || *tool == crate::tools::Tool::Assets;
+    let shown = popout.browser_tool(*tool).table().is_some()
+        || matches!(*tool, crate::tools::Tool::Assets | crate::tools::Tool::GameFiles);
     let away = !shown || !playtest.editing();
     let ask = match away {
         true => {

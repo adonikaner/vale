@@ -412,13 +412,16 @@ fn listed(session: &EditSession, assets: &GameAssets, folder: &str, of: Textures
         .collect();
     // `_u` sorts after `_f` and `_m`; a body texture is shown by its `_u`.
     files.sort_by_key(|path| !path.ends_with("_u.blp"));
+    // A name is written into a table field, so it is spelled as the
+    // archives spell the file, as the shipped rows are.
+    let spell = session.spellings(assets);
     for path in files {
-        let name = texture_name(&path, of);
-        if !out.iter().any(|(had, _)| *had == name) {
+        let name = texture_name(spell.of(&path), of);
+        if !out.iter().any(|(had, _)| had.eq_ignore_ascii_case(&name)) {
             out.push((name, path));
         }
     }
-    out.sort();
+    out.sort_by_key(|(name, _)| name.to_ascii_lowercase());
     out
 }
 
@@ -580,7 +583,8 @@ pub(super) fn textures(ui: &mut egui::Ui, work: &mut Workspace<'_>, table: &str,
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                let chosen = work.browser.texture_preview.as_deref().map(|path| texture_name(path, of));
+                let spell = work.session.spellings(work.assets);
+                let chosen = work.browser.texture_preview.as_deref().map(|path| texture_name(spell.of(path), of));
                 if ui
                     .add_enabled(
                         chosen.is_some(),

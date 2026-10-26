@@ -90,7 +90,7 @@ use tiles::refresh_claims;
 use project::reread_after_a_switch;
 use originals::{Shipped, Unchanged, drop_unchanged_tiles};
 use open::open;
-use republish::{forget_what_changed, publish_for_the_preview, show_the_edit};
+use republish::{forget_changed_previews, forget_what_changed, publish_for_the_preview, show_the_edit};
 
 /// The tiles this editor has changed and not yet saved, keyed by virtual path in
 /// lower case.
@@ -248,6 +248,9 @@ pub(crate) struct EditSession {
     /// [`Self::listed`] is built again when it moves. See
     /// `crate::import::assets`.
     pub(crate) files_revision: u64,
+    /// The spellings [`Self::spellings`] answers with, and the
+    /// [`Self::files_revision`] the project's half was read at.
+    pub(crate) spelled: std::sync::Mutex<Option<(u64, std::sync::Arc<files::Spellings>)>>,
     /// Everything drawn is from a project that is no longer open.
     ///
     /// Set by [`Self::switch_to`] and drained by [`reread_after_a_switch`],
@@ -403,6 +406,7 @@ impl EditSession {
             tables_republished: false,
             republished_revision: 0,
             files_revision: 0,
+            spelled: Default::default(),
             claimed: HashSet::default(),
             reread_everything: false,
             claims_for: "Azeroth".to_string(),
@@ -482,6 +486,7 @@ impl Plugin for SessionPlugin {
                 Update,
                 vale_client::assets::ForgetChanged.before(crate::preview::lab::hang_the_effect),
             )
+            .add_systems(Update, forget_changed_previews.in_set(vale_client::assets::ForgetChanged))
             .add_systems(
                 Update,
                 show_the_edit

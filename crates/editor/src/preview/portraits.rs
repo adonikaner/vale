@@ -571,6 +571,25 @@ impl Portraits {
     ///
     /// Cheap and idempotent, as [`Self::want`] is: a row calls it on every
     /// frame it is drawn.
+    /// Forget every picture of the file at `path`: of the model, or of a
+    /// model wearing it as a skin, whose key holds the path. The next request
+    /// draws it again. The forgotten picture's texture stays registered with
+    /// egui, one image per forget, which an edit makes rarely.
+    pub(crate) fn forget(&mut self, path: &str) {
+        let lower = path.to_ascii_lowercase();
+        let holds = |key: &str| key.to_ascii_lowercase().contains(&lower);
+        self.ready.retain(|key, _| !holds(key));
+        self.wanted.retain(|key, _| !holds(key));
+        self.failed.retain(|key| !holds(key));
+    }
+
+    /// …and every picture, for a change more than its paths can name.
+    pub(crate) fn forget_all(&mut self) {
+        self.ready.clear();
+        self.wanted.clear();
+        self.failed.clear();
+    }
+
     pub(crate) fn want_worn(&mut self, worn: &Worn) -> String {
         let key = worn.key();
         self.worn.entry(key.clone()).or_insert_with(|| worn.clone());

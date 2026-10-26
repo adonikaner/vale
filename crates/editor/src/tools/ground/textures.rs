@@ -104,6 +104,9 @@ pub(crate) struct Textures {
     pub(crate) catalogue: Vec<String>,
     /// The `EditSession::files_revision` [`Self::catalogue`] was read at.
     catalogue_for: Option<u64>,
+    /// How the archives and the project spell [`Self::catalogue`]'s paths,
+    /// read with it. See `crate::session::files::Spellings`.
+    pub(crate) spellings: std::sync::Arc<crate::session::files::Spellings>,
     /// What the panel's search box holds. Held here rather than in the panel so
     /// that it survives the tool being switched away from and back.
     pub(crate) search: String,
@@ -141,6 +144,7 @@ impl Default for Textures {
             brush: PaintBrush::default(),
             catalogue: Vec::new(),
             catalogue_for: None,
+            spellings: Default::default(),
             search: String::new(),
             // [`ROOT`], not the empty string a derived default would give. An
             // empty prefix matches every path, so the picker would open on one
@@ -290,6 +294,7 @@ fn read_catalogue(
         found.push(String::new());
     }
     textures.catalogue = found;
+    textures.spellings = session.spellings(&assets);
 }
 
 /// Run the brush while the left button is held.

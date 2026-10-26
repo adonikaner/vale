@@ -84,10 +84,15 @@ use super::sounds;
 use vale_assets::world::blp::Encoding;
 use vale_edit::manifest::Kind;
 
-/// Everything the workspace draws from.
+/// Everything the workspace's two parts draw from.
 pub(crate) struct Work<'a> {
     pub(crate) session: &'a mut EditSession,
     pub(crate) assets: &'a mut Assets,
+    /// The Game Files part's state. See [`crate::import::files`].
+    pub(crate) files: &'a mut crate::import::files::GameFiles,
+    /// What a part asks of the shell: the other part, or a table opened in
+    /// its editor.
+    pub(crate) asks: &'a mut crate::ui::shell::asks::ShellAsks,
     pub(crate) game: &'a vale_client::assets::GameAssets,
     pub(crate) thumbnails: &'a mut crate::ui::widgets::thumbnails::Thumbnails,
     pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
@@ -102,6 +107,35 @@ pub(crate) struct Work<'a> {
 
 /// How large the inspector draws a texture, at most.
 const PICTURE: f32 = 256.0;
+
+/// Whose copy of a file the details and the inspector read: the project's,
+/// in the Project Files part, or the archives' own, in the Game Files part
+/// ([`super::files`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Whose {
+    Project,
+    Archives,
+}
+
+impl Whose {
+    /// The bytes of this copy of the file at `vpath`.
+    pub(super) fn read(self, session: &EditSession, game: &vale_client::assets::GameAssets, vpath: &str) -> Option<Vec<u8>> {
+        match self {
+            Whose::Project => session.project.read(vpath),
+            Whose::Archives => crate::import::files::shipped(game, vpath),
+        }
+    }
+
+    /// The revision a cache of facts read from this copy is kept for: the
+    /// project's `EditSession::files_revision`, or 0 for the archives, which
+    /// do not change while the editor runs.
+    pub(super) fn revision(self, session: &EditSession) -> u64 {
+        match self {
+            Whose::Project => session.files_revision,
+            Whose::Archives => 0,
+        }
+    }
+}
 
 /// Where a project file came from, as the list filters it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,12 +272,12 @@ pub(crate) fn draw(ui: &mut egui::Ui, mut work: Work<'_>) {
 }
 
 /// The file name of a path.
-fn basename(vpath: &str) -> &str {
+pub(super) fn basename(vpath: &str) -> &str {
     vpath.rsplit(['\\', '/']).next().unwrap_or(vpath)
 }
 
 /// The folder of a path, with its trailing backslash.
-fn folder(vpath: &str) -> &str {
+pub(super) fn folder(vpath: &str) -> &str {
     match vpath.rfind(['\\', '/']) {
         Some(at) => &vpath[..=at],
         None => "",
@@ -251,7 +285,7 @@ fn folder(vpath: &str) -> &str {
 }
 
 /// A size in bytes as a person reads it.
-fn size_words(bytes: u64) -> String {
+pub(super) fn size_words(bytes: u64) -> String {
     match bytes {
         0..=1023 => format!("{bytes} B"),
         1024..=1_048_575 => format!("{:.1} KB", bytes as f64 / 1024.0),
@@ -322,6 +356,11 @@ fn rows_words(table: &str, rows: &[u32]) -> String {
 /// The left column: Import, where the files came from, the sorts the project
 /// has, what has fallen behind, the search and the files.
 fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
+    // The workspace's two parts, Project Files and Game Files. The shell
+    // switches after the frame is drawn.
+    if let Some(part) = crate::ui::shell::rail::parts(ui, crate::tools::Tool::Assets) {
+        work.asks.push(crate::ui::shell::asks::ShellAsk::Part(part));
+    }
     let all: Vec<Own> = work.assets.files(work.session).to_vec();
     let sources = work.assets.sources(work.session).clone();
     let survey = survey(work, &all, &sources);
@@ -652,7 +691,7 @@ fn catch_up(ui: &mut egui::Ui, work: &mut Work<'_>, survey: &Survey) {
 }
 
 /// A row's picture: the texture itself, or the model's portrait.
-fn picture(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, rect: egui::Rect) {
+pub(super) fn picture(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, rect: egui::Rect) {
     match own.kind {
         Kind::Texture | Kind::Minimap => {
             work.thumbnails.want(&own.vpath);
@@ -768,14 +807,14 @@ struct ModelFacts {
     sequences: Vec<(u16, u32, bool)>,
 }
 
-/// The facts of the project's model at `vpath`, read once per change of the
-/// project's files and kept in egui's memory.
-fn model_facts(ui: &egui::Ui, session: &EditSession, vpath: &str) -> Option<Arc<ModelFacts>> {
-    let key = egui::Id::new(("asset-model-facts", vpath.to_ascii_lowercase(), session.files_revision));
+/// The facts of `whose` copy of the model at `vpath`, read once per change
+/// of that copy and kept in egui's memory.
+fn model_facts(ui: &egui::Ui, work: &Work<'_>, whose: Whose, vpath: &str) -> Option<Arc<ModelFacts>> {
+    let key = egui::Id::new(("asset-model-facts", whose, vpath.to_ascii_lowercase(), whose.revision(work.session)));
     if let Some(known) = ui.data(|data| data.get_temp::<Option<Arc<ModelFacts>>>(key)) {
         return known;
     }
-    let facts = session.project.read(vpath).and_then(|bytes| vale_assets::world::m2::M2::parse(&bytes).ok()).map(|model| {
+    let facts = whose.read(work.session, work.game, vpath).and_then(|bytes| vale_assets::world::m2::M2::parse(&bytes).ok()).map(|model| {
         let (bones, sequences) = match &model.skeleton {
             Some(skeleton) => (
                 skeleton.bones.len(),
@@ -793,6 +832,154 @@ fn model_facts(ui: &egui::Ui, session: &EditSession, vpath: &str) -> Option<Arc<
     });
     ui.data_mut(|data| data.insert_temp(key, facts.clone()));
     facts
+}
+
+/// The header of `whose` copy of the texture at `vpath`, read once per
+/// change of that copy and kept in egui's memory: an archive read
+/// decompresses the file, and the details are drawn every frame.
+fn texture_header(ui: &egui::Ui, work: &Work<'_>, whose: Whose, vpath: &str) -> Option<Arc<Header>> {
+    let key = egui::Id::new(("asset-texture-header", whose, vpath.to_ascii_lowercase(), whose.revision(work.session)));
+    if let Some(known) = ui.data(|data| data.get_temp::<Option<Arc<Header>>>(key)) {
+        return known;
+    }
+    let read = whose.read(work.session, work.game, vpath).and_then(|bytes| header(&bytes)).map(Arc::new);
+    ui.data_mut(|data| data.insert_temp(key, read.clone()));
+    read
+}
+
+/// What a file holds, as its details show it: a texture's header, a model's
+/// geometry, bones, textures and sequences, a sound's format and length, and
+/// the `SoundEntries` rows whose File columns hold a sound.
+pub(super) struct Content {
+    texture: Option<Arc<Header>>,
+    model: Option<Arc<ModelFacts>>,
+    sound: Option<Arc<sounds::SoundFacts>>,
+    pub(super) played_by: Option<Vec<u32>>,
+}
+
+/// The [`Content`] of `whose` copy of the file at `vpath`, of type `kind`.
+/// For a sound, `SoundEntries` is opened, since the rows that hold it are
+/// read from it.
+pub(super) fn content_of(ui: &egui::Ui, work: &mut Work<'_>, whose: Whose, kind: Kind, vpath: &str) -> Content {
+    let texture = matches!(kind, Kind::Texture | Kind::Minimap).then(|| texture_header(ui, work, whose, vpath)).flatten();
+    let model = (kind == Kind::Model).then(|| model_facts(ui, work, whose, vpath)).flatten();
+    let sound = (kind == Kind::Sound).then(|| sounds::facts(ui, whose, work.session, work.game, vpath)).flatten();
+    let played_by = match kind {
+        Kind::Sound => {
+            work.session.open_table(work.game, crate::import::sounds::TABLE);
+            sounds::rows_playing(ui, work.session, vpath)
+        }
+        _ => None,
+    };
+    Content { texture, model, sound, played_by }
+}
+
+/// The rows of a details grid that say what a file holds: Dimensions,
+/// Compression and Mipmaps for a texture; Geometry, Bones and Textures for a
+/// model; Format, Length and Played by for a sound.
+pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Content) {
+    if let Some(head) = &content.texture {
+        ui.label(egui::RichText::new("Dimensions").color(theme::INK_DIM));
+        ui.label(format!("{}x{}", head.width, head.height));
+        ui.end_row();
+        ui.label(egui::RichText::new("Compression").color(theme::INK_DIM));
+        ui.label(&head.words);
+        ui.end_row();
+        ui.label(egui::RichText::new("Mipmaps").color(theme::INK_DIM));
+        ui.label(match head.mips {
+            true => "yes",
+            false => "no",
+        });
+        ui.end_row();
+    }
+    if let Some(facts) = &content.model {
+        ui.label(egui::RichText::new("Geometry").color(theme::INK_DIM));
+        ui.label(format!("{} vertices, {} triangles", facts.vertices, facts.triangles));
+        ui.end_row();
+        ui.label(egui::RichText::new("Bones").color(theme::INK_DIM));
+        ui.label(match facts.bones {
+            0 => "none animated".to_string(),
+            n => n.to_string(),
+        });
+        ui.end_row();
+        ui.label(egui::RichText::new("Textures").color(theme::INK_DIM));
+        let named: Vec<String> = facts
+            .textures
+            .iter()
+            .map(|(kind, file)| match kind {
+                0 => basename(file).to_string(),
+                11..=13 => format!("creature skin {}", kind - 10),
+                other => format!("type {other}"),
+            })
+            .collect();
+        ui.label(named.join(", "));
+        ui.end_row();
+    }
+    if let Some(heard) = &content.sound {
+        ui.label(egui::RichText::new("Format").color(theme::INK_DIM));
+        match heard.format {
+            Some(format) if format.is_shipped_wav() || matches!(format, vale_edit::sound::Format::Mp3 { .. }) => {
+                ui.label(format.words())
+            }
+            Some(format) => ui
+                .label(egui::RichText::new(format.words()).color(theme::WARN))
+                .on_hover_text("Not the encoding of the shipped WAVs: all 6,845 are 16-bit PCM at 22,050 or 44,100 Hz."),
+            None => ui.label(egui::RichText::new("not a WAV or an MP3").color(theme::BAD)),
+        };
+        ui.end_row();
+        ui.label(egui::RichText::new("Length").color(theme::INK_DIM));
+        match &heard.seconds {
+            Ok(seconds) => ui.label(sounds::seconds_words(*seconds)),
+            Err(why) => ui.label(egui::RichText::new(format!("does not decode: {why}")).color(theme::BAD)),
+        };
+        ui.end_row();
+    }
+    if let Some(rows) = &content.played_by {
+        ui.label(egui::RichText::new("Played by").color(theme::INK_DIM));
+        let named: Vec<String> = rows
+            .iter()
+            .take(6)
+            .map(|id| match work.browser.describe_id(work.session, crate::import::sounds::TABLE, *id) {
+                Some(label) if !label.title.is_empty() => format!("{id} {}", label.title),
+                _ => id.to_string(),
+            })
+            .collect();
+        match rows.len() {
+            0 => ui.label(egui::RichText::new("no SoundEntries row holds it").color(theme::WARN)),
+            n if n > 6 => ui.label(format!("SoundEntries {} and {} more", named.join(", "), n - 6)),
+            _ => ui.label(format!("SoundEntries {}", named.join(", "))),
+        };
+        ui.end_row();
+    }
+}
+
+/// A model's sequences under its details: each animation's id and name, its
+/// length, and whether it loops. Nothing for a file that is not a model, or a
+/// model with none.
+pub(super) fn sequences(ui: &mut egui::Ui, work: &Work<'_>, content: &Content) {
+    let Some(facts) = content.model.as_ref().filter(|f| !f.sequences.is_empty()) else { return };
+    let tables = work.game.display_tables().ok();
+    let animations = tables.as_deref().and_then(|t| t.animations());
+    ui.add_space(6.0);
+    theme::heading(ui, "Sequences");
+    egui::Grid::new("asset-sequences")
+        .num_columns(3)
+        .spacing([12.0, 2.0])
+        .show(ui, |ui| {
+            for (id, length, loops) in &facts.sequences {
+                let name = animations.and_then(|a| a.name(*id)).unwrap_or("?");
+                ui.label(format!("{id} {name}"));
+                ui.label(theme::number(format!("{length} ms")));
+                ui.label(
+                    egui::RichText::new(match loops {
+                        true => "loops",
+                        false => "once",
+                    })
+                    .color(theme::INK_DIM),
+                );
+                ui.end_row();
+            }
+        });
 }
 
 /// What a sort of file is used for, in the details.
@@ -858,17 +1045,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .as_ref()
         .is_some_and(|gloss| gloss_own.is_none() && in_archives(ui.ctx(), work.game, gloss));
     let unpaired = gloss.is_some() && gloss_own.is_none() && !gloss_shipped;
-    let facts = (own.kind == Kind::Model).then(|| model_facts(ui, work.session, &own.vpath)).flatten();
-    let heard = (own.kind == Kind::Sound).then(|| sounds::facts(ui, work.session, &own.vpath)).flatten();
-    let played_by = match own.kind {
-        Kind::Sound => {
-            work.session.open_table(work.game, crate::import::sounds::TABLE);
-            sounds::rows_playing(ui, work.session, &own.vpath)
-        }
-        _ => None,
-    };
-    let tables = work.game.display_tables().ok();
-    let animations = tables.as_deref().and_then(|t| t.animations());
+    let content = content_of(ui, work, Whose::Project, own.kind, &own.vpath);
 
     ui.label(egui::RichText::new(basename(&own.vpath)).strong().size(17.0).color(theme::INK));
     ui.label(egui::RichText::new(&own.vpath).small().color(theme::INK_DIM));
@@ -910,81 +1087,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 };
                 ui.end_row();
             }
-            if matches!(own.kind, Kind::Texture | Kind::Minimap) {
-                if let Some(head) = work.session.project.read(&own.vpath).and_then(|bytes| header(&bytes)) {
-                    ui.label(egui::RichText::new("Dimensions").color(theme::INK_DIM));
-                    ui.label(format!("{}x{}", head.width, head.height));
-                    ui.end_row();
-                    ui.label(egui::RichText::new("Compression").color(theme::INK_DIM));
-                    ui.label(head.words);
-                    ui.end_row();
-                    ui.label(egui::RichText::new("Mipmaps").color(theme::INK_DIM));
-                    ui.label(match head.mips {
-                        true => "yes",
-                        false => "no",
-                    });
-                    ui.end_row();
-                }
-            }
-            if let Some(facts) = &facts {
-                ui.label(egui::RichText::new("Geometry").color(theme::INK_DIM));
-                ui.label(format!("{} vertices, {} triangles", facts.vertices, facts.triangles));
-                ui.end_row();
-                ui.label(egui::RichText::new("Bones").color(theme::INK_DIM));
-                ui.label(match facts.bones {
-                    0 => "none animated".to_string(),
-                    n => n.to_string(),
-                });
-                ui.end_row();
-                ui.label(egui::RichText::new("Textures").color(theme::INK_DIM));
-                let named: Vec<String> = facts
-                    .textures
-                    .iter()
-                    .map(|(kind, file)| match kind {
-                        0 => basename(file).to_string(),
-                        11..=13 => format!("creature skin {}", kind - 10),
-                        other => format!("type {other}"),
-                    })
-                    .collect();
-                ui.label(named.join(", "));
-                ui.end_row();
-            }
-            if let Some(heard) = &heard {
-                ui.label(egui::RichText::new("Format").color(theme::INK_DIM));
-                match heard.format {
-                    Some(format) if format.is_shipped_wav() || matches!(format, vale_edit::sound::Format::Mp3 { .. }) => {
-                        ui.label(format.words())
-                    }
-                    Some(format) => ui
-                        .label(egui::RichText::new(format.words()).color(theme::WARN))
-                        .on_hover_text("Not the encoding of the shipped WAVs: all 6,845 are 16-bit PCM at 22,050 or 44,100 Hz."),
-                    None => ui.label(egui::RichText::new("not a WAV or an MP3").color(theme::BAD)),
-                };
-                ui.end_row();
-                ui.label(egui::RichText::new("Length").color(theme::INK_DIM));
-                match &heard.seconds {
-                    Ok(seconds) => ui.label(sounds::seconds_words(*seconds)),
-                    Err(why) => ui.label(egui::RichText::new(format!("does not decode: {why}")).color(theme::BAD)),
-                };
-                ui.end_row();
-            }
-            if let Some(rows) = &played_by {
-                ui.label(egui::RichText::new("Played by").color(theme::INK_DIM));
-                let named: Vec<String> = rows
-                    .iter()
-                    .take(6)
-                    .map(|id| match work.browser.describe_id(work.session, crate::import::sounds::TABLE, *id) {
-                        Some(label) if !label.title.is_empty() => format!("{id} {}", label.title),
-                        _ => id.to_string(),
-                    })
-                    .collect();
-                match rows.len() {
-                    0 => ui.label(egui::RichText::new("no SoundEntries row holds it").color(theme::WARN)),
-                    n if n > 6 => ui.label(format!("SoundEntries {} and {} more", named.join(", "), n - 6)),
-                    _ => ui.label(format!("SoundEntries {}", named.join(", "))),
-                };
-                ui.end_row();
-            }
+            content_rows(ui, work, &content);
             if let Some(gloss) = &gloss {
                 ui.label(egui::RichText::new("Gloss file").color(theme::INK_DIM));
                 match (&gloss_own, gloss_shipped) {
@@ -1007,28 +1110,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     if let Some(made_by) = sort.made_by() {
         ui.label(egui::RichText::new(made_by).small().color(theme::INK_DIM));
     }
-    if let Some(facts) = facts.as_ref().filter(|f| !f.sequences.is_empty()) {
-        ui.add_space(6.0);
-        theme::heading(ui, "Sequences");
-        egui::Grid::new("asset-sequences")
-            .num_columns(3)
-            .spacing([12.0, 2.0])
-            .show(ui, |ui| {
-                for (id, length, loops) in &facts.sequences {
-                    let name = animations.and_then(|a| a.name(*id)).unwrap_or("?");
-                    ui.label(format!("{id} {name}"));
-                    ui.label(theme::number(format!("{length} ms")));
-                    ui.label(
-                        egui::RichText::new(match loops {
-                            true => "loops",
-                            false => "once",
-                        })
-                        .color(theme::INK_DIM),
-                    );
-                    ui.end_row();
-                }
-            });
-    }
+    sequences(ui, work, &content);
     if unpaired {
         ui.add_space(6.0);
         theme::note(
@@ -1038,7 +1120,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
              Write Its _s File writes both again.",
         );
     }
-    if played_by.as_ref().is_some_and(Vec::is_empty) {
+    if content.played_by.as_ref().is_some_and(Vec::is_empty) {
         ui.add_space(6.0);
         theme::note(
             ui,
@@ -1051,7 +1133,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     ui.horizontal_wrapped(|ui| {
         if own.kind == Kind::Sound {
             sounds::play_button(ui, work.browser, &own.vpath);
-            if played_by.as_ref().is_some_and(Vec::is_empty)
+            if content.played_by.as_ref().is_some_and(Vec::is_empty)
                 && ui
                     .button("Add a SoundEntries Row")
                     .on_hover_text("Add a SoundEntries row whose Directory and File 1 hold this file, as one undo entry.")
@@ -1110,6 +1192,16 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             ui.ctx().copy_text(own.vpath.clone());
             work.session.status = format!("{} is on the clipboard", own.vpath);
         }
+        export_buttons(ui, work, &own.vpath, true);
+        if in_archives(ui.ctx(), work.game, &own.vpath)
+            && ui
+                .button("Show in Game Files")
+                .on_hover_text("Open the archives' file at this path, which the project's file replaces, in the Game Files part.")
+                .clicked()
+        {
+            work.files.show(&own.vpath);
+            work.asks.push(crate::ui::shell::asks::ShellAsk::Part(crate::tools::Tool::GameFiles));
+        }
         if own.kind == Kind::Texture
             && !sort.generated()
             && ui
@@ -1162,6 +1254,34 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             }
         }
     });
+}
+
+/// Export… and, for a BLP texture, Export as PNG…: the file at `vpath`
+/// written to a path chosen with the system's save dialog. `from_project`
+/// exports the project's copy, and otherwise the archives'. See
+/// [`crate::import::files`].
+pub(super) fn export_buttons(ui: &mut egui::Ui, work: &mut Work<'_>, vpath: &str, from_project: bool) {
+    let copy = match from_project {
+        true => "the project's file",
+        false => "the archives' file",
+    };
+    if ui
+        .button("Export\u{2026}")
+        .on_hover_text(format!("Write {copy} to disk, byte for byte."))
+        .clicked()
+    {
+        work.files.ask = Some(crate::import::files::Ask::Export { vpath: vpath.to_string(), as_png: false, from_project });
+    }
+    if crate::import::files::is_texture(vpath)
+        && ui
+            .button("Export as PNG\u{2026}")
+            .on_hover_text(format!(
+                "Write {copy}'s largest mip as an 8-bit RGBA PNG, which a paint program opens and Replace imports back."
+            ))
+            .clicked()
+    {
+        work.files.ask = Some(crate::import::files::Ask::Export { vpath: vpath.to_string(), as_png: true, from_project });
+    }
 }
 
 /// The button that makes a generated file again from what it was made from,
@@ -1241,7 +1361,18 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
         theme::note(ui, "Choose a file to see it.");
         return;
     };
-    ui.label(egui::RichText::new(basename(&vpath)).strong().size(14.0));
+    preview(ui, work, Whose::Project, &vpath);
+}
+
+/// The file at `vpath` drawn in the inspector, for either part: a texture as
+/// a picture over a checkerboard, a model as a portrait, a sound as its
+/// waveform with a button that plays it. `whose` is the copy a sound's
+/// waveform is read from; the picture and the portrait are read as the game
+/// reads them, through the project.
+pub(super) fn preview(ui: &mut egui::Ui, work: &mut Work<'_>, whose: Whose, vpath: &str) {
+    let vpath = vpath.to_string();
+    let spell = work.session.spellings(work.game);
+    ui.label(egui::RichText::new(spell.name_of(&vpath.to_ascii_lowercase())).strong().size(14.0));
     match Kind::of(&vpath) {
         Kind::Texture | Kind::Minimap => {
             let side = PICTURE as u32;
@@ -1270,7 +1401,7 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Work<'_>) {
             crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &key, side);
         }
         Kind::Sound => {
-            let facts = sounds::facts(ui, work.session, &vpath);
+            let facts = sounds::facts(ui, whose, work.session, work.game, &vpath);
             let peaks = facts.as_ref().map(|f| f.peaks.clone()).unwrap_or_default();
             sounds::waveform(ui, &peaks, egui::vec2(ui.available_width(), 96.0));
             ui.add_space(4.0);
@@ -1584,23 +1715,35 @@ fn source_picture(ui: &mut egui::Ui, import: &Import) {
     );
 }
 
+/// Either part's [`Work`], from the shell's state.
+pub(super) fn work<'a>(
+    session: &'a mut EditSession,
+    editing: &'a mut crate::ui::Editing<'_>,
+    game: &'a vale_client::assets::GameAssets,
+    now: f64,
+) -> Work<'a> {
+    Work {
+        session,
+        assets: &mut editing.assets,
+        files: &mut editing.files,
+        asks: &mut editing.asks,
+        game,
+        thumbnails: &mut editing.thumbnails,
+        portraits: &mut editing.portraits,
+        tiles: &mut editing.tiles,
+        flights: &mut editing.flightpaths,
+        browser: &mut editing.browser,
+        now,
+    }
+}
+
 /// The Assets workspace's inspector panel, its third part: the chosen file,
 /// drawn.
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     let crate::ui::tools::Subject { session, assets, now, .. } = subject;
     inspector(
         ui,
-        Work {
-            session,
-            assets: &mut editing.assets,
-            game: assets,
-            thumbnails: &mut editing.thumbnails,
-            portraits: &mut editing.portraits,
-            tiles: &mut editing.tiles,
-            flights: &mut editing.flightpaths,
-            browser: &mut editing.browser,
-            now,
-        },
+        work(session, editing, assets, now),
     );
 }
 
@@ -1609,17 +1752,7 @@ pub(crate) fn workspace(ui: &mut egui::Ui, _: crate::tools::Tool, bench: crate::
     let crate::ui::workspace::Bench { session, editing, assets, now, .. } = bench;
     draw(
         ui,
-        Work {
-            session,
-            assets: &mut editing.assets,
-            game: assets,
-            thumbnails: &mut editing.thumbnails,
-            portraits: &mut editing.portraits,
-            tiles: &mut editing.tiles,
-            flights: &mut editing.flightpaths,
-            browser: &mut editing.browser,
-            now,
-        },
+        work(session, editing, assets, now),
     );
 }
 

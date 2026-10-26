@@ -548,6 +548,12 @@ pub(crate) enum Ask {
     Rewrite { vpath: String, purpose: Option<Purpose> },
     /// Remove one of the project's files.
     Remove(String),
+    /// Choose a file with the system's file dialog and import it at the
+    /// archive path `vpath`, in its folder and under its name, so the
+    /// project's file is read in place of the archives': a picture for a BLP
+    /// texture, a glTF model for an M2, one WAV or MP3 for a sound. See
+    /// [`super::files`].
+    Replace(String),
 }
 
 /// The workspace's state.
@@ -641,7 +647,9 @@ pub(crate) struct AssetsPlugin;
 impl Plugin for AssetsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Assets>()
-            .add_systems(Update, (on_the_command_line, answer).chain());
+            .init_resource::<super::files::GameFiles>()
+            .init_resource::<crate::jobs::Running<super::files::Exported>>()
+            .add_systems(Update, (on_the_command_line, answer, super::files::answer).chain());
     }
 }
 
@@ -1117,6 +1125,51 @@ fn answer(
                     assets.import = Some(import);
                 }
                 Err(why) => session.status = why,
+            }
+        }
+        Ask::Replace(vpath) => {
+            let (folder, file) = match vpath.rsplit_once('\\') {
+                Some((folder, file)) => (format!("{folder}\\"), file),
+                None => (String::new(), vpath.as_str()),
+            };
+            let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem).to_string();
+            match Kind::of(&vpath) {
+                // The texture dialog's own route, which this answer takes on
+                // the next frame.
+                Kind::Texture | Kind::Minimap => {
+                    assets.ask = Some(Ask::Choose { folder, name: Some(stem), for_field: None, any: false });
+                }
+                Kind::Model => {
+                    let mut dialog = rfd::FileDialog::new().add_filter("Model (glTF 2.0)", &["glb", "gltf"]);
+                    if let Some(dir) = &assets.picture_dir {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    let Some(path) = dialog.pick_file() else { return };
+                    assets.picture_dir = path.parent().map(Path::to_path_buf);
+                    match super::models::ModelImport::open(&path, &folder, Some(stem), animations, None) {
+                        Ok(import) => assets.model = Some(import),
+                        Err(why) => session.status = why,
+                    }
+                }
+                Kind::Sound => {
+                    let mut dialog = rfd::FileDialog::new().add_filter("Sound", &["wav", "mp3"]);
+                    if let Some(dir) = &assets.picture_dir {
+                        dialog = dialog.set_directory(dir);
+                    }
+                    let Some(path) = dialog.pick_file() else { return };
+                    assets.picture_dir = path.parent().map(Path::to_path_buf);
+                    // `SoundEntries` is opened first, because the dialog
+                    // shows which rows already hold the file's path.
+                    session.open_table(&game, super::sounds::TABLE);
+                    match super::sounds::SoundImport::open(&[path], &folder, None) {
+                        Ok(mut import) => {
+                            import.files[0].name = stem;
+                            assets.sound = Some(import);
+                        }
+                        Err(why) => session.status = why,
+                    }
+                }
+                _ => session.status = format!("{vpath} is not a texture, a model or a sound, which are the files an import writes"),
             }
         }
         Ask::Remove(vpath) => {

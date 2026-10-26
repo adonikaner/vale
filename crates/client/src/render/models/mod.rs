@@ -367,6 +367,9 @@ struct Geometry {
     kinds: Vec<u32>,
     /// The model's own textures, magenta where it names one the archive lacks.
     own: Vec<Handle<Image>>,
+    /// The archive paths of [`Self::own`]'s files, so [`ModelCache::forget`]
+    /// of one of them drops this build.
+    own_files: Vec<String>,
     skeleton: Option<Arc<M2Skeleton>>,
     inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
     joint_count: usize,
@@ -1374,21 +1377,47 @@ impl ModelCache {
     ///
     /// `true` when anything was held. Costs a handful of hash lookups.
     pub fn forget(&mut self, path: &str) -> bool {
-        let keys = [geometry_key(path, false), geometry_key(path, true)];
-        let mut held = false;
-        for key in &keys {
-            held |= self.geometry.remove(key).is_some();
-            self.variants.retain(|_, variant| variant.geometry != *key);
-            if self.pending.remove(key) {
-                // Still being read, so what comes back is the old file.
-                self.refetch.insert(key.clone());
-                held = true;
-            }
+        // Matched without case. The cache holds each path as whatever asked
+        // for it spells it, a table row or a model's own texture name, and
+        // the archives find a path without case, so a host announcing a
+        // change cannot know that spelling.
+        let same = |key: &str| key.eq_ignore_ascii_case(path);
+        // Both builds of the model at `path`, and every build that reads the
+        // texture at `path` as one of its own.
+        let builds: Vec<String> = self
+            .geometry
+            .iter()
+            .filter(|(key, geometry)| same(path_of(key)) || geometry.own_files.iter().any(|file| same(file)))
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut held = !builds.is_empty();
+        for key in &builds {
+            self.geometry.remove(key);
         }
-        held |= self.loaded.remove(path);
-        held |= self.failed.remove(path);
-        held |= self.textures.remove(path).is_some();
-        held
+        // A player's composed skin is keyed by the appearance, not by the
+        // files it is painted from, which are under these two folders; a
+        // change to one of them drops every composed skin.
+        let lower = path.to_ascii_lowercase();
+        let composed = |key: &str| key.starts_with(CHARACTER_PREFIX) || key.starts_with(CHARACTER_HAIR_PREFIX);
+        let paints = lower.starts_with("character\\") || lower.starts_with("item\\texturecomponents\\");
+        let worn = |skin: &str| same(skin) || (paints && composed(skin));
+        // Every dressing over one of those builds, or wearing the texture.
+        let dressings = self.variants.len();
+        self.variants
+            .retain(|_, variant| !builds.contains(&variant.geometry) && !variant.skins.iter().any(|skin| worn(skin)));
+        held |= self.variants.len() != dressings;
+        // Still being read, so what comes back is the old file.
+        let flying: Vec<String> = self.pending.iter().filter(|key| same(path_of(key))).cloned().collect();
+        for key in flying {
+            self.pending.remove(&key);
+            self.refetch.insert(key);
+            held = true;
+        }
+        let marks = self.loaded.len() + self.failed.len() + self.textures.len();
+        self.loaded.retain(|had| !same(had));
+        self.failed.retain(|had| !same(had));
+        self.textures.retain(|had, _| !worn(had));
+        held | (self.loaded.len() + self.failed.len() + self.textures.len() != marks)
     }
 
     /// Forget everything, for a host that has changed what a whole namespace

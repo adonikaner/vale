@@ -72,25 +72,12 @@ pub(in crate::ui::tools) fn paint(
     cursor: &Cursor,
     assets: &vale_client::assets::GameAssets,
     guides: &mut crate::tools::guides::Guides,
-    asks: &mut crate::ui::shell::asks::ShellAsks,
     now: f64,
 ) {
     tileset_chosen(ui, textures, thumbnails, session, assets);
     ui.add_space(4.0);
     if !tileset_picker(ui, textures, thumbnails, session) {
         return;
-    }
-    // A picture of the person's own, written as a ground texture and put on
-    // the brush. See `crate::import::assets`.
-    if ui
-        .add_sized(egui::vec2(ui.available_width(), 22.0), egui::Button::new("Import Ground Texture\u{2026}"))
-        .on_hover_text(
-            "Choose a PNG, TGA or BLP picture and write it under Tileset\\ as a ground texture \
-             with its _s file. The brush takes it once it is written.",
-        )
-        .clicked()
-    {
-        asks.push(crate::ui::shell::asks::ShellAsk::ImportGround);
     }
 
     ui.add_space(4.0);
@@ -358,10 +345,11 @@ pub(super) fn tileset_browser(
     // catalogue; see [`crate::ui::tools::placements::place`] for the reason.
     let needle = textures.search.to_ascii_lowercase();
     let row = SIDE as f32 + 6.0;
+    let spell = std::sync::Arc::clone(&textures.spellings);
     let mut picked: Option<String> = None;
     if needle.is_empty() {
         let here = textures.folder.clone();
-        let mut go = breadcrumb(ui, &here, "");
+        let mut go = breadcrumb(ui, &here, "", &spell);
         let (folders, files) = split_folder(&textures.catalogue, &here);
         theme::note(
             ui,
@@ -375,9 +363,9 @@ pub(super) fn tileset_browser(
             .max_height(260.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                go = folder_rows(ui, &here, &folders, row).or(go.take());
+                go = folder_rows(ui, &here, &folders, row, &spell).or(go.take());
                 for path in &files {
-                    if texture_row(ui, thumbnails, path, chosen) {
+                    if texture_row(ui, thumbnails, path, spell.of(path), chosen) {
                         picked = Some(path.clone());
                     }
                 }
@@ -409,7 +397,7 @@ pub(super) fn tileset_browser(
             .auto_shrink([false, true])
             .show_rows(ui, row, matches.len(), |ui, range| {
                 for path in &matches[range] {
-                    if texture_row(ui, thumbnails, path, chosen) {
+                    if texture_row(ui, thumbnails, path, spell.of(path), chosen) {
                         picked = Some(path.clone());
                     }
                 }
@@ -423,7 +411,7 @@ pub(super) fn tileset_browser(
 /// Laid out by hand rather than built from a `Button`, because the row must be
 /// the same height whether or not its picture has been decoded. If rows changed
 /// size as thumbnails arrived, the list would move under the pointer.
-fn texture_row(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str, chosen: &str) -> bool {
+fn texture_row(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str, shown: &str, chosen: &str) -> bool {
     let height = SIDE as f32 + 4.0;
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
@@ -460,7 +448,7 @@ fn texture_row(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str, chose
         // painted as one line it runs off the edge of the window. The file name
         // identifies the texture and the folder groups it, so those are the two
         // lines. The extension is the same on all 621 and is dropped.
-        let (folder, file) = split(path);
+        let (folder, file) = split(shown);
         let text = ui.painter().with_clip_rect(egui::Rect::from_min_max(
             egui::pos2(square.right() + 6.0, rect.top()),
             rect.right_bottom(),
@@ -959,7 +947,6 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         cursor,
         assets,
         guides,
-        &mut editing.asks,
         now,
     );
     crate::ui::tools::tablet::tablet(ui, &mut editing.tablet, &editing.pen);

@@ -53,6 +53,9 @@ pub(super) struct RawModel {
     /// Already an [`Image`], built on the loader thread; see
     /// [`RawTexture::into_image`].
     textures: Vec<Option<Image>>,
+    /// The file names of the type-0 slots, the files the model reads itself,
+    /// so a forget of one of them drops the build. See `ModelCache::forget`.
+    texture_files: Vec<String>,
     /// The texture type of each of those slots, which says whether the client
     /// fills the slot and with what; see [`skin_slot`].
     kinds: Vec<u32>,
@@ -663,6 +666,12 @@ fn read_model(archive: &mut Archive, path: &str, skinned: bool) -> Option<RawMod
         textures.push(Some(decoded.into_image()));
     }
     let kinds = model.textures.iter().map(|t| t.kind).collect();
+    let texture_files = model
+        .textures
+        .iter()
+        .filter(|t| t.kind == 0 && !t.file_name.is_empty())
+        .map(|t| t.file_name.clone())
+        .collect();
 
     // The lights, joined to their colours. A glow whose texture would not
     // decode is dropped rather than lit white, because without the texture
@@ -762,6 +771,7 @@ fn read_model(archive: &mut Archive, path: &str, skinned: bool) -> Option<RawMod
 
     Some(RawModel {
         textures,
+        texture_files,
         kinds,
         draws,
         glows,
@@ -1229,6 +1239,7 @@ pub(super) fn receive_models(
             merge,
             kinds: raw.kinds,
             own,
+            own_files: raw.texture_files,
             skeleton: raw.skeleton.map(Arc::new),
             inverse_bindposes,
             joint_count,

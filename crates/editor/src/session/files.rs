@@ -7,7 +7,57 @@ use bevy::prelude::*;
 use super::EditSession;
 use super::originals::changes_nothing;
 
+/// How the archives and the project spell paths and folders that the
+/// listing and [`EditSession::listed`] hold in lower case: `DBFilesClient\`
+/// for `dbfilesclient\`. A list shows a path through [`Self::of`], and looks
+/// it up and compares it in lower case.
+#[derive(Debug, Default)]
+pub(crate) struct Spellings {
+    /// The archives' spellings, from `vale_assets::archive::Assets::spellings`.
+    archives: std::sync::Arc<std::collections::HashMap<String, String>>,
+    /// The project's own files and their folders, as the project folder
+    /// spells them, for a path the archives do not list.
+    project: std::collections::HashMap<String, String>,
+}
+
+impl Spellings {
+    /// The spelling of the lower-case path or folder `lower`, or `lower`
+    /// itself for one neither spells.
+    pub(crate) fn of<'a>(&'a self, lower: &'a str) -> &'a str {
+        self.archives.get(lower).or_else(|| self.project.get(lower)).map_or(lower, String::as_str)
+    }
+
+    /// The spelled name of the folder or file at the end of `lower`, which
+    /// is a folder when it ends in `\`: `Creature` for `creature\`, and
+    /// `Wolf.m2` for `creature\wolf\wolf.m2`.
+    pub(crate) fn name_of<'a>(&'a self, lower: &'a str) -> &'a str {
+        let spelled = self.of(lower).trim_end_matches('\\');
+        spelled.rsplit('\\').next().unwrap_or(spelled)
+    }
+}
+
 impl EditSession {
+    /// The spellings of every path the archives list and every file the
+    /// project has. The archives' half is read once; the project's again
+    /// when [`Self::files_revision`] moves.
+    pub(crate) fn spellings(&self, assets: &GameAssets) -> std::sync::Arc<Spellings> {
+        let mut held = self.spelled.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, spellings)) = held.as_ref() {
+            if *at == self.files_revision {
+                return std::sync::Arc::clone(spellings);
+            }
+        }
+        let archives = match held.as_ref() {
+            Some((_, known)) => std::sync::Arc::clone(&known.archives),
+            None => std::sync::Arc::new(assets.with_archive(|chain| Ok(chain.spellings())).unwrap_or_default()),
+        };
+        let own = self.project.files();
+        let project = vale_assets::archive::spellings_of(own.iter().map(String::as_str));
+        let spellings = std::sync::Arc::new(Spellings { archives, project });
+        *held = Some((self.files_revision, std::sync::Arc::clone(&spellings)));
+        spellings
+    }
+
     /// Put any file's bytes into the overlay under a virtual path, so the
     /// next read of that path answers with them — a model just baked, before
     /// or instead of writing it anywhere.
@@ -57,6 +107,9 @@ impl EditSession {
             return match self.project.revert(vpath) {
                 Ok(_) => {
                     self.unpublish_scratch(vpath);
+                    // A copy saved before is gone, and whatever read it
+                    // reads the archives' file again.
+                    self.republished.push(vpath.to_string());
                     self.status = format!("{vpath} matches the archives, so it is not kept in the project");
                     true
                 }

@@ -128,6 +128,11 @@ pub(crate) fn window(title: impl Into<egui::WidgetText>, id: impl std::hash::Has
 /// this.
 pub(crate) const SMALL: f32 = 11.5;
 
+/// The size of a list row's name, in points: a [`list_row`]'s title, and a
+/// folder row's name in the pickers' folder lists, which sit in one list
+/// with them.
+pub(crate) const LIST_TITLE: f32 = 13.5;
+
 /// The size of body text, buttons and fields, in points: egui's `Body` and
 /// `Button` styles. egui's default is 13.
 pub(crate) const BODY: f32 = 13.5;
@@ -606,7 +611,7 @@ pub(crate) fn list_row(ui: &mut Ui, row: ListRow<'_>, chosen: bool) -> RowShape 
     line.with_layout(egui::Layout::top_down(egui::Align::Min), |line| {
         line.spacing_mut().item_spacing.y = 0.0;
         line.add(
-            egui::Label::new(RichText::new(row.title).size(13.5).color(row.tint))
+            egui::Label::new(RichText::new(row.title).size(LIST_TITLE).color(row.tint))
                 .truncate()
                 .selectable(false),
         );

@@ -104,6 +104,13 @@ impl Thumbnails {
         self.wanted.retain(|(had, _)| *had != path);
     }
 
+    /// Forget every picture, for a change more than its paths can name.
+    pub(crate) fn forget_all(&mut self) {
+        self.ready.clear();
+        self.failed.clear();
+        self.wanted.clear();
+    }
+
     /// …and at any size.
     pub(crate) fn want_at(&mut self, path: &str, side: u32) {
         let key = (path.to_ascii_lowercase(), side);

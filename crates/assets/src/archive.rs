@@ -99,9 +99,10 @@ pub struct Assets {
     /// written; a host that reads this field without one of them reports only
     /// part of the damaged entries.
     pub(crate) damaged: Vec<(String, String, u64)>,
-    /// Every listed path and the index of the archive that answers it, `None`
-    /// where that archive deletes it.
-    listing: Option<HashMap<String, Option<usize>>>,
+    /// Every listed path, lower case, with the index of the archive that
+    /// answers it (`None` where that archive deletes it) and the spelling that
+    /// archive's listfile gives it.
+    listing: Option<HashMap<String, (Option<usize>, String)>>,
     /// The install root whose `Interface\AddOns\` is read before the archives,
     /// or `None` for a chain that answers from the archives alone.
     loose: Option<PathBuf>,
@@ -400,20 +401,21 @@ impl Assets {
     }
 
     /// Build (once) a map of every listed file to the index of the archive that
-    /// wins for it, `None` where that archive deletes it. Used for prefix
-    /// queries like "which maps exist".
-    fn listing(&mut self) -> &HashMap<String, Option<usize>> {
+    /// wins for it, `None` where that archive deletes it, and that archive's
+    /// spelling of it. Used for prefix queries like "which maps exist".
+    fn listing(&mut self) -> &HashMap<String, (Option<usize>, String)> {
         if self.listing.is_none() {
-            let mut map: HashMap<String, Option<usize>> = HashMap::new();
+            let mut map: HashMap<String, (Option<usize>, String)> = HashMap::new();
             for (idx, mounted) in self.archives.iter_mut().enumerate() {
                 let Ok(entries) = mounted.archive.list() else {
                     continue;
                 };
                 for entry in entries {
-                    let key = entry.name.replace('/', "\\").to_ascii_lowercase();
+                    let spelled = entry.name.replace('/', "\\");
+                    let key = spelled.to_ascii_lowercase();
                     // First writer wins: archives are already in priority order.
                     let deleted = entry.flags & DELETE_MARKER != 0;
-                    map.entry(key).or_insert((!deleted).then_some(idx));
+                    map.entry(key).or_insert(((!deleted).then_some(idx), spelled));
                 }
             }
             self.listing = Some(map);
@@ -421,18 +423,51 @@ impl Assets {
         self.listing.as_ref().unwrap()
     }
 
-    /// Every known file path starting with `prefix` (case-insensitive).
+    /// The spelling the archives give each listed path and each folder on a
+    /// listed path, by its lower-case form; a folder's key and spelling end in
+    /// `\`. The listing is lower case, because the archives look a path up
+    /// without case. See
+    /// [`spellings_of`] for which spelling a folder takes.
+    pub fn spellings(&mut self) -> HashMap<String, String> {
+        let mut listed: Vec<(usize, &str)> = self
+            .listing()
+            .values()
+            .filter_map(|(at, spelled)| Some((at.as_ref().copied()?, spelled.as_str())))
+            .collect();
+        listed.sort();
+        spellings_of(listed.into_iter().map(|(_, spelled)| spelled))
+    }
+
+    /// Every known file path starting with `prefix` (case-insensitive), lower
+    /// case. [`Self::spellings`] gives each one's spelling.
     pub fn list_prefix(&mut self, prefix: &str) -> Vec<String> {
         let needle = prefix.replace('/', "\\").to_ascii_lowercase();
         let mut out: Vec<String> = self
             .listing()
             .iter()
-            .filter(|(k, at)| at.is_some() && k.starts_with(&needle))
+            .filter(|(k, (at, _))| at.is_some() && k.starts_with(&needle))
             .map(|(k, _)| k.clone())
             .collect();
         out.sort();
         out
     }
+}
+
+/// Each path's spelling, and each folder's, by its lower-case form, from
+/// `spelled` paths in the order their spellings are preferred. A folder takes
+/// the spelling of the first path under it, because a listfile can spell one
+/// folder differently from one file to the next and a list shows one name
+/// per folder.
+pub fn spellings_of<'a>(spelled: impl Iterator<Item = &'a str>) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::new();
+    for path in spelled {
+        out.entry(path.to_ascii_lowercase()).or_insert_with(|| path.to_string());
+        for (at, _) in path.match_indices('\\') {
+            let folder = &path[..=at];
+            out.entry(folder.to_ascii_lowercase()).or_insert_with(|| folder.to_string());
+        }
+    }
+    out
 }
 
 /// A pool of open chains that are lent out and returned, so that a short task
@@ -581,6 +616,20 @@ impl Drop for PooledChain<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A path keeps its own spelling, and a folder takes the spelling of the
+    /// first path under it.
+    #[test]
+    fn a_folder_takes_the_first_spelling_of_it() {
+        let spelled = spellings_of(
+            ["DBFilesClient\\Spell.dbc", "DBFILESCLIENT\\AreaTable.dbc", "Sound\\Creature\\Wolf\\Howl.wav"].into_iter(),
+        );
+        assert_eq!(spelled["dbfilesclient\\spell.dbc"], "DBFilesClient\\Spell.dbc");
+        assert_eq!(spelled["dbfilesclient\\areatable.dbc"], "DBFILESCLIENT\\AreaTable.dbc");
+        assert_eq!(spelled["dbfilesclient\\"], "DBFilesClient\\");
+        assert_eq!(spelled["sound\\creature\\"], "Sound\\Creature\\");
+        assert_eq!(spelled.len(), 7);
+    }
 
     /// A chain with no archives, for the pool's tests; the pool's behaviour
     /// does not depend on a chain's contents.

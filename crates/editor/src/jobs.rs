@@ -64,7 +64,6 @@ impl Progress {
         self.done.load(Ordering::Relaxed)
     }
 
-    #[cfg(test)]
     pub(crate) fn total(&self) -> usize {
         self.total
     }

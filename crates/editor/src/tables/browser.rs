@@ -132,6 +132,11 @@ pub(crate) struct Browser {
     /// and lose the row. This flag tells it the change came with a
     /// destination.
     pub(crate) followed_in: bool,
+    /// Whether [`Self::follow`] or [`Self::go_back`] moved the browser to
+    /// another table since [`open_tables`] last ran. `open_tables` then moves
+    /// the tool to the workspace that edits that table; see
+    /// [`super::open::owner_after_follow`].
+    pub(crate) followed: bool,
     /// The table the Tables workspace last showed, which it returns to. Empty
     /// for the list of tables. See [`ANY`](super::tabs::ANY).
     pub(crate) any: String,
@@ -176,6 +181,7 @@ impl Browser {
         if let (Some(from), false) = (self.open, self.table.is_empty()) {
             self.back.push((self.table.clone(), from));
         }
+        self.followed |= self.table != table;
         self.table = table.to_string();
         self.open = Some(at);
         self.query.clear();
@@ -205,6 +211,7 @@ impl Browser {
         let Some((table, record)) = self.back.pop() else {
             return false;
         };
+        self.followed |= self.table != table;
         self.table = table;
         self.open = Some(record);
         self.built = None;

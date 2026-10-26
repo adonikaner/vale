@@ -163,6 +163,7 @@ pub(super) fn models(
             let page = work.browser.model_page;
             let previewing = work.browser.model_preview.clone();
             let rows = &hits[range];
+            let spell = work.session.spellings(work.assets);
             let portraits = &mut *work.portraits;
             let favourites = &mut *work.favourites;
             let browser = &mut *work.browser;
@@ -178,7 +179,7 @@ pub(super) fn models(
                     for at in range {
                         let path = &rows[at];
                         let lit = previewing.as_deref() == Some(path.as_str());
-                        let hit = model_row(ui, portraits, favourites, kind, path, lit);
+                        let hit = model_row(ui, portraits, favourites, kind, path, spell.of(path), lit);
                         if hit.starred {
                             favourites.toggle(kind, path);
                         }
@@ -239,6 +240,8 @@ pub(super) fn models(
         });
     if let Some(path) = picked {
         work.favourites.used(crate::prefs::favourites::Kind::Effect, &path);
+        // Written as the archives spell it, as the shipped rows are.
+        let path = work.session.spellings(work.assets).of(&path).to_string();
         let written = match item {
             true => crate::ui::tables::appearance::item_model_name(&path),
             false => match crate::ui::tables::appearance::file_field(&table_name, field) {

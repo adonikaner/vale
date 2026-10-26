@@ -1,9 +1,16 @@
 //! A catalogue of paths browsed as folders: the breadcrumb, the folder rows,
 //! and a path split into its folder and file. The model, tileset and area
-//! pickers use them.
+//! pickers and the Assets workspace's Game Files part use them.
+//!
+//! A catalogue is lower case, so a folder is found and compared without
+//! case. A name is drawn as the archives or the project spell it
+//! ([`Spellings`]): `DBFilesClient`, not `dbfilesclient`. A catalogue that is
+//! not of paths, such as the area tree, passes [`Spellings::default`], which
+//! draws each name as it is.
 
 use bevy_egui::egui;
 
+use crate::session::files::Spellings;
 use crate::tools::placements::place;
 use crate::ui::widgets::theme;
 
@@ -19,7 +26,7 @@ use crate::ui::widgets::theme;
 /// `""` leaves the row unchanged. The area tree needs it: its top level is
 /// thirty-six maps, and without a name for the level above them the empty
 /// segment draws as an empty button and a map cannot be left once opened.
-pub(in crate::ui) fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str) -> Option<String> {
+pub(in crate::ui) fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str, spell: &Spellings) -> Option<String> {
     let mut go: Option<String> = None;
     ui.horizontal_wrapped(|ui| {
         let mut first = true;
@@ -56,7 +63,11 @@ pub(in crate::ui) fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str) -> Op
             walked.push_str(segment);
             walked.push(place::SEP);
             let last = walked.len() == here.len();
-            crumb(ui, segment, (!last).then(|| walked.clone()));
+            let name = match spell.name_of(&walked) {
+                "" => segment.to_string(),
+                spelled => spelled.to_string(),
+            };
+            crumb(ui, &name, (!last).then(|| walked.clone()));
         }
     });
     go
@@ -64,57 +75,82 @@ pub(in crate::ui) fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str) -> Op
 
 /// The folders directly under the open folder, with how many entries each
 /// holds. Returns the one a click opened.
-///
-/// The arrow is a painted triangle, not a glyph. egui's bundled fonts have no
-/// `▸`, and a missing glyph draws as a hollow box beside every folder.
 pub(in crate::ui) fn folder_rows(
     ui: &mut egui::Ui,
     here: &str,
     folders: &[(String, usize)],
     row: f32,
+    spell: &Spellings,
 ) -> Option<String> {
     let mut go: Option<String> = None;
     for (name, count) in folders {
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), row - 2.0),
-            egui::Sense::click(),
-        );
-        if ui.is_rect_visible(rect) {
-            let painter = ui.painter();
-            if response.hovered() {
-                painter.rect_filled(rect, egui::CornerRadius::same(3), theme::RAISED);
-            }
-            let text = painter.with_clip_rect(rect);
-            let tip = egui::pos2(rect.left() + 12.0, rect.center().y);
-            text.add(egui::Shape::convex_polygon(
-                vec![
-                    egui::pos2(tip.x - 3.0, tip.y - 4.0),
-                    egui::pos2(tip.x + 3.0, tip.y),
-                    egui::pos2(tip.x - 3.0, tip.y + 4.0),
-                ],
-                theme::INK_DIM,
-                egui::Stroke::NONE,
-            ));
-            text.text(
-                egui::pos2(rect.left() + 20.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                name,
-                egui::FontId::proportional(12.0),
-                theme::INK,
-            );
-            text.text(
-                egui::pos2(rect.right() - 6.0, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                count.to_string(),
-                egui::FontId::proportional(theme::SMALL),
-                theme::INK_FAINT,
-            );
-        }
-        if response.clicked() {
-            go = Some(format!("{here}{name}{}", place::SEP));
+        let folder = format!("{here}{name}{}", place::SEP);
+        let shown = match spell.name_of(&folder) {
+            "" => name.as_str(),
+            spelled => spelled,
+        };
+        if folder_row(ui, shown, *count, 0, false, row).clicked() {
+            go = Some(folder);
         }
     }
     go
+}
+
+/// How far a tree indents each level, in points.
+pub(in crate::ui) const INDENT: f32 = 14.0;
+
+/// One folder's row: an arrow, the name `shown`, and how many entries it
+/// holds, indented `depth` levels. The arrow points down when `open`, for a
+/// tree whose folders open in place. Answers the row's response.
+///
+/// The arrow is a painted triangle, not a glyph. egui's bundled fonts have no
+/// `▸`, and a missing glyph draws as a hollow box beside every folder.
+pub(in crate::ui) fn folder_row(
+    ui: &mut egui::Ui,
+    shown: &str,
+    count: usize,
+    depth: usize,
+    open: bool,
+    row: f32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row - 2.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if response.hovered() {
+            painter.rect_filled(rect, egui::CornerRadius::same(3), theme::RAISED);
+        }
+        let text = painter.with_clip_rect(rect);
+        let left = rect.left() + depth as f32 * INDENT;
+        let tip = egui::pos2(left + 12.0, rect.center().y);
+        let arrow = match open {
+            true => vec![
+                egui::pos2(tip.x - 4.0, tip.y - 2.0),
+                egui::pos2(tip.x + 4.0, tip.y - 2.0),
+                egui::pos2(tip.x, tip.y + 3.0),
+            ],
+            false => vec![
+                egui::pos2(tip.x - 3.0, tip.y - 4.0),
+                egui::pos2(tip.x + 3.0, tip.y),
+                egui::pos2(tip.x - 3.0, tip.y + 4.0),
+            ],
+        };
+        text.add(egui::Shape::convex_polygon(arrow, theme::INK_DIM, egui::Stroke::NONE));
+        text.text(
+            egui::pos2(left + 20.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            shown,
+            egui::FontId::proportional(theme::LIST_TITLE),
+            theme::INK,
+        );
+        text.text(
+            egui::pos2(rect.right() - 6.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            count.to_string(),
+            egui::FontId::proportional(theme::SMALL),
+            theme::INK_FAINT,
+        );
+    }
+    response
 }
 
 /// The folders directly under a prefix with how much is in each, and the files

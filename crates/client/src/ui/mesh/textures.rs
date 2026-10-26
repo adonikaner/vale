@@ -157,8 +157,30 @@ impl UiTextures {
         self.minimap.retain(|key, _| !key.eq_ignore_ascii_case(path));
     }
 
-    /// …and all of them, for a host that has changed more than it can name.
-    pub(crate) fn forget_all_minimaps(&mut self) {
+    /// Forget every picture read from the file at `path`, in any of the
+    /// maps, so the next draw reads the file again. An interface path is
+    /// written without `.blp` and the client adds it, so a path matches with
+    /// or without one, and without case. What is drawn already keeps its
+    /// handle until the tree is rebuilt.
+    pub(crate) fn forget(&mut self, path: &str) {
+        let stem = |key: &str| {
+            match key.len() >= 4 && key[key.len() - 4..].eq_ignore_ascii_case(".blp") {
+                true => key[..key.len() - 4].to_ascii_lowercase(),
+                false => key.to_ascii_lowercase(),
+            }
+        };
+        let wanted = stem(path);
+        self.plain.retain(|key, _| stem(key) != wanted);
+        self.tiled.retain(|key, _| stem(key) != wanted);
+        self.edges.retain(|key, _| stem(key) != wanted);
+        self.forget_minimap(path);
+    }
+
+    /// …and every picture, for a host that has changed more than it can name.
+    pub(crate) fn forget_all(&mut self) {
+        self.plain.clear();
+        self.tiled.clear();
+        self.edges.clear();
         self.minimap.clear();
     }
 
@@ -208,19 +230,19 @@ impl UiTextures {
     }
 }
 
-/// Forget the minimap pictures a [`crate::assets::PathsChanged`] names. The
-/// other interface art is read once per session and is not forgotten.
-pub(crate) fn forget_changed_minimaps(
+/// Forget the pictures a [`crate::assets::PathsChanged`] names: an
+/// interface texture replaced, a minimap picture drawn again.
+pub(crate) fn forget_changed_textures(
     mut changed: MessageReader<crate::assets::PathsChanged>,
     mut textures: ResMut<UiTextures>,
 ) {
     for change in changed.read() {
         if change.all {
-            textures.forget_all_minimaps();
+            textures.forget_all();
             continue;
         }
         for path in &change.paths {
-            textures.forget_minimap(path);
+            textures.forget(path);
         }
     }
 }
@@ -313,4 +335,23 @@ fn image(size: [u32; 2], pixels: &mut [u8], mode: ImageAddressMode) -> Image {
         ..ImageSamplerDescriptor::default()
     });
     image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An interface picture is forgotten by its path with or without `.blp`
+    /// and without case, and a minimap picture by its path.
+    #[test]
+    fn a_picture_is_forgotten_with_or_without_its_extension() {
+        let mut textures = UiTextures::default();
+        textures.plain.insert("Interface\\Icons\\INV_Misc_QuestionMark".to_string(), None);
+        textures.tiled.insert("Interface\\Icons\\INV_Misc_QuestionMark.blp".to_string(), None);
+        textures.plain.insert("Interface\\Buttons\\UI-Quickslot2".to_string(), None);
+        textures.forget("interface\\icons\\inv_misc_questionmark.blp");
+        assert!(textures.plain.len() == 1 && textures.tiled.is_empty());
+        textures.forget_all();
+        assert!(textures.plain.is_empty());
+    }
 }

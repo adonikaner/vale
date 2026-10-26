@@ -207,6 +207,9 @@ pub(crate) struct Placing {
     pub(crate) wmos: Vec<String>,
     /// The `EditSession::files_revision` the two lists were read at, by kind.
     catalogue_for: [Option<u64>; 2],
+    /// How the archives and the project spell the two lists' paths, read
+    /// with them. See `crate::session::files::Spellings`.
+    pub(crate) spellings: std::sync::Arc<crate::session::files::Spellings>,
     /// What the panel's search box holds, kept per kind so switching between
     /// them does not lose it.
     pub(crate) search: String,
@@ -248,6 +251,7 @@ impl Default for Placing {
             seed: 0,
             doodads: Vec::new(),
             wmos: Vec::new(),
+            spellings: Default::default(),
             catalogue_for: [None; 2],
             search: String::new(),
             // The building picker starts one level in. Every `.wmo` in the
@@ -546,6 +550,7 @@ fn read_catalogue(
         Kind::Doodad => placing.doodads = found,
         Kind::Wmo => placing.wmos = found,
     }
+    placing.spellings = session.spellings(&assets);
 }
 
 /// Whether a `.wmo` path names one of a building's groups rather than its root.

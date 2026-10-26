@@ -19,7 +19,7 @@
 
 use bevy::prelude::*;
 
-use crate::import::assets::{Ask as ImportAsk, FieldTarget, Purpose, GROUND_FOLDER};
+use crate::import::assets::{Ask as ImportAsk, FieldTarget, Purpose};
 use crate::session::EditSession;
 use crate::tools::Tool;
 use crate::ui::Editing;
@@ -33,6 +33,10 @@ pub(crate) enum ShellAsk {
     /// Open a client table's row in the table browser, under the tool that
     /// edits that table. See [`Tool::for_table`].
     ShowRow(&'static str, u32),
+    /// Open a client table in the table browser, under the tool that edits
+    /// it, on no row: a `.dbc` file chosen in the Assets workspace's Game
+    /// Files part.
+    ShowTable(&'static str),
     /// What the Areas panel or the right-click menu asks of `AreaTable`. See
     /// [`crate::tools::ground::areas::Ask`].
     Area(crate::tools::ground::areas::Ask),
@@ -45,9 +49,6 @@ pub(crate) enum ShellAsk {
     /// Open the Import Sound dialog. With a target, the import sets that table
     /// field to the id of the `SoundEntries` row it adds.
     ImportSound { target: Option<FieldTarget> },
-    /// Open the Import Texture dialog for a ground texture: the texture
-    /// tool's Import Ground Texture.
-    ImportGround,
     /// Switch to another part of the open workspace, chosen on the strip at
     /// the head of its list.
     Part(Tool),
@@ -65,15 +66,14 @@ impl ShellAsk {
     fn rank(&self) -> u8 {
         match self {
             ShellAsk::ShowItem(_) => 0,
-            ShellAsk::ShowRow(..) => 1,
+            ShellAsk::ShowRow(..) | ShellAsk::ShowTable(_) => 1,
             ShellAsk::Area(_) => 2,
             ShellAsk::PaintArea(_) => 3,
             ShellAsk::ImportTexture { .. } => 4,
             ShellAsk::ImportSound { .. } => 5,
-            ShellAsk::ImportGround => 6,
-            ShellAsk::Part(_) => 7,
-            ShellAsk::Link(_) => 8,
-            ShellAsk::ShowQuest(_) => 9,
+            ShellAsk::Part(_) => 6,
+            ShellAsk::Link(_) => 7,
+            ShellAsk::ShowQuest(_) => 8,
         }
     }
 }
@@ -113,7 +113,7 @@ pub(crate) fn carry_out(
     let mut asks = std::mem::take(&mut editing.asks.0);
     asks.sort_by_key(ShellAsk::rank);
     let (early, late): (Vec<ShellAsk>, Vec<ShellAsk>) =
-        asks.into_iter().partition(|ask| ask.rank() <= ShellAsk::ImportGround.rank());
+        asks.into_iter().partition(|ask| !matches!(ask, ShellAsk::Part(_) | ShellAsk::Link(_) | ShellAsk::ShowQuest(_)));
     for ask in early {
         carry_out_one(ask, editing, session, assets, tool, rail, in_world);
     }
@@ -166,6 +166,19 @@ fn carry_out_one(
                 *tool = Tool::for_table(table);
             }
         }
+        // A table with no workspace of its own opens in the Tables
+        // workspace, which starts on the table it last showed.
+        ShellAsk::ShowTable(table) => {
+            if session.open_table(assets, table) {
+                let owner = Tool::for_table(table);
+                if owner == Tool::Tables {
+                    editing.browser.any = table.to_string();
+                }
+                editing.browser.look_at(table);
+                editing.browser.followed_in = true;
+                *tool = owner;
+            }
+        }
         ShellAsk::Area(ask) => {
             if let Some(wanted) = ask.answer(&mut editing.areas, session, &mut editing.browser, assets) {
                 *tool = wanted;
@@ -186,14 +199,6 @@ fn carry_out_one(
         }
         ShellAsk::ImportSound { target } => {
             editing.assets.ask = Some(ImportAsk::ChooseSounds { for_field: target });
-        }
-        ShellAsk::ImportGround => {
-            editing.assets.ask = Some(ImportAsk::Choose {
-                folder: GROUND_FOLDER.to_string(),
-                name: None,
-                for_field: None,
-                any: false,
-            });
         }
         ShellAsk::Part(part) => *tool = part,
         ShellAsk::Link(wanted) => {

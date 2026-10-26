@@ -130,6 +130,7 @@ pub(super) fn open(
         tables_republished: false,
         republished_revision: 0,
         files_revision: 0,
+        spelled: Default::default(),
         claimed,
         reread_everything: false,
         claims_for: args.view.map.clone(),

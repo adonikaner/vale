@@ -31,6 +31,7 @@ pub(in crate::ui) fn model_row(
     favourites: &crate::prefs::favourites::Favourites,
     kind: crate::prefs::favourites::Kind,
     path: &str,
+    shown: &str,
     lit: bool,
 ) -> RowHit {
     let (rect, response) = ui.allocate_exact_size(
@@ -64,9 +65,9 @@ pub(in crate::ui) fn model_row(
         egui::pos2(picture.right() + 8.0, rect.top()),
         egui::pos2(star.left() - 4.0, rect.bottom()),
     ));
-    let (folder, file) = match path.rfind(['\\', '/']) {
-        Some(at) => (&path[..at], &path[at + 1..]),
-        None => ("", path),
+    let (folder, file) = match shown.rfind(['\\', '/']) {
+        Some(at) => (&shown[..at], &shown[at + 1..]),
+        None => ("", shown),
     };
     text.text(
         egui::pos2(picture.right() + 8.0, rect.center().y - 7.0),

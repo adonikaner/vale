@@ -234,6 +234,7 @@ fn browse(
     }
     let total = catalogue.len();
     let list = list_of(kind);
+    let spell = std::sync::Arc::clone(&placing.spellings);
 
     // Searching: every match, wherever it is, with its folder under it.
     if !needle.is_empty() {
@@ -244,7 +245,7 @@ fn browse(
             .collect();
         theme::note(ui, format!("{} of {total} match", matches.len()));
         return rows(
-            ui, "search", &matches, chosen, true, portraits, favourites, list,
+            ui, "search", &matches, chosen, true, portraits, favourites, list, &spell,
         );
     }
 
@@ -264,14 +265,14 @@ fn browse(
         .id_salt(("kept", name, kind as u8))
         .default_open(name == "Starred")
         .show(ui, |ui| {
-            picked = rows(ui, name, &paths, chosen, false, portraits, favourites, list)
+            picked = rows(ui, name, &paths, chosen, false, portraits, favourites, list, &spell)
                 .or(picked.take());
         });
     }
 
     // Browsing: the way back up, then the folders, then what is in this one.
     let here = placing.folder(kind).to_string();
-    let mut go = breadcrumb(ui, &here, "");
+    let mut go = breadcrumb(ui, &here, "", &spell);
     let (folders, files) = split_folder(catalogue, &here);
     theme::note(
         ui,
@@ -287,9 +288,9 @@ fn browse(
         .max_height(300.0)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            go = folder_rows(ui, &here, &folders, row).or(go.take());
+            go = folder_rows(ui, &here, &folders, row, &spell).or(go.take());
             picked = rows(
-                ui, "here", &files, chosen, false, portraits, favourites, list,
+                ui, "here", &files, chosen, false, portraits, favourites, list, &spell,
             )
             .or(picked.take());
         });
@@ -324,12 +325,13 @@ fn rows(
     portraits: &mut crate::preview::portraits::Portraits,
     favourites: &mut crate::prefs::favourites::Favourites,
     list: crate::prefs::favourites::Kind,
+    spell: &crate::session::files::Spellings,
 ) -> Option<String> {
     let mut picked: Option<String> = None;
     let mut draw = |ui: &mut egui::Ui, range: std::ops::Range<usize>| {
         for path in &paths[range] {
             let on = chosen.eq_ignore_ascii_case(path);
-            let hit = crate::ui::widgets::models::model_row(ui, portraits, favourites, list, path, on);
+            let hit = crate::ui::widgets::models::model_row(ui, portraits, favourites, list, path, spell.of(path), on);
             if hit.starred {
                 favourites.toggle(list, path);
             }

@@ -1,7 +1,8 @@
 //! The flags that move pictures, models and sounds in and out of the
 //! project: a tile's height map as a PNG, a PNG imported onto a tile, a
 //! texture imported as a BLP, a glTF model imported as an M2, and a WAV or
-//! MP3 imported as a sound file with the `SoundEntries` row that plays it.
+//! MP3 imported as a sound file with the `SoundEntries` row that plays it;
+//! and the Game Files part opened on an archive file or folder.
 
 use super::Arity::*;
 use super::{text, Flag};
@@ -45,6 +46,10 @@ pub(crate) struct Import {
     /// `File 1` hold it, and open the Assets workspace on it. See
     /// `crate::import::sounds`.
     pub(crate) import_sound: Option<(String, String)>,
+    /// `--game-file <archive path>`: open the Assets workspace's Game Files
+    /// part on that file, or on that folder when the path ends in `\`. See
+    /// `crate::import::files`.
+    pub(crate) game_file: Option<String>,
 }
 
 pub(super) const FLAGS: &[Flag] = &[
@@ -68,6 +73,10 @@ pub(super) const FLAGS: &[Flag] = &[
             a.import.import_sound = Some((sound.clone(), vpath.clone()));
         }
         a.view.tool = Some(Tool::Assets);
+    }),
+    Flag::new("--game-file", One, |a, v| {
+        a.import.game_file = text(v).map(Into::into);
+        a.view.tool = Some(Tool::GameFiles);
     }),
     // The purpose is optional, so a flag that follows the picture is not taken
     // as the purpose.

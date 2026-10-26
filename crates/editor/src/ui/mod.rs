@@ -335,6 +335,8 @@ pub(crate) struct Editing<'w> {
     /// The Assets workspace's state and the Import Texture dialog's. See
     /// [`crate::import::assets`].
     pub(crate) assets: ResMut<'w, crate::import::assets::Assets>,
+    /// The Assets workspace's Game Files part. See [`crate::import::files`].
+    pub(crate) files: ResMut<'w, crate::import::files::GameFiles>,
     /// The pop-out window: the workspace in it, and what a panel asked of it.
     /// See [`crate::popout`].
     pub(crate) popout: ResMut<'w, crate::popout::Popout>,

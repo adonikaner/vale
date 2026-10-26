@@ -852,3 +852,26 @@ fn a_sound_row_s_files_are_added_moved_up_and_kept_in_one_folder() {
     assert!(names(&session, 1).is_empty(), "one undo takes out the file and the folder");
     let _ = std::fs::remove_dir_all(&install);
 }
+
+/// A reference followed into a table another workspace edits moves the tool
+/// to that workspace, and `< back` moves it back. A table with no workspace
+/// of its own, a tab of the workspace shown, and a tool that keeps the
+/// viewport leave the tool where it is.
+#[test]
+fn a_followed_reference_moves_the_tool_to_the_table_s_workspace() {
+    use super::open::owner_after_follow;
+    use crate::tools::Tool;
+    assert_eq!(owner_after_follow(Tool::Ambience, "SoundEntries", true), Some(Tool::Sounds));
+    assert_eq!(owner_after_follow(Tool::Sounds, "SoundAmbience", true), Some(Tool::Ambience));
+    assert_eq!(
+        owner_after_follow(Tool::NpcSounds, "CreatureDisplayInfoExtra", true),
+        Some(Tool::CreatureDisplays)
+    );
+    assert_eq!(owner_after_follow(Tool::CreatureDisplays, "CreatureModelData", true), None);
+    assert_eq!(owner_after_follow(Tool::Spells, "SpellIcon", true), None);
+    assert_eq!(owner_after_follow(Tool::Tables, "SoundEntries", true), Some(Tool::Sounds));
+    assert_eq!(owner_after_follow(Tool::Lights, "AreaTable", true), None);
+    // During a playtest Zones cannot be used, and the Sound parts can.
+    assert_eq!(owner_after_follow(Tool::ZoneMusic, "AreaTable", false), None);
+    assert_eq!(owner_after_follow(Tool::Spells, "SoundEntries", false), Some(Tool::Sounds));
+}

@@ -202,6 +202,21 @@ impl Popout {
             .unwrap_or(main)
     }
 
+    /// Make `wanted`, a table workspace, the tool whose table the browser
+    /// shows: the main window's tool while the main window has the browser,
+    /// else the tool of the window that holds the table workspaces. See
+    /// [`Self::browser_tool`].
+    pub(crate) fn show_in_browser(&mut self, main: &mut Tool, wanted: Tool) {
+        let held = match main.table() {
+            Some(_) => None,
+            None => self.slot_of(Group::Tables).and_then(|slot| self.slots[slot].as_mut()),
+        };
+        match held {
+            Some(held) => held.tool = wanted,
+            None => *main = wanted,
+        }
+    }
+
     /// Whether the table workspace in `slot` cannot have the browser because
     /// the main window's tool has a table. See the module comment.
     pub(crate) fn browser_lent(&self, slot: usize, main: Tool) -> bool {

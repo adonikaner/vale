@@ -252,6 +252,7 @@ fn stub_geometry(used: f32) -> Geometry {
         merge: Vec::new(),
         kinds: Vec::new(),
         own: Vec::new(),
+        own_files: Vec::new(),
         skeleton: None,
         inverse_bindposes: Handle::Uuid(
             bevy::asset::uuid::Uuid::from_u128(1),
@@ -1422,6 +1423,32 @@ fn a_forget_during_a_read_discards_what_that_read_was_carrying() {
     assert!(cache.pending.is_empty());
     assert!(cache.refetch.contains(&key));
     assert_eq!(cache.resident(), (0, 0, 0));
+}
+
+/// A forget matches a path without case, and drops every build that reads
+/// the texture as its own and every dressing that wears it, so a replaced or
+/// removed texture is read again however the model or the table spelled it.
+#[test]
+fn a_forget_matches_without_case_and_reaches_what_reads_the_file() {
+    let mut cache = ModelCache::default();
+    let model = "Creature\\Wolf\\Wolf.m2";
+    let own = geometry_key(model, false);
+    let mut geometry = stub_geometry(0.0);
+    geometry.own_files = vec!["Creature\\Wolf\\WolfFur.blp".to_string()];
+    cache.geometry.insert(own.clone(), geometry);
+    let dressed = |skins: Vec<String>| Variant { assets: stub_assets(), geometry: geometry_key(model, true), skins, used: 0.0 };
+    cache.variants.insert("timber".to_string(), dressed(vec!["Creature\\Wolf\\WolfSkinTimber.blp".to_string()]));
+    cache.variants.insert("black".to_string(), dressed(vec!["Creature\\Wolf\\WolfSkinBlack.blp".to_string()]));
+    cache.failed.insert("Creature\\Wolf\\WolfSkinGhost.blp".to_string());
+
+    assert!(cache.forget("creature\\wolf\\wolfskintimber.blp"), "a dressing wears it");
+    assert!(!cache.variants.contains_key("timber"));
+    assert!(cache.variants.contains_key("black"), "a dressing that does not wear it is kept");
+    assert!(cache.forget("CREATURE\\WOLF\\WOLFFUR.BLP"), "a build reads it as its own");
+    assert!(!cache.geometry.contains_key(&own));
+    assert!(cache.forget("creature\\wolf\\wolfskinghost.blp"), "a failure is forgotten too");
+    assert!(cache.failed.is_empty());
+    assert!(!cache.forget("creature\\wolf\\wolfskinghost.blp"), "and nothing is held after");
 }
 
 /// What `m2.wgsl`'s `uv_table_float` does with one texel of the table: each

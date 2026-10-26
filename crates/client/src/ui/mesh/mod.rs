@@ -129,7 +129,7 @@ impl Plugin for UiMeshPlugin {
             .add_message::<crate::assets::PathsChanged>()
             .add_systems(
                 Update,
-                textures::forget_changed_minimaps.in_set(crate::assets::ForgetChanged),
+                textures::forget_changed_textures.in_set(crate::assets::ForgetChanged),
             )
             .init_resource::<fonts::UiFonts>()
             // `rebuild` after the walk (`framexml::walk`), so a tick's items

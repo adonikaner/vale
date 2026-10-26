@@ -310,7 +310,7 @@ pub(super) fn area_tree(
 
     let here = areas.folder.clone();
     // `all` names the level above the maps; see [`breadcrumb`].
-    let mut go = breadcrumb(ui, &here, "all");
+    let mut go = breadcrumb(ui, &here, "all", &Default::default());
     let (folders, files) = split_folder(&paths, &here);
     theme::note(
         ui,
@@ -326,7 +326,7 @@ pub(super) fn area_tree(
         .max_height(260.0)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            go = folder_rows(ui, &here, &folders, row).or(go.take());
+            go = folder_rows(ui, &here, &folders, row, &Default::default()).or(go.take());
             picked = text_rows(ui, "area-here", &files, &chosen, false);
         });
     if let Some(folder) = go {

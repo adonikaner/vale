@@ -253,6 +253,7 @@ pub(super) fn pick_file(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usi
         _ => "sound\\".to_string(),
     };
     let listed = sound_files_under(ui, work, &prefix);
+    let spell = work.session.spellings(work.assets);
     let mut close = false;
     let mut picked: Option<String> = None;
     let response = egui::Modal::new(egui::Id::new("sound-file-pick")).show(ui.ctx(), |ui| {
@@ -290,7 +291,8 @@ pub(super) fn pick_file(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usi
                     let path = page[at];
                     ui.horizontal(|ui| {
                         play_file(ui, work, path, channel);
-                        let shown = path.get(prefix.len()..).unwrap_or(path);
+                        let spelled = spell.of(path);
+                        let shown = spelled.get(prefix.len()..).unwrap_or(spelled);
                         if ui.selectable_label(false, shown).on_hover_text(path.as_str()).clicked() {
                             picked = Some(path.clone());
                         }
@@ -309,6 +311,8 @@ pub(super) fn pick_file(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usi
         });
     });
     if let Some(path) = picked {
+        // Written as the archives spell the file, as the shipped rows are.
+        let path = work.session.spellings(work.assets).of(&path).to_string();
         if let Err(why) = sound_files::put_file(work.session, record, slot, &path) {
             work.session.status = why;
         }

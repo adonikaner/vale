@@ -361,8 +361,8 @@ pub(super) fn waveform(ui: &mut egui::Ui, peaks: &[f32], size: egui::Vec2) {
     }
 }
 
-/// A project sound file's format, length and peak levels, as the Assets
-/// workspace's details and inspector show them.
+/// A sound file's format, length and peak levels, as the Assets workspace's
+/// details and inspector show them.
 #[derive(Debug, Clone)]
 pub(super) struct SoundFacts {
     pub(super) format: Option<Format>,
@@ -371,15 +371,21 @@ pub(super) struct SoundFacts {
     pub(super) peaks: Vec<f32>,
 }
 
-/// The [`SoundFacts`] of the project's sound at `vpath`, decoded once per
-/// change of the project's files and kept in egui's memory, because a long
-/// track takes a noticeable time to decode.
-pub(super) fn facts(ui: &egui::Ui, session: &EditSession, vpath: &str) -> Option<Arc<SoundFacts>> {
-    let key = egui::Id::new(("asset-sound-facts", vpath.to_ascii_lowercase(), session.files_revision));
+/// The [`SoundFacts`] of `whose` copy of the sound at `vpath`, decoded once
+/// per change of that copy and kept in egui's memory, because a long track
+/// takes a noticeable time to decode.
+pub(super) fn facts(
+    ui: &egui::Ui,
+    whose: super::assets::Whose,
+    session: &EditSession,
+    game: &vale_client::assets::GameAssets,
+    vpath: &str,
+) -> Option<Arc<SoundFacts>> {
+    let key = egui::Id::new(("asset-sound-facts", whose, vpath.to_ascii_lowercase(), whose.revision(session)));
     if let Some(known) = ui.data(|data| data.get_temp::<Option<Arc<SoundFacts>>>(key)) {
         return known;
     }
-    let facts = session.project.read(vpath).map(|bytes| {
+    let facts = whose.read(session, game, vpath).map(|bytes| {
         let decoded = sound::decode(&bytes);
         Arc::new(SoundFacts {
             format: Format::of(&bytes),

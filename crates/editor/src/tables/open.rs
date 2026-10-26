@@ -19,10 +19,11 @@ use super::fields::set_field;
 /// visible stall, so each table is requested once and the panel draws whatever
 /// is open.
 pub(crate) fn open_tables(
-    tool: Res<crate::tools::Tool>,
+    mut tool: ResMut<crate::tools::Tool>,
     // A table workspace in a pop-out window has the browser unless the main
     // window's tool has a table. See `crate::popout`.
-    popout: Res<crate::popout::Popout>,
+    mut popout: ResMut<crate::popout::Popout>,
+    playtest: Res<crate::playtest::Playtest>,
     assets: Res<GameAssets>,
     args: Res<crate::args::Args>,
     session: Option<ResMut<EditSession>>,
@@ -37,6 +38,19 @@ pub(crate) fn open_tables(
     let (Some(mut session), Some(mut browser)) = (session, browser) else {
         return;
     };
+    // A followed reference or `< back` can move the browser to a table that
+    // another workspace edits: an ambience's day sound is a `SoundEntries`
+    // row. The tool moves to that workspace, so the top bar, the part strip
+    // and the tabs name the table on screen. `pointed` is set to the new
+    // tool's table, so the browser stays on the followed row and the back
+    // stack is kept.
+    if std::mem::take(&mut browser.followed) {
+        let shown = popout.browser_tool(*tool);
+        if let Some(owner) = owner_after_follow(shown, &browser.table, playtest.editing()) {
+            popout.show_in_browser(&mut tool, owner);
+            *pointed = owner.table().map(str::to_string);
+        }
+    }
     let Some(wanted) = popout.browser_tool(*tool).table() else {
         // Clear the stage here when no table tool is chosen. The panel sets
         // `showing`, and the panel is not drawn once the rail moves to a World
@@ -62,12 +76,12 @@ pub(crate) fn open_tables(
         false => wanted.to_string(),
     };
     let followed_in = std::mem::take(&mut browser.followed_in);
-    // The back stack belongs to the workspace it was made in, and is cleared
-    // when the workspace changes. If it were kept, `< back` would open the
-    // last workspace's tables under this one's tool: Zones would show
-    // SkillLineAbility with no tab to leave by, since Zones has one table and
-    // draws no tabs. A follow from outside pushes the table the browser last
-    // showed, which is not a way back either, so it is cleared too.
+    // The back stack is cleared when the workspace is changed from outside
+    // the browser: the rail, the top bar, a part strip, a link from another
+    // form. A follow from outside pushes the table the browser last showed,
+    // which is not a way back. A workspace change made above for a followed
+    // reference keeps the stack, because each entry's table moves the tool
+    // again when `< back` returns to it.
     if pointed.as_deref() != Some(wanted) {
         browser.back.clear();
     }
@@ -302,4 +316,26 @@ pub(crate) fn open_tables(
             }
         }
     }
+}
+
+/// The workspace to move to after the browser followed a reference or went
+/// back to `table` while `shown` had it, or `None` to stay.
+///
+/// It moves when another workspace edits `table` (`Tool::for_table`) and
+/// `shown` does not have it as a tab. It stays when the table has no
+/// workspace but Tables, so a followed `SpellIcon` stays in Spells. It stays
+/// when `shown` keeps the viewport, such as Lights, whose inspector browses
+/// its references in place. And it stays during a playtest when the other
+/// workspace cannot be used then (`Tool::survives_playtest`).
+pub(crate) fn owner_after_follow(
+    shown: crate::tools::Tool,
+    table: &str,
+    editing: bool,
+) -> Option<crate::tools::Tool> {
+    use crate::tools::Tool;
+    if table.is_empty() || !shown.covers_viewport() || shown.tabs().iter().any(|&(_, tab)| tab == table) {
+        return None;
+    }
+    let owner = Tool::for_table(table);
+    (owner != Tool::Tables && owner != shown && (editing || owner.survives_playtest())).then_some(owner)
 }
