@@ -13,10 +13,13 @@
 //!
 //! ## What an edit is
 //!
-//! A formation is the rows naming one leader. A spawn joins one where it
-//! stands: its `dist` and `angle` are read from where it and the leader
-//! stand and which way the leader faces
-//! (`vale_mangos::formation::Member::placing`), so the server keeps it there.
+//! A formation is the rows naming one leader. A member's slot is the point
+//! `dist` yards from the leader at `angle` from the leader's facing
+//! ([`Placed::slot`]); while the leader moves, the member walks at its slot.
+//! A spawn joins a formation where it stands: its `dist` and `angle` are read
+//! from where it and the leader stand and which way the leader faces
+//! (`vale_mangos::formation::Member::placing`), so its slot is its spawn
+//! point.
 //! A spawn is in one formation at most, since `member_guid` is the key, so
 //! joining another moves it. Making a member the leader rewrites every row
 //! of the formation under the new leader, each placed where it stands, as
@@ -44,6 +47,25 @@ pub(crate) struct Placed {
     pub(crate) at: Vec3,
     pub(crate) facing: f32,
 }
+
+impl Placed {
+    /// A member's slot with this spawn as its leader: the point `dist`
+    /// yards from it at `angle` from its facing, at its height.
+    pub(crate) fn slot(&self, row: &Member) -> Vec3 {
+        let (dx, dy) = row.offset(self.facing);
+        Vec3::new(self.at.x + dx, self.at.y + dy, self.at.z)
+    }
+
+    /// How far `member` stands from its slot with this spawn as its
+    /// leader, in yards across the ground.
+    pub(crate) fn slot_distance(&self, member: Vec3, row: &Member) -> f32 {
+        (member.truncate() - self.slot(row).truncate()).length()
+    }
+}
+
+/// How far a member may stand from its slot, in yards, and still stand in
+/// it. A placed member is off by float rounding only.
+pub(crate) const IN_SLOT: f32 = 0.1;
 
 /// The three tables as the database has them, with the indexes a view
 /// finds its rows by.
@@ -257,8 +279,8 @@ impl Formations {
         put_row(session, formation::GROUPS, &row.key(), columns.as_deref(), &row.assignments(), gesture);
     }
 
-    /// Place a member of its formation where it stands now: its `dist` and
-    /// `angle` from its leader's position and facing.
+    /// Move a member's slot to where it stands now: its `dist` and `angle`
+    /// from its leader's position and facing.
     pub(crate) fn place(&self, session: &mut EditSession, leader: Placed, member: Placed, now: f64) {
         let Some(own) = self.member_row(member.guid, &session.rows.edits) else { return };
         let (dist, angle) = Member::placing((leader.at.x, leader.at.y), leader.facing, (member.at.x, member.at.y));
@@ -587,5 +609,19 @@ mod tests {
         let slaves: Vec<u64> = formations.slaves_of(10, &edits).iter().map(|shown| shown.row.slave).collect();
         assert_eq!(slaves, vec![11, 12]);
         assert_eq!(formations.link_of(13, &edits).unwrap().row.master, 99);
+    }
+
+    /// A member placed where it stands has its slot there, whichever way the
+    /// leader faces, and a slot turns with the leader.
+    #[test]
+    fn a_placed_member_stands_in_its_slot() {
+        let leader = Placed { guid: 1, at: Vec3::new(100.0, 50.0, 7.0), facing: 2.0 };
+        let stands = Vec3::new(97.0, 54.0, 9.0);
+        let (dist, angle) = Member::placing((leader.at.x, leader.at.y), leader.facing, (stands.x, stands.y));
+        let row = Member::new(1, 2, dist, angle);
+        assert!(leader.slot_distance(stands, &row) < IN_SLOT);
+        assert_eq!(leader.slot(&row).z, leader.at.z);
+        let turned = Placed { facing: leader.facing + std::f32::consts::PI, ..leader };
+        assert!((turned.slot_distance(stands, &row) - 2.0 * dist).abs() < 1e-3);
     }
 }

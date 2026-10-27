@@ -6,7 +6,7 @@
 //! ## The section
 //!
 //! One line per event the spawn answers, saying whether the event adds the
-//! spawn or removes it, with Turn to change which. A creature's changes are
+//! spawn or removes it, with Make Added or Make Removed to change which. A creature's changes are
 //! listed under them with their columns. Add to Event and Remove During
 //! Event choose an event in the picker for the whole selection.
 //!
@@ -152,7 +152,7 @@ fn event_name(events: &GameEvents, entry: u32, edits: &vale_mangos::row::Edits) 
 }
 
 /// How much of an event's line its three buttons keep, in points.
-const BUTTONS_ROOM: f32 = 170.0;
+const BUTTONS_ROOM: f32 = 220.0;
 
 /// One event the spawn answers.
 fn membership(ui: &mut egui::Ui, sec: &mut Section<'_>, events: &mut GameEvents, of: SpawnKind, shown: &Shown<Member>, patch: u32) {
@@ -191,11 +191,7 @@ fn membership(ui: &mut egui::Ui, sec: &mut Section<'_>, events: &mut GameEvents,
                 Some(_) => events.remove(sec.session, of, member, sec.now),
                 None => {}
             }
-            if shown.kept()
-                && ui
-                    .small_button("Turn")
-                    .on_hover_text("Turn between added during the event and removed during it.")
-                    .clicked()
+            if shown.kept() && switch_button(ui, &member)
             {
                 events.turn(sec.session, of, member, sec.now);
             }
@@ -204,6 +200,16 @@ fn membership(ui: &mut egui::Ui, sec: &mut Section<'_>, events: &mut GameEvents,
             }
         });
     });
+}
+
+/// The button that turns a spawn the event adds into one it removes, or
+/// back, named for what it makes the row. Answers whether it was pressed.
+fn switch_button(ui: &mut egui::Ui, member: &Member) -> bool {
+    let (word, about) = match member.removed() {
+        true => ("Make Added", "Add the spawn during the event instead: it exists only while the event is on."),
+        false => ("Make Removed", "Remove the spawn during the event instead: it exists only while the event is off."),
+    };
+    ui.small_button(word).on_hover_text(about).clicked()
 }
 
 /// One creature change, with its columns under it, and Go To on its spawn
@@ -396,8 +402,8 @@ fn spawns(ui: &mut egui::Ui, view: &mut View<'_>, events: &mut GameEvents, entry
 }
 
 /// One spawn of an event, as five grid cells: its state, its name, whether
-/// the event adds or removes it, Go To and Turn, and the button that takes it
-/// out.
+/// the event adds or removes it, Go To and [`switch_button`], and the button
+/// that takes it out.
 fn spawn_line(ui: &mut egui::Ui, view: &mut View<'_>, events: &mut GameEvents, kind: SpawnKind, shown: &Shown<Member>) {
     let member = shown.row;
     let spawn = SpawnRef { kind, guid: member.guid };
@@ -411,12 +417,7 @@ fn spawn_line(ui: &mut egui::Ui, view: &mut View<'_>, events: &mut GameEvents, k
     ui.label(egui::RichText::new(how).small().color(theme::INK_DIM));
     ui.horizontal(|ui| {
         view.go_to_button(ui, spawn);
-        if shown.kept()
-            && ui
-                .small_button("Turn")
-                .on_hover_text("Turn between added during the event and removed during it.")
-                .clicked()
-        {
+        if shown.kept() && switch_button(ui, &member) {
             events.turn(view.session, kind, member, view.now);
         }
     });

@@ -1047,13 +1047,28 @@ fn hold_weapons(
 /// The colour of a line from a formation's leader to a member.
 const FORMATION_LINE: Color = Color::srgb(0.3, 0.85, 0.95);
 
+/// The colour of a line from a formation member standing away from its slot
+/// to the slot.
+const STRAY_LINE: Color = Color::srgb(0.6, 0.66, 0.72);
+
 /// The colour of a line from a master to a linked spawn.
 const LINK_LINE: Color = Color::srgb(0.85, 0.55, 1.0);
 
-/// Draw the selected creature's formation and links on the ground: a line
-/// from the leader to each member, and from the master to each slave, with
-/// the project's edits over the rows and the positions. A spawn not on the
-/// open map has no line.
+/// The radius of the ring at a formation member's slot, in yards.
+const SLOT_RING: f32 = 0.6;
+
+/// How far a slot's height may be from the leader's and still be taken from
+/// the terrain, in yards. The terrain is the only ground the editor samples,
+/// so under a building's floor it is far below the leader, and the slot is
+/// drawn at the leader's height.
+const SLOT_GROUND: f32 = 4.0;
+
+/// Draw the selected creature's formation and links on the ground, with the
+/// project's edits over the rows and the positions. A formation is the
+/// leader's facing, a line from the leader to each member's slot, a ring at
+/// each slot, and a line from a member standing away from its slot to the
+/// slot (`crate::subjects::formations::Placed::slot`). A link is an arrow
+/// from the master to the slave. A spawn not on the open map is not drawn.
 fn mark_formations(
     creatures: Res<Creatures>,
     formations: Res<crate::subjects::formations::Formations>,
@@ -1072,12 +1087,37 @@ fn mark_formations(
             .edited(guid, Some(edits))
             .map(|spawn| vale_client::render::axes::to_bevy(spawn.at.to_array()))
     };
-    if let Some(formation) = formations.formation_of(selected, edits) {
-        if let Some(leader) = at(formation.leader) {
-            for shown in formation.members() {
-                if let Some(member) = at(shown.row.member) {
-                    marks.wide_ground_line(leader, member, 1.4, FORMATION_LINE, Look::Ghosted);
+    let bevy = |at: Vec3| vale_client::render::axes::to_bevy(at.to_array());
+    let formation = formations.formation_of(selected, edits);
+    let leader = formation.as_ref().and_then(|formation| creatures.edited(formation.leader, Some(edits)));
+    if let Some((formation, leader)) = formation.zip(leader) {
+        let placed = crate::subjects::formations::Placed {
+            guid: leader.guid,
+            at: leader.at,
+            facing: leader.orientation,
+        };
+        let from = bevy(leader.at);
+        if leader.guid != selected {
+            // The selected spawn draws its own facing.
+            let facing = Vec3::new(leader.orientation.cos(), leader.orientation.sin(), 0.0);
+            let lift = Vec3::Z * 0.2;
+            let tail = bevy(leader.at + lift);
+            let thickness = marks.line_radius(tail) * 1.6;
+            marks.arrow(tail, bevy(leader.at + facing * 2.0 + lift), thickness, FORMATION_LINE, Look::Ghosted);
+        }
+        for shown in formation.members() {
+            let mut slot = placed.slot(&shown.row);
+            if let Some(z) = crate::tools::placements::doodads::ground_height(&session, slot.x, slot.y) {
+                if (z - leader.at.z).abs() <= SLOT_GROUND {
+                    slot.z = z;
                 }
+            }
+            let slot_at = bevy(slot);
+            marks.wide_ground_line(from, slot_at, 1.4, FORMATION_LINE, Look::Ghosted);
+            marks.flat_ring(slot_at + Vec3::Y * 0.05, SLOT_RING, FORMATION_LINE, Look::Ghosted);
+            let member = creatures.edited(shown.row.member, Some(edits));
+            if let Some(member) = member.filter(|member| placed.slot_distance(member.at, &shown.row) > crate::subjects::formations::IN_SLOT) {
+                marks.ground_line(bevy(member.at), slot_at, STRAY_LINE, Look::Ghosted);
             }
         }
     }
@@ -1089,6 +1129,15 @@ fn mark_formations(
     for (from, to) in links {
         if let Some((from, to)) = at(from).zip(at(to)) {
             marks.wide_ground_line(from, to, 1.0, LINK_LINE, Look::Ghosted);
+            // A head at the slave's end, short of its body.
+            let along = to - from;
+            let length = along.length();
+            if length > 2.0 {
+                let tip = to - along / length;
+                let lift = Vec3::Y * marks.line_radius(tip);
+                let radius = marks.line_radius(tip) * 3.5;
+                marks.cone(tip - along / length * radius * 3.0 + lift, tip + lift, radius, LINK_LINE, Look::Ghosted);
+            }
         }
     }
 }

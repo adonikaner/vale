@@ -477,7 +477,11 @@ fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, eve
             if events.is_empty() {
                 theme::note(ui, "The events are read when a spawn tool or the Spawning workspace opens.");
             }
-            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            // A menu keeps the size it had when last open, and a scroll area
+            // takes only the height left in it. Opened before the events
+            // were read, the menu would keep the empty list's height, so the
+            // list asks for its own.
+            egui::ScrollArea::vertical().max_height(320.0).min_scrolled_height(320.0).show(ui, |ui| {
                 for (entry, description) in events {
                     ui.radio_value(phase, Phase::During(*entry), format!("{entry} \u{b7} {description}"));
                 }
