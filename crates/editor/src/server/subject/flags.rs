@@ -26,6 +26,10 @@ pub(crate) struct Scripted<'w> {
     quests: Res<'w, crate::subjects::quests::Quests>,
     loot: Res<'w, crate::subjects::loot::Loot>,
     services: Res<'w, crate::subjects::services::Services>,
+    addons: Res<'w, crate::subjects::addons::Addons>,
+    formations: Res<'w, crate::subjects::formations::Formations>,
+    pools: Res<'w, crate::subjects::pools::Pools>,
+    game_events: Res<'w, crate::subjects::game_events::GameEvents>,
     behaviour: Res<'w, crate::subjects::behaviour::Behaviour>,
 }
 
@@ -41,6 +45,10 @@ impl Scripted<'_> {
             && self.quests.scripted_done
             && self.loot.scripted_done
             && self.services.scripted_done
+            && self.addons.scripted_done
+            && self.formations.scripted_done
+            && self.pools.scripted_done
+            && self.game_events.scripted_done
             && self.behaviour.scripted_done
     }
 }

@@ -370,7 +370,7 @@ pub(crate) const TRAINER_RACES: [Value; 9] = [
 
 /// `WowPatch`, from `Progression.h:64`: the content patches a spawn's
 /// `patch_min` and `patch_max` count in.
-pub(crate) const PATCHES: [Value; 11] = [
+pub const PATCHES: [Value; 11] = [
     Value { value: 0, name: "1.2" },
     Value { value: 1, name: "1.3" },
     Value { value: 2, name: "1.4" },
@@ -524,9 +524,30 @@ pub(crate) const SPAWN_COLUMNS: [Column; 21] = [
 /// measured at over two minutes for map 0 here; grouping the whole of
 /// `creature_template` by entry once and joining to that runs the same map in
 /// 0.34 s. The rows it picks are the same rows.
+///
+/// The spawn's `creature_addon` row is joined the same way, at the highest
+/// `patch` at or below `wow_patch`, which is the row `LoadCreatureAddons`
+/// keeps. Its `patch`, `equipment_id` and `sheath_state` come back as
+/// `addon_patch`, `addon_equipment_id` and `addon_sheath_state`, all NULL for
+/// a spawn with no row; with the template's `equipment_id` they say what the
+/// spawn holds and whether it is in hand. `creature_addon` is small: on map 0
+/// here 1,137 of 24,644 spawns have a row.
 pub fn spawns_on_map_query(map: u32, wow_patch: u32) -> String {
     format!(
-        "SELECT c.`guid`, c.`id`, c.`map`, c.`position_x`, c.`position_y`, c.`position_z`,          c.`orientation`, c.`spawn_flags`, c.`wander_distance`, c.`movement_type`,          t.`name`, t.`subname`, t.`display_id1`, t.`display_scale1`, t.`level_min`,          t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`, t.`patch`          FROM `creature` c          LEFT JOIN (SELECT `entry`, MAX(`patch`) AS `patch` FROM `creature_template`                     WHERE `patch` <= {wow_patch} GROUP BY `entry`) w ON w.`entry` = c.`id`          LEFT JOIN `creature_template` t ON t.`entry` = c.`id` AND t.`patch` = w.`patch`          WHERE c.`map` = {map} ORDER BY c.`guid`"
+        "SELECT c.`guid`, c.`id`, c.`map`, c.`position_x`, c.`position_y`, c.`position_z`, \
+         c.`orientation`, c.`spawn_flags`, c.`wander_distance`, c.`movement_type`, \
+         t.`name`, t.`subname`, t.`display_id1`, t.`display_scale1`, t.`level_min`, \
+         t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`, t.`patch`, t.`equipment_id`, \
+         a.`patch` AS `addon_patch`, a.`equipment_id` AS `addon_equipment_id`, \
+         a.`sheath_state` AS `addon_sheath_state` \
+         FROM `creature` c \
+         LEFT JOIN (SELECT `entry`, MAX(`patch`) AS `patch` FROM `creature_template` \
+                    WHERE `patch` <= {wow_patch} GROUP BY `entry`) w ON w.`entry` = c.`id` \
+         LEFT JOIN `creature_template` t ON t.`entry` = c.`id` AND t.`patch` = w.`patch` \
+         LEFT JOIN (SELECT `guid`, MAX(`patch`) AS `patch` FROM `creature_addon` \
+                    WHERE `patch` <= {wow_patch} GROUP BY `guid`) aw ON aw.`guid` = c.`guid` \
+         LEFT JOIN `creature_addon` a ON a.`guid` = c.`guid` AND a.`patch` = aw.`patch` \
+         WHERE c.`map` = {map} ORDER BY c.`guid`"
     )
 }
 
@@ -550,6 +571,33 @@ pub fn template_query(entry: u32, patch: u32) -> String {
 /// One spawn, by guid.
 pub fn spawn_query(guid: u64) -> String {
     format!("SELECT * FROM `creature` WHERE `guid` = {guid}")
+}
+
+/// Where spawns named by guid stand and what they are: `guid`, `map`, the
+/// three positions, `id` and the template's `name` at its highest patch. A
+/// list that names spawns on any map (a game event's, a pool's) reads its
+/// rows' places this way. `None` for an empty list rather than a statement
+/// with an empty `IN ()`, which MySQL refuses.
+pub fn located_query(guids: &[u64]) -> Option<String> {
+    located_in("creature", "creature_template", guids)
+}
+
+/// Where spawns of `spawns` named by guid stand and what they are, with the
+/// name of each one's `templates` row at its highest patch; see
+/// [`located_query`].
+pub(crate) fn located_in(spawns: &str, templates: &str, guids: &[u64]) -> Option<String> {
+    if guids.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = guids.iter().map(u64::to_string).collect();
+    Some(format!(
+        "SELECT s.`guid`, s.`map`, s.`position_x`, s.`position_y`, s.`position_z`, s.`id`, \
+         (SELECT t.`name` FROM {templates} t WHERE t.`entry` = s.`id` ORDER BY t.`patch` DESC LIMIT 1) AS `name` \
+         FROM {spawns} s WHERE s.`guid` IN ({})",
+        list.join(", "),
+        templates = crate::sql::name(templates),
+        spawns = crate::sql::name(spawns),
+    ))
 }
 
 /// The key an edit to a template row is written under.
@@ -828,7 +876,8 @@ pub const MAX_SPAWN_GUID_QUERY: &str = "SELECT MAX(`guid`) AS `guid` FROM `creat
 /// on the map, so a creature read this way and one read from the map carry the
 /// same fields.
 const BRIEF: &str = "t.`entry`, t.`patch`, t.`name`, t.`subname`, t.`display_id1`, \
-     t.`display_scale1`, t.`level_min`, t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`";
+     t.`display_scale1`, t.`level_min`, t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`, \
+     t.`equipment_id`";
 
 /// The join that picks the row the server would load, shared by both queries.
 fn winning_join(wow_patch: u32) -> String {
@@ -1226,6 +1275,10 @@ mod tests {
         // A LEFT join: a spawn whose template row is missing is a spawn worth
         // seeing, and an inner join would silently drop it.
         assert!(sql.contains("LEFT JOIN"), "{sql}");
+        // The addon row at the patch the server keeps, under names that do
+        // not collide with the template's columns.
+        assert!(sql.contains("FROM `creature_addon` WHERE `patch` <= 10 GROUP BY `guid`"), "{sql}");
+        assert!(sql.contains("AS `addon_equipment_id`") && sql.contains("AS `addon_sheath_state`"), "{sql}");
     }
 
     #[test]

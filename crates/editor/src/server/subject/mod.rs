@@ -9,7 +9,7 @@
 //!            buttons from the command line
 //! ```
 //!
-//! ## One lifecycle, twelve subjects
+//! ## One lifecycle, thirteen subjects
 //!
 //! Every row subject is written and applied the same way. The project's row
 //! store (`server\rows.txt`, shared by all of them and keyed by table) holds

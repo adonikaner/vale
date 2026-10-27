@@ -32,7 +32,7 @@
 //!              position while a pen is in range
 //! tools/       what the pointer does when a button is held, one file per tool
 //! subjects/    the server-row subjects that have no place in the world:
-//!              items, quests, loot, services, behaviour, gossip, conditions,
+//!              items, quests, loot, services, addons, behaviour, gossip, conditions,
 //!              display ids, and the two template workspaces
 //! tables/      the client's own tables: which row is open, and what an edit
 //!              to a field is

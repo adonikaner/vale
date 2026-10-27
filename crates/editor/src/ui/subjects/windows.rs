@@ -8,7 +8,7 @@ use bevy_egui::egui;
 use crate::subjects::behaviour::About;
 use crate::subjects::loot::Window;
 use crate::subjects::windows::Focus;
-use crate::subjects::{gossip, services};
+use crate::subjects::{addons, gossip, services};
 use crate::tools::Tool;
 use crate::ui::subjects;
 use crate::ui::workspace::Bench;
@@ -141,6 +141,14 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
         .flatten();
     editing.behaviour.about = creature.map(|focus| About::from_focus(focus, template, edits));
     editing.services.about = creature.and_then(|focus| services::About::from_focus(focus, template, edits));
+    // The addon row belongs to one spawn, so its guid is read from the
+    // creature tool's selection; under the workspace the subject is the
+    // template alone.
+    let guid = match tool {
+        Tool::Creatures => editing.creatures.chosen().map(|spawn| spawn.guid),
+        _ => None,
+    };
+    editing.addons.about = creature.and_then(|focus| addons::About::from_focus(focus, template, edits, guid));
     editing.gossip.about = editing.services.about.as_ref().map(|services| {
         let at = creature.and_then(|focus| focus.at);
         gossip::About::from_services(services, template, edits, at)
@@ -192,6 +200,20 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
             },
         );
         floating.extend(service_windows);
+        let equipment_windows = subjects::addons::windows(
+            ctx,
+            subjects::addons::Subject {
+                session,
+                addons: &mut editing.addons,
+                quests: &mut editing.quests,
+                items: &mut editing.items,
+                assets,
+                thumbnails: &mut editing.thumbnails,
+                now,
+                asks: &mut editing.asks,
+            },
+        );
+        floating.extend(equipment_windows);
     }
     // The script window also opens from a trigger's script id, and from the
     // gossip window's script columns under any tool.

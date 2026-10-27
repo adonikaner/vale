@@ -13,7 +13,7 @@
 //!                faction_template
 //! mod.rs         `save`, the one function every subject's SQL is written by,
 //!                and the statements run when the Server panel's switch is on
-//! subject/       what the twelve row subjects share: the RowSubject trait,
+//! subject/       what the thirteen row subjects share: the RowSubject trait,
 //!                the plan, the SQL file, Apply and Put back, and the
 //!                --apply and --revert flags
 //! creatures.rs   creature_template and creature, which have no client file,
@@ -32,6 +32,18 @@
 //! services.rs    npc_vendor, npc_trainer and their two template tables: what a
 //!                creature sells and teaches, live on two reloads, removals
 //!                included
+//! addons.rs      creature_addon and creature_equip_template: how one spawn
+//!                stands and what a creature holds, as keyed rows; both read
+//!                at startup, so live after a restart
+//! formations.rs  creature_groups, creature_linking and
+//!                creature_linking_template: which spawns act together, as
+//!                keyed rows; formations live on a reload, links after a
+//!                restart
+//! pools.rs       the six pool tables: which spawns are kept a few at a time,
+//!                as keyed rows, live after a restart
+//! game_events.rs game_event and the four tables that name an event: what the
+//!                world holds while it is on, as keyed rows, live after a
+//!                restart
 //! behaviour.rs   creature_ai_events and creature_spells as keyed rows, and the
 //!                eleven *_scripts tables as whole scripts under an id, since a
 //!                script row has no key; live on a reload of the events, the
@@ -52,7 +64,7 @@
 //!                its statements run, so the database always holds what it
 //!                held before plus what the project says now; and the revert
 //!                file every subject keeps, read and written
-//! stack.rs       the order the twelve row subjects stand in the database: to
+//! stack.rs       the order the thirteen row subjects stand in the database: to
 //!                apply or put back one, every applied subject after it is put
 //!                back first and applied again after, so each revert file runs
 //!                against the database it was read from
@@ -107,6 +119,8 @@
 //! skill_line_ability   a restart; it has no reload
 //! area_template        a restart; it has no reload
 //! faction              a restart; neither it nor faction_template has a reload
+//! creature_addon       a restart; neither it nor creature_equip_template has a
+//!                      reload
 //! DataDir\5875\dbc     a restart; its files, TaxiPath and TaxiPathNode among
 //!                      them
 //! item_template        .reload item_template, live for every copy of the item
@@ -150,17 +164,21 @@
 //! handshake to talk to it. The plan's section *What is deliberately not in
 //! this plan* gives the argument.
 
+pub(crate) mod addons;
 pub(crate) mod behaviour;
 pub(crate) mod creatures;
 pub(crate) mod dbcs;
 pub(crate) mod datadir;
 pub(crate) mod follow;
+pub(crate) mod formations;
 pub(crate) mod fresh;
+pub(crate) mod game_events;
 pub(crate) mod gameobjects;
 pub(crate) mod held;
 pub(crate) mod items;
 pub(crate) mod loot;
 pub(crate) mod places;
+pub(crate) mod pools;
 pub(crate) mod publish;
 pub(crate) mod queue;
 pub(crate) mod quests;

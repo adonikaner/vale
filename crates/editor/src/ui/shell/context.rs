@@ -977,6 +977,16 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
         }
         chosen = true;
     }
+    if item(
+        ui,
+        "Equipment\u{2026}",
+        true,
+        "The weapons the creature holds: its creature_equip_template set, or this spawn's own.",
+        "",
+    ) {
+        editing.addons.equipment_open = true;
+        chosen = true;
+    }
 
     ui.separator();
     if item(

@@ -128,6 +128,7 @@ mod tests {
                 faction: 11,
                 npc_flags: 0,
                 rank: 0,
+                equipment_id: 68,
                 claim: Life::Update,
             }
         }

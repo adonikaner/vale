@@ -74,6 +74,9 @@ pub(crate) struct Subject<'a, S: SpawnView> {
     /// Where the Go to button sends its request. See
     /// [`crate::camera::FlyTo`].
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    /// Whether the other spawn tool's spawns are drawn too. See
+    /// [`crate::tools::spawns::spawn::OtherSpawns`].
+    pub(crate) others: &'a mut crate::tools::spawns::spawn::OtherSpawns,
     /// What only this subject's panel reaches.
     pub(crate) own: S::Panel<'a>,
 }
@@ -415,6 +418,16 @@ fn controls<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
              grouped spawns are marked, which saves frame time where many spawns are \
              near. Spawns can still be clicked.",
         );
+        let other = S::KIND.other();
+        let label = match other {
+            crate::tools::spawns::spawn::SpawnKind::Creature => "Creatures",
+            crate::tools::spawns::spawn::SpawnKind::GameObject => "Game Objects",
+        };
+        ui.checkbox(&mut subject.others.shown, label).on_hover_text(format!(
+            "Mark the {} spawns near the camera too, faded. A click on one selects it \
+             and switches to its tool.",
+            other.word()
+        ));
         S::beside_markers(ui, subject);
     });
 }

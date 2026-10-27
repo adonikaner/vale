@@ -243,6 +243,21 @@ pub(crate) struct ItemName {
     pub(crate) sheath: u32,
 }
 
+impl ItemName {
+    /// The item held in a hand, as a body draws it. The material is left 0:
+    /// it decides only the sound of a blow, which a preview does not play.
+    pub(crate) fn weapon(&self) -> vale_assets::tables::item::Weapon {
+        vale_assets::tables::item::Weapon {
+            display_id: self.display_id,
+            class: self.class as u8,
+            subclass: self.subclass as u8,
+            inventory_type: self.inventory_type as u8,
+            sheath: self.sheath as u8,
+            ..Default::default()
+        }
+    }
+}
+
 /// A change to a set's item list made in the set's form, waiting for the
 /// items' rows to be read so that their `set_id` can follow it. See
 /// [`Quests::follow_sets`].
@@ -462,6 +477,22 @@ pub(crate) enum PickFor {
     /// that is not a teaching spell with the one that teaches it.
     VendorItem { table: &'static str, entry: u32 },
     TrainerSpell { table: &'static str, entry: u32 },
+    /// An item for a row of an equipment set: a new row holding it in
+    /// `slot`, or `slot` of the row holding `row` changed to it. Answered
+    /// into [`Quests::equipment_pick`], because a row is keyed by its items
+    /// and `crate::subjects::addons` decides what a change comes to.
+    EquipmentItem { set: u32, row: Option<[u32; 3]>, slot: usize },
+    /// A pool or a game event for the selected spawns: the Pool and Game
+    /// Events sections' use of the same dialog. Answered into
+    /// [`Quests::spawn_pick`], because what a choice comes to is
+    /// `crate::subjects::pools`' or `crate::subjects::game_events`' decision.
+    SpawnData { into: SpawnInto, spawns: Vec<u64> },
+    /// A quest an event offers only while it is on: the Game Events
+    /// workspace's use of the same dialog. Answered into
+    /// [`Quests::event_quest_pick`], because an add is
+    /// `crate::subjects::game_events`' decision: it refuses a quest the event
+    /// already offers.
+    EventQuest { event: u32 },
     /// One cell of one row of a script, which is the script window's use of
     /// the same dialog. Answered into [`Quests::script_pick`], because a
     /// script is written whole by `crate::subjects::behaviour` and not through
@@ -477,6 +508,15 @@ pub(crate) enum PickFor {
     /// Answered into [`Quests::condition_pick`], because the tree is a draft
     /// of `crate::subjects::conditions` and is written only when it is saved.
     ConditionValue { path: Vec<usize>, slot: usize, label: &'static str },
+}
+
+/// What a pool or game event chosen for spawns is for; see
+/// [`PickFor::SpawnData`]. `objects` is whether the spawns are game objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpawnInto {
+    Pool { objects: bool },
+    /// `removed`: the event removes the spawns rather than adding them.
+    Event { objects: bool, removed: bool },
 }
 
 /// The reference picker's state — see [`crate::ui::subjects::quests`], which draws it.
@@ -609,6 +649,17 @@ pub(crate) struct Quests {
     /// table and entry and the id chosen: taken by that window on the frame
     /// after. See [`PickFor::VendorItem`].
     pub(crate) service_pick: Option<(&'static str, u32, u32)>,
+    /// An item chosen for an equipment set, as the set, the row it is for
+    /// (`None` for a new row), the slot and the item: taken by the Equipment
+    /// window on the frame after. See [`PickFor::EquipmentItem`].
+    pub(crate) equipment_pick: Option<(u32, Option<[u32; 3]>, usize, u32)>,
+    /// A pool or a game event chosen for spawns, as what it is for, the
+    /// spawns and the id chosen: taken by the section on the frame after.
+    /// See [`PickFor::SpawnData`].
+    pub(crate) spawn_pick: Option<(SpawnInto, Vec<u64>, u32)>,
+    /// A quest chosen for an event, as the event and the quest: taken by the
+    /// Game Events workspace on the frame after. See [`PickFor::EventQuest`].
+    pub(crate) event_quest_pick: Option<(u32, u32)>,
     /// A value chosen for one cell of a script row through the picker, as
     /// the script's table and id, the row's index, the column and the value:
     /// taken by the script window on the frame after. See

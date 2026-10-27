@@ -114,6 +114,18 @@ pub(crate) struct CreaturePanel<'a> {
     /// The gossip window's state, for the Gossip button. See
     /// `crate::ui::subjects::gossip::window`.
     pub(crate) gossip: &'a mut crate::subjects::gossip::Gossip,
+    /// The Equipment window's state, for its button, and the selected
+    /// spawn's addon row, for the Addon section. See
+    /// `crate::ui::subjects::addons::windows` and [`addon_form`].
+    pub(crate) addons: &'a mut crate::subjects::addons::Addons,
+    /// The Formation and Links sections' state. See [`spawn_data`].
+    pub(crate) formations: &'a mut crate::subjects::formations::Formations,
+    /// The Pool section's and window's state.
+    pub(crate) pools: &'a mut crate::subjects::pools::Pools,
+    /// The Game Events section's and window's state.
+    pub(crate) game_events: &'a mut crate::subjects::game_events::GameEvents,
+    /// Where the spawns the Pool and Game Event windows list stand.
+    pub(crate) located: &'a mut crate::subjects::located::Locations,
 }
 
 impl<'a> Subject<'a> {
@@ -146,11 +158,17 @@ impl<'a> Subject<'a> {
             gizmo,
             asks: &mut editing.asks,
             fly: &mut editing.fly,
+            others: &mut editing.others,
             own: CreaturePanel {
                 waypoints: &mut editing.waypoints,
                 behaviour: &mut editing.behaviour,
                 services: &mut editing.services,
                 gossip: &mut editing.gossip,
+                addons: &mut editing.addons,
+                formations: &mut editing.formations,
+                pools: &mut editing.pools,
+                game_events: &mut editing.game_events,
+                located: &mut editing.located,
             },
         }
     }
@@ -473,6 +491,13 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     };
     let standing = crate::tools::spawns::spawn::Standing::of::<crate::tools::spawns::creatures::CreatureSubject>(spawn);
     super::spawn::placement(ui, subject.session, &standing, subject.now);
+    // The addon row before the spawn's own columns: it is what makes this
+    // spawn differ from the others of its template, and the columns below
+    // are mostly its key and its position, which the placement block above
+    // already edits.
+    addon_form(ui, subject, spawn);
+    spawn_data(ui, subject);
+    ui.add_space(8.0);
     groups(
         ui,
         subject,
@@ -481,6 +506,201 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         &row,
         &[Group::Identity, Group::Place],
     );
+}
+
+/// The Addon section of the spawn form, drawn before the spawn's own
+/// columns: the spawn's `creature_addon` row, which overrides the template's
+/// display, mount, equipment set and auras for this one spawn and says how
+/// it stands. A checkbox makes the row or removes it; its columns follow,
+/// one per row of the page layout. See [`crate::subjects::addons`].
+fn addon_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
+    use vale_mangos::addon;
+    use vale_mangos::row::Life;
+    theme::heading(ui, "Addon");
+    theme::note(
+        ui,
+        "The creature_addon row: this spawn's own display, mount, weapons, stance, emote \
+         and auras, over the template's. The server reads it at startup; a change needs a \
+         restart.",
+    );
+    let guid = spawn.guid;
+    if let Some(trouble) = subject.own.addons.trouble().cloned() {
+        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
+        return;
+    }
+    if !subject.own.addons.is_addon_read(guid) {
+        theme::waiting(ui, "reading the addon row\u{2026}");
+        return;
+    }
+    let edits = subject.session.rows.edits.clone();
+    let shown = subject.own.addons.addon_of(&edits, guid);
+    let live = shown.as_ref().filter(|(_, _, life)| *life != Life::Delete);
+    let mut on = live.is_some();
+    if ui
+        .checkbox(&mut on, "creature_addon row")
+        .on_hover_text(
+            "Whether this spawn has a row. A new row changes nothing until a column is set: \
+             the template's display, mount, set and auras, standing, melee weapon in hand, no \
+             emote. Unticking removes the row, and the spawn stands as every other spawn of \
+             the template.",
+        )
+        .changed()
+    {
+        match on {
+            true => subject.own.addons.add_addon(subject.session, guid, subject.now),
+            false => subject.own.addons.remove_addon(subject.session, guid, subject.now),
+        }
+        return;
+    }
+    let Some((addon, _, _)) = live.cloned() else {
+        return;
+    };
+    let (key, held) = subject.own.addons.addon_held(guid);
+    ui.scope(|ui| {
+        page_spacing(ui);
+        for column in addon::ADDON_COLUMNS.iter().filter(|column| column.kind != Kind::Key) {
+            addon_field(ui, subject, guid, &key, &held, column);
+        }
+    });
+    for fault in addon.check() {
+        ui.label(egui::RichText::new(fault).size(theme::SMALL).color(theme::WARN));
+    }
+}
+
+/// The Formation, Links, Pool and Game Events sections: the rows of other
+/// tables that name the selected spawn, acting on the whole selection. See
+/// `crate::ui::subjects::keyed`. A spawn a section asks to select is
+/// selected once all four are drawn.
+fn spawn_data(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+    use crate::ui::subjects::keyed::{Chosen, Section};
+    let patch = crate::server::settings::server_patch(subject.server);
+    let edits = subject.session.rows.edits.clone();
+    let map = subject.session.map_id;
+    let select = {
+        let Some(chosen) = Chosen::of(&*subject.tool, edits, map, false) else { return };
+        let mut section = Section {
+            session: &mut *subject.session,
+            quests: &mut *subject.quests,
+            asks: &mut *subject.asks,
+            assets: subject.assets,
+            now: subject.now,
+            located: &mut *subject.own.located,
+            chosen: &chosen,
+            select: None,
+        };
+        crate::ui::subjects::formations::formation_section(ui, &mut section, subject.own.formations);
+        crate::ui::subjects::formations::links_section(ui, &mut section, subject.own.formations);
+        crate::ui::subjects::pools::pool_section(ui, &mut section, subject.own.pools, patch);
+        crate::ui::subjects::game_events::events_section(ui, &mut section, subject.own.game_events, patch);
+        section.select
+    };
+    if let Some(guid) = select {
+        subject.tool.select_only(Some(guid));
+    }
+}
+
+/// One column of the addon row, through [`server_field`]. The display column
+/// draws its picture and picker as the template's do, and the mount and
+/// equipment columns draw their -1 as the template's own, with a button to
+/// override it and one to go back; an equipment id of its own opens the
+/// Equipment window on that set.
+fn addon_field(
+    ui: &mut egui::Ui,
+    subject: &mut Subject<'_>,
+    guid: u64,
+    key: &Key,
+    row: &creature::Row,
+    column: &'static Column,
+) {
+    use vale_mangos::addon;
+    let field = FieldCtx::new(ui, &subject.session.rows.edits, addon::ADDON, key, row, column, "Edit creature addon", subject.now);
+    let assets = subject.assets;
+    let (creatures, portraits, addons) = (&mut *subject.tool, &mut *subject.portraits, &mut *subject.own.addons);
+    let mut resolver = Resolver {
+        session: &mut *subject.session,
+        assets,
+        quests: &mut *subject.quests,
+        asks: &mut *subject.asks,
+    };
+    let written = server_field(ui, &mut resolver, &field, |hook, ui, resolver, field, showing| {
+        match (hook, field.column.name) {
+            (Hook::Cell, "display_id") => Some(display_cell(
+                ui,
+                creatures,
+                portraits,
+                resolver.asks,
+                assets,
+                showing,
+                field.target(),
+                |_| {},
+            )),
+            (Hook::After, "display_id") if showing.trim() == "0" => {
+                ui.label(egui::RichText::new("template's").small().color(theme::INK_DIM))
+                    .on_hover_text("0: the spawn is drawn as the template's display.");
+                None
+            }
+            (Hook::Cell, "mount_display_id" | "equipment_id") => {
+                let value: i64 = showing.trim().parse().unwrap_or(-1);
+                let (own, none) = match field.column.name {
+                    "mount_display_id" => ("the template's mount", "no mount"),
+                    _ => ("the template's set", "no weapons"),
+                };
+                if value < 0 {
+                    ui.label(egui::RichText::new(own).small().color(theme::INK_DIM));
+                    return Some(
+                        ui.small_button("override")
+                            .on_hover_text(format!("Give this spawn its own value; 0 is {none}."))
+                            .clicked()
+                            .then(|| "0".to_string()),
+                    );
+                }
+                // The button that goes back to the template's value comes
+                // before the model's path, which is truncated to the room
+                // left and would otherwise push the button off the form.
+                let mut reset = false;
+                let mut back = |ui: &mut egui::Ui| {
+                    reset |= ui
+                        .small_button("template's")
+                        .on_hover_text(format!("Write -1: {own}."))
+                        .clicked();
+                };
+                let written = match field.column.name {
+                    "mount_display_id" => display_cell(
+                        ui,
+                        creatures,
+                        portraits,
+                        resolver.asks,
+                        assets,
+                        showing,
+                        field.target(),
+                        back,
+                    ),
+                    _ => {
+                        let written = number_cell(ui, Kind::Unsigned, showing);
+                        if value == 0 {
+                            ui.label(egui::RichText::new(none).small().color(theme::INK_DIM));
+                        } else if ui
+                            .small_button("open\u{2026}")
+                            .on_hover_text("Open the Equipment window on this set.")
+                            .clicked()
+                        {
+                            addons.equipment_open = true;
+                        }
+                        back(ui);
+                        written
+                    }
+                };
+                Some(match reset {
+                    true => Some("-1".to_string()),
+                    false => written,
+                })
+            }
+            _ => None,
+        }
+    });
+    if let Some(written) = written {
+        subject.own.addons.set_addon_column(subject.session, guid, column.name, written, subject.now);
+    }
 }
 
 /// The Creature section: a summary of what the creature is.
@@ -684,6 +904,19 @@ pub(in crate::ui) fn windows(
         {
             subject.own.services.toggle(Kind::Trainer);
         }
+        // Equipment is a window over the world that follows the selection,
+        // like the ones beside it. See `crate::ui::subjects::addons`.
+        if ui
+            .selectable_label(subject.own.addons.equipment_open, "Equipment")
+            .on_hover_text(
+                "The weapons the creature holds: the creature_equip_template set its \
+                 template's equipment_id names, or the one a selected spawn's addon row names. \
+                 Each row is three items and a probability, and a spawn rolls one row.",
+            )
+            .clicked()
+        {
+            subject.own.addons.equipment_open = !subject.own.addons.equipment_open;
+        }
         if spawn.is_some() {
             super::spawn::open_in_templates(ui, subject, entry);
         }
@@ -800,9 +1033,16 @@ fn field(
     };
     let written = server_field(ui, &mut resolver, &field, |hook, ui, resolver, field, showing| {
         match (hook, field.kind) {
-            (Hook::Cell, Kind::Ref(dbc)) if DisplayTable::of(dbc).is_some() => {
-                Some(display_cell(ui, creatures, portraits, resolver.asks, assets, showing, field.target()))
-            }
+            (Hook::Cell, Kind::Ref(dbc)) if DisplayTable::of(dbc).is_some() => Some(display_cell(
+                ui,
+                creatures,
+                portraits,
+                resolver.asks,
+                assets,
+                showing,
+                field.target(),
+                |_| {},
+            )),
             (Hook::After, _) if field.table == creature::TEMPLATE && field.column.name == "gossip_menu_id" => {
                 let npc_flags = resolver
                     .session
@@ -829,11 +1069,13 @@ fn field(
 }
 
 /// A display id: the number, a picture of the model it names, the button
-/// that opens the picker, and the model's path.
+/// that opens the picker, whatever `before_path` draws, and the model's path.
+/// The path comes last because it is truncated to the room that is left.
 ///
 /// The number stays editable beside the picture, because a user often has the
 /// id already, for example from a wiki. The picture is the same rendered
 /// portrait the Place picker's rows draw.
+#[allow(clippy::too_many_arguments)]
 fn display_cell(
     ui: &mut egui::Ui,
     creatures: &mut Creatures,
@@ -842,6 +1084,7 @@ fn display_cell(
     assets: &GameAssets,
     showing: &str,
     target: ColumnTarget,
+    before_path: impl FnOnce(&mut egui::Ui),
 ) -> Option<String> {
     let written = number_cell(ui, Kind::Unsigned, showing);
     let id: u32 = showing.trim().parse().unwrap_or(0);
@@ -864,6 +1107,7 @@ fn display_cell(
     ) {
         creatures.display_pick = Some(DisplayPick::open(DisplayTable::Creature, target, id));
     }
+    before_path(ui);
     match worn {
         Some(worn) => reference::display_link(
             ui,

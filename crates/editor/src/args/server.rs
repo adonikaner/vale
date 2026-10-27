@@ -68,8 +68,9 @@ pub(crate) struct Server {
     /// `--apply <subject>` and `--revert <subject>`: the Server panel's Apply
     /// and Put back on one row subject, from the command line, named by
     /// `crate::server::subject::RowSubject::word` (`creatures`, `gameobjects`,
-    /// `items`, `quests`, `loot`, `services`, `behaviour`, `conditions`,
-    /// `gossip`, `maps`, `triggers`, `graveyards`). Each may be given more
+    /// `items`, `quests`, `loot`, `services`, `addons`, `formations`, `pools`,
+    /// `gameevents`, `behaviour`, `conditions`, `gossip`, `maps`, `triggers`,
+    /// `graveyards`). Each may be given more
     /// than once. `--apply-creatures` and `--revert-creatures`, and the same
     /// for the other six subjects that had flags of their own, are the same
     /// flags.
@@ -116,7 +117,7 @@ pub(super) const FLAGS: &[Flag] = &[
     }),
     Flag::new("--apply", One, |a, v| match first(v).and_then(Subject::named) {
         Some(subject) => a.server.apply_subjects.push(subject),
-        None => bevy::log::warn!("--apply needs a subject: creatures, gameobjects, items, quests, loot, services, behaviour, conditions, gossip, maps, triggers or graveyards"),
+        None => bevy::log::warn!("--apply needs a subject: creatures, gameobjects, items, quests, loot, services, addons, formations, pools, gameevents, behaviour, conditions, gossip, maps, triggers or graveyards"),
     }),
     // The seven subjects that had flags of their own before `--apply
     // <subject>` and `--revert <subject>` existed keep them.

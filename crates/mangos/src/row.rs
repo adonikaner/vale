@@ -63,7 +63,7 @@ impl Assignment {
     }
 }
 
-/// **What this project says should become of a row**: it is edited, it is
+/// What this project says should become of a row: it is edited, it is
 /// created, or it goes.
 ///
 /// One per row in an [`Edits`] store, beside its columns, and it decides the
@@ -110,7 +110,7 @@ impl Life {
 /// The values are SQL literals, as [`Assignment`]'s are, for the same reason:
 /// one escaping rule, applied once.
 ///
-/// **Ordered by number, not by text.** A plan runs its rows in the store's
+/// Ordered by number, not by text. A plan runs its rows in the store's
 /// order, and a text order puts `2000456` before `852`: a claim on one content
 /// patch of item 852 and a move of another would run the move first, which
 /// takes every patch with it and leaves the claim's `UPDATE` matching nothing.
@@ -175,8 +175,8 @@ impl Key {
 
     /// …and read back. `None` for anything that is not `column=value` pairs.
     ///
-    /// **Every key this crate writes is integers under plain column names, and
-    /// nothing else is read.** A key goes into a `WHERE` as it stands, and the
+    /// Every key this crate writes is integers under plain column names, and
+    /// nothing else is read. A key goes into a `WHERE` as it stands, and the
     /// text it comes from is a file beside the project that a person may edit:
     /// `entry=1 OR 1=1` would otherwise be a `DELETE` of the whole table.
     pub fn parse(text: &str) -> Option<Key> {
@@ -218,7 +218,7 @@ impl Key {
     }
 }
 
-/// **`UPDATE <table> SET … WHERE <key>`**, or `None` when nothing changed.
+/// `UPDATE <table> SET … WHERE <key>`, or `None` when nothing changed.
 pub fn update(table: &str, key: &Key, changes: &[Assignment]) -> Option<String> {
     if changes.is_empty() {
         return None;
@@ -232,7 +232,7 @@ pub fn update(table: &str, key: &Key, changes: &[Assignment]) -> Option<String> 
     ))
 }
 
-/// **The `UPDATE` a row whose id changes becomes**: the key columns that differ
+/// The `UPDATE` a row whose id changes becomes: the key columns that differ
 /// are set to where the project puts the row, the edited columns beside them,
 /// and the `WHERE` names where the database has it. See [`RowEdit::from`].
 pub(crate) fn update_moved(table: &str, from: &Key, to: &Key, changes: &[Assignment]) -> String {
@@ -246,7 +246,7 @@ pub(crate) fn update_moved(table: &str, from: &Key, to: &Key, changes: &[Assignm
     )
 }
 
-/// …and **the statement that puts such a row back**: the key columns returned
+/// …and the statement that puts such a row back: the key columns returned
 /// to where the database had them and the edited columns to what it held, with
 /// a `WHERE` naming where the move leaves the row. An undo naming the old key
 /// would match nothing once the move has run.
@@ -291,7 +291,7 @@ fn key_sets(from: &Key, to: &Key) -> Vec<String> {
         .collect()
 }
 
-/// **One reference to a row's id held by another table**: the table, and the
+/// One reference to a row's id held by another table: the table, and the
 /// column of it that names the id.
 ///
 /// vmangos declares no foreign keys, so nothing follows a row whose id changes.
@@ -303,12 +303,12 @@ fn key_sets(from: &Key, to: &Key) -> Vec<String> {
 pub struct Reference {
     pub table: &'static str,
     pub column: &'static str,
-    /// **A further condition the row must meet for the column to be this kind
-    /// of id**, as SQL. A loot table's `item` is an item only while
+    /// A further condition the row must meet for the column to be this kind
+    /// of id, as SQL. A loot table's `item` is an item only while
     /// `mincountOrRef > 0`; below zero the row points at a reference template
     /// and `item` is a label.
     pub only: Option<&'static str>,
-    /// **Whether the column holds the id negated.** `PrevQuestId = -783` and
+    /// Whether the column holds the id negated. `PrevQuestId = -783` and
     /// `ReqCreatureOrGOId1 = -1234` name the quest and the game object by the
     /// negative of their ids, in the same column that names another kind of
     /// row by a positive one.
@@ -336,7 +336,7 @@ impl Reference {
         }
     }
 
-    /// **Whether a claim's own columns rule this reference out**: its
+    /// Whether a claim's own columns rule this reference out: its
     /// [`Self::only`] condition, evaluated against the values the claim sets.
     ///
     /// `false` when the claim does not set the condition's column, because the
@@ -364,7 +364,7 @@ impl Reference {
         }
     }
 
-    /// **The statement that makes this reference follow a move.** With the ids
+    /// The statement that makes this reference follow a move. With the ids
     /// exchanged it is its own undo, which holds only while nothing named the
     /// target id before the move: see [`Reference::count`], which an apply asks
     /// of every reference before it runs anything.
@@ -387,7 +387,7 @@ impl Reference {
         )
     }
 
-    /// …and the same count **leaving out the rows at `except`**: rows this
+    /// …and the same count leaving out the rows at `except`: rows this
     /// project writes itself, whose own undo puts the column back. See
     /// `crates/editor/src/server/reconcile.rs`, which is the one caller.
     pub fn count_except(&self, id: u64, except: &[Key]) -> String {
@@ -406,7 +406,7 @@ impl Reference {
         )
     }
 
-    /// **The rows naming an id through this reference, whole**, which is what
+    /// The rows naming an id through this reference, whole, which is what
     /// the undo of a removal that takes them is read from.
     pub fn select(&self, id: u64) -> String {
         format!(
@@ -416,7 +416,7 @@ impl Reference {
         )
     }
 
-    /// **The statement that removes those rows**, for a removal that takes them
+    /// The statement that removes those rows, for a removal that takes them
     /// with the row they name.
     pub fn delete(&self, id: u64) -> String {
         format!(
@@ -461,7 +461,7 @@ pub fn rows_where(table: &str, column: &str, id: u64) -> String {
     )
 }
 
-/// **Whether any row holds this key's id**, at any content patch.
+/// Whether any row holds this key's id, at any content patch.
 ///
 /// What an apply asks before it creates a row or moves one onto an id. The
 /// whole key is the wrong question for a table keyed by `(entry, patch)`: an
@@ -475,7 +475,7 @@ pub fn id_exists_query(table: &str, key: &Key) -> String {
     format!("SELECT 1 FROM {} WHERE {clause} LIMIT 1", crate::sql::name(table))
 }
 
-/// **Every statement moving a row's id comes to**, in the order they run.
+/// Every statement moving a row's id comes to, in the order they run.
 ///
 /// ```text
 /// UPDATE t SET entry = N, <edited columns> WHERE entry = O AND patch = P;
@@ -483,8 +483,8 @@ pub fn id_exists_query(table: &str, key: &Key) -> String {
 /// UPDATE <reference> SET <column> = N WHERE <column> = O;     one per reference
 /// ```
 ///
-/// **The second statement is why a move names the id column and not the whole
-/// key.** `item_template`, `quest_template` and `creature_template` are keyed
+/// The second statement is why a move names the id column and not the whole
+/// key. `item_template`, `quest_template` and `creature_template` are keyed
 /// by `(entry, patch)` and the server loads the highest patch at or below its
 /// own. Moving one version leaves the older ones at the old entry, where the
 /// server loads them: the row would be at both ids. For a table keyed by the id
@@ -515,7 +515,7 @@ pub fn move_statements(
     out
 }
 
-/// …and **every statement that puts such a row back**: [`move_statements`]
+/// …and every statement that puts such a row back: [`move_statements`]
 /// undone last to first. `None` when the row is not in the database.
 pub fn undo_move_statements(
     table: &str,
@@ -545,7 +545,7 @@ pub fn undo_move_statements(
     Some(out)
 }
 
-/// **`INSERT INTO <table> (…) VALUES (…)`**, or `None` when nothing is named.
+/// `INSERT INTO <table> (…) VALUES (…)`, or `None` when nothing is named.
 ///
 /// The key's own columns come first and then the changes, so a row created by
 /// this crate names its key in the statement rather than relying on a database
@@ -580,7 +580,7 @@ pub fn insert(table: &str, key: &Key, changes: &[Assignment]) -> Option<String> 
     ))
 }
 
-/// **`DELETE FROM <table> WHERE <key>`.**
+/// `DELETE FROM <table> WHERE <key>`.
 pub fn delete(table: &str, key: &Key) -> String {
     format!(
         "DELETE FROM {} WHERE {};",
@@ -589,13 +589,13 @@ pub fn delete(table: &str, key: &Key) -> String {
     )
 }
 
-/// **A row read out of the database, as the `INSERT` that puts it back.**
+/// A row read out of the database, as the `INSERT` that puts it back.
 ///
 /// What the undo of a removal is: every column the `SELECT` returned, named,
 /// with the same rule the undo writes a value by and a SQL `NULL` written as
-/// one. It needs no schema, which is the point — the five tables a removed
-/// creature spawn drags with it are restored this way without this crate
-/// knowing a column of any of them.
+/// one. It needs no schema, so the five tables a removed creature spawn
+/// takes with it are restored this way without this crate knowing a column
+/// of any of them.
 ///
 /// The columns are sorted, so the statement is the same text whichever order
 /// the driver handed the row back in and two runs produce the same file.
@@ -627,7 +627,7 @@ pub fn insert_from_row(
     ))
 }
 
-/// **The statement that puts a row back**, given what it holds now.
+/// The statement that puts a row back, given what it holds now.
 ///
 /// One `UPDATE` naming the same columns the edit names, with the values read
 /// out of the database before the edit ran. `None` when the row is not there —
@@ -664,8 +664,8 @@ pub fn undo(
 
 /// A value read out of the database, as a literal to write back.
 ///
-/// **Unquoted only when it is an integer written the one way MySQL writes
-/// one**, and quoted otherwise.
+/// Unquoted only when it is an integer written the one way MySQL writes
+/// one, and quoted otherwise.
 ///
 /// The value is read back without its column's type, so the literal has to
 /// mean the same text in a text column as in a numeric one. A canonical
@@ -701,7 +701,7 @@ fn return_unchanged(change: &Assignment) -> String {
     change.value.clone()
 }
 
-/// **One row's whole edit**: what is to become of it, and the columns it sets.
+/// One row's whole edit: what is to become of it, and the columns it sets.
 ///
 /// A [`Life::Update`] row is the ordinary case and carries only the columns
 /// that changed. A [`Life::Insert`] row carries every column the table has,
@@ -712,8 +712,8 @@ pub struct RowEdit {
     pub life: Life,
     /// Column to SQL literal, in name order.
     pub columns: BTreeMap<String, String>,
-    /// **Where the row is in the database, when that is not the key this edit
-    /// is stored under** — a row whose id the project changes.
+    /// Where the row is in the database, when that is not the key this edit
+    /// is stored under — a row whose id the project changes.
     ///
     /// The store's key is the row's identity *as the project says it*: the new
     /// id. This is where the database had it before the project touched it, and
@@ -731,7 +731,7 @@ impl RowEdit {
     /// Whether this row edit says nothing at all, which is when the store drops
     /// it.
     ///
-    /// **A removal is never empty**, however few columns it has: the claim is
+    /// A removal is never empty, however few columns it has: the claim is
     /// the [`Life`], and a store that asked only about the columns would forget
     /// one on the frame it was made.
     pub fn is_empty(&self) -> bool {
@@ -743,7 +743,7 @@ impl RowEdit {
     /// vmangos' own and none holds a hyphen.
     const FROM: &'static str = "moved-from";
 
-    /// **This row edit as one line**, for an undo stack to carry it whole.
+    /// This row edit as one line, for an undo stack to carry it whole.
     ///
     /// Its life, then a `column=value` per tab. Tab-separated because a value
     /// is a SQL literal, which may hold a semicolon, a comma or a space and
@@ -818,7 +818,7 @@ pub fn whole<'a>(
     row
 }
 
-/// **Every row edit a project carries**, in the order they will be written.
+/// Every row edit a project carries, in the order they will be written.
 ///
 /// Keyed by table and then by key, so two edits to the same row become one
 /// statement and an edit typed twice does not appear twice.
@@ -860,7 +860,7 @@ impl Edits {
         }
     }
 
-    /// **Say what is to become of the row**: it is edited, created or removed.
+    /// Say what is to become of the row: it is edited, created or removed.
     ///
     /// Setting [`Life::Update`] on a row with no columns removes it from the
     /// store, which is how a removal is taken back.
@@ -873,7 +873,7 @@ impl Edits {
         }
     }
 
-    /// **Re-key a row's claim**, which is what changing a row's id is to the
+    /// Re-key a row's claim, which is what changing a row's id is to the
     /// store — see [`RowEdit::from`].
     ///
     /// `at_base` is where the database holds the row when the project has no
@@ -936,7 +936,7 @@ impl Edits {
         self.rows.get(&(table.to_string(), key.clone()))
     }
 
-    /// **One row's whole edit as a line** — what an undo entry for a creation
+    /// One row's whole edit as a line — what an undo entry for a creation
     /// or a removal carries. See [`RowEdit::to_line`].
     ///
     /// `None` is "this project says nothing about the row", which is a
@@ -1010,7 +1010,7 @@ impl Edits {
         self.rows.contains_key(&(table.to_string(), key.clone()))
     }
 
-    /// **Give up every row in the tables one subject owns**, and answer how
+    /// Give up every row in the tables one subject owns, and answer how
     /// many went.
     ///
     /// The store holds every subject's rows in one map — a creature's and an
@@ -1050,14 +1050,37 @@ impl Edits {
             .map(|((table, key), row)| (table.as_str(), key, row))
     }
 
+    /// Every edited row of one table, in key order. A range of the map
+    /// rather than a pass over every row, so a lookup made once per spawn
+    /// does not walk the whole project. An empty key orders before every
+    /// other key, which is where the range starts.
+    pub fn table<'a>(&'a self, table: &'a str) -> impl Iterator<Item = (&'a Key, &'a RowEdit)> + 'a {
+        self.rows
+            .range((table.to_string(), Key(Vec::new()))..)
+            .take_while(move |((named, _), _)| named == table)
+            .map(|((_, key), row)| (key, row))
+    }
+
+    /// The edits to `tables` alone: a copy for work done away from the
+    /// store, such as on a task, that reads a few tables.
+    pub fn only(&self, tables: &[&str]) -> Edits {
+        let mut out = Edits::default();
+        for table in tables {
+            for (key, row) in self.table(table) {
+                out.rows.insert((table.to_string(), key.clone()), row.clone());
+            }
+        }
+        out
+    }
+
     /// The file this is kept in, one edit a line.
     ///
     /// Tab-separated, with a header naming the fields, because the whole value
     /// of keeping this as text is that it can be read and corrected without the
     /// editor.
     ///
-    /// **A row this project creates or removes carries one extra line of three
-    /// fields** — its table, its key and the word — written before its columns.
+    /// A row this project creates or removes carries one extra line of three
+    /// fields — its table, its key and the word — written before its columns.
     /// A row it merely edits carries none, so a file written before [`Life`]
     /// existed reads back as exactly what it was.
     pub fn to_text(&self, project: &str) -> String {
@@ -1094,7 +1117,7 @@ impl Edits {
         Edits::read(text).0
     }
 
-    /// [`Self::from_text`], with **every line it refused**, for a host to report.
+    /// [`Self::from_text`], with every line it refused, for a host to report.
     ///
     /// A line is refused when its key is not integers under plain column names
     /// ([`Key::parse`]) or its value is not one SQL literal
@@ -1153,8 +1176,8 @@ impl Edits {
         (out, refused)
     }
 
-    /// **A store written before [`RowEdit::from`] existed held a move as a
-    /// column**: `entry = <new>` on the row at the old key. Read as what it
+    /// A store written before [`RowEdit::from`] existed held a move as a
+    /// column: `entry = <new>` on the row at the old key. Read as what it
     /// meant — the claim re-keyed to the new id with the old key as its
     /// origin — so the project keeps its move and every writer sees one form.
     ///
@@ -1208,7 +1231,7 @@ pub(crate) const EDITED_OR_CREATED: &[Life] = &[Life::Update, Life::Insert];
 /// …and when it may be edited, created and removed.
 pub(crate) const ANY_LIFE: &[Life] = &[Life::Update, Life::Insert, Life::Delete];
 
-/// **One of the server's tables as this crate writes it**: its name, its
+/// One of the server's tables as this crate writes it: its name, its
 /// columns, the columns elsewhere that name its rows, the lives a row of it
 /// may carry, and what a removal takes with it.
 ///
@@ -1250,7 +1273,7 @@ impl Table {
         self.lives.contains(&life)
     }
 
-    /// **The statements a save emits for one row this project claims.**
+    /// The statements a save emits for one row this project claims.
     ///
     /// One `UPDATE` for a row it edits. A `DELETE` and an `INSERT` for a row
     /// it creates: the pair `Creature::SaveToDB` writes, so that applying
@@ -1306,7 +1329,7 @@ pub fn table_named(tables: &'static [Table], name: &str) -> Option<&'static Tabl
     tables.iter().find(|table| table.name == name)
 }
 
-/// **One row of a store, passed by its table's rules**: the key the statement
+/// One row of a store, passed by its table's rules: the key the statement
 /// names, where the database has the row, and the columns it sets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Planned {
@@ -1318,7 +1341,7 @@ pub struct Planned {
     pub changes: Vec<Assignment>,
 }
 
-/// **What one row of a store comes to under its table's rules**, and every
+/// What one row of a store comes to under its table's rules, and every
 /// refusal on the way, each as a sentence.
 ///
 /// The rules, in the order they are applied:
@@ -1395,8 +1418,8 @@ pub fn plan(table: &Table, key: &Key, row: &RowEdit) -> (Option<Planned>, Vec<St
 // Numbering a template
 // ---------------------------------------------------------------------------
 
-/// **How the rows of a template table keyed by `(entry, patch)` are
-/// numbered**: `creature_template`, `gameobject_template`, `item_template`,
+/// How the rows of a template table keyed by `(entry, patch)` are
+/// numbered: `creature_template`, `gameobject_template`, `item_template`,
 /// `quest_template`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Numbering {
@@ -1416,7 +1439,7 @@ impl Numbering {
         Key::two(("entry", u64::from(entry)), ("patch", u64::from(patch)))
     }
 
-    /// **The entry a new row gets**: the highest of the reserved base, one
+    /// The entry a new row gets: the highest of the reserved base, one
     /// past the highest the table holds at any patch (`in_database`), and one
     /// past the highest this project already creates.
     ///
@@ -1449,7 +1472,7 @@ pub struct Numbered {
     pub life: Life,
 }
 
-/// **Whether a template row may move to another entry**, as the key its claim
+/// Whether a template row may move to another entry, as the key its claim
 /// is under and the key it goes to.
 ///
 /// `Ok(None)` is a move to the entry the row already has, which is what a form
@@ -1495,12 +1518,35 @@ pub fn plan_rekey(
 mod tests {
     use super::*;
 
-    /// **A discard is about one subject's tables and never about the store.**
+    /// One table's rows are its own and no other's, including a table whose
+    /// name starts with this one's, and a copy of a few tables holds those
+    /// tables' rows and nothing else.
+    #[test]
+    fn one_tables_rows_are_found_by_range() {
+        let mut edits = Edits::default();
+        edits.set("creature", &Key::one("guid", 12), "position_z", Some("1".into()));
+        edits.set("creature", &Key::one("guid", 7), "position_z", Some("2".into()));
+        edits.set("creature_addon", &Key::one("guid", 7), "mount", Some("0".into()));
+        edits.set("conditions", &Key::one("condition_entry", 3), "type", Some("1".into()));
+        edits.set_life("game_event_gameobject", &Key::one("guid", 5), Life::Insert);
+
+        let guids: Vec<&Key> = edits.table("creature").map(|(key, _)| key).collect();
+        assert_eq!(guids, [&Key::one("guid", 7), &Key::one("guid", 12)]);
+        assert_eq!(edits.table("creature_addon").count(), 1);
+        assert_eq!(edits.table("creature_template").count(), 0);
+
+        let only = edits.only(&["creature_addon", "game_event_gameobject"]);
+        assert_eq!(only.len(), 2);
+        assert_eq!(only.life("game_event_gameobject", &Key::one("guid", 5)), Life::Insert);
+        assert!(only.row("creature", &Key::one("guid", 7)).is_none());
+    }
+
+    /// A discard is about one subject's tables and never about the store.
     ///
-    /// Every subject's rows are in one map, keyed by table. The creature
-    /// panel's Discard emptied the whole of it for a round, so giving up a
-    /// creature edit threw away every item edit beside it — and counted them as
-    /// creatures in the sentence it then printed.
+    /// Every subject's rows are in one map, keyed by table. A Discard that
+    /// empties the whole map throws away every other subject's edits with the
+    /// creature's, and counts them as creatures in its status line; the
+    /// creature panel's Discard once did.
     #[test]
     fn a_discard_leaves_the_other_subjects_rows() {
         let mut edits = Edits::default();
@@ -1531,7 +1577,7 @@ mod tests {
         assert_eq!(Key::parse("entry=3296;patch=0"), Some(key));
     }
 
-    /// **The key round-trips**, which is what stops a save from editing every
+    /// The key round-trips, which is what stops a save from editing every
     /// patch of a creature instead of the one the server loaded.
     #[test]
     fn a_key_reads_back_as_itself() {
@@ -1542,7 +1588,7 @@ mod tests {
         assert_eq!(Key::parse("nokey"), None);
     }
 
-    /// **A key is integers under plain column names, and nothing else reads**:
+    /// A key is integers under plain column names, and nothing else reads:
     /// the value goes into a `WHERE` as it stands.
     #[test]
     fn a_key_that_is_not_integers_is_not_a_key() {
@@ -1561,7 +1607,7 @@ mod tests {
         assert_eq!(Key::parse("entry=-5"), Some(Key(vec![("entry".into(), "-5".into())])));
     }
 
-    /// **Keys order by number.** A text order runs item 2000456 before item
+    /// Keys order by number. A text order runs item 2000456 before item
     /// 852, which puts a move of one content patch ahead of an edit of another.
     #[test]
     fn keys_order_by_number() {
@@ -1581,7 +1627,7 @@ mod tests {
         );
     }
 
-    /// **A value read out of the database is put back as the same text**,
+    /// A value read out of the database is put back as the same text,
     /// whatever the column holds.
     #[test]
     fn only_a_canonical_integer_goes_back_unquoted() {
@@ -1606,8 +1652,8 @@ mod tests {
         );
     }
 
-    /// **A store line whose key or value is not a literal is refused and
-    /// named**, and the lines around it are still read.
+    /// A store line whose key or value is not a literal is refused and
+    /// named, and the lines around it are still read.
     #[test]
     fn a_store_line_that_is_not_a_literal_is_refused() {
         let text = "item_template\tentry=852;patch=10\tname\t'Axe'\n\
@@ -1664,7 +1710,7 @@ mod tests {
         assert!(undo("creature_template", &Key::one("entry", 1), &changes, None).is_none());
     }
 
-    /// **The store round-trips through its file**, which is what makes an edit
+    /// The store round-trips through its file, which is what makes an edit
     /// survive closing the editor.
     #[test]
     fn the_edits_file_reads_back_what_it_wrote() {
@@ -1680,7 +1726,7 @@ mod tests {
         assert_eq!(back.get("creature_template", &key, "name"), Some("'Kobold Vermin'"));
     }
 
-    /// **A value with a tab in it cannot be written**, because the file is
+    /// A value with a tab in it cannot be written, because the file is
     /// tab-separated — and it cannot occur, because every text value is escaped
     /// by `sql::text` first and that turns a tab into `\t`.
     #[test]
@@ -1710,7 +1756,7 @@ mod tests {
         assert!(!edits.touches("creature", &key));
     }
 
-    /// **A removal carries no columns and must survive anyway.**
+    /// A removal carries no columns and must survive anyway.
     ///
     /// The store drops a row with nothing left in it, which is how an edit is
     /// taken back — and a `DELETE` has nothing in it by construction. Without
@@ -1730,7 +1776,7 @@ mod tests {
     }
 
     /// A row this project creates keeps its columns, and clearing the last one
-    /// does **not** remove it — the claim is that the row should exist.
+    /// does not remove it — the claim is that the row should exist.
     #[test]
     fn clearing_a_created_rows_last_column_leaves_the_row() {
         let key = Key::one("guid", 10_000_001);
@@ -1742,7 +1788,7 @@ mod tests {
         assert!(!edits.is_empty());
     }
 
-    /// **The life round-trips through the file**, and a file written before it
+    /// The life round-trips through the file, and a file written before it
     /// existed reads back as exactly what it was.
     #[test]
     fn the_edits_file_carries_what_becomes_of_a_row() {
@@ -1763,7 +1809,7 @@ mod tests {
         assert_eq!(Edits::from_text(&text), edits);
     }
 
-    /// **A row's whole edit goes on the undo stack as one line**, which is what
+    /// A row's whole edit goes on the undo stack as one line, which is what
     /// makes creating and removing one undoable at all: neither is a column.
     #[test]
     fn a_row_edit_round_trips_through_its_line() {
@@ -1800,7 +1846,7 @@ mod tests {
         );
     }
 
-    /// **A row read out of the database is the `INSERT` that puts it back**,
+    /// A row read out of the database is the `INSERT` that puts it back,
     /// which is the undo of a removal. Its columns are sorted, so two runs
     /// write the same file.
     #[test]
@@ -1830,7 +1876,7 @@ mod tests {
         Key::two(("entry", entry), ("patch", 10))
     }
 
-    /// **A row whose id changes is one claim**, stored where the project puts
+    /// A row whose id changes is one claim, stored where the project puts
     /// it and naming where the database has it. A second move keeps the first
     /// origin, a column edit lands on the same claim, and the file reads back.
     #[test]
@@ -1879,7 +1925,7 @@ mod tests {
         assert_eq!(row.from, None);
     }
 
-    /// **A store written before origins existed held a move as a key column.**
+    /// A store written before origins existed held a move as a key column.
     /// It reads back as the move it meant.
     #[test]
     fn an_old_move_column_is_read_as_a_move() {

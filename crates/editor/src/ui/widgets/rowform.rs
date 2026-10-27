@@ -284,6 +284,12 @@ pub(crate) fn section<R>(
 /// The name cell is [`FORM_LABEL`] wide, or 45% of the form when the form has
 /// less room than that; [`page_spacing`] decides which, once. The name is
 /// centred in it and truncated rather than wrapped. `about` is the hover text.
+///
+/// Text in the row is truncated at the form's right edge, with the whole of
+/// it on hover. A horizontal layout otherwise extends a label past the edge,
+/// and egui grows every `Ui` around the row to hold it: in a docked panel at
+/// its maximum width the panel is then drawn wider than the screen allows,
+/// and its resize line is left inside it, offset by the overflow.
 pub(crate) fn page_row<R>(
     ui: &mut egui::Ui,
     name: &str,
@@ -292,6 +298,7 @@ pub(crate) fn page_row<R>(
     contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
     ui.horizontal(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         let width = ui
             .data(|data| data.get_temp::<f32>(label_width_id()))
             .unwrap_or_else(|| FORM_LABEL.min(ui.available_width() * 0.45));

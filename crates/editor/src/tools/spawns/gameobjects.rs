@@ -613,6 +613,7 @@ impl SpawnSubject for GameObjectSubject {
     const DISPLAY_COLUMN: &'static str = "displayId";
     const DISPLAY_TABLE: crate::subjects::displays::Table = crate::subjects::displays::Table::Object;
     const HOLDER: crate::subjects::quests::Holder = crate::subjects::quests::Holder::Object;
+    const KIND: super::spawn::SpawnKind = super::spawn::SpawnKind::GameObject;
     // Half the creature tool's: a vein or a chest is knee high.
     const BODY: f32 = 1.0;
     const HANDLE_PIXELS: f32 = 16.0;

@@ -29,6 +29,9 @@
 //! services.rs   the Vendor and Trainer windows of a selected creature: its
 //!               own list and its template's, each row drawn as the server
 //!               reads it, with the reasons it would skip one
+//! addons.rs     the Equipment window of a selected creature: the set it
+//!               holds, one row per roll of three items, with the reasons
+//!               the server would empty one
 //! gossip.rs     the gossip window: a creature's menu, what it says and the
 //!               options it offers, each leading to the next menu
 //! conditions.rs the condition window: one row of `conditions`, its values
@@ -39,15 +42,31 @@
 //! windows.rs    the windows that follow a creature's or a game object's
 //!               template, opened from its tool or its workspace: quests,
 //!               loot, behaviour, vendor, trainer, gossip and conditions
+//! formations.rs the creature inspector's Formation and Links sections: the
+//!               formation the selected spawn is in and the spawns linked to
+//!               it, with each row's columns
+//! pools.rs      the Pool section of both spawn inspectors and the Pool
+//!               window: the pool a spawn is kept in, and one pool whole
+//! game_events.rs the Game Events section of both spawn inspectors and the
+//!               Game Event window: the events a spawn answers, a creature's
+//!               changes during them, and one event's row
+//! keyed.rs      what the four spawn-data sections share: the selection as
+//!               spawns that stand somewhere, and a keyed row drawn through
+//!               the form
 //! ```
 
+pub(crate) mod addons;
 pub(crate) mod behaviour;
 pub(crate) mod conditions;
 pub(crate) mod displays;
+pub(crate) mod formations;
+pub(crate) mod game_events;
 pub(crate) mod gossip;
 pub(crate) mod items;
+pub(crate) mod keyed;
 pub(crate) mod listing;
 pub(crate) mod loot;
+pub(crate) mod pools;
 pub(crate) mod quests;
 pub(crate) mod services;
 pub(crate) mod templates;

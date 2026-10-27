@@ -34,7 +34,10 @@
 //! Nothing is drawn during a playtest. The server spawns the real ones then,
 //! and a preview in the same place would be a second copy of each.
 
-use super::{Drag, MapRead, SpawnRow, SpawnSubject, SpawnTool, Spawned, Template, TemplateRow, MATCHES};
+use super::{
+    Drag, MapRead, OtherSpawns, Role, SpawnHover, SpawnRow, SpawnSubject, SpawnTool, Spawned, Tag, TagsFor, Template,
+    TemplateRow, MATCHES,
+};
 use crate::marks::{Look, Marks};
 use crate::subjects::listing::Listed;
 use crate::session::EditSession;
@@ -85,6 +88,17 @@ const REMOVED: Color = Color::srgb(0.95, 0.30, 0.30);
 /// primary's gold, paler.
 const MEMBER: Color = Color::srgb(0.95, 0.78, 0.50);
 
+/// The marker colour of a spawn that exists only while an event is on.
+pub(crate) const EVENT_ONLY: Color = Color::srgb(0.72, 0.52, 1.0);
+
+/// The marker colour of a spawn in a pool, and, drawn through walls, of a
+/// member of the pool the Pool window or workspace has open.
+pub(crate) const POOLED: Color = Color::srgb(1.0, 0.52, 0.78);
+
+/// How much of its colour a marker of the other spawn tool keeps; see
+/// [`super::OtherSpawns`].
+const OTHER_FADE: f32 = 0.45;
+
 /// Read the open map's spawns, on a task, when the map or the project's
 /// applied edits have changed.
 pub(super) fn read_the_map<S: SpawnSubject>(
@@ -93,6 +107,7 @@ pub(super) fn read_the_map<S: SpawnSubject>(
     settings: Res<crate::server::settings::ServerSettings>,
     chosen: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
 ) {
     // Collect a finished read whatever the tool is, so switching away and back
     // does not discard a read that has already run.
@@ -126,7 +141,7 @@ pub(super) fn read_the_map<S: SpawnSubject>(
         }
         return;
     }
-    if !state.editing() || *chosen != S::TOOL {
+    if !Role::of::<S>(*chosen, &others, state.editing()).draws() {
         return;
     }
     let Some(session) = session else { return };
@@ -187,10 +202,13 @@ pub(super) fn rebuild_created<S: SpawnSubject>(
     chosen: Res<Tool>,
     popout: Res<crate::popout::Popout>,
     state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
 ) {
     // Under the subject's workspace too, in either window: Discard there finds
-    // the created template in `templates`.
-    if !state.editing() || !(*chosen == S::TOOL || popout.shows(*chosen, S::WORKSPACE)) {
+    // the created template in `templates`. And under the other spawn tool
+    // while it draws these spawns.
+    let drawn = Role::of::<S>(*chosen, &others, state.editing()).draws();
+    if !state.editing() || !(drawn || popout.shows(*chosen, S::WORKSPACE)) {
         return;
     }
     let Some(session) = session else { return };
@@ -395,8 +413,9 @@ pub(super) fn collect_the_near<S: SpawnSubject>(
     focus: Res<WorldFocus>,
     chosen: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
 ) {
-    if !state.editing() || *chosen != S::TOOL || !focus.present {
+    if !Role::of::<S>(*chosen, &others, state.editing()).draws() || !focus.present {
         return;
     }
     let tile = vale_assets::tile_for_position(focus.position.x, focus.position.y);
@@ -423,11 +442,113 @@ pub(crate) fn lay_the_edits<S: SpawnSubject>(
     session: Option<Res<EditSession>>,
     chosen: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
 ) {
-    if !state.editing() || *chosen != S::TOOL {
+    if !Role::of::<S>(*chosen, &others, state.editing()).draws() {
         return;
     }
     tool.lay_edits(session.as_deref());
+}
+
+/// Work out each near spawn's [`Tag`] when anything it depends on has
+/// changed: the near list, the store, the view bar's event filter, a pool or
+/// event read landing, or the pool the Pool window has open. A spawn the
+/// filter hides is left out of everything drawn and picked; see
+/// [`SpawnTool::near_drawn`].
+///
+/// The tags are worked out on a task, and the last ones are drawn until it
+/// lands. Each tag looks up the spawn's event and pool rows with the
+/// project's edits over them; near a fair that is a few hundred spawns with
+/// event rows, and done on the main thread it held the viewport for seconds
+/// at each change of the filter. The task is given what it reads: the two
+/// reads, shared rather than copied, and a copy of the store's rows for the
+/// member tables ([`vale_mangos::row::Edits::only`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn tag_the_near<S: SpawnSubject>(
+    mut tool: ResMut<SpawnTool<S>>,
+    session: Option<Res<EditSession>>,
+    chosen: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
+    view: Res<crate::subjects::game_events::EventView>,
+    events: Res<crate::subjects::game_events::GameEvents>,
+    pools: Res<crate::subjects::pools::Pools>,
+) {
+    use vale_mangos::pool::Of;
+    if !Role::of::<S>(*chosen, &others, state.editing()).draws() {
+        return;
+    }
+    let Some(session) = session else { return };
+    let key = TagsFor {
+        near: tool.near_generation(),
+        revision: Some(session.rows.revision),
+        phase: view.phase,
+        events: events.generation,
+        pools: pools.generation,
+        open_pool: pools.open,
+    };
+    tool.land_tags();
+    if !tool.wants_tags(&key) {
+        return;
+    }
+    let kind = S::KIND;
+    let pool_kind = match kind {
+        super::SpawnKind::Creature => Of::Creature,
+        super::SpawnKind::GameObject => Of::GameObject,
+    };
+    let mut tables = vec![crate::subjects::game_events::member_table(kind)];
+    tables.extend(Of::ALL.iter().map(|of| of.table()));
+    let edits = session.rows.edits.only(&tables);
+    let (events, pools, phase, open) = (events.shared(), pools.shared(), view.phase, pools.open);
+    tool.retag(key, move |guid, entry| {
+        let answers = events.as_ref().map(|held| held.events_of(kind, guid, &edits)).unwrap_or_default();
+        let pool = pools.as_ref().and_then(|held| held.pool_of_spawn(pool_kind, guid, entry, &edits));
+        Tag {
+            hidden: !phase.shows(&answers),
+            event_only: answers.iter().any(|event| *event > 0),
+            pooled: pool.is_some(),
+            in_open_pool: pool.is_some() && pool == open,
+        }
+    });
+}
+
+/// Carry out a Go To: open the spawn's map when it stands on another, wait
+/// for that map's spawns to be read, then select the spawn and put the
+/// camera over it. See [`super::GoTo`].
+pub(crate) fn go_to<S: SpawnSubject>(
+    mut tool: ResMut<SpawnTool<S>>,
+    mut session: Option<ResMut<EditSession>>,
+    mut camera: ResMut<crate::camera::EditorCamera>,
+    mut fly: MessageWriter<crate::camera::FlyTo>,
+    chosen: Res<Tool>,
+) {
+    let Some(go) = tool.go_to else { return };
+    if *chosen != S::TOOL {
+        return;
+    }
+    let Some(session) = session.as_mut() else { return };
+    if let Some((map, at)) = go.map.filter(|(map, _)| *map != session.map_id) {
+        let Some((id, name)) = session.maps.iter().find(|(id, _)| *id == map).cloned() else {
+            session.status = format!("map {map} is not in Map.dbc, so {} spawn {} cannot be shown", S::WORDS.noun, go.guid);
+            tool.go_to = None;
+            return;
+        };
+        session.switch_map(name, id, &mut camera);
+        camera.target = at;
+        camera.wants_the_ground = false;
+        return;
+    }
+    if !tool.read_for(session.map_id, session.database_writes) {
+        return;
+    }
+    tool.go_to = None;
+    match tool.edited(go.guid, Some(&session.rows.edits)) {
+        Some(spawn) => {
+            tool.select_only(Some(go.guid));
+            fly.write(crate::camera::FlyTo::at(spawn.at()));
+        }
+        None => session.status = format!("no {} spawn {} on this map", S::WORDS.noun, go.guid),
+    }
 }
 
 /// What a right click landed on, for the right-click menu: the spawn the
@@ -462,24 +583,30 @@ pub(super) fn aim<S: SpawnSubject>(
     session: Option<Res<EditSession>>,
     chosen: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
+    mut hover: ResMut<SpawnHover>,
     viewport: Res<crate::ui::Viewport>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
-    if !state.editing() || *chosen != S::TOOL {
+    let role = Role::of::<S>(*chosen, &others, state.editing());
+    if !role.draws() {
         tool.hovered = None;
+        hover.set(S::KIND, None);
         return;
     }
     // A held drag keeps what it grabbed.
-    if tool.drag.is_some() {
+    if role == Role::Own && tool.drag.is_some() {
         return;
     }
     // Nothing is hovered while a template is on the cursor. A highlighted
     // marker under a ghost would indicate that a click selects it, and the
-    // click places instead.
+    // click places instead. The other tool's placer counts too: a click there
+    // places, and must not select a spawn of this kind.
     if tool.placing() || !crate::ui::over_the_world(&viewport, &wants, &windows) {
         tool.hovered = None;
+        hover.set(S::KIND, None);
         return;
     }
     let Some((origin, direction)) = crate::pick::ray(&windows, &camera) else {
@@ -516,6 +643,7 @@ pub(super) fn aim<S: SpawnSubject>(
         }
     }
     tool.hovered = best.map(|(_, guid)| guid);
+    hover.set(S::KIND, best);
 }
 
 /// Place the chosen template on the surface under the pointer.
@@ -604,11 +732,18 @@ pub(crate) fn press<S: SpawnSubject>(
     gizmo: Res<crate::tools::placements::gizmo::Gizmo>,
     keys: Res<ButtonInput<KeyCode>>,
     mut marquee: ResMut<crate::tools::placements::group::Marquee>,
+    hover: Res<SpawnHover>,
 ) {
     if !state.editing() || *chosen != S::TOOL {
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+    // A nearer spawn of the other kind, drawn while the other kind is shown,
+    // takes the press; see [`press_across`]. Only outside Place, where a
+    // click places whatever is under it.
+    if !tool.placing() && hover.any() && !hover.nearest_is(S::KIND) {
         return;
     }
     // A press on a gizmo handle is the gizmo's, which runs first; it must
@@ -666,6 +801,33 @@ pub(crate) fn press<S: SpawnSubject>(
         tool.also.iter().filter_map(|&guid| tool.edited(guid, edits).map(|spawn| (guid, spawn.at()))).collect();
     tool.group_from = group_from;
     tool.drag = Some(Drag { guid, from, pressed_at: pointer, grab: None, moving: false, collapse });
+}
+
+/// A press on a spawn of this kind while the other spawn tool is chosen and
+/// draws it ([`super::OtherSpawns`]): select it and switch to this tool, so
+/// its form opens. Only when it is nearer along the pointer's ray than any
+/// spawn of the chosen tool's kind; see [`SpawnHover`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn press_across<S: SpawnSubject>(
+    mut tool: ResMut<SpawnTool<S>>,
+    mut chosen: ResMut<Tool>,
+    mut rail: ResMut<crate::ui::shell::rail::Rail>,
+    state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
+    hover: Res<SpawnHover>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    gizmo: Res<crate::tools::placements::gizmo::Gizmo>,
+) {
+    if Role::of::<S>(*chosen, &others, state.editing()) != Role::Other {
+        return;
+    }
+    if !buttons.just_pressed(MouseButton::Left) || gizmo.holding() || !hover.nearest_is(S::KIND) {
+        return;
+    }
+    let Some(guid) = tool.hovered else { return };
+    tool.select_only(Some(guid));
+    *chosen = S::TOOL;
+    rail.follow(S::TOOL);
 }
 
 /// Select every drawn spawn whose marker is inside a finished rectangle.
@@ -839,9 +1001,12 @@ pub(super) fn draw<S: SpawnSubject>(
     tool: Res<SpawnTool<S>>,
     chosen: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    others: Res<OtherSpawns>,
 ) {
-    if !state.editing() || *chosen != S::TOOL {
-        return;
+    match Role::of::<S>(*chosen, &others, state.editing()) {
+        Role::Own => {}
+        Role::Other => return draw_for_the_other_tool(&mut marks, &tool),
+        Role::Idle => return,
     }
     // Sorted once and searched per marker — see
     // `crate::tools::placements::doodads::draw_marker`.
@@ -871,6 +1036,10 @@ pub(super) fn draw<S: SpawnSubject>(
         // The other colours all mean the project changes the spawn, and a
         // removal is a different claim. A creation has its own colour for the
         // same reason, at lower priority.
+        // A spawn the project does not change is coloured by what its other
+        // rows say: in the open pool, in any pool, or there only during an
+        // event.
+        let tag = tool.tag(spawn.guid());
         let colour = match (spawn.claim(), chosen, under, edited) {
             (Life::Delete, _, _, _) => REMOVED,
             (_, true, _, _) => Color::srgb(1.0, 0.82, 0.25),
@@ -879,11 +1048,15 @@ pub(super) fn draw<S: SpawnSubject>(
             _ if member => MEMBER,
             (Life::Insert, _, _, _) => NEW,
             (_, _, _, true) => Color::srgb(0.95, 0.55, 0.20),
+            _ if tag.pooled => POOLED,
+            _ if tag.event_only => EVENT_ONLY,
             _ => S::ORDINARY,
         };
         let at = vale_client::render::axes::to_bevy(spawn.at().to_array());
         let radius = marks.visible_radius(at, S::MARK_RADIUS);
-        let look = match chosen || member || under {
+        // A member of the open pool shows through walls, so the whole pool
+        // can be found from one place.
+        let look = match chosen || member || under || tag.in_open_pool {
             true => Look::Ghosted,
             false => Look::Solid,
         };
@@ -916,6 +1089,32 @@ pub(super) fn draw<S: SpawnSubject>(
             marks.arrow(from, nose, thickness, Color::srgb(1.0, 0.95, 0.6), Look::Ghosted);
             S::mark_chosen(&mut marks, spawn, at);
         }
+    }
+}
+
+/// The markers of this tool's spawns while the other spawn tool is chosen:
+/// every near spawn as a full marker, its colour faded, white while the
+/// pointer is over it, since a click selects it under this tool. No models,
+/// no selection and no group: the chosen tool owns those.
+fn draw_for_the_other_tool<S: SpawnSubject>(marks: &mut Marks, tool: &SpawnTool<S>) {
+    for rank in 0..tool.near.len() {
+        let Some(spawn) = tool.near_drawn(rank) else { continue };
+        let under = tool.hovered == Some(spawn.guid());
+        let tag = tool.tag(spawn.guid());
+        let colour = match (under, spawn.claim()) {
+            (true, _) => Color::WHITE,
+            (false, Life::Delete) => REMOVED.with_alpha(OTHER_FADE),
+            _ if tag.pooled => POOLED.with_alpha(OTHER_FADE),
+            _ if tag.event_only => EVENT_ONLY.with_alpha(OTHER_FADE),
+            _ => S::ORDINARY.with_alpha(OTHER_FADE),
+        };
+        let at = vale_client::render::axes::to_bevy(spawn.at().to_array());
+        let radius = marks.visible_radius(at, S::MARK_RADIUS);
+        let look = match under || tag.in_open_pool {
+            true => Look::Ghosted,
+            false => Look::Solid,
+        };
+        S::mark(marks, spawn, at, radius, false, colour, look);
     }
 }
 
@@ -983,7 +1182,7 @@ pub(super) fn stand_them_up<S: SpawnSubject>(
             // logged: `spawn_models` requires it in its query rather than as
             // an option, so an entity without one does not match, and it gets
             // no model, no fallback box and no warning line.
-            vale_client::world::entities::Sheath::seeded(0),
+            vale_client::world::entities::Sheath::seeded(S::sheath(spawn)),
             Preview::<S> { guid, look: S::look(spawn), of: PhantomData },
         ));
     }

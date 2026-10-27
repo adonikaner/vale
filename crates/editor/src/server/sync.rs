@@ -19,7 +19,7 @@
 //! the server.
 //!
 //! Apply and Put back on a row subject also act on the blocks below it. The
-//! twelve row subjects stand in the database in the panel's order, and an item
+//! thirteen row subjects stand in the database in the panel's order, and an item
 //! renumber moves loot rows and quest columns, so every applied subject below
 //! the one pressed is put back first and applied again after. See
 //! `crate::server::stack`. The client-table block is outside that order.
@@ -585,7 +585,7 @@ pub(crate) fn apply(half: Half, work: &mut Work<'_>) -> Result<String, String> {
             };
             Some((label, rows::apply_work(work.session, plan, work.server)?))
         }
-        // The twelve row subjects go through the stack, which puts back and
+        // The thirteen row subjects go through the stack, which puts back and
         // applies again every applied subject after this one. See
         // `crate::server::stack`.
         _ => match half.subject() {
@@ -722,6 +722,10 @@ mod tests {
             .chain(vale_mangos::quest::TABLES)
             .chain(vale_mangos::loot::TABLES)
             .chain(crate::server::services::TABLES)
+            .chain(crate::server::addons::TABLES)
+            .chain(crate::server::formations::TABLES)
+            .chain(crate::server::pools::TABLES)
+            .chain(crate::server::game_events::TABLES)
             .chain(crate::server::places::TABLES)
             .chain(crate::server::behaviour::ROW_TABLES)
             .map(|table| table.name)

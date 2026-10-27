@@ -29,6 +29,20 @@
 //!              `Faction.dbc` and `FactionTemplate.dbc`: an edited row of
 //!              either written at build 5875 on `skill_line_ability`'s terms,
 //!              both read at startup
+//! addon.rs     `creature_addon`, how one spawn stands: its display, mount,
+//!              equipment set, stand and sheath state, emote and auras over
+//!              the template's; and `creature_equip_template`, the weapon
+//!              rows a set holds, one rolled per spawn. Both read at startup
+//! formation.rs `creature_groups`, which spawns walk and fight together and
+//!              where each member stands from its leader, live on a reload;
+//!              and `creature_linking` and `creature_linking_template`, what
+//!              a slave does when its master acts, read at startup
+//! pool.rs      the six pool tables: a pool, its creature, game object and
+//!              pool members with their chances, and its members by entry.
+//!              Read at startup
+//! game_event.rs `game_event`, when an event is on, and the four tables of
+//!              what it changes: the spawns it adds or removes, the creatures
+//!              it changes, the quests it offers. Read at startup
 //! creature.rs  two tables with no client file behind them: `creature_template`,
 //!              what an NPC is, and `creature`, where one stands
 //! gameobject.rs the matching pair for game objects: `gameobject_template`,
@@ -139,6 +153,7 @@ pub(crate) const CLIENT_BUILD: u32 = client_build!();
 /// (`GridDefines.h`) refuses a coordinate outside it.
 pub(crate) const MAP_REACH: f32 = 64.0 * 533.333_3 / 2.0 - 0.5;
 
+pub mod addon;
 pub mod area;
 pub mod broadcast;
 pub mod condition;
@@ -148,6 +163,8 @@ pub mod creaturespells;
 pub mod datadir;
 pub mod eventai;
 pub mod faction;
+pub mod formation;
+pub mod game_event;
 pub mod gameobject;
 pub mod gossip;
 pub mod graveyard;
@@ -157,6 +174,7 @@ pub mod loot;
 pub mod map;
 pub mod migration;
 pub mod path;
+pub mod pool;
 pub mod quest;
 pub mod row;
 pub mod schema;

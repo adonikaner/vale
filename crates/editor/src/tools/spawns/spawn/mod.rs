@@ -8,9 +8,10 @@
 //!             whole rows a form draws) and its operations: create, duplicate,
 //!             remove, keep, and a template's create, copy, renumber and discard
 //! systems.rs  the systems over a SpawnTool: the map read, the created rows,
-//!             the picker's search, the near list, the pointer's aim, press,
-//!             rectangle and drag, the markers, the models and the ghost, and
-//!             the two whole rows a form reads
+//!             the picker's search, the near list and its tags, the pointer's
+//!             aim, press, rectangle and drag, a press on the other tool's
+//!             spawns, Go To, the markers, the models and the ghost, and the
+//!             two whole rows a form reads
 //! script.rs   the command-line flags that select, place, remove, create and
 //!             renumber, and the display picker flag
 //! keys.rs     the handles and keys for a selected spawn, which has a position
@@ -44,6 +45,26 @@
 //! What a game object's form adds (the `data` columns named by the row's type,
 //! a lock resolved through `Lock.dbc`) is in the subject's own view and its
 //! `Known`, and does not reach this module.
+//!
+//! ## Both kinds at once
+//!
+//! Pools and game events hold creatures and game objects in one list, so a
+//! few things here name a spawn of either kind:
+//!
+//! * [`SpawnKind`] and [`SpawnRef`] name a spawn by its table and guid, since
+//!   the two tables number their guids independently.
+//! * [`GoTo`] asks a tool to select a spawn and fly the camera to it, opening
+//!   its map first when it stands on another one.
+//! * [`Role`] says how a tool's systems run on a frame. A tool reads and draws
+//!   its spawns when it is chosen, and also when the other spawn tool is
+//!   chosen with [`OtherSpawns`] on. In the second case it draws faded markers
+//!   only, and a click on one selects the spawn and switches to its tool.
+//! * [`SpawnHover`] and the [`SpawnPointer`] sets run every tool's aim before
+//!   any tool's press, so a press goes to the nearer spawn of either kind.
+//! * [`Tag`] is what a spawn's pool and event rows say about drawing it:
+//!   hidden by the view bar's event filter, existing only during an event,
+//!   pooled, or in the pool that is open. The tags are built for the near list
+//!   only, and rebuilt when the filter, the events or the pools change.
 
 mod keys;
 mod script;
@@ -198,6 +219,8 @@ pub(crate) trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     const DISPLAY_TABLE: crate::subjects::displays::Table;
     /// Which holder a quest relation names this subject by.
     const HOLDER: crate::subjects::quests::Holder;
+    /// Which spawn table this subject's spawns are rows of.
+    const KIND: SpawnKind;
     /// How far up from the row's position the marker reaches, in yards.
     const BODY: f32;
     /// The pick radius of a marker, in pixels.
@@ -218,6 +241,11 @@ pub(crate) trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     /// The table names, from the two tables.
     const SPAWN: &'static str = Self::SPAWN_TABLE.name;
     const TEMPLATE: &'static str = Self::TEMPLATE_TABLE.name;
+    /// Other tables whose rows are keyed by the spawn's guid first and change
+    /// how the spawn is drawn, so an edit to one lays the project's edits
+    /// over that spawn again ([`SpawnTool::lay_edits`]). A creature's
+    /// `creature_addon` row decides what it holds.
+    const SPAWN_ROWS: &'static [&'static str] = &[];
 
     fn spawn_key(guid: u64) -> Key;
     fn template_key(entry: u32, patch: u32) -> Key {
@@ -281,6 +309,13 @@ pub(crate) trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     fn look(spawn: &Self::Spawn) -> Self::Look;
     /// A preview body for a spawn, given its guid.
     fn body(guid: u64, spawn: &Self::Spawn) -> vale_client::world::entity::WorldEntity;
+    /// The sheath state a preview body starts with: 0, stowed, unless the
+    /// subject says the spawn stands with a weapon in hand. It seeds the
+    /// client's `Sheath`, so a body spawned holding its weapon does not play
+    /// the draw on its first frame.
+    fn sheath(_spawn: &Self::Spawn) -> u8 {
+        0
+    }
     /// Where a preview body stands, in Bevy's axes.
     fn transform(spawn: &Self::Spawn) -> Transform;
     /// Whether the chosen template is put on the cursor at all.
@@ -549,6 +584,144 @@ impl<P> Default for Overlay<P> {
     }
 }
 
+/// Which of the two spawn tables a spawn is a row of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum SpawnKind {
+    Creature,
+    GameObject,
+}
+
+impl SpawnKind {
+    /// The rail tool that edits a spawn of this kind.
+    pub(crate) fn tool(self) -> Tool {
+        match self {
+            SpawnKind::Creature => Tool::Creatures,
+            SpawnKind::GameObject => Tool::GameObjects,
+        }
+    }
+
+    /// The other kind.
+    pub(crate) fn other(self) -> SpawnKind {
+        match self {
+            SpawnKind::Creature => SpawnKind::GameObject,
+            SpawnKind::GameObject => SpawnKind::Creature,
+        }
+    }
+
+    /// What a list calls a spawn of this kind.
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            SpawnKind::Creature => "creature",
+            SpawnKind::GameObject => "game object",
+        }
+    }
+
+    /// Where this kind's entry in a per-kind array is.
+    fn index(self) -> usize {
+        match self {
+            SpawnKind::Creature => 0,
+            SpawnKind::GameObject => 1,
+        }
+    }
+}
+
+/// One spawn named across both spawn tables. Creature guid 5000 and game
+/// object guid 5000 are two different rows, so a list that names spawns of
+/// both kinds names each by its kind and guid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct SpawnRef {
+    pub(crate) kind: SpawnKind,
+    pub(crate) guid: u64,
+}
+
+/// A spawn a tool is asked to select and put the camera over: Go To on a list
+/// that names spawns on any map. `map` is where the spawn stands, when it is
+/// known: a spawn on another map opens that map first, with the camera over
+/// the spawn, and is selected once the map's spawns are read.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct GoTo {
+    pub(crate) guid: u64,
+    pub(crate) map: Option<(u32, Vec3)>,
+}
+
+/// What a spawn's other rows say about it, for drawing it: whether the open
+/// event filter hides it, and the marks it is drawn with. See
+/// [`crate::subjects::game_events::Phase`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Tag {
+    /// The event filter leaves it out of the world.
+    pub(crate) hidden: bool,
+    /// It exists only while an event is on.
+    pub(crate) event_only: bool,
+    /// It is in a pool, by its guid or by its entry.
+    pub(crate) pooled: bool,
+    /// It is in the pool the Pool window or workspace has open.
+    pub(crate) in_open_pool: bool,
+}
+
+/// Whether each spawn tool draws the other tool's spawns while it is the one
+/// chosen: dimmed markers that select the spawn under the other tool on a
+/// click. One switch for both tools, set on either inspector.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct OtherSpawns {
+    pub(crate) shown: bool,
+}
+
+/// The spawn under the pointer for each kind this frame, with its distance
+/// along the pointer's ray, so a press goes to the nearer of a creature and a
+/// game object whichever tool is chosen. Written by each tool's
+/// [`systems::aim`], read by the presses.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct SpawnHover {
+    under: [Option<(f32, u64)>; 2],
+}
+
+impl SpawnHover {
+    pub(crate) fn set(&mut self, kind: SpawnKind, under: Option<(f32, u64)>) {
+        self.under[kind.index()] = under;
+    }
+
+    /// Whether a spawn of `kind` is under the pointer and nearer than any of
+    /// the other kind.
+    pub(crate) fn nearest_is(&self, kind: SpawnKind) -> bool {
+        match (self.under[kind.index()], self.under[kind.other().index()]) {
+            (Some((mine, _)), Some((theirs, _))) => mine <= theirs,
+            (Some(_), None) => true,
+            (None, _) => false,
+        }
+    }
+
+    /// Whether anything of either kind is under the pointer.
+    pub(crate) fn any(&self) -> bool {
+        self.under.iter().any(Option::is_some)
+    }
+}
+
+/// How a spawn tool's systems run this frame: its own tool is chosen; the
+/// other spawn tool is chosen and draws this one's spawns; or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Role {
+    Own,
+    Other,
+    Idle,
+}
+
+impl Role {
+    pub(crate) fn of<S: SpawnSubject>(chosen: Tool, others: &OtherSpawns, editing: bool) -> Role {
+        match (editing, chosen == S::TOOL, others.shown && chosen == S::KIND.other().tool()) {
+            (false, _, _) => Role::Idle,
+            (true, true, _) => Role::Own,
+            (true, false, true) => Role::Other,
+            (true, false, false) => Role::Idle,
+        }
+    }
+
+    /// Whether the spawns are read, laid out and drawn.
+    pub(crate) fn draws(self) -> bool {
+        self != Role::Idle
+    }
+}
+
 /// What the pointer is doing with one subject's spawns on the open map.
 #[derive(Resource, Debug)]
 pub(crate) struct SpawnTool<S: SpawnSubject> {
@@ -703,6 +876,27 @@ pub(crate) struct SpawnTool<S: SpawnSubject> {
     pub(crate) listed: Listing<S::Known>,
     /// What only this subject's tool keeps.
     pub(crate) own: S::Own,
+    /// A spawn to select and frame once its map is read; see [`GoTo`].
+    pub(crate) go_to: Option<GoTo>,
+    /// Each near spawn's [`Tag`], by guid, and what it was worked out for:
+    /// [`Self::near`]'s generation, the store's revision and the event
+    /// filter, pool and event reads. See [`systems::tag_the_near`].
+    tags: HashMap<u64, Tag>,
+    tags_for: Option<TagsFor>,
+    /// The task working out the tags for a newer key, while [`Self::tags`]
+    /// are still drawn.
+    tagging: Option<(TagsFor, Task<HashMap<u64, Tag>>)>,
+}
+
+/// What a spawn tool's tags were worked out for.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TagsFor {
+    pub(crate) near: u64,
+    pub(crate) revision: Option<u64>,
+    pub(crate) phase: crate::subjects::game_events::Phase,
+    pub(crate) events: u64,
+    pub(crate) pools: u64,
+    pub(crate) open_pool: Option<u32>,
 }
 
 impl<S: SpawnSubject> Default for SpawnTool<S> {
@@ -750,6 +944,10 @@ impl<S: SpawnSubject> Default for SpawnTool<S> {
             scripted_done: false,
             listed: Listing::default(),
             own: S::Own::default(),
+            go_to: None,
+            tags: HashMap::new(),
+            tags_for: None,
+            tagging: None,
         }
     }
 }
@@ -880,6 +1078,11 @@ impl<S: SpawnSubject> SpawnTool<S> {
                 if key.cmp(&S::template_key(entry, patch)).is_eq() {
                     templates.push((entry, patch));
                 }
+            } else if S::SPAWN_ROWS.contains(&table) {
+                let Some(guid) = key.first() else { continue };
+                if let Some(&rank) = self.near_rank.get(&guid) {
+                    ranks.push(rank);
+                }
             }
         }
         if !templates.is_empty() {
@@ -904,13 +1107,79 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// The near spawn at `rank` in [`Self::near`] as it is drawn: with the
     /// project's edits over it where it changes it. Borrowed, as nothing is
     /// built here; see [`Self::lay_edits`].
+    ///
+    /// `None` for a spawn the event filter hides, so nothing draws, picks or
+    /// encloses it.
     pub(crate) fn near_drawn(&self, rank: usize) -> Option<&S::Spawn> {
         let base = self.base_spawn(*self.near.get(rank)?)?;
+        if self.tags.get(&base.guid()).is_some_and(|tag| tag.hidden) {
+            return None;
+        }
         let edited = match self.overlay.slots.get(rank) {
             Some(&slot) if slot > 0 => self.overlay.edited.get(slot as usize - 1),
             _ => None,
         };
         Some(edited.filter(|edited| edited.guid() == base.guid()).unwrap_or(base))
+    }
+
+    /// [`Self::near_drawn`] by the spawn's guid, for a pass over the preview
+    /// bodies, which know their spawn by guid.
+    pub(crate) fn near_drawn_by_guid(&self, guid: u64) -> Option<&S::Spawn> {
+        let rank = *self.near_rank.get(&guid)?;
+        self.near_drawn(rank).filter(|spawn| spawn.guid() == guid)
+    }
+
+    /// A near spawn's [`Tag`], or the empty tag.
+    pub(crate) fn tag(&self, guid: u64) -> Tag {
+        self.tags.get(&guid).copied().unwrap_or_default()
+    }
+
+    /// Take the tags a finished task worked out. Tags for a key that has
+    /// changed since are still taken: they are nearer the truth than the ones
+    /// they replace, and the next call to [`Self::retag`] starts a task for
+    /// the new key.
+    pub(crate) fn land_tags(&mut self) {
+        let Some((_, task)) = self.tagging.as_mut() else { return };
+        let Some(tags) = bevy::tasks::block_on(bevy::tasks::futures_lite::future::poll_once(task)) else { return };
+        if let Some((key, _)) = self.tagging.take() {
+            self.tags = tags;
+            self.tags_for = Some(key);
+        }
+    }
+
+    /// Whether a task should start for `key`: the tags are not for it and no
+    /// task is running.
+    pub(crate) fn wants_tags(&self, key: &TagsFor) -> bool {
+        self.tags_for.as_ref() != Some(key) && self.tagging.is_none()
+    }
+
+    /// Start a task that works out each near spawn's tag for `key`, unless
+    /// [`Self::wants_tags`] says no. `tag` runs on the task, once per near
+    /// spawn, with the spawn's guid and the entry the database has it at.
+    pub(crate) fn retag(&mut self, key: TagsFor, tag: impl Fn(u64, u32) -> Tag + Send + 'static) {
+        if !self.wants_tags(&key) {
+            return;
+        }
+        let near: Vec<(u64, u32)> = self
+            .near
+            .iter()
+            .filter_map(|at| self.base_spawn(*at))
+            .map(|spawn| (spawn.guid(), spawn.entry()))
+            .collect();
+        let pool = bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        let task = pool.spawn(async move { near.into_iter().map(|(guid, entry)| (guid, tag(guid, entry))).collect() });
+        self.tagging = Some((key, task));
+    }
+
+    /// The generation [`Self::near`] was built at.
+    pub(crate) fn near_generation(&self) -> u64 {
+        self.near_generation
+    }
+
+    /// Whether the open map's spawns have been read for `map` at `writes`,
+    /// with no read in flight.
+    pub(crate) fn read_for(&self, map: u32, writes: u64) -> bool {
+        self.loaded == Some((map, writes)) && self.task.is_none()
     }
 
     /// Whether the store holds the own row of the near spawn at `rank`.
@@ -1591,11 +1860,26 @@ impl<S> Default for SpawnToolPlugin<S> {
     }
 }
 
+/// The two halves of a press on a spawn, across both spawn tools: every
+/// tool's aim, then every tool's press, so a press can go to the nearer of a
+/// creature and a game object whichever tool is chosen. See [`SpawnHover`].
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SpawnPointer {
+    Aim,
+    Press,
+}
+
 impl<S: SpawnSubject> Plugin for SpawnToolPlugin<S> {
     fn build(&self, app: &mut App) {
         use script::{display_on_the_command_line, on_the_command_line, placed_on_the_command_line, template_on_the_command_line};
-        use systems::{aim, collect_the_near, drag, draw, enclose, ghost, learn_the_created, read_the_map, rebuild_created, search, stand_them_up};
+        use systems::{
+            aim, collect_the_near, drag, draw, enclose, ghost, go_to, learn_the_created, press_across, read_the_map,
+            rebuild_created, search, stand_them_up, tag_the_near,
+        };
         app.init_resource::<SpawnTool<S>>()
+            .init_resource::<OtherSpawns>()
+            .init_resource::<SpawnHover>()
+            .configure_sets(Update, SpawnPointer::Aim.before(SpawnPointer::Press))
             .add_systems(
                 Update,
                 // After the pick, like every tool here: reading the pointer
@@ -1608,9 +1892,13 @@ impl<S: SpawnSubject> Plugin for SpawnToolPlugin<S> {
                     learn_the_created::<S>,
                     search::<S>,
                     collect_the_near::<S>,
-                    aim::<S>,
+                    // Before the aim, which picks only what the event filter
+                    // leaves in the world.
+                    tag_the_near::<S>,
+                    aim::<S>.in_set(SpawnPointer::Aim),
                     menu_target::<S>,
-                    press::<S>,
+                    press::<S>.in_set(SpawnPointer::Press),
+                    press_across::<S>.in_set(SpawnPointer::Press),
                     enclose::<S>,
                     drag::<S>,
                     // After the drag, which writes the store on every frame
@@ -1632,6 +1920,7 @@ impl<S: SpawnSubject> Plugin for SpawnToolPlugin<S> {
                     placed_on_the_command_line::<S>,
                     template_on_the_command_line::<S>,
                     display_on_the_command_line::<S>,
+                    go_to::<S>,
                 )
                     .chain()
                     .after(read_the_map::<S>),

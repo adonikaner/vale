@@ -14,12 +14,14 @@
 //! A button draws the icon [`super::icons`] has under its switch label, and
 //! its short label from [`ART`] when there is none. No icons are shipped yet.
 //!
-//! ## The six groups
+//! ## The seven groups
 //!
 //! ```text
 //! world    a subtraction: the layer is in the frame, and this takes it out
 //! overlay  an addition: not in the frame at all, drawn on top of it
 //! server   the server's navmesh, which is the editor's own overlay
+//! spawns   the event filter: which spawns the creature and game object tools
+//!          draw, by the game events they answer; one button that opens a menu
 //! ground   the guides drawn on the terrain: one button that opens a menu
 //! camera   the editor camera's top-down map view, and free flight: whether
 //!          W and S follow the line of sight
@@ -236,6 +238,12 @@ pub(crate) struct Bar<'a> {
     pub(crate) navmesh: &'a mut crate::navmesh::Navmesh,
     /// The ground guides. A copy, written back by the caller when it changed.
     pub(crate) guides: &'a mut crate::tools::guides::Guides,
+    /// The event filter. A copy, written back by the caller when it changed.
+    /// See [`crate::subjects::game_events::Phase`].
+    pub(crate) phase: &'a mut crate::subjects::game_events::Phase,
+    /// Every game event as its entry and description, for the filter's menu;
+    /// empty until a spawn tool has read the event tables.
+    pub(crate) events: &'a [(u32, String)],
     /// Whether the top-down map view is on. A copy, written back by the caller
     /// when it changed. See [`crate::camera::TopDown`].
     pub(crate) map_view: &'a mut bool,
@@ -346,6 +354,9 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
         }
 
         rule(ui);
+        events_menu(ui, bar.phase, bar.events);
+
+        rule(ui);
         guides_menu(ui, bar.guides, bar.areas_shown, bar.open_guides);
 
         // The editor camera's top-down view. Its own group, because it changes
@@ -409,6 +420,7 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
             *bar.frame = RenderTuning::default();
             bar.navmesh.on = false;
             *bar.guides = crate::tools::guides::Guides::default();
+            *bar.phase = crate::subjects::game_events::Phase::All;
             *bar.map_view = false;
             #[cfg(feature = "diagnostics")]
             {
@@ -416,6 +428,65 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
             }
         }
     });
+}
+
+/// The Events button and its menu: which spawns the creature and game object
+/// tools draw, by the game events they answer. Every spawn, the world outside
+/// every event, or the world during one event. Lit while it is not every
+/// spawn. See [`crate::subjects::game_events::Phase`].
+fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, events: &[(u32, String)]) {
+    use crate::subjects::game_events::Phase;
+    let moved = *phase != Phase::All;
+    let label = match *phase {
+        Phase::All => "Events".to_string(),
+        Phase::Outside => "Events: none".to_string(),
+        Phase::During(entry) => format!("Event {entry}"),
+    };
+    let button = egui::Button::new(RichText::new(label).size(12.0).color(match moved {
+        false => theme::INK_DIM,
+        true => theme::INK,
+    }))
+    .fill(match moved {
+        false => theme::RAISED,
+        true => theme::ACCENT_SUNK,
+    })
+    .stroke(Stroke::new(
+        1.0,
+        match moved {
+            false => theme::LINE,
+            true => theme::ACCENT,
+        },
+    ))
+    .corner_radius(CornerRadius::same(3))
+    .min_size(Vec2::new(64.0, BUTTON));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+        )
+        .ui(ui, |ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+            ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
+            ui.set_min_width(280.0);
+            theme::heading(ui, "Spawns Drawn");
+            ui.radio_value(phase, Phase::All, "Every spawn")
+                .on_hover_text("Every spawn, whatever its game events say.");
+            ui.radio_value(phase, Phase::Outside, "Outside events")
+                .on_hover_text("The world while no event is on: spawns that exist only during an event are left out.");
+            theme::heading(ui, "During One Event");
+            if events.is_empty() {
+                theme::note(ui, "The events are read when a spawn tool or the Spawning workspace opens.");
+            }
+            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                for (entry, description) in events {
+                    ui.radio_value(phase, Phase::During(*entry), format!("{entry} \u{b7} {description}"));
+                }
+            });
+        });
+    response.on_hover_text(
+        "spawns: which spawns the creature and game object tools draw, by the game events \
+         they answer. A spawn left out cannot be picked.",
+    );
 }
 
 /// The Guides button and its menu: the five things drawn on the ground to

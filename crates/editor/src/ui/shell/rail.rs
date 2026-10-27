@@ -416,8 +416,22 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
         // now is listed disabled with the reason, so the menu shows
         // everything the workspace holds: with no database, Creatures still
         // offers its display tables, which are files.
+        let name = format!("{} \u{23F7}", subject.name);
+        // The menu is drawn in a child of the row, which a wrapping row
+        // places before the menu's width is known, so the row is ended here
+        // when the button would not fit.
+        if ui.layout().main_wrap() && ui.cursor().min.x > ui.max_rect().min.x {
+            let text = egui::WidgetText::from(name.as_str());
+            let galley = text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
+            // A wrapping row's available width is the whole row's, not what is
+            // left of it.
+            let left = ui.max_rect().right() - ui.cursor().min.x;
+            if galley.size().x + 2.0 * ui.spacing().button_padding.x > left {
+                ui.end_row();
+            }
+        }
         ui.add_enabled_ui(why.is_none(), |ui| {
-            let button = egui::Button::selectable(lit, format!("{} \u{23F7}", subject.name));
+            let button = egui::Button::selectable(lit, name);
             let (response, _) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
                 for &(_, part_tool) in subject.tool.parts() {
                     let Some(entry) = part(part_tool) else { continue };

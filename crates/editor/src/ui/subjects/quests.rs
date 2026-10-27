@@ -1969,6 +1969,19 @@ pub(in crate::ui) fn picker(
             PickFor::LootItem { table, entry } => format!("Choose an item for {table} {entry}"),
             PickFor::VendorItem { table, entry } => format!("Choose an item for {table} {entry}"),
             PickFor::TrainerSpell { table, entry } => format!("Choose a spell for {table} {entry}"),
+            PickFor::EquipmentItem { set, slot, .. } => {
+                format!("Choose the item held in the {} in set {set}", vale_mangos::addon::SLOT_WORDS[*slot])
+            }
+            PickFor::SpawnData { into, spawns } => match into {
+                crate::subjects::quests::SpawnInto::Pool { .. } => format!("Choose a pool for {} spawn(s)", spawns.len()),
+                crate::subjects::quests::SpawnInto::Event { removed: false, .. } => {
+                    format!("Choose a game event to add {} spawn(s) to", spawns.len())
+                }
+                crate::subjects::quests::SpawnInto::Event { removed: true, .. } => {
+                    format!("Choose a game event to remove {} spawn(s) during", spawns.len())
+                }
+            },
+            PickFor::EventQuest { event } => format!("Choose a quest offered during game event {event}"),
             PickFor::ScriptCell { column, .. } => format!("Choose {column}"),
             PickFor::TableField { column, .. } => format!("Choose {column}"),
             PickFor::ConditionValue { label, .. } => format!("Choose the {label}"),
@@ -2131,6 +2144,18 @@ pub(in crate::ui) fn picker(
         }
         (PickFor::VendorItem { table, entry } | PickFor::TrainerSpell { table, entry }, Some(hit), _) => {
             quests.service_pick = Some((table, *entry, hit.id));
+            close = true;
+        }
+        (PickFor::EquipmentItem { set, row, slot }, Some(hit), _) => {
+            quests.equipment_pick = Some((*set, *row, *slot, hit.id));
+            close = true;
+        }
+        (PickFor::SpawnData { into, spawns }, Some(hit), _) => {
+            quests.spawn_pick = Some((*into, spawns.clone(), hit.id));
+            close = true;
+        }
+        (PickFor::EventQuest { event }, Some(hit), _) => {
+            quests.event_quest_pick = Some((*event, hit.id));
             close = true;
         }
         (PickFor::ScriptCell { table, id, row, column }, picked, cleared)

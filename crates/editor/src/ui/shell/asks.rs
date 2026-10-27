@@ -59,6 +59,13 @@ pub(crate) enum ShellAsk {
     Link(Tool),
     /// Open the quest workspace on a quest.
     ShowQuest(u32),
+    /// Select a spawn under its tool and put the camera over it, opening its
+    /// map when it stands on another: Go To on a list that names spawns on
+    /// any map. See [`crate::tools::spawns::spawn::GoTo`].
+    ShowSpawn {
+        spawn: crate::tools::spawns::spawn::SpawnRef,
+        go: crate::tools::spawns::spawn::GoTo,
+    },
 }
 
 impl ShellAsk {
@@ -74,6 +81,7 @@ impl ShellAsk {
             ShellAsk::Part(_) => 6,
             ShellAsk::Link(_) => 7,
             ShellAsk::ShowQuest(_) => 8,
+            ShellAsk::ShowSpawn { .. } => 9,
         }
     }
 }
@@ -113,7 +121,9 @@ pub(crate) fn carry_out(
     let mut asks = std::mem::take(&mut editing.asks.0);
     asks.sort_by_key(ShellAsk::rank);
     let (early, late): (Vec<ShellAsk>, Vec<ShellAsk>) =
-        asks.into_iter().partition(|ask| !matches!(ask, ShellAsk::Part(_) | ShellAsk::Link(_) | ShellAsk::ShowQuest(_)));
+        asks.into_iter().partition(|ask| {
+            !matches!(ask, ShellAsk::Part(_) | ShellAsk::Link(_) | ShellAsk::ShowQuest(_) | ShellAsk::ShowSpawn { .. })
+        });
     for ask in early {
         carry_out_one(ask, editing, session, assets, tool, rail, in_world);
     }
@@ -213,6 +223,19 @@ fn carry_out_one(
             editing.quests.forget_matches();
             *tool = Tool::Quests;
         }
+        // Dropped during a playtest, when no tool that keeps the viewport
+        // can be used. The tool selects it once its map is read.
+        ShellAsk::ShowSpawn { spawn, go } if !in_world => {
+            use crate::tools::spawns::spawn::SpawnKind;
+            match spawn.kind {
+                SpawnKind::Creature => editing.creatures.go_to = Some(go),
+                SpawnKind::GameObject => editing.objects.go_to = Some(go),
+            }
+            let wanted = spawn.kind.tool();
+            *tool = wanted;
+            rail.follow(wanted);
+        }
+        ShellAsk::ShowSpawn { .. } => {}
     }
 }
 

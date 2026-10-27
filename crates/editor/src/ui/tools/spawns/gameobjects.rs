@@ -97,14 +97,26 @@ impl<'a> Subject<'a> {
             gizmo,
             asks: &mut editing.asks,
             fly: &mut editing.fly,
-            own: (),
+            others: &mut editing.others,
+            own: GameObjectPanel {
+                pools: &mut editing.pools,
+                game_events: &mut editing.game_events,
+                located: &mut editing.located,
+            },
         }
     }
 }
 
+/// What the game object panel reaches beside the shared panel's state: the
+/// Pool and Game Events sections' state. See [`spawn_data`].
+pub(crate) struct GameObjectPanel<'a> {
+    pub(crate) pools: &'a mut crate::subjects::pools::Pools,
+    pub(crate) game_events: &'a mut crate::subjects::game_events::GameEvents,
+    pub(crate) located: &'a mut crate::subjects::located::Locations,
+}
+
 impl SpawnView for GameObjectSubject {
-    /// A game object's panel reaches nothing beside the shared state.
-    type Panel<'a> = ();
+    type Panel<'a> = GameObjectPanel<'a>;
     const STACK: crate::server::stack::Subject = crate::server::stack::Subject::GameObjects;
     const SQL: &'static str = crate::server::gameobjects::SQL_VPATH;
     const REVERT: &'static str = crate::server::gameobjects::REVERT_VPATH;
@@ -433,8 +445,39 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     };
     let standing = crate::tools::spawns::spawn::Standing::of::<crate::tools::spawns::gameobjects::GameObjectSubject>(spawn);
     super::spawn::placement(ui, subject.session, &standing, subject.now);
+    spawn_data(ui, subject);
+    ui.add_space(8.0);
     let form = Form { table: gameobject::SPAWN, key: &key, row: &row, spawn: Some(spawn) };
     groups(ui, subject, &form, &[Group::Identity, Group::Place]);
+}
+
+/// The Pool and Game Events sections: the rows of other tables that name the
+/// selected spawn, acting on the whole selection. See
+/// `crate::ui::subjects::keyed`.
+fn spawn_data(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
+    use crate::ui::subjects::keyed::{Chosen, Section};
+    let patch = crate::server::settings::server_patch(subject.server);
+    let edits = subject.session.rows.edits.clone();
+    let map = subject.session.map_id;
+    let select = {
+        let Some(chosen) = Chosen::of(&*subject.tool, edits, map, true) else { return };
+        let mut section = Section {
+            session: &mut *subject.session,
+            quests: &mut *subject.quests,
+            asks: &mut *subject.asks,
+            assets: subject.assets,
+            now: subject.now,
+            located: &mut *subject.own.located,
+            chosen: &chosen,
+            select: None,
+        };
+        crate::ui::subjects::pools::pool_section(ui, &mut section, subject.own.pools, patch);
+        crate::ui::subjects::game_events::events_section(ui, &mut section, subject.own.game_events, patch);
+        section.select
+    };
+    if let Some(guid) = select {
+        subject.tool.select_only(Some(guid));
+    }
 }
 
 /// A summary of the object's template, with a picture of its model, and the

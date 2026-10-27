@@ -1,6 +1,7 @@
 //! The flags for the server-row subjects: the windows a selected spawn opens
-//! (quests, loot, vendor, trainer, gossip, events, spells, scripts, a
-//! condition) and the item, quest, creature and game object workspaces.
+//! (quests, loot, vendor, trainer, equipment, gossip, events, spells,
+//! scripts, a condition), its addon row, and the item, quest, creature and
+//! game object workspaces.
 
 use super::Arity::*;
 use super::{first, named, number, Flag};
@@ -42,6 +43,41 @@ pub(crate) struct Subjects {
     /// Each implies its window.
     pub(crate) vendor_find: Option<String>,
     pub(crate) trainer_find: Option<String>,
+    /// `--equipment`: open the Equipment window on `--spawn`'s creature.
+    /// `--equipment-add <item>`: add a row holding the item in the main hand
+    /// to the set the window shows, which implies the window. `--addon`:
+    /// give `--spawn`'s creature a `creature_addon` row, which the Addon
+    /// section's checkbox does. Each follows the selection, so it needs
+    /// `--spawn`.
+    pub(crate) equipment_window: bool,
+    pub(crate) equipment_add: Option<u32>,
+    pub(crate) addon_row: bool,
+    /// `--formation-add <guid>`: that spawn joins the formation of
+    /// `--spawn`'s creature where it stands, or a new one `--spawn` leads.
+    /// `--link-add <guid>`: that spawn becomes a slave of `--spawn`'s. These
+    /// are Add Selected and Link Selected as Slaves, which need a
+    /// shift-click a scripted run cannot make.
+    pub(crate) formation_add: Option<u64>,
+    pub(crate) link_add: Option<u64>,
+    /// `--pool <entry>`: open the Pool window on a pool. `--pool-add
+    /// <entry>`: put `--spawn`'s creature, or `--object`'s game object, in
+    /// that pool, or in a new one for 0, and open it.
+    pub(crate) pool_window: Option<u32>,
+    pub(crate) pool_add: Option<u32>,
+    /// `--game-event <entry>`: open the Game Event window on an event.
+    /// `--game-event-add <entry>`: add `--spawn`'s creature, or `--object`'s
+    /// game object, to the event, or for a negative entry have the event
+    /// remove it.
+    pub(crate) game_event_window: Option<u32>,
+    pub(crate) game_event_add: Option<i32>,
+    /// `--event-view <all|outside|entry>`: the view bar's event filter, which
+    /// is otherwise a menu a scripted run cannot open. `--others`: each spawn
+    /// tool draws the other's spawns too, which is otherwise a checkbox.
+    pub(crate) event_view: Option<crate::subjects::game_events::Phase>,
+    pub(crate) others: bool,
+    /// `--go-to-spawn <creature|object>:<guid>`: Go To on a spawn, as a
+    /// pool's or a game event's list does it, once the spawn's map is read.
+    pub(crate) go_to_spawn: Option<crate::tools::spawns::spawn::SpawnRef>,
     /// `--events`: open the events window on `--spawn`'s creature;
     /// `--event-add`: add an event to it, which is the gesture a scripted run
     /// cannot make and every check downstream needs. `--spells`: open the
@@ -146,6 +182,39 @@ pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--trainer-find", One, |a, v| {
         a.subjects.trainer_find = named(v);
         a.subjects.trainer_window = true;
+    }),
+    Flag::new("--equipment", Switch, |a, _| a.subjects.equipment_window = true),
+    Flag::new("--equipment-add", One, |a, v| {
+        a.subjects.equipment_add = number(v);
+        a.subjects.equipment_window = true;
+    }),
+    Flag::new("--addon", Switch, |a, _| a.subjects.addon_row = true),
+    Flag::new("--formation-add", One, |a, v| a.subjects.formation_add = number(v)),
+    Flag::new("--link-add", One, |a, v| a.subjects.link_add = number(v)),
+    Flag::new("--pool", One, |a, v| a.subjects.pool_window = number(v)),
+    Flag::new("--pool-add", One, |a, v| a.subjects.pool_add = number(v)),
+    Flag::new("--game-event", One, |a, v| a.subjects.game_event_window = number(v)),
+    Flag::new("--game-event-add", One, |a, v| a.subjects.game_event_add = number(v)),
+    Flag::new("--event-view", One, |a, v| {
+        use crate::subjects::game_events::Phase;
+        a.subjects.event_view = match first(v) {
+            Some("all") => Some(Phase::All),
+            Some("outside") => Some(Phase::Outside),
+            other => other.and_then(|word| word.parse().ok()).map(Phase::During),
+        };
+    }),
+    Flag::new("--others", Switch, |a, _| a.subjects.others = true),
+    Flag::new("--go-to-spawn", One, |a, v| {
+        use crate::tools::spawns::spawn::{SpawnKind, SpawnRef};
+        a.subjects.go_to_spawn = first(v).and_then(|word| {
+            let (kind, guid) = word.split_once(':')?;
+            let kind = match kind {
+                "creature" => SpawnKind::Creature,
+                "object" => SpawnKind::GameObject,
+                _ => return None,
+            };
+            Some(SpawnRef { kind, guid: guid.parse().ok()? })
+        });
     }),
     Flag::new("--events", Switch, |a, _| a.subjects.events_window = true),
     Flag::new("--event-add", Switch, |a, _| {

@@ -1340,14 +1340,7 @@ impl Outfit {
             };
             match hand {
                 Some(hand) if outfit.weapons[hand].display_id == 0 => {
-                    outfit.weapons[hand] = vale_assets::tables::item::Weapon {
-                        display_id: item.display_id,
-                        class: item.class as u8,
-                        subclass: item.subclass as u8,
-                        inventory_type: item.inventory_type as u8,
-                        sheath: item.sheath as u8,
-                        ..Default::default()
-                    };
+                    outfit.weapons[hand] = item.weapon();
                 }
                 Some(_) => {}
                 None => outfit.equipment.push((item.display_id, item.inventory_type)),

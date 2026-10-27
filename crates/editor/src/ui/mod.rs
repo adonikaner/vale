@@ -327,6 +327,28 @@ pub(crate) struct Editing<'w> {
     /// The Vendor and Trainer windows' state: the creature they are about,
     /// and what its lists hold. See [`crate::subjects::services`].
     pub(crate) services: ResMut<'w, crate::subjects::services::Services>,
+    /// The Equipment window's and the Addon section's state: the creature
+    /// they are about, the spawn's addon row and the set read. See
+    /// [`crate::subjects::addons`].
+    pub(crate) addons: ResMut<'w, crate::subjects::addons::Addons>,
+    /// The Formation and Links sections' state: the creature group and
+    /// linking tables, read whole. See [`crate::subjects::formations`].
+    pub(crate) formations: ResMut<'w, crate::subjects::formations::Formations>,
+    /// The Pool section's and window's state: the pool tables, read whole.
+    /// See [`crate::subjects::pools`].
+    pub(crate) pools: ResMut<'w, crate::subjects::pools::Pools>,
+    /// The Game Events section's and window's state: the game event tables,
+    /// read whole. See [`crate::subjects::game_events`].
+    pub(crate) game_events: ResMut<'w, crate::subjects::game_events::GameEvents>,
+    /// Where spawns named by guid stand, for the lists that name spawns on
+    /// any map. See [`crate::subjects::located`].
+    pub(crate) located: ResMut<'w, crate::subjects::located::Locations>,
+    /// Whether each spawn tool draws the other's spawns. See
+    /// [`crate::tools::spawns::spawn::OtherSpawns`].
+    pub(crate) others: ResMut<'w, crate::tools::spawns::spawn::OtherSpawns>,
+    /// The view bar's event filter. See
+    /// [`crate::subjects::game_events::EventView`].
+    pub(crate) event_view: ResMut<'w, crate::subjects::game_events::EventView>,
     /// The gossip window's state: the creature it is about and the menus it
     /// has read. See [`crate::subjects::gossip`].
     pub(crate) gossip: ResMut<'w, crate::subjects::gossip::Gossip>,
@@ -640,6 +662,14 @@ fn draw(
         });
 
     let mut edited_guides = viewing.guides.clone();
+    let mut phase = editing.event_view.phase;
+    let event_list: Vec<(u32, String)> = editing
+        .game_events
+        .all(&session.rows.edits)
+        .into_iter()
+        .filter(|shown| shown.kept())
+        .map(|shown| (shown.row.entry, shown.row.description))
+        .collect();
     let mut map_view = viewing.top_down.on;
     let mut flight = camera.movement == crate::camera::Movement::Flight;
     egui::Panel::bottom("editor-view")
@@ -658,6 +688,8 @@ fn draw(
                     drawn: &viewing.drawn,
                     navmesh: &mut viewing.navmesh,
                     guides: &mut edited_guides,
+                    phase: &mut phase,
+                    events: &event_list,
                     map_view: &mut map_view,
                     flight: &mut flight,
                     editing: playing.state.editing(),
@@ -673,6 +705,9 @@ fn draw(
     // Written back only when a switch moved, as the other view settings are.
     if edited_guides != *viewing.guides {
         *viewing.guides = edited_guides;
+    }
+    if phase != editing.event_view.phase {
+        editing.event_view.phase = phase;
     }
     if map_view != viewing.top_down.on {
         viewing.top_down.on = map_view;

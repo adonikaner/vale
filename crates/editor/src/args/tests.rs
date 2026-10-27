@@ -12,7 +12,7 @@ fn parse(list: &[&str]) -> Args {
 
 /// Every flag spelling the parse accepted when it was one `match`, before the
 /// tables. A spelling taken out of a table fails this test.
-const EVERY_FLAG: [&str; 122] = [
+const EVERY_FLAG: [&str; 134] = [
     "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu",
     "--export-heights", "--import-image", "--import-confirm", "--import-model", "--import-sound", "--game-file", "--minimaps", "--tilt",
     "--vertices", "--view", "--reach", "--tool", "--spawn", "--waypoint-add", "--spawn-add",
@@ -24,7 +24,9 @@ const EVERY_FLAG: [&str; 122] = [
     "--apply", "--template", "--template-new", "--template-entry", "--pick-display", "--quests",
     "--loot", "--loot-add", "--apply-loot", "--revert-loot", "--vendor", "--gossip",
     "--condition", "--trainer", "--vendor-add", "--trainer-add", "--vendor-find",
-    "--trainer-find", "--apply-services", "--revert-services", "--events", "--event-add",
+    "--trainer-find", "--apply-services", "--revert-services", "--equipment", "--equipment-add",
+    "--addon", "--formation-add", "--link-add", "--pool", "--pool-add", "--game-event",
+    "--game-event-add", "--event-view", "--others", "--go-to-spawn", "--events", "--event-add",
     "--spells", "--find-event", "--script", "--apply-behaviour", "--revert-behaviour",
     "--apply-creatures", "--revert-creatures", "--apply-gameobjects", "--revert-gameobjects",
     "--object", "--object-add", "--object-delete", "--object-pick", "--object-new",

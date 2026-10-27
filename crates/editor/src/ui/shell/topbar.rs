@@ -47,9 +47,20 @@
 //! while the query cache is kept.
 //!
 //! After the Map menu comes the workspace control ([`super::rail::workspaces`]):
-//! World, Spells, Items, Quests. World returns to the last rail tool; the other
-//! three replace the viewport. [`Subjects`] carries the tool and the rail's
-//! memory into [`draw`].
+//! World, then each workspace that replaces the viewport. World returns to the
+//! last rail tool. [`Subjects`] carries the tool and the rail's memory into
+//! [`draw`].
+//!
+//! ## Where the workspace control wraps
+//!
+//! The workspace control is given the width between the Map menu and the
+//! playtest controls, and wraps to a second row inside it. The playtest
+//! controls are laid out right to left after it, so their width is measured on
+//! each frame and kept in egui's temporary data for the next one; the first
+//! frame assumes `RIGHT_ROOM`. Without the limit, a workspace that did not fit
+//! was drawn under the playtest controls and could not be clicked. Text does
+//! not wrap inside the control, so a workspace that does not fit moves to the
+//! next row whole rather than having its name narrowed.
 
 use bevy_egui::egui;
 
@@ -154,11 +165,26 @@ pub(crate) fn draw(
         separator(ui);
         map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world);
         separator(ui);
-        // The workspace control: World, then Spells, Items and Quests. World
-        // returns to the last rail tool; the other three replace the viewport.
-        // See [`super::rail`], which holds the world tools' rail too.
+        // The workspace control: World, then each workspace that replaces the
+        // viewport. See [`super::rail`], which holds the world tools' rail too.
         let server = playing.server.resolve().is_some();
-        super::rail::workspaces(ui, subjects.tool, subjects.rail, in_world, server, &subjects.popped, true);
+        // The workspace control wraps inside the room the playtest controls
+        // leave, measured on the frame before, so a workspace that does not
+        // fit goes to a second row rather than under the playtest controls.
+        let right_id = ui.id().with("topbar-right-width");
+        let right = ui.data(|data| data.get_temp::<f32>(right_id)).unwrap_or(RIGHT_ROOM);
+        let room = (ui.available_width() - right - 12.0).max(160.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(room, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+            |ui| {
+                ui.set_max_width(room);
+                // A button that does not fit goes to the next row whole;
+                // with wrapping text, egui narrows its name to fit instead.
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                super::rail::workspaces(ui, subjects.tool, subjects.rail, in_world, server, &subjects.popped, true);
+            },
+        );
 
         // The playtest controls sit at the far right, apart from the rest,
         // because they are the only controls here that take the editor out of
@@ -170,13 +196,20 @@ pub(crate) fn draw(
         // started it. Leaving the `playtest` window up over the shell instead
         // would state the same thing in two places on one screen.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let start = ui.cursor().max.x;
             match in_world {
                 true => running(ui, playing, session),
                 false => not_running(ui, session, assets, popovers, playing),
             }
+            let used = start - ui.min_rect().min.x;
+            ui.data_mut(|data| data.insert_temp(right_id, used));
         });
     });
 }
+
+/// The width the playtest controls are given before they have been measured,
+/// in points: Playtest and a login label.
+const RIGHT_ROOM: f32 = 240.0;
 
 /// What the workspace control changes: the tool in use, and the rail's memory
 /// of the last world tool. Passed into [`draw`] as one parameter.

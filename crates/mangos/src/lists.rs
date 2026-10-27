@@ -16,7 +16,14 @@
 //! npc_trainer_template        how many spells at build 5875, and the same
 //! the four loot tables        how many rows at the server's patch, and the
 //!                             creatures or chests that name it
+//! game_event                  its description, and how many spawns it adds
+//!                             or removes
+//! pool_template               its description at the server's patch, and how
+//!                             many members it has
 //! ```
+//!
+//! No template column names a game event or a pool, so those two lists have
+//! no users: a search matches the description and the id only.
 //!
 //! [`query`] answers one row per id with the columns `id`, `title`, `n`,
 //! `users` and `named`, and [`Listed::read`] turns such a row into what a
@@ -52,12 +59,13 @@ pub struct List {
     /// `{like}` for the term. Empty for a table whose rows carry no text.
     matches: &'static str,
     /// The templates that name an id: the table, the column, and a condition
-    /// that narrows the rows (a game object's type).
+    /// that narrows the rows (a game object's type). An empty table for a
+    /// list no template names.
     users: (&'static str, &'static str, &'static str),
 }
 
 /// Every table a picker can list, in the order a reader looks for one.
-pub static LISTS: [List; 9] = [
+pub static LISTS: [List; 11] = [
     List {
         table: "gossip_menu",
         noun: "gossip menu",
@@ -173,6 +181,34 @@ pub static LISTS: [List; 9] = [
         matches: "",
         users: (crate::gameobject::TEMPLATE, "data1", "`type` IN (3, 25)"),
     },
+    List {
+        table: crate::game_event::EVENT,
+        noun: "game event",
+        counts: "spawn",
+        rows: "SELECT e.`entry` AS id, e.`description` AS d, \
+               (SELECT COUNT(*) FROM `game_event_creature` c WHERE ABS(c.`event`) = e.`entry`) + \
+               (SELECT COUNT(*) FROM `game_event_gameobject` g WHERE ABS(g.`event`) = e.`entry`) AS n \
+               FROM `game_event` e",
+        joins: "",
+        title: "l.d",
+        matches: "l.d LIKE {like}",
+        users: ("", "", ""),
+    },
+    List {
+        table: crate::pool::TEMPLATE,
+        noun: "pool",
+        counts: "member",
+        rows: "SELECT p.`entry` AS id, MAX(p.`description`) AS d, \
+               (SELECT COUNT(*) FROM `pool_creature` c WHERE c.`pool_entry` = p.`entry`) + \
+               (SELECT COUNT(*) FROM `pool_gameobject` g WHERE g.`pool_entry` = p.`entry`) + \
+               (SELECT COUNT(*) FROM `pool_pool` q WHERE q.`mother_pool` = p.`entry`) AS n \
+               FROM `pool_template` p WHERE {patch} BETWEEN p.`patch_min` AND p.`patch_max` \
+               GROUP BY p.`entry`",
+        joins: "",
+        title: "l.d",
+        matches: "l.d LIKE {like}",
+        users: ("", "", ""),
+    },
 ];
 
 /// The list for a table a column names, or `None` for a table this module
@@ -198,10 +234,13 @@ pub fn query(list: &List, filter: Filter<'_>, wow_patch: u32, limit: usize) -> S
         "" => String::new(),
         more => format!(" AND {more}"),
     };
-    let users = format!(
-        "SELECT `{column}` AS id, COUNT(DISTINCT `entry`) AS users, MIN(`name`) AS named \
-         FROM `{template}` WHERE `{column}` <> 0{narrowed} GROUP BY `{column}`"
-    );
+    let users = match template {
+        "" => "SELECT 0 AS id, 0 AS users, NULL AS named FROM DUAL WHERE FALSE".to_string(),
+        _ => format!(
+            "SELECT `{column}` AS id, COUNT(DISTINCT `entry`) AS users, MIN(`name`) AS named \
+             FROM `{template}` WHERE `{column}` <> 0{narrowed} GROUP BY `{column}`"
+        ),
+    };
     let wanted = match filter {
         Filter::Ids(ids) => {
             let ids: Vec<String> = ids.iter().map(u32::to_string).collect();
@@ -213,9 +252,12 @@ pub fn query(list: &List, filter: Filter<'_>, wow_patch: u32, limit: usize) -> S
         Filter::Search(term) if term.trim().is_empty() => "TRUE".to_string(),
         Filter::Search(term) => {
             let like = crate::sql::text(&format!("%{}%", term.trim()));
-            let mut any = vec![format!(
-                "l.id IN (SELECT `{column}` FROM `{template}` WHERE `name` LIKE {like}{narrowed})"
-            )];
+            let mut any = Vec::new();
+            if !template.is_empty() {
+                any.push(format!(
+                    "l.id IN (SELECT `{column}` FROM `{template}` WHERE `name` LIKE {like}{narrowed})"
+                ));
+            }
             if !list.matches.is_empty() {
                 any.push(list.matches.replace("{like}", &like));
             }
@@ -257,13 +299,14 @@ impl Listed {
             n => format!("{n} {}s", list.counts),
         };
         let title = row.text("title").unwrap_or_default().trim().to_string();
-        Some(match title.is_empty() {
-            true => Listed { id, title: who, sub: counted },
-            false => Listed {
+        Some(match (title.is_empty(), list.users.0.is_empty()) {
+            (true, false) => Listed { id, title: who, sub: counted },
+            (false, false) => Listed {
                 id,
                 title,
                 sub: format!("{counted} \u{b7} {who}"),
             },
+            (_, true) => Listed { id, title, sub: counted },
         })
     }
 }
@@ -318,6 +361,21 @@ mod tests {
                 other => panic!("{column} is {other:?}"),
             }
         }
+    }
+
+    /// A list no template names searches its title and its id only, and a
+    /// row of it is its title and its count.
+    #[test]
+    fn a_list_with_no_users_searches_its_title() {
+        let events = list("game_event").unwrap();
+        let sql = query(events, Filter::Search("fair"), 10, 50);
+        assert!(!sql.contains("`name` LIKE"), "{sql}");
+        assert!(sql.contains("l.d LIKE '%fair%'"), "{sql}");
+        assert!(sql.contains("FROM DUAL WHERE FALSE"), "{sql}");
+        let read = Listed::read(events, &row(&[("id", "4"), ("title", "Darkmoon Faire (Elwynn)"), ("n", "120")])).unwrap();
+        assert_eq!((read.title.as_str(), read.sub.as_str()), ("Darkmoon Faire (Elwynn)", "120 spawns"));
+        let pools = list("pool_template").unwrap();
+        assert!(query(pools, Filter::Ids(&[5]), 10, 1).contains("BETWEEN p.`patch_min` AND p.`patch_max`"));
     }
 
     /// A search matches the users' names and the title's text, and an

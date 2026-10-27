@@ -698,6 +698,15 @@ pub fn spawn_query(guid: u64) -> String {
     format!("SELECT * FROM `gameobject` WHERE `guid` = {guid}")
 }
 
+/// Where spawns named by guid stand and what they are: `guid`, `map`, the
+/// three positions, `id` and the template's `name` at its highest patch. A
+/// list that names spawns on any map (a game event's, a pool's) reads its
+/// rows' places this way. `None` for an empty list rather than a statement
+/// with an empty `IN ()`, which MySQL refuses.
+pub fn located_query(guids: &[u64]) -> Option<String> {
+    crate::creature::located_in("gameobject", "gameobject_template", guids)
+}
+
 /// The key an edit to a template row is written under.
 pub fn template_key(entry: u32, patch: u32) -> Key {
     Key::two(("entry", entry as u64), ("patch", patch as u64))

@@ -201,6 +201,15 @@ pub(crate) enum Tool {
     /// Assets workspace; like [`Tool::Assets`] it has no table, because its
     /// subject is the archives' files.
     GameFiles,
+    /// The game events: every `game_event` row, and the spawns, creature
+    /// changes and quests each names. See [`crate::subjects::game_events`].
+    /// The first part of the Spawning workspace, whose other part is
+    /// [`Tool::Pools`].
+    GameEvents,
+    /// The spawn pools: every `pool_template` row as a tree of mother pools,
+    /// and one pool's members. See [`crate::subjects::pools`]. A part of the
+    /// Spawning workspace.
+    Pools,
     /// A find-and-replace over every tile of the map. See [`crate::map::sweep`].
     ///
     /// The second subject whose document is not a place: it edits the map's
@@ -504,6 +513,10 @@ const FACTION_PARTS: [(&str, Tool); 3] = [
 /// The Assets workspace's parts: the project's own files, then the
 /// archives' files.
 const ASSET_PARTS: [(&str, Tool); 2] = [("Project Files", Tool::Assets), ("Game Files", Tool::GameFiles)];
+
+/// The Spawning workspace's parts: the game events and the pools, the two
+/// sets of spawns that span a map and more.
+const SPAWNING_PARTS: [(&str, Tool); 2] = [("Game Events", Tool::GameEvents), ("Pools", Tool::Pools)];
 
 /// The Game Objects workspace's parts.
 const OBJECT_PARTS: [(&str, Tool); 2] = [
@@ -1134,6 +1147,45 @@ pub(crate) const SPECS: &[Spec] = &[
             crate::ui::import::files::workspace,
         )
     },
+    Spec {
+        server_table: Some(vale_mangos::game_event::EVENT),
+        parts: &SPAWNING_PARTS,
+        menu: Some(Entry {
+            name: "Game Events",
+            about: "game_event: every event, when it starts and for how long, and every spawn it \
+                    adds or removes on any map, the creatures it changes and the quests it \
+                    offers. Rows in vmangos' database, so this needs a database connection.",
+        }),
+        ..middle(
+            Tool::GameEvents,
+            // The top bar calls the workspace Spawning; the tool is named by
+            // its part, so `--tool "game events"` finds it.
+            "Game Events",
+            Place::Bar("Spawning"),
+            "The game events and the spawn pools: the sets of spawns that span a map. A spawn's \
+             own rows are also in the creature and game object inspectors.",
+            crate::ui::subjects::game_events::inspect,
+            crate::ui::subjects::game_events::workspace,
+        )
+    },
+    Spec {
+        server_table: Some(vale_mangos::pool::TEMPLATE),
+        parts: &SPAWNING_PARTS,
+        menu: Some(Entry {
+            name: "Pools",
+            about: "pool_template: every pool as a tree of mother pools, and one pool's members \
+                    of every kind with their chances, on any map. Rows in vmangos' database, so \
+                    this needs a database connection.",
+        }),
+        ..middle(
+            Tool::Pools,
+            "Pools",
+            Place::Part,
+            "",
+            crate::ui::subjects::pools::inspect,
+            crate::ui::subjects::pools::workspace,
+        )
+    },
 ];
 
 /// Every tool, listed once, in the order of [`SPECS`].
@@ -1211,6 +1263,8 @@ impl Tool {
             Tool::Tables => 40,
             Tool::Assets => 41,
             Tool::GameFiles => 42,
+            Tool::GameEvents => 43,
+            Tool::Pools => 44,
         }
     }
 
@@ -1421,7 +1475,17 @@ impl Plugin for ToolPlugin {
                 crate::subjects::conditions::ConditionToolPlugin,
                 crate::subjects::gossip::GossipToolPlugin,
             ),
-            crate::subjects::services::ServicesToolPlugin,
+            // The spawn-row subjects as one entry, for the same reason: the
+            // vendor and trainer lists, the addons, and the formations, pools
+            // and game events.
+            (
+                crate::subjects::services::ServicesToolPlugin,
+                crate::subjects::addons::AddonsToolPlugin,
+                crate::subjects::formations::FormationsToolPlugin,
+                crate::subjects::pools::PoolsToolPlugin,
+                crate::subjects::game_events::GameEventsToolPlugin,
+                crate::subjects::located::LocatedPlugin,
+            ),
             spawns::spawn::SpawnKeysPlugin,
             placements::group::GroupPlugin,
             measure::MeasureToolPlugin,
@@ -1541,8 +1605,9 @@ mod tests {
 
     /// The tools that work during a playtest are four workspaces, with the
     /// Sets part of Items, and nothing that keeps the viewport. Zones,
-    /// Creatures, Game Objects, Factions and Faction Templates are the
-    /// workspaces that do not: the server reads each one's table at startup.
+    /// Creatures, Game Objects, Factions, Faction Templates, Game Events and
+    /// Pools are the workspaces that do not: the server reads each one's
+    /// tables at startup.
     #[test]
     fn only_the_workspaces_survive_a_playtest() {
         for tool in ALL {
@@ -1553,6 +1618,8 @@ mod tests {
                     | Tool::GameObjectData
                     | Tool::Factions
                     | Tool::FactionTemplates
+                    | Tool::GameEvents
+                    | Tool::Pools
             );
             assert_eq!(
                 tool.survives_playtest(),

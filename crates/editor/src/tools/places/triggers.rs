@@ -489,7 +489,7 @@ fn the_databases_own(session: &EditSession, table: &str, key: &Key, held: bool) 
 }
 
 /// Create a row, or keep one the database holds that was marked for removal.
-pub(super) fn create_row(
+pub(crate) fn create_row(
     session: &mut EditSession,
     table: &str,
     key: &Key,

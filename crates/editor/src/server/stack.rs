@@ -1,4 +1,4 @@
-//! The order the twelve row subjects stand in the database, which every Apply
+//! The order the sixteen row subjects stand in the database, which every Apply
 //! and every Put back keeps.
 //!
 //! ## Why the subjects are applied and put back as a stack
@@ -33,6 +33,19 @@
 //! loot                      keyed by all of the above, moves nothing
 //! services                  vendor and trainer lists, keyed by a creature's
 //!                           entry, an item's and a spell, moves nothing
+//! addons                    a spawn's addon row and the equipment sets,
+//!                           keyed by a guid, a set's entry and three item
+//!                           entries, moves nothing
+//! formations                which spawns walk and fight together and which
+//!                           answer another: keyed by spawn guids and, for a
+//!                           template link, a creature entry a creature
+//!                           renumber moves; moves nothing
+//! pools                     which spawns are kept a few at a time: keyed by
+//!                           spawn guids, pool entries and creature and game
+//!                           object entries a renumber moves; moves nothing
+//! game events               what an event adds, removes and changes: keyed by
+//!                           spawn guids, event entries and quest ids a quest
+//!                           renumber moves; moves nothing
 //! behaviour                 keyed by a creature's entry and by ids of its own,
 //!                           moves nothing
 //! conditions                keyed by condition entry, named by every subject
@@ -63,10 +76,10 @@
 use super::queue::{Finish, Work};
 use super::settings::ServerSettings;
 use super::subject::{self, RowSubject};
-use super::{behaviour, creatures, gameobjects, items, loot, places, quests, services};
+use super::{addons, behaviour, creatures, formations, game_events, gameobjects, items, loot, places, pools, quests, services};
 use crate::session::EditSession;
 
-/// One of the twelve row subjects.
+/// One of the sixteen row subjects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Subject {
     Creatures,
@@ -77,6 +90,23 @@ pub(crate) enum Subject {
     /// What creatures sell and teach: `npc_vendor`, `npc_trainer` and their
     /// two template tables.
     Services,
+    /// How a spawn stands and what a creature holds: `creature_addon` and
+    /// `creature_equip_template`. Keyed by a spawn's guid, and by a set's
+    /// entry with three item entries, so an item renumber moves a set's
+    /// row; nothing moves under it.
+    Addons,
+    /// Which spawns act together: `creature_groups`, `creature_linking` and
+    /// `creature_linking_template`. A creature renumber moves a template
+    /// link's entries; nothing moves under it.
+    Formations,
+    /// Which spawns are kept a few at a time: the six pool tables. A
+    /// creature or game object renumber moves an entry member; nothing moves
+    /// under it.
+    Pools,
+    /// What an event adds, removes and changes: `game_event` and the four
+    /// tables that name an event. A quest renumber moves an event quest and
+    /// a creature renumber a change's `entry_id`; nothing moves under it.
+    GameEvents,
     /// Events, scripts and spell lists. Keyed by creature entry and by ids
     /// of their own, so a creature renumber moves an event's `creature_id`;
     /// nothing moves under it.
@@ -127,13 +157,17 @@ pub(crate) enum Wanted {
 impl Subject {
     /// The order the subjects are applied in. The module comment gives the
     /// reason for it.
-    pub(crate) const ORDER: [Subject; 12] = [
+    pub(crate) const ORDER: [Subject; 16] = [
         Subject::Creatures,
         Subject::GameObjects,
         Subject::Items,
         Subject::Quests,
         Subject::Loot,
         Subject::Services,
+        Subject::Addons,
+        Subject::Formations,
+        Subject::Pools,
+        Subject::GameEvents,
         Subject::Behaviour,
         Subject::Conditions,
         Subject::Gossip,
@@ -155,6 +189,10 @@ impl Subject {
             Subject::Quests => &quests::Quests,
             Subject::Loot => &loot::Loot,
             Subject::Services => &services::Services,
+            Subject::Addons => &addons::Addons,
+            Subject::Formations => &formations::Formations,
+            Subject::Pools => &pools::Pools,
+            Subject::GameEvents => &game_events::GameEvents,
             Subject::Behaviour => &behaviour::Behaviour,
             Subject::Conditions => &places::Group::Conditions,
             Subject::Gossip => &places::Group::Gossip,
@@ -365,7 +403,7 @@ mod tests {
     /// loot revert file is read from the database the item move leaves.
     #[test]
     fn applying_one_subject_takes_the_later_ones_off_and_back_on() {
-        let stands = [NONE, NONE, CHANGED, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [NONE, NONE, CHANGED, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
         assert_eq!(put_back, vec![Subject::Loot, Subject::Items]);
         assert_eq!(apply, vec![Subject::Items, Subject::Loot]);
@@ -375,17 +413,29 @@ mod tests {
     /// the vendor and trainer lists first and applies them again after.
     #[test]
     fn applying_items_takes_the_vendor_lists_off_and_back_on() {
-        let stands = [NONE, NONE, CHANGED, NONE, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [NONE, NONE, CHANGED, NONE, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
         assert_eq!(put_back, vec![Subject::Services, Subject::Items]);
         assert_eq!(apply, vec![Subject::Items, Subject::Services]);
+    }
+
+    /// An item renumber moves `creature_equip_template.item1` to `item3`, so
+    /// applying items puts back the addons and equipment first and applies
+    /// them again after, in their place after the vendor lists.
+    #[test]
+    fn applying_items_takes_the_equipment_sets_off_and_back_on() {
+        let stands = [NONE, NONE, CHANGED, NONE, NONE, APPLIED, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
+        assert_eq!(put_back, vec![Subject::Addons, Subject::Services, Subject::Items]);
+        assert_eq!(apply, vec![Subject::Items, Subject::Services, Subject::Addons]);
+        assert_eq!(Subject::named("addons"), Some(Subject::Addons));
     }
 
     /// Putting back items puts back loot first, which stops the item undo
     /// moving a row loot created out from under loot's own undo.
     #[test]
     fn putting_one_back_takes_the_later_ones_off_first() {
-        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::PutBack(Subject::Items), &stands);
         assert_eq!(put_back, vec![Subject::Loot, Subject::Items]);
         assert_eq!(apply, vec![Subject::Loot]);
@@ -395,7 +445,7 @@ mod tests {
     /// by a later one's undo.
     #[test]
     fn an_earlier_subject_is_left_alone() {
-        let stands = [APPLIED, APPLIED, CLAIMED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [APPLIED, APPLIED, CLAIMED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Items), &stands);
         assert!(put_back.is_empty());
         assert_eq!(apply, vec![Subject::Items]);
@@ -406,7 +456,7 @@ mod tests {
     /// is what Apply on save means.
     #[test]
     fn a_save_starts_at_the_first_subject_that_changed() {
-        let stands = [APPLIED, NONE, APPLIED, CHANGED, CLAIMED, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [APPLIED, NONE, APPLIED, CHANGED, CLAIMED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Save, &stands);
         assert_eq!(put_back, vec![Subject::Quests]);
         assert_eq!(apply, vec![Subject::Quests, Subject::Loot]);
@@ -415,7 +465,7 @@ mod tests {
     /// A save does nothing when the database holds every plan already.
     #[test]
     fn a_save_with_nothing_owed_does_nothing() {
-        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [APPLIED, NONE, APPLIED, NONE, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         assert_eq!(order(Wanted::Save, &stands), (Vec::new(), Vec::new()));
     }
 
@@ -424,10 +474,34 @@ mod tests {
     #[test]
     fn a_save_takes_back_a_subject_the_project_no_longer_claims() {
         let gone = Stands { applied: true, claims: false, current: false };
-        let stands = [NONE, NONE, APPLIED, gone, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [NONE, NONE, APPLIED, gone, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Save, &stands);
         assert_eq!(put_back, vec![Subject::Loot, Subject::Quests]);
         assert_eq!(apply, vec![Subject::Loot]);
+    }
+
+    /// The three spawn-data subjects stand after the addons in their order:
+    /// applying the addons takes them off and puts them back on, and each is
+    /// named by its word.
+    #[test]
+    fn the_spawn_data_subjects_follow_the_addons() {
+        let stands = [NONE, NONE, NONE, NONE, NONE, NONE, CHANGED, APPLIED, APPLIED, APPLIED, NONE, NONE, NONE, NONE, NONE, NONE];
+        let (put_back, apply) = order(Wanted::Apply(Subject::Addons), &stands);
+        assert_eq!(
+            put_back,
+            vec![Subject::GameEvents, Subject::Pools, Subject::Formations, Subject::Addons]
+        );
+        assert_eq!(
+            apply,
+            vec![Subject::Addons, Subject::Formations, Subject::Pools, Subject::GameEvents]
+        );
+        for (word, subject) in [
+            ("formations", Subject::Formations),
+            ("pools", Subject::Pools),
+            ("gameevents", Subject::GameEvents),
+        ] {
+            assert_eq!(Subject::named(word), Some(subject));
+        }
     }
 
     /// Applying a subject that claims nothing but has rows in the database is
@@ -435,7 +509,7 @@ mod tests {
     #[test]
     fn applying_nothing_is_a_put_back() {
         let gone = Stands { applied: true, claims: false, current: false };
-        let stands = [gone, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
+        let stands = [gone, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE, NONE];
         let (put_back, apply) = order(Wanted::Apply(Subject::Creatures), &stands);
         assert_eq!(put_back, vec![Subject::Creatures]);
         assert!(apply.is_empty());

@@ -131,6 +131,12 @@ pub(crate) struct Spawn {
     /// Which content patch of the template the server would load. It is the
     /// other half of the key an edit to the template is written under.
     pub(crate) patch: u32,
+    /// The template's `equipment_id`: the `creature_equip_template` set every
+    /// spawn of the template holds, unless its addon row names another.
+    pub(crate) equipment_id: u32,
+    /// The columns of this spawn's `creature_addon` row that decide what it
+    /// holds, when it has a row.
+    pub(crate) addon: Option<SpawnAddon>,
     /// What this project does to the row.
     ///
     /// [`Life::Update`] for a spawn as the database has it, whether or not this
@@ -140,6 +146,22 @@ pub(crate) struct Spawn {
     /// and restored; nothing reaches the database until Apply.
     pub(crate) claim: Life,
 }
+
+/// What a spawn's `creature_addon` row says about what it holds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SpawnAddon {
+    /// The row's `patch`, which with the guid is its key.
+    pub(crate) patch: u32,
+    /// -1 for the template's set, 0 for none, otherwise a set of its own.
+    pub(crate) equipment_id: i32,
+    /// 0 unarmed, 1 melee weapon in hand, 2 ranged weapon in hand.
+    pub(crate) sheath_state: u8,
+}
+
+/// The sheath state of a creature with no addon row:
+/// `SHEATH_STATE_MELEE`, which `Creature::LoadCreatureAddon` sets when there
+/// is none, so a guard stands with its weapon in hand.
+pub(crate) const DEFAULT_SHEATH: u8 = 1;
 
 impl Spawn {
     /// The key an edit to this spawn is written under.
@@ -166,6 +188,30 @@ impl Spawn {
         self.claim == Life::Insert
     }
 
+    /// The key of this spawn's `creature_addon` row: the database's row's,
+    /// or patch 0 for a row this project makes, as
+    /// `crate::subjects::addons::Addons` keys one.
+    pub(crate) fn addon_key(&self) -> Key {
+        vale_mangos::addon::addon_key(self.guid, self.addon.map_or(0, |addon| addon.patch))
+    }
+
+    /// The `creature_equip_template` set this spawn holds: its addon row's
+    /// `equipment_id` unless that is -1, the template's otherwise, as
+    /// `Creature::LoadDefaultEquipment` chooses. A game event's
+    /// `game_event_creature_data` set is not drawn.
+    pub(crate) fn held_set(&self) -> u32 {
+        match self.addon {
+            Some(addon) if addon.equipment_id >= 0 => addon.equipment_id as u32,
+            _ => self.equipment_id,
+        }
+    }
+
+    /// Whether its weapons are in hand: the addon row's `sheath_state`, or
+    /// [`DEFAULT_SHEATH`].
+    pub(crate) fn sheath_state(&self) -> u8 {
+        self.addon.map_or(DEFAULT_SHEATH, |addon| addon.sheath_state)
+    }
+
     /// Whether this project removes this spawn.
     pub(crate) fn is_removed(&self) -> bool {
         self.claim == Life::Delete
@@ -189,9 +235,14 @@ impl Spawn {
     /// is true of all but a few spawns on the map. The caller then keeps the
     /// base reading rather than cloning it.
     fn with_edits(&self, edits: &Edits) -> Option<Spawn> {
+        use vale_mangos::addon;
         let spawn_key = self.key();
         let template_key = self.template_key();
-        if !edits.touches(creature::SPAWN, &spawn_key) && !edits.touches(creature::TEMPLATE, &template_key) {
+        let addon_key = self.addon_key();
+        if !edits.touches(creature::SPAWN, &spawn_key)
+            && !edits.touches(creature::TEMPLATE, &template_key)
+            && !edits.touches(addon::ADDON, &addon_key)
+        {
             return None;
         }
         let mut out = self.clone();
@@ -247,6 +298,26 @@ impl Spawn {
         }
         if let Some(high) = number(&template_key, creature::TEMPLATE, "level_max") {
             out.level.1 = high as u32;
+        }
+        if let Some(set) = number(&template_key, creature::TEMPLATE, "equipment_id") {
+            out.equipment_id = set as u32;
+        }
+        if edits.touches(addon::ADDON, &addon_key) {
+            out.addon = match edits.life(addon::ADDON, &addon_key) {
+                Life::Delete => None,
+                // A row this project makes starts as `Addon::new` does: the
+                // template's set, the weapon in hand.
+                Life::Insert => Some(SpawnAddon { patch: 0, equipment_id: -1, sheath_state: DEFAULT_SHEATH }),
+                Life::Update => out.addon,
+            };
+            if let Some(held) = out.addon.as_mut() {
+                if let Some(set) = number(&addon_key, addon::ADDON, "equipment_id") {
+                    held.equipment_id = set as i32;
+                }
+                if let Some(sheath) = number(&addon_key, addon::ADDON, "sheath_state") {
+                    held.sheath_state = sheath as u8;
+                }
+            }
         }
         Some(out)
     }
@@ -326,6 +397,8 @@ pub(crate) struct Known {
     pub(crate) faction: u32,
     pub(crate) npc_flags: u32,
     pub(crate) rank: u32,
+    /// The `creature_equip_template` set it holds.
+    pub(crate) equipment_id: u32,
     /// [`Life::Insert`] for a template this project creates, which is in no
     /// database; [`Life::Update`] for one the database holds.
     pub(crate) claim: Life,
@@ -377,6 +450,7 @@ impl Known {
             faction: number("faction"),
             npc_flags: number("npc_flags"),
             rank: number("rank"),
+            equipment_id: number("equipment_id"),
             claim: Life::Insert,
         })
     }
@@ -454,6 +528,9 @@ impl Listed for Known {
         if let Some(rank) = number("rank") {
             out.rank = rank as u32;
         }
+        if let Some(set) = number("equipment_id") {
+            out.equipment_id = set as u32;
+        }
         out
     }
 
@@ -500,6 +577,7 @@ pub(crate) fn read_known(row: &creature::Row) -> Option<Known> {
         faction: integer("faction"),
         npc_flags: integer("npc_flags"),
         rank: integer("rank"),
+        equipment_id: integer("equipment_id"),
     })
 }
 
@@ -519,6 +597,7 @@ pub(crate) fn known_from(spawn: &Spawn) -> Option<Known> {
         faction: spawn.faction,
         npc_flags: spawn.npc_flags,
         rank: spawn.rank,
+        equipment_id: spawn.equipment_id,
     })
 }
 
@@ -543,6 +622,12 @@ fn read_spawn(row: &creature::Row) -> Spawn {
         npc_flags: integer("npc_flags"),
         rank: integer("rank"),
         patch: integer("patch"),
+        equipment_id: integer("equipment_id"),
+        addon: row.integer("addon_patch").map(|patch| SpawnAddon {
+            patch: patch as u32,
+            equipment_id: row.integer("addon_equipment_id").unwrap_or(-1) as i32,
+            sheath_state: row.integer("addon_sheath_state").unwrap_or(i64::from(DEFAULT_SHEATH)) as u8,
+        }),
         // A row read from the database exists, so it is an update. Any other
         // state is the project's claim, laid over by `with_edits`.
         claim: Life::Update,
@@ -606,6 +691,7 @@ impl SpawnSubject for CreatureSubject {
     const DISPLAY_COLUMN: &'static str = "display_id1";
     const DISPLAY_TABLE: crate::subjects::displays::Table = crate::subjects::displays::Table::Creature;
     const HOLDER: crate::subjects::quests::Holder = crate::subjects::quests::Holder::Creature;
+    const KIND: super::spawn::SpawnKind = super::spawn::SpawnKind::Creature;
     const BODY: f32 = BODY;
     // Wider than a light's twelve, because a creature marker is a body rather
     // than a dot and the whole body is the target.
@@ -620,6 +706,7 @@ impl SpawnSubject for CreatureSubject {
     // A little past the 7x7 block the editor streams at its default reach, so
     // a marker appears as its ground does.
     const RANGE: f32 = 1200.0;
+    const SPAWN_ROWS: &'static [&'static str] = &[vale_mangos::addon::ADDON];
 
     fn spawn_key(guid: u64) -> Key {
         creature::spawn_key(guid)
@@ -687,6 +774,7 @@ impl SpawnSubject for CreatureSubject {
             faction: 0,
             npc_flags: 0,
             rank: 0,
+            equipment_id: 0,
         }
     }
 
@@ -716,6 +804,8 @@ impl SpawnSubject for CreatureSubject {
             npc_flags: known.map(|known| known.npc_flags).unwrap_or(0),
             rank: known.map(|known| known.rank).unwrap_or(0),
             patch: known.map(|known| known.patch).unwrap_or(0),
+            equipment_id: known.map(|known| known.equipment_id).unwrap_or(0),
+            addon: None,
             claim: Life::Insert,
         }
     }
@@ -790,8 +880,15 @@ impl SpawnSubject for CreatureSubject {
             // reads this field, and it skips an entity with no entry in
             // `Motion`, which none of these has. See [`transform_for`].
             scale: Some(1.0),
+            // The weapons are put in its hands by [`hold_weapons`] once the
+            // set and its items have been read.
+            sheath_state: spawn.sheath_state(),
             ..WorldEntity::default()
         }
+    }
+
+    fn sheath(spawn: &Spawn) -> u8 {
+        spawn.sheath_state()
     }
 
     fn transform(spawn: &Spawn) -> Transform {
@@ -861,10 +958,138 @@ impl Plugin for CreatureToolPlugin {
             // a moving camera by a frame.
             .add_systems(
                 Update,
-                mark_services
-                    .after(super::spawn::lay_the_edits::<CreatureSubject>)
-                    .after(vale_client::world::camera::place),
+                (
+                    mark_services
+                        .after(super::spawn::lay_the_edits::<CreatureSubject>)
+                        .after(vale_client::world::camera::place),
+                    hold_weapons.after(super::spawn::lay_the_edits::<CreatureSubject>),
+                    mark_formations.after(super::spawn::lay_the_edits::<CreatureSubject>),
+                ),
             );
+    }
+}
+
+/// Put in each creature model's hands the row of its set that
+/// [`crate::subjects::addons::drawn_row`] chooses, and draw or stow its
+/// weapons by its sheath state.
+///
+/// The set is the spawn's addon's or its template's ([`Spawn::held_set`]),
+/// with the project's edits laid over the spawn, the set's rows and the items,
+/// so a set chosen in the Addon section or an item changed in the Equipment
+/// window is held on the next frame after its rows are read. An item the
+/// server would force to 0, one not in `item_template` or not held in a hand,
+/// is drawn as an empty hand, as the server would send it.
+///
+/// A body's `WorldEntity` is written only when what it holds changes. The
+/// client hangs the weapons from the hands or the sheath points again when
+/// `weapons` or `sheath_state` changes (`world::entities`), so nothing here
+/// rebuilds a model.
+#[allow(clippy::too_many_arguments)]
+fn hold_weapons(
+    creatures: Res<Creatures>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    settings: Res<crate::server::settings::ServerSettings>,
+    mut sets: ResMut<crate::subjects::addons::DrawnSets>,
+    mut quests: ResMut<crate::subjects::quests::Quests>,
+    mut bodies: Query<(&super::spawn::Preview<CreatureSubject>, &mut WorldEntity)>,
+) {
+    use vale_assets::tables::item::Weapon;
+    if !state.editing() || *tool != Tool::Creatures {
+        return;
+    }
+    let Some(session) = session else { return };
+    let edits = &session.rows.edits;
+    let patch = crate::server::settings::server_patch(&settings);
+    // One set's choice is worked out once a frame however many bodies hold
+    // it; `None` while the set or one of its items is being read.
+    let mut chosen: HashMap<u32, Option<[Weapon; 3]>> = HashMap::new();
+    for (preview, mut body) in &mut bodies {
+        let Some(spawn) = creatures.near_drawn_by_guid(preview.guid) else {
+            continue;
+        };
+        let set = spawn.held_set();
+        let weapons = *chosen.entry(set).or_insert_with(|| {
+            if set == 0 {
+                return Some([Weapon::default(); 3]);
+            }
+            let rows = sets.rows(set, edits)?;
+            let Some(row) = crate::subjects::addons::drawn_row(&rows, patch) else {
+                return Some([Weapon::default(); 3]);
+            };
+            let mut hands = [Weapon::default(); 3];
+            let mut waiting = false;
+            for (hand, item) in row.items.into_iter().enumerate() {
+                if item == 0 {
+                    continue;
+                }
+                match quests.item(item, edits) {
+                    Some(found) if vale_mangos::addon::held_in_a_hand(found.inventory_type) => {
+                        hands[hand] = found.weapon();
+                    }
+                    Some(_) => {}
+                    None if quests.item_known(item, edits) => {}
+                    None => waiting = true,
+                }
+            }
+            (!waiting).then_some(hands)
+        });
+        let Some(weapons) = weapons else { continue };
+        let sheath = spawn.sheath_state();
+        if body.weapons != weapons || body.sheath_state != sheath {
+            body.weapons = weapons;
+            body.sheath_state = sheath;
+        }
+    }
+}
+
+/// The colour of a line from a formation's leader to a member.
+const FORMATION_LINE: Color = Color::srgb(0.3, 0.85, 0.95);
+
+/// The colour of a line from a master to a linked spawn.
+const LINK_LINE: Color = Color::srgb(0.85, 0.55, 1.0);
+
+/// Draw the selected creature's formation and links on the ground: a line
+/// from the leader to each member, and from the master to each slave, with
+/// the project's edits over the rows and the positions. A spawn not on the
+/// open map has no line.
+fn mark_formations(
+    creatures: Res<Creatures>,
+    formations: Res<crate::subjects::formations::Formations>,
+    session: Option<Res<EditSession>>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    mut marks: ResMut<Marks>,
+) {
+    if !state.editing() || *tool != Tool::Creatures {
+        return;
+    }
+    let (Some(session), Some(selected)) = (session, creatures.selected) else { return };
+    let edits = &session.rows.edits;
+    let at = |guid: u64| {
+        creatures
+            .edited(guid, Some(edits))
+            .map(|spawn| vale_client::render::axes::to_bevy(spawn.at.to_array()))
+    };
+    if let Some(formation) = formations.formation_of(selected, edits) {
+        if let Some(leader) = at(formation.leader) {
+            for shown in formation.members() {
+                if let Some(member) = at(shown.row.member) {
+                    marks.wide_ground_line(leader, member, 1.4, FORMATION_LINE, Look::Ghosted);
+                }
+            }
+        }
+    }
+    let master = formations.link_of(selected, edits).filter(|shown| shown.kept()).map(|shown| shown.row.master);
+    let links = master
+        .map(|master| (master, selected))
+        .into_iter()
+        .chain(formations.slaves_of(selected, edits).into_iter().filter(|shown| shown.kept()).map(|shown| (selected, shown.row.slave)));
+    for (from, to) in links {
+        if let Some((from, to)) = at(from).zip(at(to)) {
+            marks.wide_ground_line(from, to, 1.0, LINK_LINE, Look::Ghosted);
+        }
     }
 }
 
@@ -1076,6 +1301,8 @@ mod tests {
             npc_flags: 1,
             rank: 0,
             patch: 0,
+            equipment_id: 0,
+            addon: None,
             claim: Life::Update,
         }
     }
