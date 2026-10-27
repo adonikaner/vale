@@ -88,6 +88,13 @@ pub(crate) struct Route {
     pub(crate) length: f32,
     /// The line the client flies along each leg. See [`flown`].
     pub(crate) flown: Vec<Vec<Vec3>>,
+    /// A sphere about each leg's [`Self::flown`] line, as its centre and
+    /// radius. The pick skips a leg whose sphere is too far from the pointer.
+    pub(crate) bounds: Vec<(Vec3, f32)>,
+    /// A number the route's lines were given when they were last sampled. It
+    /// is kept while the path, its points and its ends are unchanged, and the
+    /// route's kept line set is built again when it changes.
+    pub(crate) revision: u64,
     /// Whether either end is a node with no mount on either side. Those are
     /// the ends of the boat and zeppelin routes, which share `TaxiPath.dbc`
     /// with the flights; `vale taxi` separates them by the same rule.
@@ -171,6 +178,8 @@ pub(crate) struct Flightpaths {
     pub(crate) findings: Vec<Finding>,
     /// The session's table revision and the map the lists were built for.
     built: Option<(u64, u32)>,
+    /// The last [`Route::revision`] given.
+    revisions: u64,
     pub(crate) map: u32,
     pub(crate) node: Option<u32>,
     pub(crate) path: Option<u32>,
@@ -211,6 +220,7 @@ impl Default for Flightpaths {
             routes: Vec::new(),
             findings: Vec::new(),
             built: None,
+            revisions: 0,
             map: 0,
             node: None,
             path: None,
@@ -433,6 +443,14 @@ fn rebuild(
     flights.names = every.iter().map(|n| (n.id, n.name.clone())).collect();
     flights.nodes = every.into_iter().filter(|node| node.map == map).collect();
     let mut by_path = taxi::points_by_path(points);
+    // A route whose path, points and ends are unchanged is kept with its
+    // sampled line and its revision, so an edit samples and draws again only
+    // the routes it changed.
+    let mut old: HashMap<u32, Route> = match flights.map == map {
+        true => std::mem::take(&mut flights.routes).into_iter().map(|route| (route.path.id, route)).collect(),
+        false => HashMap::new(),
+    };
+    let mut revision = flights.revisions;
     flights.routes = taxi::paths(paths)
         .into_iter()
         .filter_map(|path| {
@@ -447,15 +465,24 @@ fn rebuild(
             let transport = [path.from, path.to]
                 .iter()
                 .any(|end| mounts.get(end).is_some_and(|m| *m == [0, 0]));
+            let same = |route: &Route| route.path == path && route.points == points && route.transport == transport;
+            if let Some(route) = old.remove(&path.id).filter(same) {
+                return Some(route);
+            }
+            let flown = flown(&points);
+            revision += 1;
             Some(Route {
                 length: taxi::length(&points),
-                flown: flown(&points),
+                bounds: leg_bounds(&flown),
+                flown,
                 path,
                 points,
                 transport,
+                revision,
             })
         })
         .collect();
+    flights.revisions = revision;
     flights.findings = taxi::check(nodes, paths, points);
     flights.map = map;
     // A selection whose row went away with an undo or a removal is dropped
@@ -518,11 +545,51 @@ pub(crate) fn curve_legs(run: &[Vec3]) -> Vec<Vec<Vec3>> {
         .collect()
 }
 
+/// A sphere about each leg's sampled line: the middle of the box its points
+/// span, and the distance to the farthest of them. An empty leg, between two
+/// maps, is a point at the origin.
+pub(crate) fn leg_bounds(flown: &[Vec<Vec3>]) -> Vec<(Vec3, f32)> {
+    flown
+        .iter()
+        .map(|leg| {
+            let Some(&first) = leg.first() else {
+                return (Vec3::ZERO, 0.0);
+            };
+            let (low, high) = leg.iter().fold((first, first), |(low, high), p| (low.min(*p), high.max(*p)));
+            let centre = (low + high) * 0.5;
+            let radius = leg.iter().map(|p| p.distance(centre)).fold(0.0, f32::max);
+            (centre, radius)
+        })
+        .collect()
+}
+
 /// Draw a leg's curve as its straight pieces.
 fn polyline(marks: &mut Marks, leg: &[Vec3], colour: Color, look: Look) {
     for piece in leg.windows(2) {
         marks.line(axes::to_bevy(piece[0].to_array()), axes::to_bevy(piece[1].to_array()), colour, look);
     }
+}
+
+/// The kept line set of a route that is not selected, hovered or on the
+/// selected node: every leg on `map`, each drawn while the eye is within
+/// [`ROUTE_RANGE`] of the leg's middle, as [`leg_shown`] decides for the
+/// others. The set is built again only when [`Route::revision`] changes, and
+/// the shader makes the range test, so neither a still nor a moving camera
+/// costs a line's work per frame.
+fn kept_route(marks: &mut Marks, route: &Route, map: u32, colour: Color) {
+    marks.kept_lines(("flightpaths", route.path.id), route.revision, |lines| {
+        for (pair, leg) in route.points.windows(2).zip(&route.flown) {
+            if pair[0].map != map || pair[1].map != map {
+                continue;
+            }
+            let middle = (Vec3::from(pair[0].at) + Vec3::from(pair[1].at)) * 0.5;
+            let middle = axes::to_bevy(middle.to_array());
+            for piece in leg.windows(2) {
+                let (a, b) = (axes::to_bevy(piece[0].to_array()), axes::to_bevy(piece[1].to_array()));
+                lines.line_within(a, b, middle, ROUTE_RANGE, colour, Look::Solid);
+            }
+        }
+    });
 }
 
 /// Whether a leg is drawn and picked: near the eye, or on a path that is
@@ -600,12 +667,12 @@ fn aim(
     }
     let mut legs: Vec<(f32, Handle)> = Vec::new();
     for route in flights.routes.iter().filter(|route| route_shown(&flights, route)) {
-        for (pair, leg) in route.points.windows(2).zip(&route.flown) {
+        for ((pair, leg), &(centre, radius)) in route.points.windows(2).zip(&route.flown).zip(&route.bounds) {
             if pair[0].map != map || pair[1].map != map {
                 continue;
             }
             let (a, b) = (Vec3::from(pair[0].at), Vec3::from(pair[1].at));
-            if !leg_shown(&flights, route, a, b, eye) {
+            if !leg_shown(&flights, route, a, b, eye) || !aim.may_reach(centre, radius, HANDLE_PIXELS) {
                 continue;
             }
             let pixels = leg
@@ -1196,7 +1263,7 @@ pub(crate) fn side_colour(mounts: [u32; 2]) -> Color {
 /// A route that is selected, hovered or leaves the selected node, and every
 /// node and point, is [`Look::Ghosted`]: a mountain between it and the camera
 /// hides it to a faint line rather than not at all. The other routes are
-/// [`Look::Solid`].
+/// [`Look::Solid`], each a kept line set ([`kept_route`]).
 #[allow(clippy::too_many_arguments)]
 fn draw(
     mut marks: ResMut<Marks>,
@@ -1230,6 +1297,10 @@ fn draw(
             _ if route.transport => Color::srgba(0.6, 0.6, 0.7, 0.5),
             _ => Color::srgba(0.35, 0.75, 0.85, 0.55),
         };
+        if !(selected || under || of_node) {
+            kept_route(&mut marks, route, map, colour);
+            continue;
+        }
         for (n, (pair, leg)) in route.points.windows(2).zip(&route.flown).enumerate() {
             if pair[0].map != map || pair[1].map != map {
                 continue;
@@ -1238,11 +1309,7 @@ fn draw(
             if !leg_shown(&flights, route, a, b, eye) {
                 continue;
             }
-            let look = match selected || under || of_node {
-                true => Look::Ghosted,
-                false => Look::Solid,
-            };
-            polyline(&mut marks, leg, colour, look);
+            polyline(&mut marks, leg, colour, Look::Ghosted);
             if selected {
                 // The straight leg between the two points, faint, so the
                 // points the curve is drawn through read in order.
@@ -1738,8 +1805,10 @@ mod tests {
             },
             points: Vec::new(),
             flown: Vec::new(),
+            bounds: Vec::new(),
             length,
             transport,
+            revision: 0,
         };
         let routes = [
             route(100, 1000.0, false),
@@ -1863,6 +1932,85 @@ mod tests {
         assert!(off > 0.5, "{off} yards off the straight leg");
     }
 
+    /// Each leg's sphere holds every point sampled along it.
+    #[test]
+    fn a_legs_bounds_hold_its_curve() {
+        let legs = flown(&turning());
+        let bounds = leg_bounds(&legs);
+        assert_eq!(bounds.len(), legs.len());
+        for (leg, (centre, radius)) in legs.iter().zip(&bounds) {
+            assert!(leg.iter().all(|p| p.distance(*centre) <= radius + 1e-3));
+        }
+        assert_eq!(leg_bounds(&[Vec::new()]), vec![(Vec3::ZERO, 0.0)]);
+    }
+
+    /// A table of `fields` words per record and the given rows.
+    fn table(fields: usize, rows: &[Vec<u32>]) -> vale_edit::dbc::DbcFile {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"WDBC");
+        bytes.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(fields as u32).to_le_bytes());
+        bytes.extend_from_slice(&((fields * 4) as u32).to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for row in rows {
+            for field in 0..fields {
+                bytes.extend_from_slice(&row.get(field).copied().unwrap_or(0).to_le_bytes());
+            }
+        }
+        bytes.push(0);
+        vale_edit::dbc::DbcFile::parse(&bytes).expect("a table this test builds")
+    }
+
+    /// A rebuild keeps a route whose path, points and ends are unchanged,
+    /// with its revision, and samples an edited route again under a new one.
+    #[test]
+    fn a_rebuild_keeps_an_unchanged_routes_revision() {
+        use vale_assets::tables::taxi::{node_fields as nf, path_fields as pf, path_node_fields as wf};
+        let node = |id: u32, x: f32| {
+            let mut row = vec![0u32; nf::COUNT];
+            row[nf::ID] = id;
+            row[nf::X] = x.to_bits();
+            row[nf::MOUNT] = 2224;
+            row
+        };
+        let nodes = table(nf::COUNT, &[node(1, 0.0), node(2, 100.0), node(3, 200.0)]);
+        let paths = table(pf::COUNT, &[vec![10, 1, 2, 500], vec![11, 2, 3, 500]]);
+        let row = |id: u32, path: u32, index: u32, x: f32| {
+            vec![id, path, index, 0, x.to_bits(), 0f32.to_bits(), 50f32.to_bits(), 0, 0]
+        };
+        let points = |middle: f32| {
+            table(
+                wf::COUNT,
+                &[
+                    row(100, 10, 0, 0.0),
+                    row(101, 10, 1, 50.0),
+                    row(102, 10, 2, 100.0),
+                    row(110, 11, 0, 100.0),
+                    row(111, 11, 1, middle),
+                    row(112, 11, 2, 200.0),
+                ],
+            )
+        };
+        let revisions = |flights: &Flightpaths| -> Vec<u64> { flights.routes.iter().map(|route| route.revision).collect() };
+        let mut flights = Flightpaths::default();
+        rebuild(&mut flights, &nodes, &paths, &points(150.0), 0);
+        let first = revisions(&flights);
+        assert_eq!(first.len(), 2);
+        assert_ne!(first[0], first[1]);
+
+        rebuild(&mut flights, &nodes, &paths, &points(150.0), 0);
+        assert_eq!(revisions(&flights), first);
+
+        rebuild(&mut flights, &nodes, &paths, &points(160.0), 0);
+        let after = revisions(&flights);
+        assert_eq!(after[0], first[0], "path 10 did not change");
+        assert!(after[1] > first[0].max(first[1]), "path 11 did");
+        let moved = flights.route(11).expect("path 11");
+        let end = *moved.flown[0].last().expect("a sampled leg");
+        assert!((end - Vec3::new(160.0, 0.0, 50.0)).length() < 1e-3, "{end}");
+        assert_eq!(moved.bounds, leg_bounds(&moved.flown));
+    }
+
     #[test]
     fn a_change_of_map_starts_the_curve_again() {
         let mut points = turning();
@@ -1894,8 +2042,10 @@ mod tests {
             },
             points: vec![point(0, 0.0, 0.0), point(1, 1.0, 0.0)],
             flown: flown(&[point(0, 0.0, 0.0), point(1, 1.0, 0.0)]),
+            bounds: Vec::new(),
             length: 1.0,
             transport: false,
+            revision: 0,
         });
         flights.select_point(101);
         assert_eq!((flights.path, flights.point), (Some(7), Some(101)));

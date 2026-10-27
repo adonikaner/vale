@@ -67,6 +67,24 @@ impl Aim {
         let (along, off) = crate::pick::ray_to_segment(self.origin, self.direction, a, b)?;
         Some(self.pixels(off, along))
     }
+
+    /// Whether any point in the sphere at `centre` of `radius` yards could be
+    /// within `pixels` of the ray in front of the eye. False only when no
+    /// point is, so a pick that skips what this rules out finds what a pick
+    /// over everything finds.
+    ///
+    /// A point of the sphere is at least `off - radius` yards from the ray and
+    /// at most `along + radius` yards down it, and [`Self::pixels`] grows with
+    /// the first and shrinks with the second.
+    pub(crate) fn may_reach(&self, centre: Vec3, radius: f32, pixels: f32) -> bool {
+        let to = centre - self.origin;
+        let along = to.dot(self.direction);
+        if along + radius <= 0.0 {
+            return false;
+        }
+        let off = (to - self.direction * along).length();
+        off <= radius || self.pixels(off - radius, along + radius) <= pixels
+    }
 }
 
 /// The pointer's [`Aim`], when it is over the window and the camera has a
@@ -412,4 +430,44 @@ pub(crate) fn delete_selected<T: PointTool>(subject: &mut T, session: &mut EditS
     }
     let line = subject.remove(session, id, now);
     session.status = line;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `may_reach` never rules out a segment that `to_segment` puts within
+    /// the pixels, for segments all around and behind a ray.
+    #[test]
+    fn a_sphere_test_never_rules_out_a_segment_within_reach() {
+        let aim = Aim {
+            origin: Vec3::new(5.0, -3.0, 40.0),
+            direction: Vec3::new(1.0, 0.4, -0.3).normalize(),
+            focal: 1.7,
+            height: 900.0,
+        };
+        let pixels = HANDLE_PIXELS;
+        let mut within = 0;
+        // Segments along the ray, beside it and behind the eye.
+        for i in -4i32..=40 {
+            for j in -8i32..=8 {
+                for k in -8i32..=8 {
+                    let beside = Vec3::new(j as f32 * 0.7, k as f32 * 0.9, (j - k) as f32 * 0.4);
+                    let a = aim.origin + aim.direction * (i as f32 * 10.0) + beside;
+                    let b = a + Vec3::new(4.0, -2.5, 1.5) * (1 + (i + j).rem_euclid(4)) as f32;
+                    let centre = (a + b) * 0.5;
+                    let radius = (b - a).length() * 0.5;
+                    if aim.to_segment(a, b).is_some_and(|found| found <= pixels) {
+                        within += 1;
+                        assert!(aim.may_reach(centre, radius, pixels), "{a} {b}");
+                    }
+                }
+            }
+        }
+        assert!(within > 0, "some segments are within reach");
+        // Far off the ray, and wholly behind the eye, are ruled out.
+        let side = aim.origin + aim.direction * 100.0 + Vec3::Z * 500.0;
+        assert!(!aim.may_reach(side, 5.0, pixels));
+        assert!(!aim.may_reach(aim.origin - aim.direction * 50.0, 10.0, pixels));
+    }
 }

@@ -18,6 +18,13 @@
 // times LINE_PIXELS pixels at its own depth, and up by the same distance for a
 // line on the ground. The tangent slot is used so the mesh pipeline lays the
 // attribute out and defines VERTEX_TANGENTS for a line's mesh and for no other.
+//
+// A line's colour slot is its reach, not a colour: a place in the world
+// (`xyz`) and a range in yards (`w`). While the eye is farther than the range
+// from the place, every vertex of the line goes to one point outside the
+// view, so its triangles have no area and nothing is drawn. A range of 0 draws
+// the line at any distance. This is how a kept line set is limited to the
+// lines near the camera without being rebuilt as the camera moves.
 
 #import bevy_pbr::forward_io::{Vertex, VertexOutput}
 #import bevy_pbr::mesh_functions
@@ -33,6 +40,15 @@ const LINE_PIXELS: f32 = 1.5;
 @vertex
 fn vertex(vertex: Vertex) -> VertexOutput {
     var out: VertexOutput;
+#ifdef VERTEX_TANGENTS
+#ifdef VERTEX_COLORS
+    let reach = vertex.color;
+    if reach.w > 0.0 && distance(view.world_position.xyz, reach.xyz) > reach.w {
+        out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+        return out;
+    }
+#endif
+#endif
     let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
     var world = mesh_functions::mesh_position_local_to_world(
         world_from_local,

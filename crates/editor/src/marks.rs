@@ -18,12 +18,31 @@
 //! one hash per line, so it does not depend on the order the tools' systems
 //! ran in, which changes from frame to frame.
 //!
+//! A frame whose lines are the last frame's in the same order is recognised by
+//! comparing the two lists, which costs less than the hashes; the hashes are
+//! the test when the order differs.
+//!
 //! The shapes stay one entity each. A tool sizes most of them by the distance
 //! to the camera, so a moving camera changes every one of them every frame,
 //! and rebuilding a merged mesh of 2,000 domes took 180 ms in the editor's
 //! unoptimised build, against moving 2,000 entities, which costs little. A
 //! shape's entities are not touched on a frame whose poses for that shape and
 //! colour are the last frame's, by the same sum of hashes.
+//!
+//! ## Kept line sets
+//!
+//! A tool that draws many lines which change rarely, such as every flight
+//! path on a map, gives them to [`Marks::kept_lines`] under a key and a
+//! revision instead of sending them every frame. The set's meshes are built
+//! when the revision changes and are otherwise only shown or hidden, so a
+//! frame costs one lookup per set rather than a push, a hash and a comparison
+//! per line. A line in a set can be drawn only near a place
+//! ([`KeptLines::line_within`]); the vertex shader makes that test, so a
+//! moving camera rebuilds nothing.
+//!
+//! Each set's meshes are drawn and sorted on their own, so a translucent mark
+//! must not depend on where its mesh sorts among the world's translucent
+//! surfaces; [`MARKS_SORT`] draws every translucent mark after them.
 //!
 //! ## Lines are widened by the shader
 //!
@@ -94,6 +113,22 @@ const SHADER: &str = "embedded://vale_ide/marks.wgsl";
 
 /// The ghost pass's opacity, as a fraction of the mark's own.
 pub(crate) const GHOST: f32 = 0.35;
+
+/// What every mark adds to its distance in the transparent phase's sort, so
+/// a translucent mark or a ghost sorts in front of every translucent surface
+/// of the world and is drawn after it.
+///
+/// Water is blended and writes depth. A translucent mark writes none, so
+/// water drawn after a flight path above it painted over the path; which of
+/// the two was drawn first depended on where each mesh's centre was, and a
+/// map's routes split into one mesh each lost some to the water. Drawn after
+/// the water, a mark above it is seen, and a mark under it is still hidden,
+/// or ghosted, by the depth the water wrote, as under the ground.
+///
+/// The client's `render::sky::SKY_SORT` sorts the sky behind the world by the
+/// same means, at -1e6; an `f32` near 1e6 still resolves a sixteenth of a
+/// yard, so the marks keep their order among themselves.
+const MARKS_SORT: f32 = 1.0e6;
 
 /// The thinnest a ghost may be, so a translucent volume's buried half is
 /// still seen.
@@ -179,14 +214,18 @@ struct Mark {
     look: Look,
 }
 
-/// One line: its ends, its radius as a multiple of [`LINE_PIXELS`], and
-/// whether it rests on the ground (raised by its own radius at each end).
+/// One line: its ends, its radius as a multiple of [`LINE_PIXELS`], whether it
+/// rests on the ground (raised by its own radius at each end), and where it is
+/// drawn.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Line {
     a: Vec3,
     b: Vec3,
     width: f32,
     lift: bool,
+    /// The line is drawn only while the eye is within `w` yards of `xyz`; a
+    /// `w` of 0 draws it at any distance. See [`KeptLines::line_within`].
+    reach: Vec4,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -206,9 +245,75 @@ pub(crate) struct Marks {
     eye: Vec3,
     forward: Vec3,
     scale: Scale,
-    /// The last colour pushed and its bytes. A tool pushes runs of one
-    /// colour, so most marks skip the conversion.
+    /// The last colour pushed and its bytes; see [`colour_bytes`].
     last_colour: Option<(Color, [u8; 4])>,
+    /// The kept line sets asked for this frame; see [`Self::kept_lines`].
+    kept: Vec<KeptAsk>,
+    /// The revision each kept line set was last built from. [`show`] writes
+    /// it when it builds a set and removes it when it despawns one.
+    kept_built: HashMap<KeptKey, u64>,
+}
+
+/// Which kept line set: the tool's name and a number the tool chooses.
+pub(crate) type KeptKey = (&'static str, u32);
+
+/// One frame's ask for a kept line set: its lines when they must be built
+/// again, else `None`.
+struct KeptAsk {
+    key: KeptKey,
+    revision: u64,
+    lines: Option<Vec<LineMark>>,
+}
+
+/// The lines of one kept set, gathered by [`Marks::kept_lines`].
+#[derive(Default)]
+pub(crate) struct KeptLines {
+    lines: Vec<LineMark>,
+    last_colour: Option<(Color, [u8; 4])>,
+}
+
+impl KeptLines {
+    /// A line [`LINE_PIXELS`] pixels in radius, drawn only while the eye is
+    /// within `range` yards of `centre`.
+    pub(crate) fn line_within(&mut self, a: Vec3, b: Vec3, centre: Vec3, range: f32, colour: Color, look: Look) {
+        let line = Line {
+            a,
+            b,
+            width: 1.0,
+            lift: false,
+            reach: centre.extend(range),
+        };
+        push_line(&mut self.lines, &mut self.last_colour, line, colour, look);
+    }
+}
+
+/// A colour as the bytes a material is keyed by. `last` is the last colour
+/// converted and its bytes: a tool pushes runs of one colour, so most marks
+/// skip the conversion.
+fn colour_bytes(last: &mut Option<(Color, [u8; 4])>, colour: Color) -> [u8; 4] {
+    match *last {
+        Some((had, bytes)) if had == colour => bytes,
+        _ => {
+            let bytes = colour.to_srgba().to_u8_array();
+            *last = Some((colour, bytes));
+            bytes
+        }
+    }
+}
+
+/// Add a line to `lines`, unless it has no length.
+fn push_line(
+    lines: &mut Vec<LineMark>,
+    last_colour: &mut Option<(Color, [u8; 4])>,
+    line: Line,
+    colour: Color,
+    look: Look,
+) {
+    if line.a.distance_squared(line.b) < 1e-8 {
+        return;
+    }
+    let colour = colour_bytes(last_colour, colour);
+    lines.push(LineMark { line, colour, look });
 }
 
 impl Marks {
@@ -240,20 +345,8 @@ impl Marks {
         radius.max(self.pixel(at) * MARKER_PIXELS)
     }
 
-    /// A colour as the bytes a material is keyed by.
-    fn bytes(&mut self, colour: Color) -> [u8; 4] {
-        match self.last_colour {
-            Some((had, bytes)) if had == colour => bytes,
-            _ => {
-                let bytes = colour.to_srgba().to_u8_array();
-                self.last_colour = Some((colour, bytes));
-                bytes
-            }
-        }
-    }
-
     fn push(&mut self, shape: Shape, pose: Transform, colour: Color, look: Look) {
-        let colour = self.bytes(colour);
+        let colour = colour_bytes(&mut self.last_colour, colour);
         self.list.push(Mark {
             shape,
             pose,
@@ -297,15 +390,27 @@ impl Marks {
     }
 
     fn push_line(&mut self, line: Line, colour: Color, look: Look) {
-        if line.a.distance_squared(line.b) < 1e-8 {
-            return;
-        }
-        let colour = self.bytes(colour);
-        self.lines.push(LineMark {
-            line,
-            colour,
-            look,
-        });
+        push_line(&mut self.lines, &mut self.last_colour, line, colour, look);
+    }
+
+    /// Draw a set of lines that changes rarely, such as every flight path on
+    /// a map, without sending it every frame.
+    ///
+    /// The set is named by `key` and is drawn on every frame that asks for it.
+    /// `draw` runs only when `revision` differs from the revision the set was
+    /// last built from, so a tool gives a new revision whenever the lines
+    /// change. A frame that does not ask for a set hides it, as a frame that
+    /// does not draw a mark hides the mark.
+    pub(crate) fn kept_lines(&mut self, key: KeptKey, revision: u64, draw: impl FnOnce(&mut KeptLines)) {
+        let lines = match self.kept_built.get(&key) == Some(&revision) {
+            true => None,
+            false => {
+                let mut kept = KeptLines::default();
+                draw(&mut kept);
+                Some(kept.lines)
+            }
+        };
+        self.kept.push(KeptAsk { key, revision, lines });
     }
 
     /// A line [`LINE_PIXELS`] pixels in radius wherever it is; see the module
@@ -316,7 +421,7 @@ impl Marks {
 
     /// [`Self::line`] with `width` times its radius.
     pub(crate) fn wide_line(&mut self, a: Vec3, b: Vec3, width: f32, colour: Color, look: Look) {
-        self.push_line(Line { a, b, width, lift: false }, colour, look);
+        self.push_line(Line { a, b, width, lift: false, reach: Vec4::ZERO }, colour, look);
     }
 
     /// [`Self::line`] lying on the ground: raised by its own radius at each
@@ -332,7 +437,7 @@ impl Marks {
 
     /// [`Self::ground_line`] with `width` times its radius.
     pub(crate) fn wide_ground_line(&mut self, a: Vec3, b: Vec3, width: f32, colour: Color, look: Look) {
-        self.push_line(Line { a, b, width, lift: true }, colour, look);
+        self.push_line(Line { a, b, width, lift: true, reach: Vec4::ZERO }, colour, look);
     }
 
     /// [`Self::line`] through every point in turn.
@@ -494,6 +599,11 @@ impl Material for MarkMaterial {
         }
     }
 
+    /// See [`MARKS_SORT`].
+    fn depth_bias(&self) -> f32 {
+        MARKS_SORT
+    }
+
     fn enable_prepass() -> bool {
         false
     }
@@ -558,12 +668,26 @@ struct Slots {
 /// One colour and one pass: one material, and one merged mesh of lines.
 type MaterialKey = ([u8; 4], bool);
 
-/// The entity that draws one [`MaterialKey`]'s lines as one mesh, and the
-/// [`signature`] of the lines it was last built from.
+/// The entity that draws one [`MaterialKey`]'s lines as one mesh.
 struct Lines {
     entity: Entity,
     mesh: Handle<Mesh>,
+    /// The [`signature`] of the lines it was last built from…
     built: (u64, usize),
+    /// …and the lines, in the order they came, as [`Slots::last`] keeps
+    /// poses. Empty for a kept set, whose revision is the test.
+    last: Vec<Line>,
+}
+
+/// One kept line set's entities, one per material. See
+/// [`Marks::kept_lines`].
+#[derive(Default)]
+struct Kept {
+    lines: HashMap<MaterialKey, Lines>,
+    /// Whether a tool asked for the set this frame.
+    asked: bool,
+    /// Frames since a tool last asked for it.
+    idle: u32,
 }
 
 /// The meshes, the materials and the entities [`show`] keeps.
@@ -573,13 +697,15 @@ struct Pool {
     materials: HashMap<MaterialKey, Handle<MarkMaterial>>,
     entities: HashMap<PoolKey, Slots>,
     lines: HashMap<MaterialKey, Lines>,
+    kept: HashMap<KeptKey, Kept>,
     /// This frame's poses per key, kept to reuse the allocations. A list
     /// rather than a map, so a run of marks of one key is gathered without a
     /// lookup per mark; [`Self::wanted_at`] finds a key's place otherwise.
     wanted: Vec<(PoolKey, Vec<Transform>)>,
     wanted_at: HashMap<PoolKey, usize>,
-    /// …and this frame's lines per key.
-    wanted_lines: HashMap<MaterialKey, Vec<Line>>,
+    /// …and this frame's lines per key, gathered the same way.
+    wanted_lines: Vec<(MaterialKey, Vec<Line>)>,
+    wanted_lines_at: HashMap<MaterialKey, usize>,
 }
 
 /// Marks a pooled entity.
@@ -623,7 +749,8 @@ fn follow_eye(
 }
 
 /// Pose one pooled entity per shape, merge the lines into one mesh per colour
-/// and pass, hide the rest, then empty the lists.
+/// and pass, build or show the kept line sets asked for, hide the rest, then
+/// empty the lists.
 ///
 /// Nothing is drawn while a playtest is running, whatever a tool asked for:
 /// the tools that draw marks do not each check the playtest. The pool is
@@ -639,16 +766,19 @@ fn show(
     state: Res<crate::playtest::Playtest>,
     mut entities: Query<(&mut Transform, &mut Visibility), With<Pooled>>,
 ) {
+    let marks = &mut *marks;
     let pool = &mut *pool;
     for (_, poses) in pool.wanted.iter_mut() {
         poses.clear();
     }
-    for lines in pool.wanted_lines.values_mut() {
+    for (_, lines) in pool.wanted_lines.iter_mut() {
         lines.clear();
     }
     if !state.editing() {
         marks.list.clear();
         marks.lines.clear();
+        marks.kept.clear();
+        marks.kept_built.clear();
         for (_, slots) in pool.entities.drain() {
             for entity in slots.entities {
                 commands.entity(entity).despawn();
@@ -657,24 +787,30 @@ fn show(
         for (_, lines) in pool.lines.drain() {
             commands.entity(lines.entity).despawn();
         }
+        for (_, kept) in pool.kept.drain() {
+            for (_, lines) in kept.lines {
+                commands.entity(lines.entity).despawn();
+            }
+        }
         return;
     }
-    let mut hint = usize::MAX;
+    let (mut hint, mut ghost_hint) = (usize::MAX, usize::MAX);
     for mark in marks.list.drain(..) {
         hint = place_of(&mut pool.wanted, &mut pool.wanted_at, (mark.shape, mark.colour, false), hint);
         pool.wanted[hint].1.push(mark.pose);
         if mark.look == Look::Ghosted {
-            let ghost = place_of(&mut pool.wanted, &mut pool.wanted_at, (mark.shape, ghost_of(mark.colour), true), usize::MAX);
-            pool.wanted[ghost].1.push(mark.pose);
+            ghost_hint = place_of(&mut pool.wanted, &mut pool.wanted_at, (mark.shape, ghost_of(mark.colour), true), ghost_hint);
+            pool.wanted[ghost_hint].1.push(mark.pose);
         }
     }
+    let (mut hint, mut ghost_hint) = (usize::MAX, usize::MAX);
     for mark in marks.lines.drain(..) {
-        pool.wanted_lines.entry((mark.colour, false)).or_default().push(mark.line);
+        hint = place_of(&mut pool.wanted_lines, &mut pool.wanted_lines_at, (mark.colour, false), hint);
+        pool.wanted_lines[hint].1.push(mark.line);
         if mark.look == Look::Ghosted {
-            pool.wanted_lines
-                .entry((ghost_of(mark.colour), true))
-                .or_default()
-                .push(mark.line);
+            let key = (ghost_of(mark.colour), true);
+            ghost_hint = place_of(&mut pool.wanted_lines, &mut pool.wanted_lines_at, key, ghost_hint);
+            pool.wanted_lines[ghost_hint].1.push(mark.line);
         }
     }
 
@@ -786,74 +922,170 @@ fn show(
         }
     }
 
-    let keys: Vec<MaterialKey> =
-        pool.wanted_lines.keys().chain(pool.lines.keys()).copied().collect::<HashSet<_>>().into_iter().collect();
+    let keys: Vec<MaterialKey> = pool
+        .wanted_lines
+        .iter()
+        .filter(|(_, lines)| !lines.is_empty())
+        .map(|(key, _)| *key)
+        .chain(pool.lines.keys().copied())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
     for key in keys {
-        let wanted = pool.wanted_lines.entry(key).or_default();
-        if wanted.is_empty() {
+        let wanted = pool.wanted_lines_at.get(&key).map(|&at| &mut pool.wanted_lines[at].1);
+        let Some(wanted) = wanted.filter(|wanted| !wanted.is_empty()) else {
             if let Some(lines) = pool.lines.get(&key) {
-                if let Ok((_, mut visibility)) = entities.get_mut(lines.entity) {
-                    if *visibility != Visibility::Hidden {
-                        *visibility = Visibility::Hidden;
-                    }
-                }
+                set_visible(lines.entity, false, &mut entities, &mut commands);
             }
             continue;
-        }
-        let lines = pool.lines.entry(key).or_insert_with(|| {
-            let mesh = meshes.add(empty_mesh());
-            let entity = commands
-                .spawn((
-                    Pooled,
-                    Mesh3d(mesh.clone()),
-                    MeshMaterial3d(material(key)),
-                    Transform::IDENTITY,
-                    Visibility::Hidden,
-                    NotShadowCaster,
-                    NotShadowReceiver,
-                    // The merged mesh spans everything a tool draws, and its
-                    // bounds change with every rebuild.
-                    NoFrustumCulling,
-                ))
-                .id();
-            Lines {
-                entity,
-                mesh,
-                built: (0, 0),
+        };
+        let lines = pool
+            .lines
+            .entry(key)
+            .or_insert_with(|| spawn_lines(&mut commands, &mut meshes, material(key)));
+        // The same lines in the same order as last frame are compared rather
+        // than hashed; in another order, the signature decides.
+        if lines.last != *wanted {
+            let now = signature(wanted.iter().map(line_hash));
+            if lines.built != now {
+                build_lines(lines, wanted, &mut meshes, &mut commands, &mut entities);
+                lines.built = now;
             }
+            // `wanted` is emptied at the start of the next frame, so last
+            // frame's list can go there instead of being dropped.
+            std::mem::swap(&mut lines.last, wanted);
+        }
+        set_visible(lines.entity, true, &mut entities, &mut commands);
+    }
+
+    for ask in marks.kept.drain(..) {
+        let kept = pool.kept.entry(ask.key).or_default();
+        kept.asked = true;
+        let Some(list) = ask.lines else { continue };
+        let mut by_key: Vec<(MaterialKey, Vec<Line>)> = Vec::new();
+        let mut at: HashMap<MaterialKey, usize> = HashMap::new();
+        let (mut hint, mut ghost_hint) = (usize::MAX, usize::MAX);
+        for mark in list {
+            hint = place_of(&mut by_key, &mut at, (mark.colour, false), hint);
+            by_key[hint].1.push(mark.line);
+            if mark.look == Look::Ghosted {
+                ghost_hint = place_of(&mut by_key, &mut at, (ghost_of(mark.colour), true), ghost_hint);
+                by_key[ghost_hint].1.push(mark.line);
+            }
+        }
+        kept.lines.retain(|key, lines| {
+            let used = at.contains_key(key);
+            if !used {
+                commands.entity(lines.entity).despawn();
+            }
+            used
         });
-        let now = signature(wanted.iter().map(line_hash));
-        if lines.built != now {
-            let centre = wanted.iter().map(|line| (line.a + line.b) * 0.5).sum::<Vec3>()
-                / wanted.len() as f32;
-            if meshes.insert(lines.mesh.id(), merge_lines(wanted, centre)).is_ok() {
-                // A replaced mesh is queued again only when its `Mesh3d` is
-                // inserted again, as the client's interface painter does.
-                commands.entity(lines.entity).insert(Mesh3d(lines.mesh.clone()));
-            }
-            // At the lines' centre, so a translucent mesh sorts by where its
-            // lines are rather than by the world's origin. A new entity is
-            // spawned by a command and is not in the query until the next
-            // frame, so its transform goes through a command as well.
-            match entities.get_mut(lines.entity) {
-                Ok((mut transform, _)) => *transform = Transform::from_translation(centre),
-                Err(_) => {
-                    commands
-                        .entity(lines.entity)
-                        .insert(Transform::from_translation(centre));
-                }
-            }
-            lines.built = now;
+        for (key, list) in by_key {
+            let lines = kept
+                .lines
+                .entry(key)
+                .or_insert_with(|| spawn_lines(&mut commands, &mut meshes, material(key)));
+            build_lines(lines, &list, &mut meshes, &mut commands, &mut entities);
         }
-        match entities.get_mut(lines.entity) {
-            Ok((_, mut visibility)) => {
-                if *visibility != Visibility::Visible {
-                    *visibility = Visibility::Visible;
-                }
+        marks.kept_built.insert(ask.key, ask.revision);
+    }
+    // A set no tool asked for this frame is hidden, and despawned after
+    // `KEEP_FRAMES` of that, as a pooled shape is.
+    let mut gone: Vec<KeptKey> = Vec::new();
+    for (key, kept) in pool.kept.iter_mut() {
+        let asked = std::mem::take(&mut kept.asked);
+        for lines in kept.lines.values() {
+            set_visible(lines.entity, asked, &mut entities, &mut commands);
+        }
+        kept.idle = if asked { 0 } else { kept.idle + 1 };
+        if kept.idle >= KEEP_FRAMES {
+            gone.push(*key);
+        }
+    }
+    for key in gone {
+        if let Some(kept) = pool.kept.remove(&key) {
+            for (_, lines) in kept.lines {
+                commands.entity(lines.entity).despawn();
             }
-            Err(_) => {
-                commands.entity(lines.entity).insert(Visibility::Visible);
+        }
+        marks.kept_built.remove(&key);
+    }
+}
+
+/// Spawn the entity that draws one material's lines as one merged mesh,
+/// hidden until it is first built and shown.
+fn spawn_lines(commands: &mut Commands, meshes: &mut Assets<Mesh>, material: Handle<MarkMaterial>) -> Lines {
+    let mesh = meshes.add(empty_mesh());
+    let entity = commands
+        .spawn((
+            Pooled,
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(material),
+            Transform::IDENTITY,
+            Visibility::Hidden,
+            NotShadowCaster,
+            NotShadowReceiver,
+            // The merged mesh spans everything a tool draws, its bounds change
+            // with every rebuild, and the shader moves its vertices off the
+            // segments they lie on.
+            NoFrustumCulling,
+        ))
+        .id();
+    Lines {
+        entity,
+        mesh,
+        built: (0, 0),
+        last: Vec::new(),
+    }
+}
+
+/// Build `lines`' mesh from `list`, which is not empty.
+///
+/// The entity stands at the lines' centre, so a translucent mesh sorts by
+/// where its lines are rather than by the world's origin. A new entity is
+/// spawned by a command and is not in the query until the next frame, so its
+/// transform goes through a command as well.
+fn build_lines(
+    lines: &Lines,
+    list: &[Line],
+    meshes: &mut Assets<Mesh>,
+    commands: &mut Commands,
+    entities: &mut Query<(&mut Transform, &mut Visibility), With<Pooled>>,
+) {
+    let centre = list.iter().map(|line| (line.a + line.b) * 0.5).sum::<Vec3>() / list.len().max(1) as f32;
+    if meshes.insert(lines.mesh.id(), merge_lines(list, centre)).is_ok() {
+        // A replaced mesh is queued again only when its `Mesh3d` is inserted
+        // again, as the client's interface painter does.
+        commands.entity(lines.entity).insert(Mesh3d(lines.mesh.clone()));
+    }
+    match entities.get_mut(lines.entity) {
+        Ok((mut transform, _)) => *transform = Transform::from_translation(centre),
+        Err(_) => {
+            commands.entity(lines.entity).insert(Transform::from_translation(centre));
+        }
+    }
+}
+
+/// Show or hide a pooled entity, through a command when it was spawned this
+/// frame and is not in the query yet.
+fn set_visible(
+    entity: Entity,
+    visible: bool,
+    entities: &mut Query<(&mut Transform, &mut Visibility), With<Pooled>>,
+    commands: &mut Commands,
+) {
+    let wanted = match visible {
+        true => Visibility::Visible,
+        false => Visibility::Hidden,
+    };
+    match entities.get_mut(entity) {
+        Ok((_, mut visibility)) => {
+            if *visibility != wanted {
+                *visibility = wanted;
             }
+        }
+        Err(_) => {
+            commands.entity(entity).insert(wanted);
         }
     }
 }
@@ -884,10 +1116,10 @@ fn pose_hash(pose: &Transform) -> u64 {
 /// The place of `key` in `list`, added when it is not there. `hint` is the
 /// place found for the last mark, which is usually the answer: a tool's marks
 /// come in runs of one shape and colour.
-fn place_of(
-    list: &mut Vec<(PoolKey, Vec<Transform>)>,
-    at: &mut HashMap<PoolKey, usize>,
-    key: PoolKey,
+fn place_of<K: Copy + Eq + std::hash::Hash, T>(
+    list: &mut Vec<(K, Vec<T>)>,
+    at: &mut HashMap<K, usize>,
+    key: K,
     hint: usize,
 ) -> usize {
     if list.get(hint).is_some_and(|(had, _)| *had == key) {
@@ -906,7 +1138,14 @@ fn line_hash(line: &Line) -> u64 {
         true => -line.width,
         false => line.width,
     };
-    hash_of(line.a.to_array().into_iter().chain(line.b.to_array()).chain([width]))
+    hash_of(
+        line.a
+            .to_array()
+            .into_iter()
+            .chain(line.b.to_array())
+            .chain([width])
+            .chain(line.reach.to_array()),
+    )
 }
 
 /// One mesh of every line in `list`, relative to `centre`.
@@ -915,13 +1154,15 @@ fn line_hash(line: &Line) -> u64 {
 /// lies on the segment, at one of the two ends, and the tangent slot carries
 /// the direction the shader pushes it out in (`xyz`) and the line's width,
 /// negated for a line raised onto the ground (`w`). The normal is the same
-/// direction. The tube has no caps, which at a few pixels across cannot be
-/// seen.
+/// direction. The colour slot carries the line's [`Line::reach`], in the
+/// world and not relative to `centre`. The tube has no caps, which at a few
+/// pixels across cannot be seen.
 fn merge_lines(list: &[Line], centre: Vec3) -> Mesh {
     let count = list.len() * LINE_SIDES * 2;
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(count);
     let mut normals: Vec<[f32; 3]> = Vec::with_capacity(count);
     let mut offsets: Vec<[f32; 4]> = Vec::with_capacity(count);
+    let mut reaches: Vec<[f32; 4]> = Vec::with_capacity(count);
     let mut triangles: Vec<u32> = Vec::with_capacity(list.len() * LINE_SIDES * 6);
     let around: [(f32, f32); LINE_SIDES] = std::array::from_fn(|side| {
         let angle = side as f32 / LINE_SIDES as f32 * std::f32::consts::TAU;
@@ -944,6 +1185,7 @@ fn merge_lines(list: &[Line], centre: Vec3) -> Mesh {
                 positions.push(end.to_array());
                 normals.push(out.to_array());
                 offsets.push([out.x, out.y, out.z, w]);
+                reaches.push(line.reach.to_array());
             }
         }
         let sides = LINE_SIDES as u32;
@@ -959,6 +1201,7 @@ fn merge_lines(list: &[Line], centre: Vec3) -> Mesh {
         .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
         .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
         .with_inserted_attribute(Mesh::ATTRIBUTE_TANGENT, offsets)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, reaches)
 }
 
 /// A mesh with no triangles, for an entity before its first lines.
@@ -1099,9 +1342,9 @@ mod tests {
         assert_eq!(near.lines.len(), 1);
         assert!(near.list.is_empty());
         assert_eq!(near.lines[0].line, far.lines[0].line);
-        assert_eq!(near.lines[0].line, Line { a, b, width: 1.0, lift: false });
+        assert_eq!(near.lines[0].line, Line { a, b, width: 1.0, lift: false, reach: Vec4::ZERO });
         near.wide_ground_line(a, b, 1.5, Color::WHITE, Look::Solid);
-        assert_eq!(near.lines[1].line, Line { a, b, width: 1.5, lift: true });
+        assert_eq!(near.lines[1].line, Line { a, b, width: 1.5, lift: true, reach: Vec4::ZERO });
         // A line of no length is not drawn.
         near.line(a, a, Color::WHITE, Look::Solid);
         assert_eq!(near.lines.len(), 2);
@@ -1113,7 +1356,7 @@ mod tests {
     #[test]
     fn a_line_mesh_lies_on_its_segment_and_faces_outward() {
         let (a, b) = (Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 6.0, 3.0));
-        let mesh = merge_lines(&[Line { a, b, width: 1.5, lift: true }], Vec3::ZERO);
+        let mesh = merge_lines(&[Line { a, b, width: 1.5, lift: true, reach: Vec4::ZERO }], Vec3::ZERO);
         let positions: Vec<Vec3> = match mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             Some(bevy::mesh::VertexAttributeValues::Float32x3(v)) => v.iter().map(|p| Vec3::from_array(*p)).collect(),
             _ => panic!("positions"),
@@ -1146,18 +1389,66 @@ mod tests {
         }
     }
 
+    /// A line with a reach carries it on every vertex, in the world and not
+    /// relative to the mesh's centre; a line without one carries a range of 0.
+    #[test]
+    fn a_line_mesh_carries_each_lines_reach() {
+        let near = Line {
+            a: Vec3::new(10.0, 0.0, 0.0),
+            b: Vec3::new(20.0, 0.0, 0.0),
+            width: 1.0,
+            lift: false,
+            reach: Vec4::new(15.0, 0.0, 0.0, 3500.0),
+        };
+        let anywhere = Line { reach: Vec4::ZERO, ..near };
+        let mesh = merge_lines(&[near, anywhere], Vec3::new(15.0, 0.0, 0.0));
+        let reaches: Vec<[f32; 4]> = match mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
+            Some(bevy::mesh::VertexAttributeValues::Float32x4(v)) => v.clone(),
+            _ => panic!("reaches"),
+        };
+        assert_eq!(reaches.len(), LINE_SIDES * 4);
+        assert!(reaches[..LINE_SIDES * 2].iter().all(|r| *r == [15.0, 0.0, 0.0, 3500.0]));
+        assert!(reaches[LINE_SIDES * 2..].iter().all(|r| *r == [0.0; 4]));
+    }
+
+    /// A kept set's lines are gathered only when its revision is new; the
+    /// same revision asks for the set without building it again.
+    #[test]
+    fn a_kept_set_is_drawn_again_only_for_a_new_revision() {
+        let mut marks = Marks::default();
+        let mut draws = 0;
+        let mut ask = |marks: &mut Marks, revision: u64| {
+            marks.kept_lines(("test", 1), revision, |lines| {
+                draws += 1;
+                lines.line_within(Vec3::ZERO, Vec3::X, Vec3::ZERO, 10.0, Color::WHITE, Look::Solid);
+            });
+        };
+        ask(&mut marks, 1);
+        assert_eq!(marks.kept[0].lines.as_ref().map(Vec::len), Some(1));
+        // `show` records the revision it built.
+        marks.kept_built.insert(("test", 1), 1);
+        marks.kept.clear();
+        ask(&mut marks, 1);
+        assert!(marks.kept[0].lines.is_none());
+        marks.kept.clear();
+        ask(&mut marks, 2);
+        assert!(marks.kept[0].lines.is_some());
+        assert_eq!(draws, 2);
+    }
+
     /// The change test ignores the order the marks arrived in and notices a
-    /// moved, widened or raised line, and a moved pose.
+    /// moved, widened, raised or re-reached line, and a moved pose.
     #[test]
     fn a_signature_ignores_order_and_notices_a_change() {
-        let first = Line { a: Vec3::ZERO, b: Vec3::X, width: 1.0, lift: false };
-        let second = Line { a: Vec3::new(1.0, 2.0, 3.0), b: Vec3::Y, width: 1.0, lift: false };
+        let first = Line { a: Vec3::ZERO, b: Vec3::X, width: 1.0, lift: false, reach: Vec4::ZERO };
+        let second = Line { a: Vec3::new(1.0, 2.0, 3.0), b: Vec3::Y, width: 1.0, lift: false, reach: Vec4::ZERO };
         let of = |lines: &[Line]| signature(lines.iter().map(line_hash));
         assert_eq!(of(&[first, second]), of(&[second, first]));
         let moved = Line { a: Vec3::new(1.0, 2.0, 3.5), ..second };
         let wider = Line { width: 1.6, ..second };
         let raised = Line { lift: true, ..second };
-        for changed in [moved, wider, raised] {
+        let reached = Line { reach: Vec4::new(0.0, 0.0, 0.0, 100.0), ..second };
+        for changed in [moved, wider, raised, reached] {
             assert_ne!(of(&[first, second]), of(&[first, changed]));
         }
         assert_ne!(of(&[first]), of(&[first, first]));
