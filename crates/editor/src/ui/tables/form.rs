@@ -524,10 +524,8 @@ fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, i
                     ui.label(egui::RichText::new("…").small().color(theme::INK_FAINT));
                     break;
                 }
-                if ui
-                    .add(egui::Link::new(egui::RichText::new(&name).small()))
-                    .clicked()
-                {
+                let hover = format!("Open {source} {}.", label.id);
+                if crate::ui::widgets::reference::link_text(ui, egui::RichText::new(&name).small(), theme::ACCENT, &hover) {
                     follow = Some((source.clone(), at));
                 }
                 shown.push(name);

@@ -600,6 +600,23 @@ impl SpawnKind {
         }
     }
 
+    /// The workspace that edits this kind's templates, and what the top bar
+    /// calls it.
+    pub(crate) fn workspace(self) -> (Tool, &'static str) {
+        match self {
+            SpawnKind::Creature => (Tool::CreatureData, "Creatures"),
+            SpawnKind::GameObject => (Tool::GameObjectData, "Game Objects"),
+        }
+    }
+
+    /// The kind of a quest relation's holder, which is a template of one.
+    pub(crate) fn of_holder(holder: crate::subjects::quests::Holder) -> SpawnKind {
+        match holder {
+            crate::subjects::quests::Holder::Creature => SpawnKind::Creature,
+            crate::subjects::quests::Holder::Object => SpawnKind::GameObject,
+        }
+    }
+
     /// The other kind.
     pub(crate) fn other(self) -> SpawnKind {
         match self {

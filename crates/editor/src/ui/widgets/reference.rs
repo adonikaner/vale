@@ -31,10 +31,21 @@
 //!
 //! A DBC row opens the table browser, a quest the quest workspace and an item
 //! the item workspace, each through a [`ShellAsk`] the shell carries out after
-//! everything is drawn. A creature or a game object is named and not linked:
-//! the tool that edits one is the tool this form is already in, and its
-//! selection is a spawn, not a template. A display id opens its display
+//! everything is drawn. A creature or a game object opens its template in the
+//! Creatures or Game Objects workspace through [`template_link`], which the
+//! lists that name templates use as well. A display id opens its display
 //! workspace through [`display_link`].
+//!
+//! ## What a link looks like
+//!
+//! Every link in the editor is drawn by [`link`], [`link_text`] or
+//! [`link_job`], so they look alike: the accent colour, underlined while the
+//! pointer is over it, with the hand cursor, and cut to the room it has. Two
+//! colours differ for a reason: an item is in its quality's colour, as the
+//! game draws it, and a row marked for removal is in the bad colour. The hover
+//! text says what a click does, as a sentence: `Open Spell 133.` for a row in
+//! the same view, and `Open quest 5 in the quest workspace.` for one that
+//! switches workspace.
 
 use bevy_egui::egui;
 
@@ -44,6 +55,7 @@ use super::rowform::{meaning, FORM_ROW, FORM_VALUE};
 use super::theme;
 use crate::session::EditSession;
 use crate::subjects::quests::{ColumnTarget, Holder, PickFor, Picker, Quests, Target};
+use crate::tools::spawns::spawn::SpawnKind;
 use vale_client::assets::GameAssets;
 
 /// What resolving a name needs.
@@ -219,12 +231,11 @@ fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
     }
 }
 
-/// A creature's or a game object's name, out of the quest tool's cache.
+/// A creature's or a game object's name, out of the quest tool's cache, as
+/// a link that opens its template.
 fn holder_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, holder: Holder, id: u32) {
     match resolver.quests.holder(holder, id, &resolver.session.rows.edits) {
-        Some(name) => {
-            ui.label(egui::RichText::new(name).color(theme::INK));
-        }
+        Some(name) => template_link(ui, resolver.asks, SpawnKind::of_holder(holder), id, egui::RichText::new(name)),
         None => match resolver.quests.holder_known(holder, id, &resolver.session.rows.edits) {
             true => {
                 ui.label(
@@ -312,16 +323,55 @@ pub(crate) fn display_link(
     }
 }
 
+/// A creature's or a game object's name, or any text that stands for its
+/// template, as a link that opens the template in the Creatures or Game
+/// Objects workspace through a [`ShellAsk::ShowTemplate`].
+pub(crate) fn template_link(ui: &mut egui::Ui, asks: &mut ShellAsks, kind: SpawnKind, entry: u32, text: egui::RichText) {
+    let (_, workspace) = kind.workspace();
+    let hover = format!("Open {} template {entry} in the {workspace} workspace.", kind.word());
+    if link_text(ui, text, theme::ACCENT, &hover) {
+        asks.push(ShellAsk::ShowTemplate { kind, entry });
+    }
+}
+
+/// Up to `most` templates, each as `name (entry)` and a [`template_link`],
+/// wrapped and separated by commas, then how many more there are.
+pub(crate) fn template_links(ui: &mut egui::Ui, asks: &mut ShellAsks, kind: SpawnKind, named: &[(u32, String)], most: usize) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (at, (entry, name)) in named.iter().take(most).enumerate() {
+            if at > 0 {
+                ui.label(egui::RichText::new(", ").small());
+            }
+            template_link(ui, asks, kind, *entry, egui::RichText::new(format!("{name} ({entry})")).small());
+        }
+        if named.len() > most {
+            ui.label(egui::RichText::new(format!(" and {} more", named.len() - most)).small());
+        }
+    });
+}
+
 /// A name that opens something: drawn in `colour`, underlined while the
 /// pointer is over it. `true` when it was clicked.
 pub(crate) fn link(ui: &mut egui::Ui, text: &str, colour: egui::Color32, hover: &str) -> bool {
     link_text(ui, egui::RichText::new(text), colour, hover)
 }
 
-/// [`link`] for text with its own size.
-fn link_text(ui: &mut egui::Ui, text: egui::RichText, colour: egui::Color32, hover: &str) -> bool {
+/// [`link`] for text with its own size or weight.
+pub(crate) fn link_text(ui: &mut egui::Ui, text: egui::RichText, colour: egui::Color32, hover: &str) -> bool {
+    link_widget(ui, text.color(colour).into(), colour, hover)
+}
+
+/// [`link`] for a laid-out job whose parts carry their own colours, such as
+/// a name and a dimmer line after it. The underline is drawn in `colour`.
+pub(crate) fn link_job(ui: &mut egui::Ui, job: egui::text::LayoutJob, colour: egui::Color32, hover: &str) -> bool {
+    link_widget(ui, job.into(), colour, hover)
+}
+
+/// What [`link_text`] and [`link_job`] draw.
+fn link_widget(ui: &mut egui::Ui, text: egui::WidgetText, colour: egui::Color32, hover: &str) -> bool {
     let name = ui.add(
-        egui::Label::new(text.color(colour))
+        egui::Label::new(text)
             .truncate()
             .sense(egui::Sense::click()),
     );

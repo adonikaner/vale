@@ -465,7 +465,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         ui.label(
             egui::RichText::new(creature::mask_words(&creature::NPC_FLAGS, spawn.npc_flags))
                 .small()
-                .color(theme::ACCENT),
+                .color(theme::INK),
         );
     }
     super::spawn::head_buttons(ui, subject, spawn);

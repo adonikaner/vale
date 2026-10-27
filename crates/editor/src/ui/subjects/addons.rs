@@ -215,18 +215,10 @@ fn set_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, set: u3
     if let Some(users) = subject.addons.users(set, &subject.session.rows.edits) {
         let others: Vec<&(u32, String)> = users.iter().filter(|(entry, _)| *entry != about.entry).collect();
         let spawns = subject.addons.addon_users(set).unwrap_or(0);
+        let named: Vec<(u32, String)> = others.iter().map(|&other| other.clone()).collect();
         let mut parts: Vec<String> = Vec::new();
-        if !others.is_empty() {
-            let names: Vec<String> = others
-                .iter()
-                .take(4)
-                .map(|(entry, name)| format!("{name} ({entry})"))
-                .collect();
-            let more = match others.len() > 4 {
-                true => format!(" and {} more", others.len() - 4),
-                false => String::new(),
-            };
-            parts.push(format!("{} other creature(s): {}{more}", others.len(), names.join(", ")));
+        if !named.is_empty() {
+            parts.push(format!("{} other creature(s)", named.len()));
         }
         if spawns > 0 {
             parts.push(format!("{spawns} spawn(s) name it in their addon row"));
@@ -242,6 +234,15 @@ fn set_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, set: u3
                     .small()
                     .color(theme::WARN),
                 );
+                if !named.is_empty() {
+                    crate::ui::widgets::reference::template_links(
+                        ui,
+                        subject.asks,
+                        crate::tools::spawns::spawn::SpawnKind::Creature,
+                        &named,
+                        4,
+                    );
+                }
             }
         }
     }

@@ -60,13 +60,8 @@ pub(super) fn area_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: us
                     for &row in &rows {
                         let label = work.browser.describe(work.session, area::TABLE, row);
                         ui.horizontal(|ui| {
-                            if ui
-                                .add(egui::Link::new(
-                                    egui::RichText::new(&label.title).color(theme::ACCENT),
-                                ))
-                                .on_hover_text(format!("open area {}", label.id))
-                                .clicked()
-                            {
+                            let hover = format!("Open area {}.", label.id);
+                            if crate::ui::widgets::reference::link(ui, &label.title, theme::ACCENT, &hover) {
                                 follow = Some(label.id);
                             }
                             ui.label(theme::number(format!("#{}", label.id)).color(theme::INK_DIM));

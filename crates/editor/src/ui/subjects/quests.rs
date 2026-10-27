@@ -453,16 +453,20 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(
-                egui::RichText::new(format!("Given or taken by {name}"))
-                    .color(theme::INK)
-                    .size(12.5),
-            )
-            .on_hover_text(format!(
-                "{} template entry {id}. The list shows only the quests it gives or takes, \
-                 including relations added in this project.",
-                holder.word()
-            ));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.label(egui::RichText::new("Given or taken by ").color(theme::INK).size(12.5)).on_hover_text(
+                    "The list shows only the quests this template gives or takes, including relations \
+                     added in this project.",
+                );
+                crate::ui::widgets::reference::template_link(
+                    ui,
+                    work.asks,
+                    crate::tools::spawns::spawn::SpawnKind::of_holder(holder),
+                    id,
+                    egui::RichText::new(name).size(12.5),
+                );
+            });
             ui.horizontal(|ui| {
                 if ui
                     .small_button("show all quests")
@@ -1658,14 +1662,21 @@ fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation,
             .quests
             .holder(relation.holder, relation.id, &work.session.rows.edits)
             .unwrap_or_else(|| format!("{} {}", relation.holder.word(), relation.id));
-        if ui
-            .add(egui::Link::new(egui::RichText::new(name).color(colour)))
-            .on_hover_text("narrow the quest list to the quests this creature or game object gives or takes")
-            .clicked()
-        {
+        if crate::ui::widgets::reference::link(
+            ui,
+            &name,
+            colour,
+            "Narrow the quest list to the quests this creature or game object gives or takes.",
+        ) {
             work.quests.show_quests_of(relation.holder, relation.id);
         }
-        ui.label(theme::number(relation.id.to_string()).color(theme::INK_FAINT));
+        crate::ui::widgets::reference::template_link(
+            ui,
+            work.asks,
+            crate::tools::spawns::spawn::SpawnKind::of_holder(relation.holder),
+            relation.id,
+            theme::number(relation.id.to_string()),
+        );
         if relation.holder == Holder::Object {
             ui.label(
                 egui::RichText::new("game object")
@@ -2473,11 +2484,8 @@ fn window_row(
             Life::Delete => theme::BAD,
             _ => theme::ACCENT,
         };
-        if ui
-            .add(egui::Link::new(egui::RichText::new(title).color(colour)))
-            .on_hover_text("open this quest in the quest workspace")
-            .clicked()
-        {
+        let hover = format!("Open quest {} in the quest workspace.", relation.quest);
+        if crate::ui::widgets::reference::link(ui, &title, colour, &hover) {
             subject.quests.open = Some(relation.quest);
             subject.quests.show_quests_of(relation.holder, relation.id);
             *switch = Some(Tool::Quests);

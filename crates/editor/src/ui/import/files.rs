@@ -173,7 +173,7 @@ fn file_row(
                 sub: &sub,
                 trailing: "",
                 tint: match replaced {
-                    true => theme::ACCENT,
+                    true => theme::WARN,
                     false => theme::INK,
                 },
                 picture: true,
@@ -318,7 +318,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             ui.label(egui::RichText::new("Project").color(theme::INK_DIM));
             match replaced {
                 true => ui
-                    .label(egui::RichText::new("replaces this file").color(theme::ACCENT))
+                    .label(egui::RichText::new("replaces this file").color(theme::WARN))
                     .on_hover_text(
                         "The game reads the project's file at this path. The details and Export are the \
                          archives' file; the picture and Play are the project's.",

@@ -412,7 +412,7 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     );
     if let Some(known) = &spawn.known {
         if let Some(words) = gathered_by(locks(&mut subject.tool.own.locks, subject.assets), known) {
-            ui.label(egui::RichText::new(words).small().color(theme::ACCENT));
+            ui.label(egui::RichText::new(words).small().color(theme::INK));
         }
     }
     super::spawn::head_buttons(ui, subject, spawn);

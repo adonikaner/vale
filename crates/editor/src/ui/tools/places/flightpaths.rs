@@ -556,7 +556,8 @@ fn path_block(
     ui.horizontal(|ui| {
         for (end, word) in [(route.path.from, "from"), (route.path.to, "to")] {
             ui.label(egui::RichText::new(word).color(theme::INK_DIM));
-            if ui.link(flights.name(end)).clicked() {
+            let hover = format!("Select node {end} and put the camera over it.");
+            if crate::ui::widgets::reference::link(ui, &flights.name(end), theme::ACCENT, &hover) {
                 flights.select_node(end);
                 if let Some(node) = flights.node(end) {
                     let at = node.at;

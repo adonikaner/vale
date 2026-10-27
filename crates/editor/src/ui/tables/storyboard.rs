@@ -497,15 +497,12 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
                         .color(theme::INK_FAINT),
                 );
                 if board.visual_row.is_some() {
-                    if ui
-                        .add(egui::Link::new(
-                            egui::RichText::new(format!("SpellVisual #{}", board.visual))
-                                .strong()
-                                .color(theme::ACCENT),
-                        ))
-                        .on_hover_text("open the SpellVisual row")
-                        .clicked()
-                    {
+                    if crate::ui::widgets::reference::link_text(
+                        ui,
+                        egui::RichText::new(format!("SpellVisual #{}", board.visual)).strong(),
+                        theme::ACCENT,
+                        &format!("Open SpellVisual {}.", board.visual),
+                    ) {
                         super::reference::follow_reference(work, "SpellVisual", board.visual);
                     }
                 } else {
@@ -704,11 +701,7 @@ fn sound_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, sound: u32, name: &str
     let mut open = false;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("sound").small().color(theme::INK_FAINT));
-        if ui
-            .add(egui::Link::new(egui::RichText::new(name).size(12.0)))
-            .on_hover_text(format!("open SoundEntries {sound}"))
-            .clicked()
-        {
+        if crate::ui::widgets::reference::link_text(ui, egui::RichText::new(name).size(12.0), theme::ACCENT, &format!("Open SoundEntries {sound}.")) {
             open = true;
         }
         play = ui.small_button("▶").on_hover_text("play sound").clicked();
@@ -734,9 +727,10 @@ fn boxed(
     work: &mut Workspace<'_>,
     body: impl FnOnce(&mut egui::Ui, &mut Workspace<'_>),
 ) {
+    // Not the accent: that is the colour of a link, and the title is not one.
     let ink = match empty {
         true => theme::INK_FAINT,
-        false => theme::ACCENT,
+        false => theme::INK,
     };
     egui::Frame::new()
         .fill(match empty {
@@ -861,12 +855,12 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
         let mut open_kit = false;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("kit").small().color(theme::INK_FAINT));
-            open_kit = ui
-                .add(egui::Link::new(
-                    egui::RichText::new(format!("#{kit}")).size(12.0),
-                ))
-                .on_hover_text("open the SpellVisualKit row")
-                .clicked();
+            open_kit = crate::ui::widgets::reference::link_text(
+                ui,
+                egui::RichText::new(format!("#{kit}")).size(12.0),
+                theme::ACCENT,
+                &format!("Open SpellVisualKit {kit}."),
+            );
         });
         if open_kit {
             super::reference::follow_reference(work, "SpellVisualKit", kit);
@@ -896,11 +890,12 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
             let mut open = false;
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("shake").small().color(theme::INK_FAINT));
-                open = ui
-                    .add(egui::Link::new(
-                        egui::RichText::new(format!("camera shake #{shake}")).size(12.0),
-                    ))
-                    .clicked();
+                open = crate::ui::widgets::reference::link_text(
+                    ui,
+                    egui::RichText::new(format!("camera shake #{shake}")).size(12.0),
+                    theme::ACCENT,
+                    &format!("Open SpellEffectCameraShakes {shake}."),
+                );
             });
             if open {
                 super::reference::follow_reference(work, "SpellEffectCameraShakes", shake);
@@ -930,18 +925,13 @@ fn effect(ui: &mut egui::Ui, work: &mut Workspace<'_>, row: &EffectRow) {
         ui.label(
             egui::RichText::new(row.where_it_hangs)
                 .small()
-                .color(theme::ACCENT),
+                .color(theme::INK_FAINT),
         );
         let shown = match row.name.is_empty() {
             true => format!("effect {}", row.id),
             false => row.name.clone(),
         };
-        asked = ui
-            .add(egui::Link::new(
-                egui::RichText::new(shown).color(theme::INK),
-            ))
-            .on_hover_text(format!("open SpellVisualEffectName {}", row.id))
-            .clicked();
+        asked = crate::ui::widgets::reference::link(ui, &shown, theme::ACCENT, &format!("Open SpellVisualEffectName {}.", row.id));
         if (row.scale - 1.0).abs() > f32::EPSILON {
             ui.label(theme::number(format!("x{:.2}", row.scale)));
         }

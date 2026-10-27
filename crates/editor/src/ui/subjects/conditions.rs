@@ -333,7 +333,7 @@ fn list_page(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
             let entry = condition.entry;
             ui.horizontal(|ui| {
                 ui.set_min_height(height);
-                if ui.link(entry.to_string()).on_hover_text("Open this condition.").clicked() {
+                if reference::link(ui, &entry.to_string(), theme::ACCENT, &format!("Open condition {entry}.")) {
                     subject.conditions.show(Some(entry));
                 }
                 if offers_use(subject, entry)
@@ -412,7 +412,7 @@ fn condition_page(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: Shown) {
         theme::heading(ui, "Combined into");
         ui.horizontal_wrapped(|ui| {
             for user in users {
-                if ui.link(format!("condition {user}")).clicked() {
+                if reference::link(ui, &format!("condition {user}"), theme::ACCENT, &format!("Open condition {user}.")) {
                     subject.conditions.show(Some(user));
                 }
             }
@@ -504,7 +504,7 @@ fn value_cell(ui: &mut egui::Ui, subject: &mut Subject<'_>, shown: &Shown, n: us
                     .shown(&subject.session.rows.edits, child)
                     .and_then(|child| rows::type_of(child.condition.kind).map(|kind| kind.name))
                     .unwrap_or("missing");
-                if ui.link(format!("{child}: {named}")).clicked() {
+                if reference::link(ui, &format!("{child}: {named}"), theme::ACCENT, &format!("Open condition {child}.")) {
                     subject.conditions.show(Some(child));
                 }
             }

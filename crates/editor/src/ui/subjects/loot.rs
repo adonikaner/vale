@@ -686,32 +686,21 @@ pub(super) fn item_name(
         }
     }
     let colour = super::items::quality_colour(found.quality);
-    let name = ui.add(
-        egui::Label::new(egui::RichText::new(&found.name).color(colour))
-            .truncate()
-            .sense(egui::Sense::click()),
-    );
-    if (picture | name)
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(format!("{} ({entry}). Open it in the item workspace.", found.name))
-        .clicked()
-    {
+    let hover = format!("Open {} ({entry}) in the item workspace.", found.name);
+    let picture = picture.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(&hover).clicked();
+    let name = crate::ui::widgets::reference::link(ui, &found.name, colour, &hover);
+    if picture || name {
         asks.push(crate::ui::shell::asks::ShellAsk::ShowItem(entry));
     }
 }
 
 /// A reference row's link into the set it names.
 fn reference_link(ui: &mut egui::Ui, subject: &mut Subject<'_>, reference: u32) {
-    let link = ui.add(egui::Link::new(
-        egui::RichText::new(format!("reference {reference}")).color(theme::ACCENT),
-    ));
-    if link
-        .on_hover_text(format!(
-            "Rolls {} {reference}, a set shared by every row that references it. Click to open it.",
-            loot::REFERENCE
-        ))
-        .clicked()
-    {
+    let hover = format!(
+        "Rolls {} {reference}, a set shared by every row that references it. Open the set.",
+        loot::REFERENCE
+    );
+    if crate::ui::widgets::reference::link(ui, &format!("reference {reference}"), theme::ACCENT, &hover) {
         subject.loot.follow(reference);
     }
 }

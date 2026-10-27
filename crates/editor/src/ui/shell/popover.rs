@@ -876,7 +876,7 @@ fn which_project(
             egui::RichText::new(&here)
                 .strong()
                 .size(15.0)
-                .color(theme::ACCENT),
+                .color(theme::INK),
         );
         ui.label(egui::RichText::new(holds).color(theme::INK_DIM));
         ui.label(theme::number(session.project.root.display().to_string()).color(theme::INK_FAINT));

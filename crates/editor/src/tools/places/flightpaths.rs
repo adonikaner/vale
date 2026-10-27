@@ -86,6 +86,8 @@ pub(crate) struct Route {
     pub(crate) points: Vec<Point>,
     /// Yards, point to point, not counting a crossing between maps.
     pub(crate) length: f32,
+    /// The line the client flies along each leg. See [`flown`].
+    pub(crate) flown: Vec<Vec<Vec3>>,
     /// Whether either end is a node with no mount on either side. Those are
     /// the ends of the boat and zeppelin routes, which share `TaxiPath.dbc`
     /// with the flights; `vale taxi` separates them by the same rule.
@@ -359,6 +361,11 @@ const ROUTE_RANGE: f32 = 3500.0;
 /// Yards between the points a new path is seeded with.
 const SEED_SPACING: f32 = 120.0;
 
+/// About how many yards of a leg's curve one straight piece of the drawn
+/// line covers, and how many pieces a leg is drawn with at most.
+const CURVE_STEP: f32 = 6.0;
+const CURVE_PIECES: usize = 24;
+
 /// Mount creature ids a new node is given: the Horde wind rider in field 14
 /// and the Alliance gryphon in field 15, which is how vmangos reads the two
 /// columns. Node 79, Marshal's Refuge, carries the same pair.
@@ -442,6 +449,7 @@ fn rebuild(
                 .any(|end| mounts.get(end).is_some_and(|m| *m == [0, 0]));
             Some(Route {
                 length: taxi::length(&points),
+                flown: flown(&points),
                 path,
                 points,
                 transport,
@@ -460,6 +468,60 @@ fn rebuild(
     }
     if flights.point.is_some_and(|id| flights.point(id).is_none()) {
         flights.point = None;
+    }
+}
+
+/// The line the client flies along each leg of a path, sampled into short
+/// straight pieces: one entry per leg, `points[n]` to `points[n + 1]`, from
+/// the leg's first point to its second. A leg between two maps is empty.
+///
+/// vmangos sends a flight as one flying spline per map
+/// (`FlightPathMovementGenerator::Reset`), and a flying spline is Catmull-Rom
+/// through its points, which the client runs as
+/// `vale_protocol::state::movement::curve` does. So the curve starts again
+/// where a path changes map. A flight of several paths is one spline across
+/// all of them, so near a node where two paths join, the curve the client
+/// flies depends on the next path as well; this draws each path alone, as a
+/// flight of that one path flies it.
+pub(crate) fn flown(points: &[Point]) -> Vec<Vec<Vec3>> {
+    let mut legs = Vec::with_capacity(points.len().saturating_sub(1));
+    let mut start = 0;
+    while start < points.len() {
+        let map = points[start].map;
+        let end = points[start..].iter().position(|point| point.map != map).map_or(points.len(), |at| start + at);
+        let run: Vec<Vec3> = points[start..end].iter().map(|point| Vec3::from(point.at)).collect();
+        legs.extend(curve_legs(&run));
+        if end < points.len() {
+            legs.push(Vec::new());
+        }
+        start = end;
+    }
+    legs
+}
+
+/// [`flown`] over one run of points on one map.
+pub(crate) fn curve_legs(run: &[Vec3]) -> Vec<Vec<Vec3>> {
+    use vale_protocol::state::movement::curve;
+    let path: Vec<[f32; 3]> = run.iter().map(|at| at.to_array()).collect();
+    let controls = curve::controls(&path);
+    run.windows(2)
+        .enumerate()
+        .map(|(index, pair)| {
+            let pieces = ((pair[1] - pair[0]).length() / CURVE_STEP).ceil().clamp(1.0, CURVE_PIECES as f32) as usize;
+            (0..=pieces)
+                .map(|step| {
+                    let t = step as f32 / pieces as f32;
+                    curve::position(&controls, index, t).map_or(pair[0].lerp(pair[1], t), Vec3::from)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Draw a leg's curve as its straight pieces.
+fn polyline(marks: &mut Marks, leg: &[Vec3], colour: Color, look: Look) {
+    for piece in leg.windows(2) {
+        marks.line(axes::to_bevy(piece[0].to_array()), axes::to_bevy(piece[1].to_array()), colour, look);
     }
 }
 
@@ -538,7 +600,7 @@ fn aim(
     }
     let mut legs: Vec<(f32, Handle)> = Vec::new();
     for route in flights.routes.iter().filter(|route| route_shown(&flights, route)) {
-        for pair in route.points.windows(2) {
+        for (pair, leg) in route.points.windows(2).zip(&route.flown) {
             if pair[0].map != map || pair[1].map != map {
                 continue;
             }
@@ -546,7 +608,11 @@ fn aim(
             if !leg_shown(&flights, route, a, b, eye) {
                 continue;
             }
-            if let Some(pixels) = aim.to_segment(a, b) {
+            let pixels = leg
+                .windows(2)
+                .filter_map(|piece| aim.to_segment(piece[0], piece[1]))
+                .min_by(f32::total_cmp);
+            if let Some(pixels) = pixels {
                 legs.push((pixels, Handle::Path(route.path.id)));
             }
         }
@@ -1164,7 +1230,7 @@ fn draw(
             _ if route.transport => Color::srgba(0.6, 0.6, 0.7, 0.5),
             _ => Color::srgba(0.35, 0.75, 0.85, 0.55),
         };
-        for (n, pair) in route.points.windows(2).enumerate() {
+        for (n, (pair, leg)) in route.points.windows(2).zip(&route.flown).enumerate() {
             if pair[0].map != map || pair[1].map != map {
                 continue;
             }
@@ -1176,10 +1242,15 @@ fn draw(
                 true => Look::Ghosted,
                 false => Look::Solid,
             };
-            marks.line(bevy(a), bevy(b), colour, look);
-            // Which way the selected path flies: a chevron on every third leg.
-            if selected && n % 3 == 1 {
-                chevron(&mut marks, a, b, colour);
+            polyline(&mut marks, leg, colour, look);
+            if selected {
+                // The straight leg between the two points, faint, so the
+                // points the curve is drawn through read in order.
+                marks.line(bevy(a), bevy(b), colour.with_alpha(0.25), Look::Ghosted);
+                // Which way the path flies: a chevron on every third leg.
+                if n % 3 == 1 {
+                    chevron(&mut marks, leg, colour);
+                }
             }
         }
         if !selected {
@@ -1279,22 +1350,35 @@ fn draw_draft(
     };
     let bevy = |p: Vec3| axes::to_bevy(p.to_array());
     let drawn = Color::srgb(0.5, 1.0, 0.5);
-    let mut last = start;
-    for &at in &draft.points {
-        marks.line(bevy(last), bevy(at), drawn, Look::Ghosted);
-        let radius = marks.visible_radius(bevy(at), MARKER_RADIUS * 0.6);
-        marks.sphere(bevy(at), radius, drawn, Look::Ghosted);
-        last = at;
-    }
     // A hovered far node is where the next click ends the path.
-    if let Some(end) = match flights.hovered {
+    let end = match flights.hovered {
         Some(Handle::Node(id)) if id != draft.from => flights.node(id).map(|node| Vec3::from(node.at)),
         _ => None,
-    } {
-        marks.line(bevy(last), bevy(end), Color::WHITE, Look::Ghosted);
+    };
+    let next = match end {
+        Some(_) => None,
+        None => draft.next(cursor.surface),
+    };
+    // The curve through the points so far and the one the next click
+    // places, as it will be flown: the turn at the last placed point
+    // depends on the point after it.
+    let mut through = vec![start];
+    through.extend(&draft.points);
+    through.extend(end.or(next));
+    let legs = curve_legs(&through);
+    for leg in legs.iter().take(draft.points.len()) {
+        polyline(&mut marks, leg, drawn, Look::Ghosted);
+    }
+    for &at in &draft.points {
+        let radius = marks.visible_radius(bevy(at), MARKER_RADIUS * 0.6);
+        marks.sphere(bevy(at), radius, drawn, Look::Ghosted);
+    }
+    let last = legs.get(draft.points.len()).map_or(&[][..], Vec::as_slice);
+    if end.is_some() {
+        polyline(&mut marks, last, Color::WHITE, Look::Ghosted);
         return;
     }
-    let Some(next) = draft.next(cursor.surface) else { return };
+    let Some(next) = next else { return };
     let ground = session
         .as_ref()
         .and_then(|session| crate::tools::placements::doodads::ground_height(session, next.x, next.y));
@@ -1302,7 +1386,7 @@ fn draw_draft(
         Some(ground) if next.z < ground => Color::srgb(1.0, 0.3, 0.25),
         _ => Color::srgb(1.0, 0.85, 0.5),
     };
-    marks.line(bevy(last), bevy(next), colour.with_alpha(0.7), Look::Ghosted);
+    polyline(&mut marks, last, colour.with_alpha(0.7), Look::Ghosted);
     let radius = marks.visible_radius(bevy(next), MARKER_RADIUS * 0.6);
     marks.sphere(bevy(next), radius, colour, Look::Ghosted);
     if let Some(ground) = ground {
@@ -1310,16 +1394,19 @@ fn draw_draft(
     }
 }
 
-/// A cone at the middle of a leg, pointing from `a` to `b`.
-fn chevron(marks: &mut Marks, a: Vec3, b: Vec3, colour: Color) {
-    let along = b - a;
-    let length = along.length();
-    if length < 1.0 {
+/// A cone at the middle of a leg's curve, pointing the way it is flown.
+fn chevron(marks: &mut Marks, leg: &[Vec3], colour: Color) {
+    let (Some(first), Some(last)) = (leg.first(), leg.last()) else {
+        return;
+    };
+    let length = (*last - *first).length();
+    let middle = leg.len() / 2;
+    if length < 1.0 || middle == 0 {
         return;
     }
     let size = (length * 0.15).clamp(2.0, 12.0);
-    let tip = (a + b) * 0.5;
-    let base = tip - along / length * size;
+    let tip = leg[middle];
+    let base = tip - (leg[middle] - leg[middle - 1]).normalize_or_zero() * size;
     marks.cone(
         axes::to_bevy(base.to_array()),
         axes::to_bevy(tip.to_array()),
@@ -1650,6 +1737,7 @@ mod tests {
                 cost,
             },
             points: Vec::new(),
+            flown: Vec::new(),
             length,
             transport,
         };
@@ -1751,6 +1839,48 @@ mod tests {
         assert_ne!(side_colour([0, 0]), side_colour([2224, 541]));
     }
 
+    /// A turning path, 30 yards a leg.
+    fn turning() -> Vec<Point> {
+        vec![point(0, 0.0, 0.0), point(1, 30.0, 0.0), point(2, 60.0, 30.0), point(3, 90.0, 30.0)]
+    }
+
+    #[test]
+    fn a_path_is_flown_as_a_curve_through_its_points() {
+        let points = turning();
+        let legs = flown(&points);
+        assert_eq!(legs.len(), 3);
+        for (n, leg) in legs.iter().enumerate() {
+            assert!((leg[0] - Vec3::from(points[n].at)).length() < 1e-3, "leg {n} starts at its point");
+            let end = *leg.last().expect("a sampled leg");
+            assert!((end - Vec3::from(points[n + 1].at)).length() < 1e-3, "leg {n} ends at the next");
+        }
+        // The middle leg is between two turns, so it bends off the straight
+        // line between its points. The path is symmetric, so the curve
+        // crosses the line halfway; a quarter of the way it is off it.
+        let (a, b) = (Vec3::from(points[1].at), Vec3::from(points[2].at));
+        let quarter = legs[1][legs[1].len() / 4] - a;
+        let off = (quarter - (b - a).normalize() * quarter.dot((b - a).normalize())).length();
+        assert!(off > 0.5, "{off} yards off the straight leg");
+    }
+
+    #[test]
+    fn a_change_of_map_starts_the_curve_again() {
+        let mut points = turning();
+        points[2].map = 1;
+        points[3].map = 1;
+        let legs = flown(&points);
+        assert_eq!(legs.len(), 3);
+        assert!(legs[1].is_empty(), "no leg between two maps");
+        // Each map's run is two points, which the curve flies straight.
+        for leg in [&legs[0], &legs[2]] {
+            let (a, b) = (leg[0], *leg.last().expect("a sampled leg"));
+            for at in leg {
+                let along = (*at - a).dot((b - a).normalize());
+                assert!(((*at - a) - (b - a).normalize() * along).length() < 1e-3);
+            }
+        }
+    }
+
     #[test]
     fn a_selection_follows_what_is_clicked() {
         let mut flights = Flightpaths::default();
@@ -1763,6 +1893,7 @@ mod tests {
                 cost: 0,
             },
             points: vec![point(0, 0.0, 0.0), point(1, 1.0, 0.0)],
+            flown: flown(&[point(0, 0.0, 0.0), point(1, 1.0, 0.0)]),
             length: 1.0,
             transport: false,
         });

@@ -151,6 +151,22 @@ impl View<'_> {
             Some(Some(place)) => format!("{} \u{b7} guid {} \u{b7} map {}", place.label(), spawn.guid, place.map),
         }
     }
+
+    /// [`Self::spawn_name`] as a grid cell, with the template a link to its
+    /// workspace once the spawn's row has been read.
+    pub(crate) fn spawn_cell(&mut self, ui: &mut egui::Ui, spawn: SpawnRef) {
+        let open = self.session.map_id;
+        let Some(place) = self.located.find(spawn).flatten().cloned() else {
+            let name = self.spawn_name(spawn);
+            name_cell(ui, name);
+            return;
+        };
+        let rest = match place.map == open {
+            true => format!(" \u{b7} guid {}", spawn.guid),
+            false => format!(" \u{b7} guid {} \u{b7} map {}", spawn.guid, place.map),
+        };
+        template_cell(ui, self.asks, spawn.kind, place.entry, place.label(), rest);
+    }
 }
 
 /// Everything a section draws with, as one argument.
@@ -206,6 +222,29 @@ pub(crate) fn name_cell(ui: &mut egui::Ui, name: String) {
         |ui| {
             ui.set_width(NAME_CELL);
             ui.add(egui::Label::new(egui::RichText::new(name).small()).truncate());
+        },
+    );
+}
+
+/// [`name_cell`] for a spawn or an entry of a template: `named` is drawn as
+/// a link that opens the template in its workspace, and `rest` after it.
+pub(crate) fn template_cell(
+    ui: &mut egui::Ui,
+    asks: &mut ShellAsks,
+    kind: crate::tools::spawns::spawn::SpawnKind,
+    entry: u32,
+    named: String,
+    rest: String,
+) {
+    let height = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(NAME_CELL, height),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_width(NAME_CELL);
+            ui.spacing_mut().item_spacing.x = 0.0;
+            crate::ui::widgets::reference::template_link(ui, asks, kind, entry, egui::RichText::new(named).small());
+            ui.add(egui::Label::new(egui::RichText::new(rest).small()).truncate());
         },
     );
 }

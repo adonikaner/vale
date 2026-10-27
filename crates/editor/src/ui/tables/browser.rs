@@ -154,12 +154,7 @@ pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     // The Tables workspace reaches every table from its list, so its way
     // to another table is back to that list.
     if work.tool == crate::tools::Tool::Tables
-        && ui
-            .add(egui::Link::new(
-                egui::RichText::new("\u{2039} Tables").color(theme::ACCENT),
-            ))
-            .on_hover_text("Back to the list of tables.")
-            .clicked()
+        && crate::ui::widgets::reference::link(ui, "\u{2039} Tables", theme::ACCENT, "Back to the list of tables.")
     {
         work.browser.look_at(tables::tabs::ANY);
         work.browser.back.clear();

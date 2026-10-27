@@ -403,8 +403,7 @@ fn spawn_line(ui: &mut egui::Ui, view: &mut View<'_>, events: &mut GameEvents, k
     let spawn = SpawnRef { kind, guid: member.guid };
     let faults: Vec<String> = game_event::event_fault(i64::from(member.event)).into_iter().collect();
     state_dot(ui, shown.life, &faults);
-    let name = view.spawn_name(spawn);
-    super::keyed::name_cell(ui, name);
+    view.spawn_cell(ui, spawn);
     let how = match member.removed() {
         true => "Removed during",
         false => "Added during",

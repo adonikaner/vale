@@ -62,11 +62,26 @@ pub(in crate::ui) fn formation_section(ui: &mut egui::Ui, sec: &mut Section<'_>,
         };
         let leads = formation.leader == primary.guid;
         theme::row(ui, "Leader", |ui| {
-            let name = match leads {
-                true => "This spawn".to_string(),
-                false => sec.chosen.name(formation.leader),
-            };
-            ui.label(egui::RichText::new(name).color(theme::INK));
+            match (leads, sec.chosen.find(formation.leader)) {
+                (true, _) => {
+                    ui.label(egui::RichText::new("This spawn").color(theme::INK));
+                }
+                (false, Some(brief)) => {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    crate::ui::widgets::reference::template_link(
+                        ui,
+                        sec.asks,
+                        crate::tools::spawns::spawn::SpawnKind::Creature,
+                        brief.entry,
+                        egui::RichText::new(&brief.label),
+                    );
+                    ui.label(egui::RichText::new(format!(" \u{b7} guid {}", formation.leader)).color(theme::INK));
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                }
+                (false, None) => {
+                    ui.label(egui::RichText::new(sec.chosen.name(formation.leader)).color(theme::INK));
+                }
+            }
             sec.select_button(ui, formation.leader);
         });
         theme::row(ui, "Options", |ui| {

@@ -35,17 +35,14 @@ pub(in crate::ui) fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str, spell
                 ui.label(egui::RichText::new("/").color(theme::INK_FAINT).size(theme::SMALL));
             }
             first = false;
-            let text = egui::RichText::new(label).size(theme::SMALL).color(match walked {
-                None => theme::INK,
-                Some(_) => theme::ACCENT,
-            });
+            let text = egui::RichText::new(label).size(theme::SMALL);
             match walked {
                 // The open folder.
                 None => {
-                    ui.label(text);
+                    ui.label(text.color(theme::INK));
                 }
                 Some(to) => {
-                    if ui.small_button(text).clicked() {
+                    if super::reference::link_text(ui, text, theme::ACCENT, &format!("Open {label}.")) {
                         go = Some(to);
                     }
                 }

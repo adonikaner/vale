@@ -364,20 +364,32 @@ fn member_line(ui: &mut egui::Ui, view: &mut View<'_>, pools: &mut Pools, shown:
     let row = &shown.row;
     let faults = row.check();
     let spawn = spawn_of(row);
-    let named = match spawn {
-        Some(spawn) => view.spawn_name(spawn),
-        None if row.of == Of::Pool => {
+    state_dot(ui, shown.life, &faults);
+    match (spawn, row.of) {
+        (Some(spawn), _) => view.spawn_cell(ui, spawn),
+        (None, Of::Pool) => {
             let edits = view.session.rows.edits.clone();
             let description = pools
                 .pool_rows(row.id as u32, &edits)
                 .first()
                 .map_or_else(String::new, |shown| shown.row.description.clone());
-            format!("pool {} \u{b7} {description}", row.id)
+            super::keyed::name_cell(ui, format!("pool {} \u{b7} {description}", row.id));
         }
-        None => format!("{} {} \u{b7} {}", of_word(row.of), row.id, row.description),
-    };
-    state_dot(ui, shown.life, &faults);
-    super::keyed::name_cell(ui, named);
+        (None, of) => {
+            let kind = match of {
+                Of::CreatureEntry => SpawnKind::Creature,
+                _ => SpawnKind::GameObject,
+            };
+            super::keyed::template_cell(
+                ui,
+                view.asks,
+                kind,
+                row.id as u32,
+                format!("{} {}", of_word(of), row.id),
+                format!(" \u{b7} {}", row.description),
+            );
+        }
+    }
     let mut chance = row.chance;
     let changed = ui
         .add_enabled(shown.kept(), egui::DragValue::new(&mut chance).range(0.0..=100.0).speed(0.5).suffix("%"))

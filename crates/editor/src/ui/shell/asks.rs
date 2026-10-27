@@ -66,6 +66,13 @@ pub(crate) enum ShellAsk {
         spawn: crate::tools::spawns::spawn::SpawnRef,
         go: crate::tools::spawns::spawn::GoTo,
     },
+    /// Open a creature or game object template in the Creatures or Game
+    /// Objects workspace: a template's name clicked in a form or a list. See
+    /// [`crate::ui::widgets::reference::template_link`].
+    ShowTemplate {
+        kind: crate::tools::spawns::spawn::SpawnKind,
+        entry: u32,
+    },
 }
 
 impl ShellAsk {
@@ -82,6 +89,7 @@ impl ShellAsk {
             ShellAsk::Link(_) => 7,
             ShellAsk::ShowQuest(_) => 8,
             ShellAsk::ShowSpawn { .. } => 9,
+            ShellAsk::ShowTemplate { .. } => 10,
         }
     }
 }
@@ -236,6 +244,20 @@ fn carry_out_one(
             rail.follow(wanted);
         }
         ShellAsk::ShowSpawn { .. } => {}
+        // As Open in Workspace on a spawn's menu does it, and dropped as
+        // Link is during a playtest.
+        ShellAsk::ShowTemplate { kind, entry } => {
+            use crate::tools::spawns::spawn::SpawnKind;
+            let (wanted, _) = kind.workspace();
+            if !in_world || wanted.survives_playtest() {
+                match kind {
+                    SpawnKind::Creature => editing.creatures.open_listed(entry),
+                    SpawnKind::GameObject => editing.objects.open_listed(entry),
+                }
+                *tool = wanted;
+                rail.follow(wanted);
+            }
+        }
     }
 }
 

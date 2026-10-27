@@ -44,11 +44,7 @@ pub(super) fn learning(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usiz
                         .describe_id(work.session, "Spell", taught)
                         .map(|label| label.line())
                         .unwrap_or_else(|| format!("spell {taught}"));
-                    if ui
-                        .add(egui::Link::new(egui::RichText::new(name).color(theme::ACCENT)))
-                        .on_hover_text(format!("open Spell {taught}"))
-                        .clicked()
-                    {
+                    if crate::ui::widgets::reference::link(ui, &name, theme::ACCENT, &format!("Open Spell {taught}.")) {
                         follow_reference(work, "Spell", taught);
                     }
                 });
@@ -226,13 +222,7 @@ fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     for &(row, instant) in &teachers {
         let label = work.browser.describe(work.session, "Spell", row);
         ui.horizontal(|ui| {
-            if ui
-                .add(egui::Link::new(
-                    egui::RichText::new(label.line()).color(theme::ACCENT),
-                ))
-                .on_hover_text(format!("open Spell {}", label.id))
-                .clicked()
-            {
+            if crate::ui::widgets::reference::link(ui, &label.line(), theme::ACCENT, &format!("Open Spell {}.", label.id)) {
                 follow = Some(label.id);
             }
             // The rank, which is what tells one teaching spell's row from the
@@ -361,15 +351,13 @@ pub(super) fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, re
                     .color(theme::INK),
                 );
                 if count > 0
-                    && ui
-                        .add(egui::Link::new(
-                            egui::RichText::new("show in Abilities").color(theme::ACCENT),
-                        ))
-                        .on_hover_text(
-                            "Open the Abilities tab filtered by this skill line's name. To add a \
-                             spell to the skill line, use the spell's own form.",
-                        )
-                        .clicked()
+                    && crate::ui::widgets::reference::link(
+                        ui,
+                        "Show in Abilities",
+                        theme::ACCENT,
+                        "Open the Abilities tab filtered by this skill line's name. To add a \
+                         spell to the skill line, use the spell's own form.",
+                    )
                 {
                     let name = work
                         .session

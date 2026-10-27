@@ -253,7 +253,7 @@ pub(crate) fn form_head(ui: &mut egui::Ui, shown: &TemplateSubject, table: &str)
                  server to load it.",
                 shown.entry
             ),
-            theme::ACCENT,
+            theme::WARN,
         ),
         _ => (
             format!(

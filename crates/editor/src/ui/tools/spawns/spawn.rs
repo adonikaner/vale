@@ -588,7 +588,7 @@ fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
                 ui.label(
                     egui::RichText::new("New: this project creates it. There is no row in the database yet.")
                         .small()
-                        .color(theme::ACCENT),
+                        .color(theme::WARN),
                 );
             }
             theme::note(
@@ -819,7 +819,7 @@ pub(super) fn claim<S: SpawnView>(
                 }
             })
             .small()
-            .color(theme::ACCENT),
+            .color(theme::WARN),
         );
     }
     if spawn.is_removed() {
@@ -1050,7 +1050,7 @@ fn template_head<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, 
                      server before spawns of it appear in the world.",
                 )
                 .small()
-                .color(theme::ACCENT),
+                .color(theme::WARN),
             );
         }
         _ => {

@@ -335,23 +335,20 @@ fn list_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, about: &About, kind: 
                     theme::note(ui, "Only this creature uses this list.");
                 }
                 n => {
-                    let names: Vec<String> = others
-                        .iter()
-                        .take(4)
-                        .map(|(entry, name)| format!("{name} ({entry})"))
-                        .collect();
-                    let more = match n > 4 {
-                        true => format!(" and {} more", n - 4),
-                        false => String::new(),
-                    };
+                    let named: Vec<(u32, String)> = others.iter().map(|&other| other.clone()).collect();
                     ui.label(
                         egui::RichText::new(format!(
-                            "{n} other creature(s) use this list, and an edit changes all of them: \
-                             {}{more}.",
-                            names.join(", ")
+                            "{n} other creature(s) use this list, and an edit changes all of them:"
                         ))
                         .small()
                         .color(theme::WARN),
+                    );
+                    crate::ui::widgets::reference::template_links(
+                        ui,
+                        subject.asks,
+                        crate::tools::spawns::spawn::SpawnKind::Creature,
+                        &named,
+                        4,
                     );
                 }
             }
@@ -804,12 +801,7 @@ fn trainer_row(
                     ),
                     _ => format!("Spell {}. Open it in the table browser.", lesson.spell),
                 };
-                let link = ui.add(
-                    egui::Label::new(egui::RichText::new(name).color(theme::ACCENT))
-                        .truncate()
-                        .sense(egui::Sense::click()),
-                );
-                if link.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(hover).clicked() {
+                if crate::ui::widgets::reference::link(ui, name, theme::ACCENT, &hover) {
                     subject.asks.push(crate::ui::shell::asks::ShellAsk::ShowRow("Spell", lesson.spell));
                 }
             },

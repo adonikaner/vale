@@ -201,12 +201,8 @@ pub(super) fn reference(
                 true => title.clone(),
                 false => format!("{title}\n{}", label.sub),
             };
-            if ui
-                .add(egui::Label::new(job).truncate().sense(egui::Sense::click()))
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(format!("{whole}\n\nopen {points_at} {raw}"))
-                .clicked()
-            {
+            let hover = format!("{whole}\n\nOpen {points_at} {raw}.");
+            if crate::ui::widgets::reference::link_job(ui, job, theme::ACCENT, &hover) {
                 follow_reference(work, points_at, raw);
             }
         }
@@ -321,11 +317,8 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     .truncate()
                     .selectable(false),
             );
-            if ui
-                .add(egui::Link::new(egui::RichText::new(text).size(theme::SMALL)))
-                .on_hover_text(format!("open {points_at} {value}"))
-                .clicked()
-            {
+            let hover = format!("Open {points_at} {value}.");
+            if crate::ui::widgets::reference::link_text(ui, egui::RichText::new(text).size(theme::SMALL), theme::ACCENT, &hover) {
                 follow = Some((points_at, value));
             }
         });
@@ -373,11 +366,8 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     true => format!("#{}", label.id),
                     false => format!("{} [{}]", label.title, label.id),
                 };
-                if ui
-                    .add(egui::Link::new(egui::RichText::new(name).size(theme::SMALL)))
-                    .on_hover_text(format!("open {source} {}", label.id))
-                    .clicked()
-                {
+                let hover = format!("Open {source} {}.", label.id);
+                if crate::ui::widgets::reference::link_text(ui, egui::RichText::new(name).size(theme::SMALL), theme::ACCENT, &hover) {
                     follow = Some((source.clone(), at.record));
                 }
                 ui.label(egui::RichText::new(column).small().color(theme::INK_FAINT));
