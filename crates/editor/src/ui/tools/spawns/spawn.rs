@@ -25,7 +25,7 @@ use crate::tools::placements::place;
 use crate::tools::spawns::spawn::{SpawnSubject, SpawnTool, Spawned, Template, TemplateSubject};
 use crate::ui::shell::asks::{ShellAsk, ShellAsks};
 use crate::ui::widgets::rowform::{entry_cell, Renumber};
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, bar_gap, bar_toggle, property};
 use crate::ui::Editing;
 use vale_client::assets::GameAssets;
 use vale_mangos::row::{Key, Life};
@@ -579,7 +579,7 @@ pub(crate) fn toolbar<S: SpawnView>(
                     place::Mode::Select => "Click a spawn to select it, and drag to move it.",
                     place::Mode::Place => "Choose a template in the inspector, then click the ground to create a spawn of it.",
                 };
-                if toggle(ui, subject.tool.mode == mode, name).on_hover_text(hover).clicked() && subject.tool.mode != mode {
+                if bar_toggle(ui, subject.tool.mode == mode, name).on_hover_text(hover).clicked() && subject.tool.mode != mode {
                     subject.tool.mode = mode;
                     // Switching away puts down whatever was on the cursor. The
                     // tool's `ghost` also does this; doing it here as well
@@ -593,7 +593,7 @@ pub(crate) fn toolbar<S: SpawnView>(
             }
             if subject.tool.mode == place::Mode::Select {
                 if let Some(gizmo) = subject.gizmo.as_deref_mut() {
-                    gap(ui);
+                    bar_gap(ui);
                     ui.label(egui::RichText::new("Handles").color(theme::INK_DIM));
                     // A spawn has no tilt, so Turn offers the z ring alone;
                     // see `crate::tools::spawns::spawn`.
@@ -603,14 +603,14 @@ pub(crate) fn toolbar<S: SpawnView>(
                             Handles::Turn => "Drag the ring to turn the spawn about Z.",
                             Handles::Off => "No handles: the pointer picks and drags on the ground.",
                         };
-                        if toggle(ui, gizmo.handles == handles, name).on_hover_text(hover).clicked() {
+                        if bar_toggle(ui, gizmo.handles == handles, name).on_hover_text(hover).clicked() {
                             gizmo.handles = handles;
                         }
                     }
                 }
             }
-            gap(ui);
-            if toggle(ui, subject.tool.show_models, "Models").on_hover_text(S::TEXT.models).clicked() {
+            bar_gap(ui);
+            if bar_toggle(ui, subject.tool.show_models, "Models").on_hover_text(S::TEXT.models).clicked() {
                 subject.tool.show_models = !subject.tool.show_models;
             }
             ui.add_enabled(
@@ -618,7 +618,7 @@ pub(crate) fn toolbar<S: SpawnView>(
                 egui::DragValue::new(&mut subject.tool.model_budget).speed(5.0).range(0..=S::TEXT.budget_max).prefix("Max "),
             )
             .on_hover_text(S::TEXT.budget);
-            if toggle(ui, subject.tool.show_markers, "Markers")
+            if bar_toggle(ui, subject.tool.show_markers, "Markers")
                 .on_hover_text(
                     "Mark every spawn near the camera. Off, only the selected, hovered and \
                      grouped spawns are marked, which saves frame time where many spawns are \
@@ -633,7 +633,7 @@ pub(crate) fn toolbar<S: SpawnView>(
                 crate::tools::spawns::spawn::SpawnKind::Creature => "Creatures",
                 crate::tools::spawns::spawn::SpawnKind::GameObject => "Objects",
             };
-            if toggle(ui, subject.others.shown, label)
+            if bar_toggle(ui, subject.others.shown, label)
                 .on_hover_text(format!(
                     "Mark the {} spawns near the camera too, faded. A click on one selects it \
                      and switches to its tool.",
@@ -659,18 +659,6 @@ pub(crate) fn toolbar<S: SpawnView>(
         };
         ui.add(egui::Label::new(egui::RichText::new(keys).size(theme::SMALL).color(theme::INK_FAINT)).wrap());
     })
-}
-
-/// A toolbar button that shows whether it is on.
-pub(super) fn toggle(ui: &mut egui::Ui, on: bool, text: &str) -> egui::Response {
-    ui.add(egui::Button::selectable(on, text).min_size(egui::vec2(0.0, 24.0)))
-}
-
-/// The space and rule between two groups of toolbar controls.
-fn gap(ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    ui.separator();
-    ui.add_space(2.0);
 }
 
 /// The Place mode: choose a template, then click the ground.

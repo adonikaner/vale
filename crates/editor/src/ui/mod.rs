@@ -381,7 +381,7 @@ pub(crate) struct Editing<'w> {
     /// What the doodad and WMO tools have copied, for the menu's Paste here.
     pub(crate) clipboard: Res<'w, crate::tools::placements::group::Clipboard>,
     /// The drawing tablet settings and the pen's state, for the section the
-    /// terrain and shading panels show and the texture toolbar's Tablet menu.
+    /// shading panel shows and the terrain and texture toolbars' Tablet menus.
     /// See [`crate::tablet`].
     pub(crate) tablet: ResMut<'w, crate::tablet::Tablet>,
     pub(crate) pen: Res<'w, crate::tablet::Pen>,
@@ -960,6 +960,17 @@ fn draw(
         Tool::Flightpaths => {
             let strip = crate::ui::tools::places::flightpaths::strip(&ctx, world_rect, corner, &mut editing.flightpaths);
             viewport.floating.extend(strip);
+        }
+        Tool::Terrain => {
+            let bar = crate::ui::tools::ground::terrain::toolbar(
+                &ctx,
+                world_rect,
+                corner,
+                &mut editing.terrain,
+                &mut editing.tablet,
+                &editing.pen,
+            );
+            viewport.floating.extend(bar);
         }
         Tool::Textures => {
             // The guide is written back only when it changed, as the view

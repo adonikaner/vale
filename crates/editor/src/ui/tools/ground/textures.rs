@@ -20,7 +20,7 @@ use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
 use crate::tools::placements::place;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split, split_folder};
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
 use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
 
 /// What `MCLY`'s animation bits come to, in words: which way the texture
@@ -122,28 +122,28 @@ pub(crate) fn toolbar(
         let erasing = brush.erase;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            if toggle(ui, !brush.erase, "Paint")
+            if bar_toggle(ui, !brush.erase, "Paint")
                 .on_hover_text("Paint the brush's texture onto the ground.")
                 .clicked()
             {
                 brush.erase = false;
             }
-            if toggle(ui, brush.erase, "Erase")
+            if bar_toggle(ui, brush.erase, "Erase")
                 .on_hover_text("Remove the brush's texture from the ground. Shift held erases for one stroke.")
                 .clicked()
             {
                 brush.erase = true;
             }
-            gap(ui);
-            setting(ui, "Radius", |ui| {
+            bar_gap(ui);
+            bar_setting(ui, "Radius", |ui| {
                 ui.add(egui::DragValue::new(&mut brush.radius).speed(0.25).range(textures::RADIUS).suffix(" yd"))
                     .on_hover_text("The outer ring. Ctrl + wheel.");
             });
-            setting(ui, "Strength", |ui| {
+            bar_setting(ui, "Strength", |ui| {
                 ui.add(egui::DragValue::new(&mut brush.strength).speed(0.05).range(textures::RATE).suffix("/s"))
                     .on_hover_text("How fast a held stroke reaches its opacity. Shift + wheel.");
             });
-            setting(ui, "Opacity", |ui| {
+            bar_setting(ui, "Opacity", |ui| {
                 let mut percent = brush.opacity * 100.0;
                 let response = ui
                     .add_enabled(
@@ -160,7 +160,7 @@ pub(crate) fn toolbar(
                     brush.opacity = percent / 100.0;
                 }
             });
-            setting(ui, "Core", |ui| {
+            bar_setting(ui, "Core", |ui| {
                 ui.add(egui::DragValue::new(&mut brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2))
                     .on_hover_text(
                         "The share of the radius painted at full strength, drawn as the inner \
@@ -172,18 +172,18 @@ pub(crate) fn toolbar(
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            setting(ui, "Falloff", |ui| {
-                choice(ui, "textures-falloff", &mut brush.falloff, &textures::FALLOFFS)
+            bar_setting(ui, "Falloff", |ui| {
+                bar_choice(ui, "textures-falloff", &mut brush.falloff, &textures::FALLOFFS, |a, b| a == b)
                     .on_hover_text("How the strength fades from the inner ring to the outer ring. Keys 1 to 5.");
             });
-            setting(ui, "Shape", |ui| {
-                choice(ui, "textures-shape", &mut brush.shape, &textures::SHAPES)
+            bar_setting(ui, "Shape", |ui| {
+                bar_choice(ui, "textures-shape", &mut brush.shape, &textures::SHAPES, |a, b| a == b)
                     .on_hover_text("The brush's outline. Shift + 1, 2 or 3.");
             });
-            gap(ui);
+            bar_gap(ui);
             // Spray: a stroke in patches. One number while it is solid, and
             // the patch size only once it is not.
-            setting(ui, "Spray", |ui| {
+            bar_setting(ui, "Spray", |ui| {
                 let mut percent = brush.density * 100.0;
                 if ui
                     .add(egui::DragValue::new(&mut percent).speed(0.5).range(5.0..=100.0).fixed_decimals(0).suffix("%"))
@@ -198,15 +198,15 @@ pub(crate) fn toolbar(
                 }
             });
             if brush.density < 1.0 {
-                setting(ui, "Grain", |ui| {
+                bar_setting(ui, "Grain", |ui| {
                     ui.add(egui::DragValue::new(&mut brush.grain).speed(0.05).range(0.5..=20.0).fixed_decimals(1).suffix(" yd"))
                         .on_hover_text("How many yards a patch is across. A blend map's texel is half a yard.");
                 });
             }
-            gap(ui);
+            bar_gap(ui);
             // The two switches about the limit of four textures to a chunk,
             // which is what stops a stroke on about half the shipped ground.
-            if toggle(ui, brush.existing_only, "Existing Layers Only")
+            if bar_toggle(ui, brush.existing_only, "Existing Layers Only")
                 .on_hover_text(
                     "Skip chunks that do not carry the texture. A stroke then changes only \
                      the blend of existing layers and never adds a layer.",
@@ -228,8 +228,8 @@ pub(crate) fn toolbar(
             {
                 brush.reuse_hidden = !brush.reuse_hidden;
             }
-            gap(ui);
-            if toggle(ui, *full_chunks, "Show Full Chunks")
+            bar_gap(ui);
+            if bar_toggle(ui, *full_chunks, "Show Full Chunks")
                 .on_hover_text(
                     "Tint red the chunks that carry four textures. The same switch as Full chunks \
                      in the view bar's Guides menu.",
@@ -255,39 +255,6 @@ pub(crate) fn toolbar(
             .wrap(),
         );
     })
-}
-
-/// A toolbar button that shows whether it is on.
-fn toggle(ui: &mut egui::Ui, on: bool, text: &str) -> egui::Response {
-    ui.add(egui::Button::selectable(on, text).min_size(egui::vec2(0.0, 24.0)))
-}
-
-/// A toolbar setting: its name, then its control.
-fn setting(ui: &mut egui::Ui, name: &str, control: impl FnOnce(&mut egui::Ui)) {
-    ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-    control(ui);
-    ui.add_space(4.0);
-}
-
-/// The space and rule between two groups of toolbar controls.
-fn gap(ui: &mut egui::Ui) {
-    ui.add_space(2.0);
-    ui.separator();
-    ui.add_space(2.0);
-}
-
-/// One of a short list of named values, as a drop-down list.
-fn choice<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, current: &mut T, options: &[(&str, T)]) -> egui::Response {
-    let shown = options.iter().find(|(_, value)| value == current).map_or("", |(name, _)| name);
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(shown)
-        .width(72.0)
-        .show_ui(ui, |ui| {
-            for (name, value) in options {
-                ui.selectable_value(current, *value, *name);
-            }
-        })
-        .response
 }
 
 /// The texture brush's texture, and what a new layer of it grows.

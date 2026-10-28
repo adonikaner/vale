@@ -419,6 +419,56 @@ pub(crate) fn xyz(ui: &mut Ui, at: &mut [f32; 3]) -> bool {
     moved
 }
 
+/// A [`toolbar`] button that shows whether it is on.
+pub(crate) fn bar_toggle(ui: &mut Ui, on: bool, text: &str) -> egui::Response {
+    ui.add(egui::Button::selectable(on, text).min_size(Vec2::new(0.0, 24.0)))
+}
+
+/// A [`toolbar`] setting: its name, then its control, then a little space
+/// before the next.
+pub(crate) fn bar_setting<R>(ui: &mut Ui, name: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.label(RichText::new(name).color(INK_DIM));
+    let inner = control(ui);
+    ui.add_space(4.0);
+    inner
+}
+
+/// The space and rule between two groups of [`toolbar`] controls.
+pub(crate) fn bar_gap(ui: &mut Ui) {
+    ui.add_space(2.0);
+    ui.separator();
+    ui.add_space(2.0);
+}
+
+/// One of a short list of named values on a [`toolbar`], as a drop-down list.
+/// `same` compares as [`segmented`]'s does, so a variant carrying data can be
+/// compared on its discriminant.
+pub(crate) fn bar_choice<T: Copy>(
+    ui: &mut Ui,
+    id: &str,
+    current: &mut T,
+    options: &[(&str, T)],
+    same: impl Fn(&T, &T) -> bool,
+) -> egui::Response {
+    let shown = options.iter().find(|(_, value)| same(value, current)).map_or("", |(name, _)| name);
+    let mut picked = None;
+    let response = egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .width(72.0)
+        .show_ui(ui, |ui| {
+            for (name, value) in options {
+                if ui.selectable_label(same(value, current), *name).clicked() {
+                    picked = Some(*value);
+                }
+            }
+        })
+        .response;
+    if let Some(value) = picked {
+        *current = value;
+    }
+    response
+}
+
 /// A tool's bar over the top of the viewport, to the right of `corner` (the
 /// Select and Measure buttons) and in the same row: a panel-coloured frame
 /// holding the tool's modes and settings. It wraps at the viewport's right

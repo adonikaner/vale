@@ -311,7 +311,7 @@ impl SpawnView for CreatureSubject {
 
     fn beside_markers(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         let on = subject.tool.own.show_services;
-        if super::spawn::toggle(ui, on, "Services")
+        if theme::bar_toggle(ui, on, "Services")
             .on_hover_text(
                 "Draw an icon over each creature within 150 yards for each service its npc_flags \
                  offer: quests, vendor, trainer, flight master, innkeeper, banker and others. The \

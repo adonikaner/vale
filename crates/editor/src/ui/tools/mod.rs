@@ -13,7 +13,7 @@
 //! history.rs    what undo and redo would do, at the top of an editing tool's
 //!               panel
 //! tablet.rs     the drawing tablet's settings and the pen's state: under the
-//!               terrain and shading panels, and in the texture toolbar
+//!               shading panel, and in the terrain and texture toolbars
 //! ```
 //!
 //! This file is the inspector: the panel beside the viewport, which shows the
