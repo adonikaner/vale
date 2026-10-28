@@ -260,6 +260,7 @@ impl Plugin for CameraPlugin {
         app.init_resource::<CameraRig>()
             .init_resource::<RenderTuning>()
             .init_resource::<MouseLook>()
+            .init_resource::<crate::world::camera_ease::CameraEases>()
             // False by default, so no press is excluded here. See
             // [`PointerTaken`]; its only setter is another host.
             .init_resource::<PointerTaken>()
@@ -887,7 +888,7 @@ fn inversion(cvars: &crate::settings::cvars::CVars) -> Vec2 {
 /// folder's `Config.wtf` would disable the control without any message. Zero is
 /// treated as absent for the same reason. The deviation is small: 1.12's own
 /// slider stops well above zero.
-fn rate(cvars: &crate::settings::cvars::CVars, name: &str, registered: f32) -> f32 {
+pub(crate) fn rate(cvars: &crate::settings::cvars::CVars, name: &str, registered: f32) -> f32 {
     let value = cvars.number(name);
     if value.is_finite() && value != 0.0 {
         value
@@ -958,14 +959,6 @@ fn look_rate(aspect: f32, cvars: &crate::settings::cvars::CVars) -> Vec2 {
 /// plane clips into the wall and the camera sees the inside of it.
 const CAMERA_SKIN: f32 = 0.35;
 
-/// How far the eye may fall back out per second once the obstruction is gone.
-///
-/// Pulling in is instantaneous and letting out is not, as in most third-person
-/// cameras: a frame spent inside a wall is a frame of solid grey, while a frame
-/// spent closer than asked is barely noticeable. Easing the return stops a
-/// fence post the character runs past from snapping the view in and out.
-const CAMERA_RETURN: f32 = 12.0;
-
 /// Pull the eye in until nothing is between it and the character.
 ///
 /// Two sources of obstruction are asked. The buildings, trees and furniture
@@ -975,18 +968,36 @@ const CAMERA_RETURN: f32 = 12.0;
 /// sampled along the ray instead. Without the ground check a camera below the
 /// horizon is unusable, because the commonest obstruction outdoors is the
 /// hillside the character is standing on.
+///
+/// Pulling in is immediate and letting out is eased, as in the 1.12.1 client.
+/// A frame spent inside a wall is a frame of solid grey, while a frame spent
+/// closer than asked is barely noticeable. The eye has a free distance, which
+/// is the zoom distance until collision pulls the eye in. Then the free
+/// distance is left a ninth of a yard outside the collision and returns to the
+/// zoom distance over two seconds on the camera's curve; see
+/// [`crate::world::camera_ease`]. A fence post the character runs past
+/// therefore does not snap the view in and out.
 pub fn collide(
     mut rig: ResMut<CameraRig>,
     time: Res<Time>,
     session: Res<crate::world::session::Session>,
     solids: Res<crate::world::session::Solids>,
+    mut eases: ResMut<crate::world::camera_ease::CameraEases>,
 ) {
     let Some(active) = session.active.as_ref() else {
         rig.reach = rig.distance;
+        eases.no_collision();
         return;
     };
+    let now = time.elapsed_secs();
+    let free = eases.free_distance(rig.distance, now);
+    // The ray reaches the further of the free distance and the zoom distance,
+    // as the 1.12.1 client's does, and the eye then sits no further out than
+    // the free distance. An obstruction between the two therefore does not
+    // restart the return before the eye reaches it.
+    let probe = free.max(rig.distance);
     let focus = rig.focus();
-    let wanted = rig.at(rig.distance);
+    let wanted = rig.at(probe);
     let map_id = active.map_id;
 
     // The buildings, as a fraction of the segment.
@@ -1033,16 +1044,15 @@ pub fn collide(
         }
     }
 
-    let target = if hit < 1.0 {
-        (rig.distance * hit - CAMERA_SKIN).clamp(0.5, rig.distance)
+    // At least half a yard from the focus, unless the probe itself is shorter.
+    let collided = if hit < 1.0 {
+        (probe * hit - CAMERA_SKIN).max(0.5).min(probe)
     } else {
-        rig.distance
+        probe
     };
-    rig.reach = if target <= rig.reach {
-        target
-    } else {
-        (rig.reach + CAMERA_RETURN * time.delta_secs()).min(target)
-    };
+    let reach = collided.min(free);
+    eases.collided(reach, rig.distance, now);
+    rig.reach = reach;
 }
 
 /// Write the rig onto the camera's `Transform`. The single point where the
@@ -1183,6 +1193,9 @@ pub(crate) fn follow_player(
     // Whether that object is driven by the keys, which decides whether the
     // view turns with it. See [`WorldStatus::mover`].
     status: Res<WorldStatus>,
+    // The swing behind the character and the height change; see
+    // [`crate::world::camera_ease`].
+    mut ease: crate::world::camera_ease::Eases,
 ) {
     // The camera always follows. A `CameraRig::follow` flag that a shift-pan
     // cleared used to be here; the pan has been removed (see `camera::orbit`),
@@ -1219,6 +1232,8 @@ pub(crate) fn follow_player(
         if let Some(target) = at {
             rig.target = target;
             rig.target_height = through(&index, &seen, guid);
+            // The swing behind the character is about the character.
+            ease.eases.away();
             // The three stored values belong to the character and must be
             // reset on the switch. Each accumulates a delta between frames, so
             // keeping one would add every degree the body turned while the
@@ -1327,6 +1342,16 @@ pub(crate) fn follow_player(
             }
         }
         *facing = Some(orientation);
+        // The following style, after the turn has been carried: the angle it
+        // closes is the camera's angle off the character's back.
+        let held = crate::world::camera_ease::Held::read(&ease.controls, &ease.look, &buttons);
+        let character = crate::world::camera_ease::Followed {
+            heading: orientation,
+            steered: mouse_owns_the_heading,
+            uncontrolled: status.uncontrolled,
+            on_taxi: status.on_taxi,
+        };
+        ease.eases.follow(&mut rig.yaw, character, held, now, &ease.cvars);
     }
     // The camera target is interpolated like everything else; a stepping
     // camera makes the whole world jitter even when everything in it moves
@@ -1361,18 +1386,18 @@ pub(crate) fn follow_player(
             None => model.anchor * transform.scale.y,
         };
         let wanted = vale_assets::look::anchor::clamp(wanted);
-        // Eased, not snapped, at the shipped `cameraHeightSmoothSpeed`.
-        // Mounting and dismounting move the anchor most of a yard, and a rig
-        // that jumps there looks like a glitch rather than a change of seat.
-        // The rate is the 1.12.1 client's; the exponential curve is this
-        // client's. The first frame of a session takes the value directly, so
-        // a login does not start with the camera climbing off the floor.
-        let rate = vale_assets::look::anchor::SMOOTH_SPEED;
+        // Eased, not snapped, at `cameraHeightSmoothSpeed` yards a second on
+        // the camera's curve, as in the 1.12.1 client. Mounting and
+        // dismounting move the anchor most of a yard, and a rig that jumps
+        // there looks like a glitch rather than a change of seat. The first
+        // frame of a session takes the value directly, as the 1.12.1 client's
+        // first height does, so a login does not start with the camera
+        // climbing off the floor.
+        let speed = rate(&ease.cvars, "cameraHeightSmoothSpeed", vale_assets::look::anchor::SMOOTH_SPEED);
         rig.target_height = if rig.target_height <= 0.0 {
             wanted
         } else {
-            let step = 1.0 - (-rate * time.delta_secs()).exp();
-            rig.target_height + (wanted - rig.target_height) * step
+            ease.eases.height(rig.target_height, wanted, speed, now)
         };
     }
 }

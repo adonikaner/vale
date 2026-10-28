@@ -738,6 +738,12 @@ pub struct SessionStatus {
     /// producing a 40 Hz sawtooth on the vertical axis. See
     /// [`crate::state::movement::Spline::velocity`].
     pub riding: Option<[f32; 3]>,
+    /// The same ride's path and how far along it this reading is, or `None`
+    /// when nothing is driving. A reader drawing between readings samples the
+    /// path rather than continuing [`Self::riding`] in a straight line, which
+    /// leaves the curve on every bend and holds the heading still between
+    /// steps. See [`crate::state::movement::Mover::ride_curve`].
+    pub ride: Option<crate::state::movement::RideCurve>,
     /// The moving platform this character is standing on, or `None` for most
     /// of a session. See [`crate::state::movement::Ferry`].
     ///
@@ -3194,6 +3200,7 @@ impl SessionLoop {
         // uses none of the six; see `Mover::travel_speed`.
         let speed = self.local.mover.travel_speed();
         let riding = self.local.mover.ride_velocity();
+        let ride = self.local.mover.ride_curve();
         let ferry = self.local.mover.ferry();
         let packets = self.stats.packets as u64;
         let warnings = self.stats.warnings.clone();
@@ -3238,6 +3245,7 @@ impl SessionLoop {
         status.moving = moving;
         status.speed = speed;
         status.riding = riding;
+        status.ride = ride;
         status.ferry = ferry;
         // The movement block from which the gait, the strafe body offset and
         // the prediction are all derived. Published whole rather than as three

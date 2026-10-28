@@ -1490,6 +1490,9 @@ pub(super) fn poll_world(
     status.orientation = pos.orientation;
     status.in_world = session_status.in_world;
     status.mover = session_status.mover;
+    status.on_taxi = session_status.restraint.on_taxi;
+    status.uncontrolled = session_status.in_world
+        && (session_status.mover == 0 || (session_status.ride.is_some() && !status.on_taxi));
     status.weather = session_status.weather;
     status.packets = session_status.packets;
     status.movement_sent = session_status.movement_sent;

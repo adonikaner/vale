@@ -4,10 +4,10 @@
 //! ## The workspace's three parts, as in the other workspaces
 //!
 //! ```text
-//! left       which file    every game file of the project but its tiles and
-//!                          tables, filtered by where it came from and by
-//!                          sort, searched by path, with Import and what has
-//!                          fallen behind
+//! left       which file    every file of the project the publish packs, as a
+//!                          tree of folders, filtered by where it came from
+//!                          and by sort, searched by path, with Import and
+//!                          what has fallen behind
 //! middle     what it is    its path, what it is used as, what made it and
 //!                          from what, a texture's dimensions and compression,
 //!                          a model's skeleton and sequences, a sound's
@@ -22,11 +22,17 @@
 //! [`crate::import::assets`] for what an import writes and why a file listed
 //! here is in every picker.
 //!
-//! ## Imported and generated files
+//! With the search box empty the list is a tree of the project's folders, each
+//! open until closed, as the Game Files part draws the archives. With words
+//! in it the list is the matching files, each with its folder.
+//!
+//! ## Imported, generated and edited files
 //!
 //! A file is imported when the import record has it, and generated when one
-//! of the editor's generators wrote it ([`crate::import::generated`]). The
-//! list is filtered by the two. A generated file says what it was made from
+//! of the editor's generators wrote it ([`crate::import::generated`]). A client
+//! table, a map tile or a tile index is edited: it is written by the table,
+//! terrain and map tools, and changed and undone there, so this part offers
+//! no Remove for it. The list is filtered by the three. A generated file says what it was made from
 //! and whether that changed after it was made, and offers to make it again: a
 //! minimap picture is drawn again from its tile, a baked skin is baked again
 //! from the rows that name it, a flight map is drawn again from the minimap
@@ -79,6 +85,7 @@ use crate::import::sounds::SoundPurpose;
 use crate::import::sources::Sources;
 use crate::session::EditSession;
 use crate::ui::subjects::listing;
+use crate::ui::widgets::folders::{folder_row, split_folder, INDENT};
 use crate::ui::widgets::theme;
 use super::sounds;
 use vale_assets::world::blp::Encoding;
@@ -143,6 +150,19 @@ enum Origin {
     All,
     Imported,
     Generated,
+    Edited,
+}
+
+impl Origin {
+    /// Whether a file of `sort` is from this origin.
+    fn holds(self, sort: Sort) -> bool {
+        match self {
+            Origin::All => true,
+            Origin::Imported => !sort.generated() && !sort.edited(),
+            Origin::Generated => sort.generated(),
+            Origin::Edited => sort.edited(),
+        }
+    }
 }
 
 /// What a project file is to the game, as the list filters it.
@@ -159,11 +179,18 @@ enum Sort {
     NpcSkin,
     FlightMap,
     BakedModel,
+    /// A client table (`.dbc`), edited in the table editor.
+    Table,
+    /// A map tile (`.adt`), edited by the terrain tools.
+    Tile,
+    /// A map's tile index (`.wdt`), written when a map is made or a tile is
+    /// added to it.
+    TileIndex,
     Other,
 }
 
 impl Sort {
-    const ALL: [Sort; 12] = [
+    const ALL: [Sort; 15] = [
         Sort::Ground,
         Sort::Icon,
         Sort::Texture,
@@ -175,6 +202,9 @@ impl Sort {
         Sort::NpcSkin,
         Sort::FlightMap,
         Sort::BakedModel,
+        Sort::Table,
+        Sort::Tile,
+        Sort::TileIndex,
         Sort::Other,
     ];
 
@@ -198,6 +228,9 @@ impl Sort {
                     SoundPurpose::Music => Sort::Music,
                     _ => Sort::Sound,
                 },
+                Kind::Table => Sort::Table,
+                Kind::Tile => Sort::Tile,
+                Kind::Wdt => Sort::TileIndex,
                 _ => Sort::Other,
             },
         }
@@ -206,6 +239,12 @@ impl Sort {
     /// Whether the editor generates files of this sort.
     fn generated(self) -> bool {
         matches!(self, Sort::Minimap | Sort::MinimapIndex | Sort::NpcSkin | Sort::FlightMap | Sort::BakedModel)
+    }
+
+    /// Whether files of this sort are written and undone by another
+    /// workspace's editing: a table, a tile, a tile index.
+    fn edited(self) -> bool {
+        matches!(self, Sort::Table | Sort::Tile | Sort::TileIndex)
     }
 
     /// The filter's name for the sort.
@@ -222,6 +261,9 @@ impl Sort {
             Sort::NpcSkin => "NPC skins",
             Sort::FlightMap => "Flight maps",
             Sort::BakedModel => "Baked models",
+            Sort::Table => "Tables",
+            Sort::Tile => "Tiles",
+            Sort::TileIndex => "Tile indexes",
             Sort::Other => "Other",
         }
     }
@@ -240,6 +282,9 @@ impl Sort {
             Sort::NpcSkin => "baked NPC skin",
             Sort::FlightMap => "flight map picture",
             Sort::BakedModel => "baked model",
+            Sort::Table => "client table",
+            Sort::Tile => "map tile",
+            Sort::TileIndex => "map tile index",
             Sort::Other => "file",
         }
     }
@@ -375,10 +420,11 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     })
     .response
     .on_hover_text(
-        "The project's own game files other than tiles and tables: imported textures, \
-         models and sounds, and the files the editor generates: minimap pictures, baked NPC skins, \
-         baked models, flight maps. Each is read in place of the archives' file at its path, \
-         listed in the editor's pickers, and published with the project.",
+        "Every file the project publishes for the client: imported textures, models and \
+         sounds; the files the editor generates (minimap pictures, baked NPC skins, baked models, \
+         flight maps); and the tables, tiles and tile indexes the other workspaces edit. Each is \
+         read in place of the archives' file at its path, listed in the editor's pickers, and \
+         published with the project. The project's SQL, server and editor files are not listed.",
     );
     ui.add_space(4.0);
     if ui
@@ -405,14 +451,25 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     // in egui's memory, as the sort's is.
     let origin_id = egui::Id::new("assets-origin");
     let mut origin: Origin = ui.data(|data| data.get_temp::<Origin>(origin_id)).unwrap_or(Origin::All);
-    let generated = files.iter().filter(|own| sort_of(own).generated()).count();
-    let imported = files.len() - generated;
-    if generated > 0 && imported > 0 {
-        let options = [
-            (format!("All {}", files.len()), Origin::All),
-            (format!("Imported {imported}"), Origin::Imported),
-            (format!("Generated {generated}"), Origin::Generated),
-        ];
+    let count = |origin: Origin| files.iter().filter(|own| origin.holds(sort_of(own))).count();
+    let origins: Vec<(Origin, usize)> = [Origin::Imported, Origin::Generated, Origin::Edited]
+        .into_iter()
+        .map(|origin| (origin, count(origin)))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    if origins.len() > 1 {
+        let name = |origin: Origin| match origin {
+            Origin::All => "All",
+            Origin::Imported => "Imported",
+            Origin::Generated => "Generated",
+            Origin::Edited => "Edited",
+        };
+        let options: Vec<(String, Origin)> = std::iter::once((format!("All {}", files.len()), Origin::All))
+            .chain(origins.iter().map(|(origin, count)| (format!("{} {count}", name(*origin)), *origin)))
+            .collect();
+        if !options.iter().any(|(_, o)| *o == origin) {
+            origin = Origin::All;
+        }
         let options: Vec<(&str, Origin)> = options.iter().map(|(name, o)| (name.as_str(), *o)).collect();
         ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
             theme::segmented(ui, &mut origin, &options, |a, b| a == b);
@@ -422,11 +479,7 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         origin = Origin::All;
     }
     ui.data_mut(|data| data.insert_temp(origin_id, origin));
-    let in_origin = |sort: Sort| match origin {
-        Origin::All => true,
-        Origin::Imported => !sort.generated(),
-        Origin::Generated => sort.generated(),
-    };
+    let in_origin = |sort: Sort| origin.holds(sort);
 
     // The sorts the project has, and All.
     let filter_id = egui::Id::new("assets-filter");
@@ -460,7 +513,7 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     }
     ui.data_mut(|data| data.insert_temp(filter_id, filter));
 
-    if origin != Origin::Imported {
+    if matches!(origin, Origin::All | Origin::Generated) {
         behind_summary(ui, work, &survey);
     }
 
@@ -498,54 +551,168 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     }
     let height = listing::ROW_HEIGHT;
     let mut clicked = None;
-    theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
-        for own in &shown[range] {
-            let chosen = work.assets.selected.as_deref() == Some(own.vpath.as_str());
-            let sort = sort_of(own);
-            // A ground texture says whether its pair is there, since without it
-            // the client draws the ground as a missing texture. See
-            // `crate::import::assets`.
-            let unpaired = gloss_of(&own.vpath).is_some_and(|gloss| !all.iter().any(|o| o.vpath.eq_ignore_ascii_case(&gloss)));
-            let (from, standing) = made_words(sort, survey.made.get(&own.vpath.to_ascii_lowercase()), &own.vpath);
-            let pair = match (sort, unpaired) {
-                (Sort::Ground, false) => " \u{b7} with _s",
-                (Sort::Ground, true) => " \u{b7} no _s file",
-                _ => "",
-            };
-            let about = match (&standing, from.is_empty()) {
-                (Some(standing), _) => format!(" \u{b7} {standing}"),
-                (None, false) => format!(" \u{b7} {from}"),
-                (None, true) => String::new(),
-            };
-            let sub = format!(
-                "{} \u{b7} {}{pair}{about} \u{b7} {}",
-                folder(&own.vpath).trim_end_matches('\\'),
-                sort.word(),
-                size_words(own.bytes)
-            );
-            let shape = theme::list_row(
-                ui,
-                theme::ListRow {
-                    title: basename(&own.vpath),
-                    sub: &sub,
-                    trailing: "",
-                    tint: match unpaired || standing.is_some() {
-                        true => theme::WARN,
-                        false => theme::INK,
-                    },
-                    picture: true,
-                },
-                chosen,
-            );
-            picture(ui, work, own, shape.picture);
-            if shape.response.clicked() {
-                clicked = Some(own.vpath.clone());
+    if words.is_empty() {
+        // The folders the viewer closed; every other folder is open.
+        let closed_id = egui::Id::new("assets-closed");
+        let mut closed: std::collections::BTreeSet<String> =
+            ui.data(|data| data.get_temp(closed_id)).unwrap_or_default();
+        let rows = tree_rows(&shown, &closed);
+        let mut toggled: Option<String> = None;
+        theme::list_area(ui, None, height).show_rows(ui, height, rows.len(), |ui, range| {
+            for row in &rows[range] {
+                match row {
+                    TreeRow::Folder { path, name, count, open, depth } => {
+                        if folder_row(ui, name, *count, *depth, *open, height).clicked() {
+                            toggled = Some(path.clone());
+                        }
+                    }
+                    TreeRow::File { index, depth } => {
+                        let own = shown[*index];
+                        let (sub, warn) = row_words(own, sort_of(own), &all, &survey, false);
+                        if own_row(ui, work, own, &sub, warn, *depth) {
+                            clicked = Some(own.vpath.clone());
+                        }
+                    }
+                }
             }
+        });
+        if let Some(folder) = toggled {
+            if !closed.remove(&folder) {
+                closed.insert(folder);
+            }
+            ui.data_mut(|data| data.insert_temp(closed_id, closed));
         }
-    });
+    } else {
+        theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
+            for own in &shown[range] {
+                let (sub, warn) = row_words(own, sort_of(own), &all, &survey, true);
+                if own_row(ui, work, own, &sub, warn, 0) {
+                    clicked = Some(own.vpath.clone());
+                }
+            }
+        });
+    }
     if clicked.is_some() {
         work.assets.selected = clicked;
     }
+}
+
+/// One row of the project's folder tree.
+enum TreeRow {
+    /// A folder: its lower-case path ending in `\`, its name as the project
+    /// spells it, how many files are under it, and whether it is open.
+    Folder { path: String, name: String, count: usize, open: bool, depth: usize },
+    /// A file, by its place in the shown list.
+    File { index: usize, depth: usize },
+}
+
+/// The tree's rows for the shown files: each folder, open unless the viewer
+/// closed it, and under an open one its folders and then its files one level
+/// in. Built every frame; a project holds hundreds of files, not the
+/// archives' tens of thousands.
+fn tree_rows(shown: &[&Own], closed: &std::collections::BTreeSet<String>) -> Vec<TreeRow> {
+    let lower: Vec<String> = shown.iter().map(|own| own.vpath.replace('/', "\\").to_ascii_lowercase()).collect();
+    let index: std::collections::HashMap<&str, usize> =
+        lower.iter().enumerate().map(|(at, path)| (path.as_str(), at)).collect();
+    // Each folder as the first file under it spells it.
+    let mut spelled: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for own in shown {
+        let path = own.vpath.replace('/', "\\");
+        let mut start = 0;
+        for (at, _) in path.match_indices('\\') {
+            spelled
+                .entry(path[..=at].to_ascii_lowercase())
+                .or_insert_with(|| path[start..at].to_string());
+            start = at + 1;
+        }
+    }
+    let mut rows = Vec::new();
+    walk_tree(&lower, &index, &spelled, closed, "", 0, &mut rows);
+    rows
+}
+
+/// [`tree_rows`] for the folder `here`, at `depth`.
+fn walk_tree(
+    lower: &[String],
+    index: &std::collections::HashMap<&str, usize>,
+    spelled: &std::collections::HashMap<String, String>,
+    closed: &std::collections::BTreeSet<String>,
+    here: &str,
+    depth: usize,
+    rows: &mut Vec<TreeRow>,
+) {
+    let (folders, files) = split_folder(lower, here);
+    for (name, count) in folders {
+        let path = format!("{here}{name}\\");
+        let open = !closed.contains(&path);
+        let name = spelled.get(&path).cloned().unwrap_or(name);
+        rows.push(TreeRow::Folder { path: path.clone(), name, count, open, depth });
+        if open {
+            walk_tree(lower, index, spelled, closed, &path, depth + 1, rows);
+        }
+    }
+    rows.extend(
+        files
+            .iter()
+            .filter_map(|path| index.get(path.as_str()))
+            .map(|at| TreeRow::File { index: *at, depth }),
+    );
+}
+
+/// What a file's row says under its name, after its folder when
+/// `with_folder`, and whether it is drawn in the warning colour: a ground
+/// texture without its `_s` file, or a generated file out of date or unused.
+fn row_words(own: &Own, sort: Sort, all: &[Own], survey: &Survey, with_folder: bool) -> (String, bool) {
+    // A ground texture says whether its pair is there, since without it the
+    // client draws the ground as a missing texture. See
+    // `crate::import::assets`.
+    let unpaired = gloss_of(&own.vpath).is_some_and(|gloss| !all.iter().any(|o| o.vpath.eq_ignore_ascii_case(&gloss)));
+    let (from, standing) = made_words(sort, survey.made.get(&own.vpath.to_ascii_lowercase()), &own.vpath);
+    let pair = match (sort, unpaired) {
+        (Sort::Ground, false) => " \u{b7} with _s",
+        (Sort::Ground, true) => " \u{b7} no _s file",
+        _ => "",
+    };
+    let about = match (&standing, from.is_empty()) {
+        (Some(standing), _) => format!(" \u{b7} {standing}"),
+        (None, false) => format!(" \u{b7} {from}"),
+        (None, true) => String::new(),
+    };
+    let folder = folder(&own.vpath).trim_end_matches('\\');
+    let lead = match with_folder && !folder.is_empty() {
+        true => format!("{folder} \u{b7} "),
+        false => String::new(),
+    };
+    let sub = format!("{lead}{}{pair}{about} \u{b7} {}", sort.word(), size_words(own.bytes));
+    (sub, unpaired || standing.is_some())
+}
+
+/// One project file's row, indented `depth` levels: its picture, its name and
+/// `sub` under it. Answers whether it was clicked.
+fn own_row(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, sub: &str, warn: bool, depth: usize) -> bool {
+    let chosen = work.assets.selected.as_deref() == Some(own.vpath.as_str());
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(depth as f32 * INDENT);
+        let shape = theme::list_row(
+            ui,
+            theme::ListRow {
+                title: basename(&own.vpath),
+                sub,
+                trailing: "",
+                tint: match warn {
+                    true => theme::WARN,
+                    false => theme::INK,
+                },
+                picture: true,
+            },
+            chosen,
+        );
+        picture(ui, work, own, shape.picture);
+        clicked = shape.response.clicked();
+    });
+    clicked
 }
 
 /// The lines of what has fallen behind, in the list column, each with its
@@ -998,6 +1165,9 @@ fn used_as(sort: Sort) -> &'static str {
         Sort::NpcSkin => "The body texture of the NPCs whose CreatureDisplayInfoExtra row names it as BakeName.",
         Sort::FlightMap => "Drawn behind the nodes of the map's flight map.",
         Sort::BakedModel => "The model of the spell effects whose SpellVisualEffectName row names it.",
+        Sort::Table => "Read by the client in place of the archives' table. Its rows are edited in the table editor.",
+        Sort::Tile => "The ground, water and placements of one 533-yard square of a map, edited by the terrain and placement tools.",
+        Sort::TileIndex => "The list of which tiles a map has, written when the map is made or a tile is added to it in the map window.",
         Sort::Other => "Read wherever the game asks for its path.",
     }
 }
@@ -1131,6 +1301,19 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     }
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
+        if own.kind == Kind::Table {
+            let table = crate::tables::tabs::table_named(basename(&own.vpath).trim_end_matches(".dbc").trim_end_matches(".DBC"));
+            if ui
+                .add_enabled(table.is_some(), egui::Button::new("Open in Table Editor"))
+                .on_hover_text("Open this table in the workspace that edits it, or in Tables when none does.")
+                .on_disabled_hover_text("The table editor does not know this table's name.")
+                .clicked()
+            {
+                if let Some(table) = table {
+                    work.asks.push(crate::ui::shell::asks::ShellAsk::ShowTable(table));
+                }
+            }
+        }
         if own.kind == Kind::Sound {
             sounds::play_button(ui, work.browser, &own.vpath);
             if content.played_by.as_ref().is_some_and(Vec::is_empty)
@@ -1216,40 +1399,45 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 any: false,
             });
         }
-        // Removal takes two presses: the file is deleted from the project
-        // folder, which no undo puts back.
-        let confirm_id = egui::Id::new(("asset-remove", own.vpath.clone()));
-        let confirming = ui.data(|data| data.get_temp::<bool>(confirm_id).unwrap_or(false));
-        match confirming {
-            false => {
-                if ui
-                    .button(egui::RichText::new("Remove").color(theme::BAD))
-                    .on_hover_text(match gloss_own {
-                        Some(_) => {
-                            "Delete the texture and its _s file from the project. The archives' \
-                             files at these paths, if there are any, are read again. Undo does \
-                             not restore them."
-                        }
-                        None => {
-                            "Delete the file from the project. The archives' file at this path, \
-                             if there is one, is read again. Undo does not restore it."
-                        }
-                    })
-                    .clicked()
-                {
-                    ui.data_mut(|data| data.insert_temp(confirm_id, true));
+        // A table, a tile or a tile index is changed and undone in the
+        // workspace that edits it, which holds it open; deleting the file here
+        // would go behind that workspace's back.
+        if !sort.edited() {
+            // Removal takes two presses: the file is deleted from the project
+            // folder, which no undo puts back.
+            let confirm_id = egui::Id::new(("asset-remove", own.vpath.clone()));
+            let confirming = ui.data(|data| data.get_temp::<bool>(confirm_id).unwrap_or(false));
+            match confirming {
+                false => {
+                    if ui
+                        .button(egui::RichText::new("Remove").color(theme::BAD))
+                        .on_hover_text(match gloss_own {
+                            Some(_) => {
+                                "Delete the texture and its _s file from the project. The archives' \
+                                 files at these paths, if there are any, are read again. Undo does \
+                                 not restore them."
+                            }
+                            None => {
+                                "Delete the file from the project. The archives' file at this path, \
+                                 if there is one, is read again. Undo does not restore it."
+                            }
+                        })
+                        .clicked()
+                    {
+                        ui.data_mut(|data| data.insert_temp(confirm_id, true));
+                    }
                 }
-            }
-            true => {
-                if ui
-                    .button(egui::RichText::new("Confirm Remove").color(theme::BAD))
-                    .clicked()
-                {
-                    work.assets.ask = Some(Ask::Remove(own.vpath.clone()));
-                    ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
-                }
-                if ui.button("Cancel").clicked() {
-                    ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
+                true => {
+                    if ui
+                        .button(egui::RichText::new("Confirm Remove").color(theme::BAD))
+                        .clicked()
+                    {
+                        work.assets.ask = Some(Ask::Remove(own.vpath.clone()));
+                        ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
+                    }
+                    if ui.button("Cancel").clicked() {
+                        ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
+                    }
                 }
             }
         }
@@ -1810,5 +1998,56 @@ mod tests {
         assert_eq!(Sort::of(&model, true), Sort::Model);
         assert_eq!(Sort::of(&model, false), Sort::BakedModel);
         assert!(!Sort::Model.generated());
+    }
+
+    /// A table, a tile and a tile index are edited files, neither imported
+    /// nor generated.
+    #[test]
+    fn tables_and_tiles_are_edited() {
+        let own = |vpath: &str| Own { vpath: vpath.to_string(), kind: Kind::of(vpath), bytes: 1 };
+        assert_eq!(Sort::of(&own("DBFilesClient\\Spell.dbc"), false), Sort::Table);
+        assert_eq!(Sort::of(&own("World\\Maps\\Azeroth\\Azeroth_32_48.adt"), false), Sort::Tile);
+        assert_eq!(Sort::of(&own("World\\Maps\\Azeroth\\Azeroth.wdt"), false), Sort::TileIndex);
+        for sort in [Sort::Table, Sort::Tile, Sort::TileIndex] {
+            assert!(sort.edited() && !sort.generated(), "{sort:?}");
+            assert!(Origin::Edited.holds(sort) && !Origin::Imported.holds(sort));
+        }
+    }
+
+    /// The project's files as a tree: folders before files, nested, named as
+    /// the project spells them, and a closed folder hides what is under it.
+    #[test]
+    fn the_project_files_are_a_tree_of_folders() {
+        let own = |vpath: &str| Own { vpath: vpath.to_string(), kind: Kind::of(vpath), bytes: 1 };
+        let files = [
+            own("DBFilesClient\\Spell.dbc"),
+            own("Tileset\\Custom\\Moss.blp"),
+            own("Tileset\\Custom\\Moss_s.blp"),
+            own("readme.txt"),
+        ];
+        let shown: Vec<&Own> = files.iter().collect();
+        let names = |rows: &[TreeRow]| -> Vec<String> {
+            rows.iter()
+                .map(|row| match row {
+                    TreeRow::Folder { name, depth, .. } => format!("{depth} {name}\\"),
+                    TreeRow::File { index, depth } => format!("{depth} {}", basename(&shown[*index].vpath)),
+                })
+                .collect()
+        };
+        let open = tree_rows(&shown, &Default::default());
+        assert_eq!(
+            names(&open),
+            [
+                "0 DBFilesClient\\",
+                "1 Spell.dbc",
+                "0 Tileset\\",
+                "1 Custom\\",
+                "2 Moss.blp",
+                "2 Moss_s.blp",
+                "0 readme.txt",
+            ]
+        );
+        let closed: std::collections::BTreeSet<String> = ["tileset\\".to_string()].into();
+        assert_eq!(names(&tree_rows(&shown, &closed)), ["0 DBFilesClient\\", "1 Spell.dbc", "0 Tileset\\", "0 readme.txt"]);
     }
 }

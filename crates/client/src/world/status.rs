@@ -31,6 +31,13 @@ pub struct WorldStatus {
     /// interpolation. It is separate from [`WorldEntity::farsight`], which says
     /// where the camera is: Eagle Eye moves the view and drives no unit.
     pub(crate) mover: u64,
+    /// The character is on a taxi flight: `UNIT_FLAG_TAXI_FLIGHT`.
+    pub(crate) on_taxi: bool,
+    /// The server is moving the character and the keys cannot: feared or
+    /// confused (no mover), or on a server path that is not a taxi flight, such
+    /// as a charge. Read by the camera's following style, whose Fear state this
+    /// is; see `world::camera_ease`.
+    pub(crate) uncontrolled: bool,
     /// The current weather: the last `SMSG_WEATHER`; see
     /// [`vale_protocol::play::weather`]. Read by `render::weather` for the
     /// picture and by `sound::ambience` for the sound loop. `None` is a clear

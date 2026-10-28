@@ -19,7 +19,9 @@
 //! facing.rs       the heading a unit is drawn at, which a strafe turns away
 //!                 from the direction it moves
 //! camera.rs       the game's camera controls, and the camera's collision
-//! crowd.rs        a population the server never sent, for measuring the
+//! camera_ease.rs  the camera's eases: the swing behind a moving character,
+//!                 the return after a collision, the change of orbit height
+//! crowd.rs       a population the server never sent, for measuring the
 //!                 passes above; `diagnostics` only
 //!
 //! object state that is not an entity:
@@ -48,6 +50,7 @@
 
 pub mod areatrigger;
 pub mod camera;
+pub mod camera_ease;
 #[cfg(feature = "diagnostics")]
 pub mod crowd;
 pub(crate) mod desync;
