@@ -1,9 +1,9 @@
 //! The panels of the place tools: the views of `crate::tools::places`.
 //!
 //! ```text
-//! flightpaths.rs the flight path tool's panel: the selected node and its
-//!               paths, the selected path and its points, and what a click on
-//!               the ground is armed to make
+//! flightpaths.rs the flight path tool's strip over the viewport (what a
+//!               click on the ground is armed to make) and its panel (the
+//!               selected node, path or point)
 //! triggers.rs   the area trigger tool's panel: the selected trigger's shape
 //!               and place, and its teleport, inn and quest rows
 //! graveyards.rs the graveyard tool's panel: the selected safe place, its

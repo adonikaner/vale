@@ -953,6 +953,12 @@ fn draw(
     let world_rect = viewport.rect.unwrap_or(egui::Rect::NOTHING);
     let corner = shell::rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail, &viewing.icons);
     viewport.floating.extend(corner);
+    // The flight path tool's modes, beside Select and Measure over the top of
+    // the viewport, where the clicks they arm land.
+    if *tool == Tool::Flightpaths {
+        let strip = crate::ui::tools::places::flightpaths::strip(&ctx, world_rect, corner, &mut editing.flightpaths);
+        viewport.floating.extend(strip);
+    }
     // The right-click menu, on the root context so it is not clipped to a
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.
