@@ -358,6 +358,78 @@ pub(crate) fn row_about<R>(ui: &mut Ui, label: &str, about: &str, contents: impl
     .inner
 }
 
+/// How wide the name column of a [`property`] row is, in points. Wider than
+/// [`LABEL_WIDTH`], which fits one word; property names are up to three.
+pub(crate) const PROPERTY_WIDTH: f32 = 96.0;
+
+/// One property of a selection: its name, left-aligned in a fixed column, then
+/// its value or control. `about`, when not empty, is shown when the name is
+/// hovered.
+///
+/// [`row`] centres its label, which suits a stack of brush settings. A
+/// property list reads down the left edge of its names, so these are aligned
+/// left and cut with an ellipsis rather than overflowing.
+pub(crate) fn property<R>(ui: &mut Ui, name: &str, about: &str, contents: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        let height = ui.spacing().interact_size.y;
+        let label = ui
+            .allocate_ui_with_layout(
+                egui::vec2(PROPERTY_WIDTH, height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_size(egui::vec2(PROPERTY_WIDTH, height));
+                    ui.add(
+                        egui::Label::new(RichText::new(name).color(INK_DIM))
+                            .selectable(false)
+                            .truncate()
+                            .sense(egui::Sense::hover()),
+                    )
+                },
+            )
+            .inner;
+        if !about.is_empty() {
+            label.on_hover_text(about);
+        }
+        contents(ui)
+    })
+    .inner
+}
+
+/// A tool's bar over the top of the viewport, to the right of `corner` (the
+/// Select and Measure buttons) and in the same row: a panel-coloured frame
+/// holding the tool's modes and settings. It wraps at the viewport's right
+/// edge. Answers its rectangle, which the shell adds to the areas a press over
+/// the world does not reach.
+///
+/// A tool puts here what decides the next click or stroke in the world, so it
+/// sits beside the pointer that uses it, and the inspector keeps what is
+/// already selected.
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    id: &str,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    contents: impl FnOnce(&mut Ui),
+) -> Option<egui::Rect> {
+    if !viewport.is_positive() {
+        return None;
+    }
+    let left = corner.map_or(viewport.left() + 8.0, |corner| corner.right() + 8.0);
+    let area = egui::Area::new(egui::Id::new(id))
+        .order(egui::Order::Middle)
+        .fixed_pos(egui::pos2(left, viewport.top() + 8.0))
+        .show(ctx, |ui| {
+            ui.set_max_width((viewport.right() - left - 8.0).max(120.0));
+            egui::Frame::new()
+                .fill(PANEL)
+                .stroke(Stroke::new(1.0, LINE))
+                .corner_radius(CornerRadius::same(4))
+                .inner_margin(Margin::same(4))
+                .show(ui, contents);
+        });
+    Some(area.response.rect)
+}
+
 /// A run of mutually exclusive choices as one control.
 ///
 /// It replaces a row of loose toggle buttons. Those did not look like one

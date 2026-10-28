@@ -12,8 +12,8 @@
 //! measure.rs    the Measure tool's panel: a point, a distance, and the slope
 //! history.rs    what undo and redo would do, at the top of an editing tool's
 //!               panel
-//! tablet.rs     the drawing tablet's settings and the pen's state, under the
-//!               three brushes a pen's pressure scales
+//! tablet.rs     the drawing tablet's settings and the pen's state: under the
+//!               terrain and shading panels, and in the texture toolbar
 //! ```
 //!
 //! This file is the inspector: the panel beside the viewport, which shows the
@@ -100,9 +100,6 @@ pub(crate) struct Subject<'a> {
     /// and object panels read their subject's line from it. See
     /// [`crate::server::sync::Standings`].
     pub(crate) standings: &'a mut crate::server::sync::Standings,
-    /// The ground guides, for the one a tool's panel repeats: the texture
-    /// brush shows the full chunks. See [`crate::tools::guides`].
-    pub(crate) guides: &'a mut crate::tools::guides::Guides,
 }
 
 /// Draw the panel for whichever tool is chosen: the header, the undo row

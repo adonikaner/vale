@@ -381,7 +381,8 @@ pub(crate) struct Editing<'w> {
     /// What the doodad and WMO tools have copied, for the menu's Paste here.
     pub(crate) clipboard: Res<'w, crate::tools::placements::group::Clipboard>,
     /// The drawing tablet settings and the pen's state, for the section the
-    /// three painting brushes show. See [`crate::tablet`].
+    /// terrain and shading panels show and the texture toolbar's Tablet menu.
+    /// See [`crate::tablet`].
     pub(crate) tablet: ResMut<'w, crate::tablet::Tablet>,
     pub(crate) pen: Res<'w, crate::tablet::Pen>,
     /// What the panels asked of the shell this frame, carried out after the
@@ -797,7 +798,6 @@ fn draw(
                         server: &playing.server,
                         server_panel: &mut popovers.server,
                         standings: &mut playing.standings,
-                        guides: &mut viewing.guides,
                     },
                     &mut editing,
                 );
@@ -953,11 +953,34 @@ fn draw(
     let world_rect = viewport.rect.unwrap_or(egui::Rect::NOTHING);
     let corner = shell::rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail, &viewing.icons);
     viewport.floating.extend(corner);
-    // The flight path tool's modes, beside Select and Measure over the top of
-    // the viewport, where the clicks they arm land.
-    if *tool == Tool::Flightpaths {
-        let strip = crate::ui::tools::places::flightpaths::strip(&ctx, world_rect, corner, &mut editing.flightpaths);
-        viewport.floating.extend(strip);
+    // A tool's toolbar, beside Select and Measure over the top of the
+    // viewport, where the clicks and strokes it sets up land. See
+    // `widgets::theme::toolbar`.
+    match *tool {
+        Tool::Flightpaths => {
+            let strip = crate::ui::tools::places::flightpaths::strip(&ctx, world_rect, corner, &mut editing.flightpaths);
+            viewport.floating.extend(strip);
+        }
+        Tool::Textures => {
+            // The guide is written back only when it changed, as the view
+            // bar writes its switches, so the resource is not marked changed
+            // on every frame.
+            let mut full_chunks = viewing.guides.layers;
+            let bar = crate::ui::tools::ground::textures::toolbar(
+                &ctx,
+                world_rect,
+                corner,
+                &mut editing.textures,
+                &mut full_chunks,
+                &mut editing.tablet,
+                &editing.pen,
+            );
+            if full_chunks != viewing.guides.layers {
+                viewing.guides.layers = full_chunks;
+            }
+            viewport.floating.extend(bar);
+        }
+        _ => {}
     }
     // The right-click menu, on the root context so it is not clipped to a
     // panel. Its area is added to the floating list with the other areas at

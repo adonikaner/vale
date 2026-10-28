@@ -36,7 +36,7 @@ use crate::session::EditSession;
 use crate::tables;
 use crate::tools::places::flightpaths::{self, Armed, Flightpaths, Route};
 use crate::ui::widgets::reference;
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 use vale_assets::tables::taxi::{node_fields as nf, path_fields as pf, path_node_fields as wf};
 use vale_edit::dbc::taxi;
 
@@ -55,10 +55,6 @@ pub(crate) struct Subject<'a> {
 
 /// The size of a selection's title.
 const TITLE: f32 = 17.0;
-
-/// The width of a property's name column. Wider than `theme::LABEL_WIDTH`,
-/// which fits one word; these names are up to three.
-const NAME_WIDTH: f32 = 96.0;
 
 /// How tall the path's height profile is drawn.
 const PROFILE_HEIGHT: f32 = 110.0;
@@ -339,34 +335,6 @@ fn short(name: &str, most: usize) -> String {
 /// The selection's title: one line, cut with an ellipsis to the panel's width.
 fn title(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Label::new(egui::RichText::new(text).strong().size(TITLE).color(theme::INK)).truncate());
-}
-
-/// One property: its name in a fixed column, then its value or control.
-/// `about`, when not empty, is shown when the name is hovered.
-fn property<R>(ui: &mut egui::Ui, name: &str, about: &str, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        let height = ui.spacing().interact_size.y;
-        let label = ui
-            .allocate_ui_with_layout(
-                egui::vec2(NAME_WIDTH, height),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_size(egui::vec2(NAME_WIDTH, height));
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(name).color(theme::INK_DIM))
-                            .selectable(false)
-                            .truncate()
-                            .sense(egui::Sense::hover()),
-                    )
-                },
-            )
-            .inner;
-        if !about.is_empty() {
-            label.on_hover_text(about);
-        }
-        contents(ui)
-    })
-    .inner
 }
 
 /// A property's value that is not edited here.
@@ -1389,25 +1357,10 @@ pub(crate) fn strip(
     corner: Option<egui::Rect>,
     flights: &mut Flightpaths,
 ) -> Option<egui::Rect> {
-    if !viewport.is_positive() {
-        return None;
-    }
-    let left = corner.map_or(viewport.left() + 8.0, |corner| corner.right() + 8.0);
-    let area = egui::Area::new(egui::Id::new("flightpaths-strip"))
-        .order(egui::Order::Middle)
-        .fixed_pos(egui::pos2(left, viewport.top() + 8.0))
-        .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(theme::PANEL)
-                .stroke(egui::Stroke::new(1.0, theme::LINE))
-                .corner_radius(egui::CornerRadius::same(4))
-                .inner_margin(egui::Margin::same(4))
-                .show(ui, |ui| {
-                    modes(ui, flights);
-                    armed_settings(ui, flights);
-                });
-        });
-    Some(area.response.rect)
+    theme::toolbar(ctx, "flightpaths-strip", viewport, corner, |ui| {
+        modes(ui, flights);
+        armed_settings(ui, flights);
+    })
 }
 
 /// The four modes, and the transport paths switch.

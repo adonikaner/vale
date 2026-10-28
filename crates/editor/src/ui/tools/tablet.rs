@@ -1,4 +1,5 @@
-//! The drawing tablet section of the brush panels. The state is `crate::tablet`.
+//! The drawing tablet section of the terrain and shading panels, and of the
+//! texture brush's Tablet menu on its toolbar. The state is `crate::tablet`.
 
 use bevy_egui::egui;
 
