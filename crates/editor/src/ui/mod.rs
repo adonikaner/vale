@@ -980,6 +980,46 @@ fn draw(
             }
             viewport.floating.extend(bar);
         }
+        Tool::Creatures => {
+            let bar = tools::spawns::spawn::toolbar(
+                &ctx,
+                world_rect,
+                corner,
+                &mut tools::spawns::creatures::Subject::new(
+                    session,
+                    &mut editing,
+                    tools::spawns::Server {
+                        settings: &playing.server,
+                        panel: &mut popovers.server,
+                        standings: &mut playing.standings,
+                    },
+                    &assets,
+                    time.elapsed_secs_f64(),
+                    true,
+                ),
+            );
+            viewport.floating.extend(bar);
+        }
+        Tool::GameObjects => {
+            let bar = tools::spawns::spawn::toolbar(
+                &ctx,
+                world_rect,
+                corner,
+                &mut tools::spawns::gameobjects::Subject::new(
+                    session,
+                    &mut editing,
+                    tools::spawns::Server {
+                        settings: &playing.server,
+                        panel: &mut popovers.server,
+                        standings: &mut playing.standings,
+                    },
+                    &assets,
+                    time.elapsed_secs_f64(),
+                    true,
+                ),
+            );
+            viewport.floating.extend(bar);
+        }
         _ => {}
     }
     // The right-click menu, on the root context so it is not clipped to a

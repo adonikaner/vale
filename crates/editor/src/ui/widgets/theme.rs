@@ -395,6 +395,30 @@ pub(crate) fn property<R>(ui: &mut Ui, name: &str, about: &str, contents: impl F
     .inner
 }
 
+/// X, Y and Z on one line, three equal columns of the width there is, each a
+/// drag-or-type box in yards. Answers whether any changed.
+///
+/// The columns are `ui.columns`. Widths summed by hand ran past the panel's
+/// edge by the item spacing, and a panel sized to its content grew by that
+/// much every frame.
+pub(crate) fn xyz(ui: &mut Ui, at: &mut [f32; 3]) -> bool {
+    let mut moved = false;
+    ui.columns(3, |columns| {
+        for (axis, (column, name)) in columns.iter_mut().zip(["X", "Y", "Z"]).enumerate() {
+            column.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(RichText::new(name).color(INK_FAINT));
+                let width = ui.available_width();
+                moved |= ui
+                    .add_sized([width, 20.0], egui::DragValue::new(&mut at[axis]).speed(0.5).max_decimals(1))
+                    .on_hover_text("Yards. Drag to change, or click to type.")
+                    .changed();
+            });
+        }
+    });
+    moved
+}
+
 /// A tool's bar over the top of the viewport, to the right of `corner` (the
 /// Select and Measure buttons) and in the same row: a panel-coloured frame
 /// holding the tool's modes and settings. It wraps at the viewport's right

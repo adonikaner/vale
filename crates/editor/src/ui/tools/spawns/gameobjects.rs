@@ -1,12 +1,12 @@
 //! The game-object tool's panel: one spawn, the template behind it, and what an
 //! edit to either means.
 //!
-//! The layout follows [`super::creatures`], for the same reason. The spawn's 19
-//! columns are in the sidebar because they describe one place in the world,
-//! and they scroll under a summary of the template and its buttons, which stay
-//! in place.
+//! The layout follows [`super::creatures`], for the same reason: Spawn,
+//! Location, Game Object Template, Related Data, Pool, Game Events, then the
+//! spawn's 19 columns, in the sidebar because they describe one place in the
+//! world.
 //! `gameobject_template`'s 34 columns are in a window opened by the Edit
-//! object… button because they apply to every object of that kind. Each form
+//! Template… button because they apply to every object of that kind. Each form
 //! states which of the two it is before its first field, and both are
 //! [`crate::ui::widgets::rowform`]'s page: one column per row under a folding heading per
 //! group.
@@ -33,8 +33,8 @@
 //!
 //! ## What is here
 //!
-//! The panel's frame, the picker, the edits block, the claim and the template
-//! window are the creature panel's too, in [`super::spawn`]. This file is what
+//! The toolbar, the summary block, the picker, the Spawn and Location sections
+//! and the template window are the creature panel's too, in [`super::spawn`]. This file is what
 //! the game object panel adds ([`GameObjectSubject`]'s [`SpawnView`]): the
 //! type filter in the picker, the lock and the profession a gathering node
 //! needs, the summary and the quest and loot windows, and the form with its
@@ -50,7 +50,7 @@ use crate::session::EditSession;
 use crate::subjects::displays::{DisplayPick, Table as DisplayTable};
 use crate::subjects::quests::{ColumnTarget, Holder};
 use crate::tools::spawns::gameobjects::{GameObjectSubject, GameObjects, Known, Spawn};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 use vale_assets::tables::lock::{KeyKind, Locks};
 use vale_client::assets::GameAssets;
 use vale_mangos::gameobject::{self, Column, Group, Kind};
@@ -121,7 +121,7 @@ impl SpawnView for GameObjectSubject {
     const SQL: &'static str = crate::server::gameobjects::SQL_VPATH;
     const REVERT: &'static str = crate::server::gameobjects::REVERT_VPATH;
     const TEXT: Text = Text {
-        heading: "Game object",
+        heading: "Game Object Template",
         title: "Game objects",
         workspace: "Game Objects",
         click: "Click a game object in the viewport to select it. The nearest spawns are drawn \
@@ -141,7 +141,7 @@ impl SpawnView for GameObjectSubject {
         new_listed: "Creates a gameobject_template row with an entry from 2,000,000 up, clear of \
                      upstream vmangos entries. It starts as a Generic object of size 1 with no \
                      model, and opens here.",
-        edit: "Edit object…",
+        edit: "Edit Template…",
         edit_chosen: "Opens the gameobject_template columns in a separate window. The window \
                       shows the chosen object.",
         edit_selected: "Opens the 34 gameobject_template columns in a separate window. The 24 \
@@ -249,18 +249,34 @@ impl SpawnView for GameObjectSubject {
         });
     }
 
-    /// As on the creature panel, everything above the spawn's columns stays
-    /// in place and only the columns scroll.
+    /// The sections in the order the module comment lists them, in the
+    /// inspector's one scroll. The title's second line is the profession a
+    /// gathering node needs, or the type.
     fn selected(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, on_server: &crate::server::sync::Standing) {
-        head(ui, subject, spawn);
-        super::spawn::claim(ui, subject, spawn, on_server);
-        ui.add_space(6.0);
+        let sub = match &spawn.known {
+            Some(known) => {
+                gathered_by(locks(&mut subject.tool.own.locks, subject.assets), known).unwrap_or_else(|| known.type_word())
+            }
+            None => "No template".to_string(),
+        };
+        super::spawn::title(ui, &spawn.label(), Some(&sub));
+        super::spawn::spawn_sections(ui, subject, spawn, on_server);
+        if spawn.tilted {
+            ui.label(
+                egui::RichText::new(
+                    "Tilted: rotation0 or rotation1 is not 0, so the rotation quaternion is not \
+                     derived from the facing alone. Changing the facing does not change \
+                     rotation2 and rotation3 on this spawn. The editor and the client draw it \
+                     upright.",
+                )
+                .size(theme::SMALL)
+                .color(theme::WARN),
+            );
+        }
         what_it_is(ui, subject, spawn);
-        ui.add_space(8.0);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .min_scrolled_height(super::spawn::SPAWN_FORM_MIN)
-            .show(ui, |ui| spawn_form(ui, subject, spawn));
+        theme::heading(ui, "Related Data");
+        windows(ui, subject, spawn.entry, spawn.label());
+        spawn_form(ui, subject, spawn);
     }
 
     fn template_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, key: &Key, row: &gameobject::Row) {
@@ -320,7 +336,7 @@ impl SpawnView for GameObjectSubject {
     }
 
     fn list_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known) {
-        windows(ui, subject, known.entry, known.label(), false);
+        windows(ui, subject, known.entry, known.label());
     }
 }
 
@@ -397,58 +413,19 @@ pub(in crate::ui) fn gathered_by(locks: &Locks, known: &Known) -> Option<String>
     })
 }
 
-/// The selected spawn's name, what it is, and the buttons.
-fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    ui.label(egui::RichText::new(spawn.label()).strong().size(14.0));
-    let type_word = spawn
-        .known
-        .as_ref()
-        .map(Known::type_word)
-        .unwrap_or_else(|| "no template".to_string());
-    ui.label(
-        egui::RichText::new(format!("guid {}  ·  {type_word}", spawn.guid))
-            .small()
-            .color(theme::INK_DIM),
-    );
-    if let Some(known) = &spawn.known {
-        if let Some(words) = gathered_by(locks(&mut subject.tool.own.locks, subject.assets), known) {
-            ui.label(egui::RichText::new(words).small().color(theme::INK));
-        }
-    }
-    super::spawn::head_buttons(ui, subject, spawn);
-}
-
-/// The `gameobject` row: one spawn, at one place.
+/// The spawn's own rows: the rows of other tables that name it, and then
+/// every column of its `gameobject` row. Place is folded because the
+/// Location section already edits its columns.
 fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    theme::heading(ui, "This spawn");
-    theme::note(
-        ui,
-        "The gameobject row: one placed instance of the object. Drag the selected spawn in \
-         the viewport to move it; dragging keeps its height above the ground.",
-    );
-    if spawn.tilted {
-        ui.label(
-            egui::RichText::new(
-                "Tilted: rotation0 or rotation1 is not 0, so the rotation quaternion is not \
-                 derived from orientation alone. Editing orientation does not change \
-                 rotation2 and rotation3 on this spawn. The editor and the client draw it \
-                 upright.",
-            )
-            .small()
-            .color(theme::WARN),
-        );
-    }
+    spawn_data(ui, subject);
+    super::spawn::row_heading::<GameObjectSubject>(ui);
     let key = spawn.key();
     let Some(row) = subject.tool.spawn_row.as_ref().map(|held| held.row.clone()) else {
-        theme::waiting(ui, "reading the row\u{2026}");
+        theme::waiting(ui, "Loading the row\u{2026}");
         return;
     };
-    let standing = crate::tools::spawns::spawn::Standing::of::<crate::tools::spawns::gameobjects::GameObjectSubject>(spawn);
-    super::spawn::placement(ui, subject.session, &standing, subject.now);
-    spawn_data(ui, subject);
-    ui.add_space(8.0);
     let form = Form { table: gameobject::SPAWN, key: &key, row: &row, spawn: Some(spawn) };
-    groups(ui, subject, &form, &[Group::Identity, Group::Place]);
+    groups(ui, subject, &form, &[Group::Identity]);
 }
 
 /// The Pool and Game Events sections: the rows of other tables that name the
@@ -480,86 +457,85 @@ fn spawn_data(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
     }
 }
 
-/// A summary of the object's template, with a picture of its model, and the
-/// buttons that open the template window, the quest window and the loot
-/// window. Drawn under the spawn's name with no heading of its own, outside
-/// the scrolled form; the first line names the template row.
+/// The Game Object Template section: a summary of the object's template with
+/// a picture of its model, and the buttons that open the template window and
+/// the workspace. The note under the heading states the template's scope, in
+/// the warning colour while this project changes the row.
 fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    let edited = subject
-        .session
-        .rows.edits
-        .touches(gameobject::TEMPLATE, &spawn.template_key());
-    ui.label(
-        egui::RichText::new(format!(
-            "gameobject_template entry {} at content patch {}",
-            spawn.entry,
-            spawn.patch()
-        ))
-        .small()
-        .color(match edited {
-            true => theme::WARN,
-            false => theme::INK_DIM,
-        }),
-    );
-    ui.label(
-        egui::RichText::new("Template edits change every spawn of this entry, on every map.")
-            .small()
-            .color(theme::INK_FAINT),
-    );
+    let edited = subject.session.rows.edits.touches(gameobject::TEMPLATE, &spawn.template_key());
+    theme::heading(ui, GameObjectSubject::TEXT.heading);
     let Some(known) = spawn.known.clone() else {
         ui.label(
-            egui::RichText::new(
-                "No gameobject_template row at this content patch. The server skips this \
-                 spawn at startup and logs an error.",
-            )
-            .small()
+            egui::RichText::new(format!(
+                "No gameobject_template row for entry {} at content patch {}. The server skips \
+                 this spawn at startup and logs an error.",
+                spawn.entry,
+                spawn.patch()
+            ))
+            .size(theme::SMALL)
             .color(theme::BAD),
         );
         return;
     };
+    let scope = format!("Changes apply to every spawn of entry {}, on every map.", spawn.entry);
+    match edited {
+        true => {
+            ui.label(egui::RichText::new(format!("Edited. {scope}")).size(theme::SMALL).color(theme::WARN));
+        }
+        false => theme::note(ui, scope),
+    }
 
-    let lock = known.lock().map(|id| {
-        format!("{id} — {}", lock_words(locks(&mut subject.tool.own.locks, subject.assets), id))
-    });
-    // The model is drawn at the panel's right edge, after the columns.
+    let lock = known.lock().map(|id| format!("{id}: {}", lock_words(locks(&mut subject.tool.own.locks, subject.assets), id)));
+    // The model is drawn at the panel's right edge, beside the rows.
     ui.horizontal(|ui| {
-        egui::Grid::new("object-summary")
-            .num_columns(2)
-            .spacing([8.0, 2.0])
-            .show(ui, |ui| {
-                let mut rows: Vec<(&str, String)> = vec![
-                    ("type", known.type_word()),
-                    ("display", known.display_id.to_string()),
-                    ("size", format!("{}", known.size)),
-                    ("faction", known.faction.to_string()),
-                    ("flags", gameobject::mask_words(&gameobject::FLAGS, known.flags)),
-                ];
-                if let Some(lock) = lock {
-                    rows.push(("lock", lock));
-                }
-                if let Some(loot) = known.loot() {
-                    rows.push(("loot", format!("gameobject_loot_template {loot}")));
-                }
-                for (name, value) in rows {
-                    ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                    match name == "display" && known.display_id != 0 {
-                        true => crate::ui::widgets::reference::display_link(
-                            ui,
-                            egui::RichText::new(value),
-                            subject.asks,
-                            DisplayTable::Object.name(),
-                            known.display_id,
-                        ),
-                        false => {
-                            ui.label(egui::RichText::new(value).color(theme::INK));
-                        }
-                    }
-                    ui.end_row();
-                }
+        let width = (ui.available_width() - SUMMARY_PICTURE - 8.0).max(120.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(width);
+            property(ui, "Entry", "The gameobject_template entry.", |ui| {
+                super::spawn::value(ui, spawn.entry.to_string());
             });
+            if spawn.patch() != 0 {
+                property(ui, "Content Patch", "The patch column of the template row the server uses.", |ui| {
+                    super::spawn::value(ui, spawn.patch().to_string());
+                });
+            }
+            property(ui, "Type", "gameobject_template.type. It names the 24 data columns.", |ui| {
+                super::spawn::value(ui, known.type_word());
+            });
+            property(ui, "Display", "displayId, a GameObjectDisplayInfo.dbc row.", |ui| match known.display_id {
+                0 => {
+                    super::spawn::value_in(ui, "None", theme::INK_DIM);
+                }
+                display => reference::display_link(
+                    ui,
+                    egui::RichText::new(display.to_string()),
+                    subject.asks,
+                    DisplayTable::Object.name(),
+                    display,
+                ),
+            });
+            property(ui, "Size", "The model's scale.", |ui| {
+                super::spawn::value(ui, format!("{}", known.size));
+            });
+            property(ui, "Faction", "A FactionTemplate.dbc row.", |ui| {
+                super::spawn::value(ui, known.faction.to_string());
+            });
+            property(ui, "Flags", "", |ui| {
+                super::spawn::value(ui, gameobject::mask_words(&gameobject::FLAGS, known.flags));
+            });
+            if let Some(lock) = &lock {
+                property(ui, "Lock", "A Lock.dbc row, and what opens it.", |ui| {
+                    super::spawn::value(ui, lock.clone()).on_hover_text(lock.clone());
+                });
+            }
+            if let Some(loot) = known.loot() {
+                property(ui, "Loot", "The gameobject_loot_template id, from the lootId data column.", |ui| {
+                    super::spawn::value(ui, loot.to_string());
+                });
+            }
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            let (rect, _) =
-                ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
             match subject.tool.model_of(subject.assets, known.display_id) {
                 Some(path) => crate::preview::portraits::paint(ui, subject.portraits, &path, rect),
                 None => {
@@ -568,36 +544,21 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
             }
         });
     });
-
-    ui.add_space(4.0);
-    windows(ui, subject, spawn.entry, spawn.label(), true);
+    super::spawn::template_buttons(ui, subject, spawn.entry);
 }
 
-/// The buttons that open the template window and the object's quest and loot
-/// windows. Each is a toggle, lit while its window is open.
-///
-/// `in_world` is whether a spawn is selected in the world. The Game Objects
-/// workspace draws the same row without one, and then the template window and
-/// the link to the workspace are left out, since the form is already in the
-/// middle of the screen.
-pub(in crate::ui) fn windows(
-    ui: &mut egui::Ui,
-    subject: &mut Subject<'_>,
-    entry: u32,
-    label: String,
-    in_world: bool,
-) {
-    ui.horizontal_wrapped(|ui| {
-        if in_world {
-            super::spawn::edit_toggle(ui, subject);
-        }
+/// The buttons that open the object's quest and loot windows, as property
+/// rows. Each is a toggle, lit while its window is open, and each window
+/// follows the selection. The Game Objects workspace draws the same rows.
+pub(in crate::ui) fn windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, entry: u32, label: String) {
+    property(ui, "Interaction", "The quests a player starts and ends at the object.", |ui| {
         let quests_open = subject
             .quests
             .window_for
             .as_ref()
             .is_some_and(|(holder, _, _)| *holder == Holder::Object);
         if ui
-            .selectable_label(quests_open, "Quests")
+            .add(egui::Button::new("Quests").selected(quests_open))
             .on_hover_text(
                 "Lists, adds and removes the quests this object starts and ends: \
                  gameobject_questrelation and gameobject_involvedrelation. Each quest opens in \
@@ -611,12 +572,13 @@ pub(in crate::ui) fn windows(
                 false => Some((Holder::Object, entry, label.clone())),
             };
         }
-        // The loot window stays open over the world and follows the selection,
-        // as the quest window does. The button is enabled for every type,
-        // because the window itself states when the server takes no loot from
-        // the type. See `crate::ui::subjects::loot`.
+    });
+    property(ui, "Items", "What the object gives when looted.", |ui| {
+        // The button is enabled for every type, because the window itself
+        // states when the server takes no loot from the type. See
+        // `crate::ui::subjects::loot`.
         if ui
-            .selectable_label(subject.loot.open, "Loot")
+            .add(egui::Button::new("Loot").selected(subject.loot.open))
             .on_hover_text(
                 "The loot of a chest, vein, herb or fishing pool: gameobject_loot_template, \
                  keyed by the lootId data column. Every object with the same loot id shares \
@@ -625,9 +587,6 @@ pub(in crate::ui) fn windows(
             .clicked()
         {
             subject.loot.toggle();
-        }
-        if in_world {
-            super::spawn::open_in_templates(ui, subject, entry);
         }
     });
 }
@@ -825,8 +784,8 @@ fn field(ui: &mut egui::Ui, subject: &mut Subject<'_>, form: &Form<'_>, drawn: &
             (Hook::Cell, Kind::Ref(dbc)) if DisplayTable::of(dbc).is_some() => {
                 Some(display_cell(ui, objects, portraits, resolver.asks, assets, showing, field.target()))
             }
-            // A lock is resolved through the client's own table, in words,
-            // and has no picker: `Lock.dbc` carries no name to search.
+            // A lock is resolved through `Lock.dbc`, in words, and has no
+            // picker: `Lock.dbc` carries no name to search.
             (Hook::Cell, Kind::Ref("Lock")) => {
                 let written = number_cell(ui, Kind::Unsigned, showing);
                 let words = match showing.trim().parse::<u32>().unwrap_or(0) {

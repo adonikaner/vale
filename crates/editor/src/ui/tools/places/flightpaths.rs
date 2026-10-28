@@ -394,28 +394,6 @@ fn dot(ui: &mut egui::Ui, colour: egui::Color32, radius: f32) {
     ui.painter().circle_filled(rect.center(), radius, colour);
 }
 
-/// X, Y and Z on one line. Answers whether any changed.
-fn position(ui: &mut egui::Ui, at: &mut [f32; 3]) -> bool {
-    // Three columns of the width there is. Widths summed by hand ran past the
-    // panel's edge by the item spacing, and a panel sized to its content grew
-    // by that much every frame.
-    let mut moved = false;
-    ui.columns(3, |columns| {
-        for (axis, (column, name)) in columns.iter_mut().zip(["X", "Y", "Z"]).enumerate() {
-            column.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                ui.label(egui::RichText::new(name).color(theme::INK_FAINT));
-                let width = ui.available_width();
-                moved |= ui
-                    .add_sized([width, 20.0], egui::DragValue::new(&mut at[axis]).speed(0.5).max_decimals(1))
-                    .on_hover_text("Yards. Drag to change, or click to type.")
-                    .changed();
-            });
-        }
-    });
-    moved
-}
-
 /// The height of `at` over the ground under it, as a property row. Nothing
 /// when the ground there is not loaded.
 fn above_ground(ui: &mut egui::Ui, session: &EditSession, at: [f32; 3]) {
@@ -557,7 +535,7 @@ fn node_card(
 
     theme::heading(ui, "Location");
     let mut at = node.at;
-    if position(ui, &mut at) {
+    if theme::xyz(ui, &mut at) {
         flightpaths::move_node(session, flights, id, bevy::math::Vec3::from(at), now);
         flights.stale();
     }
@@ -1225,7 +1203,7 @@ fn point_card(
 
     theme::heading(ui, "Location");
     let mut at = point.at;
-    if position(ui, &mut at) {
+    if theme::xyz(ui, &mut at) {
         flightpaths::move_point(session, flights, id, bevy::math::Vec3::from(at), now);
         flights.stale();
     }

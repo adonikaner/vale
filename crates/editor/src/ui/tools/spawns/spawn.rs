@@ -1,15 +1,21 @@
 //! What the creature and game object panels draw the same way, written once
-//! over the subject: the panel's frame, the switches, the edits block, the
-//! picker with its template buttons and created list, the selected spawn's
-//! claim and buttons, the template window with its entry box, and the group
-//! line, handles and placement block of a selection. The view of
-//! [`crate::tools::spawns::spawn`].
+//! over the subject. The view of [`crate::tools::spawns::spawn`].
+//!
+//! ```text
+//! viewport toolbar   Select or Place, the handles, which spawns are drawn and
+//!                    how, Reload, and the keys of the chosen mode
+//! inspector          the map's counts and the project's state on the server;
+//!                    in Place, the template picker; in Select, the group
+//!                    line, then the selected spawn's Spawn and Location
+//!                    sections and whatever the subject adds
+//! ```
 //!
 //! [`SpawnView`] is what a subject's panel adds: the pictures, the lines a
 //! template is described by, the sections a selected spawn is drawn in, the
 //! template's form, and the sentences that name its own tables. The forms
 //! themselves differ (a game object's `data` columns are named by its type)
-//! and stay in [`super::creatures`] and [`super::gameobjects`].
+//! and stay in [`super::creatures`] and [`super::gameobjects`]. This file also
+//! holds the template window with its entry box.
 
 use bevy_egui::egui;
 
@@ -19,7 +25,7 @@ use crate::tools::placements::place;
 use crate::tools::spawns::spawn::{SpawnSubject, SpawnTool, Spawned, Template, TemplateSubject};
 use crate::ui::shell::asks::{ShellAsk, ShellAsks};
 use crate::ui::widgets::rowform::{entry_cell, Renumber};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 use crate::ui::Editing;
 use vale_client::assets::GameAssets;
 use vale_mangos::row::{Key, Life};
@@ -46,7 +52,7 @@ pub(crate) struct Subject<'a, S: SpawnView> {
     /// panel that applies it. See [`crate::ui::shell::sync`].
     pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where each server subject stands, held for half a second: the
-    /// subject's line in [`edits_block`] and whether the selected spawn is
+    /// subject's line in [`overview`] and whether the selected spawn is
     /// applied are read from it rather than planned each frame. See
     /// [`crate::server::sync::Standings`].
     pub(crate) standings: &'a mut crate::server::sync::Standings,
@@ -64,14 +70,13 @@ pub(crate) struct Subject<'a, S: SpawnView> {
     /// rather than one per keystroke because every keystroke names the same
     /// subject inside the fold window.
     pub(crate) now: f64,
-    /// The gizmo, for the Handles switch drawn under the Select/Place switch.
-    /// `None` where the panel's parts are drawn without it, as in the
-    /// template window.
+    /// The gizmo, for the Handles switch on the toolbar. `None` where the
+    /// panel's parts are drawn without it, as in the template window.
     pub(crate) gizmo: Option<&'a mut crate::tools::placements::gizmo::Gizmo>,
     /// What a link on the panel asks of the shell: a row to open in another
     /// workspace, a tool to switch to. See [`crate::ui::shell::asks`].
     pub(crate) asks: &'a mut ShellAsks,
-    /// Where the Go to button sends its request. See
+    /// Where the Go To button sends its request. See
     /// [`crate::camera::FlyTo`].
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
     /// Whether the other spawn tool's spawns are drawn too. See
@@ -83,7 +88,7 @@ pub(crate) struct Subject<'a, S: SpawnView> {
 
 /// The sentences a subject's panel says that are its own.
 pub(crate) struct Text {
-    /// The subject in a heading: `Creature`, `Game object`.
+    /// The subject's template in a heading: `Creature Template`.
     pub(crate) heading: &'static str,
     /// The subject's rows in a sentence's first word: `Creatures`.
     pub(crate) title: &'static str,
@@ -93,14 +98,14 @@ pub(crate) struct Text {
     pub(crate) click: &'static str,
     /// The Models switch's hover.
     pub(crate) models: &'static str,
-    /// The model budget's hover, and its largest value.
+    /// The model limit's hover, and its largest value.
     pub(crate) budget: &'static str,
     pub(crate) budget_max: usize,
     /// What Apply's removal of a spawn takes with it, before and after the
     /// apply.
     pub(crate) removal: &'static str,
     pub(crate) removed: &'static str,
-    /// The + New button's hover, in the picker and in the workspace.
+    /// The New button's hover, in the picker and in the workspace.
     pub(crate) new_template: &'static str,
     pub(crate) new_listed: &'static str,
     /// The button that opens the template window, and its hover in the
@@ -136,7 +141,7 @@ pub(crate) trait SpawnView: SpawnSubject {
     const TEXT: Text;
 
     /// The panel's subject out of the shell's state. `gizmo` is whether the
-    /// panel draws the Handles switch, which only the inspector does.
+    /// subject carries the gizmo, which only the toolbar uses.
     fn subject<'a>(
         session: &'a mut EditSession,
         editing: &'a mut Editing<'_>,
@@ -163,10 +168,11 @@ pub(crate) trait SpawnView: SpawnSubject {
     fn on_place(_subject: &mut Subject<'_, Self>) {}
     /// What Reload forgets beside the map.
     fn reloaded(_subject: &mut Subject<'_, Self>) {}
-    /// What the switches row holds beside Markers.
+    /// What the toolbar holds after the other spawn type's switch.
     fn beside_markers(_ui: &mut egui::Ui, _subject: &mut Subject<'_, Self>) {}
-    /// The selected spawn's sections under the group line: its name, what it
-    /// is, its claim, the buttons that open its windows, and its form.
+    /// The selected spawn's sections under the group line: its name, the
+    /// shared Spawn and Location sections ([`spawn_sections`]), what its
+    /// template is, the buttons that open its windows, and its form.
     fn selected(
         ui: &mut egui::Ui,
         subject: &mut Subject<'_, Self>,
@@ -201,7 +207,7 @@ pub(crate) fn inspect<S: SpawnView>(
     let crate::ui::tools::Subject { session, assets, now, server, server_panel, standings, .. } = subject;
     draw(
         ui,
-        S::subject(session, editing, super::Server { settings: server, panel: server_panel, standings }, assets, now, true),
+        S::subject(session, editing, super::Server { settings: server, panel: server_panel, standings }, assets, now, false),
     );
 }
 
@@ -230,45 +236,23 @@ pub(in crate::ui) fn dialogs<S: SpawnView>(ctx: &egui::Context, subject: &mut Su
 
 /// The panel itself.
 fn panel<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
-    controls(ui, subject);
-    ui.add_space(8.0);
-
     if subject.tool.trouble.is_some() {
+        overview(ui, subject, None);
+        ui.add_space(8.0);
         nothing_to_show(ui, subject);
         return;
     }
 
     // What this project changes and how much of it is in the database are
     // read from the held standing, which is recomputed at most every half
-    // second, and passed to both the block and the selected spawn's sentence.
+    // second, and passed to both the summary and the selected spawn's State.
     // Computing them is a walk of the store and a file read.
-    //
-    // Drawn above the mode switch because it is about the project rather than
-    // about either mode. See [`edits_block`].
     let on_server = subject
         .standings
         .of(crate::server::sync::Half::Row(S::STACK), subject.session, subject.assets, subject.now)
         .clone();
-    edits_block(ui, subject, &on_server);
-
-    // Select or Place, the placement tools' own switch. See
-    // `crate::tools::placements::place::Mode` for why this is a mode rather
-    // than a second rail entry.
-    let mut mode = subject.tool.mode;
-    theme::segmented(ui, &mut mode, &place::MODES, |a, b| a == b);
-    if mode != subject.tool.mode {
-        subject.tool.mode = mode;
-        // Switching away puts down whatever was on the cursor. The tool's
-        // `ghost` also does this; doing it here as well makes the panel
-        // correct on the frame of the switch rather than on the frame after.
-        if mode == place::Mode::Select {
-            subject.tool.new_spawn.chosen = None;
-        }
-        if mode == place::Mode::Place {
-            S::on_place(subject);
-        }
-    }
-    ui.add_space(6.0);
+    overview(ui, subject, Some(&on_server));
+    ui.add_space(8.0);
 
     if subject.tool.mode == place::Mode::Place {
         picker(ui, subject);
@@ -280,13 +264,11 @@ fn panel<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
         return;
     }
     let Some(spawn) = subject.tool.chosen_edited(Some(&subject.session.rows.edits)) else {
+        title(ui, "No Selection", None);
         theme::note(ui, S::TEXT.click);
         return;
     };
 
-    if let Some(gizmo) = subject.gizmo.as_deref_mut() {
-        handles(ui, gizmo);
-    }
     let asked = {
         let tool = &*subject.tool;
         let edits = Some(&subject.session.rows.edits);
@@ -298,8 +280,8 @@ fn panel<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
             };
             crate::ui::widgets::members::Member {
                 id: guid,
-                label: tool.edited(guid, edits).map(|spawn| spawn.label()).unwrap_or_else(|| "not on this map".to_string()),
-                detail: format!("guid {guid}"),
+                label: tool.edited(guid, edits).map(|spawn| spawn.label()).unwrap_or_else(|| "Not on this map".to_string()),
+                detail: format!("GUID {guid}"),
             }
         };
         group_line(ui, tool.also.len() + 1, S::WORDS.nouns, member)
@@ -314,12 +296,27 @@ fn panel<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
     S::selected(ui, subject, &spawn, &on_server);
 }
 
-/// The least height the scrolled spawn form takes, in points.
-///
-/// The inspector is itself a scroll area. When the window is too short for
-/// the fixed part and this much of the form, the whole panel scrolls instead.
-/// Without a minimum the form would be egui's default of 64 points, two rows.
-pub(super) const SPAWN_FORM_MIN: f32 = 240.0;
+/// The size of a selection's title.
+const TITLE: f32 = 17.0;
+
+/// The selection's title, one line cut with an ellipsis, and a smaller line
+/// under it when there is one.
+pub(super) fn title(ui: &mut egui::Ui, text: &str, sub: Option<&str>) {
+    ui.add(egui::Label::new(egui::RichText::new(text).strong().size(TITLE).color(theme::INK)).truncate());
+    if let Some(sub) = sub.filter(|sub| !sub.is_empty()) {
+        ui.add(egui::Label::new(egui::RichText::new(sub).size(theme::SMALL).color(theme::INK_DIM)).truncate());
+    }
+}
+
+/// A property's value that is not edited here, cut to the room left.
+pub(super) fn value(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
+    value_in(ui, text, theme::INK)
+}
+
+/// [`value`] in another colour.
+pub(super) fn value_in(ui: &mut egui::Ui, text: impl Into<String>, colour: egui::Color32) -> egui::Response {
+    ui.add(egui::Label::new(egui::RichText::new(text.into()).color(colour)).truncate())
+}
 
 /// What the line about a group of spawns asked for.
 pub(super) enum GroupAsk {
@@ -333,7 +330,7 @@ pub(super) enum GroupAsk {
     Drop(u64),
 }
 
-/// The line over a spawn's form when several spawns are selected: how many,
+/// The block over a spawn's form when several spawns are selected: how many,
 /// that the form is the primary's, the two buttons that shrink the group, and
 /// the list of members (`crate::ui::widgets::members`), of which `member(0)` is
 /// the primary. Nothing is drawn for one. See `crate::tools::placements::group`.
@@ -347,89 +344,188 @@ pub(super) fn group_line(
         return None;
     }
     let mut asked = None;
-    ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("{count} {noun} selected")).strong().color(theme::INK));
+    theme::heading(ui, "Selection");
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("{count} {noun} selected")).color(theme::INK));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("Clear").on_hover_text("Deselect every spawn.").clicked() {
+                asked = Some(GroupAsk::Clear);
+            }
+            if ui
+                .small_button("Keep Primary")
+                .on_hover_text("Keep the highlighted spawn selected and deselect the rest.")
+                .clicked()
+            {
+                asked = Some(GroupAsk::Only);
+            }
+        });
+    });
     theme::note(
         ui,
-        "The form shows the highlighted spawn. Dragging, the handles, the keys and \
-         delete act on every selected spawn.",
+        "The properties below are the highlighted spawn's. Dragging, the handles, the keys and \
+         Delete act on every selected spawn.",
     );
-    ui.horizontal(|ui| {
-        if ui
-            .small_button("Select primary only")
-            .on_hover_text("Keep the highlighted spawn selected and deselect the rest.")
-            .clicked()
-        {
-            asked = Some(GroupAsk::Only);
-        }
-        if ui.small_button("Clear").clicked() {
-            asked = Some(GroupAsk::Clear);
-        }
-    });
-    theme::note(ui, "shift + click adds or removes one · drag on empty ground selects a rectangle");
     match crate::ui::widgets::members::list(ui, noun, count, member) {
         Some(crate::ui::widgets::members::Pick::Primary(guid)) => asked = Some(GroupAsk::Primary(guid)),
         Some(crate::ui::widgets::members::Pick::Drop(guid)) => asked = Some(GroupAsk::Drop(guid)),
         None => {}
     }
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     asked
 }
 
-/// What the tool is showing, and the switches that decide how much of it.
-fn controls<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
+/// The block at the top of the panel: how many spawns the map has, Reload,
+/// and what this project changes about the subject's rows with the button
+/// that opens the panel that applies it. `on_server` is `None` while the
+/// tool has no connection.
+///
+/// The project's state is drawn whether or not a spawn is selected, because
+/// what the project has changed is a question about the project rather than
+/// about the selection.
+///
+/// The operations are not here. Apply, Restore and Discard are on the top
+/// bar's Server… popover, beside the other subjects' and in the same words;
+/// [`crate::ui::shell::sync`]'s module comment gives the reason for one panel.
+/// This block shows only the state, so that a person looking at a spawn can
+/// tell whether what they see is in the database without opening another
+/// panel.
+///
+/// The standing's `outstanding` counts this project's rows and paths not yet
+/// in the database; without that count the state line read the same whether
+/// nothing had been applied or everything had.
+fn overview<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, on_server: Option<&crate::server::sync::Standing>) {
     let spawns = subject.tool.spawns.len();
     let mine = subject.tool.created.len();
     let near = subject.tool.near.len();
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(match (subject.tool.reading(), mine) {
-                (true, _) => "reading the map's spawns…".to_string(),
-                (false, 0) => format!("{spawns} spawn(s) on this map, {near} near"),
-                // The project's own are not in the read's count and are drawn
-                // beside the ones that are, so they are counted here. Kept
-                // short: the Reload button shares the line, and egui clips
-                // text that does not fit.
-                (false, mine) => format!("{spawns} on this map, {mine} new, {near} near"),
-            })
-            .small()
-            .color(theme::INK_DIM),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("Reload").on_hover_text("Read the map's spawns from the database again.").clicked() {
-                subject.tool.forget();
-                S::reloaded(subject);
+    egui::Frame::new()
+        .fill(theme::SUNK)
+        .corner_radius(4.0)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                match subject.tool.reading() {
+                    true => {
+                        ui.label(egui::RichText::new("Loading spawns\u{2026}").size(theme::SMALL).color(theme::INK_DIM));
+                    }
+                    false => {
+                        count(ui, spawns, "on this map");
+                        dot_between(ui);
+                        count(ui, near, "near");
+                        // The project's own are not in the read's count and
+                        // are drawn beside the ones that are, so they are
+                        // counted here.
+                        if mine > 0 {
+                            dot_between(ui);
+                            count(ui, mine, "new");
+                        }
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("Reload").on_hover_text("Read the map's spawns from the database again.").clicked() {
+                        subject.tool.forget();
+                        S::reloaded(subject);
+                    }
+                });
+            });
+            if let Some(on_server) = on_server {
+                project_state(ui, subject, on_server);
             }
         });
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut subject.tool.show_models, "Models").on_hover_text(S::TEXT.models);
-        ui.add(
-            egui::DragValue::new(&mut subject.tool.model_budget)
-                .speed(5.0)
-                .range(0..=S::TEXT.budget_max)
-                .prefix("at most "),
-        )
-        .on_hover_text(S::TEXT.budget);
-    });
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut subject.tool.show_markers, "Markers").on_hover_text(
-            "Mark every spawn near the camera. Off, only the selected, hovered and \
-             grouped spawns are marked, which saves frame time where many spawns are \
-             near. Spawns can still be clicked.",
-        );
-        let other = S::KIND.other();
-        let label = match other {
-            crate::tools::spawns::spawn::SpawnKind::Creature => "Creatures",
-            crate::tools::spawns::spawn::SpawnKind::GameObject => "Game Objects",
+}
+
+/// A number and what it counts, the number in the body colour.
+fn count(ui: &mut egui::Ui, n: usize, what: &str) {
+    ui.label(theme::number(n.to_string()));
+    ui.label(egui::RichText::new(what).size(theme::SMALL).color(theme::INK_DIM));
+}
+
+/// The faint dot between two counts.
+fn dot_between(ui: &mut egui::Ui) {
+    ui.label(egui::RichText::new("\u{b7}").color(theme::INK_FAINT));
+}
+
+/// The project's part of [`overview`]: the summary and the SQL file, the
+/// state on the server in one line, and the Server… button.
+fn project_state<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, on_server: &crate::server::sync::Standing) {
+    let undoable = on_server.applied;
+    let empty = on_server.changed == 0;
+    if empty && undoable == 0 {
+        return;
+    }
+    let outstanding = on_server.outstanding;
+    ui.add_space(2.0);
+    // The project's state is two independent facts, and the line states both.
+    // A revert puts the database back and leaves the project still claiming
+    // the rows, so the editor goes on drawing the edited values.
+    let (state, colour, about) = match (undoable, outstanding, empty) {
+        (0, _, false) => (
+            "Not applied".to_string(),
+            theme::WARN,
+            "The database still holds its previous values; the editor draws this project's values.".to_string(),
+        ),
+        // Everything this project claims is in the database. This case has
+        // its own words so that it can be told from the case above.
+        (n, 0, false) => match on_server.current {
+            true => (
+                format!("Applied ({n} rows); restart the server"),
+                theme::INK_DIM,
+                format!("All {n} rows are in the database. Restart the server to see them; Restore reverts them."),
+            ),
+            // The signature is per process, so a project also reads this way
+            // after a relaunch. See `EditSession::applied`.
+            false => (
+                format!("Applied ({n} rows); may be out of date"),
+                theme::WARN,
+                format!(
+                    "All {n} rows are in the database, possibly with older values: an edit was \
+                     made since, or this is a later session. Apply again to make sure."
+                ),
+            ),
+        },
+        (n, out, false) => (
+            format!("{out} not applied; {n} applied"),
+            theme::WARN,
+            format!("{out} changes are not in the database yet; {n} rows are in the database and can be restored."),
+        ),
+        (n, _, true) => (
+            format!("{n} applied rows no longer changed"),
+            theme::WARN,
+            format!("{n} rows are applied and can be restored; the project no longer changes any of them."),
+        ),
+    };
+    // The Server… button is laid out first, from the right, so the summary is
+    // cut to the room left beside it rather than drawn under it.
+    property(ui, "Project", &format!("{}, written to {}.", on_server.summary, S::SQL), |ui| {
+        let colour = match outstanding == 0 {
+            true => theme::INK,
+            false => theme::WARN,
         };
-        ui.checkbox(&mut subject.others.shown, label).on_hover_text(format!(
-            "Mark the {} spawns near the camera too, faded. A click on one selects it \
-             and switches to its tool.",
-            other.word()
-        ));
-        S::beside_markers(ui, subject);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .small_button("Server\u{2026}")
+                .on_hover_text(format!(
+                    "Open the Server panel, which holds Apply, Restore and Discard for every \
+                     subject. Apply writes the rows only: the server reads {} once, at startup, \
+                     so restart it to see them. Restore runs {}.",
+                    S::WORDS.nouns,
+                    S::REVERT
+                ))
+                .clicked()
+            {
+                subject.server_panel.show();
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                value_in(ui, on_server.summary.clone(), colour);
+            });
+        });
     });
+    ui.add(egui::Label::new(egui::RichText::new(state).size(theme::SMALL).color(colour)).wrap())
+        .on_hover_text(about);
+    for refused in &on_server.refused {
+        ui.label(egui::RichText::new(refused).size(theme::SMALL).color(theme::BAD));
+    }
 }
 
 /// Why the list is empty: no connection, still reading, or no spawn on the
@@ -437,7 +533,7 @@ fn controls<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
 fn nothing_to_show<S: SpawnView>(ui: &mut egui::Ui, subject: &Subject<'_, S>) {
     match &subject.tool.trouble {
         Some(trouble) => {
-            ui.label(egui::RichText::new(trouble).small().color(theme::WARN));
+            ui.label(egui::RichText::new(trouble).size(theme::SMALL).color(theme::WARN));
             theme::note(
                 ui,
                 format!(
@@ -448,7 +544,7 @@ fn nothing_to_show<S: SpawnView>(ui: &mut egui::Ui, subject: &Subject<'_, S>) {
             );
         }
         None if subject.tool.reading() => {
-            theme::waiting(ui, "reading\u{2026}");
+            theme::waiting(ui, "Loading\u{2026}");
         }
         None => {
             theme::note(ui, format!("No {} spawns on this map.", S::WORDS.noun));
@@ -456,111 +552,125 @@ fn nothing_to_show<S: SpawnView>(ui: &mut egui::Ui, subject: &Subject<'_, S>) {
     }
 }
 
-/// What this project changes about the subject's rows, and the button that
-/// opens the panel that applies it.
+/// The toolbar over the viewport while a spawn tool is chosen:
 ///
-/// Drawn whether or not a spawn is selected, because what the project has
-/// changed is a question about the project rather than about the selection.
+/// ```text
+/// Select  Place | Handles  Move  Turn  Off | Models  Max  Markers  <other type>  <own switches> | Reload
+/// the keys of the chosen mode
+/// ```
 ///
-/// The operations are not on this panel. Apply, Put back and Discard are on
-/// the top bar's Server… popover, beside the other subjects' and in the same
-/// words; [`crate::ui::shell::sync`]'s module comment gives the reason for one
-/// panel. This block shows only the state, so that a person looking at a
-/// spawn can tell whether what they see is in the database without opening
-/// another panel.
-///
-/// `on_server` is the subject's held [`crate::server::sync::Standing`]. Its
-/// `outstanding` counts this project's rows and paths not yet in the
-/// database; without that count the line below read the same whether nothing
-/// had been applied or everything had.
-fn edits_block<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, on_server: &crate::server::sync::Standing) {
-    let undoable = on_server.applied;
-    let empty = on_server.changed == 0;
-    if empty && undoable == 0 {
-        return;
-    }
-    let outstanding = on_server.outstanding;
-
-    ui.separator();
-    theme::heading(ui, "This project");
-    if !empty {
-        // Amber while something is not yet applied, dim once all of it is in
-        // the database. A warning colour that is always on stops being read
-        // as a warning.
-        let colour = match outstanding == 0 {
-            true => theme::INK_DIM,
-            false => theme::WARN,
-        };
-        ui.label(egui::RichText::new(format!("{} — {}", on_server.summary, S::SQL)).small().color(colour));
-    }
-    for refused in &on_server.refused {
-        ui.label(egui::RichText::new(refused).small().color(theme::BAD));
-    }
-
-    // The project's state is two independent facts, and the line states both.
-    // A revert puts the database back and leaves the project still claiming
-    // the rows, so the editor goes on drawing the edited values.
-    match (undoable, outstanding, empty) {
-        (0, _, false) => theme::note(
-            ui,
-            "Not applied. The database still holds its previous values; the editor \
-             draws this project's values.",
-        ),
-        // Everything this project claims is in the database. This case has
-        // its own sentence so that it can be told from the case above.
-        (n, 0, false) => {
-            let line = match on_server.current {
-                true => format!(
-                    "Applied — all {n} row(s) are in the database. Restart the server to \
-                     see them; Restore reverts them."
-                ),
-                // The signature is per process, so a project also reads this
-                // way after a relaunch. See `EditSession::applied`.
-                false => format!(
-                    "Applied — all {n} row(s) are in the database, possibly with older \
-                     values: an edit was made since, or this is a later session. Apply \
-                     again to make sure."
-                ),
+/// Select or Place is the placement tools' own switch; see
+/// `crate::tools::placements::place::Mode` for why it is a mode rather than a
+/// second rail entry. The handles are drawn only in Select, the one mode with
+/// a selection to move. See [`theme::toolbar`].
+pub(crate) fn toolbar<S: SpawnView>(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    subject: &mut Subject<'_, S>,
+) -> Option<egui::Rect> {
+    use crate::tools::placements::gizmo::{Handles, HANDLES};
+    let id = format!("{}-toolbar", S::SPAWN);
+    theme::toolbar(ctx, &id, viewport, corner, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            for (name, mode) in place::MODES {
+                let hover = match mode {
+                    place::Mode::Select => "Click a spawn to select it, and drag to move it.",
+                    place::Mode::Place => "Choose a template in the inspector, then click the ground to create a spawn of it.",
+                };
+                if toggle(ui, subject.tool.mode == mode, name).on_hover_text(hover).clicked() && subject.tool.mode != mode {
+                    subject.tool.mode = mode;
+                    // Switching away puts down whatever was on the cursor. The
+                    // tool's `ghost` also does this; doing it here as well
+                    // makes the panel correct on the frame of the switch
+                    // rather than on the frame after.
+                    match mode {
+                        place::Mode::Select => subject.tool.new_spawn.chosen = None,
+                        place::Mode::Place => S::on_place(subject),
+                    }
+                }
+            }
+            if subject.tool.mode == place::Mode::Select {
+                if let Some(gizmo) = subject.gizmo.as_deref_mut() {
+                    gap(ui);
+                    ui.label(egui::RichText::new("Handles").color(theme::INK_DIM));
+                    // A spawn has no tilt, so Turn offers the z ring alone;
+                    // see `crate::tools::spawns::spawn`.
+                    for (name, handles) in HANDLES {
+                        let hover = match handles {
+                            Handles::Move => "Drag an arrow to move the spawn along one axis.",
+                            Handles::Turn => "Drag the ring to turn the spawn about Z.",
+                            Handles::Off => "No handles: the pointer picks and drags on the ground.",
+                        };
+                        if toggle(ui, gizmo.handles == handles, name).on_hover_text(hover).clicked() {
+                            gizmo.handles = handles;
+                        }
+                    }
+                }
+            }
+            gap(ui);
+            if toggle(ui, subject.tool.show_models, "Models").on_hover_text(S::TEXT.models).clicked() {
+                subject.tool.show_models = !subject.tool.show_models;
+            }
+            ui.add_enabled(
+                subject.tool.show_models,
+                egui::DragValue::new(&mut subject.tool.model_budget).speed(5.0).range(0..=S::TEXT.budget_max).prefix("Max "),
+            )
+            .on_hover_text(S::TEXT.budget);
+            if toggle(ui, subject.tool.show_markers, "Markers")
+                .on_hover_text(
+                    "Mark every spawn near the camera. Off, only the selected, hovered and \
+                     grouped spawns are marked, which saves frame time where many spawns are \
+                     near. Spawns can still be clicked.",
+                )
+                .clicked()
+            {
+                subject.tool.show_markers = !subject.tool.show_markers;
+            }
+            let other = S::KIND.other();
+            let label = match other {
+                crate::tools::spawns::spawn::SpawnKind::Creature => "Creatures",
+                crate::tools::spawns::spawn::SpawnKind::GameObject => "Objects",
             };
-            ui.label(egui::RichText::new(line).small().color(theme::INK_DIM));
-        }
-        (n, out, false) => {
-            ui.label(
-                egui::RichText::new(format!("{out} not applied yet; {n} row(s) are in the database and undoable"))
-                    .small()
-                    .color(theme::WARN),
-            );
-        }
-        (n, _, true) => {
-            ui.label(
-                egui::RichText::new(format!(
-                    "{n} row(s) applied and undoable; the project no longer changes any of them"
+            if toggle(ui, subject.others.shown, label)
+                .on_hover_text(format!(
+                    "Mark the {} spawns near the camera too, faded. A click on one selects it \
+                     and switches to its tool.",
+                    other.word()
                 ))
-                .small()
-                .color(theme::WARN),
-            );
-        }
-    }
-    if ui
-        .button("Server\u{2026}")
-        .on_hover_text(format!(
-            "Open the Server panel, which holds Apply, Restore and Discard for every \
-             subject, including spells and items. Restore runs {}.",
-            S::REVERT
-        ))
-        .clicked()
-    {
-        subject.server_panel.show();
-    }
-    theme::note(
-        ui,
-        format!(
-            "Apply writes the rows only. The server reads {} once, at startup, so restart \
-             it to see them.",
-            S::WORDS.nouns
-        ),
-    );
+                .clicked()
+            {
+                subject.others.shown = !subject.others.shown;
+            }
+            S::beside_markers(ui, subject);
+        });
+        let keys = match subject.tool.mode {
+            place::Mode::Select => "Click: select \u{b7} Shift + click: add or remove \u{b7} Drag on empty ground: \
+                                    select an area \u{b7} Arrows: nudge \u{b7} Page Up/Down: raise \u{b7} Shift: ten \
+                                    times \u{b7} , and .: turn \u{b7} Alt + mouse: turn \u{b7} Ctrl + Alt: 15\u{b0} \
+                                    steps \u{b7} Delete: remove \u{b7} Ctrl + D: duplicate"
+                .to_string(),
+            place::Mode::Place => format!(
+                "Click the ground: place the chosen {} \u{b7} , and .: turn \u{b7} Shift: three times as far \u{b7} \
+                 Alt + mouse: turn \u{b7} Ctrl + Alt: 15\u{b0} steps \u{b7} Esc: clear the choice",
+                S::WORDS.noun
+            ),
+        };
+        ui.add(egui::Label::new(egui::RichText::new(keys).size(theme::SMALL).color(theme::INK_FAINT)).wrap());
+    })
+}
+
+/// A toolbar button that shows whether it is on.
+pub(super) fn toggle(ui: &mut egui::Ui, on: bool, text: &str) -> egui::Response {
+    ui.add(egui::Button::selectable(on, text).min_size(egui::vec2(0.0, 24.0)))
+}
+
+/// The space and rule between two groups of toolbar controls.
+fn gap(ui: &mut egui::Ui) {
+    ui.add_space(2.0);
     ui.separator();
+    ui.add_space(2.0);
 }
 
 /// The Place mode: choose a template, then click the ground.
@@ -577,35 +687,30 @@ fn edits_block<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, on
 /// separate button press would add a step to every placement and give two
 /// ways to reach the same state.
 fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
-    theme::heading(ui, S::TEXT.heading);
-    template_actions(ui, subject);
-    ui.add_space(4.0);
     match subject.tool.new_spawn.chosen.clone() {
         Some(chosen) => {
-            ui.label(egui::RichText::new(chosen.label()).color(theme::INK));
+            title(ui, &chosen.label(), None);
             S::chosen_detail(ui, subject, &chosen);
             if chosen.is_new() {
                 ui.label(
                     egui::RichText::new("New: this project creates it. There is no row in the database yet.")
-                        .small()
+                        .size(theme::SMALL)
                         .color(theme::WARN),
                 );
             }
             theme::note(
                 ui,
                 format!(
-                    "Click the ground to place it. Escape clears the chosen {}. Every column of \
-                     the row can be edited afterwards in Select.",
+                    "Click the ground to place it. Every column of the new spawn can be edited \
+                     afterwards in Select. Esc clears the chosen {}.",
                     S::WORDS.noun
                 ),
             );
-            theme::note(ui, ", and . turn it \u{b7} shift turns three times as far \u{b7} alt + mouse turns it");
-            theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
             // The window's toggle, here as well as under a selected spawn, so
             // a template can be edited before any spawn of it exists.
             ui.horizontal_wrapped(|ui| {
                 let open = subject.tool.template_window;
-                if ui.selectable_label(open, S::TEXT.edit).on_hover_text(S::TEXT.edit_chosen).clicked() {
+                if ui.add(egui::Button::new(S::TEXT.edit).selected(open)).on_hover_text(S::TEXT.edit_chosen).clicked() {
                     subject.tool.template_window = !open;
                 }
                 open_in_templates(ui, subject, chosen.entry());
@@ -619,26 +724,28 @@ fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
                 }
             }
         }
-        None => theme::note(ui, S::TEXT.none_chosen),
+        None => {
+            title(ui, "No Template Chosen", None);
+            theme::note(ui, S::TEXT.none_chosen);
+        }
     }
 
+    theme::heading(ui, S::TEXT.heading);
+    template_actions(ui, subject);
     created_templates(ui, subject);
 
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("find").color(theme::INK_DIM));
-        ui.add(
-            egui::TextEdit::singleline(&mut subject.tool.new_spawn.search)
-                .hint_text("name or entry")
-                .desired_width(f32::INFINITY),
-        );
-    });
+    theme::heading(ui, "Search");
+    ui.add(
+        egui::TextEdit::singleline(&mut subject.tool.new_spawn.search)
+            .hint_text("Name or entry")
+            .desired_width(f32::INFINITY),
+    );
     S::search_filters(ui, subject);
     if let Some(trouble) = subject.tool.new_spawn.trouble.clone() {
-        ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
+        ui.label(egui::RichText::new(trouble).size(theme::SMALL).color(theme::BAD));
     }
     if subject.tool.new_spawn.searching() {
-        theme::waiting(ui, "searching\u{2026}");
+        theme::waiting(ui, "Searching\u{2026}");
         return;
     }
     // The search is sent with two letters, or with none once a type is
@@ -649,7 +756,7 @@ fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
     }
     let matches = subject.tool.new_spawn.matches.clone();
     if matches.is_empty() {
-        ui.label(egui::RichText::new(format!("no matching {}", S::WORDS.noun)).small().color(theme::INK_DIM));
+        theme::note(ui, format!("No matching {}.", S::WORDS.nouns));
         return;
     }
     egui::ScrollArea::vertical()
@@ -673,9 +780,9 @@ fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
 /// keeps its room.
 const MATCH_LIST_HEIGHT: f32 = 260.0;
 
-/// The three buttons over the picker: a new template, a copy of the one the
-/// window is about, and giving up a created one. The workspace's list has the
-/// same row.
+/// The three buttons of the picker's template section: a new template, a copy
+/// of the one the window is about, and giving up a created one. The
+/// workspace's list has the same row.
 fn template_actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
     let now = subject.now;
     let patch = crate::server::settings::server_patch(subject.server);
@@ -688,7 +795,7 @@ fn template_actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S
     ui.horizontal(|ui| {
         let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
         let size = egui::vec2(third, 22.0);
-        if ui.add(egui::Button::new("+ New").min_size(size)).on_hover_text(S::TEXT.new_template).clicked() {
+        if ui.add(egui::Button::new("New").min_size(size)).on_hover_text(S::TEXT.new_template).clicked() {
             let entry = subject.tool.create_template(subject.session, S::WORDS.new_name, patch, now);
             subject.session.status = format!("{} {entry} created", S::TEMPLATE);
         }
@@ -704,8 +811,8 @@ fn template_actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S
         {
             if let Some(shown) = shown.as_ref() {
                 subject.session.status = match subject.tool.copy_template(subject.session, shown, patch, now) {
-                    Some(entry) => format!("copied as {} {entry}", S::TEMPLATE),
-                    None => format!("still reading this {noun}'s row"),
+                    Some(entry) => format!("Copied as {} {entry}", S::TEMPLATE),
+                    None => format!("Still reading this {noun}'s row"),
                 };
             }
         }
@@ -735,12 +842,8 @@ fn created_templates<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, 
     if templates.is_empty() {
         return;
     }
-    ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(format!("{} {}(s) created by this project", templates.len(), S::WORDS.noun))
-            .small()
-            .color(theme::INK_DIM),
-    );
+    ui.add_space(4.0);
+    theme::note(ui, format!("Created by this project ({})", templates.len()));
     egui::ScrollArea::vertical()
         .id_salt((S::TEMPLATE, "created-templates"))
         .max_height(CREATED_LIST_HEIGHT)
@@ -786,18 +889,23 @@ fn template_row<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, k
     shape.response.clicked()
 }
 
-/// What this project claims about the selected spawn, and the button that
-/// changes it.
+/// The selected spawn's Spawn and Location sections, which both subjects
+/// draw the same way.
 ///
-/// There are three states, and each means something different for what Apply
-/// will do, so each is drawn as a sentence rather than a colour:
+/// Spawn names the row and says what this project does to it. There are
+/// three states, and each means something different for what Apply will do,
+/// so each is named rather than shown as a colour alone:
 ///
 /// ```text
 /// new       there is no row for it yet; Apply creates one
 /// removed   there is, and Apply takes it away with the rows keyed by it
 /// ordinary  Apply writes whatever columns have been changed
 /// ```
-pub(super) fn claim<S: SpawnView>(
+///
+/// Location is the three position columns and the facing in degrees, written
+/// through the same calls the tool's drag and keys use, so a value dragged
+/// here is one undo entry as a drag in the world is.
+pub(super) fn spawn_sections<S: SpawnView>(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_, S>,
     spawn: &S::Spawn,
@@ -805,82 +913,40 @@ pub(super) fn claim<S: SpawnView>(
 ) {
     let now = subject.now;
     let guid = spawn.guid();
+    let key = S::spawn_key(guid);
     // Whether this project has written this row to the database. Without it
-    // the sentence below said "there is no row in the database" after Apply
-    // had been pressed.
-    let written = on_server.covers(S::SPAWN, &S::spawn_key(guid));
-    if spawn.is_new() {
-        ui.label(
-            egui::RichText::new(match written {
-                false => "New — this project creates it. There is no row in the database yet.",
-                true => {
-                    "New — created by this project and applied. The database holds the row; \
-                     restart the server to see the spawn in the world."
-                }
-            })
-            .small()
-            .color(theme::WARN),
-        );
-    }
-    if spawn.is_removed() {
-        ui.label(
-            egui::RichText::new(match written {
-                false => S::TEXT.removal,
-                true => S::TEXT.removed,
-            })
-            .small()
-            .color(theme::BAD),
-        );
-    }
-    ui.horizontal(|ui| match spawn.is_removed() {
-        true => {
-            if ui
-                .button("Cancel removal")
-                .on_hover_text("Cancel the removal. Column edits this project made to the spawn remain.")
-                .clicked()
-            {
-                SpawnTool::<S>::keep(subject.session, guid, now);
-                subject.session.status = format!("{} {guid} removal cancelled", S::WORDS.spawn);
-            }
-        }
-        false => {
-            // A spawn this project created is dropped rather than marked for
-            // removal, and the button label says which: a `DELETE` for a row
-            // this project never inserted would act on a row it does not own.
-            let word = match spawn.is_new() {
-                true => "Discard this spawn",
-                false => "Remove this spawn",
-            };
-            let hover = match (spawn.is_new(), written) {
-                (true, true) => "Remove the spawn from this project. The row is already in the database \
-                                 and stays there; Restore on the Server panel removes it."
-                    .to_string(),
-                (true, false) => "Remove the spawn this project creates. Nothing in the database changes.".to_string(),
-                (false, _) => format!(
-                    "Mark the row for deletion. Apply deletes it; then restart the server, \
-                     because .reload {} never removes a spawn it has already read.",
-                    S::SPAWN
-                ),
-            };
-            if ui.button(egui::RichText::new(word).color(theme::BAD)).on_hover_text(hover).clicked() {
-                SpawnTool::<S>::remove(subject.session, guid, now);
-                subject.session.status = match spawn.is_new() {
-                    true => format!("{} {guid} discarded", S::WORDS.spawn),
-                    false => format!("{} {guid} is marked for removal", S::WORDS.spawn),
-                };
-                if spawn.is_new() {
-                    subject.tool.select_only(None);
-                }
-            }
-        }
-    });
-}
+    // the state said "there is no row in the database" after Apply had been
+    // pressed.
+    let written = on_server.covers(S::SPAWN, &key);
+    let edited = subject.session.rows.edits.touches(S::SPAWN, &key);
 
-/// The selected spawn's buttons: Go to, Duplicate, and how many spawns of
-/// its template the map has.
-pub(super) fn head_buttons<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, spawn: &S::Spawn) {
+    theme::heading(ui, "Spawn");
+    property(ui, "GUID", &format!("The {} row's key.", S::SPAWN), |ui| {
+        value(ui, guid.to_string());
+    });
+    let (state, colour, about): (&str, egui::Color32, &str) = match (spawn.is_new(), spawn.is_removed(), written) {
+        (_, true, false) => ("Marked for removal", theme::BAD, S::TEXT.removal),
+        (_, true, true) => ("Removed and applied", theme::BAD, S::TEXT.removed),
+        (true, false, false) => ("New, not applied", theme::WARN, "This project creates the spawn. There is no row in the database yet."),
+        (true, false, true) => (
+            "New, applied",
+            theme::WARN,
+            "Created by this project and applied. The database holds the row; restart the server to see the spawn in the world.",
+        ),
+        (false, false, _) if edited => ("Edited", theme::WARN, "This project changes columns of this row."),
+        (false, false, _) => ("Unchanged", theme::INK, "This project does not change this row."),
+    };
+    property(ui, "State", about, |ui| {
+        value_in(ui, state, colour);
+    });
+    let copies = subject.tool.spawns.iter().filter(|other| other.entry() == spawn.entry()).count();
+    property(ui, "Same Entry", &format!("Spawns of this {} on the open map.", S::WORDS.noun), |ui| {
+        value(ui, format!("{copies} on this map"));
+    });
+
+    ui.add_space(6.0);
     ui.horizontal(|ui| {
-        if ui.small_button("Go to").on_hover_text("Move the camera to this spawn.").clicked() {
+        if ui.button("Go To").on_hover_text("Move the camera to this spawn.").clicked() {
             subject.fly.write(crate::camera::FlyTo::at(spawn.at()));
         }
         // Duplicate is on the selection rather than in the picker because it
@@ -893,81 +959,113 @@ pub(super) fn head_buttons<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subjec
             .add_enabled(has_row, egui::Button::new("Duplicate"))
             .on_hover_text(format!(
                 "Create a spawn of this {} two yards north with every column of this one, \
-                 including the columns this project has changed.",
+                 including the columns this project has changed. Ctrl + D.",
                 S::WORDS.noun
             ))
             .on_disabled_hover_text("Still reading this spawn's row.")
             .clicked()
         {
-            let now = subject.now;
             subject.session.status = match subject.tool.duplicate(subject.session, now) {
-                Some(guid) => format!("duplicated as guid {guid}"),
-                None => "nothing to duplicate".into(),
+                Some(guid) => format!("Duplicated as GUID {guid}"),
+                None => "Nothing to duplicate".into(),
             };
         }
-        let others = subject.tool.spawns.iter().filter(|other| other.entry() == spawn.entry()).count();
-        ui.label(
-            egui::RichText::new(format!("{others} spawn(s) of this {} on this map", S::WORDS.noun))
-                .small()
-                .color(theme::INK_FAINT),
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            remove_button(ui, subject, spawn, written);
+        });
     });
-}
 
-/// The Handles switch for a selected spawn. A spawn has no tilt, so Turn
-/// offers the z ring alone; see `crate::tools::spawns::spawn`.
-fn handles(ui: &mut egui::Ui, gizmo: &mut crate::tools::placements::gizmo::Gizmo) {
-    use crate::tools::placements::gizmo::{Handles, HANDLES};
-    theme::heading(ui, "Handles");
-    theme::segmented(ui, &mut gizmo.handles, &HANDLES, |a, b| a == b);
-    theme::note(
+    theme::heading(ui, "Location");
+    let standing = crate::tools::spawns::spawn::Standing::of::<S>(spawn);
+    let mut at = [standing.at.x, standing.at.y, standing.at.z];
+    if theme::xyz(ui, &mut at) {
+        standing.move_to(subject.session, bevy::math::Vec3::from(at), now);
+    }
+    let mut degrees = standing.orientation.to_degrees();
+    property(
         ui,
-        match gizmo.handles {
-            Handles::Move => "drag an arrow to move along one axis",
-            Handles::Turn => "drag the ring to turn about z",
-            Handles::Off => "no handles: the pointer picks and drags on the ground",
+        "Facing",
+        "The orientation column in degrees, anticlockwise from north. Written back in radians.",
+        |ui| {
+            if ui.add(egui::DragValue::new(&mut degrees).speed(1.0).fixed_decimals(1).suffix("\u{b0}")).changed() {
+                standing.face(subject.session, degrees.to_radians(), now);
+            }
         },
     );
-    ui.add_space(6.0);
-}
-
-/// The facing in degrees and the keys that move and turn a spawn. The
-/// position and the facing in radians are also columns of the form below this
-/// block; the facing is repeated here in degrees because the doodad and WMO
-/// panels state their turns in degrees.
-pub(super) fn placement(
-    ui: &mut egui::Ui,
-    session: &mut EditSession,
-    standing: &crate::tools::spawns::spawn::Standing,
-    now: f64,
-) {
-    theme::heading(ui, "Placement");
-    let mut degrees = standing.orientation.to_degrees();
-    theme::row(ui, "facing", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut degrees).speed(1.0).fixed_decimals(1).suffix("\u{b0}"))
-            .on_hover_text(
-                "The orientation column in degrees, anticlockwise from north. \
-                 Written back in radians.",
-            )
-            .changed()
-        {
-            standing.face(session, degrees.to_radians(), now);
-        }
-    });
-    theme::note(ui, "arrows nudge \u{b7} page up/down raises \u{b7} shift is ten times");
-    theme::note(ui, ", and . turn about z \u{b7} alt + mouse turns it");
-    theme::note(ui, "ctrl with alt snaps the turn to 15\u{b0}");
-    theme::note(ui, "delete removes it \u{b7} ctrl+d duplicates");
-    ui.add_space(6.0);
-}
-
-/// The template window's toggle under a selected spawn.
-pub(super) fn edit_toggle<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
-    let open = subject.tool.template_window;
-    if ui.selectable_label(open, S::TEXT.edit).on_hover_text(S::TEXT.edit_selected).clicked() {
-        subject.tool.template_window = !open;
+    if let Some(ground) = crate::tools::placements::doodads::ground_height(subject.session, at[0], at[1]) {
+        let above = at[2] - ground;
+        property(ui, "Above Ground", "Z minus the height of the loaded ground directly below.", |ui| {
+            let colour = match above < -0.5 {
+                true => theme::WARN,
+                false => theme::INK,
+            };
+            value_in(ui, format!("{above:.1} yd"), colour);
+        });
     }
+    theme::note(
+        ui,
+        "To move the spawn, drag it in the viewport, use the handles on the toolbar, or press \
+         the arrow keys.",
+    );
+}
+
+/// The button that removes the selected spawn, discards one this project
+/// created, or cancels a removal.
+fn remove_button<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, spawn: &S::Spawn, written: bool) {
+    let now = subject.now;
+    let guid = spawn.guid();
+    if spawn.is_removed() {
+        if ui
+            .button("Cancel Removal")
+            .on_hover_text("Cancel the removal. Column edits this project made to the spawn remain.")
+            .clicked()
+        {
+            SpawnTool::<S>::keep(subject.session, guid, now);
+            subject.session.status = format!("{} {guid} removal cancelled", S::WORDS.spawn);
+        }
+        return;
+    }
+    // A spawn this project created is dropped rather than marked for
+    // removal, and the button label says which: a `DELETE` for a row this
+    // project never inserted would act on a row it does not own.
+    let word = match spawn.is_new() {
+        true => "Discard Spawn",
+        false => "Remove Spawn",
+    };
+    let hover = match (spawn.is_new(), written) {
+        (true, true) => "Remove the spawn from this project. The row is already in the database \
+                         and stays there; Restore on the Server panel removes it."
+            .to_string(),
+        (true, false) => "Remove the spawn this project creates. Nothing in the database changes.".to_string(),
+        (false, _) => format!(
+            "Mark the row for deletion. Apply deletes it; then restart the server, because \
+             .reload {} never removes a spawn it has already read. Delete.",
+            S::SPAWN
+        ),
+    };
+    if ui.button(egui::RichText::new(word).color(theme::BAD)).on_hover_text(hover).clicked() {
+        SpawnTool::<S>::remove(subject.session, guid, now);
+        subject.session.status = match spawn.is_new() {
+            true => format!("{} {guid} discarded", S::WORDS.spawn),
+            false => format!("{} {guid} is marked for removal", S::WORDS.spawn),
+        };
+        if spawn.is_new() {
+            subject.tool.select_only(None);
+        }
+    }
+}
+
+/// The template window's toggle and the link to the workspace, on one row
+/// under a selected spawn's template summary.
+pub(super) fn template_buttons<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, entry: u32) {
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        let open = subject.tool.template_window;
+        if ui.add(egui::Button::new(S::TEXT.edit).selected(open)).on_hover_text(S::TEXT.edit_selected).clicked() {
+            subject.tool.template_window = !open;
+        }
+        open_in_templates(ui, subject, entry);
+    });
 }
 
 /// The link from the tool to its workspace on the top bar, open on this
@@ -987,6 +1085,20 @@ pub(super) fn open_in_templates<S: SpawnView>(ui: &mut egui::Ui, subject: &mut S
         subject.tool.open_listed(entry);
         subject.asks.push(ShellAsk::Link(S::WORKSPACE));
     }
+}
+
+/// The heading and note over a selected spawn's full row, then the row's
+/// columns, which the subject draws.
+pub(super) fn row_heading<S: SpawnView>(ui: &mut egui::Ui) {
+    theme::heading(ui, "Spawn Row");
+    theme::note(
+        ui,
+        format!(
+            "Every column of the {} row. Columns this project changes are amber, with a button \
+             that reverts each.",
+            S::SPAWN
+        ),
+    );
 }
 
 /// The template's own window, where it is edited.
@@ -1023,7 +1135,7 @@ pub(crate) fn template_window<S: SpawnView>(ctx: &egui::Context, subject: &mut S
             let Some(row) =
                 subject.tool.template.as_ref().filter(|held| held.entry == shown.entry).map(|held| held.row.clone())
             else {
-                theme::waiting(ui, "reading the row\u{2026}");
+                theme::waiting(ui, "Loading the row\u{2026}");
                 return;
             };
             egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {

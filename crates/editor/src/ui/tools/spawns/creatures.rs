@@ -19,14 +19,21 @@
 //!
 //! The two rows are drawn in two places on the same split: the columns of the
 //! clicked spawn are in the sidebar, and the columns of its template are behind
-//! a button. The sidebar carries the spawn's own 21 columns, which describe a
-//! place in the world shown by the viewport beside them. Above them are two
-//! folding sections and a row of buttons: Spawn (the selected spawn's guid,
-//! level, what it offers and what this project does to it), Creature (a
-//! read-only summary of the template row) and the buttons that open its
-//! windows. Those stay in place and the 21 columns scroll under them, in the
-//! height the sections leave: folding a section gives its height to the
-//! columns.
+//! a button. The sidebar is one scrolled column of sections:
+//!
+//! ```text
+//! Spawn              guid, what this project does to it, Go To, Duplicate,
+//!                    Remove (super::spawn::spawn_sections)
+//! Location           position, facing, height above the ground
+//! Creature Template  a read-only summary of the template row, Edit
+//!                    Template… and Open in Workspace
+//! Related Data       the buttons that open the creature's other windows,
+//!                    one row per kind
+//! Addon              the spawn's creature_addon row
+//! Formation, Links, Pool, Game Events
+//! Spawn Row          the spawn's own 21 columns
+//! ```
+//!
 //! [`super::spawn::template_window`] holds `creature_template`'s 78, in a window that can be
 //! dragged off the panel and left open while the pointer works in the world.
 //!
@@ -68,8 +75,8 @@
 //!
 //! ## What is here
 //!
-//! The panel's frame, the picker, the edits block, the claim and the template
-//! window are the game object panel's too, in [`super::spawn`]. This file is
+//! The toolbar, the summary block, the picker, the Spawn and Location sections
+//! and the template window are the game object panel's too, in [`super::spawn`]. This file is
 //! what the creature panel adds ([`CreatureSubject`]'s [`SpawnView`]): the
 //! sections a selected creature is drawn in, its summary and its windows, the
 //! waypoint mode beside the template window, the creature's pictures, and the
@@ -82,7 +89,7 @@ use crate::session::EditSession;
 use crate::subjects::displays::{DisplayPick, Table as DisplayTable};
 use crate::subjects::quests::ColumnTarget;
 use crate::tools::spawns::creatures::{CreatureSubject, Creatures, Known, Spawn};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 use crate::ui::Editing;
 use vale_client::assets::GameAssets;
 use vale_mangos::creature::{self, Column, Group, Kind};
@@ -180,11 +187,11 @@ impl SpawnView for CreatureSubject {
     const SQL: &'static str = crate::server::creatures::SQL_VPATH;
     const REVERT: &'static str = crate::server::creatures::REVERT_VPATH;
     const TEXT: Text = Text {
-        heading: "Creature",
+        heading: "Creature Template",
         title: "Creatures",
         workspace: "Creatures",
-        click: "Click a creature in the viewport to open it. The nearest ones are drawn as \
-                models; everything further out is a dome.",
+        click: "Click a creature in the viewport to show its properties here. The nearest ones \
+                are drawn as models; everything further out is a dome.",
         models: "Draw the nearest spawns as creature models. Off, every spawn is drawn as a \
                  ring, as spawns past the model limit already are.",
         budget: "The maximum number of models drawn at once. The busiest tile on map 0 holds 288 \
@@ -201,7 +208,7 @@ impl SpawnView for CreatureSubject {
                        template window opens on it.",
         new_listed: "Creates a creature_template row with an entry above any upstream entry. It \
                      starts as a level 1 friendly humanoid with no model, and opens here.",
-        edit: "Edit creature…",
+        edit: "Edit Template…",
         edit_chosen: "Open creature_template's 78 columns in a separate window. The window \
                       follows the chosen creature.",
         edit_selected: "Open creature_template's 78 columns in a separate window. The window can \
@@ -303,42 +310,29 @@ impl SpawnView for CreatureSubject {
     }
 
     fn beside_markers(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-        ui.checkbox(&mut subject.tool.own.show_services, "Services").on_hover_text(
-            "Draw an icon over each creature within 150 yards for each service its npc_flags \
-             offer: quests, vendor, trainer, flight master, innkeeper, banker and others. The \
-             hover card lists them.",
-        );
+        let on = subject.tool.own.show_services;
+        if super::spawn::toggle(ui, on, "Services")
+            .on_hover_text(
+                "Draw an icon over each creature within 150 yards for each service its npc_flags \
+                 offer: quests, vendor, trainer, flight master, innkeeper, banker and others. The \
+                 hover card lists them.",
+            )
+            .clicked()
+        {
+            subject.tool.own.show_services = !on;
+        }
     }
 
-    /// The spawn's name, the two folding sections and the buttons stay in
-    /// place; only the spawn's columns scroll. The buttons are used while the
-    /// form below is scrolled to any column, so they are outside both
-    /// sections.
-    ///
-    /// The sections fold because the scrolled form takes the height they
-    /// leave. With both open on a short window the form is at its minimum and
-    /// the whole panel scrolls; with either shut the form has that much more.
-    /// egui keeps each section's state under its id, so a section stays as it
-    /// was left when another creature is selected.
+    /// The sections in the order the module comment lists them, in the
+    /// inspector's one scroll.
     fn selected(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, on_server: &crate::server::sync::Standing) {
-        title(ui, spawn);
-        let edits = &subject.session.rows.edits;
-        let spawn_edited = edits.touches(creature::SPAWN, &spawn.key());
-        let template_edited = edits.touches(creature::TEMPLATE, &spawn.template_key());
-        section(ui, "creature-panel-spawn", "Spawn", spawn_edited, true, |ui| {
-            head(ui, subject, spawn);
-            super::spawn::claim(ui, subject, spawn, on_server);
-        });
-        section(ui, "creature-panel-template", "Creature", template_edited, true, |ui| {
-            summary(ui, subject, spawn, template_edited);
-        });
-        ui.add_space(4.0);
+        let subname = spawn.subname.as_deref().filter(|s| !s.is_empty()).map(|s| format!("<{s}>"));
+        super::spawn::title(ui, &spawn.label(), subname.as_deref());
+        super::spawn::spawn_sections(ui, subject, spawn, on_server);
+        summary(ui, subject, spawn);
+        theme::heading(ui, "Related Data");
         windows(ui, subject, spawn.entry, spawn.label(), Some(spawn));
-        ui.add_space(8.0);
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .min_scrolled_height(super::spawn::SPAWN_FORM_MIN)
-            .show(ui, |ui| spawn_form(ui, subject, spawn));
+        spawn_form(ui, subject, spawn);
     }
 
     fn template_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, key: &Key, row: &creature::Row) {
@@ -433,52 +427,16 @@ fn worn_in(creatures: &mut Creatures, assets: &GameAssets, display_id: u32) -> O
     found
 }
 
-/// The selected spawn's name and subname. Drawn above the folding sections,
-/// so the panel says which creature is open when both are shut.
-fn title(ui: &mut egui::Ui, spawn: &Spawn) {
-    ui.label(egui::RichText::new(spawn.label()).strong().size(14.0));
-    if let Some(subname) = spawn.subname.as_deref().filter(|s| !s.is_empty()) {
-        ui.label(
-            egui::RichText::new(format!("<{subname}>"))
-                .small()
-                .color(theme::INK_DIM),
-        );
-    }
-}
-
-/// The Spawn section's first part: the selected spawn's guid, level, rank and
-/// faction, what it offers, and the two buttons.
-fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    ui.label(
-        egui::RichText::new(format!(
-            "guid {}  ·  level {}–{}  ·  {}  ·  faction {}",
-            spawn.guid,
-            spawn.level.0,
-            spawn.level.1,
-            creature::value_word(&creature::RANKS, spawn.rank),
-            spawn.faction
-        ))
-        .small()
-        .color(theme::INK_DIM),
-    );
-    if spawn.npc_flags != 0 {
-        ui.label(
-            egui::RichText::new(creature::mask_words(&creature::NPC_FLAGS, spawn.npc_flags))
-                .small()
-                .color(theme::INK),
-        );
-    }
-    super::spawn::head_buttons(ui, subject, spawn);
-}
-
-/// The `creature` row: one spawn, at one place.
+/// The spawn's own rows: its addon, the rows of other tables that name it,
+/// and then every column of its `creature` row.
 fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    theme::heading(ui, "This spawn");
-    theme::note(
-        ui,
-        "The creature row: one spawn at one position. Drag the selected spawn in the \
-         viewport to move it; a drag writes the position columns as one undo step.",
-    );
+    // The addon row before the spawn's own columns: it is what makes this
+    // spawn differ from the others of its template, and the columns below
+    // are mostly its key and its position, which the Location section
+    // already edits. Place is folded for the same reason.
+    addon_form(ui, subject, spawn);
+    spawn_data(ui, subject);
+    super::spawn::row_heading::<CreatureSubject>(ui);
     let key = spawn.key();
     let Some(row) = subject
         .tool
@@ -486,26 +444,10 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         .as_ref()
         .map(|held| held.row.clone())
     else {
-        theme::waiting(ui, "reading the row\u{2026}");
+        theme::waiting(ui, "Loading the row\u{2026}");
         return;
     };
-    let standing = crate::tools::spawns::spawn::Standing::of::<crate::tools::spawns::creatures::CreatureSubject>(spawn);
-    super::spawn::placement(ui, subject.session, &standing, subject.now);
-    // The addon row before the spawn's own columns: it is what makes this
-    // spawn differ from the others of its template, and the columns below
-    // are mostly its key and its position, which the placement block above
-    // already edits.
-    addon_form(ui, subject, spawn);
-    spawn_data(ui, subject);
-    ui.add_space(8.0);
-    groups(
-        ui,
-        subject,
-        creature::SPAWN,
-        &key,
-        &row,
-        &[Group::Identity, Group::Place],
-    );
+    groups(ui, subject, creature::SPAWN, &key, &row, &[Group::Identity]);
 }
 
 /// The Addon section of the spawn form, drawn before the spawn's own
@@ -529,7 +471,7 @@ fn addon_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         return;
     }
     if !subject.own.addons.is_addon_read(guid) {
-        theme::waiting(ui, "reading the addon row\u{2026}");
+        theme::waiting(ui, "Loading the addon row\u{2026}");
         return;
     }
     let edits = subject.session.rows.edits.clone();
@@ -537,7 +479,7 @@ fn addon_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     let live = shown.as_ref().filter(|(_, _, life)| *life != Life::Delete);
     let mut on = live.is_some();
     if ui
-        .checkbox(&mut on, "creature_addon row")
+        .checkbox(&mut on, "Has an addon row")
         .on_hover_text(
             "Whether this spawn has a row. A new row changes nothing until a column is set: \
              the template's display, mount, set and auras, standing, melee weapon in hand, no \
@@ -703,71 +645,71 @@ fn addon_field(
     }
 }
 
-/// The Creature section: a summary of what the creature is.
+/// The Creature Template section: a summary of what the creature is, with a
+/// picture of its model, and the buttons that open the template window and
+/// the workspace.
 ///
 /// A summary rather than a form: the columns a person wants to see while
 /// looking at a spawn (how strong it is, what it offers) without the 78 that
-/// editing it needs, with a picture of its model beside them. Editing is in
-/// [`super::spawn::template_window`], behind the first button of [`windows`].
+/// editing it needs. Editing is in [`super::spawn::template_window`].
 ///
-/// The first line names the template row, which is what tells its scope from
-/// the spawn's. `edited` is whether this project changes that row.
-fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: bool) {
-    ui.label(
-        egui::RichText::new(format!(
-            "creature_template entry {} at content patch {}",
-            spawn.entry, spawn.patch
-        ))
-        .small()
-        .color(match edited {
-            true => theme::WARN,
-            false => theme::INK_DIM,
-        }),
-    );
-    ui.label(
-        egui::RichText::new("Edits here change every spawn of this entry, on every map.")
-            .small()
-            .color(theme::INK_FAINT),
-    );
+/// The note under the heading states the template's scope, which is what
+/// tells an edit here from an edit to the spawn. It is in the warning colour
+/// while this project changes the row.
+fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
+    let edited = subject.session.rows.edits.touches(creature::TEMPLATE, &spawn.template_key());
+    theme::heading(ui, CreatureSubject::TEXT.heading);
+    let scope = format!("Changes apply to every spawn of entry {}, on every map.", spawn.entry);
+    match edited {
+        true => {
+            ui.label(egui::RichText::new(format!("Edited. {scope}")).size(theme::SMALL).color(theme::WARN));
+        }
+        false => theme::note(ui, scope),
+    }
 
     // The few columns worth reading at a glance, from the row the map query
     // already carries, so this shows something before the whole row has been
     // fetched. The model is drawn at the panel's right edge, from the same
     // display id.
     ui.horizontal(|ui| {
-        egui::Grid::new("creature-summary")
-            .num_columns(2)
-            .spacing([8.0, 2.0])
-            .show(ui, |ui| {
-                for (name, value) in [
-                    ("level", format!("{}–{}", spawn.level.0, spawn.level.1)),
-                    ("rank", creature::value_word(&creature::RANKS, spawn.rank)),
-                    ("faction", spawn.faction.to_string()),
-                    ("display", spawn.display_id.to_string()),
-                    (
-                        "npc flags",
-                        creature::mask_words(&creature::NPC_FLAGS, spawn.npc_flags),
-                    ),
-                ] {
-                    ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                    match name == "display" && spawn.display_id != 0 {
-                        true => crate::ui::widgets::reference::display_link(
-                            ui,
-                            egui::RichText::new(value),
-                            subject.asks,
-                            DisplayTable::Creature.name(),
-                            spawn.display_id,
-                        ),
-                        false => {
-                            ui.label(egui::RichText::new(value).color(theme::INK));
-                        }
-                    }
-                    ui.end_row();
-                }
+        let width = (ui.available_width() - SUMMARY_PICTURE - 8.0).max(120.0);
+        ui.vertical(|ui| {
+            ui.set_max_width(width);
+            property(ui, "Entry", "The creature_template entry.", |ui| {
+                super::spawn::value(ui, spawn.entry.to_string());
             });
+            if spawn.patch != 0 {
+                property(ui, "Content Patch", "The patch column of the template row the server uses.", |ui| {
+                    super::spawn::value(ui, spawn.patch.to_string());
+                });
+            }
+            property(ui, "Level", "", |ui| {
+                super::spawn::value(ui, levels_of(spawn.level));
+            });
+            property(ui, "Rank", "", |ui| {
+                super::spawn::value(ui, creature::value_word(&creature::RANKS, spawn.rank));
+            });
+            property(ui, "Faction", "A FactionTemplate.dbc row.", |ui| {
+                super::spawn::value(ui, spawn.faction.to_string());
+            });
+            property(ui, "Display", "display_id1, a CreatureDisplayInfo.dbc row.", |ui| match spawn.display_id {
+                0 => {
+                    super::spawn::value_in(ui, "None", theme::INK_DIM);
+                }
+                display => reference::display_link(
+                    ui,
+                    egui::RichText::new(display.to_string()),
+                    subject.asks,
+                    DisplayTable::Creature.name(),
+                    display,
+                ),
+            });
+            property(ui, "NPC Flags", "What the creature offers: npc_flags.", |ui| {
+                super::spawn::value(ui, creature::mask_words(&creature::NPC_FLAGS, spawn.npc_flags));
+            });
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            let (rect, _) =
-                ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(SUMMARY_PICTURE), egui::Sense::hover());
             match worn(subject, spawn.display_id) {
                 Some(worn) => {
                     let key = subject.portraits.want_worn(&worn);
@@ -779,17 +721,25 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn, edited: 
             }
         });
     });
+    super::spawn::template_buttons(ui, subject, spawn.entry);
 }
 
-/// The buttons that open the template window and what a creature has besides
-/// its template: its path, quests, loot, events, spells and its two service
-/// lists. Each is a toggle, lit while its window is open. Drawn outside the
-/// folding sections, so they are reachable with both shut.
+/// A creature's levels: one number when the two are the same.
+fn levels_of((low, high): (u32, u32)) -> String {
+    match low == high {
+        true => format!("{low}"),
+        false => format!("{low}\u{2013}{high}"),
+    }
+}
+
+/// The buttons that open what a creature has besides its template, one
+/// property row per kind: its path, its AI, what a player can do with it,
+/// what it sells and teaches, and its items. Each is a toggle, lit while its
+/// window is open, and each window follows the selection.
 ///
 /// `spawn` is the selected spawn in the world. The Creatures workspace draws
-/// the same row with none, and then the template window, the path and the
-/// link to the workspace are left out: the form is already in the middle of
-/// the screen, and a path belongs to a spawn.
+/// the same rows with none, and then the path is left out, because a path
+/// belongs to a spawn.
 pub(in crate::ui) fn windows(
     ui: &mut egui::Ui,
     subject: &mut Subject<'_>,
@@ -797,12 +747,37 @@ pub(in crate::ui) fn windows(
     label: String,
     spawn: Option<&Spawn>,
 ) {
-    ui.horizontal_wrapped(|ui| {
-        if let Some(spawn) = spawn {
-            spawn_windows(ui, subject, spawn);
+    if let Some(spawn) = spawn {
+        property(ui, "Movement", "The spawn's waypoint path.", |ui| waypoints_button(ui, subject, spawn));
+    }
+    property(ui, "AI", "The creature's scripted behaviour and combat spells.", |ui| {
+        // Events and Spells: see `crate::ui::subjects::behaviour`.
+        if ui
+            .add(egui::Button::new("Events").selected(subject.own.behaviour.events_open))
+            .on_hover_text(
+                "The creature's creature_ai_events: each trigger with its parameters, and \
+                 the creature_ai_scripts it runs, opened in the script window. The server \
+                 reads them only for a template whose ai_name is EventAI; the window can \
+                 set it.",
+            )
+            .clicked()
+        {
+            subject.own.behaviour.events_open = !subject.own.behaviour.events_open;
         }
-        // Quests is a window over the world, like the two beside it, and like
-        // them it follows the selection. `crate::ui::subjects::quests` draws it, and the
+        if ui
+            .add(egui::Button::new("Spells").selected(subject.own.behaviour.spells_open))
+            .on_hover_text(
+                "The creature's combat spells from creature_spells, by the template's \
+                 spell_list_id: eight slots, each with a spell, chance, target, flags and \
+                 timers.",
+            )
+            .clicked()
+        {
+            subject.own.behaviour.spells_open = !subject.own.behaviour.spells_open;
+        }
+    });
+    property(ui, "Interaction", "What a player can do when talking to the creature.", |ui| {
+        // Quests: `crate::ui::subjects::quests` draws the window, and the
         // shell keeps it on the chosen creature.
         let quests_open = subject
             .quests
@@ -810,7 +785,7 @@ pub(in crate::ui) fn windows(
             .as_ref()
             .is_some_and(|(holder, _, _)| *holder == crate::subjects::quests::Holder::Creature);
         if ui
-            .selectable_label(quests_open, "Quests")
+            .add(egui::Button::new("Quests").selected(quests_open))
             .on_hover_text(
                 "Quests this creature starts and ends: creature_questrelation and \
                  creature_involvedrelation rows, which can be added and removed. Each quest \
@@ -824,50 +799,9 @@ pub(in crate::ui) fn windows(
                 false => Some((crate::subjects::quests::Holder::Creature, entry, label.clone())),
             };
         }
-        // Loot is a window over the world that follows the selection, like
-        // the quest window. It shows the rows this creature's three loot
-        // columns name. See `crate::ui::subjects::loot`.
+        // Gossip: see `crate::ui::subjects::gossip`.
         if ui
-            .selectable_label(subject.loot.open, "Loot")
-            .on_hover_text(
-                "The creature's drop, pickpocket and skinning loot: creature_loot_template, \
-                 pickpocketing_loot_template and skinning_loot_template, by the three loot \
-                 ids on its template. The rows are keyed by loot id, so they apply to every \
-                 creature that shares it.",
-            )
-            .clicked()
-        {
-            subject.loot.toggle();
-        }
-        // Events and Spells are two windows over the world that follow the
-        // selection, like the two beside them. See `crate::ui::subjects::behaviour`.
-        if ui
-            .selectable_label(subject.own.behaviour.events_open, "Events")
-            .on_hover_text(
-                "The creature's creature_ai_events: each trigger with its parameters, and \
-                 the creature_ai_scripts it runs, opened in the script window. The server \
-                 reads them only for a template whose ai_name is EventAI; the window can \
-                 set it.",
-            )
-            .clicked()
-        {
-            subject.own.behaviour.events_open = !subject.own.behaviour.events_open;
-        }
-        if ui
-            .selectable_label(subject.own.behaviour.spells_open, "Spells")
-            .on_hover_text(
-                "The creature's combat spells from creature_spells, by the template's \
-                 spell_list_id: eight slots, each with a spell, chance, target, flags and \
-                 timers.",
-            )
-            .clicked()
-        {
-            subject.own.behaviour.spells_open = !subject.own.behaviour.spells_open;
-        }
-        // Gossip is a window over the world that follows the selection, like
-        // the ones beside it. See `crate::ui::subjects::gossip`.
-        if ui
-            .selectable_label(subject.own.gossip.open, "Gossip")
+            .add(egui::Button::new("Gossip").selected(subject.own.gossip.open))
             .on_hover_text(
                 "The gossip_menu named by the template's gossip_menu_id: its texts, its \
                  options and the menus they open. The window can create a menu for a \
@@ -879,11 +813,12 @@ pub(in crate::ui) fn windows(
             subject.own.gossip.menu = None;
             subject.own.gossip.trail.clear();
         }
-        // Vendor and Trainer are two windows over the world that follow the
-        // selection, like the four beside them. See `crate::ui::subjects::services`.
+    });
+    property(ui, "Services", "What the creature sells and teaches.", |ui| {
+        // Vendor and Trainer: see `crate::ui::subjects::services`.
         use crate::subjects::services::Kind;
         if ui
-            .selectable_label(subject.own.services.is_open(Kind::Vendor), "Vendor")
+            .add(egui::Button::new("Vendor").selected(subject.own.services.is_open(Kind::Vendor)))
             .on_hover_text(
                 "The creature's vendor items: npc_vendor by its entry, and npc_vendor_template \
                  by its vendor_id, which other creatures can share. Each item with its slot, \
@@ -894,7 +829,7 @@ pub(in crate::ui) fn windows(
             subject.own.services.toggle(Kind::Vendor);
         }
         if ui
-            .selectable_label(subject.own.services.is_open(Kind::Trainer), "Trainer")
+            .add(egui::Button::new("Trainer").selected(subject.own.services.is_open(Kind::Trainer)))
             .on_hover_text(
                 "The creature's trainer spells: npc_trainer by its entry, and npc_trainer_template \
                  by its trainer_id, which other creatures can share. Each teaching spell with its \
@@ -904,10 +839,25 @@ pub(in crate::ui) fn windows(
         {
             subject.own.services.toggle(Kind::Trainer);
         }
-        // Equipment is a window over the world that follows the selection,
-        // like the ones beside it. See `crate::ui::subjects::addons`.
+    });
+    property(ui, "Items", "What the creature drops and holds.", |ui| {
+        // Loot: the rows this creature's three loot columns name. See
+        // `crate::ui::subjects::loot`.
         if ui
-            .selectable_label(subject.own.addons.equipment_open, "Equipment")
+            .add(egui::Button::new("Loot").selected(subject.loot.open))
+            .on_hover_text(
+                "The creature's drop, pickpocket and skinning loot: creature_loot_template, \
+                 pickpocketing_loot_template and skinning_loot_template, by the three loot \
+                 ids on its template. The rows are keyed by loot id, so they apply to every \
+                 creature that shares it.",
+            )
+            .clicked()
+        {
+            subject.loot.toggle();
+        }
+        // Equipment: see `crate::ui::subjects::addons`.
+        if ui
+            .add(egui::Button::new("Equipment").selected(subject.own.addons.equipment_open))
             .on_hover_text(
                 "The weapons the creature holds: the creature_equip_template set its \
                  template's equipment_id names, or the one a selected spawn's addon row names. \
@@ -917,25 +867,20 @@ pub(in crate::ui) fn windows(
         {
             subject.own.addons.equipment_open = !subject.own.addons.equipment_open;
         }
-        if spawn.is_some() {
-            super::spawn::open_in_templates(ui, subject, entry);
-        }
     });
 }
 
-/// The two buttons of [`windows`] that belong to a spawn in the world: the
-/// template window and the path.
-fn spawn_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
-    super::spawn::edit_toggle(ui, subject);
-    // Waypoints is a mode rather than a form: it takes the pointer while it
-    // is open, so it is a toggle like the template window beside it, not a
-    // button that opens something and returns. The toggle shows or hides the
-    // window, not this creature's path. The path in the window follows the
-    // selection, as the template window does. See
-    // `tools::spawns::waypoints::follow_the_selection`.
+/// The Waypoints toggle.
+///
+/// Waypoints is a mode rather than a form: it takes the pointer while it is
+/// open, so it is a toggle like the template window, not a button that opens
+/// something and returns. The toggle shows or hides the window, not this
+/// creature's path. The path in the window follows the selection, as the
+/// template window does. See `tools::spawns::waypoints::follow_the_selection`.
+fn waypoints_button(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     let showing = subject.own.waypoints.showing;
     if ui
-        .selectable_label(showing, "Waypoints")
+        .add(egui::Button::new("Waypoints").selected(showing))
         .on_hover_text(
             "The creature's waypoint path from creature_movement, drawn on the ground. \
              Points can be selected, dragged, added and removed. The window follows the \
@@ -955,7 +900,6 @@ fn spawn_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         }
     }
 }
-
 /// The side of the picture beside the summary, in points.
 const SUMMARY_PICTURE: f32 = 56.0;
 
