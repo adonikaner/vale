@@ -383,6 +383,7 @@ fn read_the_rows(
     session: Option<Res<EditSession>>,
     settings: Res<crate::server::settings::ServerSettings>,
     tool: Res<crate::tools::Tool>,
+    popout: Res<crate::popout::Popout>,
 ) {
     use crate::tools::Tool;
     let Some(session) = session else { return };
@@ -398,7 +399,11 @@ fn read_the_rows(
         Some(Err(e)) => warn!("pools: {e}"),
         None => {}
     }
-    if !matches!(*tool, Tool::Creatures | Tool::GameObjects | Tool::GameEvents | Tool::Pools) || pools.read.is_read(&()) || pools.read.is_busy() {
+    // Under the spawn tools and the Spawning workspace, in any window.
+    let shown = std::iter::once(*tool)
+        .chain(popout.tools())
+        .any(|tool| matches!(tool, Tool::Creatures | Tool::GameObjects | Tool::GameEvents | Tool::Pools));
+    if !shown || pools.read.is_read(&()) || pools.read.is_busy() {
         return;
     }
     pools.read.want(writes, (), || {

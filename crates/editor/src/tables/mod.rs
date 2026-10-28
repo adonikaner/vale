@@ -20,6 +20,8 @@
 //! sounds.rs    playing a `SoundEntries` row for the panel
 //! sound_files.rs  a `SoundEntries` row's File and Weight columns: read, and
 //!              a file added, changed or removed
+//! server_users.rs  the server templates that name a row: the creatures that
+//!              wear a display, the items that cast a spell
 //! open.rs      opening the tables a workspace needs, one per frame
 //! tests.rs     the rows each operation makes and the labels they get
 //! ```
@@ -183,6 +185,7 @@ pub(crate) mod bake;
 pub(crate) mod visuals;
 pub(crate) mod sounds;
 pub(crate) mod sound_files;
+pub(crate) mod server_users;
 pub(crate) mod open;
 #[cfg(test)]
 mod tests;
@@ -299,6 +302,6 @@ impl Plugin for TableToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Browser>()
             .init_resource::<crate::ui::tables::storyboard::Storyboard>()
-            .add_systems(Update, (open_tables, audition, listen));
+            .add_systems(Update, (open_tables, audition, listen, server_users::read_server_users));
     }
 }

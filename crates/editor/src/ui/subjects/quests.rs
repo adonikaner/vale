@@ -2293,6 +2293,7 @@ pub(crate) fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) 
                 return;
             }
             if subject.quests.all.is_empty() {
+                subject.quests.want();
                 theme::waiting(ui, "reading the quest tables\u{2026}");
                 return;
             }

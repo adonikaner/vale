@@ -77,9 +77,10 @@ const STOP_SECS: f32 = 0.25;
 /// Play or stop what a panel asked for in [`Browser::listen`], through the
 /// client's mixer and at its channel volumes.
 ///
-/// The sound is stopped when the tool shown is neither one with a table nor
-/// the Assets workspace, and when a playtest begins, because a looping
-/// ambience has no other end.
+/// The sound is stopped when no window, the main one or a pop-out, shows a
+/// tool with a table or the Assets workspace, and when a playtest begins,
+/// because a looping ambience has no other end. A request made during a
+/// playtest is played: the Assets workspace stays up through one.
 pub(super) fn listen(
     browser: Option<ResMut<Browser>>,
     tool: Res<crate::tools::Tool>,
@@ -93,6 +94,8 @@ pub(super) fn listen(
     mut playing: Local<Option<(Entity, f32)>>,
     // The edited `SoundEntries` table's bank and the revision it was read at.
     mut edited: Local<Option<(u64, Arc<SoundBank>)>>,
+    // Whether a playtest ran last frame, so its beginning is seen once.
+    mut was_playing: Local<bool>,
 ) {
     use vale_client::sound::mixer::{Channel, Place};
     let Some(mut browser) = browser else { return };
@@ -103,9 +106,13 @@ pub(super) fn listen(
             browser.hearing_file = None;
         }
     }
-    let shown = popout.browser_tool(*tool).table().is_some()
-        || matches!(*tool, crate::tools::Tool::Assets | crate::tools::Tool::GameFiles);
-    let away = !shown || !playtest.editing();
+    let hears = |tool: crate::tools::Tool| {
+        tool.table().is_some() || matches!(tool, crate::tools::Tool::Assets | crate::tools::Tool::GameFiles)
+    };
+    let shown = std::iter::once(*tool).chain(popout.tools()).any(hears);
+    let begun = playtest.playing() && !*was_playing;
+    *was_playing = playtest.playing();
+    let away = !shown || begun;
     let ask = match away {
         true => {
             browser.listen = None;

@@ -476,7 +476,8 @@ fn head(
 /// Shows a note instead when no row of an open table points here.
 fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, id: u32) {
     let uses = work.browser.used_by(work.session, table_name, id);
-    if uses.is_empty() {
+    let server = work.browser.server_users.of(table_name, id, &work.session.rows.edits).unwrap_or_default();
+    if uses.is_empty() && server.is_empty() {
         theme::note(ui, "No row of an open table references this row.");
         return;
     }
@@ -529,6 +530,26 @@ fn used_by_line(ui: &mut egui::Ui, work: &mut Workspace<'_>, table_name: &str, i
                     follow = Some((source.clone(), at));
                 }
                 shown.push(name);
+            }
+        }
+        // Then the server templates that name the row, by template table.
+        let mut tables: Vec<&'static str> = server.iter().map(|named| named.table).collect();
+        tables.dedup();
+        for (which, table) in tables.iter().enumerate() {
+            if which > 0 || !sources.is_empty() {
+                ui.label(egui::RichText::new("·").small().color(theme::INK_FAINT));
+            }
+            let here: Vec<&tables::server_users::Named> = server.iter().filter(|named| named.table == *table).collect();
+            ui.label(
+                egui::RichText::new(super::reference::template_words(table, here.len()))
+                    .small()
+                    .color(theme::INK_DIM),
+            );
+            for named in here.iter().take(6) {
+                super::reference::server_user_link(ui, work.asks, named, egui::RichText::new(&named.name).small());
+            }
+            if here.len() > 6 {
+                ui.label(egui::RichText::new("…").small().color(theme::INK_FAINT));
             }
         }
     });

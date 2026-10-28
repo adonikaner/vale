@@ -675,6 +675,9 @@ pub(crate) struct Quests {
     /// `crate::server::subject::flags::on_the_command_line`, which waits on this.
     pub(crate) scripted_done: bool,
     seeded: bool,
+    /// Whether anything looked up a quest or a relation since the last
+    /// frame; see [`Self::want`].
+    asked: std::sync::atomic::AtomicBool,
 }
 
 /// What one read of the tables answered.
@@ -708,6 +711,7 @@ impl Quests {
 
     /// One quest by entry, from either list.
     pub(crate) fn by_entry(&self, entry: u32) -> Option<&Known> {
+        self.want();
         // The database's list is sorted by entry, which is the query's own
         // `ORDER BY`, so this is a binary search rather than a walk of 4,433.
         match self.all.binary_search_by_key(&entry, |known| known.entry) {
@@ -733,6 +737,14 @@ impl Quests {
     /// The open quest, with this project's edits over it.
     pub(crate) fn open_quest(&self, edits: &Edits) -> Option<Known> {
         self.shown_entry(self.open?, edits)
+    }
+
+    /// Ask for the templates and the relations to be read, from whatever
+    /// shows them: a quest's title under any tool, the quest window of a
+    /// creature or game object from its data workspace, a quest picker. Read
+    /// once per apply, as for the tools that always want them.
+    pub(crate) fn want(&self) {
+        self.asked.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// What a quest is called, for a line that has only its entry.
@@ -1072,6 +1084,7 @@ impl Quests {
         edits: &Edits,
         wanted: impl Fn(&Relation) -> bool,
     ) -> Vec<(Relation, Life)> {
+        self.want();
         let mut out: Vec<(Relation, Life)> = self
             .relations
             .iter()
@@ -1378,17 +1391,16 @@ fn read_the_tables(
         }
         return;
     }
-    // Read for every tool that shows quests: the quest workspace, and the
-    // creature and game object tools while their Quests window is open.
-    // Without this read, that window would open on an empty list when the
-    // Quests row had never been pressed, and show the creature as giving no
-    // quests.
-    //
-    // The item workspace reads it too: it shows `start_quest` as the quest's
-    // title rather than its number, and its picker searches this list.
+    // Read for the quest and item workspaces, which always show quests, and
+    // for anything else that looked one up last frame ([`Quests::want`]): the
+    // Quests window of a creature or game object under any tool, a quest
+    // picker, a quest's title in a reference or a condition. Without the
+    // last, those waited on a read only the first two started.
+    let asked = quests.asked.swap(false, std::sync::atomic::Ordering::Relaxed);
     let wanted = popout.shows(*tool, Tool::Quests)
         || popout.shows(*tool, Tool::Items)
-        || (matches!(*tool, Tool::Creatures | Tool::GameObjects) && quests.window_for.is_some());
+        || quests.window_for.is_some()
+        || asked;
     if !wanted {
         return;
     }
@@ -1970,6 +1982,10 @@ fn search_the_picker(
 ) {
     let edits = session.as_ref().map(|session| &session.rows.edits);
     let quests = &mut *quests;
+    // A quest picker lists the templates, so it asks for them to be read.
+    if quests.picker.as_ref().is_some_and(|picker| picker.target == Target::Quest) {
+        quests.want();
+    }
     let Some(picker) = quests.picker.as_mut() else {
         return;
     };

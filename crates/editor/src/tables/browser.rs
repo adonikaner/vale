@@ -145,6 +145,9 @@ pub(crate) struct Browser {
     /// Every file of `DBFilesClient\` the archives list, by its one name,
     /// sorted; read once for the Tables workspace's list.
     pub(crate) table_names: Option<Vec<String>>,
+    /// The server templates that name the open row, for its Used by. See
+    /// [`super::server_users`].
+    pub(crate) server_users: super::server_users::ServerUsers,
     /// Each open table's records by id, and the revision it was built at. See
     /// [`Self::record_of`].
     ids: HashMap<String, (u64, HashMap<u32, usize>)>,

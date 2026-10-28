@@ -161,6 +161,7 @@ pub mod conn;
 pub mod creature;
 pub mod creaturespells;
 pub mod datadir;
+pub mod dbc_users;
 pub mod eventai;
 pub mod faction;
 pub mod formation;

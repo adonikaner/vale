@@ -4,7 +4,9 @@
 
 use bevy_egui::egui;
 
+use crate::tables::server_users::Named;
 use crate::tables::{commands::Command, Modal};
+use crate::ui::shell::asks::{ShellAsk, ShellAsks};
 use crate::tables;
 use crate::ui::tables::commands::run_command;
 use crate::ui::tables::field::{number, presence, write};
@@ -330,7 +332,8 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         follow_reference(work, table, id);
     }
 
-    // The rows that point at this one, looked up in the reference index.
+    // The rows that point at this one, looked up in the reference index, and
+    // the server templates that name it.
     theme::heading(ui, "Used by");
     let id = work
         .session
@@ -338,10 +341,12 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         .and_then(|table| table.u32_at(record, 0))
         .unwrap_or(0);
     let uses = work.browser.used_by(work.session, &table_name, id);
-    if uses.is_empty() {
+    let server = work.browser.server_users.of(&table_name, id, &work.session.rows.edits).unwrap_or_default();
+    if uses.is_empty() && server.is_empty() {
         theme::note(ui, "No row of an open table references this row.");
         return;
     }
+    server_users_list(ui, work.asks, &server);
     let mut sources: Vec<String> = uses.iter().map(|at| at.table.clone()).collect();
     sources.sort();
     sources.dedup();
@@ -384,5 +389,67 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .and_then(|open| open.u32_at(record, 0))
             .unwrap_or(0);
         follow_reference(work, &table, id);
+    }
+}
+
+/// The inspector's list of the server templates that name the row, grouped
+/// by template table: each as a link with the columns that name the row.
+fn server_users_list(ui: &mut egui::Ui, asks: &mut ShellAsks, server: &[Named]) {
+    let mut tables: Vec<&'static str> = server.iter().map(|named| named.table).collect();
+    tables.dedup();
+    for table in tables {
+        let here: Vec<&Named> = server.iter().filter(|named| named.table == table).collect();
+        ui.label(egui::RichText::new(template_words(table, here.len())).small().color(theme::INK_FAINT));
+        for named in here.iter().take(12) {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                let text = egui::RichText::new(format!("{} [{}]", named.name, named.entry)).size(theme::SMALL);
+                server_user_link(ui, asks, named, text);
+                ui.label(egui::RichText::new(named.columns.join(", ")).small().color(theme::INK_FAINT));
+            });
+        }
+        if here.len() > 12 {
+            theme::note(ui, format!("…and {} more", here.len() - 12));
+        }
+    }
+}
+
+/// How many rows of a server template table: `1 creature`, `3 items`.
+pub(super) fn template_words(table: &str, count: usize) -> String {
+    let word = match table {
+        "creature_template" => "creature",
+        "gameobject_template" => "game object",
+        "item_template" => "item",
+        "quest_template" => "quest",
+        other => other,
+    };
+    match count {
+        1 => format!("1 {word}"),
+        _ => format!("{count} {word}s"),
+    }
+}
+
+/// A server template's name as a link that opens it where it is edited.
+pub(super) fn server_user_link(ui: &mut egui::Ui, asks: &mut ShellAsks, named: &Named, text: egui::RichText) {
+    use crate::tools::spawns::spawn::SpawnKind;
+    use crate::ui::widgets::reference::{link_text, template_link};
+    match named.table {
+        "creature_template" => template_link(ui, asks, SpawnKind::Creature, named.entry, text),
+        "gameobject_template" => template_link(ui, asks, SpawnKind::GameObject, named.entry, text),
+        "item_template" => {
+            let hover = format!("Open item {} in the item workspace.", named.entry);
+            if link_text(ui, text, theme::ACCENT, &hover) {
+                asks.push(ShellAsk::ShowItem(named.entry));
+            }
+        }
+        "quest_template" => {
+            let hover = format!("Open quest {} in the quest workspace.", named.entry);
+            if link_text(ui, text, theme::ACCENT, &hover) {
+                asks.push(ShellAsk::ShowQuest(named.entry));
+            }
+        }
+        _ => {
+            ui.label(text);
+        }
     }
 }
