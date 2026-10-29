@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use super::EditSession;
 
 impl EditSession {
-    /// Open a client table for editing, if it is not open already.
+    /// Open a DBC for editing, if it is not open already.
     ///
     /// Read through the same chain the renderer uses, so a table edited in an
     /// earlier session comes back edited. `false` for a name the archives do not
@@ -145,10 +145,18 @@ impl EditSession {
     /// dialog. Rows rather than bytes, because [`DbcFile::set_string`] only
     /// appends to the string block and an undone string edit leaves the text
     /// behind it.
+    ///
+    /// The project's file list changes with the save, as it does for
+    /// [`Self::save_bytes`]: a table can be added to it or taken out, and its
+    /// size changes. So [`Self::files_revision`] moves, and every list of the
+    /// project's files is read again. A table saved without it was missing from
+    /// the Assets workspace's Project Files until another kind of file was
+    /// saved.
     pub(crate) fn save_table(&mut self, name: &str) -> bool {
         let Some(table) = self.tables.get(name) else {
             return false;
         };
+        self.files_revision += 1;
         let path = vale_assets::tables::dbc::dbc_path(name);
         let bytes = table.write();
         if self.changes_nothing(&path, &bytes) {
@@ -217,6 +225,29 @@ mod tests {
         session.tables_republished = false;
         session.unpublish_table("SpellVisualKit");
         assert!(!session.tables_republished);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// Saving a table moves `files_revision`, so the lists of the project's
+    /// files are read again and show it.
+    #[test]
+    fn a_saved_table_moves_the_files_revision() {
+        let install = std::env::temp_dir().join(format!("vale-session-save-table-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        let mut bytes = b"WDBC".to_vec();
+        for word in [1u32, 1, 4, 1] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(&7u32.to_le_bytes());
+        bytes.push(0);
+        session.tables.insert("SpellVisualKit".to_string(), DbcFile::parse(&bytes).unwrap());
+        let before = session.files_revision;
+        assert!(session.save_table("SpellVisualKit"));
+        assert!(session.files_revision > before);
+        let path = vale_assets::tables::dbc::dbc_path("SpellVisualKit");
+        assert!(session.project.files().iter().any(|f| f.eq_ignore_ascii_case(&path)));
         let _ = std::fs::remove_dir_all(&install);
     }
 }

@@ -48,6 +48,8 @@ pub(crate) struct Popovers {
     pub(crate) patch_name: String,
     /// Which tab of the server popover is showing.
     pub(crate) server_tab: ServerTab,
+    /// The *Server tile files* dialog, opened from the server popover.
+    pub(crate) tile_files: super::tilefiles::TileFiles,
     /// Whether `--server` has already opened the server popover. Its anchor is
     /// the button's rectangle, which does not exist until the bar has been
     /// drawn once, so the flag cannot be acted on at startup. `--projects`
@@ -225,6 +227,7 @@ pub(crate) fn draw(
                 assets,
                 &mut popovers.project.open,
                 &mut ask_server,
+                server,
             );
         });
         if response.should_close() {
@@ -249,12 +252,33 @@ pub(crate) fn draw(
         projects.confirming = None;
     }
     if popovers.server.open {
+        let mut ask_tile_files = false;
         if let Some(response) = window(ctx, "server", popovers.server.under, |ui| {
-            the_server(ui, &mut popovers.server_tab, session, assets, server, queue, standings, now, playing, step);
+            the_server(
+                ui,
+                &mut popovers.server_tab,
+                session,
+                assets,
+                server,
+                queue,
+                standings,
+                now,
+                playing,
+                step,
+                &mut ask_tile_files,
+            );
         }) {
             seen[3] = (true, response);
             rects.push(response);
         }
+        // The dialog is modal, so the popover closes under it.
+        if ask_tile_files {
+            popovers.server.open = false;
+            popovers.tile_files.show();
+        }
+    }
+    if let Some(whole) = super::tilefiles::draw(ctx, &mut popovers.tile_files, session, assets, server, queue, standings) {
+        rects.push(whole);
     }
     if popovers.publish.open {
         let mut close = false;
@@ -468,6 +492,9 @@ fn the_server(
     now: f64,
     playing: bool,
     step: &crate::server::datadir::Step,
+    // Set when the Server tile files button is pressed; the caller opens the
+    // dialog. See [`super::tilefiles`].
+    ask_tile_files: &mut bool,
 ) {
     ui.set_width(540.0);
     ui.horizontal(|ui| {
@@ -510,7 +537,7 @@ fn the_server(
                     }
                 });
             }
-            this_project(ui, session, assets, server, queue, standings, now, playing, step);
+            this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files);
         }
         ServerTab::Setup => setup(ui, assets, server, queue),
     }
@@ -529,6 +556,7 @@ fn this_project(
     now: f64,
     playing: bool,
     step: &crate::server::datadir::Step,
+    ask_tile_files: &mut bool,
 ) {
     // Every server operation of the project. See [`super::sync`], whose
     // module comment says why they are in one panel.
@@ -552,7 +580,8 @@ fn this_project(
     // `None` until the first count, which runs on a worker, has finished. The
     // button is enabled while the count is unknown; a press with nothing
     // changed says so on the status line.
-    let changed = standings.changed_tiles(session, assets, now);
+    let counts = standings.tile_counts(session, assets, server, now);
+    let changed = counts.map(|c| c.changed);
     let busy = queue.busy();
     ui.horizontal(|ui| {
         let count = match changed {
@@ -596,6 +625,30 @@ fn this_project(
         "Writes maps, vmaps and mmaps under the server's DataDir with the four map tools \
          set under Setup. To regenerate selected tiles only, use Server files in Edit Map.",
     );
+    ui.horizontal(|ui| {
+        if ui
+            .button("Server tile files\u{2026}")
+            .on_hover_text(
+                "The tile files a regeneration no longer produces, the files each project \
+                 wrote, and a check for files nothing uses. Remove and put back from there; \
+                 a regeneration removes no file.",
+            )
+            .clicked()
+        {
+            *ask_tile_files = true;
+        }
+        if let Some(c) = counts {
+            let line = format!(
+                "{} no longer produced, {} written by other projects",
+                c.stale, c.others
+            );
+            let colour = match c.stale {
+                0 => theme::INK_DIM,
+                _ => theme::WARN,
+            };
+            ui.label(egui::RichText::new(line).small().color(colour));
+        }
+    });
 
     // What a publish hands over as rows.
     ui.add_space(10.0);
@@ -808,6 +861,17 @@ fn setting_row(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::
     });
 }
 
+/// A project's size for its row in the project dialog: `52 files`, or
+/// `empty`. The count of each type is the row's hover, and the manifest
+/// below the open project lists the files themselves.
+fn file_count(summary: &vale_edit::project::Summary) -> String {
+    match summary.total() {
+        0 => "empty".to_string(),
+        1 => "1 file".to_string(),
+        n => format!("{n} files"),
+    }
+}
+
 /// The project dialog: which project the edits go into, the other projects
 /// there are, and making another.
 ///
@@ -843,6 +907,7 @@ fn which_project(
     assets: &vale_client::assets::GameAssets,
     open: &mut bool,
     ask_server: &mut bool,
+    server: &crate::server::settings::ServerSettings,
 ) {
     ui.set_width(680.0);
     if !projects.listed {
@@ -863,12 +928,12 @@ fn which_project(
 
     // ---- the one that is open.
     theme::heading(ui, "Open project");
-    let holds = projects
+    let summary = projects
         .known
         .iter()
         .find(|(name, _)| *name == here)
-        .map(|(_, summary)| summary.line())
-        .unwrap_or_else(|| "empty".to_string());
+        .map(|(_, summary)| summary.clone())
+        .unwrap_or_default();
     let tiles = session.unsaved.len();
     let tables = session.unsaved_tables.len();
     ui.horizontal(|ui| {
@@ -878,8 +943,8 @@ fn which_project(
                 .size(15.0)
                 .color(theme::INK),
         );
-        ui.label(egui::RichText::new(holds).color(theme::INK_DIM));
-        ui.label(theme::number(session.project.root.display().to_string()).color(theme::INK_FAINT));
+        ui.label(egui::RichText::new(file_count(&summary)).color(theme::INK_DIM))
+            .on_hover_text(format!("{}.\n{}", summary.line(), session.project.root.display()));
         if tiles + tables > 0 {
             ui.label(
                 egui::RichText::new(format!("unsaved: {tiles} tiles, {tables} tables"))
@@ -940,7 +1005,8 @@ fn which_project(
                     .show(ui, |ui| {
                         for (name, summary) in &others {
                             ui.label(egui::RichText::new(name).color(theme::INK));
-                            ui.label(egui::RichText::new(summary.line()).small().color(theme::INK_DIM));
+                            ui.label(egui::RichText::new(file_count(summary)).small().color(theme::INK_DIM))
+                                .on_hover_text(summary.line());
                             ui.label(
                                 egui::RichText::new(match summary.modified {
                                     Some(at) => ago(std::time::SystemTime::now(), at),
@@ -1031,6 +1097,25 @@ fn which_project(
                 .color(theme::INK),
             );
             theme::note(ui, format!("{what}. This cannot be undone."));
+            // The tile files stay: the DataDir's ledger, not the project,
+            // records them, so they can be put back after the project is gone.
+            let written = *doomed.tile_files.get_or_insert_with(|| {
+                crate::server::datadir::data_dir(server)
+                    .and_then(|dir| vale_mangos::datadir::Ledger::open(&dir))
+                    .map(|ledger| ledger.written_by(&doomed.name).len())
+                    .unwrap_or(0)
+            });
+            if written > 0 {
+                theme::note(
+                    ui,
+                    format!(
+                        "The project's regenerations wrote {written} tile file(s) in the server's \
+                         DataDir. They stay there after the project is gone. To restore the \
+                         server's own files, use Put back originals in Server\u{2026} > Server \
+                         tile files."
+                    ),
+                );
+            }
             // The gate: a project that has applied to the server holds the
             // only record of what to put back, and Clear and Delete remove
             // it. See `crate::server::held`.

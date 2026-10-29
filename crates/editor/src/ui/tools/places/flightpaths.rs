@@ -4,6 +4,7 @@
 //! viewport toolbar   what a click in the world does: Select, New Node,
 //!                    Connect, Add Points, and under the armed one its own
 //!                    settings and what the next click does; Show Transports
+//!                    and Show Unselected, which decide which paths are drawn
 //! inspector          the map's summary and flight map, then the properties
 //!                    of one selection: the node, the path or the point,
 //!                    chosen with a breadcrumb when more than one is selected
@@ -359,6 +360,7 @@ fn nothing_selected(ui: &mut egui::Ui) {
         ("Connect", "With a node selected, click another node to create a path to it."),
         ("Add Points", "With a path selected, click near it to insert a point."),
         ("Show Transports", "Also draw the boat and zeppelin paths."),
+        ("Show Unselected", "Draw every path. Off, only the selection's paths are drawn."),
     ] {
         property(ui, mode, "", |ui| {
             ui.add(egui::Label::new(egui::RichText::new(what).size(theme::SMALL).color(theme::INK_DIM)).wrap());
@@ -1341,7 +1343,7 @@ pub(crate) fn strip(
     })
 }
 
-/// The four modes, and the transport paths switch.
+/// The four modes, and the two switches that decide which paths are drawn.
 fn modes(ui: &mut egui::Ui, flights: &mut Flightpaths) {
     let mode = Mode::of(flights.armed);
     ui.horizontal(|ui| {
@@ -1401,6 +1403,16 @@ fn modes(ui: &mut egui::Ui, flights: &mut Flightpaths) {
             .clicked()
         {
             flights.transports = !transports;
+        }
+        let unselected = flights.unselected;
+        if button(ui, unselected, true, "Show Unselected")
+            .on_hover_text(
+                "Draw every path. Off, only the selected path and the selected node's paths \
+                 are drawn and can be clicked. Also on the right-click menu.",
+            )
+            .clicked()
+        {
+            flights.unselected = !unselected;
         }
     });
 }

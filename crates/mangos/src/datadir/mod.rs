@@ -2,6 +2,9 @@
 //! four vmangos tools that build them from the client's archives.
 //!
 //! ```text
+//! ledger.rs    what the editor has done to a DataDir: which project built
+//!              each tile, the files written and the originals they replaced,
+//!              and the files no run produces any longer
 //! navmesh.rs   an `mmaps` tile read as triangles in the world's axes, grouped
 //!              by what their flags mean to the server's path queries
 //! ```
@@ -107,8 +110,23 @@
 //! drops a navmesh tile, and the next step onto that tile re-reads the file.
 //! New `maps` and `vmaps` files need a server restart, and the report says
 //! so.
+//!
+//! ## Nothing is removed by a run
+//!
+//! A run writes and replaces tile files and removes none. A file it no longer
+//! produces is marked stale in [`Outcome::stale`] and in the [`Ledger`], and
+//! stays until it is removed from the editor's *Server tile files* window. A
+//! stale file is still read: the server loads a stale `.map` or `.vmtile`, and
+//! the navmesh generator stitches a stale neighbour `.map` into the tiles
+//! beside it. The navmesh step leaves out a tile whose own `.map` is stale.
+//! The one file a run takes out of the way is a tile's old `.mmtile`, moved
+//! into the scratch folder while the generator builds the new one, and moved
+//! back if the build fails.
 
+pub mod ledger;
 pub mod navmesh;
+
+pub use ledger::Ledger;
 
 use crate::conn::setting;
 use std::collections::BTreeMap;
@@ -328,9 +346,17 @@ pub struct Request {
     /// The tiles, each with the [`Reach`] of its change.
     pub tiles: Vec<(Tile, Reach)>,
     /// The ones the archive the tools read carries, which must come out as a
-    /// `.map`. A requested tile not listed is one the project has reverted,
-    /// whose server file is removed when the extractor writes none.
+    /// `.map`. A requested tile not listed is one the project has reverted.
+    /// When the extractor writes no `.map` for it, the archives do not have
+    /// the tile either, and its `.map` and `.mmtile` are marked stale.
     pub carried: Vec<Tile>,
+    /// Maps whose files are all marked stale and none rebuilt: maps a project
+    /// made and has since removed, so that `Map.dbc` no longer lists them. The
+    /// tools do not read a map that `Map.dbc` does not list, so none is run
+    /// for these. See [`map_files`].
+    pub removed_maps: Vec<u32>,
+    /// The project the run is for, as the [`Ledger`] names it.
+    pub project: String,
     /// `mapextractor -f`: store heights as `int16` where the range allows,
     /// which halves the file. [`heights_as_int`] reads it from an existing
     /// `.map`, so a regenerated tile is stored the same way as its
@@ -402,15 +428,16 @@ fn map_heights_flag(path: &Path) -> Option<bool> {
 pub struct Outcome {
     /// `.map` files written into `DataDir\maps\`, by name.
     pub maps: Vec<String>,
-    /// `.map` files removed from `DataDir\maps\`, for tiles the archives no
-    /// longer contain.
-    pub maps_removed: Vec<String>,
     /// `.vmtree` and `.vmtile` files written, by name.
     pub vmaps: Vec<String>,
     /// `.vmo` model files written, because their bytes differed, by name.
     pub models: Vec<String>,
     /// `.mmtile` files written.
     pub mmaps: Vec<String>,
+    /// Files in the `DataDir` that this run no longer produces, as
+    /// `<sub>\<name>` with why. They are left where they are: see the
+    /// module's *Nothing is removed by a run*.
+    pub stale: Vec<(String, String)>,
     /// Navmesh tiles requested and not produced, each with the generator's
     /// last output lines.
     pub mmaps_failed: Vec<(String, String)>,
@@ -427,9 +454,6 @@ impl Outcome {
         if !self.maps.is_empty() {
             parts.push(format!("{} .map", self.maps.len()));
         }
-        if !self.maps_removed.is_empty() {
-            parts.push(format!("{} .map removed", self.maps_removed.len()));
-        }
         if !self.vmaps.is_empty() {
             parts.push(format!("{} vmap files, {} models", self.vmaps.len(), self.models.len()));
         }
@@ -440,13 +464,20 @@ impl Outcome {
             parts.push(format!("{} navmesh tile(s) failed", self.mmaps_failed.len()));
         }
         let seconds: f32 = self.timings.iter().map(|(_, s)| s).sum();
-        match parts.is_empty() {
+        let mut line = match parts.is_empty() {
             true => "no server tile to regenerate".to_string(),
             false => format!(
                 "server tiles: {} in {seconds:.0} s — restart the server to load them",
                 parts.join(", ")
             ),
+        };
+        if !self.stale.is_empty() {
+            line.push_str(&format!(
+                "; {} file(s) no longer produced were left in place — review them under Server tile files",
+                self.stale.len()
+            ));
         }
+        line
     }
 }
 
@@ -458,28 +489,57 @@ impl Outcome {
 /// an estimate until the navmesh step starts, because the `.map` step may
 /// write a neighbour's `.map`.
 ///
-/// The steps run in dependency order: every map's `.map` files first, then
-/// the vmap files for each map with a placement change, then one navmesh
-/// build per tile and per neighbour. A failing tool stops the run and the
-/// error carries its last output lines. Files copied before the failure are
-/// kept, because each file is complete and correct on its own.
+/// The steps run in dependency order: the removed maps' files are marked
+/// stale, then every map's `.map` files are extracted, then the vmap files
+/// for each map with a placement change, then one navmesh build per tile and
+/// per neighbour. A failing tool stops the run and the error carries its last
+/// output lines. Files copied before the failure are kept, because each file
+/// is complete and correct on its own.
+///
+/// A file that no longer has a source is marked stale and left in place
+/// ([`Outcome::stale`]): the `.map` and `.mmtile` of a tile neither the
+/// project nor the archives carry, the `.mmap` of a map left with no `.map`,
+/// a `.vmtile` the map's new tree does not index, and, after any vmap step,
+/// every model file nothing names ([`unused_models`]).
+///
+/// With `ledger`, which a run into the live `DataDir` passes, every file is
+/// noted before it is written, so the file it replaces is kept the first
+/// time, and every stale mark is kept there too. A run into a staged copy
+/// passes `None`.
 pub fn regenerate(
     tools: &Tools,
     data_dir: &Path,
     request: &Request,
     scratch: &Path,
+    ledger: Option<&mut Ledger>,
     mut progress: impl FnMut(&str, usize, usize),
 ) -> Result<Outcome, String> {
     let mut out = Outcome::default();
-    if request.tiles.is_empty() {
+    if request.tiles.is_empty() && request.removed_maps.is_empty() {
         return Ok(out);
     }
-    let _ = std::fs::remove_dir_all(scratch);
-    std::fs::create_dir_all(scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
     for sub in ["maps", "vmaps", "mmaps"] {
         std::fs::create_dir_all(data_dir.join(sub))
             .map_err(|e| format!("{}: {e}", data_dir.join(sub).display()))?;
     }
+    let mut files = Files {
+        data_dir,
+        ledger,
+        project: &request.project,
+    };
+
+    // 0. The removed maps: every file of each is stale, and no tool runs.
+    for map in &request.removed_maps {
+        for (sub, name) in map_files(data_dir, *map) {
+            files.stale(&mut out, sub, &name, &format!("map {map} is not in Map.dbc"))?;
+        }
+    }
+    if request.tiles.is_empty() {
+        stale_unused_models(&mut files, &mut out)?;
+        return Ok(out);
+    }
+    let _ = std::fs::remove_dir_all(scratch);
+    std::fs::create_dir_all(scratch).map_err(|e| format!("{}: {e}", scratch.display()))?;
     let mut by_map: BTreeMap<u32, Vec<(Tile, Reach)>> = BTreeMap::new();
     for (tile, reach) in &request.tiles {
         by_map.entry(tile.map).or_default().push((*tile, *reach));
@@ -538,10 +598,9 @@ pub fn regenerate(
         for (tile, _) in tiles {
             let name = tile.map_file();
             let produced = out_dir.join("maps").join(&name);
-            let target = data_dir.join("maps").join(&name);
             match produced.is_file() {
                 true => {
-                    copy_replacing(&produced, &target)?;
+                    files.copy(&produced, "maps", &name)?;
                     out.maps.push(name);
                 }
                 // The archive carries the tile and the extractor wrote nothing:
@@ -557,12 +616,14 @@ pub fn regenerate(
                 }
                 // The archives no longer contain the tile: the project
                 // created it and has since reverted it. The server's file
-                // for it is removed.
+                // for it, and its navmesh, have no source.
                 false => {
-                    if target.is_file() {
-                        std::fs::remove_file(&target).map_err(|e| format!("{}: {e}", target.display()))?;
-                        out.maps_removed.push(name);
-                    }
+                    let why = format!(
+                        "neither the project nor the archives have map {map} tile {},{}",
+                        tile.x, tile.y
+                    );
+                    files.stale(&mut out, "maps", &name, &why)?;
+                    files.stale(&mut out, "mmaps", &tile.mmtile_file(), &why)?;
                 }
             }
         }
@@ -603,13 +664,13 @@ pub fn regenerate(
             let path = entry.path();
             let target = data_dir.join("vmaps").join(&name);
             if name == vmtree_file(*map) || (name.starts_with(&prefix) && name.ends_with(".vmtile")) {
-                copy_replacing(&path, &target)?;
+                files.copy(&path, "vmaps", &name)?;
                 out.vmaps.push(name.clone());
                 if name.ends_with(".vmtile") {
                     produced_tiles.push(name);
                 }
             } else if name.ends_with(".vmo") && !same_bytes(&path, &target) {
-                copy_replacing(&path, &target)?;
+                files.copy(&path, "vmaps", &name)?;
                 out.models.push(name);
             }
         }
@@ -619,8 +680,8 @@ pub fn regenerate(
             // The extractor records every building and model it finds in
             // `Buildings\dir_bin`. Empty, the map has none, and has no vmaps:
             // the server and the navmesh generator both carry on without them.
-            // The server's old files for the map would describe models that
-            // are gone, so they are removed.
+            // The server's old files for the map describe models that are
+            // gone.
             let spawns = std::fs::metadata(buildings.join("dir_bin")).map_or(0, |meta| meta.len());
             if spawns != 0 {
                 return Err(format!(
@@ -633,30 +694,51 @@ pub fn regenerate(
             for entry in std::fs::read_dir(data_dir.join("vmaps")).map_err(|e| e.to_string())?.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 if name == vmtree_file(*map) || (name.starts_with(&format!("{prefix}_")) && name.ends_with(".vmtile")) {
-                    std::fs::remove_file(entry.path()).map_err(|e| format!("{name}: {e}"))?;
-                    out.vmaps.push(format!("{name} removed"));
+                    let why = format!("map {map} has no buildings or models any longer");
+                    files.stale(&mut out, "vmaps", &name, &why)?;
                 }
             }
             continue;
         }
         // A tile of this map that the server had and this run did not
-        // produce no longer has any buildings. Its old file would name spawns
-        // the new tree does not have, so it is removed.
+        // produce no longer has any buildings. Its old file names spawns the
+        // new tree does not have, and the server and the navmesh generator
+        // read it with the new tree until it is removed.
         for entry in std::fs::read_dir(data_dir.join("vmaps")).map_err(|e| e.to_string())?.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with(&format!("{prefix}_")) && name.ends_with(".vmtile") && !produced_tiles.contains(&name) {
-                std::fs::remove_file(entry.path()).map_err(|e| format!("{name}: {e}"))?;
-                out.vmaps.push(format!("{name} removed"));
+                let why = format!(
+                    "map {map}'s new {} does not index this tile; the server reads it against \
+                     the new tree until it is removed",
+                    vmtree_file(*map)
+                );
+                files.stale(&mut out, "vmaps", &name, &why)?;
             }
         }
     }
+    // A model whose last placement went in this run, or whose tiles a removed
+    // map held, may be named by nothing now.
+    if placement_maps > 0 || !request.removed_maps.is_empty() {
+        stale_unused_models(&mut files, &mut out)?;
+    }
 
     // 3. The navmesh: one build per requested tile and per neighbour that
-    // has a .map.
+    // has a .map. A tile whose .map was marked stale above is not built: the
+    // file is still there, and the generator would build it from that file.
+    // A map left with no current .map has a stale .mmap header.
+    let removed: Vec<Tile> = request
+        .tiles
+        .iter()
+        .map(|(tile, _)| *tile)
+        .filter(|tile| files.is_stale(&out, "maps", &tile.map_file()))
+        .collect();
+    stale_headers(&mut files, &removed, &mut out)?;
     let mut wanted: Vec<Tile> = Vec::new();
     for (tile, _) in &request.tiles {
         for candidate in std::iter::once(*tile).chain(tile.neighbours()) {
-            if !wanted.contains(&candidate) && data_dir.join("maps").join(candidate.map_file()).is_file() {
+            let current = data_dir.join("maps").join(candidate.map_file()).is_file()
+                && !files.is_stale(&out, "maps", &candidate.map_file());
+            if !wanted.contains(&candidate) && current {
                 wanted.push(candidate);
             }
         }
@@ -666,105 +748,431 @@ pub fn regenerate(
     // tile takes minutes. Each process rewrites the map's `.mmap` header from
     // the same tile list, so the header has the same bytes whichever process
     // finishes last.
+    //
+    // The generator skips a tile whose file exists and is current, so the
+    // old file is moved aside into the scratch folder first. A build that
+    // fails puts it back, so a failure leaves the navmesh the server had.
+    let aside = scratch.join("mmaps-replaced");
+    std::fs::create_dir_all(&aside).map_err(|e| format!("{}: {e}", aside.display()))?;
+    let mut headers: Vec<u32> = Vec::new();
     for tile in &wanted {
+        if !headers.contains(&tile.map) {
+            headers.push(tile.map);
+            files.before_write("mmaps", &mmap_file(tile.map))?;
+        }
+        files.before_write("mmaps", &tile.mmtile_file())?;
         let target = data_dir.join("mmaps").join(tile.mmtile_file());
-        // The generator skips a tile whose file exists and is current, so
-        // the old file is removed first.
         if target.is_file() {
-            std::fs::remove_file(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+            move_file(&target, &aside.join(tile.mmtile_file()))?;
         }
     }
     let builds = wanted.len();
     // Replace the estimate with the actual number of builds.
     total = step + builds;
-    let mut queue = wanted.into_iter();
-    let mut running: Vec<(Tile, std::process::Child, Instant)> = Vec::new();
-    let mut done = 0usize;
-    loop {
-        while running.len() < parallel() {
-            let Some(tile) = queue.next() else {
+    let built = (|| -> Result<(), String> {
+        let mut queue = wanted.into_iter();
+        let mut running: Vec<(Tile, std::process::Child, Instant)> = Vec::new();
+        let mut done = 0usize;
+        loop {
+            while running.len() < parallel() {
+                let Some(tile) = queue.next() else {
+                    break;
+                };
+                progress(
+                    &format!(
+                        "building the navmesh of map {} tile {},{} ({} of {builds})",
+                        tile.map,
+                        tile.x,
+                        tile.y,
+                        done + running.len() + 1
+                    ),
+                    step + done + running.len(),
+                    total,
+                );
+                let mut command = Command::new(&tools.mmap_generator);
+                command
+                    .arg(tile.map.to_string())
+                    .arg("--tile")
+                    .arg(format!("{},{}", tile.x, tile.y))
+                    .arg("--silent")
+                    .arg("--threads")
+                    .arg("1");
+                if let Some(off_mesh) = &tools.off_mesh {
+                    command.arg("--offMeshInput").arg(off_mesh);
+                }
+                if let Some(config) = &tools.config {
+                    command.arg("--configInputPath").arg(config);
+                }
+                out.log.push(format!("> {}", describe(&command)));
+                let child = prepare(&mut command, data_dir, tools, &request.dll_dirs)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|e| format!("{}: {e}", tools.mmap_generator.display()))?;
+                running.push((tile, child, Instant::now()));
+            }
+            if running.is_empty() {
                 break;
-            };
-            progress(
-                &format!(
-                    "building the navmesh of map {} tile {},{} ({} of {builds})",
-                    tile.map,
-                    tile.x,
-                    tile.y,
-                    done + running.len() + 1
-                ),
-                step + done + running.len(),
-                total,
-            );
-            let mut command = Command::new(&tools.mmap_generator);
-            command
-                .arg(tile.map.to_string())
-                .arg("--tile")
-                .arg(format!("{},{}", tile.x, tile.y))
-                .arg("--silent")
-                .arg("--threads")
-                .arg("1");
-            if let Some(off_mesh) = &tools.off_mesh {
-                command.arg("--offMeshInput").arg(off_mesh);
             }
-            if let Some(config) = &tools.config {
-                command.arg("--configInputPath").arg(config);
-            }
-            out.log.push(format!("> {}", describe(&command)));
-            let child = prepare(&mut command, data_dir, tools, &request.dll_dirs)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| format!("{}: {e}", tools.mmap_generator.display()))?;
-            running.push((tile, child, Instant::now()));
-        }
-        if running.is_empty() {
-            break;
-        }
-        // Wait until any one of the running builds exits.
-        let mut finished: Option<usize> = None;
-        while finished.is_none() {
-            for (index, (_, child, _)) in running.iter_mut().enumerate() {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        finished = Some(index);
-                        break;
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        finished = Some(index);
-                        break;
+            // Wait until any one of the running builds exits.
+            let mut finished: Option<usize> = None;
+            while finished.is_none() {
+                for (index, (_, child, _)) in running.iter_mut().enumerate() {
+                    match child.try_wait() {
+                        Ok(Some(_)) => {
+                            finished = Some(index);
+                            break;
+                        }
+                        Ok(None) => {}
+                        Err(_) => {
+                            finished = Some(index);
+                            break;
+                        }
                     }
                 }
+                if finished.is_none() {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
             }
-            if finished.is_none() {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+            let (tile, child, started) = running.remove(finished.expect("set above"));
+            done += 1;
+            let output = child
+                .wait_with_output()
+                .map_err(|e| format!("{}: {e}", tools.mmap_generator.display()))?;
+            let (ok, tail) = collect(&output, &mut out.log);
+            out.timings.push((
+                format!("MoveMapGenerator {} {},{}", tile.map, tile.x, tile.y),
+                started.elapsed().as_secs_f32(),
+            ));
+            let target = data_dir.join("mmaps").join(tile.mmtile_file());
+            match (ok, target.is_file()) {
+                (true, true) => out.mmaps.push(tile.mmtile_file()),
+                (true, false) => out.mmaps_failed.push((
+                    tile.mmtile_file(),
+                    format!("MoveMapGenerator exited without writing the tile: {tail}"),
+                )),
+                (false, _) => out.mmaps_failed.push((tile.mmtile_file(), tail)),
+            }
+            let old = aside.join(tile.mmtile_file());
+            if !(ok && target.is_file()) && old.is_file() {
+                move_file(&old, &target)?;
             }
         }
-        let (tile, child, started) = running.remove(finished.expect("set above"));
-        done += 1;
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("{}: {e}", tools.mmap_generator.display()))?;
-        let (ok, tail) = collect(&output, &mut out.log);
-        out.timings.push((
-            format!("MoveMapGenerator {} {},{}", tile.map, tile.x, tile.y),
-            started.elapsed().as_secs_f32(),
-        ));
-        let target = data_dir.join("mmaps").join(tile.mmtile_file());
-        match (ok, target.is_file()) {
-            (true, true) => out.mmaps.push(tile.mmtile_file()),
-            (true, false) => out.mmaps_failed.push((
-                tile.mmtile_file(),
-                format!("MoveMapGenerator exited without writing the tile: {tail}"),
-            )),
-            (false, _) => out.mmaps_failed.push((tile.mmtile_file(), tail)),
-        }
-    }
+        Ok(())
+    })();
+    // A build that did not finish, or a run stopped by an error, leaves its
+    // tile's old file aside; it goes back.
+    restore_aside(&aside, &data_dir.join("mmaps"))?;
+    built?;
     // The generator writes its own log into its working directory, which is
     // `data_dir`; remove it.
     let _ = std::fs::remove_file(data_dir.join("MoveMapGen.log"));
     Ok(out)
+}
+
+/// Where a run's writes and stale marks go: the files in `data_dir`, the
+/// [`Outcome`], and the [`Ledger`] when the run writes a live `DataDir`.
+struct Files<'a> {
+    data_dir: &'a Path,
+    ledger: Option<&'a mut Ledger>,
+    project: &'a str,
+}
+
+impl Files<'_> {
+    /// Note the write in the ledger, then copy `from` over `<sub>\<name>`.
+    fn copy(&mut self, from: &Path, sub: &str, name: &str) -> Result<(), String> {
+        self.before_write(sub, name)?;
+        copy_replacing(from, &self.data_dir.join(sub).join(name))
+    }
+
+    /// Note in the ledger that `<sub>\<name>` is about to be written by a
+    /// tool, which keeps the file it replaces the first time.
+    fn before_write(&mut self, sub: &str, name: &str) -> Result<(), String> {
+        match self.ledger.as_deref_mut() {
+            Some(ledger) => ledger.before_write(sub, name, self.project),
+            None => Ok(()),
+        }
+    }
+
+    /// Mark `<sub>\<name>` stale, when it is there. Nothing is removed.
+    fn stale(&mut self, out: &mut Outcome, sub: &str, name: &str, why: &str) -> Result<(), String> {
+        if !self.data_dir.join(sub).join(name).is_file() {
+            return Ok(());
+        }
+        let key = ledger::key(sub, name);
+        if !out.stale.iter().any(|(k, _)| *k == key) {
+            out.stale.push((key, why.to_string()));
+        }
+        match self.ledger.as_deref_mut() {
+            Some(ledger) => ledger.mark_stale(sub, name, why),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `<sub>\<name>` is stale: marked by this run, or in the ledger.
+    fn is_stale(&self, out: &Outcome, sub: &str, name: &str) -> bool {
+        let key = ledger::key(sub, name);
+        out.stale.iter().any(|(k, _)| *k == key)
+            || self.ledger.as_deref().is_some_and(|ledger| ledger.stale.contains_key(&key))
+    }
+}
+
+/// Every file of `map` in `data_dir`, as `(sub, name)`: its `.map` files, its
+/// `.vmtree` and `.vmtile` files, and its `.mmap` and `.mmtile` files. Model
+/// files are shared between maps and are left to [`unused_models`].
+pub fn map_files(data_dir: &Path, map: u32) -> Vec<(&'static str, String)> {
+    let prefix = format!("{map:03}");
+    let digits = |s: &str| s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit());
+    let of_map = |sub: &str, name: &str| -> bool {
+        match sub {
+            "maps" => name
+                .strip_suffix(".map")
+                .and_then(|stem| stem.strip_prefix(&prefix))
+                .is_some_and(digits),
+            "vmaps" => {
+                name == vmtree_file(map)
+                    || (name.starts_with(&format!("{prefix}_")) && name.ends_with(".vmtile"))
+            }
+            _ => {
+                name == mmap_file(map)
+                    || name
+                        .strip_suffix(".mmtile")
+                        .and_then(|stem| stem.strip_prefix(&prefix))
+                        .is_some_and(digits)
+            }
+        }
+    };
+    let mut out = Vec::new();
+    for sub in ["maps", "vmaps", "mmaps"] {
+        let Ok(entries) = std::fs::read_dir(data_dir.join(sub)) else {
+            continue;
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| of_map(sub, name))
+            .collect();
+        names.sort();
+        out.extend(names.into_iter().map(|name| (sub, name)));
+    }
+    out
+}
+
+/// Mark stale the `.mmap` header of each map of `removed`, the tiles whose
+/// `.map` is stale, when the map has no current `.map` left. The generator
+/// writes the header from the tiles it finds, so a map with a current `.map`
+/// gets a new header from the navmesh step.
+fn stale_headers(files: &mut Files, removed: &[Tile], out: &mut Outcome) -> Result<(), String> {
+    let mut maps: Vec<u32> = removed.iter().map(|tile| tile.map).collect();
+    maps.sort_unstable();
+    maps.dedup();
+    for map in maps {
+        let current = map_files(files.data_dir, map)
+            .into_iter()
+            .any(|(sub, name)| sub == "maps" && !files.is_stale(out, sub, &name));
+        if !current {
+            files.stale(out, "mmaps", &mmap_file(map), &format!("map {map} has no current .map file"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Mark stale what [`unused_models`] finds. When a tile, tree or the game
+/// object list cannot be read, nothing is marked and the log says why: an
+/// unread file may name any model.
+fn stale_unused_models(files: &mut Files, out: &mut Outcome) -> Result<(), String> {
+    let unused = match unused_models(&files.data_dir.join("vmaps")) {
+        Ok(unused) => unused,
+        Err(why) => {
+            out.log.push(format!("unused model files were not looked for: {why}"));
+            return Ok(());
+        }
+    };
+    for name in unused {
+        files.stale(out, "vmaps", &name, "no .vmtile, .vmtree or game object names this model")?;
+    }
+    Ok(())
+}
+
+/// Move `from` to `to`, replacing `to`.
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    if to.is_file() {
+        std::fs::remove_file(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to).map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
+    std::fs::remove_file(from).map_err(|e| format!("{}: {e}", from.display()))
+}
+
+/// Move each file in `aside` back into `into` when `into` has no file of
+/// that name: the old navmesh of a tile whose build did not produce one.
+fn restore_aside(aside: &Path, into: &Path) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(aside) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let target = into.join(entry.file_name());
+        if !target.is_file() {
+            move_file(&entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// The game object models' list in `vmaps\`, written by the assembler and
+/// read by the server's `LoadGameObjectModelList`.
+const GAMEOBJECT_MODELS: &str = "temp_gameobject_models";
+
+/// `MOD_HAS_BOUND` in a spawn's flags: six floats of bounds follow the scale.
+const MOD_HAS_BOUND: u32 = 1 << 2;
+
+/// The model files in `vmaps` that no `.vmtile`, `.vmtree` or the game object
+/// list names, sorted. A model file is one whose name ends in `.vmo` or
+/// `.m2`; any other file is left out. Names are compared without regard to
+/// case, as the file system compares them. Fails, naming the file, when a
+/// tile, tree or the list cannot be read.
+pub fn unused_models(vmaps: &Path) -> Result<Vec<String>, String> {
+    let mut named: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut models: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(vmaps).map_err(|e| format!("{}: {e}", vmaps.display()))?.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let lower = name.to_ascii_lowercase();
+        let read = || std::fs::read(entry.path()).map_err(|e| format!("{name}: {e}"));
+        let spawns = if lower.ends_with(".vmtile") {
+            tile_spawns(&read()?)
+        } else if lower.ends_with(".vmtree") {
+            tree_spawns(&read()?)
+        } else if lower == GAMEOBJECT_MODELS {
+            gameobject_models(&read()?)
+        } else {
+            if lower.ends_with(".vmo") || lower.ends_with(".m2") {
+                models.push(name);
+            }
+            continue;
+        };
+        let spawns = spawns.ok_or_else(|| format!("{name} could not be read as a vmap file"))?;
+        named.extend(spawns.iter().map(|spawn| model_file(spawn)));
+    }
+    models.retain(|name| !named.contains(&name.to_ascii_lowercase()));
+    models.sort();
+    Ok(models)
+}
+
+/// The file the server opens for a spawn's model name, lower-cased.
+/// `VMapManager2::acquireModelInstance` opens `vmaps\` + name + `.vmo`, and
+/// the name holds every byte the file stores for it. Some extractor builds
+/// store the name with its terminating NUL, and the path then ends at the
+/// NUL: for `Well.m2` and a NUL the server opens `Well.m2`, not
+/// `Well.m2.vmo`.
+fn model_file(name: &[u8]) -> String {
+    match name.iter().position(|b| *b == 0) {
+        Some(end) => String::from_utf8_lossy(&name[..end]).to_ascii_lowercase(),
+        None => format!("{}.vmo", String::from_utf8_lossy(name)).to_ascii_lowercase(),
+    }
+}
+
+/// A cursor over a vmap file's bytes. Every read answers `None` past the end.
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let out = self.bytes.get(self.at..self.at.checked_add(n)?)?;
+        self.at += n;
+        Some(out)
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        self.take(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn done(&self) -> bool {
+        self.at >= self.bytes.len()
+    }
+
+    /// One `ModelSpawn` as `ModelSpawn::readFromFile` reads it, answering its
+    /// name: flags, adt id (2 bytes), id, position, rotation and scale (seven
+    /// floats), six floats of bounds when the flags say so, then the name's
+    /// length and bytes.
+    fn spawn(&mut self) -> Option<&'a [u8]> {
+        let flags = self.u32()?;
+        self.take(2 + 4 + 7 * 4)?;
+        if flags & MOD_HAS_BOUND != 0 {
+            self.take(6 * 4)?;
+        }
+        let len = self.u32()? as usize;
+        self.take(len)
+    }
+}
+
+/// The model names a `.vmtile` places: the magic, a count, then each spawn
+/// followed by its index into the map's tree.
+fn tile_spawns(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let mut cursor = Cursor { bytes, at: 0 };
+    if !cursor.take(8)?.starts_with(b"VMAP") {
+        return None;
+    }
+    let count = cursor.u32()?;
+    let mut out = Vec::new();
+    for _ in 0..count {
+        out.push(cursor.spawn()?.to_vec());
+        cursor.u32()?;
+    }
+    Some(out)
+}
+
+/// The model names a `.vmtree` places: the magic, the tiled flag (one
+/// byte), `NODE` and the bounding interval tree (two corners, the node count
+/// and nodes, the object count and objects, all `u32` or `f32`), then `GOBJ`
+/// and the map's global spawns to the end of the file, each followed by its
+/// index. `StaticMapTree::InitMap` reads the global spawns only for a map
+/// that is not tiled, so a tiled map's tree names no model. Trees written by
+/// older assemblers carry spawns after `GOBJ` for tiled maps too, and the
+/// server never opens what they name.
+fn tree_spawns(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let mut cursor = Cursor { bytes, at: 0 };
+    if !cursor.take(8)?.starts_with(b"VMAP") {
+        return None;
+    }
+    let tiled = cursor.take(1)?[0] != 0;
+    if cursor.take(4)? != b"NODE" {
+        return None;
+    }
+    cursor.take(6 * 4)?;
+    let nodes = cursor.u32()? as usize;
+    cursor.take(nodes.checked_mul(4)?)?;
+    let objects = cursor.u32()? as usize;
+    cursor.take(objects.checked_mul(4)?)?;
+    if cursor.take(4)? != b"GOBJ" {
+        return None;
+    }
+    let mut out = Vec::new();
+    if tiled {
+        return Some(out);
+    }
+    while !cursor.done() {
+        out.push(cursor.spawn()?.to_vec());
+        cursor.u32()?;
+    }
+    Some(out)
+}
+
+/// The model names in the game object list: per entry a display id, the
+/// name's length and bytes, and two corners of bounds.
+fn gameobject_models(bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let mut cursor = Cursor { bytes, at: 0 };
+    let mut out = Vec::new();
+    while !cursor.done() {
+        cursor.u32()?;
+        let len = cursor.u32()? as usize;
+        out.push(cursor.take(len)?.to_vec());
+        cursor.take(6 * 4)?;
+    }
+    Some(out)
 }
 
 /// How many navmesh builds run at once: half the machine's threads, at
@@ -1095,5 +1503,192 @@ mod tests {
         assert!(server_reads_dbc("lock"));
         assert!(!server_reads_dbc("Spell"), "spell_template is a SQL table");
         assert!(!server_reads_dbc("AreaTable"), "area_template is a SQL table");
+    }
+
+    /// One `ModelSpawn` as the assembler writes it, with bounds when `bound`.
+    fn spawn(name: &[u8], bound: bool) -> Vec<u8> {
+        let mut b = Vec::new();
+        let flags: u32 = if bound { 1 | MOD_HAS_BOUND } else { 1 };
+        b.extend_from_slice(&flags.to_le_bytes());
+        b.extend_from_slice(&[0u8; 2 + 4 + 7 * 4]);
+        if bound {
+            b.extend_from_slice(&[0u8; 6 * 4]);
+        }
+        b.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        b.extend_from_slice(name);
+        b
+    }
+
+    /// A `.vmtile` placing `names`, each spawn followed by its tree index.
+    fn tile(names: &[&[u8]]) -> Vec<u8> {
+        let mut b = b"VMAP_7.0".to_vec();
+        b.extend_from_slice(&(names.len() as u32).to_le_bytes());
+        for (at, name) in names.iter().enumerate() {
+            b.extend_from_slice(&spawn(name, at % 2 == 0));
+            b.extend_from_slice(&(at as u32).to_le_bytes());
+        }
+        b
+    }
+
+    /// A `.vmtree` with a two-node tree, one object, and `names` as global
+    /// spawns after `GOBJ`.
+    fn tree(names: &[&[u8]]) -> Vec<u8> {
+        let mut b = b"VMAP_7.0".to_vec();
+        b.push(0);
+        b.extend_from_slice(b"NODE");
+        b.extend_from_slice(&[0u8; 6 * 4]);
+        b.extend_from_slice(&2u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 2 * 4]);
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(&[0u8; 4]);
+        b.extend_from_slice(b"GOBJ");
+        for name in names {
+            b.extend_from_slice(&spawn(name, true));
+            b.extend_from_slice(&0u32.to_le_bytes());
+        }
+        b
+    }
+
+    /// The server opens a name with a NUL in it up to the NUL, and any other
+    /// name with `.vmo` added.
+    #[test]
+    fn a_model_name_with_a_nul_opens_without_vmo() {
+        assert_eq!(model_file(b"Well.m2\0"), "well.m2");
+        assert_eq!(model_file(b"Well.m2"), "well.m2.vmo");
+        assert_eq!(model_file(b"Stormwind.wmo"), "stormwind.wmo.vmo");
+    }
+
+    /// A model file is kept when a tile, a tree or the game object list
+    /// names it, under the name the server opens, and is unused otherwise.
+    /// A file that is not a model file is never listed.
+    #[test]
+    fn a_model_nothing_names_is_unused() {
+        let dir = std::env::temp_dir().join(format!("vale-models-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, bytes: &[u8]| std::fs::write(dir.join(name), bytes).unwrap();
+        write("000_32_48.vmtile", &tile(&[b"Tile.m2", b"Well.m2\0"]));
+        write("013.vmtree", &tree(&[b"Global.wmo"]));
+        write(GAMEOBJECT_MODELS, &{
+            let mut b = 7u32.to_le_bytes().to_vec();
+            b.extend_from_slice(&(b"Chest.m2".len() as u32).to_le_bytes());
+            b.extend_from_slice(b"Chest.m2");
+            b.extend_from_slice(&[0u8; 6 * 4]);
+            b
+        });
+        for name in [
+            "Tile.m2.vmo",
+            "Well.m2",
+            "Well.m2.vmo",
+            "Global.wmo.vmo",
+            "Chest.m2.vmo",
+            "Gone.m2",
+            "Gone.wmo.vmo",
+            "readme.txt",
+        ] {
+            write(name, b"");
+        }
+        assert_eq!(unused_models(&dir).unwrap(), vec!["Gone.m2", "Gone.wmo.vmo", "Well.m2.vmo"]);
+
+        // A tile that cannot be read could name any model, so nothing is listed.
+        write("000_32_49.vmtile", b"VMAP_7.0\x05\0\0\0");
+        assert!(unused_models(&dir).unwrap_err().contains("000_32_49.vmtile"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A map's files are its `.map`, `.vmtree`, `.vmtile`, `.mmap` and
+    /// `.mmtile` files, and no file of a map whose number starts with the same
+    /// digits.
+    #[test]
+    fn a_map_s_files_are_found_by_its_number() {
+        let dir = std::env::temp_dir().join(format!("vale-map-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let files = [
+            ("maps", "5340618.map", true),
+            ("maps", "0530618.map", false),
+            ("maps", "5341.map", false),
+            ("vmaps", "534.vmtree", true),
+            ("vmaps", "534_28_19.vmtile", true),
+            ("vmaps", "053_28_19.vmtile", false),
+            ("vmaps", "Tree.m2.vmo", false),
+            ("mmaps", "534.mmap", true),
+            ("mmaps", "5340618.mmtile", true),
+            ("mmaps", "053.mmap", false),
+        ];
+        for (sub, name, _) in files {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+            std::fs::write(dir.join(sub).join(name), b"").unwrap();
+        }
+        let found = map_files(&dir, 534);
+        let expected: Vec<(&str, String)> = files
+            .iter()
+            .filter(|(_, _, of)| *of)
+            .map(|(sub, name, _)| (*sub, name.to_string()))
+            .collect();
+        assert_eq!(found, expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Marking a file stale leaves it in place, in the outcome and in the
+    /// ledger, and marks nothing for a file that is not there. A map whose
+    /// last `.map` is stale gets a stale `.mmap` header; a map with a current
+    /// `.map` does not.
+    #[test]
+    fn a_stale_mark_removes_nothing() {
+        let dir = std::env::temp_dir().join(format!("vale-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for sub in ["maps", "mmaps"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        let gone = Tile::new(0, 22, 38);
+        for (sub, name) in [("maps", gone.map_file()), ("mmaps", gone.mmtile_file()), ("mmaps", mmap_file(0))] {
+            std::fs::write(dir.join(sub).join(name), b"").unwrap();
+        }
+        let mut ledger = Ledger::open(&dir).unwrap();
+        let mut files = Files {
+            data_dir: &dir,
+            ledger: Some(&mut ledger),
+            project: "p",
+        };
+        let mut out = Outcome::default();
+        files.stale(&mut out, "maps", &gone.map_file(), "gone").unwrap();
+        files.stale(&mut out, "maps", "0009999.map", "not there").unwrap();
+        stale_headers(&mut files, &[gone], &mut out).unwrap();
+        assert_eq!(
+            out.stale.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["maps\\0003822.map", "mmaps\\000.mmap"]
+        );
+        assert!(dir.join("maps").join(gone.map_file()).is_file());
+        assert!(dir.join("mmaps").join(mmap_file(0)).is_file());
+        assert_eq!(ledger.stale.len(), 2);
+
+        std::fs::write(dir.join("maps").join("0004832.map"), b"").unwrap();
+        let mut files = Files {
+            data_dir: &dir,
+            ledger: None,
+            project: "p",
+        };
+        let mut out = Outcome::default();
+        files.stale(&mut out, "maps", &gone.map_file(), "gone").unwrap();
+        stale_headers(&mut files, &[gone], &mut out).unwrap();
+        assert_eq!(out.stale.len(), 1, "32,48 is a current .map, so the header is not stale");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A tile's old navmesh moved aside goes back when nothing replaced it.
+    #[test]
+    fn an_old_navmesh_goes_back_when_no_build_replaced_it() {
+        let dir = std::env::temp_dir().join(format!("vale-aside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (aside, mmaps) = (dir.join("aside"), dir.join("mmaps"));
+        std::fs::create_dir_all(&aside).unwrap();
+        std::fs::create_dir_all(&mmaps).unwrap();
+        std::fs::write(aside.join("0004832.mmtile"), b"old").unwrap();
+        std::fs::write(aside.join("0004833.mmtile"), b"old").unwrap();
+        std::fs::write(mmaps.join("0004833.mmtile"), b"built").unwrap();
+        restore_aside(&aside, &mmaps).unwrap();
+        assert_eq!(std::fs::read(mmaps.join("0004832.mmtile")).unwrap(), b"old");
+        assert_eq!(std::fs::read(mmaps.join("0004833.mmtile")).unwrap(), b"built");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

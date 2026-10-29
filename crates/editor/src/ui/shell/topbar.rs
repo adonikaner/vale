@@ -536,6 +536,10 @@ pub(crate) struct Doomed {
     pub(crate) held: Vec<String>,
     /// What has been typed into the confirmation's name field.
     pub(crate) typed: String,
+    /// How many tile files in the live `DataDir` the project's regenerations
+    /// wrote last, read from the `DataDir`'s ledger on the confirmation's
+    /// first frame. `None` until then.
+    pub(crate) tile_files: Option<usize>,
 }
 
 impl Doomed {
@@ -545,6 +549,7 @@ impl Doomed {
             clear,
             held: held.lines(),
             typed: String::new(),
+            tile_files: None,
         }
     }
 

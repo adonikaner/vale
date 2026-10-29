@@ -15,12 +15,15 @@
 //! chunks.rs     a selection of chunks: copy and paste, stitching, areas,
 //!               holes and textures
 //! water.rs      the water tool
+//! presets.rs    the brush preset grid and drop-down the terrain and texture
+//!               panels share
 //! ```
 
 pub(crate) mod areas;
 pub(crate) mod chunks;
 pub(crate) mod grade;
 pub(crate) mod holes;
+pub(crate) mod presets;
 pub(crate) mod road;
 pub(crate) mod shading;
 pub(crate) mod terrain;

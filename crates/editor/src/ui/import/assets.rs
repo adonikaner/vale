@@ -45,15 +45,14 @@
 //! after their minimap was drawn, appearances changed after their skin was
 //! baked, and generated files nothing names.
 //!
-//! ## Filtering by sort: what a file is to the game, not its format
+//! ## What a file is to the game, not its format
 //!
-//! Inside each, the list is filtered by what a file is to the game ([`Sort`]):
-//! a ground texture, an icon, another texture, a model, a sound, music, a
-//! minimap picture, a baked skin. The sorts offered are the ones the project
-//! has, so the filter
-//! grows with the sorts of file the project adds rather than listing every
-//! sort there could be. A ground texture's `_s` file belongs to its pair and
-//! is shown on its plain file's row, not as a file of its own.
+//! Each file's row and details name what it is to the game ([`Sort`]): a
+//! ground texture, an icon, another texture, a model, a sound, music, a
+//! minimap picture, a baked skin. The list is not filtered by sort: it is
+//! grouped by folder, and the game's folders already separate them. A
+//! ground texture's `_s` file belongs to its pair and is shown on its plain
+//! file's row, not as a file of its own.
 //!
 //! Import takes one picture, one glTF model, or one or more WAV or MP3 files,
 //! and opens the dialog for that file type. A texture's purpose is chosen in
@@ -179,7 +178,7 @@ enum Sort {
     NpcSkin,
     FlightMap,
     BakedModel,
-    /// A client table (`.dbc`), edited in the table editor.
+    /// A DBC (`.dbc`), edited in the table editor.
     Table,
     /// A map tile (`.adt`), edited by the terrain tools.
     Tile,
@@ -190,24 +189,6 @@ enum Sort {
 }
 
 impl Sort {
-    const ALL: [Sort; 15] = [
-        Sort::Ground,
-        Sort::Icon,
-        Sort::Texture,
-        Sort::Model,
-        Sort::Sound,
-        Sort::Music,
-        Sort::Minimap,
-        Sort::MinimapIndex,
-        Sort::NpcSkin,
-        Sort::FlightMap,
-        Sort::BakedModel,
-        Sort::Table,
-        Sort::Tile,
-        Sort::TileIndex,
-        Sort::Other,
-    ];
-
     /// The sort of a project file; `imported` says whether the import record
     /// has it, which is what tells an imported model from a baked one.
     fn of(own: &Own, imported: bool) -> Sort {
@@ -245,27 +226,6 @@ impl Sort {
     /// workspace's editing: a table, a tile, a tile index.
     fn edited(self) -> bool {
         matches!(self, Sort::Table | Sort::Tile | Sort::TileIndex)
-    }
-
-    /// The filter's name for the sort.
-    fn plural(self) -> &'static str {
-        match self {
-            Sort::Ground => "Ground",
-            Sort::Icon => "Icons",
-            Sort::Texture => "Textures",
-            Sort::Model => "Models",
-            Sort::Sound => "Sounds",
-            Sort::Music => "Music",
-            Sort::Minimap => "Minimaps",
-            Sort::MinimapIndex => "Minimap index",
-            Sort::NpcSkin => "NPC skins",
-            Sort::FlightMap => "Flight maps",
-            Sort::BakedModel => "Baked models",
-            Sort::Table => "Tables",
-            Sort::Tile => "Tiles",
-            Sort::TileIndex => "Tile indexes",
-            Sort::Other => "Other",
-        }
     }
 
     /// What one file of the sort is, in its row and its details.
@@ -464,13 +424,12 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
             Origin::Generated => "Generated",
             Origin::Edited => "Edited",
         };
-        let options: Vec<(String, Origin)> = std::iter::once((format!("All {}", files.len()), Origin::All))
-            .chain(origins.iter().map(|(origin, count)| (format!("{} {count}", name(*origin)), *origin)))
+        let options: Vec<(&str, Origin)> = std::iter::once(("All", Origin::All))
+            .chain(origins.iter().map(|(origin, _)| (name(*origin), *origin)))
             .collect();
         if !options.iter().any(|(_, o)| *o == origin) {
             origin = Origin::All;
         }
-        let options: Vec<(&str, Origin)> = options.iter().map(|(name, o)| (name.as_str(), *o)).collect();
         ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
             theme::segmented(ui, &mut origin, &options, |a, b| a == b);
         });
@@ -480,38 +439,6 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     }
     ui.data_mut(|data| data.insert_temp(origin_id, origin));
     let in_origin = |sort: Sort| origin.holds(sort);
-
-    // The sorts the project has, and All.
-    let filter_id = egui::Id::new("assets-filter");
-    let mut filter: Option<Sort> = ui.data(|data| data.get_temp::<Option<Sort>>(filter_id)).flatten();
-    let present: Vec<(Sort, usize)> = Sort::ALL
-        .iter()
-        .filter(|sort| in_origin(**sort))
-        .map(|sort| (*sort, files.iter().filter(|own| sort_of(own) == *sort).count()))
-        .filter(|(_, count)| *count > 0)
-        .collect();
-    if filter.is_some_and(|sort| !present.iter().any(|(had, _)| *had == sort)) {
-        filter = None;
-    }
-    let in_view: usize = present.iter().map(|(_, count)| count).sum();
-    if present.len() > 1 {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if ui.selectable_label(filter.is_none(), format!("All {in_view}")).clicked() {
-                filter = None;
-            }
-            for (sort, count) in &present {
-                if ui
-                    .selectable_label(filter == Some(*sort), format!("{} {count}", sort.plural()))
-                    .clicked()
-                {
-                    filter = Some(*sort);
-                }
-            }
-        });
-        ui.add_space(4.0);
-    }
-    ui.data_mut(|data| data.insert_temp(filter_id, filter));
 
     if matches!(origin, Origin::All | Origin::Generated) {
         behind_summary(ui, work, &survey);
@@ -533,7 +460,6 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let shown: Vec<&Own> = files
         .iter()
         .filter(|own| in_origin(sort_of(own)))
-        .filter(|own| filter.is_none_or(|sort| sort_of(own) == sort))
         .filter(|own| {
             let path = own.vpath.to_ascii_lowercase();
             words.iter().all(|word| path.contains(word.as_str()))

@@ -3,17 +3,23 @@
 //! state is [`crate::tools::ground::terrain`].
 //!
 //! ```text
-//! viewport toolbar   Sculpt or Select Vertices; in Sculpt the five modes, the
-//!                    brush's numbers, falloff and shape, and Flatten's target
-//!                    on a line of its own; in Select Vertices the footprint;
+//! viewport toolbar   Sculpt or Select Vertices; in Sculpt the brush preset
+//!                    and the five modes; in Select Vertices the footprint;
 //!                    Only Inside Selection, Objects Follow, the drawing tablet
 //!                    and the keys
-//! inspector          the vertex selection: its height, Level and Smooth, its
-//!                    tilt, and the locked vertices
+//! inspector          in Sculpt the brush presets, the brush's settings and
+//!                    Flatten's target; the vertex selection: its height,
+//!                    Level and Smooth, its tilt, and the locked vertices
 //! ```
+//!
+//! The toolbar holds what decides what a click does and the switches about
+//! the session. The brush's settings are in the inspector beside the presets,
+//! because a preset is those settings: they are what Save writes into it. The
+//! presets are [`crate::prefs::brushes`]; their grid is [`super::presets`].
 
 use bevy_egui::egui;
 
+use crate::prefs::brushes::{Ask, Brushes, Sculpt};
 use crate::tools::ground::terrain::{FALLOFFS, MODES, SHAPES, Terrain, VertexAsk};
 use crate::tools::ground::terrain;
 use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
@@ -23,15 +29,15 @@ use vale_edit::ops::brush::{Mode, Only};
 /// The terrain tool's toolbar over the viewport:
 ///
 /// ```text
-/// Sculpt  Select Vertices | Raise  Lower  Flatten  Smooth  Noise
-/// Radius  Strength  Core  (Scale) | Falloff  Shape | Only Inside Selection  Objects Follow | Tablet
-/// Flatten: Target  Height | Both  Fill  Cut | Tilt  Uphill        (Flatten only)
+/// Sculpt  Select Vertices | Brush | Raise  Lower  Flatten  Smooth  Noise
+/// Only Inside Selection  Objects Follow  Tablet
 /// the keys
 /// ```
 ///
-/// In Select Vertices the second line is the footprint's radius and shape.
-/// Only Inside Selection is shown only while vertices are selected, the one
-/// case in which it changes a stroke. See [`theme::toolbar`].
+/// In Select Vertices the first line ends after Select Vertices and the
+/// second starts with the footprint's radius and shape. Only Inside Selection
+/// is shown only while vertices are selected, the one case in which it
+/// changes a stroke. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     viewport: egui::Rect,
@@ -39,7 +45,11 @@ pub(crate) fn toolbar(
     terrain: &mut Terrain,
     tablet: &mut crate::tablet::Tablet,
     pen: &crate::tablet::Pen,
+    brushes: &mut Brushes,
 ) -> Option<egui::Rect> {
+    // While no preset is chosen, the one equal to the brush is. See
+    // `crate::prefs::brushes`.
+    brushes.follow_sculpt(terrain);
     theme::toolbar(ctx, "terrain-toolbar", viewport, corner, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
@@ -57,6 +67,15 @@ pub(crate) fn toolbar(
             }
             if !terrain.selecting {
                 bar_gap(ui);
+                let names: Vec<&str> = brushes.sculpt.list.iter().map(|preset| preset.name.as_str()).collect();
+                let modified = brushes.sculpt.modified(&Sculpt::of(terrain));
+                let picked = bar_setting(ui, "Brush", |ui| {
+                    super::presets::picker(ui, "terrain-brush", &names, brushes.sculpt.chosen, modified)
+                });
+                if let Some(at) = picked {
+                    brushes.act_sculpt(Ask::Choose(at), terrain);
+                }
+                bar_gap(ui);
                 for (key, (name, mode)) in MODES.into_iter().enumerate() {
                     // A flatten's target is set when the stroke begins, so the
                     // variant held here carries a stale height and is compared
@@ -71,20 +90,17 @@ pub(crate) fn toolbar(
         ui.add_space(2.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            match terrain.selecting {
-                false => sculpt_settings(ui, terrain),
-                true => {
-                    bar_setting(ui, "Footprint", |ui| {
-                        ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"))
-                            .on_hover_text("The radius a click selects within. Ctrl + wheel.");
-                    });
-                    bar_setting(ui, "Shape", |ui| {
-                        bar_choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b)
-                            .on_hover_text("The footprint's outline. Shift + 1, 2 or 3.");
-                    });
-                }
+            if terrain.selecting {
+                bar_setting(ui, "Footprint", |ui| {
+                    ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"))
+                        .on_hover_text("The radius a click selects within. Ctrl + wheel.");
+                });
+                bar_setting(ui, "Shape", |ui| {
+                    bar_choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b)
+                        .on_hover_text("The footprint's outline. Shift + 1, 2 or 3.");
+                });
+                bar_gap(ui);
             }
-            bar_gap(ui);
             if terrain.selected > 0
                 && bar_toggle(ui, terrain.only_inside, "Only Inside Selection")
                     .on_hover_text(
@@ -106,13 +122,6 @@ pub(crate) fn toolbar(
                 .response
                 .on_hover_text("Drawing tablet settings: pen pressure and cursor motion.");
         });
-        if !terrain.selecting && matches!(terrain.brush.mode, Mode::Flatten { .. }) {
-            ui.add_space(2.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                flatten_settings(ui, terrain);
-            });
-        }
         let keys = match terrain.selecting {
             false => {
                 "Left button: apply \u{b7} Ctrl + wheel: radius \u{b7} Shift + wheel: strength \u{b7} \
@@ -124,12 +133,11 @@ pub(crate) fn toolbar(
     })
 }
 
-/// The Sculpt line of the toolbar: radius, strength, core, the Noise scale,
-/// falloff and shape.
-fn sculpt_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
-    bar_setting(ui, "Radius", |ui| {
-        ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"))
-            .on_hover_text("The outer ring. Ctrl + wheel.");
+/// The Brush Settings section's rows: radius, strength, core, the Noise
+/// scale, falloff and shape. The section is [`super::presets::settings`].
+fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    property(ui, "Radius", "The outer ring. Ctrl + wheel over the ground.", |ui| {
+        ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"));
     });
     // The limits are the tool's own constants, which document the reason for
     // each. A range written as a literal in the panel would have no stated
@@ -138,75 +146,70 @@ fn sculpt_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
         Mode::Raise | Mode::Lower => (terrain::STRENGTH, 0.25, " yd/s"),
         _ => (terrain::RATE, 0.05, "/s"),
     };
-    bar_setting(ui, "Strength", |ui| {
-        ui.add(egui::DragValue::new(&mut terrain.brush.strength).speed(speed).range(range).suffix(suffix))
-            .on_hover_text("How fast a held stroke works. Shift + wheel.");
+    property(ui, "Strength", "How fast a held stroke works. Shift + wheel over the ground.", |ui| {
+        ui.add(egui::DragValue::new(&mut terrain.brush.strength).speed(speed).range(range).suffix(suffix));
     });
     // The fraction of the radius that applies full strength: the inner ring
     // the preview draws. See `vale_edit::ops::brush::Falloff::over`.
-    bar_setting(ui, "Core", |ui| {
-        ui.add(egui::DragValue::new(&mut terrain.brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2))
-            .on_hover_text("The share of the radius at full strength, drawn as the inner ring. Alt + wheel.");
-    });
+    property(
+        ui,
+        "Core",
+        "The share of the radius at full strength, drawn as the inner ring. Alt + wheel over the ground.",
+        |ui| {
+            ui.add(egui::DragValue::new(&mut terrain.brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
+        },
+    );
     // Shown for Noise only, the one mode that reads it. A field shown but
     // ignored in four modes of five would suggest that the fields do not all
     // apply.
     if matches!(terrain.brush.mode, Mode::Noise) {
-        bar_setting(ui, "Scale", |ui| {
-            ui.add(egui::DragValue::new(&mut terrain.brush.scale).speed(0.5).range(terrain::SCALE).suffix(" yd"))
-                .on_hover_text("The noise's feature size. Under 4 yd is finer than the vertex grid.");
+        property(ui, "Scale", "The noise's feature size. Under 4 yd is finer than the vertex grid.", |ui| {
+            ui.add(egui::DragValue::new(&mut terrain.brush.scale).speed(0.5).range(terrain::SCALE).suffix(" yd"));
         });
     }
-    bar_gap(ui);
-    bar_setting(ui, "Falloff", |ui| {
-        bar_choice(ui, "terrain-falloff", &mut terrain.brush.falloff, &FALLOFFS, |a, b| a == b)
-            .on_hover_text("How the strength fades from the inner ring to the outer ring. Keys 6 to 0.");
+    property(ui, "Falloff", "How the strength fades from the inner ring to the outer ring. Keys 6 to 0.", |ui| {
+        bar_choice(ui, "terrain-falloff", &mut terrain.brush.falloff, &FALLOFFS, |a, b| a == b);
     });
-    bar_setting(ui, "Shape", |ui| {
-        bar_choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b)
-            .on_hover_text("The brush's outline. The square is aligned to the chunk grid. Shift + 1, 2 or 3.");
-    });
+    property(
+        ui,
+        "Shape",
+        "The brush's outline. The square is aligned to the chunk grid. Shift + 1, 2 or 3.",
+        |ui| {
+            bar_choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b);
+        },
+    );
 }
 
-/// The Flatten line of the toolbar: which height, which way the ground may
-/// move, and whether the target is level or a tilted plane.
+/// The Flatten section, while the mode is Flatten: which height, which way
+/// the ground may move, and whether the target is level or a tilted plane.
 fn flatten_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
-    ui.label(egui::RichText::new("Flatten").color(theme::INK));
-    ui.add_space(4.0);
-    if bar_toggle(ui, terrain.flatten_to_cursor, "Pointer Height")
-        .on_hover_text("Flatten to the height under the pointer where the stroke starts. Off: the height set beside it.")
-        .clicked()
-    {
-        terrain.flatten_to_cursor = !terrain.flatten_to_cursor;
-    }
+    theme::heading(ui, "Flatten");
+    property(ui, "Target", "Where the height the brush flattens to comes from.", |ui| {
+        ui.checkbox(&mut terrain.flatten_to_cursor, "Height under the pointer")
+            .on_hover_text("Sampled where the stroke starts. Off: the height set below.");
+    });
     if !terrain.flatten_to_cursor {
-        bar_setting(ui, "Height", |ui| {
+        property(ui, "Height", "The height the brush flattens to.", |ui| {
             ui.add(egui::DragValue::new(&mut terrain.flatten_height).speed(0.25).fixed_decimals(1).suffix(" yd"));
         });
     }
-    bar_gap(ui);
-    for (name, only, about) in [
-        ("Both", Only::Both, "Raise low ground and lower high ground."),
-        ("Fill", Only::Fill, "Only raise low ground."),
-        ("Cut", Only::Cut, "Only lower high ground."),
-    ] {
-        if bar_toggle(ui, terrain.brush.only == only, name).on_hover_text(about).clicked() {
-            terrain.brush.only = only;
-        }
-    }
-    bar_gap(ui);
-    bar_setting(ui, "Tilt", |ui| {
-        ui.add(egui::DragValue::new(&mut terrain.tilt_angle).speed(0.25).range(0.0..=60.0).fixed_decimals(0).suffix("\u{b0}"))
-            .on_hover_text("Slope of the target plane in degrees. 0 is level. The slope pivots where the stroke starts.");
+    property(ui, "Direction", "Which way the ground may move toward the target.", |ui| {
+        theme::segmented(
+            ui,
+            &mut terrain.brush.only,
+            &[("Both", Only::Both), ("Fill", Only::Fill), ("Cut", Only::Cut)],
+            |a, b| a == b,
+        );
     });
-    // The bearing only matters once there is a slope.
-    if terrain.tilt_angle > 0.0 {
-        bar_setting(ui, "Uphill", |ui| {
-            ui.add(egui::DragValue::new(&mut terrain.tilt_toward).speed(1.0).range(0.0..=359.0).fixed_decimals(0).suffix("\u{b0}"))
-                .on_hover_text("Compass bearing of the uphill side. 0 is north, 90 east.");
-            ui.label(egui::RichText::new(compass(terrain.tilt_toward)).size(theme::SMALL).color(theme::INK_DIM));
-        });
-    }
+    tilt_rows(ui, &mut terrain.tilt_angle, &mut terrain.tilt_toward);
+    theme::note(
+        ui,
+        match terrain.brush.only {
+            Only::Both => "Raises low ground and lowers high ground. The slope pivots where the stroke starts.",
+            Only::Fill => "Only raises low ground. The slope pivots where the stroke starts.",
+            Only::Cut => "Only lowers high ground. The slope pivots where the stroke starts.",
+        },
+    );
 }
 
 /// A tilt's two numbers as property rows: how steep, and which way is up.
@@ -239,10 +242,10 @@ fn compass(bearing: f32) -> &'static str {
     POINTS[((bearing.rem_euclid(360.0) / 45.0).round() as usize) % 8]
 }
 
-/// The terrain tool's inspector: the vertex selection and the locked
-/// vertices. In Sculpt the selection is only described, since it is changed
-/// in Select Vertices.
-fn panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
+/// The terrain tool's inspector. In Sculpt: the presets, the brush's
+/// settings, Flatten's target, and the selection described; in Select
+/// Vertices: the selection and its tilt. Both end with the locked vertices.
+fn panel(ui: &mut egui::Ui, terrain: &mut Terrain, brushes: &mut Brushes) {
     match terrain.selecting {
         true => {
             title(ui, "Select Vertices");
@@ -252,11 +255,23 @@ fn panel(ui: &mut egui::Ui, terrain: &mut Terrain) {
         }
         false => {
             title(ui, "Sculpt");
-            theme::note(
-                ui,
-                "Hold the left button over the ground to apply the brush. The brush settings are on \
-                 the toolbar over the viewport.",
-            );
+            theme::note(ui, "Hold the left button over the ground to apply the brush. The mode is on the toolbar.");
+            let presets: Vec<(String, super::presets::Icon)> = brushes
+                .sculpt
+                .list
+                .iter()
+                .map(|preset| (preset.name.clone(), super::presets::Icon::of_sculpt(&preset.settings)))
+                .collect();
+            let modified = brushes.sculpt.modified(&Sculpt::of(terrain));
+            if let Some(ask) = super::presets::section(ui, "terrain-brushes", &presets, brushes.sculpt.chosen, modified) {
+                brushes.act_sculpt(ask, terrain);
+            }
+            super::presets::settings(ui, "terrain-brush-settings", |ui| {
+                brush_settings(ui, terrain);
+                if matches!(terrain.brush.mode, Mode::Flatten { .. }) {
+                    flatten_settings(ui, terrain);
+                }
+            });
             theme::heading(ui, "Selection");
             property(ui, "Selected", "", |ui| {
                 ui.label(egui::RichText::new(selected_words(terrain.selected)).color(theme::INK));
@@ -421,8 +436,8 @@ pub(super) fn objects_follow(ui: &mut egui::Ui, on: &mut bool) {
     ui.checkbox(on, "Doodads and WMOs follow the ground").on_hover_text(OBJECTS_FOLLOW);
 }
 
-/// The height brush's inspector panel. The brush and the drawing tablet are
+/// The height brush's inspector panel. The modes and the drawing tablet are
 /// on the toolbar, [`toolbar`].
 pub(crate) fn inspect(ui: &mut egui::Ui, _: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
-    panel(ui, &mut editing.terrain);
+    panel(ui, &mut editing.terrain, &mut editing.brushes);
 }

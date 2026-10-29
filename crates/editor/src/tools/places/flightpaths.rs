@@ -203,6 +203,10 @@ pub(crate) struct Flightpaths {
     pub(crate) clearance: f32,
     /// Draw the boat and zeppelin routes as well as the flights.
     pub(crate) transports: bool,
+    /// Draw the paths that are not part of the selection: neither the
+    /// selected path nor a path of the selected node. Off, the other paths are
+    /// neither drawn nor picked. On by default.
+    pub(crate) unselected: bool,
     /// Whether the command line's flight path flags have run, or none were
     /// given. `crate::server::publish::release::migration_on_the_command_line` waits on
     /// it.
@@ -234,6 +238,7 @@ impl Default for Flightpaths {
             carry_ends: true,
             clearance: DEFAULT_CLEARANCE,
             transports: false,
+            unselected: true,
             scripted_done: false,
             picture_known: None,
         }
@@ -602,9 +607,17 @@ fn leg_shown(flights: &Flightpaths, route: &Route, a: Vec3, b: Vec3, eye: Vec3) 
     chosen || ((a + b) * 0.5 - eye).length() <= ROUTE_RANGE
 }
 
-/// Whether a route is drawn at all.
+/// Whether a route is drawn and picked at all. The selected path always is.
+/// A path of the selected node is unless it is a transport route with
+/// transports hidden. Any other path needs [`Flightpaths::unselected`] on,
+/// and, for a transport route, [`Flightpaths::transports`] too.
 fn route_shown(flights: &Flightpaths, route: &Route) -> bool {
-    flights.transports || !route.transport || flights.path == Some(route.path.id)
+    let selected = flights.path == Some(route.path.id);
+    let of_node = flights
+        .node
+        .is_some_and(|node| route.path.from == node || route.path.to == node);
+    let kind = flights.transports || !route.transport || selected;
+    kind && (selected || of_node || flights.unselected)
 }
 
 /// Which handle the pointer is over: the selected path's points first, then

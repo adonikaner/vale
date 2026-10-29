@@ -21,6 +21,7 @@
 //!   server\maps\MMMYYXX.map         -> DataDir\maps\
 //!   server\vmaps\*                  -> DataDir\vmaps\
 //!   server\mmaps\*                  -> DataDir\mmaps\
+//!   server\remove.txt               files to delete from DataDir, when any
 //!   server\sql\<stamp>_world.sql    -> mysql <world database> < it
 //! ```
 //!
@@ -229,6 +230,7 @@ pub(crate) fn publish(
     let record = Record::read(&project, tiles::PATCH_RECORD);
     let reader = tiles::TileReader::new(&project, assets);
     let (dirty, skipped) = tiles::dirty(&reader, &record, &mut |_, _| {});
+    let maps = reader.maps().to_vec();
     for line in &skipped {
         warn!("publish: {line}");
     }
@@ -316,32 +318,27 @@ pub(crate) fn publish(
                 }
             };
             let staged = datadir::stage_data_dir(&real_data_dir, &stage.join("server"))?;
-            let first_map = dirty[0].tile.map;
+            let (tiles, carried, removed_maps) = tiles::split(&dirty);
+            let first_map = tiles.first().map_or(dirty[0].tile.map, |(tile, _)| tile.map);
             let request = Request {
                 client_root,
-                tiles: dirty.iter().map(|d| (d.tile, d.reach)).collect(),
-                carried: dirty.iter().filter(|d| d.hash.is_some()).map(|d| d.tile).collect(),
+                tiles,
+                carried,
+                removed_maps,
+                project: project.name.clone(),
                 heights_as_int: datadir::heights_as_int(&real_data_dir, first_map),
                 dll_dirs,
             };
             let scratch = std::env::temp_dir().join(format!("vale-patch-{}", std::process::id()));
-            let outcome = datadir::regenerate(&tools, &staged, &request, &scratch, |line, done, total| {
+            // A staged copy, so no ledger: the live DataDir is not written.
+            let outcome = datadir::regenerate(&tools, &staged, &request, &scratch, None, |line, done, total| {
                 progress.set(line, done, total)
             })?;
             let _ = std::fs::remove_dir_all(&scratch);
             say("copying the server files into the patch");
             collect(&staged, &folder.join("server"), &outcome)?;
             let mut record = Record::read(&project, tiles::PATCH_RECORD);
-            for d in &dirty {
-                match d.hash {
-                    Some(hash) => {
-                        record.tiles.insert(d.vpath.clone(), hash);
-                    }
-                    None => {
-                        record.tiles.remove(&d.vpath);
-                    }
-                }
-            }
+            record.note(&dirty, &maps);
             record.write(&project, tiles::PATCH_RECORD)?;
             finish(&project, &head_for_finish, Some(&outcome))?;
             Ok(outcome)
@@ -405,12 +402,37 @@ fn carry_over(project: &Project, previous: Option<&str>, folder: &Path) -> Resul
             }
         }
     }
+    let list = from.join(REMOVE_LIST);
+    if list.is_file() {
+        std::fs::create_dir_all(folder.join("server")).map_err(|e| e.to_string())?;
+        std::fs::copy(&list, folder.join("server").join(REMOVE_LIST))
+            .map_err(|e| format!("{}: {e}", list.display()))?;
+    }
     Ok(())
+}
+
+/// The patch's list of server files to delete, under `server\`: one
+/// `<sub>\<name>` per line, for the files a run no longer produces. A patch
+/// cannot delete a file on the server it is copied to, so the person
+/// installing it is asked to, by the README.
+pub(crate) const REMOVE_LIST: &str = "remove.txt";
+
+/// The names in a remove list, without its comment lines.
+fn read_remove_list(path: &Path) -> std::collections::BTreeSet<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Copies the tools' output from the staged `DataDir` into the patch: every
 /// file the outcome names, and the `.mmap` header of every map a navmesh was
-/// built for. A file the outcome removed is removed from the patch as well.
+/// built for. A file the outcome marks stale is taken out of the patch and
+/// put on its [`REMOVE_LIST`], with the reason in a comment; a file written
+/// this time comes off the list.
 fn collect(staged: &Path, into: &Path, outcome: &Outcome) -> Result<(), String> {
     let copy = |sub: &str, name: &str| -> Result<(), String> {
         let target = into.join(sub);
@@ -419,26 +441,18 @@ fn collect(staged: &Path, into: &Path, outcome: &Outcome) -> Result<(), String> 
             .map(|_| ())
             .map_err(|e| format!("{sub}\\{name}: {e}"))
     };
-    let remove = |sub: &str, name: &str| {
-        let _ = std::fs::remove_file(into.join(sub).join(name));
-    };
+    let mut written: Vec<String> = Vec::new();
     for name in &outcome.maps {
         copy("maps", name)?;
+        written.push(format!("maps\\{name}"));
     }
-    for name in &outcome.maps_removed {
-        remove("maps", name);
-    }
-    for name in &outcome.vmaps {
-        match name.strip_suffix(" removed") {
-            Some(gone) => remove("vmaps", gone),
-            None => copy("vmaps", name)?,
-        }
-    }
-    for name in &outcome.models {
+    for name in outcome.vmaps.iter().chain(&outcome.models) {
         copy("vmaps", name)?;
+        written.push(format!("vmaps\\{name}"));
     }
     for name in &outcome.mmaps {
         copy("mmaps", name)?;
+        written.push(format!("mmaps\\{name}"));
     }
     let mut maps_built: Vec<u32> = outcome
         .mmaps
@@ -451,6 +465,41 @@ fn collect(staged: &Path, into: &Path, outcome: &Outcome) -> Result<(), String> 
         let header = datadir::mmap_file(map);
         if staged.join("mmaps").join(&header).is_file() {
             copy("mmaps", &header)?;
+            written.push(format!("mmaps\\{header}"));
+        }
+    }
+
+    let list_path = into.join(REMOVE_LIST);
+    let mut list = read_remove_list(&list_path);
+    let mut why: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for (key, reason) in &outcome.stale {
+        if let Some((sub, name)) = key.split_once('\\') {
+            let _ = std::fs::remove_file(into.join(sub).join(name));
+        }
+        list.insert(key.clone());
+        why.insert(key.clone(), reason.clone());
+    }
+    for key in &written {
+        list.remove(key);
+    }
+    match list.is_empty() {
+        true => {
+            let _ = std::fs::remove_file(&list_path);
+        }
+        false => {
+            let mut text = String::from(
+                "# Server files to delete from DataDir: tiles this project no longer has, and\n\
+                 # files the tools no longer produce for it. One <folder>\\<file> per line.\n",
+            );
+            for key in &list {
+                if let Some(reason) = why.get(key) {
+                    text.push_str(&format!("# {reason}\n"));
+                }
+                text.push_str(&format!("{key}\n"));
+            }
+            std::fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
+            vale_edit::project::write_replacing(&list_path, text.as_bytes())
+                .map_err(|e| format!("{REMOVE_LIST}: {e}"))?;
         }
     }
     Ok(())
@@ -547,6 +596,16 @@ fn finish(project: &Project, head: &Head, outcome: Option<&Outcome>) -> Result<(
              \x20      each changed tile's four neighbours, which read its edge. Read at\n\
              \x20      startup: restart the server.\n\n",
         ),
+    }
+    let removals = read_remove_list(&folder.join("server").join(REMOVE_LIST)).len();
+    if removals > 0 {
+        text.push_str(&format!(
+            "server\\{REMOVE_LIST} ({removals} files)\n\
+             \x20   -> delete each file it names from the server's DataDir, after copying the\n\
+             \x20      folders above. They are tiles this project no longer has, or files the\n\
+             \x20      map tools no longer produce for it, and the server still reads them\n\
+             \x20      while they are there. The comment above each line says why.\n\n"
+        ));
     }
     text.push_str("server\\sql\\\n");
     match &head.migration {

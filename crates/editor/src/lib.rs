@@ -21,7 +21,7 @@
 //! popout.rs    a workspace in an OS window of its own, beside the main
 //!              window's world
 //! prefs/       this machine's own choices, kept in files under Edit\:
-//!              favourite models and camera bookmarks
+//!              favourite models, camera bookmarks and brush presets
 //! navmesh.rs   the server's navmesh drawn over the ground: the mmaps tiles
 //!              around the camera, coloured by what a path query makes of
 //!              each polygon
@@ -205,8 +205,8 @@ pub fn run() {
     // `init_resource`, which keeps a value that is already present. See
     // [`REACH`].
     app.insert_resource(reach(&args));
-    // The layers a run asked to leave out, through the client's own flag and
-    // the client's own parser. See [`crate::args::view::View::without`].
+    // The layers a run asked to leave out, through the same `--without` flag
+    // and parser as `vale_client`'s. See [`crate::args::view::View::without`].
     if let Some(list) = args.view.without.as_deref() {
         app.insert_resource(vale_client::render::tuning::WorldTuning::without(list));
     }
@@ -262,6 +262,7 @@ impl Plugin for EditorPlugins {
         // Outside the tuple, which Bevy implements for at most fifteen plugins.
         app.add_plugins((tablet::TabletPlugin, popout::PopoutPlugin));
         app.init_resource::<prefs::favourites::Favourites>()
-            .init_resource::<prefs::bookmarks::Bookmarks>();
+            .init_resource::<prefs::bookmarks::Bookmarks>()
+            .init_resource::<prefs::brushes::Brushes>();
     }
 }

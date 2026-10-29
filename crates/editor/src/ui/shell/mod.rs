@@ -7,6 +7,8 @@
 //! popover.rs    the five forms the top bar opens: where to go, which account
 //!               to log in as, which project, where the server is, and what
 //!               a publish writes
+//! tilefiles.rs  the Server tile files dialog: the DataDir's tile files a
+//!               decision is wanted on, and the Remove and Put back buttons
 //! manifest.rs   the open project's files and what each one changes, drawn in
 //!               the project dialog
 //! sync.rs       what this project has changed on the server: one block per
@@ -42,5 +44,6 @@ pub(crate) mod rail;
 pub(crate) mod servicemarks;
 pub(crate) mod status;
 pub(crate) mod sync;
+pub(crate) mod tilefiles;
 pub(crate) mod topbar;
 pub(crate) mod viewbar;

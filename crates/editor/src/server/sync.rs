@@ -94,18 +94,29 @@ use vale_client::assets::GameAssets;
 pub(crate) struct Standings {
     /// `(taken at, what it said)` per subject, in [`Half::ALL`]'s order.
     held: [Option<(f64, Standing)>; HALVES],
-    /// The number of server tiles changed since the last regeneration. It is
-    /// held longer than the others because computing it hashes every tile the
-    /// project carries.
-    tiles: Option<(f64, usize)>,
+    /// How the server's tile files stand ([`TileCounts`]). It is held longer
+    /// than the others because computing it hashes every tile the project
+    /// carries.
+    tiles: Option<(f64, TileCounts)>,
     /// The tile count being taken, on a worker. Taken on the main thread it
     /// stopped the window every [`TILES_REFRESH`] seconds for a time that grew
     /// with the number of tiles.
-    counting: Option<Task<usize>>,
+    counting: Option<Task<TileCounts>>,
     /// Where the project's server DBC files stand against the live
     /// `DataDir\5875\dbc\`, or why that could not be read. See
     /// `crate::server::dbcs`.
     files: Option<(f64, Result<dbcs::Standing, String>)>,
+}
+
+/// How the live `DataDir`'s tile files stand, for the Server panel.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct TileCounts {
+    /// Tiles *Regenerate changed tiles* would rebuild.
+    pub(crate) changed: usize,
+    /// Files a run marked stale that are still there.
+    pub(crate) stale: usize,
+    /// Files whose last write was another project's run.
+    pub(crate) others: usize,
 }
 
 /// How long a held [`Standing`] is reused, in seconds.
@@ -116,22 +127,25 @@ const REFRESH: f64 = 0.5;
 const TILES_REFRESH: f64 = 3.0;
 
 impl Standings {
-    /// The number of tiles *Regenerate changed tiles* would rebuild, or `None`
-    /// until the first count has finished. See `crate::server::datadir::dirty`.
+    /// How the live `DataDir`'s tiles stand against the project, or `None`
+    /// until the first count has finished. See `crate::server::datadir::dirty`
+    /// and [`TileCounts`].
     ///
     /// The count is taken on a worker. A stale count is shown until the next
     /// one arrives.
-    pub(crate) fn changed_tiles(
+    pub(crate) fn tile_counts(
         &mut self,
         session: &EditSession,
         assets: &GameAssets,
+        server: &crate::server::settings::ServerSettings,
         now: f64,
-    ) -> Option<usize> {
-        use crate::server::datadir::{self, Record, TileReader, LIVE_RECORD};
+    ) -> Option<TileCounts> {
+        use crate::server::datadir::{self, TileReader};
+        use vale_mangos::datadir::Ledger;
         if let Some(task) = self.counting.as_mut() {
-            if let Some(count) = block_on(future::poll_once(task)) {
+            if let Some(counts) = block_on(future::poll_once(task)) {
                 self.counting = None;
-                self.tiles = Some((now, count));
+                self.tiles = Some((now, counts));
             }
         }
         let fresh = self
@@ -140,12 +154,25 @@ impl Standings {
         if !fresh && self.counting.is_none() {
             let project = session.project.clone();
             let reader = TileReader::new(&project, assets);
+            let data_dir = datadir::data_dir(server).ok();
             self.counting = Some(AsyncComputeTaskPool::get().spawn(async move {
-                let record = Record::read(&project, LIVE_RECORD);
-                datadir::dirty(&reader, &record, &mut |_, _| {}).0.len()
+                let ledger = data_dir
+                    .and_then(|dir| Ledger::open(&dir).ok())
+                    .unwrap_or_default();
+                let record = datadir::ledger_record(&ledger, &project, reader.maps());
+                TileCounts {
+                    changed: datadir::dirty(&reader, &record, &mut |_, _| {}).0.len(),
+                    stale: ledger.stale_files().len(),
+                    others: ledger
+                        .projects()
+                        .iter()
+                        .filter(|(name, _)| *name != project.name)
+                        .map(|(_, files)| files)
+                        .sum(),
+                }
             }));
         }
-        self.tiles.map(|(_, count)| count)
+        self.tiles.map(|(_, counts)| counts)
     }
 
     /// The subject's [`Standing`], recomputed if the held answer is stale.
@@ -475,9 +502,7 @@ pub(crate) fn standing(half: Half, session: &EditSession, assets: &GameAssets) -
                     .count(),
                 applied: undo.entries.len(),
                 current: session.applied_signature == Some(plan.signature()),
-                unsaved: rows::MAPPED
-                    .iter()
-                    .any(|(table, _)| session.unsaved_tables.contains(*table)),
+                unsaved: rows::server_tables().any(|(table, _)| session.unsaved_tables.contains(table)),
                 refused: plan
                     .refused
                     .iter()

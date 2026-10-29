@@ -5,7 +5,9 @@
 //! favourites.rs the models a person starred and the ones they placed last,
 //!              per picker
 //! bookmarks.rs named camera positions to return to
+//! brushes.rs   named presets of the terrain and texture brushes' settings
 //! ```
 
 pub(crate) mod bookmarks;
+pub(crate) mod brushes;
 pub(crate) mod favourites;

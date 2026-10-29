@@ -35,10 +35,15 @@ fn table_about(name: &str) -> String {
         .iter()
         .find(|(dbc, _)| *dbc == name)
         .map(|(_, table)| *table);
-    match (rows, vale_mangos::datadir::server_reads_dbc(name)) {
-        (Some(table), _) => format!("{fields} · the server reads {table}"),
-        (None, true) => format!("{fields} · the server reads the file"),
-        (None, false) => format!("{fields} · not sent to the server"),
+    let companion = crate::server::rows::COMPANIONS
+        .iter()
+        .find(|(dbc, _)| *dbc == name)
+        .map(|(_, table)| *table);
+    match (rows, vale_mangos::datadir::server_reads_dbc(name), companion) {
+        (Some(table), _, _) => format!("{fields} · the server reads {table}"),
+        (None, true, Some(table)) => format!("{fields} · the server reads the file, and {table} for a new row"),
+        (None, true, None) => format!("{fields} · the server reads the file"),
+        (None, false, _) => format!("{fields} · not sent to the server"),
     }
 }
 

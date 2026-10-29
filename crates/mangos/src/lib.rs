@@ -29,6 +29,10 @@
 //!              `Faction.dbc` and `FactionTemplate.dbc`: an edited row of
 //!              either written at build 5875 on `skill_line_ability`'s terms,
 //!              both read at startup
+//! display.rs   `creature_display_info_addon`, the row the server needs beside
+//!              each creature display before it spawns a creature drawn with
+//!              it: a new display's row, copied from a display of the same
+//!              model, read at startup
 //! addon.rs     `creature_addon`, how one spawn stands: its display, mount,
 //!              equipment set, stand and sheath state, emote and auras over
 //!              the template's; and `creature_equip_template`, the weapon
@@ -74,6 +78,9 @@
 //!              on a reload, removals included
 //! trainer.rs   `npc_trainer` and `npc_trainer_template`: what a creature
 //!              teaches, as teaching spells, on the same terms
+//! dbc_users.rs the server templates that name a DBC row: the
+//!              creatures drawn as a `CreatureDisplayInfo` row, the items that
+//!              cast a `Spell`, the game objects a `Lock` opens
 //! lists.rs     the server tables a template column names by id (gossip
 //!              menus, equipment, spell lists, vendor, trainer and loot lists),
 //!              and how a picker lists each by what is in it and who uses it
@@ -162,6 +169,7 @@ pub mod creature;
 pub mod creaturespells;
 pub mod datadir;
 pub mod dbc_users;
+pub mod display;
 pub mod eventai;
 pub mod faction;
 pub mod formation;

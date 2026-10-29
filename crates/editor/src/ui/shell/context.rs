@@ -117,6 +117,7 @@ fn items(
         (Tool::Creatures | Tool::GameObjects, Target::Ground { at, .. }) => {
             spawns_ground(ui, session, editing, open.tool, at, now)
         }
+        (Tool::Flightpaths, _) => flightpaths(ui, editing),
         _ => false,
     };
     // The doodad and WMO tools' Select and Place switch, whatever was
@@ -592,6 +593,28 @@ fn wmo(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, uniq
         chosen = true;
     }
     chosen
+}
+
+/// The flight path tool, clicked anywhere: the switch that hides the paths
+/// outside the selection, as the toolbar's Show Unselected sets it.
+fn flightpaths(ui: &mut egui::Ui, editing: &mut Editing) -> bool {
+    let flights = &mut editing.flightpaths;
+    let label = match flights.unselected {
+        true => "Hide unselected paths",
+        false => "Show unselected paths",
+    };
+    if !item(
+        ui,
+        label,
+        true,
+        "Draw every path, or only the selected path and the selected node's paths. The toolbar's \
+         Show Unselected switch.",
+        "",
+    ) {
+        return false;
+    }
+    flights.unselected = !flights.unselected;
+    true
 }
 
 /// The doodad and WMO tools' Select and Place switch, which the two tools

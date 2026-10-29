@@ -1,13 +1,16 @@
 //! The texture brush's controls, in two places.
 //!
 //! ```text
-//! viewport toolbar   what the next stroke does: Paint or Erase, radius,
-//!                    strength, opacity and core; falloff, shape, spray, the
-//!                    four-texture-limit switches and the drawing tablet; the
-//!                    keys
-//! inspector          the brush's texture and its foliage, the tileset list,
-//!                    and the layers of the chunk under the pointer or pinned
+//! viewport toolbar   the brush preset, Paint or Erase, Show Full Chunks, the
+//!                    drawing tablet, and the keys
+//! inspector          the brush presets and the brush's settings, the brush's
+//!                    texture and its foliage, the tileset list, and the layers
+//!                    of the chunk under the pointer or pinned
 //! ```
+//!
+//! The brush's settings are in the inspector beside the presets, because a
+//! preset is those settings: they are what Save writes into it. The presets
+//! are [`crate::prefs::brushes`]; their grid is [`super::presets`].
 //!
 //! The chunks and road panels use the tileset list and the swatches. The
 //! state is [`crate::tools::ground::textures`].
@@ -15,6 +18,7 @@
 use bevy_egui::egui;
 
 use crate::pick::Cursor;
+use crate::prefs::brushes::{Ask, Brushes, Paint};
 use crate::session::EditSession;
 use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
@@ -22,6 +26,7 @@ use crate::tools::placements::place;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split, split_folder};
 use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
 use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
+use vale_edit::ops::paint::PaintBrush;
 
 /// What `MCLY`'s animation bits come to, in words: which way the texture
 /// crawls and how long it takes to cross itself.
@@ -72,8 +77,8 @@ fn grows(assets: &vale_client::assets::GameAssets, effect_id: u32) -> String {
     format!("{} · {} per cell", names.join(", "), effect.density)
 }
 
-/// The texture brush's inspector: the brush's texture, the tileset list, and
-/// the chunk's layers. The brush's settings are on [`toolbar`].
+/// The texture brush's inspector: the presets and the brush's settings, the
+/// brush's texture, the tileset list, and the chunk's layers.
 pub(in crate::ui::tools) fn paint(
     ui: &mut egui::Ui,
     textures: &mut Textures,
@@ -81,8 +86,21 @@ pub(in crate::ui::tools) fn paint(
     session: &mut EditSession,
     cursor: &Cursor,
     assets: &vale_client::assets::GameAssets,
+    brushes: &mut Brushes,
     now: f64,
 ) {
+    let presets: Vec<(String, super::presets::Icon)> = brushes
+        .paint
+        .list
+        .iter()
+        .map(|preset| (preset.name.clone(), super::presets::Icon::of_paint(&preset.settings)))
+        .collect();
+    let modified = brushes.paint.modified(&Paint::of(&textures.brush));
+    if let Some(ask) = super::presets::section(ui, "textures-brushes", &presets, brushes.paint.chosen, modified) {
+        brushes.act_paint(ask, &mut textures.brush);
+    }
+    super::presets::settings(ui, "textures-brush-settings", |ui| brush_settings(ui, &mut textures.brush));
+
     tileset_chosen(ui, textures, thumbnails, session, assets);
 
     theme::heading(ui, "Tilesets");
@@ -95,19 +113,110 @@ pub(in crate::ui::tools) fn paint(
     chunk_layers(ui, thumbnails, textures, session, cursor, assets, now);
 }
 
-/// The texture brush's toolbar over the viewport, three lines:
+/// The Brush Settings section's rows: radius, strength, opacity, core,
+/// falloff, shape, spray, and the two switches about the limit of four
+/// textures to a chunk. The section is [`super::presets::settings`].
+///
+/// Opacity and Reuse Hidden Layer are disabled while erasing, which always
+/// goes to nothing and never adds a layer.
+fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
+    let erasing = brush.erase;
+    property(ui, "Radius", "The outer ring. Ctrl + wheel over the ground.", |ui| {
+        ui.add(egui::DragValue::new(&mut brush.radius).speed(0.25).range(textures::RADIUS).suffix(" yd"));
+    });
+    property(ui, "Strength", "How fast a held stroke reaches its opacity. Shift + wheel over the ground.", |ui| {
+        ui.add(egui::DragValue::new(&mut brush.strength).speed(0.05).range(textures::RATE).suffix("/s"));
+    });
+    property(
+        ui,
+        "Opacity",
+        "The texture's opacity at the end of a held stroke. At 100% the stroke converges on the \
+         texture alone; at 60%, on the texture at 60% over what is beneath it, from either side.",
+        |ui| {
+            let mut percent = brush.opacity * 100.0;
+            let response = ui
+                .add_enabled(
+                    !erasing,
+                    egui::DragValue::new(&mut percent).speed(0.5).range(1.0..=100.0).fixed_decimals(0).suffix("%"),
+                )
+                .on_disabled_hover_text("Erase always reduces the texture to 0%.");
+            if response.changed() {
+                brush.opacity = percent / 100.0;
+            }
+        },
+    );
+    property(
+        ui,
+        "Core",
+        "The share of the radius painted at full strength, drawn as the inner ring. Outside it \
+         the paint fades along the falloff to nothing at the outer ring, and a held stroke goes \
+         no further than that fade. Alt + wheel over the ground.",
+        |ui| {
+            ui.add(egui::DragValue::new(&mut brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
+        },
+    );
+    property(ui, "Falloff", "How the strength fades from the inner ring to the outer ring. Keys 1 to 5.", |ui| {
+        bar_choice(ui, "textures-falloff", &mut brush.falloff, &textures::FALLOFFS, |a, b| a == b);
+    });
+    property(ui, "Shape", "The brush's outline. Shift + 1, 2 or 3.", |ui| {
+        bar_choice(ui, "textures-shape", &mut brush.shape, &textures::SHAPES, |a, b| a == b);
+    });
+    // Spray: a stroke in patches. One number while it is solid, and the patch
+    // size only once it is not.
+    property(
+        ui,
+        "Spray",
+        "The share of the ground under the brush that is painted. At 100% the stroke is solid. \
+         Below 100% it paints in patches that stay fixed while the button is held, to break up \
+         the edge between two textures.",
+        |ui| {
+            let mut percent = brush.density * 100.0;
+            if ui
+                .add(egui::DragValue::new(&mut percent).speed(0.5).range(5.0..=100.0).fixed_decimals(0).suffix("%"))
+                .changed()
+            {
+                brush.density = percent / 100.0;
+            }
+            if brush.density >= 1.0 {
+                theme::note(ui, "Solid");
+            }
+        },
+    );
+    if brush.density < 1.0 {
+        property(ui, "Grain", "How many yards a patch is across. A blend map's texel is half a yard.", |ui| {
+            ui.add(egui::DragValue::new(&mut brush.grain).speed(0.05).range(0.5..=20.0).fixed_decimals(1).suffix(" yd"));
+        });
+    }
+    // The two switches about the limit of four textures to a chunk, which is
+    // what stops a stroke on about half the shipped ground.
+    ui.checkbox(&mut brush.existing_only, "Paint existing layers only").on_hover_text(
+        "Skip chunks that do not carry the texture. A stroke then changes only the blend of \
+         existing layers and never adds a layer.",
+    );
+    ui.add_enabled(
+        !brush.existing_only && !erasing,
+        egui::Checkbox::new(&mut brush.reuse_hidden, "Reuse a hidden layer"),
+    )
+    .on_hover_text(
+        "When a chunk already has four textures, replace the least visible layer if it covers \
+         under 2% of the chunk. Otherwise the stroke is refused on that chunk, and the Chunk \
+         section shows its four textures.",
+    )
+    .on_disabled_hover_text("Only a stroke that may add a texture can reuse a layer.");
+}
+
+/// The texture brush's toolbar over the viewport:
 ///
 /// ```text
-/// Paint  Erase | Radius  Strength  Opacity  Core
-/// Falloff  Shape | Spray  Grain | Existing Layers Only  Reuse Hidden Layer | Show Full Chunks | Tablet
+/// Brush | Paint  Erase | Show Full Chunks  Tablet
 /// the keys
 /// ```
 ///
-/// Paint or Erase comes first because it decides what the numbers after it
-/// mean; Shift held is the other one for the length of a stroke. Opacity and
-/// Reuse Hidden Layer are disabled while erasing, which always goes to
-/// nothing and never adds a layer. `full_chunks` is the view bar's Full chunks
-/// guide. See [`theme::toolbar`].
+/// The toolbar holds what decides what a stroke does and the switches about
+/// the view. The brush's settings are in the inspector beside the presets,
+/// because a preset is those settings. Shift held is the other of Paint and
+/// Erase for the length of a stroke. `full_chunks` is the view bar's Full
+/// chunks guide. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     viewport: egui::Rect,
@@ -116,12 +225,24 @@ pub(crate) fn toolbar(
     full_chunks: &mut bool,
     tablet: &mut crate::tablet::Tablet,
     pen: &crate::tablet::Pen,
+    brushes: &mut Brushes,
 ) -> Option<egui::Rect> {
+    // While no preset is chosen, the one equal to the brush is. See
+    // `crate::prefs::brushes`.
+    brushes.follow_paint(&textures.brush);
     theme::toolbar(ctx, "textures-toolbar", viewport, corner, |ui| {
         let brush = &mut textures.brush;
-        let erasing = brush.erase;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
+            let names: Vec<&str> = brushes.paint.list.iter().map(|preset| preset.name.as_str()).collect();
+            let modified = brushes.paint.modified(&Paint::of(brush));
+            let picked = bar_setting(ui, "Brush", |ui| {
+                super::presets::picker(ui, "textures-brush", &names, brushes.paint.chosen, modified)
+            });
+            if let Some(at) = picked {
+                brushes.act_paint(Ask::Choose(at), brush);
+            }
+            bar_gap(ui);
             if bar_toggle(ui, !brush.erase, "Paint")
                 .on_hover_text("Paint the brush's texture onto the ground.")
                 .clicked()
@@ -133,100 +254,6 @@ pub(crate) fn toolbar(
                 .clicked()
             {
                 brush.erase = true;
-            }
-            bar_gap(ui);
-            bar_setting(ui, "Radius", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.radius).speed(0.25).range(textures::RADIUS).suffix(" yd"))
-                    .on_hover_text("The outer ring. Ctrl + wheel.");
-            });
-            bar_setting(ui, "Strength", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.strength).speed(0.05).range(textures::RATE).suffix("/s"))
-                    .on_hover_text("How fast a held stroke reaches its opacity. Shift + wheel.");
-            });
-            bar_setting(ui, "Opacity", |ui| {
-                let mut percent = brush.opacity * 100.0;
-                let response = ui
-                    .add_enabled(
-                        !erasing,
-                        egui::DragValue::new(&mut percent).speed(0.5).range(1.0..=100.0).fixed_decimals(0).suffix("%"),
-                    )
-                    .on_hover_text(
-                        "The texture's opacity at the end of a held stroke. At 100% the \
-                         stroke converges on the texture alone; at 60%, on the texture at 60% \
-                         over what is beneath it, from either side.",
-                    )
-                    .on_disabled_hover_text("Erase always reduces the texture to 0%.");
-                if response.changed() {
-                    brush.opacity = percent / 100.0;
-                }
-            });
-            bar_setting(ui, "Core", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2))
-                    .on_hover_text(
-                        "The share of the radius painted at full strength, drawn as the inner \
-                         ring. Outside it the paint fades along the falloff to nothing at the \
-                         outer ring, and a held stroke goes no further than that fade. Alt + wheel.",
-                    );
-            });
-        });
-        ui.add_space(2.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            bar_setting(ui, "Falloff", |ui| {
-                bar_choice(ui, "textures-falloff", &mut brush.falloff, &textures::FALLOFFS, |a, b| a == b)
-                    .on_hover_text("How the strength fades from the inner ring to the outer ring. Keys 1 to 5.");
-            });
-            bar_setting(ui, "Shape", |ui| {
-                bar_choice(ui, "textures-shape", &mut brush.shape, &textures::SHAPES, |a, b| a == b)
-                    .on_hover_text("The brush's outline. Shift + 1, 2 or 3.");
-            });
-            bar_gap(ui);
-            // Spray: a stroke in patches. One number while it is solid, and
-            // the patch size only once it is not.
-            bar_setting(ui, "Spray", |ui| {
-                let mut percent = brush.density * 100.0;
-                if ui
-                    .add(egui::DragValue::new(&mut percent).speed(0.5).range(5.0..=100.0).fixed_decimals(0).suffix("%"))
-                    .on_hover_text(
-                        "The share of the ground under the brush that is painted. At 100% the \
-                         stroke is solid. Below 100% it paints in patches that stay fixed while \
-                         the button is held, to break up the edge between two textures.",
-                    )
-                    .changed()
-                {
-                    brush.density = percent / 100.0;
-                }
-            });
-            if brush.density < 1.0 {
-                bar_setting(ui, "Grain", |ui| {
-                    ui.add(egui::DragValue::new(&mut brush.grain).speed(0.05).range(0.5..=20.0).fixed_decimals(1).suffix(" yd"))
-                        .on_hover_text("How many yards a patch is across. A blend map's texel is half a yard.");
-                });
-            }
-            bar_gap(ui);
-            // The two switches about the limit of four textures to a chunk,
-            // which is what stops a stroke on about half the shipped ground.
-            if bar_toggle(ui, brush.existing_only, "Existing Layers Only")
-                .on_hover_text(
-                    "Skip chunks that do not carry the texture. A stroke then changes only \
-                     the blend of existing layers and never adds a layer.",
-                )
-                .clicked()
-            {
-                brush.existing_only = !brush.existing_only;
-            }
-            let reusable = !brush.existing_only && !erasing;
-            if ui
-                .add_enabled(reusable, egui::Button::selectable(brush.reuse_hidden, "Reuse Hidden Layer").min_size(egui::vec2(0.0, 24.0)))
-                .on_hover_text(
-                    "When a chunk already has four textures, replace the least visible layer \
-                     if it covers under 2% of the chunk. Otherwise the stroke is refused on \
-                     that chunk, and the inspector's Chunk section shows its four textures.",
-                )
-                .on_disabled_hover_text("Only a stroke that may add a texture can reuse a layer.")
-                .clicked()
-            {
-                brush.reuse_hidden = !brush.reuse_hidden;
             }
             bar_gap(ui);
             if bar_toggle(ui, *full_chunks, "Show Full Chunks")
@@ -941,5 +968,5 @@ fn counts_while_open(
 /// tablet's are on the toolbar over the viewport, [`toolbar`].
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     let crate::ui::tools::Subject { session, cursor, assets, now, .. } = subject;
-    paint(ui, &mut editing.textures, &mut editing.thumbnails, session, cursor, assets, now);
+    paint(ui, &mut editing.textures, &mut editing.thumbnails, session, cursor, assets, &mut editing.brushes, now);
 }

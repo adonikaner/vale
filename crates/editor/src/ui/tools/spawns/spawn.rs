@@ -555,9 +555,10 @@ fn nothing_to_show<S: SpawnView>(ui: &mut egui::Ui, subject: &Subject<'_, S>) {
 /// The toolbar over the viewport while a spawn tool is chosen:
 ///
 /// ```text
-/// Select  Place | Handles  Move  Turn  Off | Models  Max  Markers  <other type>  <own switches> | Reload
-/// the keys of the chosen mode
+/// Select  Place | Handles  Move  Turn  Off | Models  Max  Markers  <other type>  <own switches> | Keys
 /// ```
+///
+/// Keys holds the chosen mode's keys in its hover.
 ///
 /// Select or Place is the placement tools' own switch; see
 /// `crate::tools::placements::place::Mode` for why it is a mode rather than a
@@ -644,21 +645,40 @@ pub(crate) fn toolbar<S: SpawnView>(
                 subject.others.shown = !subject.others.shown;
             }
             S::beside_markers(ui, subject);
+            // The keys of the chosen mode, in the label's hover. On a line of
+            // their own they were wider than every button, and the bar was
+            // as wide as the line.
+            bar_gap(ui);
+            ui.label(egui::RichText::new("Keys").color(theme::INK_FAINT)).on_hover_text(keys::<S>(subject.tool.mode));
         });
-        let keys = match subject.tool.mode {
-            place::Mode::Select => "Click: select \u{b7} Shift + click: add or remove \u{b7} Drag on empty ground: \
-                                    select an area \u{b7} Arrows: nudge \u{b7} Page Up/Down: raise \u{b7} Shift: ten \
-                                    times \u{b7} , and .: turn \u{b7} Alt + mouse: turn \u{b7} Ctrl + Alt: 15\u{b0} \
-                                    steps \u{b7} Delete: remove \u{b7} Ctrl + D: duplicate"
-                .to_string(),
-            place::Mode::Place => format!(
-                "Click the ground: place the chosen {} \u{b7} , and .: turn \u{b7} Shift: three times as far \u{b7} \
-                 Alt + mouse: turn \u{b7} Ctrl + Alt: 15\u{b0} steps \u{b7} Esc: clear the choice",
-                S::WORDS.noun
-            ),
-        };
-        ui.add(egui::Label::new(egui::RichText::new(keys).size(theme::SMALL).color(theme::INK_FAINT)).wrap());
     })
+}
+
+/// The keys of `mode`, one per line, for the toolbar's Keys label.
+fn keys<S: SpawnView>(mode: place::Mode) -> String {
+    match mode {
+        place::Mode::Select => "Click: select\n\
+                                Shift + click: add or remove\n\
+                                Drag on empty ground: select an area\n\
+                                Arrows: nudge\n\
+                                Page Up / Page Down: raise or lower\n\
+                                Shift: ten times as far\n\
+                                , and .: turn\n\
+                                Alt + mouse: turn\n\
+                                Ctrl + Alt: turn in 15\u{b0} steps\n\
+                                Delete: remove\n\
+                                Ctrl + D: duplicate"
+            .to_string(),
+        place::Mode::Place => format!(
+            "Click the ground: place the chosen {}\n\
+             , and .: turn\n\
+             Shift: three times as far\n\
+             Alt + mouse: turn\n\
+             Ctrl + Alt: turn in 15\u{b0} steps\n\
+             Esc: clear the choice",
+            S::WORDS.noun
+        ),
+    }
 }
 
 /// The Place mode: choose a template, then click the ground.

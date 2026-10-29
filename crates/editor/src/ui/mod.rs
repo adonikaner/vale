@@ -11,7 +11,7 @@
 //!               tools, at the same paths as their state in `crate::tools`
 //! subjects/     the windows and workspaces of the server-row subjects, at the
 //!               same paths as their state in `crate::subjects`
-//! tables/       the workspace a client table is edited in, the spell
+//! tables/       the workspace a DBC table is edited in, the spell
 //!               storyboard and what a display row looks like
 //! preview/      the attachment lab's card and pane
 //! map/          the map from above
@@ -282,6 +282,8 @@ pub(crate) struct Editing<'w> {
     pub(crate) favourites: ResMut<'w, crate::prefs::favourites::Favourites>,
     /// The camera's named places, for the go-to popover.
     pub(crate) bookmarks: ResMut<'w, crate::prefs::bookmarks::Bookmarks>,
+    /// The terrain and texture brushes' presets.
+    pub(crate) brushes: ResMut<'w, crate::prefs::brushes::Brushes>,
     pub(crate) placing: ResMut<'w, crate::tools::placements::place::Placing>,
     pub(crate) tiles: ResMut<'w, crate::map::tiles::Tiles>,
     pub(crate) mapview: ResMut<'w, map::mapview::MapView>,
@@ -501,11 +503,12 @@ fn draw(
     // A dialog several windows draw opens here when this is the window last
     // used. See [`dialog_home`].
     mark_dialog_owner(&ctx, editing.popout.last_focused.is_none());
-    // The two lists kept beside the project folders, read once per install.
+    // The three files kept beside the project folders, read once per install.
     // See `crate::prefs::favourites` for where they are stored and why.
     if let Some(dir) = session.project.root.parent() {
         editing.favourites.load_from(dir);
         editing.bookmarks.load_from(dir);
+        editing.brushes.load_from(dir);
     }
 
     // A playtest has two layouts, chosen by [`crate::playtest::ShellOpen`].
@@ -969,6 +972,7 @@ fn draw(
                 &mut editing.terrain,
                 &mut editing.tablet,
                 &editing.pen,
+                &mut editing.brushes,
             );
             viewport.floating.extend(bar);
         }
@@ -985,6 +989,7 @@ fn draw(
                 &mut full_chunks,
                 &mut editing.tablet,
                 &editing.pen,
+                &mut editing.brushes,
             );
             if full_chunks != viewing.guides.layers {
                 viewing.guides.layers = full_chunks;

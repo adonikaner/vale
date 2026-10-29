@@ -7,19 +7,33 @@
 //!
 //! ## Which tiles
 //!
-//! A record holds, per tile the project carries, the hash of the ADT the
-//! server's files were last built from. There is one record for the live
-//! `DataDir` ([`LIVE_RECORD`]) and one for the patches ([`PATCH_RECORD`]). A
-//! run compares the project against its record:
+//! A record holds, per tile, the hash of the ADT the server's files were last
+//! built from. For the live `DataDir` the record is the `DataDir`'s own
+//! [`Ledger`], which every project's runs write, so it holds the tiles other
+//! projects built as well as this one's ([`ledger_record`]). For a patch it is
+//! the project's [`PATCH_RECORD`]. A run compares the project against its
+//! record:
 //!
 //! ```text
 //! a tile not in the record, or whose bytes changed     regenerated
-//! a tile in the record the project no longer carries   regenerated from the
+//! a tile in the record the project does not carry      regenerated from the
 //!                                                       archives, which is
 //!                                                       what the reverted
-//!                                                       tile now is
+//!                                                       tile, or another
+//!                                                       project's tile, is in
+//!                                                       this project
+//!   ... and the archives do not have it                its server files
+//!                                                       marked stale
+//!   ... and Map.dbc no longer lists its map            every file of the map
+//!                                                       marked stale, found by
+//!                                                       the map id the record
+//!                                                       kept
 //! a tile in the record with the same bytes             left alone
 //! ```
+//!
+//! A run removes no server file; see `vale_mangos::datadir`'s *Nothing is
+//! removed by a run*. Stale files are reviewed and removed in the *Server tile
+//! files* window ([`crate::ui::shell::tilefiles`]).
 //!
 //! How far a change reaches is read off the tile itself. A tile whose
 //! placements are the archives' own (`AdtFile::same_placements` against the
@@ -50,8 +64,9 @@
 //! compare             every tile read from the project and from the archives,
 //!                     parsed and hashed; see [`dirty`]
 //! build the archive   every file of the project packed into one MPQ
-//! run the tools       see `vale_mangos::datadir::regenerate`
-//! write the record
+//! run the tools       see `vale_mangos::datadir::regenerate`; each write is
+//!                     noted in the ledger as it is made
+//! note the tiles      the ledger's tile lines, on success
 //! ```
 //!
 //! The comparison and the archive build ran on the main thread, and the window
@@ -69,25 +84,38 @@ use vale_edit::adt::AdtFile;
 use vale_edit::project::Project;
 use vale_edit::TileKey;
 use vale_assets::archive::{ChainPool, PooledChain};
-use vale_mangos::datadir::{self, Outcome, Reach, Request, Tile, Tools};
+use vale_mangos::datadir::ledger::Built;
+use vale_mangos::datadir::{self, Ledger, Outcome, Reach, Request, Tile, Tools};
 use bevy::prelude::*;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Where the project records what the server's tiles were built from. There
-/// are two records because two things build them: a patch records under
-/// [`PATCH_RECORD`] the tiles its folder holds, and the dev-time regenerate
-/// records under [`LIVE_RECORD`] the tiles the live `DataDir` holds. One record
+/// Where the project records what its patches' server tiles were built from.
+/// The live `DataDir`'s tiles are recorded in the `DataDir`'s [`Ledger`]
+/// instead. Two records are kept because two things build tiles: one record
 /// for both would let a dev regenerate hide a tile from the next patch, or the
 /// reverse.
 pub(crate) const PATCH_RECORD: &str = "publish\\server-tiles.txt";
+/// Where a project recorded the live `DataDir`'s tiles before the `DataDir`
+/// had a ledger. Read once, into the ledger, by [`import_live_record`], and
+/// not written.
 pub(crate) const LIVE_RECORD: &str = "server\\regenerated.txt";
 
-/// The record: `vpath -> FNV-1a of the ADT bytes`, sorted by path.
+/// The record: `vpath -> FNV-1a of the ADT bytes`, sorted by path, and the
+/// `Map.dbc` id of each map those tiles are on.
+///
+/// The ids are kept because the server's file names are numbered by map id
+/// and a tile's path names the map by directory. When a project removes a map
+/// it made, `Map.dbc` no longer lists the directory, and the id kept here is
+/// the only way to find the map's files on the server. A record written
+/// before the ids were kept has none, and such a map's files are left, with a
+/// line saying so.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Record {
     pub(crate) tiles: BTreeMap<String, u64>,
+    /// Lower-cased map directory -> map id.
+    pub(crate) maps: BTreeMap<String, u32>,
 }
 
 impl Record {
@@ -105,11 +133,19 @@ impl Record {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let Some((vpath, hash)) = line.rsplit_once('\t') else {
-                continue;
-            };
-            if let Ok(hash) = u64::from_str_radix(hash.trim(), 16) {
-                out.tiles.insert(vpath.trim().to_string(), hash);
+            let fields: Vec<&str> = line.split('\t').map(str::trim).collect();
+            match fields.as_slice() {
+                ["map", directory, id] => {
+                    if let Ok(id) = id.parse() {
+                        out.maps.insert(directory.to_ascii_lowercase(), id);
+                    }
+                }
+                [vpath, hash] => {
+                    if let Ok(hash) = u64::from_str_radix(hash, 16) {
+                        out.tiles.insert(vpath.to_string(), hash);
+                    }
+                }
+                _ => {}
             }
         }
         out
@@ -118,10 +154,13 @@ impl Record {
     pub(crate) fn to_text(&self, project: &str) -> String {
         let mut out = format!(
             "# {project} — the tiles the server's maps, vmaps and mmaps were last built\n\
-             # from, as the FNV-1a 64 of each ADT's bytes. A publish regenerates every\n\
-             # tile whose bytes differ, and every tile listed here that the project no\n\
-             # longer carries.\n"
+             # from, as the FNV-1a 64 of each ADT's bytes, and the Map.dbc id of each map\n\
+             # they are on. A publish regenerates every tile whose bytes differ, and every\n\
+             # tile listed here that the project no longer carries.\n"
         );
+        for (directory, id) in &self.maps {
+            out.push_str(&format!("map\t{directory}\t{id}\n"));
+        }
         for (vpath, hash) in &self.tiles {
             out.push_str(&format!("{vpath}\t{hash:016x}\n"));
         }
@@ -136,8 +175,11 @@ impl Record {
     }
 
     /// Record every tile of `done` as built from the bytes it was compared
-    /// at, and forget a tile that has left the project.
-    fn note(&mut self, done: &[Dirty]) {
+    /// at, and forget a tile that has left the project. Then hold the id of
+    /// every map the record's tiles are on: from `maps`, `Map.dbc`'s
+    /// `(id, directory)` list, where it lists the map, and as before where it
+    /// does not. A map's id is forgotten with its last tile.
+    pub(crate) fn note(&mut self, done: &[Dirty], maps: &[(u32, String)]) {
         for d in done {
             match d.hash {
                 Some(hash) => {
@@ -148,6 +190,24 @@ impl Record {
                 }
             }
         }
+        let mut held: Vec<String> = self
+            .tiles
+            .keys()
+            .filter_map(|vpath| TileKey::from_vpath(vpath).map(|key| key.map.to_ascii_lowercase()))
+            .collect();
+        held.sort();
+        held.dedup();
+        self.maps.retain(|directory, _| held.contains(directory));
+        for directory in held {
+            if let Some((id, _)) = maps.iter().find(|(_, dir)| dir.eq_ignore_ascii_case(&directory)) {
+                self.maps.insert(directory, *id);
+            }
+        }
+    }
+
+    /// The id of the map in `directory`, as this record last saw it.
+    fn map_id(&self, directory: &str) -> Option<u32> {
+        self.maps.get(&directory.to_ascii_lowercase()).copied()
     }
 }
 
@@ -160,6 +220,22 @@ pub(crate) struct Dirty {
     pub(crate) tile: Tile,
     pub(crate) reach: Reach,
     pub(crate) hash: Option<u64>,
+    /// The tile's map is no longer in `Map.dbc`: every file of the map is
+    /// removed and no tool runs for it.
+    pub(crate) map_removed: bool,
+}
+
+/// The [`Request`] fields a list of tiles gives: the tiles the tools run
+/// for, with their reach; the ones the project carries; and the maps whose
+/// files are removed. The caller fills in the rest.
+pub(crate) fn split(dirty: &[Dirty]) -> (Vec<(Tile, Reach)>, Vec<Tile>, Vec<u32>) {
+    let built = dirty.iter().filter(|d| !d.map_removed);
+    let tiles = built.clone().map(|d| (d.tile, d.reach)).collect();
+    let carried = built.filter(|d| d.hash.is_some()).map(|d| d.tile).collect();
+    let mut removed_maps: Vec<u32> = dirty.iter().filter(|d| d.map_removed).map(|d| d.tile.map).collect();
+    removed_maps.sort_unstable();
+    removed_maps.dedup();
+    (tiles, carried, removed_maps)
 }
 
 /// What the comparison of tiles reads: the project folder, the archive chain,
@@ -209,6 +285,108 @@ impl TileReader {
             .collect()
     }
 
+    /// `Map.dbc`'s `(id, directory)` list, for [`Record::note`].
+    pub(crate) fn maps(&self) -> &[(u32, String)] {
+        &self.maps
+    }
+
+    /// The tiles the map in `directory` has in this project: its WDT read
+    /// from the project, or from the archives when the project has none.
+    /// `None` when neither has a WDT that parses.
+    fn wdt_tiles(&self, chain: &mut Option<PooledChain<'_>>, directory: &str) -> Option<Vec<(u32, u32)>> {
+        let path = vale_edit::wdt::wdt_path(directory);
+        let bytes = self
+            .project
+            .read(&path)
+            .or_else(|| chain.as_mut().and_then(|chain| chain.read(&path).ok()))?;
+        let wdt = vale_assets::world::wdt::Wdt::parse(&bytes).ok()?;
+        Some(wdt.existing_tiles())
+    }
+
+    /// Files in `data_dir` that nothing in this project uses, each with why:
+    ///
+    /// ```text
+    /// every file of a map id Map.dbc does not list
+    /// a .map or .mmtile of a terrain map, for a tile its WDT does not have
+    /// a model file no .vmtile, .vmtree or game object names
+    /// ```
+    ///
+    /// A `.vmtile` outside the WDT is not listed: the assembler writes one
+    /// for every tile a model's bounds reach, and the map's tree indexes it.
+    /// A map whose WDT cannot be read is left out, as is a map with no
+    /// terrain tiles, whose navmesh tiles follow its buildings. Nothing is
+    /// removed here.
+    pub(crate) fn orphans(&self, data_dir: &Path) -> Result<Vec<(String, String)>, String> {
+        let mut ids: Vec<u32> = Vec::new();
+        for sub in ["maps", "vmaps", "mmaps"] {
+            let Ok(entries) = std::fs::read_dir(data_dir.join(sub)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let id = name.get(0..3).filter(|d| d.bytes().all(|b| b.is_ascii_digit()));
+                let tile_file = name.ends_with(".map")
+                    || name.ends_with(".mmtile")
+                    || name.ends_with(".mmap")
+                    || name.ends_with(".vmtile")
+                    || name.ends_with(".vmtree");
+                if let (Some(id), true) = (id.and_then(|d| d.parse().ok()), tile_file) {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids.sort_unstable();
+        let mut chain = self.borrow();
+        let mut out: Vec<(String, String)> = Vec::new();
+        for id in ids {
+            let Some((_, directory)) = self.maps.iter().find(|(m, _)| *m == id) else {
+                for (sub, name) in datadir::map_files(data_dir, id) {
+                    out.push((datadir::ledger::key(sub, &name), format!("map {id} is not in Map.dbc")));
+                }
+                continue;
+            };
+            let Some(tiles) = self.wdt_tiles(&mut chain, directory) else {
+                continue;
+            };
+            if tiles.is_empty() {
+                continue;
+            }
+            for (sub, name) in datadir::map_files(data_dir, id) {
+                let stem = name.strip_suffix(".map").or_else(|| name.strip_suffix(".mmtile"));
+                let Some(stem) = stem.filter(|s| s.len() == 7) else {
+                    continue;
+                };
+                // `MMMYYXX`: the row, then the column.
+                let (Ok(y), Ok(x)) = (stem[3..5].parse::<u32>(), stem[5..7].parse::<u32>()) else {
+                    continue;
+                };
+                if !tiles.contains(&(x, y)) {
+                    out.push((
+                        datadir::ledger::key(sub, &name),
+                        format!("{directory} has no tile {x},{y} in this project or the archives"),
+                    ));
+                }
+            }
+        }
+        for name in datadir::unused_models(&data_dir.join("vmaps"))? {
+            out.push((
+                datadir::ledger::key("vmaps", &name),
+                "no .vmtile, .vmtree or game object names this model".to_string(),
+            ));
+        }
+        Ok(out)
+    }
+
+    /// The `Map.dbc` id of the map in `directory`.
+    fn map_id(&self, directory: &str) -> Option<u32> {
+        self.maps
+            .iter()
+            .find(|(_, dir)| dir.eq_ignore_ascii_case(directory))
+            .map(|(id, _)| *id)
+    }
+
     /// One tile, as a run would regenerate it: from the project when it
     /// carries the tile, with how far the change reaches; from the archives
     /// when it does not, whole. `None` when neither has it; `Err` when the map
@@ -223,10 +401,7 @@ impl TileReader {
     ) -> Result<Option<Dirty>, String> {
         let vpath = vale_assets::adt_path(map, x, y);
         let id = self
-            .maps
-            .iter()
-            .find(|(_, dir)| dir.eq_ignore_ascii_case(map))
-            .map(|(id, _)| *id)
+            .map_id(map)
             .ok_or_else(|| format!("{vpath}: {map} is not a map in Map.dbc"))?;
         let shipped = chain
             .as_mut()
@@ -238,6 +413,7 @@ impl TileReader {
                 tile: Tile::new(id, x, y),
                 reach: Reach::Placements,
                 hash: None,
+                map_removed: false,
             }));
         };
         let reach = match shipped {
@@ -253,12 +429,17 @@ impl TileReader {
             tile: Tile::new(id, x, y),
             reach,
             hash: Some(vale_edit::project::fnv1a(&bytes)),
+            map_removed: false,
         }))
     }
 }
 
-/// Which tiles a run regenerates, against `record`. A tile of a map that
-/// `Map.dbc` does not name is skipped and named in the second list.
+/// Which tiles a run regenerates, against `record`. A tile the project
+/// carries on a map that `Map.dbc` does not name is skipped and named in the
+/// second list. A tile the record holds and the project no longer carries is
+/// regenerated from the archives; when the archives do not have it either,
+/// its server files are removed, and when `Map.dbc` no longer names its map,
+/// the whole map's are ([`Dirty::map_removed`]).
 ///
 /// Every tile is read from the project and from the archives, parsed and
 /// hashed, so the cost grows with the number of tiles the project carries.
@@ -297,11 +478,42 @@ pub(crate) fn dirty(
             Ok(Some(one))
                 if !left_the_project && record.tiles.get(vpath) == one.hash.as_ref() => {}
             Ok(Some(one)) => out.push(one),
-            Ok(None) => {}
-            Err(why) => skipped.push(why),
+            Ok(None) if !left_the_project => {}
+            Err(why) if !left_the_project => skipped.push(why),
+            // The tiles below have left the project. Each keeps the record's
+            // own spelling of its path, so that the record forgets it.
+            //
+            // Neither the project nor the archives have the tile: the project
+            // made it and has removed it. The run removes its server files.
+            Ok(None) => {
+                if let Some(id) = reader.map_id(&map) {
+                    out.push(removed(vpath, Tile::new(id, x, y), false));
+                }
+            }
+            // `Map.dbc` no longer lists the map: the project made the map and
+            // has removed it. Its files are found by the id the record kept.
+            Err(why) => match record.map_id(&map) {
+                Some(id) => out.push(removed(vpath, Tile::new(id, x, y), true)),
+                None => skipped.push(format!(
+                    "{why}, and the record holds no id for it, so its server files were left"
+                )),
+            },
         }
     }
     (out, skipped)
+}
+
+/// A tile whose server files are removed: on a map that is still in
+/// `Map.dbc`, through a run of the tools for the map, or with the whole map
+/// when `map_removed`.
+fn removed(vpath: &str, tile: Tile, map_removed: bool) -> Dirty {
+    Dirty {
+        vpath: vpath.to_string(),
+        tile,
+        reach: Reach::Placements,
+        hash: None,
+        map_removed,
+    }
 }
 
 /// The tiles of `map` asked for by name, whatever the record says: the map
@@ -491,9 +703,73 @@ impl Staging {
     }
 }
 
+/// The record a dev-time run compares against: every tile the `DataDir`'s
+/// ledger says a project built, whichever project, with the id of its map.
+/// While the ledger holds no tile of `project`, the project's own
+/// [`LIVE_RECORD`] is read as well, for a project that regenerated before the
+/// ledger existed.
+pub(crate) fn ledger_record(ledger: &Ledger, project: &Project, maps: &[(u32, String)]) -> Record {
+    let mut out = Record::default();
+    for (tile, built) in &ledger.tiles {
+        out.tiles.insert(built.vpath.clone(), built.hash);
+        if let Some(key) = TileKey::from_vpath(&built.vpath) {
+            out.maps.insert(key.map.to_ascii_lowercase(), tile.map);
+        }
+    }
+    if !ledger.tiles.values().any(|built| built.project == project.name) {
+        let old = Record::read(project, LIVE_RECORD);
+        for (vpath, hash) in old.tiles {
+            out.tiles.entry(vpath).or_insert(hash);
+        }
+        for (directory, id) in old.maps {
+            out.maps.entry(directory).or_insert(id);
+        }
+        for (id, directory) in maps {
+            if out.tiles.keys().any(|v| TileKey::from_vpath(v).is_some_and(|k| k.map.eq_ignore_ascii_case(directory))) {
+                out.maps.entry(directory.to_ascii_lowercase()).or_insert(*id);
+            }
+        }
+    }
+    out
+}
+
+/// Copy the project's [`LIVE_RECORD`] into the ledger as tiles the project
+/// built, while the ledger holds none of the project's. A tile whose map id
+/// is not known is left out.
+fn import_live_record(ledger: &mut Ledger, project: &Project, maps: &[(u32, String)]) -> Result<(), String> {
+    if ledger.tiles.values().any(|built| built.project == project.name) {
+        return Ok(());
+    }
+    let old = Record::read(project, LIVE_RECORD);
+    for (vpath, hash) in &old.tiles {
+        let Some(key) = TileKey::from_vpath(vpath) else {
+            continue;
+        };
+        let id = maps
+            .iter()
+            .find(|(_, dir)| dir.eq_ignore_ascii_case(&key.map))
+            .map(|(id, _)| *id)
+            .or_else(|| old.maps.get(&key.map.to_ascii_lowercase()).copied());
+        let Some(id) = id else {
+            continue;
+        };
+        let tile = Tile::new(id, key.x, key.y);
+        if ledger.tiles.contains_key(&tile) {
+            continue;
+        }
+        let built = Built {
+            project: project.name.clone(),
+            vpath: vpath.clone(),
+            hash: *hash,
+        };
+        ledger.note_tile(tile, Some(built))?;
+    }
+    Ok(())
+}
+
 /// Which tiles a dev-time run regenerates.
 enum Which {
-    /// Every tile changed since the last run, against [`LIVE_RECORD`].
+    /// Every tile changed since the last run, against the ledger.
     Changed,
     /// The tiles named on `map`, whatever the record says: the map window's
     /// selection.
@@ -532,7 +808,8 @@ enum Ran {
     /// The tools ran.
     Done {
         outcome: Outcome,
-        /// The error from writing [`LIVE_RECORD`], if it could not be written.
+        /// The error from writing the `DataDir`'s ledger, if it could not be
+        /// written.
         recorded: Result<(), String>,
         /// This project's older archives in `Data\` that could not be
         /// removed, with why.
@@ -595,7 +872,9 @@ impl Run {
         self.tools.check_patched()?;
 
         let project = &self.reader.project;
-        let record = Record::read(project, LIVE_RECORD);
+        let mut ledger = Ledger::open(&self.data_dir)?;
+        import_live_record(&mut ledger, project, &self.reader.maps)?;
+        let record = ledger_record(&ledger, project, &self.reader.maps);
         let mut compared =
             |done, total| step.set("comparing the project's tiles with the archives", done, total);
         let (dirty, skipped) = match &self.which {
@@ -640,17 +919,26 @@ impl Run {
             }
         };
 
+        let (tiles, carried, removed_maps) = split(&dirty);
+        let first_map = tiles.first().map_or(dirty[0].tile.map, |(tile, _)| tile.map);
         let request = client_root.map(|client_root| Request {
             client_root,
-            tiles: dirty.iter().map(|d| (d.tile, d.reach)).collect(),
-            carried: dirty.iter().filter(|d| d.hash.is_some()).map(|d| d.tile).collect(),
-            heights_as_int: datadir::heights_as_int(&self.data_dir, dirty[0].tile.map),
+            tiles,
+            carried,
+            removed_maps,
+            project: project.name.clone(),
+            heights_as_int: datadir::heights_as_int(&self.data_dir, first_map),
             dll_dirs: self.dll_dirs,
         });
         let outcome = request.and_then(|request| {
-            datadir::regenerate(&self.tools, &self.data_dir, &request, &self.scratch, |line, done, total| {
-                step.set(line, done, total)
-            })
+            datadir::regenerate(
+                &self.tools,
+                &self.data_dir,
+                &request,
+                &self.scratch,
+                Some(&mut ledger),
+                |line, done, total| step.set(line, done, total),
+            )
         });
         let _ = std::fs::remove_dir_all(&self.scratch);
         if let Some(staging) = &staging {
@@ -658,16 +946,34 @@ impl Run {
         }
         // A run that fails part way has copied the tiles before the failing
         // tool and not the ones after, and nothing says which. So a failed
-        // run records nothing, and the next run does all of them again.
+        // run notes no tile, and the next run does all of them again. The
+        // ledger's file lines were written as each file was, and are kept.
+        let noted = match &outcome {
+            Ok(_) => note_tiles(&mut ledger, project, &dirty),
+            Err(_) => Ok(()),
+        };
+        let compacted = ledger.compact();
         let outcome = outcome?;
-        let mut record = Record::read(project, LIVE_RECORD);
-        record.note(&dirty);
         Ok(Ran::Done {
             outcome,
-            recorded: record.write(project, LIVE_RECORD),
+            recorded: noted.and(compacted),
             left,
         })
     }
+}
+
+/// Note in the ledger what each tile of `done` is now built from: the
+/// project's ADT, or the archives or nothing.
+fn note_tiles(ledger: &mut Ledger, project: &Project, done: &[Dirty]) -> Result<(), String> {
+    for d in done {
+        let built = d.hash.map(|hash| Built {
+            project: project.name.clone(),
+            vpath: d.vpath.clone(),
+            hash,
+        });
+        ledger.note_tile(d.tile, built)?;
+    }
+    Ok(())
 }
 
 /// Put a run's result on the status line and in the log. Runs on the main
@@ -690,10 +996,14 @@ fn finish(session: &mut EditSession, ran: Result<Ran, String>) {
                 info!("server tiles: {what}: {seconds:.1} s");
             }
             let mut line = outcome.line();
+            for (key, why) in &outcome.stale {
+                info!("server tiles: stale, left in place: {key}: {why}");
+            }
             if let Err(e) = recorded {
                 line.push_str(&format!(
-                    " — {LIVE_RECORD} could not be written ({e}), so the next \
-                     regeneration repeats these tiles"
+                    " — the DataDir's ledger ({}\\tiles.txt) could not be written ({e}), so the \
+                     next regeneration repeats these tiles",
+                    datadir::ledger::FOLDER
                 ));
             }
             for (name, why) in &left {
@@ -820,9 +1130,89 @@ mod tests {
         let mut record = Record::default();
         record.tiles.insert(r"World\Maps\Azeroth\Azeroth_32_48.adt".into(), 0xdead_beef);
         record.tiles.insert(r"World\Maps\Azeroth\Azeroth_32_49.adt".into(), 1);
+        record.maps.insert("azeroth".into(), 0);
         let text = record.to_text("p");
         assert_eq!(Record::from_text(&text), record);
         assert_eq!(Record::from_text("# nothing\nbad line\n"), Record::default());
+    }
+
+    fn one(vpath: &str, map: u32, hash: Option<u64>, map_removed: bool) -> Dirty {
+        Dirty {
+            vpath: vpath.into(),
+            tile: Tile::new(map, 1, 2),
+            reach: Reach::Placements,
+            hash,
+            map_removed,
+        }
+    }
+
+    /// A noted record holds the id of every map its tiles are on, taken from
+    /// `Map.dbc` where it lists the map and kept where it does not, and
+    /// forgets a map with its last tile.
+    #[test]
+    fn the_record_keeps_the_id_of_each_map() {
+        let maps = vec![(0, "Azeroth".to_string())];
+        let mut record = Record::default();
+        record.tiles.insert(r"World\Maps\Azeroth\Azeroth_32_48.adt".into(), 1);
+        record.tiles.insert(r"World\Maps\Mine\Mine_30_30.adt".into(), 2);
+        record.maps.insert("mine".into(), 534);
+        record.note(&[], &maps);
+        assert_eq!(record.map_id("AZEROTH"), Some(0), "taken from Map.dbc");
+        assert_eq!(record.map_id("Mine"), Some(534), "kept, though Map.dbc does not list it");
+
+        record.note(&[one(r"World\Maps\Mine\Mine_30_30.adt", 534, None, true)], &maps);
+        assert_eq!(record.map_id("Mine"), None, "forgotten with its last tile");
+        assert_eq!(record.tiles.len(), 1);
+    }
+
+    /// A tile on a removed map goes to the removed maps, once per map, and
+    /// not to the tiles the tools run for.
+    #[test]
+    fn a_removed_map_is_requested_once_and_not_built() {
+        let dirty = vec![
+            one("a", 0, Some(1), false),
+            one("b", 0, None, false),
+            one("c", 534, None, true),
+            one("d", 534, None, true),
+        ];
+        let (tiles, carried, removed_maps) = split(&dirty);
+        assert_eq!(tiles.len(), 2);
+        assert_eq!(carried, vec![Tile::new(0, 1, 2)]);
+        assert_eq!(removed_maps, vec![534]);
+    }
+
+    /// The live record is every tile the ledger holds, whichever project
+    /// built it. A project's own regenerated.txt is read while the ledger
+    /// holds none of its tiles, and is copied in once.
+    #[test]
+    fn the_live_record_is_the_ledger() {
+        let root = std::env::temp_dir().join(format!("vale-live-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let data_dir = root.join("DataDir");
+        let project = Project::at(root.join("p")).unwrap();
+        let maps = vec![(0, "Azeroth".to_string())];
+        let old = r"World\Maps\Azeroth\Azeroth_32_48.adt";
+        let other = r"World\Maps\Azeroth\Azeroth_33_48.adt";
+        let mut record = Record::default();
+        record.tiles.insert(old.into(), 7);
+        record.write(&project, LIVE_RECORD).unwrap();
+
+        let mut ledger = Ledger::open(&data_dir).unwrap();
+        let built = Built {
+            project: "q".into(),
+            vpath: other.into(),
+            hash: 9,
+        };
+        ledger.note_tile(Tile::new(0, 33, 48), Some(built)).unwrap();
+        let view = ledger_record(&ledger, &project, &maps);
+        assert_eq!(view.tiles.get(other), Some(&9), "another project's tile");
+        assert_eq!(view.tiles.get(old), Some(&7), "the project's old record");
+
+        import_live_record(&mut ledger, &project, &maps).unwrap();
+        assert_eq!(ledger.tiles[&Tile::new(0, 32, 48)].project, "p");
+        let reopened = Ledger::open(&data_dir).unwrap();
+        assert_eq!(reopened.tiles.len(), 2, "written to the DataDir's ledger");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The comparison and the run are moved to the server queue's worker, so

@@ -7,6 +7,13 @@
 //! `areatrigger_template`, `Faction.dbc` becomes `faction` and
 //! `FactionTemplate.dbc` becomes `faction_template`.
 //!
+//! [`COMPANIONS`] lists the client tables the server reads as files that
+//! also need a row in a table of the server's own for each new row: a
+//! display added to `CreatureDisplayInfo.dbc` needs a
+//! `creature_display_info_addon` row, or the server spawns no creature drawn
+//! with it (`vale_mangos::display`). Their rows are planned, applied and put
+//! back with the mapped tables'.
+//!
 //! ## The file is rewritten whole on every save
 //!
 //! The statements are a diff: each edited DBC against the file the archives
@@ -87,6 +94,7 @@ use vale_edit::dbc::DbcFile;
 use vale_mangos::conn::Db;
 use vale_mangos::row::Key;
 use vale_mangos::area;
+use vale_mangos::display;
 use vale_mangos::faction;
 use vale_mangos::skills;
 use vale_mangos::spell::{self, Assignment};
@@ -118,10 +126,21 @@ pub(crate) const MAPPED: [(&str, &str); 7] = [
     ("FactionTemplate", faction::TEMPLATE),
 ];
 
+/// The client tables the server reads as files whose new rows also need a
+/// row in a table of the server's own, as `(DBC name, that table)`. The file
+/// still goes to `DataDir\5875\dbc\`; see the module comment.
+pub(crate) const COMPANIONS: [(&str, &str); 1] = [("CreatureDisplayInfo", display::TABLE)];
+
+/// Every DBC a plan reads, and the server table its rows land in:
+/// [`MAPPED`], then [`COMPANIONS`].
+pub(crate) fn server_tables() -> impl Iterator<Item = (&'static str, &'static str)> {
+    MAPPED.into_iter().chain(COMPANIONS)
+}
+
 /// Whether the server has a `.reload` for a mapped table. `spell_template` has
 /// one; `taxi_nodes`, `skill_line_ability`, `area_template`,
-/// `areatrigger_template`, `faction` and `faction_template` are read once at
-/// startup and have none.
+/// `areatrigger_template`, `faction`, `faction_template` and
+/// `creature_display_info_addon` are read once at startup and have none.
 pub(crate) fn reloadable(table: &str) -> bool {
     table == spell::TABLE
 }
@@ -160,6 +179,11 @@ pub(crate) fn refusal(dbc: &str, id: u32) -> String {
             faction::MEDIUMINT_RANGE.end(),
             faction::MAX_NAME,
             faction::MAX_DESCRIPTION
+        ),
+        "CreatureDisplayInfo" => format!(
+            "creature display {id} cannot be given a creature_display_info_addon row: the highest \
+             display_id is {}",
+            display::MAX_ID
         ),
         "FactionTemplate" => format!(
             "faction template {id} cannot be written to the server: its id must be at most {}, and \
@@ -246,11 +270,10 @@ impl Plan {
     }
 
     /// The tables with a row in this plan that the server reads only at
-    /// startup, in [`MAPPED`]'s order.
+    /// startup, in [`server_tables`]' order.
     pub(crate) fn read_at_startup(&self) -> Vec<&'static str> {
-        MAPPED
-            .iter()
-            .map(|(_, table)| *table)
+        server_tables()
+            .map(|(_, table)| table)
             .filter(|table| !reloadable(table) && self.rows.iter().any(|row| row.table == *table))
             .collect()
     }
@@ -436,8 +459,8 @@ fn line_for(plan: &Plan, applied: &Applied) -> String {
 /// What a project changes on the server, worked out once and used three ways:
 /// written to the file, applied, and undone.
 ///
-/// Reads the project's own copy of each table in [`MAPPED`] rather than the
-/// copy open in this session, so the plan is complete across sessions: a
+/// Reads the project's own copy of each table in [`server_tables`] rather than
+/// the copy open in this session, so the plan is complete across sessions: a
 /// project edited yesterday and opened today still has its rows without the
 /// table being opened.
 ///
@@ -455,7 +478,7 @@ pub(crate) fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, S
         .into_iter()
         .map(|archive| archive.name)
         .collect();
-    for (table, server_table) in MAPPED {
+    for (table, server_table) in server_tables() {
         let path = vale_assets::tables::dbc::dbc_path(table);
         let Some(edited) = session.project.read(&path) else {
             continue;
@@ -565,6 +588,28 @@ pub(crate) fn plan(session: &EditSession, assets: &GameAssets) -> Result<Plan, S
                         changes,
                     });
                 }
+            }
+            // A new display's addon row. A shipped display has one already,
+            // and a display the project removes is not looked at.
+            "CreatureDisplayInfo" => {
+                for entry in display::new_displays(&shipped, &edited) {
+                    if !display::fits(entry) {
+                        out.refused.push((table, entry));
+                        continue;
+                    }
+                    let sources = display::sources(&shipped, &edited, entry);
+                    any = true;
+                    out.rows.push(Row {
+                        table: server_table,
+                        key: display::key(entry),
+                        statements: display::statements(entry, &sources),
+                        changes: display::changes(entry),
+                    });
+                }
+                if any {
+                    out.tables.push(server_table);
+                }
+                continue;
             }
             "Faction" | "FactionTemplate" => {
                 let Some(mirror) = faction::for_dbc(table) else {
@@ -743,6 +788,10 @@ pub(crate) fn apply_at(
                 let now = db.row(&mirror.dev_row_query(entry))?;
                 mirror.undo(entry, &row.changes, now.as_ref())
             }
+            display::TABLE => {
+                let now = db.row(&display::dev_row_query(entry))?;
+                display::undo(entry, now.as_ref())
+            }
             _ => {
                 let now = db.row(&spell::dev_row_query(entry))?;
                 spell::undo(entry, &row.changes, now.as_ref())
@@ -789,9 +838,8 @@ pub(crate) fn revert_at(
         .filter(|sql| sql.trim_start().starts_with("DELETE"))
         .count();
     let affected = db.run(&statements)?;
-    let tables: Vec<&'static str> = MAPPED
-        .iter()
-        .map(|(_, table)| *table)
+    let tables: Vec<&'static str> = server_tables()
+        .map(|(_, table)| table)
         .filter(|table| undo.entries.iter().any(|(had, _, _)| had == table))
         .collect();
     let out = Reverted {
