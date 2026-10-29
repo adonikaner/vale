@@ -1091,6 +1091,46 @@ pub(crate) const SPECS: &[Spec] = &[
             &crate::tables::tabs::FACTION_GROUP_TABS,
         )
     },
+    Spec {
+        server_table: Some(vale_mangos::game_event::EVENT),
+        parts: &SPAWNING_PARTS,
+        menu: Some(Entry {
+            name: "Game Events",
+            about: "game_event: every event, when it starts and for how long, and every spawn it \
+                    adds or removes on any map, the creatures it changes and the quests it \
+                    offers. Rows in vmangos' database, so this needs a database connection.",
+        }),
+        ..middle(
+            Tool::GameEvents,
+            // The top bar calls the workspace Spawning; the tool is named by
+            // its part, so `--tool "game events"` finds it.
+            "Game Events",
+            Place::Bar("Spawning"),
+            "The game events and the spawn pools: the sets of spawns that span a map. A spawn's \
+             own rows are also in the creature and game object inspectors.",
+            crate::ui::subjects::game_events::inspect,
+            crate::ui::subjects::game_events::workspace,
+        )
+    },
+    Spec {
+        server_table: Some(vale_mangos::pool::TEMPLATE),
+        parts: &SPAWNING_PARTS,
+        menu: Some(Entry {
+            name: "Pools",
+            about: "pool_template: every pool as a tree of mother pools, and one pool's members \
+                    of every kind with their chances, on any map. Rows in vmangos' database, so \
+                    this needs a database connection.",
+        }),
+        ..middle(
+            Tool::Pools,
+            "Pools",
+            Place::Part,
+            "",
+            crate::ui::subjects::pools::inspect,
+            crate::ui::subjects::pools::workspace,
+        )
+    },
+    // Tables and Assets end the top bar, after every subject's workspace.
     // No one table: the workspace starts on the list of them.
     Spec {
         survives_playtest: true,
@@ -1145,45 +1185,6 @@ pub(crate) const SPECS: &[Spec] = &[
             "",
             crate::ui::import::files::inspect,
             crate::ui::import::files::workspace,
-        )
-    },
-    Spec {
-        server_table: Some(vale_mangos::game_event::EVENT),
-        parts: &SPAWNING_PARTS,
-        menu: Some(Entry {
-            name: "Game Events",
-            about: "game_event: every event, when it starts and for how long, and every spawn it \
-                    adds or removes on any map, the creatures it changes and the quests it \
-                    offers. Rows in vmangos' database, so this needs a database connection.",
-        }),
-        ..middle(
-            Tool::GameEvents,
-            // The top bar calls the workspace Spawning; the tool is named by
-            // its part, so `--tool "game events"` finds it.
-            "Game Events",
-            Place::Bar("Spawning"),
-            "The game events and the spawn pools: the sets of spawns that span a map. A spawn's \
-             own rows are also in the creature and game object inspectors.",
-            crate::ui::subjects::game_events::inspect,
-            crate::ui::subjects::game_events::workspace,
-        )
-    },
-    Spec {
-        server_table: Some(vale_mangos::pool::TEMPLATE),
-        parts: &SPAWNING_PARTS,
-        menu: Some(Entry {
-            name: "Pools",
-            about: "pool_template: every pool as a tree of mother pools, and one pool's members \
-                    of every kind with their chances, on any map. Rows in vmangos' database, so \
-                    this needs a database connection.",
-        }),
-        ..middle(
-            Tool::Pools,
-            "Pools",
-            Place::Part,
-            "",
-            crate::ui::subjects::pools::inspect,
-            crate::ui::subjects::pools::workspace,
         )
     },
 ];
@@ -1260,11 +1261,11 @@ impl Tool {
             Tool::Factions => 37,
             Tool::FactionTemplates => 38,
             Tool::FactionGroups => 39,
-            Tool::Tables => 40,
-            Tool::Assets => 41,
-            Tool::GameFiles => 42,
-            Tool::GameEvents => 43,
-            Tool::Pools => 44,
+            Tool::GameEvents => 40,
+            Tool::Pools => 41,
+            Tool::Tables => 42,
+            Tool::Assets => 43,
+            Tool::GameFiles => 44,
         }
     }
 
