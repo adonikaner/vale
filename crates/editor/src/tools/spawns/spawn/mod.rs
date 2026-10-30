@@ -16,8 +16,8 @@
 //!             renumber, and the display picker flag
 //! keys.rs     the handles and keys for a selected spawn, which has a position
 //!             and a facing and no other angle: the reader and writer the
-//!             handles use, and the keys that move, turn, remove and
-//!             duplicate it
+//!             handles use, and the keys that move, turn, remove, duplicate,
+//!             copy and paste it
 //! ```
 //!
 //! ## What a subject decides
@@ -65,6 +65,25 @@
 //!   hidden by the view bar's event filter, existing only during an event,
 //!   pooled, or in the pool that is open. The tags are built for the near list
 //!   only, and rebuilt when the filter, the events or the pools change.
+//!
+//! ## Copy, paste and a group's duplicate
+//!
+//! A copy is the selection's whole rows, each with its offset from the
+//! primary ([`ClipSpawn`]). The map query reads only the columns the drawing
+//! needs, and the whole row is read for the primary alone, so a copy reads
+//! every member's row first ([`SpawnTool::start_copy`]) and the clip is made
+//! when the read lands. A spawn this project created has no row to read: its
+//! whole row is in the store.
+//!
+//! A paste writes each row under a new guid with the primary on the pasted
+//! point and the others at their offsets, as one undo entry, and selects what
+//! it wrote. `Ctrl+D` over a group is a copy pasted two yards north. Only the
+//! spawn row is copied: a creature's path, addon, pool and event rows belong
+//! to its guid and stay with the original, as they do for a single duplicate.
+//!
+//! The offsets are kept whole, height included, as the doodad paste keeps
+//! them, so a group pasted inside a building keeps its floor. A group pasted
+//! onto other ground can be stood on it with the menu's Drop to terrain.
 
 mod keys;
 mod script;
@@ -903,6 +922,35 @@ pub(crate) struct SpawnTool<S: SpawnSubject> {
     /// The task working out the tags for a newer key, while [`Self::tags`]
     /// are still drawn.
     tagging: Option<(TagsFor, Task<HashMap<u64, Tag>>)>,
+    /// What `Ctrl+C` copied, the primary first. See [`ClipSpawn`].
+    pub(crate) clip: Vec<ClipSpawn>,
+    /// The read of a copy's whole rows, while it is running, with what the
+    /// copy is for, the guids it copies, primary first, and the
+    /// `EditSession::database_writes` it was started at.
+    copying: Option<(Copying, Vec<u64>, u64, Task<Result<Vec<SpawnRow>, String>>)>,
+    /// Give each placed spawn a new random facing, so a pack placed with
+    /// several clicks does not all face one way. The ghost shows the facing
+    /// the next click writes.
+    pub(crate) random_facing: bool,
+    /// The random facing's xorshift state; 0 until first used.
+    seed: u64,
+}
+
+/// One copied spawn: its whole row less the guid, and where it stood from
+/// the copy's primary. See the module comment.
+#[derive(Debug, Clone)]
+pub(crate) struct ClipSpawn {
+    pub(crate) offset: Vec3,
+    pub(crate) columns: std::collections::BTreeMap<String, String>,
+}
+
+/// What a copy's read is for once it lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Copying {
+    /// `Ctrl+C`: the clip is kept for a paste.
+    Copy,
+    /// `Ctrl+D` over a group: the clip is pasted two yards north at once.
+    Duplicate,
 }
 
 /// What a spawn tool's tags were worked out for.
@@ -965,6 +1013,10 @@ impl<S: SpawnSubject> Default for SpawnTool<S> {
             tags: HashMap::new(),
             tags_for: None,
             tagging: None,
+            clip: Vec::new(),
+            copying: None,
+            random_facing: false,
+            seed: 0,
         }
     }
 }
@@ -974,6 +1026,37 @@ impl<S: SpawnSubject> Default for SpawnTool<S> {
 /// Far enough that the two are separate marks at editing distance, and near
 /// enough that the copy is clearly next to its original.
 const APART: f32 = 2.0;
+
+/// Every editable column of `spawn`'s row, for a copy of it under another
+/// guid: the project's value where it has changed the column, `row`'s where
+/// it has not, and the new-spawn default where `row` has no value either, so
+/// the copy matches what is drawn rather than what the table holds. `row` is
+/// the whole row read from the database, or an empty row for a spawn this
+/// project created.
+fn whole_columns<S: SpawnSubject>(
+    session: &EditSession,
+    spawn: &S::Spawn,
+    row: &vale_mangos::schema::Row,
+) -> std::collections::BTreeMap<String, String> {
+    let key = S::spawn_key(spawn.guid());
+    let mut columns = std::collections::BTreeMap::new();
+    // The defaults first, so a column that neither the row nor the project
+    // supplies gets a value this crate chose rather than the table's.
+    for change in S::new_spawn(spawn.entry(), session.map_id, spawn.at().into(), spawn.orientation()) {
+        columns.insert(change.column.to_string(), change.value);
+    }
+    for column in S::SPAWN_TABLE.columns {
+        if !column.editable() {
+            continue;
+        }
+        let value =
+            session.rows.edits.get(S::SPAWN, &key, column.name).map(str::to_string).or_else(|| column.literal(row));
+        if let Some(value) = value {
+            columns.insert(column.name.to_string(), value);
+        }
+    }
+    columns
+}
 
 impl<S: SpawnSubject> SpawnTool<S> {
     /// How many spawns there are to draw: the database's and this project's
@@ -1366,28 +1449,8 @@ impl<S: SpawnSubject> SpawnTool<S> {
     pub(crate) fn duplicate(&mut self, session: &mut EditSession, now: f64) -> Option<u64> {
         let spawn = self.chosen_edited(Some(&session.rows.edits))?;
         let from = self.spawn_row.as_ref().filter(|held| held.guid == spawn.guid())?;
-        let key = S::spawn_key(spawn.guid());
         let guid = self.next_guid(&session.rows.edits);
-        let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
-        // The defaults first, so a column that neither the row nor the project
-        // supplies gets a value this crate chose rather than the table's.
-        for change in S::new_spawn(spawn.entry(), session.map_id, spawn.at().into(), spawn.orientation()) {
-            row.columns.insert(change.column.to_string(), change.value);
-        }
-        for column in S::SPAWN_TABLE.columns {
-            if !column.editable() {
-                continue;
-            }
-            let value = session
-                .rows
-                .edits
-                .get(S::SPAWN, &key, column.name)
-                .map(str::to_string)
-                .or_else(|| column.literal(&from.row));
-            if let Some(value) = value {
-                row.columns.insert(column.name.to_string(), value);
-            }
-        }
+        let mut row = RowEdit { life: Life::Insert, columns: whole_columns::<S>(session, &spawn, &from.row), ..RowEdit::default() };
         // Then the position: beside the original, and on this map whatever
         // map the copied row names.
         row.columns.insert("map".to_string(), session.map_id.to_string());
@@ -1449,6 +1512,129 @@ impl<S: SpawnSubject> SpawnTool<S> {
             wanted.as_ref(),
             Some(crate::server::store::Gesture { label: &label, subject: &subject, now }),
         );
+    }
+
+    /// Start copying the selection, primary first, for `purpose`: read the
+    /// whole rows of the members the database holds. [`Self::copied`] makes the
+    /// clip when the read lands. A copy already running is replaced.
+    pub(crate) fn start_copy(&mut self, session: &EditSession, at: vale_mangos::conn::Where, purpose: Copying) -> usize {
+        // Kept with the read: an apply before it lands changes the rows it
+        // read, and [`Self::copied`] refuses it then.
+        let writes = session.database_writes;
+        let edits = Some(&session.rows.edits);
+        let guids: Vec<u64> = self
+            .selected
+            .into_iter()
+            .chain(self.also.iter().copied())
+            .filter(|guid| self.edited(*guid, edits).is_some())
+            .collect();
+        let read: Vec<u64> =
+            guids.iter().copied().filter(|guid| self.edited(*guid, edits).is_some_and(|spawn| !spawn.is_new())).collect();
+        let count = guids.len();
+        self.copying = Some((
+            purpose,
+            guids,
+            writes,
+            crate::server::queue::read(async move {
+                if read.is_empty() {
+                    return Ok(Vec::new());
+                }
+                let mut db = vale_mangos::conn::Db::open(&at)?;
+                let mut rows = Vec::new();
+                for guid in read {
+                    if let Some(row) = db.row(&S::spawn_query(guid))? {
+                        rows.push(SpawnRow { guid, row });
+                    }
+                }
+                Ok(rows)
+            }),
+        ));
+        count
+    }
+
+    /// The copy's read, once it has landed: the clip made from it, and what
+    /// it was for. A member the read did not find and the store does not
+    /// create is left out. A read the database was written during is refused,
+    /// as what it read may no longer be the row.
+    pub(crate) fn copied(&mut self, session: &EditSession) -> Option<Result<(Copying, Vec<ClipSpawn>), String>> {
+        use bevy::tasks::{block_on, futures_lite::future};
+        let (_, _, _, task) = self.copying.as_mut()?;
+        let done = block_on(future::poll_once(task))?;
+        let (purpose, guids, writes, _) = self.copying.take()?;
+        if writes != session.database_writes {
+            return Some(Err("the database was written while the rows were read; copy again".to_string()));
+        }
+        let rows = match done {
+            Ok(rows) => rows,
+            Err(e) => return Some(Err(e)),
+        };
+        let edits = Some(&session.rows.edits);
+        let mut clip = Vec::new();
+        let mut pivot = None;
+        for guid in guids {
+            let Some(spawn) = self.edited(guid, edits) else { continue };
+            let read = rows.iter().find(|held| held.guid == guid).map(|held| held.row.clone());
+            let row = match (read, spawn.is_new()) {
+                (Some(row), _) => row,
+                (None, true) => vale_mangos::schema::Row::new(),
+                (None, false) => continue,
+            };
+            let pivot = *pivot.get_or_insert(spawn.at());
+            clip.push(ClipSpawn { offset: spawn.at() - pivot, columns: whole_columns::<S>(session, &spawn, &row) });
+        }
+        Some(Ok((purpose, clip)))
+    }
+
+    /// Write `clip` under new guids with its primary at `anchor`, as one undo
+    /// entry labelled `label`, on the open map, and select what was written.
+    /// Answers how many were written.
+    pub(crate) fn paste(&mut self, session: &mut EditSession, clip: &[ClipSpawn], anchor: Vec3, label: &str, now: f64) -> usize {
+        let first = self.next_guid(&session.rows.edits);
+        let subject = format!("{} paste {first}", S::SPAWN);
+        let guids = session.as_one(label, &subject, |session| {
+            let mut guids = Vec::new();
+            for item in clip {
+                let guid = self.next_guid(&session.rows.edits);
+                let at = anchor + item.offset;
+                let mut row = RowEdit { life: Life::Insert, columns: item.columns.clone(), ..RowEdit::default() };
+                row.columns.insert("map".to_string(), session.map_id.to_string());
+                row.columns.insert("position_x".to_string(), vale_mangos::sql::float(at.x));
+                row.columns.insert("position_y".to_string(), vale_mangos::sql::float(at.y));
+                row.columns.insert("position_z".to_string(), vale_mangos::sql::float(at.z));
+                session.set_server_row(
+                    S::SPAWN,
+                    &S::spawn_key(guid),
+                    Some(&row),
+                    Some(crate::server::store::Gesture { label, subject: &subject, now }),
+                );
+                guids.push(guid);
+            }
+            guids
+        });
+        self.select_only(guids.first().copied());
+        self.also = guids.iter().skip(1).copied().collect();
+        guids.len()
+    }
+
+    /// Where a group's duplicate goes: the primary's place, two yards north.
+    pub(crate) fn beside(&self, edits: &Edits) -> Option<Vec3> {
+        self.chosen_edited(Some(edits)).map(|spawn| spawn.at() + Vec3::X * APART)
+    }
+
+    /// After a placement with [`Self::random_facing`] on, turn the spawn on
+    /// the cursor to a new random facing for the next click.
+    pub(crate) fn roll_facing(&mut self) {
+        if !self.random_facing {
+            return;
+        }
+        if self.seed == 0 {
+            self.seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0x9E37_79B9_7F4A_7C15)
+                | 1;
+        }
+        self.ghost_facing = Some(crate::tools::placements::place::unit(&mut self.seed) * std::f32::consts::TAU);
     }
 
     /// Ask for the map to be read again on the next frame.
@@ -1942,5 +2128,70 @@ impl<S: SpawnSubject> Plugin for SpawnToolPlugin<S> {
                     .chain()
                     .after(read_the_map::<S>),
             );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::spawns::creatures::CreatureSubject;
+
+    /// A copy of two spawns pastes both under new guids, the first on the
+    /// pasted point and the second at its offset from it, with the columns
+    /// the project gave them, and selects the two it wrote.
+    #[test]
+    fn a_copied_group_pastes_at_its_offsets() {
+        let install = std::env::temp_dir().join(format!("vale-spawn-clip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        let mut tool = SpawnTool::<CreatureSubject>::default();
+        // Two spawns this project creates, so the copy reads no database.
+        let base = CreatureSubject::RESERVED_GUID_BASE;
+        for (guid, at, wander) in [(base, Vec3::new(10.0, 20.0, 5.0), "3"), (base + 1, Vec3::new(13.0, 24.0, 6.0), "7")] {
+            let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
+            for change in CreatureSubject::new_spawn(100, 0, at.into(), 1.0) {
+                row.columns.insert(change.column.to_string(), change.value);
+            }
+            row.columns.insert("wander_distance".to_string(), wander.to_string());
+            session.set_server_row("creature", &CreatureSubject::spawn_key(guid), Some(&row), None);
+            tool.created.push(CreatureSubject::created(guid, &row, None));
+        }
+        tool.selected = Some(base);
+        tool.also = vec![base + 1];
+
+        let at = vale_mangos::conn::Where::parse("127.0.0.1;3306;user;pass;mangos").unwrap();
+        assert_eq!(tool.start_copy(&session, at, Copying::Copy), 2);
+        let mut landed = None;
+        for _ in 0..1000 {
+            landed = tool.copied(&session);
+            if landed.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let (purpose, clip) = landed.expect("the copy lands").expect("the copy reads");
+        assert_eq!(purpose, Copying::Copy);
+        assert_eq!(clip.len(), 2);
+
+        let anchor = Vec3::new(100.0, 200.0, 50.0);
+        assert_eq!(tool.paste(&mut session, &clip, anchor, "Paste creatures", 1.0), 2);
+        let (first, second) = (base + 2, base + 3);
+        assert_eq!(tool.selected, Some(first));
+        assert_eq!(tool.also, vec![second]);
+        let column = |guid: u64, name: &str| {
+            session.rows.edits.get("creature", &CreatureSubject::spawn_key(guid), name).map(str::to_string)
+        };
+        let number = |guid: u64, name: &str| column(guid, name).and_then(|value| value.parse::<f32>().ok());
+        assert_eq!(number(first, "position_x"), Some(100.0));
+        assert_eq!(number(first, "position_y"), Some(200.0));
+        assert_eq!(number(first, "position_z"), Some(50.0));
+        assert_eq!(number(second, "position_x"), Some(103.0));
+        assert_eq!(number(second, "position_y"), Some(204.0));
+        assert_eq!(number(second, "position_z"), Some(51.0));
+        assert_eq!(column(first, "wander_distance").as_deref(), Some("3"));
+        assert_eq!(column(second, "wander_distance").as_deref(), Some("7"));
+        assert_eq!(number(second, "orientation"), Some(1.0));
+        let _ = std::fs::remove_dir_all(&install);
     }
 }

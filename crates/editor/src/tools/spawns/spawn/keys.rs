@@ -1,6 +1,6 @@
 //! The selected creature or game-object spawn as a thing with a position and
 //! a facing: how it is read, how a move or a turn is written, and the keys
-//! that move, turn, remove and duplicate it.
+//! that move, turn, remove, duplicate, copy and paste it.
 //!
 //! ## What a spawn has, compared with a doodad
 //!
@@ -31,6 +31,9 @@
 //! along z, `,` and `.` turn about z, `Shift` multiplies each step by ten,
 //! `Delete` removes, `Ctrl+D` duplicates. `Alt` with the mouse turns, and is
 //! in `crate::tools::placements::gizmo::spin`, which serves all four tools.
+//! `Ctrl+C` copies the selection and `Ctrl+V` pastes it with the primary on
+//! the surface under the pointer; see the parent module's "Copy, paste and a
+//! group's duplicate".
 //!
 //! While a new spawn is on the cursor in Place, `,` and `.` and `Alt` with
 //! the mouse turn that spawn and not the selection, in the doodad placer's
@@ -201,17 +204,46 @@ pub(crate) fn keys<S: SpawnSubject>(
     wants: Res<bevy_egui::input::EguiWantsInput>,
     time: Res<Time>,
     mut menu: ResMut<crate::context::ContextMenu>,
+    cursor: Res<crate::pick::Cursor>,
+    settings: Res<crate::server::settings::ServerSettings>,
 ) {
     if *tool != S::TOOL || !state.editing() {
         return;
     }
-    // The right-click menu's Delete and Duplicate, carried out here so the
-    // item and the key are one operation. A menu item keeps egui's focus
-    // after it is pressed, so a request is answered whatever has the
-    // keyboard.
+    let now = time.elapsed_secs_f64();
+    if let Some(session) = session.as_mut() {
+        land_copy(&mut spawns, session, now);
+    }
+    // The right-click menu's Delete, Duplicate, Copy and Paste, carried out
+    // here so the item and the key are one operation. A menu item keeps
+    // egui's focus after it is pressed, so a request is answered whatever has
+    // the keyboard.
     use crate::context::Request;
-    let request = menu.take_request(|request| matches!(request, Request::Delete | Request::Duplicate));
+    let request = menu.take_request(|request| {
+        matches!(request, Request::Delete | Request::Duplicate | Request::Copy | Request::Paste(_))
+    });
     if request.is_none() && wants.wants_keyboard_input() {
+        return;
+    }
+    let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    // A paste needs no selection, and lands with the placer armed too: it is
+    // a different key from the placer's.
+    let paste = match request {
+        Some(Request::Paste(at)) => Some(Some(at)),
+        _ if control && keys.just_pressed(KeyCode::KeyV) => Some(cursor.surface),
+        _ => None,
+    };
+    if let (Some(anchor), Some(session)) = (paste, session.as_mut()) {
+        let noun = S::WORDS.nouns;
+        session.status = match (anchor, spawns.clip.is_empty()) {
+            (_, true) => format!("no {noun} have been copied"),
+            (None, false) => "no surface under the pointer; nothing pasted".to_string(),
+            (Some(anchor), false) => {
+                let clip = spawns.clip.clone();
+                let n = spawns.paste(session, &clip, anchor, &format!("Paste {noun}"), now);
+                format!("pasted {n} {noun}")
+            }
+        };
         return;
     }
     // While a spawn is on the cursor the keys are the placer's: `,` and `.`
@@ -240,8 +272,10 @@ pub(crate) fn keys<S: SpawnSubject>(
     let Some(was) = spawns.standing(Some(&session.rows.edits)) else {
         return;
     };
-    let now = time.elapsed_secs_f64();
-    let control = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    if (control && keys.just_pressed(KeyCode::KeyC)) || request == Some(Request::Copy) {
+        start_copy(&mut spawns, session, &settings, super::Copying::Copy);
+        return;
+    }
     let delete = keys.just_pressed(KeyCode::Delete) || request == Some(Request::Delete);
     let duplicate = (control && keys.just_pressed(KeyCode::KeyD)) || request == Some(Request::Duplicate);
     // The group is looked up only on a frame a key is pressed: finding a member
@@ -250,8 +284,12 @@ pub(crate) fn keys<S: SpawnSubject>(
         if request.is_none() && !KEYS.iter().any(|&key| keys.just_pressed(key)) {
             return;
         }
+        if duplicate {
+            start_copy(&mut spawns, session, &settings, super::Copying::Duplicate);
+            return;
+        }
         let others = spawns.member_standings(Some(&session.rows.edits));
-        group_keys(&mut spawns, session, &keys, was, others, Asked { control, delete, duplicate }, now);
+        group_keys(&mut spawns, session, &keys, was, others, Asked { control, delete }, now);
         return;
     }
 
@@ -351,8 +389,44 @@ struct Asked {
     control: bool,
     /// `Delete`, or the menu's Delete.
     delete: bool,
-    /// `Ctrl+D`, or the menu's Duplicate.
-    duplicate: bool,
+}
+
+/// Start reading the selection's whole rows for a copy or a group's
+/// duplicate; [`land_copy`] finishes it.
+fn start_copy<S: SpawnSubject>(
+    spawns: &mut SpawnTool<S>,
+    session: &mut EditSession,
+    settings: &crate::server::settings::ServerSettings,
+    purpose: super::Copying,
+) {
+    let Some((at, _)) = settings.resolve() else {
+        session.status = "no server is set up; nothing copied".to_string();
+        return;
+    };
+    let n = spawns.start_copy(session, at, purpose);
+    session.status = format!("reading {n} {}\u{2026}", S::WORDS.nouns);
+}
+
+/// A copy's read, once it has landed: keep the clip, or for a group's
+/// duplicate paste it two yards north of the primary.
+fn land_copy<S: SpawnSubject>(spawns: &mut SpawnTool<S>, session: &mut EditSession, now: f64) {
+    let noun = S::WORDS.nouns;
+    let Some(landed) = spawns.copied(session) else { return };
+    session.status = match landed {
+        Err(e) => format!("not copied: {e}"),
+        Ok((super::Copying::Copy, clip)) => {
+            let n = clip.len();
+            spawns.clip = clip;
+            format!("copied {n} {noun}; Ctrl+V pastes them at the pointer")
+        }
+        Ok((super::Copying::Duplicate, clip)) => match spawns.beside(&session.rows.edits) {
+            Some(anchor) => {
+                let n = spawns.paste(session, &clip, anchor, &format!("Duplicate {noun}"), now);
+                format!("duplicated {n} {noun}")
+            }
+            None => "not duplicated: the selection has changed".to_string(),
+        },
+    };
 }
 
 /// The keys over a group of spawns: the primary `was` and the `others`.
@@ -360,11 +434,8 @@ struct Asked {
 /// The arrows and `,`/`.` move and turn every member as one undo entry — a
 /// turn carries the group round the primary. `Delete` removes every member as
 /// one entry; a spawn this project created is discarded rather than marked, and
-/// leaves the selection, as the single-spawn `Delete` does.
-///
-/// `Ctrl+D` does not copy a group. A spawn's copy carries every column of its
-/// row, and the whole row is read for the primary only, so copying the others
-/// would write rows with the table's defaults in place of their own columns.
+/// leaves the selection, as the single-spawn `Delete` does. `Ctrl+D` is
+/// [`keys`]' own, through a copy.
 fn group_keys<S: SpawnSubject>(
     spawns: &mut SpawnTool<S>,
     session: &mut EditSession,
@@ -377,10 +448,6 @@ fn group_keys<S: SpawnSubject>(
     let mut all = vec![was];
     all.extend(others);
     let noun = S::WORDS.nouns;
-    if asked.duplicate {
-        session.status = format!("{} {noun} selected; Ctrl+D duplicates one spawn at a time", all.len());
-        return;
-    }
     if asked.control {
         return;
     }

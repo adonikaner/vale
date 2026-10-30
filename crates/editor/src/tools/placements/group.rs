@@ -24,9 +24,10 @@
 //!                      and each member about its own
 //! delete               removes every member, as one undo entry
 //! ctrl+c, ctrl+v       copies the group and pastes it with the primary's origin
-//!                      on the surface under the pointer (doodads and WMOs)
-//! ctrl+d               with one selected, arms the placer as before; with
-//!                      several, pastes a copy two yards north (doodads and WMOs)
+//!                      on the surface under the pointer
+//! ctrl+d               with one doodad or WMO selected, arms the placer as
+//!                      before; with one spawn, copies it two yards north; with
+//!                      several of either, pastes a copy two yards north
 //! ```
 //!
 //! The primary stays a single record rather than becoming one entry of a
@@ -46,10 +47,10 @@
 //! * It is per tool. A doodad and a building are different lists with
 //!   different rules (a building has no scale and carries its own box), so a
 //!   group is doodads or buildings, not both.
-//! * Spawns are not copied. A creature duplicate copies every column of
-//!   the row, which is read one row at a time when the spawn is selected, so a
-//!   group copy would have to read every member's row first. `Ctrl+D` on a
-//!   group of spawns says so rather than writing rows with default columns.
+//! * Spawns are not copied here. A spawn's copy carries every column of its
+//!   row, which the map query does not read, so the spawn tools read the
+//!   members' whole rows first and keep their own clip. See
+//!   `crate::tools::spawns::spawn`'s "Copy, paste and a group's duplicate".
 
 use crate::session::EditSession;
 use vale_client::render::axes;

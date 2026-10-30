@@ -9,11 +9,13 @@
 //! shading.rs    the vertex colour brush
 //! textures.rs   the texture brush, the tileset picker, and the layers of the
 //!               chunk under the pointer
+//! foliage.rs    the Foliage field every ground panel shares, and the Foliage
+//!               window it opens: the sets, their models, and a project's own
 //! holes.rs      the holes tool
 //! areas.rs      the area under the pointer, the area tree, and the
 //!               impassable flag
 //! chunks.rs     a selection of chunks: copy and paste, stitching, areas,
-//!               holes and textures
+//!               holes, textures and foliage
 //! water.rs      the water tool
 //! presets.rs    the brush preset grid and drop-down the terrain and texture
 //!               panels share
@@ -21,6 +23,7 @@
 
 pub(crate) mod areas;
 pub(crate) mod chunks;
+pub(crate) mod foliage;
 pub(crate) mod grade;
 pub(crate) mod holes;
 pub(crate) mod presets;

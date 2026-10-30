@@ -260,6 +260,9 @@ pub(crate) struct Editing<'w> {
     pub(crate) measuring: ResMut<'w, crate::tools::measure::Measuring>,
     pub(crate) shading: ResMut<'w, crate::tools::ground::shading::Shading>,
     pub(crate) textures: ResMut<'w, Textures>,
+    /// The foliage sets and the Foliage window, which the texture, road and
+    /// chunk panels open. See `crate::tools::ground::foliage`.
+    pub(crate) foliage: ResMut<'w, crate::tools::ground::foliage::Foliage>,
     pub(crate) selection: ResMut<'w, Selection>,
     /// The doodad and WMO tools' drag state. Each panel uses it for one
     /// message: that a group change made in the panel's fields needs its
@@ -976,6 +979,10 @@ fn draw(
             );
             viewport.floating.extend(bar);
         }
+        Tool::Road => {
+            let bar = crate::ui::tools::ground::road::toolbar(&ctx, world_rect, corner, &mut editing.road);
+            viewport.floating.extend(bar);
+        }
         Tool::Textures => {
             // The guide is written back only when it changed, as the view
             // bar writes its switches, so the resource is not marked changed
@@ -1038,6 +1045,13 @@ fn draw(
         }
         _ => {}
     }
+    // The Foliage window, for the three tools whose panels open it. It is
+    // larger than the inspector, so it is drawn on the root context.
+    if !matches!(*tool, Tool::Textures | Tool::Road | Tool::Chunks) {
+        editing.foliage.close();
+    }
+    let foliage = crate::ui::tools::ground::foliage::window(&ctx, &mut editing, session, &assets, time.elapsed_secs_f64());
+    viewport.floating.extend(foliage);
     // The right-click menu, on the root context so it is not clipped to a
     // panel. Its area is added to the floating list with the other areas at
     // the end of this function.

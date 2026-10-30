@@ -1012,13 +1012,11 @@ fn creature(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing,
     }
 
     ui.separator();
-    if item(
-        ui,
-        "Duplicate",
-        count == 1,
-        "Ctrl+D. Copy this spawn's row to a new guid two yards north.",
-        "Ctrl+D duplicates one spawn at a time.",
-    ) {
+    if item(ui, "Copy", true, "Ctrl+C. Copy the selected spawns' rows; Ctrl+V pastes them at the pointer.", "") {
+        editing.menu.request = Some(Request::Copy);
+        chosen = true;
+    }
+    if item(ui, "Duplicate", true, "Ctrl+D. Copy the selected spawns' rows to new guids two yards north.", "") {
         editing.menu.request = Some(Request::Duplicate);
         chosen = true;
     }
@@ -1142,13 +1140,11 @@ fn game_object(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editi
     }
 
     ui.separator();
-    if item(
-        ui,
-        "Duplicate",
-        count == 1,
-        "Ctrl+D. Copy this spawn's row to a new guid two yards north.",
-        "Ctrl+D duplicates one spawn at a time.",
-    ) {
+    if item(ui, "Copy", true, "Ctrl+C. Copy the selected spawns' rows; Ctrl+V pastes them at the pointer.", "") {
+        editing.menu.request = Some(Request::Copy);
+        chosen = true;
+    }
+    if item(ui, "Duplicate", true, "Ctrl+D. Copy the selected spawns' rows to new guids two yards north.", "") {
         editing.menu.request = Some(Request::Duplicate);
         chosen = true;
     }
@@ -1227,8 +1223,9 @@ fn game_object(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editi
     chosen
 }
 
-/// The creature or game object tool, clicked on ground: place the chosen
-/// row there, switch between Select and Place, and clear the selection.
+/// The creature or game object tool, clicked on ground: paste there, place
+/// the chosen row there, switch between Select and Place, and clear the
+/// selection.
 fn spawns_ground(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -1239,21 +1236,35 @@ fn spawns_ground(
 ) -> bool {
     use crate::tools::placements::place::Mode;
     let mut chosen = false;
-    let (noun, count, mode, chosen_label) = match tool {
+    let (noun, count, mode, chosen_label, copied) = match tool {
         Tool::Creatures => (
             "creatures",
             editing.creatures.selected.map_or(0, |_| 1 + editing.creatures.also.len()),
             editing.creatures.mode,
             editing.creatures.new_spawn.chosen.as_ref().map(|known| known.label()),
+            !editing.creatures.clip.is_empty(),
         ),
         _ => (
             "game objects",
             editing.objects.selected.map_or(0, |_| 1 + editing.objects.also.len()),
             editing.objects.mode,
             editing.objects.new_spawn.chosen.as_ref().map(|known| known.label()),
+            !editing.objects.clip.is_empty(),
         ),
     };
     caption(ui, &format!("{count} {noun} selected"));
+    if item(
+        ui,
+        "Paste here",
+        copied && at.is_some(),
+        &format!("Ctrl+V. Paste the copied {noun} with the first one at the clicked point."),
+        &format!("Copy some {noun} first, and click on open ground."),
+    ) {
+        if let Some(at) = at {
+            editing.menu.request = Some(Request::Paste(at));
+        }
+        chosen = true;
+    }
     let place_label = match &chosen_label {
         Some(label) => format!("Place {label} here"),
         None => "Place here".to_string(),

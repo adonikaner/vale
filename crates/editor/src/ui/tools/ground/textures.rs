@@ -13,13 +13,16 @@
 //! are [`crate::prefs::brushes`]; their grid is [`super::presets`].
 //!
 //! The chunks and road panels use the tileset list and the swatches. The
-//! state is [`crate::tools::ground::textures`].
+//! Foliage fields are [`super::foliage`]'s. The state is
+//! [`crate::tools::ground::textures`].
 
 use bevy_egui::egui;
 
 use crate::pick::Cursor;
+use crate::preview::portraits::Portraits;
 use crate::prefs::brushes::{Ask, Brushes, Paint};
 use crate::session::EditSession;
+use crate::tools::ground::foliage::{Foliage, Target};
 use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
 use crate::tools::placements::place;
@@ -50,33 +53,6 @@ fn crawls((turn, rate, on): (u32, u32, bool)) -> String {
     )
 }
 
-/// What a `GroundEffectTexture` row plants, in words: the models by their file
-/// names and how many a cell gets, or that it plants nothing.
-fn grows(assets: &vale_client::assets::GameAssets, effect_id: u32) -> String {
-    if effect_id == 0 {
-        return "None".to_string();
-    }
-    let effects = assets.ground_effects();
-    let Some(effect) = effects.effect(effect_id) else {
-        return format!("Missing GroundEffectTexture row {effect_id}");
-    };
-    let mut names: Vec<String> = effect.models
-        [..usize::from(effect.choices).min(effect.models.len())]
-        .iter()
-        .map(|&model| {
-            let path = effects.model(model);
-            path.rsplit(['\\', '/'])
-                .next()
-                .unwrap_or(path)
-                .trim_end_matches(".m2")
-                .trim_end_matches(".M2")
-                .to_string()
-        })
-        .collect();
-    names.dedup();
-    format!("{} · {} per cell", names.join(", "), effect.density)
-}
-
 /// The texture brush's inspector: the presets and the brush's settings, the
 /// brush's texture, the tileset list, and the chunk's layers.
 pub(in crate::ui::tools) fn paint(
@@ -87,6 +63,8 @@ pub(in crate::ui::tools) fn paint(
     cursor: &Cursor,
     assets: &vale_client::assets::GameAssets,
     brushes: &mut Brushes,
+    foliage: &mut Foliage,
+    portraits: &mut Portraits,
     now: f64,
 ) {
     let presets: Vec<(String, super::presets::Icon)> = brushes
@@ -101,7 +79,7 @@ pub(in crate::ui::tools) fn paint(
     }
     super::presets::settings(ui, "textures-brush-settings", |ui| brush_settings(ui, &mut textures.brush));
 
-    tileset_chosen(ui, textures, thumbnails, session, assets);
+    tileset_chosen(ui, textures, thumbnails, session, assets, foliage, portraits);
 
     theme::heading(ui, "Tilesets");
     if !tileset_picker(ui, textures, thumbnails, session) {
@@ -110,7 +88,7 @@ pub(in crate::ui::tools) fn paint(
     theme::note(ui, "Click a tileset to paint with it.");
 
     ui.add_space(6.0);
-    chunk_layers(ui, thumbnails, textures, session, cursor, assets, now);
+    chunk_layers(ui, thumbnails, textures, session, cursor, assets, foliage, portraits, now);
 }
 
 /// The Brush Settings section's rows: radius, strength, opacity, core,
@@ -289,8 +267,10 @@ fn tileset_chosen(
     ui: &mut egui::Ui,
     textures: &mut Textures,
     thumbnails: &mut Thumbnails,
-    session: &EditSession,
+    session: &mut EditSession,
     assets: &vale_client::assets::GameAssets,
+    foliage: &mut Foliage,
+    portraits: &mut Portraits,
 ) {
     theme::heading(ui, "Brush Texture");
     if textures.brush.texture.is_empty() {
@@ -313,19 +293,19 @@ fn tileset_chosen(
     });
     // The foliage a new layer of this texture grows: `MCLY`'s `effectId`. It
     // is set, when the texture is chosen, from what the open ground pairs this
-    // texture with, and can be edited here. See `PaintBrush::effect_id`.
-    property(
+    // texture with, and can be changed in the Foliage window. See
+    // `PaintBrush::effect_id`.
+    let catalogue = foliage.catalogue(session, assets);
+    let open = property(
         ui,
         "Foliage",
         "What a new layer of this texture grows: MCLY effectId, a GroundEffectTexture row. \
          Set, when the texture is chosen, to what the open tiles grow on it most.",
-        |ui| {
-            let picked = ground_effect(ui, "brush", textures.brush.effect_id, true, session, &chosen, assets);
-            if let Some(id) = picked {
-                textures.brush.effect_id = id;
-            }
-        },
+        |ui| super::foliage::field(ui, catalogue.as_deref(), portraits, &[textures.brush.effect_id], true, ""),
     );
+    if open {
+        foliage.open(Target::Brush, &chosen, textures.brush.effect_id, session);
+    }
 }
 
 /// The tileset picker: the search box and the list by folder. A click sets
@@ -567,6 +547,8 @@ fn chunk_layers(
     session: &mut EditSession,
     cursor: &Cursor,
     assets: &vale_client::assets::GameAssets,
+    foliage: &mut Foliage,
+    portraits: &mut Portraits,
     now: f64,
 ) {
     theme::heading(ui, "Chunk");
@@ -625,7 +607,8 @@ fn chunk_layers(
     let mut drop: Option<usize> = None;
     let mut rebase: Option<String> = None;
     let mut swap: Option<(usize, String)> = None;
-    let mut grow: Option<(usize, u32)> = None;
+    let mut grow: Option<usize> = None;
+    let catalogue = foliage.catalogue(session, assets);
     let mut crawl: Option<(usize, u32, u32, bool)> = None;
     // "The chosen texture" here is the brush's texture. There is no second
     // picker: the texture used for painting is also the one used for
@@ -679,14 +662,23 @@ fn chunk_layers(
                 // The layer's foliage and animation: the two `MCLY` fields no
                 // brush writes. Disabled while the chunk follows the pointer,
                 // for the reason the buttons are.
-                let picked = property(
+                let open = property(
                     ui,
                     "Foliage",
                     "MCLY effectId: what this layer grows, a GroundEffectTexture row.",
-                    |ui| ground_effect(ui, &format!("layer {index}"), layer.effect_id, pinned, session, &layer.texture, assets),
+                    |ui| {
+                        super::foliage::field(
+                            ui,
+                            catalogue.as_deref(),
+                            portraits,
+                            &[layer.effect_id],
+                            pinned,
+                            "Pin the chunk (press Space over it).",
+                        )
+                    },
                 );
-                if let Some(id) = picked {
-                    grow = Some((index, id));
+                if open {
+                    grow = Some(index);
                 }
                 // Only 164 layers in Azeroth are animated, all of them lava,
                 // so the direction and speed are shown only once the switch is
@@ -735,8 +727,9 @@ fn chunk_layers(
     if let Some((index, path)) = swap {
         textures::swap_layer(session, coord, chunk, index, &path);
     }
-    if let Some((index, effect_id)) = grow {
-        textures::set_layer_effect(session, coord, chunk, index, effect_id, now);
+    if let Some(index) = grow {
+        let layer = &layers[index];
+        foliage.open(Target::Layer { coord, chunk, layer: index }, &layer.texture, layer.effect_id, session);
     }
     if let Some((index, turn, rate, on)) = crawl {
         textures::set_layer_animation(session, coord, chunk, index, turn, rate, on, now);
@@ -874,99 +867,20 @@ fn crawl_direction(ui: &mut egui::Ui, index: usize, turn: &mut u32) -> bool {
     *turn != was
 }
 
-/// A ground effect, chosen by what it grows rather than typed as a
-/// `GroundEffectTexture` row id. Returns the row picked this frame.
-///
-/// The list offers nothing, then the effects the open tiles grow on this
-/// texture, most used first, then the ones they grow on other textures. Each
-/// is named by its models (see [`grows`]). Neither table names a texture, so
-/// the open ground is the only record of which effect suits which, and a zone
-/// generally reuses a handful. A row id the open tiles do not use can still be
-/// typed at the bottom.
-///
-/// The counts read every open chunk. Worked out on every frame the list was
-/// open, they made the editor slow, so they are worked out on the frame the
-/// list opens and kept in egui's memory while it stays open.
-fn ground_effect(
-    ui: &mut egui::Ui,
-    salt: &str,
-    current: u32,
-    enabled: bool,
-    session: &EditSession,
-    texture: &str,
-    assets: &vale_client::assets::GameAssets,
-) -> Option<u32> {
-    let mut picked = None;
-    let width = ui.available_width().max(80.0);
-    ui.add_enabled_ui(enabled, |ui| {
-        egui::ComboBox::from_id_salt(("ground-effect", salt))
-            .selected_text(egui::RichText::new(grows(assets, current)).size(theme::SMALL))
-            .width(width)
-            .truncate()
-            .show_ui(ui, |ui| {
-                ui.set_min_width(width.max(260.0));
-                if ui.selectable_label(current == 0, "None").clicked() {
-                    picked = Some(0);
-                }
-                let counts = counts_while_open(ui, salt, session, texture);
-                let mut section = |ui: &mut egui::Ui, title: &str, list: &[(u32, usize)]| {
-                    if list.is_empty() {
-                        return;
-                    }
-                    ui.add_space(4.0);
-                    theme::note(ui, title);
-                    for &(id, count) in list.iter().take(20) {
-                        let label = format!("{} · {count} layers · row {id}", grows(assets, id));
-                        if ui.selectable_label(current == id, label).clicked() {
-                            picked = Some(id);
-                        }
-                    }
-                };
-                section(ui, "Used with this texture in the loaded tiles", &counts.with);
-                section(ui, "Used with other textures in the loaded tiles", &counts.elsewhere);
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    theme::note(ui, "Row ID");
-                    let mut id = current;
-                    if ui
-                        .add(egui::DragValue::new(&mut id).speed(1.0).range(0..=u32::MAX))
-                        .on_hover_text("A GroundEffectTexture row id, for one the open tiles do not use.")
-                        .changed()
-                    {
-                        picked = Some(id);
-                    }
-                });
-            });
-    })
-    .response
-    .on_disabled_hover_text("Pin the chunk (press Space over it).");
-    picked
-}
-
-/// [`textures::effect_counts`] for a list that is open: worked out on the
-/// first frame and kept while the list is drawn on every frame after it, or
-/// again if the texture it was for has changed.
-fn counts_while_open(
-    ui: &egui::Ui,
-    salt: &str,
-    session: &EditSession,
-    texture: &str,
-) -> std::sync::Arc<textures::EffectCounts> {
-    type Kept = (u64, String, std::sync::Arc<textures::EffectCounts>);
-    let id = egui::Id::new(("ground-effect-counts", salt));
-    let pass = ui.ctx().cumulative_pass_nr();
-    let kept = ui.data(|data| data.get_temp::<Kept>(id));
-    let counts = match kept {
-        Some((last, path, counts)) if last + 1 >= pass && path == texture => counts,
-        _ => std::sync::Arc::new(textures::effect_counts(session, texture)),
-    };
-    ui.data_mut(|data| data.insert_temp(id, (pass, texture.to_string(), counts.clone())));
-    counts
-}
-
 /// The texture brush's inspector panel. The brush's settings and the drawing
 /// tablet's are on the toolbar over the viewport, [`toolbar`].
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     let crate::ui::tools::Subject { session, cursor, assets, now, .. } = subject;
-    paint(ui, &mut editing.textures, &mut editing.thumbnails, session, cursor, assets, &mut editing.brushes, now);
+    paint(
+        ui,
+        &mut editing.textures,
+        &mut editing.thumbnails,
+        session,
+        cursor,
+        assets,
+        &mut editing.brushes,
+        &mut editing.foliage,
+        &mut editing.portraits,
+        now,
+    );
 }

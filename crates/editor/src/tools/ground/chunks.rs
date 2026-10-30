@@ -176,6 +176,7 @@ pub(crate) enum Page {
     Area,
     Holes,
     Textures,
+    Foliage,
 }
 
 impl Chunks {
@@ -457,6 +458,32 @@ pub(crate) fn swap_texture(
             }
             let id = tile.name_texture(to);
             paint.set_layer_texture(layer, id)
+        })
+    })
+}
+
+/// Give every layer that draws `path` in the selected chunks the ground
+/// effect `effect_id` (`MCLY` `effectId`, 0 for none); every layer of every
+/// selected chunk when `path` is `None`. One undo entry. Each written tile is
+/// read again, because the foliage is planned when a tile is read.
+pub(crate) fn set_foliage(session: &mut EditSession, cells: &BTreeSet<Cell>, path: Option<&str>, effect_id: u32) -> usize {
+    let label = match path {
+        Some(path) => format!("Set foliage of {}", super::textures::leaf(path)),
+        None => "Set foliage".to_string(),
+    };
+    over(session, cells, &label, true, |tile, chunk| {
+        let only = match path {
+            Some(path) => Some(texture_id(tile, path)?),
+            None => None,
+        };
+        repaint(tile, chunk, |_, paint| {
+            let mut changed = false;
+            for index in 0..paint.layers.len() {
+                if only.is_none_or(|id| paint.layers[index].texture_id == id) {
+                    changed |= paint.set_layer_effect(index, effect_id);
+                }
+            }
+            changed
         })
     })
 }
@@ -981,6 +1008,32 @@ mod tests {
         undo(&mut session);
         assert_eq!(chunks.census(&session).textures, vec![(BASE.to_string(), 4, 4)]);
         assert_eq!(names(&session).len(), 1);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// Foliage set by texture reaches only that texture's layers, foliage set
+    /// with no texture reaches every layer, each is one undo entry, and the
+    /// census counts the pairs.
+    #[test]
+    fn foliage_is_set_by_texture_or_on_every_layer() {
+        let here = (31, 49);
+        let (mut session, install) = session_with("foliage", &[here]);
+        let mut chunks = Chunks::default();
+        chunks.select(block(Cell::of(here, (2, 2)), Cell::of(here, (3, 3))));
+        let grass = "tileset\\test\\grass.blp";
+        assert_eq!(set_base(&mut session, &chunks.selected, grass), 4);
+
+        assert_eq!(set_foliage(&mut session, &chunks.selected, Some(BASE), 7), 0, "no layer draws the old base");
+        assert_eq!(set_foliage(&mut session, &chunks.selected, Some(grass), 7), 4);
+        assert_eq!(chunks.census(&session).foliage, vec![(grass.to_string(), 7, 4)]);
+        assert!(session.stale.contains(&here), "the foliage is planned when a tile is read");
+        assert_eq!(set_foliage(&mut session, &chunks.selected, Some(grass), 7), 0, "nothing to change");
+        assert_eq!(set_foliage(&mut session, &chunks.selected, None, 0), 4);
+        assert_eq!(chunks.census(&session).foliage, vec![(grass.to_string(), 0, 4)]);
+        assert_eq!(session.history.depth_done(), 3);
+
+        undo(&mut session);
+        assert_eq!(chunks.census(&session).foliage, vec![(grass.to_string(), 7, 4)]);
         let _ = std::fs::remove_dir_all(&install);
     }
 

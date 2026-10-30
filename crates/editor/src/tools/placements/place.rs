@@ -368,7 +368,7 @@ impl Placing {
 
 /// The next number in `0..1` from a 64-bit xorshift — see the module comment
 /// on why it is not a crate.
-fn unit(seed: &mut u64) -> f32 {
+pub(crate) fn unit(seed: &mut u64) -> f32 {
     let mut x = *seed;
     x ^= x << 13;
     x ^= x >> 7;

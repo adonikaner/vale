@@ -150,6 +150,25 @@ impl RoadTool {
         self.road().is_ready()
     }
 
+    /// Why an apply would be refused, as a sentence, or `None` when it would
+    /// go ahead. The panel shows it under the disabled Apply Road button, and
+    /// [`apply`] returns it.
+    pub(crate) fn missing(&self) -> Option<&'static str> {
+        if !self.is_ready() {
+            return Some("Click the ground to add points. A road needs at least two.");
+        }
+        if !self.shape_ground && !self.paint_surface && !self.paint_verge {
+            return Some("Ground, Surface and Verge are all off, so there is nothing to apply.");
+        }
+        if self.paint_surface && self.surface.texture.is_empty() {
+            return Some("Choose a surface texture, or turn off Surface.");
+        }
+        if self.paint_verge && self.verge.texture.is_empty() {
+            return Some("Choose a verge texture, or turn off Verge.");
+        }
+        None
+    }
+
     /// How far a press may be from a point and still take it.
     fn grab(&self) -> f32 {
         (self.width * 0.75).clamp(2.0, 12.0)
@@ -293,20 +312,14 @@ fn chunks(n: usize) -> String {
     }
 }
 
-/// **Grade the ground along the road and paint it**, as one undo entry,
-/// over every open tile it reaches.
+/// Grade the ground along the road and paint it, as one undo entry, over
+/// every open tile it reaches.
 pub(crate) fn apply(session: &mut EditSession, tool: &RoadTool) -> Result<Applied, String> {
+    if let Some(why) = tool.missing() {
+        return Err(why.into());
+    }
     let road = tool.road();
     let painting = tool.painting();
-    if painting.surface.as_ref().is_some_and(|s| s.texture.is_empty()) {
-        return Err("choose a surface texture, or turn off \"Paint a surface\"".into());
-    }
-    if painting.verge.as_ref().is_some_and(|v| v.texture.is_empty()) {
-        return Err("choose a verge texture, or turn off \"Paint a verge\"".into());
-    }
-    if !tool.shape_ground && painting.surface.is_none() && painting.verge.is_none() {
-        return Err("nothing to do: shaping and both textures are off".into());
-    }
     let Some(path) = path(session, tool) else {
         return Err("place at least two points".into());
     };

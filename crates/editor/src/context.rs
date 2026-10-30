@@ -88,7 +88,8 @@ pub(crate) struct ContextMenu {
 /// An operation a menu item hands to the system that answers its key.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Request {
-    /// `Ctrl+C` for the doodad or WMO selection (`tools::placements::group::clipboard`).
+    /// `Ctrl+C` for the doodad or WMO selection (`tools::placements::group::clipboard`),
+    /// or for the creature or game object selection (`tools::spawns::spawn::keys`).
     Copy,
     /// `Ctrl+V` at a point in the world, which is where the menu was opened
     /// rather than where the pointer is when the item is pressed.

@@ -284,6 +284,10 @@ pub struct Census {
     pub cut: usize,
     /// How many carry four textures, which is the most a chunk may.
     pub full: usize,
+    /// Each texture among them paired with a ground effect its layers carry
+    /// (`MCLY` `effectId`, 0 for none), with the number of layers that carry
+    /// the pair. By texture, then the largest count first.
+    pub foliage: Vec<(String, u32, usize)>,
     /// What the selection's border meets.
     pub border: Border,
 }
@@ -346,6 +350,7 @@ pub fn census(loaded: &impl Tiles, selected: &BTreeSet<Cell>) -> Census {
     let mut tiles: BTreeSet<(u32, u32)> = BTreeSet::new();
     let mut areas: BTreeMap<u32, usize> = BTreeMap::new();
     let mut textures: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    let mut foliage: BTreeMap<(String, u32), usize> = BTreeMap::new();
     for (coord, cells) in by_tile(selected.iter().copied()) {
         let Some(tile) = loaded.tile(coord) else {
             census.closed += cells.len();
@@ -373,6 +378,7 @@ pub fn census(loaded: &impl Tiles, selected: &BTreeSet<Cell>) -> Census {
                 let Some(name) = names.get(layer.texture_id as usize) else {
                     continue;
                 };
+                *foliage.entry((name.to_ascii_lowercase(), layer.effect_id)).or_default() += 1;
                 let entry = textures.entry(name.to_ascii_lowercase()).or_default();
                 entry.0 += 1;
                 if index == 0 {
@@ -389,6 +395,11 @@ pub fn census(loaded: &impl Tiles, selected: &BTreeSet<Cell>) -> Census {
         .map(|(name, (carried, based))| (name, carried, based))
         .collect();
     census.textures.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    census.foliage = foliage
+        .into_iter()
+        .map(|((name, effect), layers)| (name, effect, layers))
+        .collect();
+    census.foliage.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)).then(a.1.cmp(&b.1)));
     census.border = seam(loaded, selected).1;
     census
 }

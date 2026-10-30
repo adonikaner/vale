@@ -296,15 +296,16 @@ struct PlannedChunk {
 #[derive(Resource, Default)]
 pub(crate) struct FoliageModels {
     protos: HashMap<u16, Arc<FoliageProto>>,
-    /// The join, once the first tile has brought it. `None` before a world is
-    /// entered, and empty on a chain with no ground-effect tables, which draws
-    /// bare ground and is not a failure.
+    /// The join, once the first tile has brought it, and after that the one
+    /// the assets hold. `None` before a world is entered, and empty on a chain
+    /// with no ground-effect tables, which draws bare ground and is not a
+    /// failure.
     effects: Option<Arc<GroundEffects>>,
 }
 
 impl FoliageModels {
     /// Take what a tile brought: its models, and the table if this is the
-    /// first.
+    /// first. A later table comes from the assets; see `stream_foliage`.
     pub(crate) fn absorb(&mut self, effects: &Arc<GroundEffects>, protos: Vec<(u16, FoliageProto)>) {
         if self.effects.is_none() {
             self.effects = Some(Arc::clone(effects));
@@ -532,7 +533,8 @@ fn stream_foliage(
     // with; this pass uses that material with one pipeline difference. See
     // [`crate::render::models::Materials::with_wind`].
     mut materials: crate::render::models::Materials,
-    models: Res<FoliageModels>,
+    mut models: ResMut<FoliageModels>,
+    assets: Res<crate::assets::GameAssets>,
     mut tiles: Query<(Entity, &mut TileFoliagePlans), With<TerrainTile>>,
     mut last: Local<Option<Vec3>>,
     mut scratch: Local<Vec<FoliageInstance>>,
@@ -545,9 +547,25 @@ fn stream_foliage(
     if !focus.present {
         return;
     }
-    let Some(effects) = models.effects.clone() else {
+    let Some(held) = models.effects.clone() else {
         return;
     };
+    // The tables are read again when a host publishes an edited one
+    // (`GameAssets::forget_tables`), and the assets then hold a new parse. A
+    // plan names `GroundEffectTexture` rows, not models, so every chunk built
+    // from the old rows is dropped and grown again from the new ones.
+    let effects = assets.ground_effects();
+    if !Arc::ptr_eq(&held, &effects) {
+        for (_, mut plans) in &mut tiles {
+            for chunk in &mut plans.plans {
+                for entity in chunk.built.drain(..) {
+                    commands.entity(entity).despawn();
+                }
+            }
+            plans.dirty = true;
+        }
+        models.effects = Some(Arc::clone(&effects));
+    }
     let frill = frill_density(cvars.as_deref());
     // A changed density changes every chunk's lawn, so everything built at
     // the old value is dropped and built again.

@@ -8,6 +8,8 @@
 //! shading.rs     the colour painted onto the terrain's vertices: MCCV
 //! textures.rs    the texture layers the terrain is painted with, and their
 //!                blend maps
+//! foliage.rs     the foliage sets a texture layer grows: GroundEffectTexture
+//!                read as sets of models, and the sets a project makes
 //! holes.rs       where the terrain is not drawn: the sixteen bits per chunk
 //! areas.rs       which place in the world a chunk is: one AreaTable id per
 //!                chunk
@@ -20,6 +22,7 @@
 
 pub(crate) mod areas;
 pub(crate) mod chunks;
+pub(crate) mod foliage;
 pub(crate) mod grade;
 pub(crate) mod holes;
 pub(crate) mod road;

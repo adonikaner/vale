@@ -66,10 +66,12 @@
 //! ## What a new layer grows
 //!
 //! `MCLY`'s `effectId` is the ground foliage a layer grows: the tufts and
-//! shrubs `render::foliage` plants. A new layer is written with the brush's
-//! `effect_id`. The panel sets that from [`usual_effect`] when a texture is
-//! chosen: the id the open tiles most often pair with the texture. Zero plants
-//! nothing. [`set_layer_effect`] changes the id on a layer already there.
+//! shrubs `render::foliage` plants. The same row also picks the footstep sound.
+//! A new layer is written with the brush's `effect_id`. The panel sets that
+//! from [`usual_effect`] when a texture is chosen: the id the open tiles most
+//! often pair with the texture. Zero plants nothing and walks as Dirt.
+//! [`set_layer_effect`] changes the id on a layer already there. The rows are
+//! read as sets in [`super::foliage`], and the Foliage window chooses them.
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -190,6 +192,8 @@ impl Plugin for TextureToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Textures>()
             .init_resource::<Held>()
+            .init_resource::<super::foliage::Foliage>()
+            .add_systems(Update, super::foliage::show_edited_sets)
             .add_systems(
                 Update,
                 (read_catalogue, stroke, live_regroup, live_paint)

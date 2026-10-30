@@ -697,6 +697,7 @@ fn place_one<S: SpawnSubject>(
         Err(_) => 0.0,
     });
     let guid = tool.create(session, &known, ground, facing, time.elapsed_secs_f64());
+    tool.roll_facing();
     tool.template_window = false;
     session.status = format!("{} placed as guid {guid}", known.label());
     info!(

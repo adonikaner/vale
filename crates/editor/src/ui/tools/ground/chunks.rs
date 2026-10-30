@@ -4,7 +4,9 @@
 
 use bevy_egui::egui;
 
+use crate::preview::portraits::Portraits;
 use crate::session::EditSession;
+use crate::tools::ground::foliage::{Foliage, Target};
 use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
 use crate::tools::placements::place;
@@ -17,13 +19,19 @@ use crate::ui::widgets::thumbnails::Thumbnails;
 /// more there are.
 const CENSUS_ROWS: usize = 6;
 
-/// The chunk panel's pages, in the order the control lists them.
-const PAGES: [(&str, crate::tools::ground::chunks::Page); 5] = [
-    ("Paste", crate::tools::ground::chunks::Page::Paste),
-    ("Stitch", crate::tools::ground::chunks::Page::Stitch),
-    ("Area", crate::tools::ground::chunks::Page::Area),
-    ("Holes", crate::tools::ground::chunks::Page::Holes),
-    ("Paint", crate::tools::ground::chunks::Page::Textures),
+/// The chunk panel's pages, in the order the control lists them, in two rows
+/// of three. Six in one row at the inspector's width cut "Foliage" short.
+const PAGES: [[(&str, crate::tools::ground::chunks::Page); 3]; 2] = [
+    [
+        ("Paste", crate::tools::ground::chunks::Page::Paste),
+        ("Stitch", crate::tools::ground::chunks::Page::Stitch),
+        ("Area", crate::tools::ground::chunks::Page::Area),
+    ],
+    [
+        ("Holes", crate::tools::ground::chunks::Page::Holes),
+        ("Paint", crate::tools::ground::chunks::Page::Textures),
+        ("Foliage", crate::tools::ground::chunks::Page::Foliage),
+    ],
 ];
 
 /// `n` with `noun`, pluralised by adding an s.
@@ -59,6 +67,9 @@ pub(in crate::ui::tools) fn chunks(
     thumbnails: &mut Thumbnails,
     session: &mut EditSession,
     tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+    assets: &vale_client::assets::GameAssets,
+    foliage: &mut Foliage,
+    portraits: &mut Portraits,
 ) {
     use crate::tools::ground::chunks as tool;
 
@@ -126,7 +137,9 @@ pub(in crate::ui::tools) fn chunks(
     });
 
     ui.add_space(8.0);
-    theme::segmented(ui, &mut chunks.page, &PAGES, |a, b| a == b);
+    for row in &PAGES {
+        theme::segmented(ui, &mut chunks.page, row, |a, b| a == b);
+    }
     ui.add_space(6.0);
     match chunks.page {
         tool::Page::Paste => chunks_paste(ui, chunks, session, any),
@@ -134,6 +147,7 @@ pub(in crate::ui::tools) fn chunks(
         tool::Page::Area => chunks_area(ui, chunks, areas, session, tables, &census),
         tool::Page::Holes => chunks_holes(ui, chunks, session, &census),
         tool::Page::Textures => chunks_textures(ui, chunks, textures, thumbnails, session, &census),
+        tool::Page::Foliage => chunks_foliage(ui, &chunks.selected, thumbnails, session, assets, foliage, portraits, &census),
     }
 
     ui.add_space(10.0);
@@ -679,9 +693,104 @@ fn chunks_textures(
         });
 }
 
+/// The Foliage page: each texture in the selection with what its layers
+/// grow, as a Foliage field that opens the Foliage window for every layer of
+/// that texture in the selection, and the two commands over every layer.
+#[allow(clippy::too_many_arguments)]
+fn chunks_foliage(
+    ui: &mut egui::Ui,
+    selected: &std::collections::BTreeSet<crate::tools::ground::chunks::Cell>,
+    thumbnails: &mut Thumbnails,
+    session: &mut EditSession,
+    assets: &vale_client::assets::GameAssets,
+    foliage: &mut Foliage,
+    portraits: &mut Portraits,
+    census: &crate::tools::ground::chunks::Census,
+) {
+    if census.open == 0 {
+        theme::note(
+            ui,
+            "Select chunks to see and change what their textures grow. Ctrl + A selects the tile \
+             under the pointer.",
+        );
+        return;
+    }
+    let catalogue = foliage.catalogue(session, assets);
+    let mut open: Option<(Option<String>, u32)> = None;
+    // `census.foliage` is by texture, so each texture's pairs are one run.
+    let mut at = 0;
+    while at < census.foliage.len() {
+        let texture = census.foliage[at].0.clone();
+        let pairs: Vec<(u32, usize)> = census.foliage[at..]
+            .iter()
+            .take_while(|(name, ..)| *name == texture)
+            .map(|&(_, id, layers)| (id, layers))
+            .collect();
+        at += pairs.len();
+        let ids: Vec<u32> = pairs.iter().map(|&(id, _)| id).collect();
+        let layers: usize = pairs.iter().map(|&(_, layers)| layers).sum();
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .fill(theme::SUNK)
+            .corner_radius(4.0)
+            .inner_margin(egui::Margin::symmetric(6, 5))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    swatch(ui, thumbnails, &texture);
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(textures::leaf(&texture)).size(theme::SMALL).color(theme::INK))
+                                .truncate(),
+                        )
+                        .on_hover_text(texture.clone());
+                        theme::note(ui, counted(layers, "layer"));
+                    });
+                });
+                if super::foliage::field(ui, catalogue.as_deref(), portraits, &ids, true, "") {
+                    let current = match ids.as_slice() {
+                        [one] => *one,
+                        _ => 0,
+                    };
+                    open = Some((Some(texture.clone()), current));
+                }
+                if ids.len() > 1 {
+                    for &(id, layers) in &pairs {
+                        // The row id first: two rows can name the same
+                        // models with another density or footstep sound.
+                        let name = catalogue.as_ref().map_or_else(String::new, |catalogue| catalogue.describe(id));
+                        theme::note(ui, format!("Row {id}: {name} \u{b7} {}", counted(layers, "layer")));
+                    }
+                }
+            });
+    }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui
+            .button("Set All Layers\u{2026}")
+            .on_hover_text("Choose one set for every layer of every selected chunk, whatever its texture.")
+            .clicked()
+        {
+            open = Some((None, 0));
+        }
+        if ui
+            .button("Clear Foliage")
+            .on_hover_text("Make every layer of the selected chunks grow nothing. One undo entry.")
+            .clicked()
+        {
+            let changed = crate::tools::ground::chunks::set_foliage(session, selected, None, 0);
+            session.status = format!("foliage cleared on {changed} chunk(s)");
+        }
+    });
+    if let Some((texture, current)) = open {
+        let shown = texture.clone().unwrap_or_default();
+        foliage.open(Target::Selection { texture }, &shown, current, session);
+    }
+}
+
 /// The chunk tool's inspector panel.
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
-    let crate::ui::tools::Subject { session, tables, .. } = subject;
+    let crate::ui::tools::Subject { session, tables, assets, .. } = subject;
     chunks(
         ui,
         &mut editing.chunks,
@@ -690,5 +799,8 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.thumbnails,
         session,
         tables,
+        assets,
+        &mut editing.foliage,
+        &mut editing.portraits,
     );
 }

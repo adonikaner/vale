@@ -558,6 +558,8 @@ fn nothing_to_show<S: SpawnView>(ui: &mut egui::Ui, subject: &Subject<'_, S>) {
 /// Select  Place | Handles  Move  Turn  Off | Models  Max  Markers  <other type>  <own switches>
 /// ```
 ///
+/// In Place, Random Facing takes the handles' place.
+///
 /// Select or Place is the placement tools' own switch; see
 /// `crate::tools::placements::place::Mode` for why it is a mode rather than a
 /// second rail entry. The handles are drawn only in Select, the one mode with
@@ -606,6 +608,16 @@ pub(crate) fn toolbar<S: SpawnView>(
                             gizmo.handles = handles;
                         }
                     }
+                }
+            }
+            if subject.tool.mode == place::Mode::Place {
+                bar_gap(ui);
+                let hover = "Give each placed spawn a new random facing, so a group placed with \
+                             several clicks does not all face one way. The spawn on the pointer \
+                             shows the next one.";
+                if bar_toggle(ui, subject.tool.random_facing, "Random Facing").on_hover_text(hover).clicked() {
+                    subject.tool.random_facing = !subject.tool.random_facing;
+                    subject.tool.roll_facing();
                 }
             }
             bar_gap(ui);
