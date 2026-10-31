@@ -421,6 +421,34 @@ pub fn describe(
                 .unwrap_or_default();
             (text(3), category)
         }
+        // A category is the skills panel heading it names, and where that
+        // heading is listed. Field 1 is the name and 10 the sort index.
+        "SkillLineCategory" => (text(1), format!("sort index {}", num(10))),
+        // A tier has no name. It is its steps' maximum values, `75 · 150 ·
+        // 225 · 300`, and the lines whose race/class rows name it.
+        "SkillTiers" => {
+            let steps: Vec<String> = (0..schema::SKILL_TIER_STEPS)
+                .map(|step| num(schema::SKILL_TIER_MAX + step))
+                .filter(|&max| max != 0)
+                .map(|max| max.to_string())
+                .collect();
+            let title = match steps.is_empty() {
+                true => "no steps".to_string(),
+                false => format!("Max {}", steps.join(" \u{b7} ")),
+            };
+            let lines = lines_on_tier(tables, index, id);
+            let sub = match lines.is_empty() {
+                true => "no skill line".to_string(),
+                false => lines,
+            };
+            (title, sub)
+        }
+        // A cost row has no name. It is its three costs, and the set it is
+        // in. Fields 2 to 4 are the costs and 1 the set.
+        "SkillCostsData" => (
+            format!("Costs {} \u{b7} {} \u{b7} {}", num(2), num(3), num(4)),
+            format!("set {}", num(1)),
+        ),
         // An ability has no name of its own. It is a spell in a skill line
         // for some classes, so the label is those three: `Fireball`, then
         // `Rank 1 · Fire · Mage`.
@@ -541,7 +569,6 @@ fn spell_label(tables: &dyn Tables, index: &mut dyn Index, id: u32) -> Option<(S
     ))
 }
 
-/// A skill line's name out of the open `SkillLine` table.
 /// The Name column of `SoundEntries` row `id`. `None` when the table is not
 /// open, no row has that id (0 is never a row), or the name is empty.
 fn sound_name(tables: &dyn Tables, id: u32) -> Option<String> {
@@ -559,11 +586,38 @@ fn faction_name(tables: &dyn Tables, id: u32) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
+/// A skill line's name out of the open `SkillLine` table, by field 3.
 fn skill_name(tables: &dyn Tables, id: u32) -> Option<String> {
     let lines = tables.table("SkillLine")?;
     lines
         .string_at(lines.row_of(id)?, 3)
         .filter(|name| !name.is_empty())
+}
+
+/// The skill lines whose `SkillRaceClassInfo` rows name tier `id`, as a
+/// phrase such as `Alchemy, Blacksmithing (+6)`, or empty when none does.
+/// A line with several race/class rows is named once.
+fn lines_on_tier(tables: &dyn Tables, index: &mut dyn Index, id: u32) -> String {
+    let Some(infos) = tables.table("SkillRaceClassInfo") else {
+        return String::new();
+    };
+    let mut names: Vec<String> = Vec::new();
+    for at in index.used_by("SkillTiers", id) {
+        if at.table != "SkillRaceClassInfo" {
+            continue;
+        }
+        let skill = infos.u32_at(at.record, 1).unwrap_or_default();
+        let name = skill_name(tables, skill).unwrap_or_else(|| format!("skill {skill}"));
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    match names.len() {
+        0 => String::new(),
+        1 | 2 => names.join(", "),
+        n => format!("{}, {} (+{})", names[0], names[1], n - 2),
+    }
 }
 
 /// A race or class mask in words: the names of its set bits, or nothing

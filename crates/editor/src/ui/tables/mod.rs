@@ -12,6 +12,8 @@
 //! commands.rs   the commands on a row, carried out, and the right-click menus
 //!               of a row and a field
 //! learning.rs   a spell's Learning section and a skill line's members
+//! skills.rs     a skill line's spells and a skill tier's steps, on those
+//!               rows' forms
 //! zones.rs      an area's sub-areas, on an `AreaTable` row's form
 //! unschemad.rs  a table with no schema: every field as its number
 //! previews.rs   the previews of a row: the stage beside a form and in a
@@ -48,14 +50,16 @@
 //! for data, because a floating panel of loose controls looks like a debug
 //! window.
 //!
-//! ## Three workspaces draw this panel
+//! ## Which workspaces draw this panel
 //!
-//! Spells, with the spell chain and the skill tables as two rows of tabs.
-//! Sets, the `ItemSet` table, which is a part of the Items workspace: the
-//! strip at the head of the list switches to the item list and back
+//! Every workspace whose tool is built with `browsed` in `crate::tools`.
+//! Spells draws the spell chain as a row of tabs. Skills, Factions and Sound
+//! draw one table per part, and Sets and the display tables are parts of the
+//! Items, Creatures and Game Objects workspaces: the strip at the head of the
+//! list switches between a workspace's parts
 //! (`crate::ui::shell::rail::parts`). Tables, whose list is every file of
-//! `DBFilesClient\` until one is chosen ([`browser::table_list`]), and which then
-//! draws that table like any other, with a link back to the list.
+//! `DBFilesClient\` until one is chosen ([`browser::table_list`]), then draws
+//! that table like any other, with a link back to the list.
 //!
 //! ## A row that exists only for another row is edited on that row's form
 //!
@@ -64,7 +68,8 @@
 //! the `SkillLineAbility` rows that put the spell in a skill line, with
 //! their classes, races and next rank, and the spells that teach it, each
 //! with a button that makes one. A skill line's form lists the
-//! `SkillRaceClassInfo` rows that say who has it ([`learning::skill_line_members`]).
+//! `SkillRaceClassInfo` rows that say who has it ([`learning::skill_line_members`])
+//! and its spells ([`skills::abilities_block`]).
 //! A set's item column says when the item's own `set_id` does not name the
 //! set, and a picked item has it written.
 //!
@@ -172,6 +177,7 @@ pub(crate) mod learning;
 pub(crate) mod modals;
 pub(crate) mod previews;
 pub(crate) mod reference;
+pub(crate) mod skills;
 pub(crate) mod sounds;
 pub(crate) mod sound_files;
 pub(crate) mod storyboard;

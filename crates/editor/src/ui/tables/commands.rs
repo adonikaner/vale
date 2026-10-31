@@ -91,6 +91,25 @@ pub(super) fn run_command(
             tables::learning::add_race_class_row(work.session, id);
             show(work);
         }
+        Command::AddSpellToSkillLine => {
+            if !work.session.open_table(work.assets, ability::TABLE) {
+                return;
+            }
+            if let Some(at) = tables::learning::add_ability_to_line(work.session, id) {
+                show(work);
+                // The new row is drawn in the skill line form's Abilities
+                // section.
+                work.browser.view = View::Fields;
+                work.browser.modal = Some(Modal::Pick {
+                    table: ability::TABLE.to_string(),
+                    record: at,
+                    field: ability::SPELL,
+                    points_at: "Spell",
+                });
+                work.browser.pick_query.clear();
+                work.browser.pick_focus = true;
+            }
+        }
         Command::AddSubArea => {
             if let Some(at) = tables::zones::add_sub_area(work.session, id) {
                 work.session.status = "sub-area added; enter its name".to_string();

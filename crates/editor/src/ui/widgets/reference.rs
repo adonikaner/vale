@@ -273,8 +273,9 @@ fn quest_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
 }
 
 /// A client table's row by name, as a link that opens the table browser on
-/// it. The table is opened through the session the first time it is asked
-/// for.
+/// it, in the workspace `Tool::for_table` names: a `SkillLine` row in Skills,
+/// a `Faction` row in Factions. The table is opened through the session the
+/// first time it is asked for.
 fn dbc_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str, id: u32) {
     if !open_for_names(resolver.session, resolver.assets, table) {
         meaning(ui, format!("{table}\u{2026}"));
@@ -288,7 +289,8 @@ fn dbc_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, table: &'static str,
         );
         return;
     };
-    let hover = format!("Open {table} {id} in the table browser.");
+    let workspace = crate::tools::Tool::for_table(table).name();
+    let hover = format!("Open {table} {id} in {workspace}.");
     if link(ui, &name, theme::ACCENT, &hover) {
         resolver.asks.push(ShellAsk::ShowRow(table, id));
     }

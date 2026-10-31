@@ -795,11 +795,11 @@ fn trainer_row(
                 super::loot::state_dot(ui, shown.life, faults);
                 let hover = match facts {
                     Some(facts) if facts.is_teaching() => format!(
-                        "Teaching spell {}, which teaches spell {}. Open the teaching spell in the \
-                         table browser.",
+                        "Teaching spell {}, which teaches spell {}. Open the teaching spell in \
+                         Spells.",
                         lesson.spell, facts.teaches
                     ),
-                    _ => format!("Spell {}. Open it in the table browser.", lesson.spell),
+                    _ => format!("Spell {}. Open it in Spells.", lesson.spell),
                 };
                 if crate::ui::widgets::reference::link(ui, name, theme::ACCENT, &hover) {
                     subject.asks.push(crate::ui::shell::asks::ShellAsk::ShowRow("Spell", lesson.spell));
@@ -860,10 +860,14 @@ fn trainer_row(
         // The skill it needs, chosen from SkillLine.dbc, and the rank in it.
         let groups = subject.services.skill_lines.as_deref().unwrap_or(&[]);
         let menu = egui::Id::new(("reqskill", list.table, key.text()));
-        if let Some(skill) = skill_cell(ui, menu, groups, lesson.skill) {
+        let mut open = false;
+        if let Some(skill) = skill_cell(ui, menu, groups, lesson.skill, &mut open) {
             if skill != lesson.skill {
                 write(subject, "reqskill", skill.to_string());
             }
+        }
+        if open {
+            subject.asks.push(crate::ui::shell::asks::ShellAsk::ShowRow("SkillLine", lesson.skill));
         }
         let mut value = lesson.skill_value as i64;
         let ranked = ui
@@ -901,12 +905,19 @@ fn open_skill_lines(subject: &mut Subject<'_>) {
 /// the professions first, and a filter at its head. Text in the filter
 /// narrows the list by name or id; a number in it also offers that id as it
 /// is, so a line the table does not hold can be written. Returns the id
-/// chosen.
+/// chosen. While a skill is set, the menu's first entry opens it in the
+/// Skills workspace, and `open` is set when it is pressed.
 ///
 /// The menu stays open while the filter is typed into, and closes on a
 /// choice or a click outside it. The filter is kept in egui's memory under
 /// the menu's id, and is emptied on a choice.
-fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[teaching::LineGroup], skill: u32) -> Option<u32> {
+fn skill_cell(
+    ui: &mut egui::Ui,
+    menu: egui::Id,
+    groups: &[teaching::LineGroup],
+    skill: u32,
+    open: &mut bool,
+) -> Option<u32> {
     let shown = match skill {
         0 => "no skill".to_string(),
         id => match teaching::skill_name(groups, id) {
@@ -939,6 +950,18 @@ fn skill_cell(ui: &mut egui::Ui, menu: egui::Id, groups: &[teaching::LineGroup],
                 typed.request_focus();
             }
             ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+            if skill != 0
+                && filter.trim().is_empty()
+                && crate::ui::widgets::reference::link(
+                    ui,
+                    &format!("Open {} in Skills", teaching::skill_name(groups, skill).unwrap_or("this skill line")),
+                    theme::ACCENT,
+                    &format!("Open SkillLine {skill} in the Skills workspace."),
+                )
+            {
+                *open = true;
+                ui.close();
+            }
             // A typed number is offered as it is, whether or not the table
             // holds it.
             if let Ok(id) = filter.trim().parse::<u32>() {

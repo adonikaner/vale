@@ -302,9 +302,24 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         // as the sound's name.
         "ItemDisplayInfo" => &["SpellVisual", "ItemGroupSounds", "SoundEntries"],
         // The skill tables, read without the spell chain: each is labelled
-        // from the others.
-        "SkillLine" => &["SkillLineCategory", "SpellIcon"],
-        "SkillLineAbility" | "SkillRaceClassInfo" => &["SkillLine", "Spell"],
+        // from the others. A skill line's form lists its abilities by spell
+        // name and its race/class rows with their tiers, so a line reads the
+        // tables those are in.
+        "SkillLine" => &[
+            "SkillLineCategory",
+            "SpellIcon",
+            "SkillLineAbility",
+            "SkillRaceClassInfo",
+            "SkillTiers",
+            "Spell",
+        ],
+        "SkillLineAbility" => &["SkillLine", "Spell"],
+        "SkillRaceClassInfo" => &["SkillLine", "SkillTiers", "Spell"],
+        // The tables that refer to a category, a tier and a cost row, so a
+        // row's Used by is complete, and `SkillLine`, which a race/class row
+        // is labelled from.
+        "SkillLineCategory" | "SkillCostsData" => &["SkillLine"],
+        "SkillTiers" => &["SkillRaceClassInfo", "SkillLine"],
         // `Map`, which an area's label names, and the five tables its sound
         // and liquid columns refer to, so each reference is drawn as a name.
         //
@@ -391,7 +406,10 @@ pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
 /// The skill group: `SkillLine` is a skill, `SkillLineAbility` says which
 /// spells belong to it and for whom, and `SkillRaceClassInfo` says which races
 /// and classes have it. Both of the last two refer to `SkillLine`, and
-/// `SkillLineAbility` refers to `Spell` twice.
+/// `SkillLineAbility` refers to `Spell` twice. `SkillLineCategory` is the
+/// heading a line is listed under, `SkillTiers` the maximum values a
+/// race/class row's line steps through, and `SkillCostsData` the cost table
+/// `SkillLine.SkillCosts` names.
 ///
 /// `ItemSet` stands alone: its items are [`Kind::Item`], its bonuses refer to
 /// `Spell` and its requirement to `SkillLine`.
@@ -441,6 +459,9 @@ pub const ALL: &[&Schema] = &[
     &SKILL_LINE,
     &SKILL_LINE_ABILITY,
     &SKILL_RACE_CLASS_INFO,
+    &SKILL_LINE_CATEGORY,
+    &SKILL_TIERS,
+    &SKILL_COSTS_DATA,
     &ITEM_SET,
     &AREA_TABLE,
     &ZONE_MUSIC,
@@ -2352,6 +2373,159 @@ pub const SKILL_RACE_CLASS_INFO: Schema = Schema {
     ],
 };
 
+/// `SkillLineCategory.dbc`: 8 rows of 11 fields. A row is one heading of the
+/// skills panel: Attributes, Weapon Skills, Class Skills, Armor
+/// Proficiencies, Secondary Skills, Languages, Professions and Not
+/// Displayed. The names follow the commented-out `SkillLineCategoryEntry` in
+/// vmangos' `DBCStructure.h`.
+///
+/// vmangos does not read this file. Its `SkillCategory` enum fixes the same
+/// ids, 5 to 12.
+pub(crate) const SKILL_LINE_CATEGORY: Schema = Schema {
+    table: "SkillLineCategory",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "Name", Kind::Text, "The heading the skills panel shows over the category's lines."),
+        c(2, "Name koKR", Kind::Locale(LOCALES[1])),
+        c(3, "Name frFR", Kind::Locale(LOCALES[2])),
+        c(4, "Name deDE", Kind::Locale(LOCALES[3])),
+        c(5, "Name enCN", Kind::Locale(LOCALES[4])),
+        c(6, "Name enTW", Kind::Locale(LOCALES[5])),
+        c(7, "Name esES", Kind::Locale(LOCALES[6])),
+        c(8, "Name esMX", Kind::Locale(LOCALES[7])),
+        c(9, "NameFlags", Kind::LocaleFlags),
+        ca(
+            10,
+            "SortIndex",
+            Kind::Int,
+            "Where the heading is listed on the skills panel, from 1. Attributes 1, Class \
+             Skills 2, Professions 3, Secondary Skills 4, Weapon Skills 5, Armor Proficiencies \
+             6, Languages 7, Not Displayed 8.",
+        ),
+    ],
+    sections: &[
+        Section {
+            name: "Category",
+            fields: &[0, 10],
+        },
+        Section {
+            name: "Name",
+            fields: &[1, 2, 3, 4, 5, 6, 7, 8, 9],
+        },
+    ],
+};
+
+/// The step a `SkillTiers` column is for: the columns `Cost n` and
+/// `MaxValue n` together describe step `n`, 1 to [`SKILL_TIER_STEPS`].
+pub const SKILL_TIER_STEPS: usize = 16;
+
+/// The first `Cost` column of `SkillTiers`; step `n`'s cost is field
+/// `SKILL_TIER_COST + n - 1`.
+pub const SKILL_TIER_COST: usize = 1;
+
+/// The first `MaxValue` column of `SkillTiers`; step `n`'s maximum is field
+/// `SKILL_TIER_MAX + n - 1`.
+pub const SKILL_TIER_MAX: usize = 17;
+
+/// `SkillTiers.dbc`: 26 rows of 33 fields. A row is the run of maximum
+/// values a skill line steps through, as a profession steps through 75, 150,
+/// 225 and 300, with a cost beside each step. A `SkillRaceClassInfo` row
+/// names one in `SkillTier`. The names follow vmangos' `SkillTiersEntry`,
+/// whose comments call the two runs `m_cost` and `m_valueMax`.
+///
+/// vmangos reads this file from `DataDir`. A line whose race/class row names
+/// a tier the file holds has ranks (`SKILL_RANGE_RANK` in `ObjectMgr.cpp`'s
+/// `GetSkillRangeType`); any other line's maximum follows its category or the
+/// character's level.
+pub const SKILL_TIERS: Schema = Schema {
+    table: "SkillTiers",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "Cost 1",
+            Kind::Int,
+            "Step 1's cost: from 0 to 200 over the 26 shipped rows. One row has a cost on a \
+             later step: 100, 400 and 1000 for its three steps.",
+        ),
+        c(2, "Cost 2", Kind::Int),
+        c(3, "Cost 3", Kind::Int),
+        c(4, "Cost 4", Kind::Int),
+        c(5, "Cost 5", Kind::Int),
+        c(6, "Cost 6", Kind::Int),
+        c(7, "Cost 7", Kind::Int),
+        c(8, "Cost 8", Kind::Int),
+        c(9, "Cost 9", Kind::Int),
+        c(10, "Cost 10", Kind::Int),
+        c(11, "Cost 11", Kind::Int),
+        c(12, "Cost 12", Kind::Int),
+        c(13, "Cost 13", Kind::Int),
+        c(14, "Cost 14", Kind::Int),
+        c(15, "Cost 15", Kind::Int),
+        c(16, "Cost 16", Kind::Int),
+        ca(
+            17,
+            "MaxValue 1",
+            Kind::Int,
+            "Step 1's maximum skill value. 75 on nine shipped rows, eight of which step on \
+             through 150, 225 and 300; 1 on six; 300 or 1000 on the rest, which have one \
+             step.",
+        ),
+        c(18, "MaxValue 2", Kind::Int),
+        c(19, "MaxValue 3", Kind::Int),
+        c(20, "MaxValue 4", Kind::Int),
+        c(21, "MaxValue 5", Kind::Int),
+        c(22, "MaxValue 6", Kind::Int),
+        c(23, "MaxValue 7", Kind::Int),
+        c(24, "MaxValue 8", Kind::Int),
+        c(25, "MaxValue 9", Kind::Int),
+        c(26, "MaxValue 10", Kind::Int),
+        c(27, "MaxValue 11", Kind::Int),
+        c(28, "MaxValue 12", Kind::Int),
+        c(29, "MaxValue 13", Kind::Int),
+        c(30, "MaxValue 14", Kind::Int),
+        c(31, "MaxValue 15", Kind::Int),
+        c(32, "MaxValue 16", Kind::Int),
+    ],
+    sections: &[
+        Section {
+            name: "Tier",
+            fields: &[0],
+        },
+        Section {
+            name: "Steps",
+            fields: &[
+                17, 1, 18, 2, 19, 3, 20, 4, 21, 5, 22, 6, 23, 7, 24, 8, 25, 9, 26, 10, 27, 11, 28,
+                12, 29, 13, 30, 14, 31, 15, 32, 16,
+            ],
+        },
+    ],
+};
+
+/// `SkillCostsData.dbc`: 1,500 rows of 5 fields, in three sets of 500 that
+/// `SkillCostsId` names: rows 1 to 500 are set 22, 501 to 1,000 set 23 and
+/// 1,001 to 1,500 set 24. Within a set the costs never fall from one row to
+/// the next, and are the same from its 264th row on. vmangos has no
+/// structure for this file; `SkillCostsId` follows the `m_skillCostsID` its
+/// `SkillLineEntry` comments give `SkillLine.SkillCosts`.
+///
+/// vmangos does not read this file, and no shipped `SkillLine` row names a
+/// set.
+pub(crate) const SKILL_COSTS_DATA: Schema = Schema {
+    table: "SkillCostsData",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(1, "SkillCostsId", Kind::Int, "The set the row is in: 22, 23 or 24."),
+        ca(2, "Cost 1", Kind::Int, "From 1 to 23 over the shipped rows."),
+        ca(3, "Cost 2", Kind::Int, "From 2 to 33 over the shipped rows."),
+        ca(4, "Cost 3", Kind::Int, "From 3 to 44 over the shipped rows."),
+    ],
+    sections: &[Section {
+        name: "Costs",
+        fields: &[0, 1, 2, 3, 4],
+    }],
+};
+
 /// `ItemSet.dbc`: 172 rows of 45 fields. A row is one set: its name, up to
 /// seventeen items and up to eight bonus spells, each with the number of
 /// pieces that grants it. The indices are those [`super::itemset`] reads, and
@@ -3630,6 +3804,26 @@ mod tests {
         assert!(chain_for("FactionTemplate").contains(&"Faction"));
     }
 
+    /// The three skill tables added beside the line, its abilities and its
+    /// race/class rows have the shipped shapes, a tier's steps pair each
+    /// maximum with its cost, and each table's chain holds the tables that
+    /// refer to it.
+    #[test]
+    fn the_skill_schemas_have_the_shipped_shapes() {
+        assert_eq!(SKILL_LINE_CATEGORY.columns.len(), 11);
+        assert_eq!(SKILL_LINE_CATEGORY.name_field(), Some(1));
+        assert_eq!(SKILL_TIERS.columns.len(), 1 + 2 * SKILL_TIER_STEPS);
+        assert_eq!(SKILL_TIERS.columns[SKILL_TIER_COST].name, "Cost 1");
+        assert_eq!(SKILL_TIERS.columns[SKILL_TIER_MAX].name, "MaxValue 1");
+        assert_eq!(SKILL_TIERS.columns[SKILL_TIER_MAX + SKILL_TIER_STEPS - 1].name, "MaxValue 16");
+        assert_eq!(SKILL_COSTS_DATA.columns.len(), 5);
+        assert_eq!(SKILL_LINE.references_to("SkillLineCategory"), [1]);
+        assert_eq!(SKILL_RACE_CLASS_INFO.references_to("SkillTiers"), [6]);
+        assert!(chain_for("SkillTiers").contains(&"SkillRaceClassInfo"));
+        assert!(chain_for("SkillLineCategory").contains(&"SkillLine"));
+        assert!(chain_for("SkillLine").contains(&"SkillLineAbility"));
+    }
+
     /// Every `SoundType` is named once, in order.
     #[test]
     fn every_sound_type_is_named_once() {
@@ -4062,15 +4256,12 @@ mod tests {
         // These are referenced deliberately without a schema of their own.
         // Each opens as numbered fields, which is better than a reference the
         // browser refuses to follow.
-        const UNDESCRIBED: [&str; 9] = [
+        const UNDESCRIBED: [&str; 6] = [
             "ChrRaces",
             "HelmetGeosetVisData",
             "ItemVisuals",
             "LiquidType",
             "LoadingScreens",
-            "SkillCostsData",
-            "SkillLineCategory",
-            "SkillTiers",
             "SoundProviderPreferences",
         ];
         for target in UNDESCRIBED {

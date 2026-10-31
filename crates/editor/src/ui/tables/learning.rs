@@ -1,6 +1,7 @@
 //! The rows that exist only for a spell or a skill line, drawn on that row's
 //! form: a spell's Learning section (its `SkillLineAbility` rows and the
-//! spells that teach it) and a skill line's `SkillRaceClassInfo` rows.
+//! spells that teach it) and a skill line's `SkillRaceClassInfo` rows. A
+//! skill line's own spells are `super::skills`'.
 
 use bevy_egui::egui;
 
@@ -20,8 +21,8 @@ use vale_assets::tables::schema;
 ///
 /// Neither is required. Most spells are in no skill line and have no teaching
 /// spell, and the section then says so in one line each and offers to make
-/// one. A row made here is an ordinary row of its table: the Abilities tab
-/// lists it, and `open` goes to it.
+/// one. A row made here is an ordinary row of its table: the Skills
+/// workspace's Abilities part lists it, and `open` goes to it there.
 pub(super) fn learning(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     use vale_assets::tables::spellbook::spell_fields;
     let Some((spell, teaches)) = work.session.table("Spell").and_then(|spells| {
@@ -134,7 +135,7 @@ fn owned_row(
 
 /// The skill lines a spell is in, as the `SkillLineAbility` rows that name
 /// it, each with its skill line, its classes and races, whether learning the
-/// line gives the spell, and the spell that crate::uisedes it.
+/// line gives the spell, and the spell that supersedes it.
 fn skill_lines_of(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     use tables::learning::ability;
     ui.label(egui::RichText::new("Skill lines").color(theme::INK_DIM));
@@ -273,11 +274,11 @@ fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     }
 }
 
-/// A skill line's two integrated blocks: who has it, as the
-/// `SkillRaceClassInfo` rows that name the line, and how many spells are in
-/// it, with a link to them.
+/// A skill line's two blocks of other tables' rows: who has it, as the
+/// `SkillRaceClassInfo` rows that name the line, then its spells, as
+/// [`super::skills::abilities_block`] lists them.
 pub(super) fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
-    use tables::learning::{ability, race_class};
+    use tables::learning::race_class;
     let Some(skill) = work
         .session
         .table("SkillLine")
@@ -333,41 +334,5 @@ pub(super) fn skill_line_members(ui: &mut egui::Ui, work: &mut Workspace<'_>, re
                 tables::rows::delete_row(work.session, race_class::TABLE, row);
             }
         });
-
-    egui::CollapsingHeader::new(egui::RichText::new("Spells in skill line").size(14.0).strong())
-        .default_open(true)
-        .show(ui, |ui| {
-            if !work.session.open_table(work.assets, ability::TABLE) {
-                theme::note(ui, "SkillLineAbility did not open");
-                return;
-            }
-            let count = tables::learning::abilities_in(work.browser, work.session, skill).len();
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(match count {
-                        1 => "1 ability".to_string(),
-                        n => format!("{n} abilities"),
-                    })
-                    .color(theme::INK),
-                );
-                if count > 0
-                    && crate::ui::widgets::reference::link(
-                        ui,
-                        "Show in Abilities",
-                        theme::ACCENT,
-                        "Open the Abilities tab filtered by this skill line's name. To add a \
-                         spell to the skill line, use the spell's own form.",
-                    )
-                {
-                    let name = work
-                        .session
-                        .table("SkillLine")
-                        .and_then(|lines| lines.string_at(record, 3))
-                        .unwrap_or_default();
-                    work.browser.back.push(("SkillLine".to_string(), record));
-                    work.browser.look_at(ability::TABLE);
-                    work.browser.query = name;
-                }
-            });
-        });
+    super::skills::abilities_block(ui, work, record);
 }

@@ -335,9 +335,17 @@ pub(in crate::ui) fn fields(
                     super::sound_files::files_block(ui, work, record);
                     continue;
                 }
+                // `SkillTiers`' sixteen MaxValue and sixteen Cost columns
+                // are one list of steps, most of them empty. `steps_block`
+                // draws a line per step with both numbers side by side.
+                if schema.table == "SkillTiers" && section.name == "Steps" {
+                    super::skills::steps_block(ui, work, record);
+                    continue;
+                }
                 section_block(ui, work, record, schema, section);
             }
-            // …and so are the rows that say who has a skill line.
+            // …and so are the rows that say who has a skill line and which
+            // spells are in it.
             if schema.table == "SkillLine" {
                 skill_line_members(ui, work, record);
             }
@@ -573,11 +581,21 @@ pub(super) fn plural(table: &str, count: usize) -> String {
         "Faction" => "faction",
         "FactionTemplate" => "faction template",
         "FactionGroup" => "faction group",
+        "SkillLine" => "skill line",
+        "SkillLineCategory" => "skill category",
+        "SkillTiers" => "skill tier",
+        "SkillRaceClassInfo" => "race/class row",
+        "SkillLineAbility" => {
+            return match count {
+                1 => "ability".to_string(),
+                _ => "abilities".to_string(),
+            };
+        }
         // These table names are not nouns, so their rows are counted as
         // rows: `3 CreatureSoundData rows`.
         "CreatureSoundData" | "NPCSounds" | "ZoneMusic" | "ZoneIntroMusicTable" | "SoundAmbience"
         | "GameObjectDisplayInfo" | "CreatureDisplayInfo" | "CreatureModelData" | "ItemDisplayInfo"
-        | "ItemGroupSounds" => {
+        | "ItemGroupSounds" | "SkillCostsData" => {
             return match count {
                 1 => format!("{table} row"),
                 _ => format!("{table} rows"),

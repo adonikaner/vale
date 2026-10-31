@@ -112,6 +112,22 @@ pub(crate) fn add_ability(session: &mut EditSession, spell: u32) -> Option<usize
     at
 }
 
+/// Put a spell in `skill`: a new `SkillLineAbility` row naming the line, as
+/// one undo entry. The spell is not chosen here; the skill line's form opens
+/// the spell picker on the new row. `ReqSkillValue` starts at 1, as in
+/// [`add_ability`].
+pub(crate) fn add_ability_to_line(session: &mut EditSession, skill: u32) -> Option<usize> {
+    session.history.begin("Add a spell to a skill line");
+    let at = push_row(
+        session,
+        ability::TABLE,
+        &[(ability::SKILL, skill), (ability::REQ_SKILL_VALUE, 1)],
+        &[],
+    );
+    session.history.end();
+    at
+}
+
 /// Give `skill` to races and classes: a new `SkillRaceClassInfo` row naming
 /// it, for every race and every class, as one undo entry. The flags start at
 /// zero, which lists the line normally and gives it a spellbook tab.

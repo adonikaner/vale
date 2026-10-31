@@ -20,6 +20,9 @@ pub(crate) enum Command {
     LookLike,
     CloneChain,
     GiveToRacesAndClasses,
+    /// A new `SkillLineAbility` row in a skill line, with the spell chosen in
+    /// the picker it opens. Offered on a skill line's row.
+    AddSpellToSkillLine,
     /// A new sub-area of a zone. Offered on a zone's row.
     AddSubArea,
     /// Give the area to the Areas tool's brush and switch to that tool.
@@ -43,7 +46,7 @@ pub(crate) fn commands(table: &str) -> Vec<Command> {
             Command::LookLike,
         ],
         "SpellVisual" => vec![Command::CloneChain],
-        "SkillLine" => vec![Command::GiveToRacesAndClasses],
+        "SkillLine" => vec![Command::GiveToRacesAndClasses, Command::AddSpellToSkillLine],
         "AreaTable" => vec![Command::AddSubArea, Command::PaintArea],
         "CreatureDisplayInfo" | "CreatureDisplayInfoExtra" => vec![Command::RebakeSkin],
         _ => Vec::new(),
@@ -80,6 +83,7 @@ pub(crate) fn command_label(
         Command::LookLike => "Visual from another spell\u{2026}".to_string(),
         Command::CloneChain => "Clone chain".to_string(),
         Command::GiveToRacesAndClasses => "Add race/class row".to_string(),
+        Command::AddSpellToSkillLine => "Add a spell\u{2026}".to_string(),
         // Offered on a zone. A sub-area's own sub-area would be a third
         // level, which the table does not have.
         Command::AddSubArea => {
@@ -128,6 +132,10 @@ pub(crate) fn command_about(command: Command) -> &'static str {
         Command::GiveToRacesAndClasses => {
             "Adds a SkillRaceClassInfo row for this skill line with every race, every class \
              and no flags set. One undo entry."
+        }
+        Command::AddSpellToSkillLine => {
+            "Adds a SkillLineAbility row in this skill line and opens the spell picker. One \
+             undo entry. The row is for every race and every class until its masks are set."
         }
         Command::AddSubArea => {
             "Adds an AreaTable row with this zone as its parent, on the zone's map, with the \

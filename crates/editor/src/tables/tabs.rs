@@ -20,20 +20,29 @@ pub(crate) const TRIGGER_TABS: [(&str, &str); 1] = [("Triggers", "AreaTrigger")]
 /// drawn.
 pub(crate) const SAFE_LOC_TABS: [(&str, &str); 1] = [("Graveyards", "WorldSafeLocs")];
 
-/// The spell workspace's tabs: the spell chain in the order a cast reads it,
-/// then the three skill tables. The workspace draws them [`TAB_ROW`] to a
-/// row, so the chain is the first row and the skill tables the second.
-/// Callers read the tabs through [`crate::tools::Tool::tabs`], which chooses
-/// between this, [`LIGHT_TABS`], [`TAXI_TABS`] and [`SET_TABS`].
-pub(crate) const SPELL_TABS: [(&str, &str); 7] = [
+/// The spell workspace's tabs: the spell chain in the order a cast reads it.
+/// The skill tables are the Skills workspace's parts. Callers read the tabs
+/// through [`crate::tools::Tool::tabs`], which chooses between this,
+/// [`LIGHT_TABS`], [`TAXI_TABS`] and the one-table lists below.
+pub(crate) const SPELL_TABS: [(&str, &str); 4] = [
     ("Spells", "Spell"),
     ("Visuals", "SpellVisual"),
     ("Kits", "SpellVisualKit"),
     ("Effects", "SpellVisualEffectName"),
-    ("Skill lines", "SkillLine"),
-    ("Abilities", "SkillLineAbility"),
-    ("Race & class", "SkillRaceClassInfo"),
 ];
+
+/// The tables of the Skills workspace's six parts, one table to a part, so
+/// no tab is drawn: `SkillLine` (a skill), `SkillLineAbility` (a spell in a
+/// line), `SkillRaceClassInfo` (who has a line), `SkillLineCategory` (the
+/// skills panel's headings), `SkillTiers` (the maximum values a line steps
+/// through) and `SkillCostsData`. The top bar's Skills menu and the strip at
+/// the head of the list switch between the parts.
+pub(crate) const SKILL_LINE_TABS: [(&str, &str); 1] = [("Lines", "SkillLine")];
+pub(crate) const SKILL_ABILITY_TABS: [(&str, &str); 1] = [("Abilities", "SkillLineAbility")];
+pub(crate) const SKILL_RACE_CLASS_TABS: [(&str, &str); 1] = [("Race & Class", "SkillRaceClassInfo")];
+pub(crate) const SKILL_CATEGORY_TABS: [(&str, &str); 1] = [("Categories", "SkillLineCategory")];
+pub(crate) const SKILL_TIER_TABS: [(&str, &str); 1] = [("Tiers", "SkillTiers")];
+pub(crate) const SKILL_COST_TABS: [(&str, &str); 1] = [("Costs", "SkillCostsData")];
 
 /// How many tabs the middle workspace draws to a row.
 pub(crate) const TAB_ROW: usize = 4;

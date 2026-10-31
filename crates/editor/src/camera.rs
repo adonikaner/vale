@@ -451,8 +451,18 @@ pub(crate) fn fly(
     // widget has focus, and a button that was clicked keeps the focus, so
     // returning here also stopped the wheel and the right-drag after a press
     // of the view bar's MAP button, until a click in the world took the focus
-    // away.
-    let typing = wants.wants_keyboard_input();
+    // away. A held Ctrl, Alt or Super makes the key a shortcut, so Ctrl+S
+    // saves without the camera backing away. Shift is the sprint, not one of
+    // these.
+    let shortcut = keys.any_pressed([
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+    ]);
+    let typing = wants.wants_keyboard_input() || shortcut;
     // A wheel notch over a panel, and a drag that began on one, also belong to
     // the panel. `in_world` is the shell's answer, not egui's; see the module
     // comment.
@@ -581,7 +591,8 @@ fn top_down(
     time: &Time,
     in_world: bool,
     steering: bool,
-    // Whether a panel has the keyboard; the keys are its then.
+    // Whether a panel has the keyboard or a shortcut is held; the keys are
+    // not the camera's then.
     typing: bool,
 ) {
     // Yards per physical pixel. The world camera renders the whole window, and

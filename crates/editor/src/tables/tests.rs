@@ -5,7 +5,7 @@ use crate::session::EditSession;
 use super::browser::Browser;
 use super::labels::describe;
 use super::tabs::table_named;
-use super::learning::{INSTANT_CAST, abilities_of, ability, add_ability, add_race_class_row, add_teaching_spell, race_class, race_class_rows_of, teachers_of};
+use super::learning::{INSTANT_CAST, abilities_in, abilities_of, ability, add_ability, add_ability_to_line, add_race_class_row, add_teaching_spell, race_class, race_class_rows_of, teachers_of};
 use super::zones::{add_sub_area, add_zone, area, sub_areas_of};
 use vale_edit::dbc::places::next_explore_bit;
 use super::rows::{SET_ITEMS, add_light, copy_light_params, move_between_sets, set_lists};
@@ -141,6 +141,36 @@ fn a_spell_joins_a_skill_line_through_a_row_of_its_own() {
     undo(&mut session);
     assert_eq!(session.tables[ability::TABLE].record_count(), 1);
     assert!(abilities_of(&mut browser, &session, 133).is_empty());
+    let _ = std::fs::remove_dir_all(&install);
+}
+
+/// A skill line gains a spell the same way from its own form: a new ability
+/// row naming the line, with the spell chosen after, as one entry that one
+/// undo takes out.
+#[test]
+fn a_skill_line_gains_a_spell_through_a_row_of_its_own() {
+    let (mut session, install) = session("line-ability");
+    let mut abilities = empty(15);
+    add(&mut abilities, 69, &[(ability::SKILL, 6), (ability::SPELL, 143)], &[]);
+    session.tables.insert(ability::TABLE.to_string(), abilities);
+    let mut lines = empty(22);
+    add(&mut lines, 6, &[], &[]);
+    session.tables.insert("SkillLine".to_string(), lines);
+    let mut browser = Browser::default();
+    assert_eq!(abilities_in(&mut browser, &session, 6), vec![0]);
+
+    let depth = session.history.depth_done();
+    let at = add_ability_to_line(&mut session, 6).expect("a row");
+    assert_eq!(session.history.depth_done(), depth + 1);
+    let table = &session.tables[ability::TABLE];
+    assert_eq!(table.u32_at(at, 0), Some(70), "the next id");
+    assert_eq!(table.u32_at(at, ability::SKILL), Some(6));
+    assert_eq!(table.u32_at(at, ability::SPELL), Some(0), "the spell is chosen after");
+    assert_eq!(table.u32_at(at, ability::REQ_SKILL_VALUE), Some(1));
+    assert_eq!(abilities_in(&mut browser, &session, 6), vec![0, at]);
+
+    undo(&mut session);
+    assert_eq!(abilities_in(&mut browser, &session, 6), vec![0]);
     let _ = std::fs::remove_dir_all(&install);
 }
 
@@ -633,7 +663,7 @@ fn a_row_s_commands_are_its_table_s_and_are_worded_for_the_row() {
         ]
     );
     assert_eq!(commands("SpellVisual")[0], Command::CloneChain);
-    assert_eq!(commands("SkillLine")[0], Command::GiveToRacesAndClasses);
+    assert_eq!(commands("SkillLine")[..2], [Command::GiveToRacesAndClasses, Command::AddSpellToSkillLine]);
     assert_eq!(
         commands("AreaTable"),
         vec![
@@ -920,4 +950,13 @@ fn a_followed_reference_moves_the_tool_to_the_table_s_workspace() {
     assert_eq!(owner_after_follow(Tool::Spells, "Faction", true), Some(Tool::Factions));
     assert_eq!(owner_after_follow(Tool::Spells, "Faction", false), None);
     assert_eq!(owner_after_follow(Tool::Factions, "FactionGroup", false), Some(Tool::FactionGroups));
+    // A spell's skill line opens the Skills workspace, and a skill line's
+    // spell opens Spells; an ability's row opens the Abilities part. During
+    // a playtest the skill line stays in the spell's browser.
+    assert_eq!(owner_after_follow(Tool::Spells, "SkillLine", true), Some(Tool::SkillLines));
+    assert_eq!(owner_after_follow(Tool::Spells, "SkillLine", false), None);
+    assert_eq!(owner_after_follow(Tool::SkillLines, "Spell", true), Some(Tool::Spells));
+    assert_eq!(owner_after_follow(Tool::SkillLines, "SkillLineAbility", true), Some(Tool::SkillAbilities));
+    assert_eq!(owner_after_follow(Tool::SkillRaceClasses, "SkillTiers", true), Some(Tool::SkillTiers));
+    assert_eq!(owner_after_follow(Tool::SkillLines, "SkillLineCategory", false), Some(Tool::SkillCategories));
 }

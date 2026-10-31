@@ -178,8 +178,8 @@ pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         .find(|(_, table)| *table == work.browser.table)
         .map(|(_, table)| *table)
         .unwrap_or("");
-    // A single tab is not drawn, and more than a row's worth are drawn in
-    // rows: the spell workspace's chain, then its skill tables.
+    // A single tab is not drawn, and a list longer than `TAB_ROW` is drawn
+    // in rows of that many.
     let mut current = before;
     if tabs.len() > 1 {
         for row in tabs.chunks(tables::tabs::TAB_ROW) {

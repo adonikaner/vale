@@ -111,6 +111,35 @@ pub(crate) enum Tool {
     /// document is not the world: the workspace replaces the viewport rather
     /// than drawing over it.
     Spells,
+    /// `SkillLine.dbc`: the skills a character can have, from a weapon skill
+    /// to a profession. See [`crate::tables`].
+    ///
+    /// The first part of the Skills workspace; the others are
+    /// [`Tool::SkillAbilities`], [`Tool::SkillRaceClasses`],
+    /// [`Tool::SkillCategories`], [`Tool::SkillTiers`] and
+    /// [`Tool::SkillCosts`]. A DBC edited in the table browser. The server
+    /// reads its copy from `DataDir` at startup, so it is not available
+    /// during a playtest, on [`Tool::Factions`]' terms.
+    SkillLines,
+    /// `SkillLineAbility.dbc`: the spells in each skill line, and the races
+    /// and classes each is for. A part of the Skills workspace. The server
+    /// reads its copy from `skill_line_ability` at startup.
+    SkillAbilities,
+    /// `SkillRaceClassInfo.dbc`: the races and classes that have a skill
+    /// line, how the skills panel lists it, and the tier it steps through. A
+    /// part of the Skills workspace. The server reads it from `DataDir` at
+    /// startup.
+    SkillRaceClasses,
+    /// `SkillLineCategory.dbc`: the skills panel's headings. A part of the
+    /// Skills workspace, and a client file the server does not read.
+    SkillCategories,
+    /// `SkillTiers.dbc`: the maximum values a skill line steps through. A
+    /// part of the Skills workspace. The server reads it from `DataDir` at
+    /// startup.
+    SkillTiers,
+    /// `SkillCostsData.dbc`: three sets of 500 cost rows. A part of the
+    /// Skills workspace, and a client file the server does not read.
+    SkillCosts,
     /// `Light.dbc` and its chain: the sun, the fill, the sky dome, the fog and
     /// the water's colour, per map and per zone. See [`crate::tables`].
     ///
@@ -502,6 +531,18 @@ const SOUND_PARTS: [(&str, Tool); 7] = [
     ("Items", Tool::ItemSounds),
 ];
 
+/// The Skills workspace's parts: the lines, the spells in them and who has
+/// them, then the three tables a line's rows refer to. Six, so the strip
+/// draws two rows of three.
+const SKILL_PARTS: [(&str, Tool); 6] = [
+    ("Lines", Tool::SkillLines),
+    ("Abilities", Tool::SkillAbilities),
+    ("Race & Class", Tool::SkillRaceClasses),
+    ("Categories", Tool::SkillCategories),
+    ("Tiers", Tool::SkillTiers),
+    ("Costs", Tool::SkillCosts),
+];
+
 /// The Factions workspace's parts: the factions, the templates that belong
 /// to them, and the groups the templates' masks name.
 const FACTION_PARTS: [(&str, Tool); 3] = [
@@ -763,6 +804,112 @@ pub(crate) const SPECS: &[Spec] = &[
              world.",
             "Spell",
             &crate::tables::tabs::SPELL_TABS,
+        )
+    },
+    Spec {
+        parts: &SKILL_PARTS,
+        menu: Some(Entry {
+            name: "Skill Lines",
+            about: "SkillLine.dbc: every skill a character can have, from weapon skills to \
+                    professions, with its category, icon, the races and classes that have it, \
+                    and the spells in it. The server loads its copy at startup.",
+        }),
+        ..browsed(
+            Tool::SkillLines,
+            "Skills",
+            Place::Bar("Skills"),
+            "SkillLine.dbc and the five tables around it: the spells in each line, the races \
+             and classes that have it, the skills panel's headings, the tiers of maximum \
+             values a line steps through, and the cost sets. The server loads SkillLine, \
+             SkillRaceClassInfo and SkillTiers from its dbc folder and the abilities from \
+             skill_line_ability, each at startup.",
+            "SkillLine",
+            &crate::tables::tabs::SKILL_LINE_TABS,
+        )
+    },
+    Spec {
+        parts: &SKILL_PARTS,
+        menu: Some(Entry {
+            name: "Skill Abilities",
+            about: "SkillLineAbility.dbc: a spell in a skill line, for the races and classes its \
+                    masks name, with the next rank and a recipe's skill values. The server \
+                    loads its copy from skill_line_ability at startup.",
+        }),
+        ..browsed(
+            Tool::SkillAbilities,
+            "Skill Abilities",
+            Place::Part,
+            "",
+            "SkillLineAbility",
+            &crate::tables::tabs::SKILL_ABILITY_TABS,
+        )
+    },
+    Spec {
+        parts: &SKILL_PARTS,
+        menu: Some(Entry {
+            name: "Skill Race & Class",
+            about: "SkillRaceClassInfo.dbc: the races and classes that have a skill line, how \
+                    the skills panel lists it and the tier it steps through. The server loads \
+                    its copy at startup.",
+        }),
+        ..browsed(
+            Tool::SkillRaceClasses,
+            "Skill Race & Class",
+            Place::Part,
+            "",
+            "SkillRaceClassInfo",
+            &crate::tables::tabs::SKILL_RACE_CLASS_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SKILL_PARTS,
+        menu: Some(Entry {
+            name: "Skill Categories",
+            about: "SkillLineCategory.dbc: the headings of the skills panel and their order. A \
+                    client file; the server does not read it.",
+        }),
+        ..browsed(
+            Tool::SkillCategories,
+            "Skill Categories",
+            Place::Part,
+            "",
+            "SkillLineCategory",
+            &crate::tables::tabs::SKILL_CATEGORY_TABS,
+        )
+    },
+    Spec {
+        parts: &SKILL_PARTS,
+        menu: Some(Entry {
+            name: "Skill Tiers",
+            about: "SkillTiers.dbc: the maximum values a skill line steps through, such as 75, \
+                    150, 225 and 300, with a cost for each step. The server loads its copy at \
+                    startup.",
+        }),
+        ..browsed(
+            Tool::SkillTiers,
+            "Skill Tiers",
+            Place::Part,
+            "",
+            "SkillTiers",
+            &crate::tables::tabs::SKILL_TIER_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &SKILL_PARTS,
+        menu: Some(Entry {
+            name: "Skill Costs",
+            about: "SkillCostsData.dbc: three sets of 500 rows of three costs each. A client \
+                    file; the server does not read it.",
+        }),
+        ..browsed(
+            Tool::SkillCosts,
+            "Skill Costs",
+            Place::Part,
+            "",
+            "SkillCostsData",
+            &crate::tables::tabs::SKILL_COST_TABS,
         )
     },
     Spec {
@@ -1242,30 +1389,36 @@ impl Tool {
             Tool::Creatures => 18,
             Tool::GameObjects => 19,
             Tool::Spells => 20,
-            Tool::Items => 21,
-            Tool::ItemSets => 22,
-            Tool::ItemDisplays => 23,
-            Tool::Quests => 24,
-            Tool::CreatureData => 25,
-            Tool::CreatureDisplays => 26,
-            Tool::GameObjectData => 27,
-            Tool::ObjectDisplays => 28,
-            Tool::Zones => 29,
-            Tool::Sounds => 30,
-            Tool::CreatureSounds => 31,
-            Tool::NpcSounds => 32,
-            Tool::ZoneMusic => 33,
-            Tool::ZoneIntros => 34,
-            Tool::Ambience => 35,
-            Tool::ItemSounds => 36,
-            Tool::Factions => 37,
-            Tool::FactionTemplates => 38,
-            Tool::FactionGroups => 39,
-            Tool::GameEvents => 40,
-            Tool::Pools => 41,
-            Tool::Tables => 42,
-            Tool::Assets => 43,
-            Tool::GameFiles => 44,
+            Tool::SkillLines => 21,
+            Tool::SkillAbilities => 22,
+            Tool::SkillRaceClasses => 23,
+            Tool::SkillCategories => 24,
+            Tool::SkillTiers => 25,
+            Tool::SkillCosts => 26,
+            Tool::Items => 27,
+            Tool::ItemSets => 28,
+            Tool::ItemDisplays => 29,
+            Tool::Quests => 30,
+            Tool::CreatureData => 31,
+            Tool::CreatureDisplays => 32,
+            Tool::GameObjectData => 33,
+            Tool::ObjectDisplays => 34,
+            Tool::Zones => 35,
+            Tool::Sounds => 36,
+            Tool::CreatureSounds => 37,
+            Tool::NpcSounds => 38,
+            Tool::ZoneMusic => 39,
+            Tool::ZoneIntros => 40,
+            Tool::Ambience => 41,
+            Tool::ItemSounds => 42,
+            Tool::Factions => 43,
+            Tool::FactionTemplates => 44,
+            Tool::FactionGroups => 45,
+            Tool::GameEvents => 46,
+            Tool::Pools => 47,
+            Tool::Tables => 48,
+            Tool::Assets => 49,
+            Tool::GameFiles => 50,
         }
     }
 
@@ -1306,7 +1459,12 @@ impl Tool {
     /// startup only, and an area is put on the ground with a tool that keeps
     /// the viewport. [`Tool::Factions`] and [`Tool::FactionTemplates`] do
     /// not for the first of those reasons: the server reads `faction` and
-    /// `faction_template` at startup only.
+    /// `faction_template` at startup only. Nor do [`Tool::SkillLines`],
+    /// [`Tool::SkillAbilities`], [`Tool::SkillRaceClasses`] and
+    /// [`Tool::SkillTiers`]: the server reads `SkillLine`,
+    /// `SkillRaceClassInfo` and `SkillTiers` from `DataDir` and the abilities
+    /// from `skill_line_ability`, each at startup only. The Skills
+    /// workspace's other two parts are client files and survive.
     ///
     /// A DBC is the same file whoever reads it, so a spell or any other table
     /// can be edited while a character stands in the world. [`Tool::Items`] is
@@ -1381,9 +1539,11 @@ impl Tool {
     ///
     /// Items and Sets are one workspace of two tools because they are two
     /// documents: an item is a row of the server's database and a set is a
-    /// DBC table, so each has its own list, form and save. The spell
-    /// workspace's skill tables are tabs of one tool instead ([`Tool::tabs`]),
-    /// since they are tables in the same browser.
+    /// DBC table, so each has its own list, form and save. The Skills and
+    /// Factions workspaces are parts of one browser each, so the top bar's
+    /// menu names every table, and a table that does not survive a playtest
+    /// can be told from one that does. A chain one tool walks in order, as
+    /// the spell chain is, is tabs of that tool instead ([`Tool::tabs`]).
     pub(crate) fn parts(self) -> &'static [(&'static str, Tool)] {
         self.spec().parts
     }
@@ -1396,8 +1556,8 @@ impl Tool {
 
     /// The workspace a DBC table is browsed in, for a reference followed
     /// from another form: Sets for `ItemSet`, Zones for `AreaTable`, Spells
-    /// for the spell chain and the skill tables, and Tables for everything
-    /// else.
+    /// for the spell chain, a Skills part for each skill table, and Tables
+    /// for everything else.
     ///
     /// A workspace whose tabs name the table comes first, then one whose
     /// chain holds it ([`Spec::chain`]).
@@ -1606,9 +1766,9 @@ mod tests {
 
     /// The tools that work during a playtest are four workspaces, with the
     /// Sets part of Items, and nothing that keeps the viewport. Zones,
-    /// Creatures, Game Objects, Factions, Faction Templates, Game Events and
-    /// Pools are the workspaces that do not: the server reads each one's
-    /// tables at startup.
+    /// Creatures, Game Objects, Factions, Faction Templates, the four skill
+    /// tables the server reads, Game Events and Pools are the workspaces that
+    /// do not: the server reads each one's tables at startup.
     #[test]
     fn only_the_workspaces_survive_a_playtest() {
         for tool in ALL {
@@ -1619,6 +1779,10 @@ mod tests {
                     | Tool::GameObjectData
                     | Tool::Factions
                     | Tool::FactionTemplates
+                    | Tool::SkillLines
+                    | Tool::SkillAbilities
+                    | Tool::SkillRaceClasses
+                    | Tool::SkillTiers
                     | Tool::GameEvents
                     | Tool::Pools
             );
@@ -1909,7 +2073,7 @@ mod tests {
         assert!(Tool::ItemSets.survives_playtest() && Tool::Tables.survives_playtest());
 
         assert_eq!(Tool::for_table("ItemSet"), Tool::ItemSets);
-        for table in ["Spell", "SpellVisualKit", "SpellIcon", "SkillLine", "SkillLineAbility"] {
+        for table in ["Spell", "SpellVisualKit", "SpellIcon"] {
             assert_eq!(Tool::for_table(table), Tool::Spells, "{table}");
         }
         for table in ["LiquidType", "Map", "Lock"] {
@@ -1928,6 +2092,20 @@ mod tests {
         }
         assert!(!Tool::Factions.survives_playtest() && !Tool::FactionTemplates.survives_playtest());
         assert!(Tool::FactionGroups.survives_playtest());
+        // Each skill table is a part of the Skills workspace, which a spell's
+        // skill line reaches although the spell chain also reads the table.
+        for (table, part) in [
+            ("SkillLine", Tool::SkillLines),
+            ("SkillLineAbility", Tool::SkillAbilities),
+            ("SkillRaceClassInfo", Tool::SkillRaceClasses),
+            ("SkillLineCategory", Tool::SkillCategories),
+            ("SkillTiers", Tool::SkillTiers),
+            ("SkillCostsData", Tool::SkillCosts),
+        ] {
+            assert_eq!(Tool::for_table(table), part, "{table}");
+            assert_eq!(part.workspace(), Tool::SkillLines, "{table}");
+        }
+        assert!(Tool::SkillCategories.survives_playtest() && !Tool::SkillTiers.survives_playtest());
         // Each sound table is a part of the Sound workspace.
         for (table, part) in [
             ("SoundEntries", Tool::Sounds),
@@ -1944,10 +2122,10 @@ mod tests {
         assert_eq!(Tool::for_table("CreatureDisplayInfo"), Tool::CreatureDisplays);
         assert_eq!(Tool::Zones.table(), Some("AreaTable"));
         assert!(Tool::Zones.covers_viewport());
-        // The skill tables are the spell workspace's second row of tabs.
+        // The spell workspace's tabs are the spell chain, one row of them.
         let tabs = Tool::Spells.tabs();
-        assert_eq!(tabs.len(), crate::tables::tabs::TAB_ROW + 3);
-        assert_eq!(tabs[crate::tables::tabs::TAB_ROW].1, "SkillLine");
+        assert_eq!(tabs.len(), crate::tables::tabs::TAB_ROW);
+        assert!(tabs.iter().all(|&(_, table)| !table.starts_with("Skill")));
     }
 
 }

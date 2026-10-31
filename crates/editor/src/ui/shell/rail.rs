@@ -6,10 +6,12 @@
 //!
 //! Tools that act on the world (terrain, grading, holes, texture layers,
 //! doodads, area assignment, lights, water) are tiles on the side rail, and
-//! editors that do not (Spells, Items, Quests, Creatures, Game Objects, Zones,
-//! Tables) are parts of the workspace control on the top bar. [`Tool::surface`] decides it: a subject for which
-//! the viewport is the document is a tile on the rail, and a subject whose
-//! workspace replaces the viewport is a part of the workspace control.
+//! editors that do not (Spells, Skills, Items, Quests, Creatures, Game
+//! Objects, Zones, Sound, Factions, Spawning, Tables, Assets) are parts of the
+//! workspace control on the top bar. [`Tool::surface`] decides it: a subject
+//! for which the viewport is the document is a tile on the rail, and a
+//! subject whose workspace replaces the viewport is a part of the workspace
+//! control.
 //!
 //! ```text
 //! the rail      Terrain  the ground itself: eight tools, each of which writes
@@ -21,12 +23,13 @@
 //!               Spawns   rows of vmangos' database that stand in the world:
 //!                        creature and gameobject spawns, picked and moved in
 //!                        the viewport
-//! the top bar   World | Spells | Items | Quests | Creatures | Game Objects |
-//!               Zones | Tables: World returns to the rail's last tool; the
-//!               other seven replace the viewport. Tables is last because it
-//!               reaches every table the others do not. Spells, Items, Quests
-//!               and Tables are available during a playtest, and nothing else
-//!               is
+//! the top bar   World, then the workspaces in `SPECS` order: Spells, Skills,
+//!               Items, Quests, Creatures, Game Objects, Zones, Sound,
+//!               Factions, Spawning, Tables and Assets. World returns to the
+//!               rail's last tool; the others replace the viewport. Tables
+//!               reaches every table the others do not. A workspace of several
+//!               parts is a menu of them. Which ones a playtest leaves
+//!               available is `Tool::survives_playtest`'s answer
 //! the corner    Select and Measure, which change nothing and are returned to
 //!               rather than started with
 //! ```
@@ -468,9 +471,12 @@ pub(crate) fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
     }
     let mut chosen = tool;
     // At most `TAB_ROW` (four) parts to a row, as the tabs are drawn. The
-    // segments share the row's width, so the Sound workspace's six names on
-    // one row would be truncated.
-    for row in parts.chunks(crate::tables::tabs::TAB_ROW) {
+    // segments share the row's width, so the Sound workspace's seven names on
+    // one row would be truncated. The rows are balanced: seven parts are four
+    // and three, and the Skills workspace's six are three and three rather
+    // than four and two.
+    let rows = parts.len().div_ceil(crate::tables::tabs::TAB_ROW);
+    for row in parts.chunks(parts.len().div_ceil(rows)) {
         ui.allocate_ui(egui::vec2(ui.available_width(), 24.0), |ui| {
             theme::segmented(ui, &mut chosen, row, |a, b| a == b);
         });
