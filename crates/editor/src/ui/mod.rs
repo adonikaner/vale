@@ -288,6 +288,9 @@ pub(crate) struct Editing<'w> {
     /// The terrain and texture brushes' presets.
     pub(crate) brushes: ResMut<'w, crate::prefs::brushes::Brushes>,
     pub(crate) placing: ResMut<'w, crate::tools::placements::place::Placing>,
+    /// The doodad and WMO panels' list for replacing the selection's model.
+    /// See [`crate::tools::placements::swap`].
+    pub(crate) swap: ResMut<'w, crate::tools::placements::swap::Swap>,
     pub(crate) tiles: ResMut<'w, crate::map::tiles::Tiles>,
     pub(crate) mapview: ResMut<'w, map::mapview::MapView>,
     pub(crate) browser: ResMut<'w, crate::tables::browser::Browser>,

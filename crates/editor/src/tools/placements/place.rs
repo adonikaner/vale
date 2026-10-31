@@ -50,22 +50,17 @@
 //! extension. The picker's paths come from the archives' own listing and are
 //! `.m2`: `vale catalogue` reports 5,816 `.m2` under `World\` and no `.mdx`. A
 //! duplicate's path comes from the tile's `MMDX`, and `MMDX` holds `.mdx`, the
-//! pre-1.0 extension no archive holds. Every reader in this project swaps it,
-//! and `vale_assets::world::m2::model_path` is the one implementation of the
-//! swap. This tool did not swap it.
+//! pre-1.0 extension no archive holds. `vale_assets::world::m2::model_path` is
+//! the one implementation of the swap.
 //!
-//! Nothing reported the failure. `ModelCache` failed the path, so the preview
-//! never appeared; `resolve_doodads` failed it too and dropped the placement,
-//! so the click drew nothing; and the record written into the file was valid,
-//! so when anything caused the tile to be read again (a drag, an undo, a
-//! playtest) every copy appeared at once. The bug report read "when
-//! duplicating, the preview does not show, nor do the duplicated placements,
-//! until you move something in the world", which matches that sequence.
+//! An unresolved `.mdx` path fails without a report. `ModelCache` fails it, so
+//! no preview appears; `resolve_doodads` fails it, so the click draws nothing;
+//! and the record written is valid, so every copy appears at once when the
+//! tile is next read (a drag, an undo, a playtest).
 //!
 //! So [`Placing::arm`] resolves the path, and it is the only entry point. The
-//! swap depends on the kind because it is the model rule: a `.wmo` path is
-//! already what the archive holds, and passing one through `model_path` would
-//! ask for `stormwind.wmo.m2`.
+//! swap depends on the kind: a `.wmo` path is already what the archive holds,
+//! and passing one through `model_path` would ask for `stormwind.wmo.m2`.
 //!
 //! ## Scattering: each drop is rolled inside stated bounds
 //!
@@ -82,6 +77,17 @@
 //! The random numbers come from a 64-bit xorshift in this file, seeded from
 //! the clock on first use. Three numbers a second do not justify a dependency
 //! and the crates it would pull in, and nothing here needs to be reproducible.
+//!
+//! ## Clusters
+//!
+//! The doodad tool has a third mode, Cluster, in which a click places several
+//! doodads from the cluster's own list of models, spread around the pointer;
+//! see [`super::cluster`]. It is Place mode with [`super::cluster::Cluster::on`]
+//! set, because the spawn tools share [`Mode`] and have no cluster; [`Switch`]
+//! is the three-way view of the two fields the panel and the number keys use.
+//! The chosen single model is kept while Cluster is on, so switching back to
+//! Place finds it on the cursor again. This module's own preview and click do
+//! nothing in Cluster mode.
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -90,7 +96,7 @@ use vale_assets::world::adt::PlacedModel;
 use vale_client::assets::GameAssets;
 use vale_client::render::axes;
 use vale_client::render::doodads::{PendingDoodads, PlacedDoodad};
-use vale_client::render::models::{Lookup, Materials, ModelCache};
+use vale_client::render::models::{Lookup, Materials, ModelCache, ModelDraw};
 use vale_client::render::terrain::TerrainTile;
 use vale_client::render::wmos::{self as wmo_render, PendingWmos, WmoCache};
 use vale_edit::adt::place::{Building, Doodad as Placement, MINTED_BASE};
@@ -147,6 +153,31 @@ pub(crate) enum Mode {
 /// The two modes, as a list for the panel.
 pub(crate) const MODES: [(&str, Mode); 2] = [("Select", Mode::Select), ("Place", Mode::Place)];
 
+/// The doodad and WMO panels' mode switch: [`Mode`], with the doodad tool's
+/// Place split into one model and a cluster. See the module comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Switch {
+    Select,
+    Place,
+    Cluster,
+}
+
+/// The doodad tool's three modes. The WMO tool has the first two; see
+/// [`switches`].
+pub(crate) const SWITCHES: [(&str, Switch); 3] = [
+    ("Select", Switch::Select),
+    ("Place", Switch::Place),
+    ("Cluster", Switch::Cluster),
+];
+
+/// The modes a placement tool's switch offers: Cluster is doodads only.
+pub(crate) fn switches(kind: Kind) -> &'static [(&'static str, Switch)] {
+    match kind {
+        Kind::Doodad => &SWITCHES,
+        Kind::Wmo => &SWITCHES[..2],
+    }
+}
+
 /// How the next drop is rolled. See the module comment.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Scatter {
@@ -168,6 +199,42 @@ impl Default for Scatter {
             turn: true,
             size: (0.9, 1.1),
             tilt_max: 0.0,
+        }
+    }
+}
+
+/// One draw inside [`Scatter`]'s bounds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Rolled {
+    /// Degrees about up, anywhere in the circle, or `None` when
+    /// [`Scatter::turn`] is off.
+    pub(crate) turn: Option<f32>,
+    /// A multiplier between [`Scatter::size`]'s two bounds.
+    pub(crate) scale: f32,
+    /// Degrees about the world's x and y axes, at most
+    /// [`Scatter::tilt_max`] off the vertical.
+    pub(crate) tilt: [f32; 2],
+}
+
+impl Scatter {
+    /// Draw a turn, a size and a tilt inside these bounds. [`Placing::roll`]
+    /// takes it for the next drop, and each member of a cluster takes one of
+    /// its own.
+    pub(crate) fn draw(&self, seed: &mut u64) -> Rolled {
+        let turn = self.turn.then(|| unit(seed) * 360.0);
+        let (low, high) = self.size;
+        let (low, high) = (low.min(high), low.max(high));
+        let scale = (low + (high - low) * unit(seed)).clamp(*SCALE.start(), *SCALE.end());
+        let most = self.tilt_max.clamp(0.0, 90.0);
+        // A lean of up to `most` in a random direction: an angle drawn once and
+        // split between the two axes, so the corner of the square is not twice
+        // as far as the side.
+        let lean = unit(seed) * most;
+        let heading = unit(seed) * std::f32::consts::TAU;
+        Rolled {
+            turn,
+            scale,
+            tilt: [lean * heading.cos(), lean * heading.sin()],
         }
     }
 }
@@ -199,8 +266,10 @@ pub(crate) struct Placing {
     pub(crate) scale: f32,
     /// How the next drop is rolled after each one.
     pub(crate) scatter: Scatter,
-    /// The roll's state; zero until first used.
-    seed: u64,
+    /// Several doodads per click. See [`super::cluster`].
+    pub(crate) cluster: super::cluster::Cluster,
+    /// The roll's state; zero until first used. See [`Self::seeded`].
+    pub(super) seed: u64,
     /// Every model path the archives and the project name, per kind, read
     /// lazily and again when the project's files change.
     pub(crate) doodads: Vec<String>,
@@ -248,6 +317,7 @@ impl Default for Placing {
             // draws at no size, so the click appears to do nothing.
             scale: 1.0,
             scatter: Scatter::default(),
+            cluster: Default::default(),
             seed: 0,
             doodads: Vec::new(),
             wmos: Vec::new(),
@@ -267,12 +337,17 @@ impl Default for Placing {
 }
 
 impl Placing {
-    /// Whether a click in the world would place something.
+    /// Whether a click in the world would place something: a model on the
+    /// cursor in Place mode, or a cluster with at least one model in Cluster
+    /// mode.
     ///
     /// Both picks check this and ignore the click while it is true, because a
     /// click that places must not also select. See the module comment.
     pub(crate) fn armed(&self) -> bool {
-        self.path.is_some()
+        match self.clustering() {
+            true => !self.cluster.models.is_empty(),
+            false => self.path.is_some(),
+        }
     }
 
     /// Arm with a model, at a rotation and scale, and show the half of the panel
@@ -292,7 +367,41 @@ impl Placing {
         self.tilt = [0.0; 2];
         self.scale = scale;
         self.mode = Mode::Place;
+        // A model armed by the picker, "Duplicate" or "Place this model" is
+        // placed on its own, so arming leaves Cluster mode.
+        self.cluster.on = false;
         self.trouble = None;
+    }
+
+    /// Which of [`SWITCHES`] the panel shows as chosen.
+    pub(crate) fn switch(&self) -> Switch {
+        match (self.mode, self.clustering()) {
+            (Mode::Select, _) => Switch::Select,
+            (Mode::Place, false) => Switch::Place,
+            (Mode::Place, true) => Switch::Cluster,
+        }
+    }
+
+    /// Change mode, as the panel's switch, the number keys and the right-click
+    /// menu do. Select puts down the model on the cursor; Place and Cluster
+    /// keep it, so switching between the two loses neither the chosen model
+    /// nor the cluster's list.
+    pub(crate) fn set_switch(&mut self, to: Switch) {
+        match to {
+            Switch::Select => {
+                self.mode = Mode::Select;
+                self.disarm();
+            }
+            Switch::Place => {
+                self.mode = Mode::Place;
+                self.cluster.on = false;
+            }
+            Switch::Cluster => {
+                self.mode = Mode::Place;
+                self.kind = Kind::Doodad;
+                self.cluster.on = true;
+            }
+        }
     }
 
     /// Draw the next turn, size and tilt inside [`Scatter`]'s bounds, if it
@@ -301,6 +410,19 @@ impl Placing {
         if !self.scatter.on {
             return;
         }
+        let scatter = self.scatter;
+        let rolled = scatter.draw(self.seeded());
+        if let Some(turn) = rolled.turn {
+            self.turn = turn;
+        }
+        if self.kind == Kind::Doodad {
+            self.scale = rolled.scale;
+            self.tilt = rolled.tilt;
+        }
+    }
+
+    /// The roll's state, seeded from the clock on first use.
+    pub(super) fn seeded(&mut self) -> &mut u64 {
         if self.seed == 0 {
             self.seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -308,22 +430,13 @@ impl Placing {
                 .unwrap_or(0x9E37_79B9_7F4A_7C15)
                 | 1;
         }
-        if self.scatter.turn {
-            self.turn = unit(&mut self.seed) * 360.0;
-        }
-        if self.kind == Kind::Doodad {
-            let (low, high) = self.scatter.size;
-            let (low, high) = (low.min(high), low.max(high));
-            self.scale =
-                (low + (high - low) * unit(&mut self.seed)).clamp(*SCALE.start(), *SCALE.end());
-            let most = self.scatter.tilt_max.clamp(0.0, 90.0);
-            // A lean of up to `most` in a random direction: an angle drawn
-            // once and split between the two axes, so the corner of the
-            // square is not twice as far as the side.
-            let lean = unit(&mut self.seed) * most;
-            let heading = unit(&mut self.seed) * std::f32::consts::TAU;
-            self.tilt = [lean * heading.cos(), lean * heading.sin()];
-        }
+        &mut self.seed
+    }
+
+    /// Whether the doodad tool is in Cluster mode, where a click places a
+    /// cluster rather than one model.
+    pub(crate) fn clustering(&self) -> bool {
+        self.mode == Mode::Place && self.kind == Kind::Doodad && self.cluster.on
     }
 
     /// Clear the model on the cursor. `Escape` and a tool change call this.
@@ -397,7 +510,16 @@ impl Plugin for PlaceToolPlugin {
         app.init_resource::<Placing>().add_systems(Update, (scripted, modes));
         app.add_systems(
             Update,
-            (read_catalogue, aim, ground_lean, follow, commit)
+            (
+                read_catalogue,
+                aim,
+                ground_lean,
+                follow,
+                commit,
+                super::cluster::lay_out_next,
+                super::cluster::follow,
+                super::cluster::commit,
+            )
                 .chain()
                 .after(crate::pick::aim)
                 // Before both picks, so the click that places does not also
@@ -409,33 +531,35 @@ impl Plugin for PlaceToolPlugin {
     }
 }
 
-/// The number row on the doodad and WMO tools: `1` Select, `2` Place.
+/// The number row on the doodad and WMO tools: `1` Select, `2` Place, and on
+/// the doodad tool `3` Cluster.
 ///
-/// Two choices and no second row, so a shifted digit means nothing here
-/// rather than meaning the unshifted one. `Tab` also works, as a toggle
-/// rather than a third key, because Select and Place is a pair people toggle
-/// between rather than choose from. See [`crate::tools::modes`].
-fn modes(row: crate::tools::modes::NumberRow, mut placing: ResMut<Placing>) {
+/// One row only, so a shifted digit means nothing here rather than meaning the
+/// unshifted one. `Tab` toggles between Select and whichever of Place and
+/// Cluster was last used, because people toggle between selecting and
+/// placing rather than choose among three. See [`crate::tools::modes`].
+fn modes(row: crate::tools::modes::NumberRow, tool: Res<Tool>, mut placing: ResMut<Placing>) {
     let Some(press) = row.read(&[Tool::Doodads, Tool::Wmos]) else { return };
     if press.shift {
         return;
     }
+    let kind = match *tool {
+        Tool::Wmos => Kind::Wmo,
+        _ => Kind::Doodad,
+    };
     let wanted = match press.digit {
-        Some(at) => MODES.get(at).map(|&(_, mode)| mode),
+        Some(at) => switches(kind).get(at).map(|&(_, to)| to),
+        // `cluster.on` is kept while in Select, so the toggle returns to the
+        // placing mode that was left.
         None if press.tab => Some(match placing.mode {
-            Mode::Select => Mode::Place,
-            Mode::Place => Mode::Select,
+            Mode::Select if kind == Kind::Doodad && placing.cluster.on => Switch::Cluster,
+            Mode::Select => Switch::Place,
+            Mode::Place => Switch::Select,
         }),
         None => None,
     };
-    if let Some(mode) = wanted {
-        placing.mode = mode;
-        // Switching to Select puts down whatever was on the cursor, which is
-        // what the panel's own switch does — see [`aim`], which would do it a
-        // frame later anyway.
-        if mode == Mode::Select {
-            placing.disarm();
-        }
+    if let Some(to) = wanted {
+        placing.set_switch(to);
     }
 }
 
@@ -490,7 +614,7 @@ fn scripted(
 /// no mesh of its own; the root carries it because the root holds the
 /// transform. Nothing else in this crate names it. See the module comment on
 /// why a ghost must not carry `Doodad` or `WmoPart`.
-#[derive(Component)]
+#[derive(Component, Clone)]
 struct Ghost;
 
 /// Read a model list the first time it is wanted, and again after the
@@ -584,6 +708,17 @@ fn aim(
         placing.disarm();
         return;
     }
+    // A switch between the doodad and WMO tools puts down the other tool's
+    // model, and makes the kind the open tool's, which is what decides whether
+    // Cluster mode applies; see [`Placing::clustering`].
+    let kind = match *tool {
+        Tool::Wmos => Kind::Wmo,
+        _ => Kind::Doodad,
+    };
+    if placing.kind != kind {
+        placing.disarm();
+        placing.kind = kind;
+    }
     if placing.mode != Mode::Place {
         placing.disarm();
         return;
@@ -591,8 +726,14 @@ fn aim(
     if !placing.armed() || wants.wants_keyboard_input() {
         return;
     }
+    // `Escape` clears the model on the cursor in Place mode. Cluster mode has
+    // a list rather than one model, and clearing it would lose the list, so
+    // there `Escape` returns to Select.
     if keys.just_pressed(KeyCode::Escape) {
-        placing.disarm();
+        match placing.clustering() {
+            true => placing.set_switch(Switch::Select),
+            false => placing.disarm(),
+        }
         return;
     }
 
@@ -641,7 +782,11 @@ fn follow(
     // The surface and not the ground (see [`crate::pick`]), so a lamp dropped
     // on a bridge or a crate on a dock stands on it. The lean still comes from
     // the ground, because it is the terrain's slope: see [`ground_lean`].
-    let (Some(path), Some(at)) = (placing.path.clone(), cursor.surface) else {
+    //
+    // A cluster draws its own previews, one per member; see
+    // [`super::cluster::follow`].
+    let path = placing.path.clone().filter(|_| !placing.clustering());
+    let (Some(path), Some(at)) = (path, cursor.surface) else {
         if let Some(ghost) = placing.ghost.take() {
             commands.entity(ghost).despawn();
             placing.showing = None;
@@ -677,22 +822,7 @@ fn follow(
         placing.trouble = failed.then(|| path.clone());
         let Some(draws) = draws else { return };
 
-        let ghost = commands
-            .spawn((Ghost, Transform::default(), Visibility::default()))
-            .id();
-        for draw in &draws {
-            // The client's own translucency, which also handles opaque
-            // batches. See the module comment.
-            let material = materials
-                .with_opacity(&draw.material, GHOST)
-                .unwrap_or_else(|| draw.material.clone());
-            commands.spawn((
-                Ghost,
-                Mesh3d(draw.mesh.clone()),
-                MeshMaterial3d(material),
-                ChildOf(ghost),
-            ));
-        }
+        let ghost = spawn_ghost(&mut commands, &mut materials, &draws, Ghost, Transform::default());
         placing.ghost = Some(ghost);
         placing.showing = Some(path);
     }
@@ -708,6 +838,35 @@ fn follow(
         placing.tilt_now(),
         placing.scale,
     );
+}
+
+/// Spawn a model's batches as a preview: a root carrying `marker` and the
+/// transform, and one translucent child per batch carrying `marker` too.
+/// [`follow`] and [`super::cluster::follow`] both build their previews with it.
+pub(super) fn spawn_ghost<M: Component + Clone>(
+    commands: &mut Commands,
+    materials: &mut Materials,
+    draws: &[ModelDraw],
+    marker: M,
+    transform: Transform,
+) -> Entity {
+    let ghost = commands
+        .spawn((marker.clone(), transform, Visibility::default()))
+        .id();
+    for draw in draws {
+        // The client's own translucency, which also handles opaque batches.
+        // See the module comment.
+        let material = materials
+            .with_opacity(&draw.material, GHOST)
+            .unwrap_or_else(|| draw.material.clone());
+        commands.spawn((
+            marker.clone(),
+            Mesh3d(draw.mesh.clone()),
+            MeshMaterial3d(material),
+            ChildOf(ghost),
+        ));
+    }
+    ghost
 }
 
 impl Placing {
@@ -761,7 +920,7 @@ fn ground_lean(
 /// through `placement_matrix` like everything else instead of composing a
 /// rotation here, because `placement_matrix` is the one implementation of the
 /// `MDDF` frame, including the 180° term.
-fn transform_of(kind: Kind, at: Vec3, turn: f32, tilt: [f32; 2], scale: f32) -> Transform {
+pub(super) fn transform_of(kind: Kind, at: Vec3, turn: f32, tilt: [f32; 2], scale: f32) -> Transform {
     let rotation =
         vale_assets::world::adt::placement_euler_from_world(world_angles(kind, turn, tilt));
     let scale = match kind {
@@ -800,7 +959,8 @@ fn commit(
     let Some(session) = session.as_mut() else {
         return;
     };
-    if !placing.armed() || !buttons.just_pressed(MouseButton::Left) {
+    // A cluster's click is [`super::cluster::commit`]'s.
+    if !placing.armed() || placing.clustering() || !buttons.just_pressed(MouseButton::Left) {
         return;
     }
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
@@ -1048,6 +1208,36 @@ pub(crate) fn leaf(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
 
+/// How far a model reaches across the ground from its origin at scale 1, in
+/// yards: the largest horizontal extent of the M2 header's box. `None` when
+/// the file does not read or parse.
+///
+/// For the `MCRF` references a new or replaced doodad needs (see
+/// `vale_edit::adt::place::AdtFile::add_doodad`), where no drawn copy of the
+/// model is at hand to measure. It reads the file through the same chain the
+/// renderer does, so a model the project added is measured too.
+pub(crate) fn model_reach(assets: &GameAssets, path: &str) -> Option<f32> {
+    let bytes = assets.with_archive(|chain| Ok(chain.read(path).ok())).ok()??;
+    let model = vale_assets::world::m2::M2::parse(&bytes).ok()?;
+    let [low, high] = model.bounds;
+    Some(
+        [low[0], low[1], high[0], high[1]]
+            .into_iter()
+            .map(f32::abs)
+            .fold(0.0, f32::max),
+    )
+}
+
+/// The `MCRF` radius for a doodad of a model reaching `reach` yards, at a
+/// scale: at least a yard, and the fallback `doodads::footprint` uses when the
+/// reach is unknown.
+pub(crate) fn reference_radius(reach: Option<f32>, scale: f32) -> f32 {
+    match reach {
+        Some(reach) => (reach * scale).max(1.0),
+        None => 20.0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1198,6 +1388,43 @@ mod tests {
         placing.roll();
         assert_eq!(placing.scale, 1.0);
         assert_eq!(placing.tilt, [0.0; 2]);
+    }
+
+    /// Cluster mode is armed by its list, not by the chosen model; Place and
+    /// Cluster keep each other's state; arming a model leaves Cluster; and a
+    /// WMO is never clustered.
+    #[test]
+    fn cluster_mode_is_armed_by_its_own_list() {
+        let mut placing = Placing::default();
+        placing.arm(Kind::Doodad, "world\\a.m2".into(), 0.0, 1.0);
+        assert_eq!(placing.switch(), Switch::Place);
+        assert!(placing.armed());
+
+        placing.set_switch(Switch::Cluster);
+        assert_eq!(placing.switch(), Switch::Cluster);
+        assert!(!placing.armed(), "the list is empty");
+        placing.cluster.toggle("world\\b.m2");
+        assert!(placing.armed());
+        placing.cluster.toggle("WORLD\\B.M2");
+        assert!(placing.cluster.models.is_empty(), "a second click takes it out");
+        placing.cluster.toggle("world\\b.m2");
+
+        placing.set_switch(Switch::Place);
+        assert_eq!(placing.path.as_deref(), Some("world\\a.m2"), "the model is kept");
+        placing.set_switch(Switch::Cluster);
+        assert_eq!(placing.cluster.models, ["world\\b.m2"], "the list is kept");
+
+        placing.arm(Kind::Doodad, "world\\c.m2".into(), 0.0, 1.0);
+        assert_eq!(placing.switch(), Switch::Place, "arming a model leaves Cluster");
+
+        placing.set_switch(Switch::Select);
+        assert!(!placing.armed() && placing.path.is_none());
+
+        placing.cluster.on = true;
+        placing.mode = Mode::Place;
+        placing.kind = Kind::Wmo;
+        assert!(!placing.clustering(), "the WMO tool has no Cluster mode");
+        assert_eq!(placing.switch(), Switch::Place);
     }
 
     /// The generator is in `0..1` and is not stuck.

@@ -19,6 +19,8 @@ pub(super) enum Group {
     AllOfModel,
     /// Lock every selected placement and drop the selection.
     Lock,
+    /// Show or hide the list for replacing the selection's model.
+    Replace,
     /// Make this member the primary, from the list of members.
     Primary(u32),
     /// Take this member out of the group, from the list of members.
@@ -54,11 +56,12 @@ pub(super) fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, ki
 }
 
 /// The lines about a selection of several, above the primary's own numbers:
-/// how many, what they are, and the three buttons that change the group.
+/// how many, what they are, and the buttons that act on the group.
 ///
 /// `chosen` is every member's unique id and path, the primary first. With one
-/// placement or none this draws only the "Select all of this model" button,
-/// which makes a group of one model in one press. See `crate::tools::placements::group`.
+/// placement this draws the buttons that act on one as well as on many:
+/// "Select all of this model", which makes a group of one model in one press,
+/// "Replace model…" and "Lock". See `crate::tools::placements::group`.
 pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Group {
     let Some(&(_, primary)) = chosen.first() else {
         return Group::Nothing;
@@ -116,6 +119,16 @@ pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Gr
             .clicked()
         {
             asked = Group::AllOfModel;
+        }
+        if ui
+            .small_button("Replace model…")
+            .on_hover_text(format!(
+                "Choose a model for the selected {noun}. Each keeps its position \
+                 and rotation."
+            ))
+            .clicked()
+        {
+            asked = Group::Replace;
         }
         if ui
             .small_button("Lock")

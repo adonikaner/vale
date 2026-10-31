@@ -7,7 +7,8 @@ use crate::tools::placements::doodads::Selection;
 use crate::tools::placements::gizmo::{Gizmo, HANDLES, Handles};
 use crate::tools::placements::place::{Kind, Placing};
 use crate::ui::tools::placements::group::{group, locked_placements, Group};
-use crate::ui::tools::placements::place::placing;
+use crate::tools::placements::swap::Swap;
+use crate::ui::tools::placements::place::{placing, replacing};
 use crate::ui::widgets::theme;
 
 /// The doodad tool: what is standing on the ground.
@@ -19,6 +20,7 @@ pub(in crate::ui::tools) fn doodad(
     held: &mut crate::tools::placements::doodads::Held,
     gizmo: &mut Gizmo,
     placer: &mut Placing,
+    swap: &mut Swap,
     portraits: &mut crate::preview::portraits::Portraits,
     favourites: &mut crate::prefs::favourites::Favourites,
     now: f64,
@@ -67,6 +69,13 @@ pub(in crate::ui::tools) fn doodad(
             selection.only(None);
             session.status = format!("locked {n} doodads");
         }
+        Group::Replace => match swap.open {
+            Some(Kind::Doodad) => swap.close(),
+            _ => swap.show(Kind::Doodad),
+        },
+    }
+    if selection.count() > 0 {
+        replacing(ui, swap, placer, Kind::Doodad, selection.count(), portraits, favourites);
     }
     locked_placements(ui, session, Kind::Doodad);
     let grouped = selection.count() > 1;
@@ -302,6 +311,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.doodad_held,
         &mut editing.gizmo,
         &mut editing.placing,
+        &mut editing.swap,
         &mut editing.portraits,
         &mut editing.favourites,
         now,

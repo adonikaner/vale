@@ -7,7 +7,8 @@ use crate::tools::placements::gizmo::{Gizmo, HANDLES};
 use crate::tools::placements::place::{Kind, Placing};
 use crate::tools::placements::wmos;
 use crate::ui::tools::placements::group::{group, locked_placements, Group};
-use crate::ui::tools::placements::place::placing;
+use crate::tools::placements::swap::Swap;
+use crate::ui::tools::placements::place::{placing, replacing};
 use crate::ui::widgets::theme;
 
 /// The building tool: `MODF` placements.
@@ -24,6 +25,7 @@ pub(in crate::ui::tools) fn wmo(
     held: &mut wmos::Held,
     gizmo: &mut Gizmo,
     placer: &mut Placing,
+    swap: &mut Swap,
     portraits: &mut crate::preview::portraits::Portraits,
     favourites: &mut crate::prefs::favourites::Favourites,
     now: f64,
@@ -64,6 +66,13 @@ pub(in crate::ui::tools) fn wmo(
             selection.only(None);
             session.status = format!("locked {n} WMOs");
         }
+        Group::Replace => match swap.open {
+            Some(Kind::Wmo) => swap.close(),
+            _ => swap.show(Kind::Wmo),
+        },
+    }
+    if selection.count() > 0 {
+        replacing(ui, swap, placer, Kind::Wmo, selection.count(), portraits, favourites);
     }
     locked_placements(ui, session, Kind::Wmo);
     let grouped = selection.count() > 1;
@@ -224,6 +233,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.wmo_held,
         &mut editing.gizmo,
         &mut editing.placing,
+        &mut editing.swap,
         &mut editing.portraits,
         &mut editing.favourites,
         now,

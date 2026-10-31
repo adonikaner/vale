@@ -125,7 +125,11 @@ fn items(
     // `spawns_ground`, since a spawn's menu is about the spawn.
     if matches!(open.tool, Tool::Doodads | Tool::Wmos) {
         ui.separator();
-        chosen |= placement_mode(ui, editing);
+        let kind = match open.tool {
+            Tool::Wmos => Kind::Wmo,
+            _ => Kind::Doodad,
+        };
+        chosen |= placement_mode(ui, editing, kind);
     }
     // What every menu ends with: the clicked point, or the clicked spawn's
     // position, and the history.
@@ -527,6 +531,13 @@ fn doodad(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, u
         editing.placing.arm(Kind::Doodad, path, 0.0, 1.0);
         chosen = true;
     }
+    if item(ui, "Replace model…", true, "Choose a model for the selected doodads in the panel. Each keeps its position, rotation and scale.", "") {
+        editing.swap.show(Kind::Doodad);
+        // The list is drawn in the panel's Select half.
+        editing.placing.mode = crate::tools::placements::place::Mode::Select;
+        editing.placing.disarm();
+        chosen = true;
+    }
     chosen
 }
 
@@ -592,6 +603,13 @@ fn wmo(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, uniq
         editing.placing.arm(Kind::Wmo, path, 0.0, 1.0);
         chosen = true;
     }
+    if item(ui, "Replace model…", true, "Choose a WMO for the selected WMOs in the panel. Each keeps its position and rotation.", "") {
+        editing.swap.show(Kind::Wmo);
+        // The list is drawn in the panel's Select half.
+        editing.placing.mode = crate::tools::placements::place::Mode::Select;
+        editing.placing.disarm();
+        chosen = true;
+    }
     chosen
 }
 
@@ -617,24 +635,28 @@ fn flightpaths(ui: &mut egui::Ui, editing: &mut Editing) -> bool {
     true
 }
 
-/// The doodad and WMO tools' Select and Place switch, which the two tools
-/// share, as the panel's switch and the number keys set it.
-fn placement_mode(ui: &mut egui::Ui, editing: &mut Editing) -> bool {
-    use crate::tools::placements::place::Mode;
-    let (label, to) = match editing.placing.mode {
-        Mode::Select => ("Switch to Place", Mode::Place),
-        Mode::Place => ("Switch to Select", Mode::Select),
-    };
-    if !item(ui, label, true, "The panel's Select and Place switch. 1 and 2 choose them; Tab toggles.", "") {
-        return false;
+/// The doodad and WMO tools' mode switch, which the two tools share, as the
+/// panel's switch and the number keys set it: one entry per mode the tool is
+/// not in.
+fn placement_mode(ui: &mut egui::Ui, editing: &mut Editing, kind: Kind) -> bool {
+    let now = editing.placing.switch();
+    let mut chosen = false;
+    for &(name, to) in crate::tools::placements::place::switches(kind) {
+        if to == now {
+            continue;
+        }
+        if item(
+            ui,
+            &format!("Switch to {name}"),
+            true,
+            "The panel's mode switch. The number keys choose a mode; Tab toggles Select.",
+            "",
+        ) {
+            editing.placing.set_switch(to);
+            chosen = true;
+        }
     }
-    editing.placing.mode = to;
-    // Switching to Select drops whatever was on the cursor, as the panel's
-    // switch does.
-    if to == Mode::Select {
-        editing.placing.disarm();
-    }
-    true
+    chosen
 }
 
 /// The doodad or WMO tool, clicked on ground: paste, the selection, and the

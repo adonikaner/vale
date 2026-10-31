@@ -1648,7 +1648,7 @@ impl Plugin for ToolPlugin {
                 crate::subjects::located::LocatedPlugin,
             ),
             spawns::spawn::SpawnKeysPlugin,
-            placements::group::GroupPlugin,
+            (placements::group::GroupPlugin, placements::swap::SwapPlugin),
             measure::MeasureToolPlugin,
             places::flightpaths::FlightpathToolPlugin,
             // The two place tools as one entry, which keeps the tuple within

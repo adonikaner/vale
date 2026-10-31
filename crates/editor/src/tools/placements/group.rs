@@ -233,7 +233,7 @@ fn clipboard(
                 });
                 if let Some(anchor) = anchor {
                     let pasted = paste_doodads(session, &clip, anchor, "Duplicate doodads");
-                    select_pasted_doodads(session, &mut doodads, &clip, pasted);
+                    select_pasted_doodads(session, &mut doodads, clip.len(), pasted);
                 }
             }
             if paste {
@@ -247,7 +247,7 @@ fn clipboard(
                 }
                 let clip = board.doodads.clone();
                 let pasted = paste_doodads(session, &clip, anchor, "Paste doodads");
-                select_pasted_doodads(session, &mut doodads, &clip, pasted);
+                select_pasted_doodads(session, &mut doodads, clip.len(), pasted);
             }
         }
         Tool::Wmos => {
@@ -331,11 +331,12 @@ fn copy_buildings(selection: &super::wmos::Selection) -> Vec<ClipBuilding> {
 }
 
 /// Select what a paste wrote, the first row written as the primary, and say
-/// what happened on the status line.
-fn select_pasted_doodads(
+/// what happened on the status line. `asked` is how many rows the paste was
+/// asked to write. A cluster's click selects its members through this too.
+pub(crate) fn select_pasted_doodads(
     session: &mut EditSession,
     selection: &mut super::doodads::Selection,
-    clip: &[ClipDoodad],
+    asked: usize,
     pasted: Pasted,
 ) {
     selection.only(None);
@@ -364,7 +365,7 @@ fn select_pasted_doodads(
             false => selection.also.push(at),
         }
     }
-    session.status = pasted_status(pasted.rows.len(), clip.len(), pasted.skipped, "doodads");
+    session.status = pasted_status(pasted.rows.len(), asked, pasted.skipped, "doodads");
 }
 
 /// …and the same for buildings.
@@ -541,7 +542,7 @@ pub(crate) fn on_screen(
     window: &Window,
     world: Vec3,
 ) -> Option<Vec2> {
-    let drawn = Vec3::from(axes::to_bevy(world.to_array()));
+    let drawn = axes::to_bevy(world.to_array());
     // In front of the camera only: a point behind it projects to a mirrored
     // place on the screen.
     let forward = eye.forward();
@@ -647,7 +648,7 @@ pub(crate) struct ClipBuilding {
 
 /// The id a new placement gets: the next one in the minted range, above every
 /// id the open tiles hold. The placer's own rule — see `place::commit`.
-fn next_minted(session: &EditSession) -> u32 {
+pub(crate) fn next_minted(session: &EditSession) -> u32 {
     session
         .tiles
         .values()
@@ -744,8 +745,9 @@ pub(crate) fn paste_buildings(
 }
 
 /// One undo entry holding every tile's placement lists before and after, and
-/// each tile published and asked for again.
-fn record_placements(
+/// each tile published and asked for again. `before` holds each changed tile's
+/// lists as they were; the tiles already hold the change.
+pub(crate) fn record_placements(
     session: &mut EditSession,
     before: std::collections::HashMap<(u32, u32), Placements>,
     label: &str,

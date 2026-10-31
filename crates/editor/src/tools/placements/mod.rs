@@ -5,6 +5,8 @@
 //! doodads.rs     the placed models (MDDF): select, move, turn, scale, remove
 //! wmos.rs        the placed buildings, which are MODF and a different list
 //! place.rs       putting a new doodad or building in the world
+//! cluster.rs     several doodads placed with one click, spread round the pointer
+//! swap.rs        replacing the model of the selected doodads or buildings
 //! group.rs       a selection of more than one placement: the rules the four
 //!                placement tools share, the rectangle a drag on empty ground
 //!                draws, turning a group about one point, and the clipboard
@@ -12,9 +14,11 @@
 //! rehome.rs      what moving a doodad or a building past a tile border means
 //! ```
 
+pub(crate) mod cluster;
 pub(crate) mod doodads;
 pub(crate) mod gizmo;
 pub(crate) mod group;
 pub(crate) mod place;
 pub(crate) mod rehome;
+pub(crate) mod swap;
 pub(crate) mod wmos;
