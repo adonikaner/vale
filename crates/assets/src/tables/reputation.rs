@@ -372,11 +372,18 @@ pub struct Reputation {
     displayed: usize,
     /// `PLAYER_FIELD_WATCHED_FACTION_INDEX`, a reputation-list id or `-1`.
     watched: i32,
+    /// Every faction with a slot, and the slot: faction id first. Usually one
+    /// faction a slot, but a table that gives two factions one
+    /// `reputationListID` gives both of them that slot's state, so
+    /// [`Slot::faction_id`] (the last one walked) cannot stand for all of
+    /// them. See [`Reputation::standings`].
+    claims: Vec<(u32, usize)>,
 }
 
 impl Default for Reputation {
     fn default() -> Self {
         Reputation {
+            claims: Vec::new(),
             slots: [Slot::default(); SLOTS],
             rows: Vec::new(),
             headers: Vec::new(),
@@ -408,6 +415,7 @@ impl Reputation {
         }
         self.rows.clear();
         self.headers.clear();
+        self.claims.clear();
         self.expanded = u32::MAX;
 
         for row in factions.descending() {
@@ -416,6 +424,7 @@ impl Reputation {
                 continue;
             }
             let rep = rep as usize;
+            self.claims.push((row.id, rep));
             self.slots[rep].faction_id = row.id;
             // The base is the *last* fitting alternative, and the row is only
             // listed if the server called it visible — see `fitting`.
@@ -865,15 +874,22 @@ impl Reputation {
     ///
     /// **A faction absent from this list is one with no reputation bar**, which
     /// is the same test the client makes against `Faction.dbc`'s
-    /// `reputationListID` — the two agree because a faction with a list id is
-    /// exactly a faction with a slot.
+    /// `reputationListID`.
+    ///
+    /// Each faction is answered from its own `reputationListID`'s slot. When a
+    /// table gives two factions one slot, both take that slot's state, as the
+    /// 1.12.1 client's reaction does: a faction copied from Bloodsail
+    /// Buccaneers with its list id is Hated and at war like Bloodsail, whatever
+    /// its own base says. Answering only the slot's last-walked faction left
+    /// the other to its template's masks, so this client drew it Friendly where
+    /// the 1.12.1 client draws it hostile.
     pub fn standings(&self) -> Vec<(u32, crate::tables::faction::FactionState)> {
-        self.slots
+        self.claims
             .iter()
-            .filter(|slot| slot.faction_id != 0)
-            .map(|slot| {
+            .map(|&(faction_id, rep)| {
+                let slot = &self.slots[rep];
                 (
-                    slot.faction_id,
+                    faction_id,
                     crate::tables::faction::FactionState {
                         rank: crate::tables::faction::Rank::from_index(
                             rank_of(slot.total()) as u32
@@ -973,6 +989,43 @@ mod tests {
         let mut rep = Reputation::default();
         rep.rebuild(&factions, 1, 1, &wire);
         (factions, rep)
+    }
+
+    /// Two factions given one `reputationListID` both take that slot's state
+    /// for friend-or-foe, and the panel lists the slot once. A copied faction
+    /// that kept its source's list id reads as its source: here Hated and at
+    /// war, though its own base is Friendly.
+    #[test]
+    fn two_factions_in_one_slot_both_take_its_state() {
+        let mut map = std::collections::HashMap::new();
+        for (id, base) in [(87u32, -6500i32), (957, 3100)] {
+            map.insert(
+                id,
+                Faction {
+                    id,
+                    reputation_list_id: 0,
+                    race_mask: [0xffff_ffff, 0, 0, 0],
+                    base: [base, 0, 0, 0],
+                    name: format!("faction {id}"),
+                    ..Faction::default()
+                },
+            );
+        }
+        let factions = Factions(map);
+        let mut wire = [(0u8, 0i32); SLOTS];
+        wire[0] = (flags::VISIBLE | flags::AT_WAR, 0);
+        let mut rep = Reputation::default();
+        rep.rebuild(&factions, 1, 1, &wire);
+
+        let standings = rep.standings();
+        assert_eq!(standings.len(), 2, "{standings:?}");
+        for id in [87, 957] {
+            let state = standings.iter().find(|(f, _)| *f == id).map(|(_, s)| *s).expect("both listed");
+            assert!(state.at_war, "faction {id} takes the slot's at-war bit");
+            assert_eq!(state.rank, crate::tables::faction::Rank::Hated, "faction {id}");
+        }
+        let bars = rep.rows().iter().filter(|row| row.reputation_list_id == 0).count();
+        assert_eq!(bars, 1, "the slot is listed once");
     }
 
     /// The whole shape in one assertion: two headings plus *Other* and

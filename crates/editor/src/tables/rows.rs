@@ -303,6 +303,7 @@ pub(crate) fn clone_row(session: &mut EditSession, table_name: &str, record: usi
     let new_id = done.new_id(table_name, id)?;
     session.history.begin("Clone row");
     record_cloned(session, done);
+    own_reputation_slot(session, table_name, new_id);
     session.history.end();
     session.table_edited(table_name);
     session.table(table_name)?.row_of(new_id)
@@ -416,6 +417,7 @@ pub(crate) fn unshare(
     let new_id = done.new_id(target, old)?;
     session.history.begin("Copy linked row");
     record_cloned(session, done);
+    own_reputation_slot(session, target, new_id);
     let table = session.tables.get_mut(table_name)?;
     if let Some(edit) = Cell::new(table, record, field, new_id) {
         edit.apply(table);
@@ -425,6 +427,43 @@ pub(crate) fn unshare(
     session.table_edited(target);
     session.table_edited(table_name);
     Some(new_id)
+}
+
+/// `Faction.dbc`'s `reputationListID` column.
+const REPUTATION_SLOT: usize = 1;
+
+/// Give a copied `Faction` row a reputation slot of its own, recorded in the
+/// open history entry.
+///
+/// A copy keeps its source's `reputationListID`, and two factions in one slot
+/// share one standing: the panel lists only one of them, and the other reads
+/// the first's standing (a copy of Bloodsail Buccaneers is Hated and at war).
+/// The copy takes the lowest slot of the 64 no other row holds, or `-1`, no
+/// bar, when all 64 are taken. A source with no slot leaves the copy with none.
+fn own_reputation_slot(session: &mut EditSession, table_name: &str, id: u32) {
+    if table_name != "Faction" {
+        return;
+    }
+    let Some(table) = session.table(table_name) else { return };
+    let Some(record) = table.row_of(id) else { return };
+    let Some(own) = table.u32_at(record, REPUTATION_SLOT).map(|v| v as i32) else { return };
+    let taken = |slot: i32| {
+        (0..table.record_count())
+            .any(|other| other != record && table.u32_at(other, REPUTATION_SLOT).map(|v| v as i32) == Some(slot))
+    };
+    if own < 0 || !taken(own) {
+        return;
+    }
+    let slot = (0..vale_assets::tables::reputation::SLOTS as i32).find(|&slot| !taken(slot)).unwrap_or(-1);
+    let table = table_mut(session, table_name);
+    if let Some(edit) = Cell::new(table, record, REPUTATION_SLOT, slot as u32) {
+        edit.apply(table);
+        session.history.record_cell(table_name, edit);
+    }
+    session.status = match slot {
+        -1 => format!("faction {id} has no reputation slot: all 64 are taken"),
+        slot => format!("faction {id} has reputation slot {slot}, the lowest free one"),
+    };
 }
 
 /// Put a copy's edits on the open history entry, rows first.

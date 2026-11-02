@@ -27,6 +27,25 @@ pub(super) fn signed(raw: u32) -> String {
     }
 }
 
+/// What is wrong with a `Faction` row's reputation slot, if anything: a slot
+/// another row also holds, or one past the 64 the server sends. Two factions
+/// in one slot share one standing, and the panel lists only one of them.
+fn reputation_slot_problem(work: &Workspace<'_>, record: usize, slot: i32) -> Option<String> {
+    use vale_assets::tables::reputation::SLOTS;
+    if slot < 0 {
+        return None;
+    }
+    if slot as usize >= SLOTS {
+        return Some(format!("past slot {}: never sent, no bar", SLOTS - 1));
+    }
+    let table = work.session.table("Faction")?;
+    let other = (0..table.record_count())
+        .find(|&other| other != record && table.u32_at(other, 1).map(|v| v as i32) == Some(slot))?;
+    let id = table.u32_at(other, 0).unwrap_or(0);
+    let name = table.string_at(other, 19).unwrap_or_default();
+    Some(format!("shared with {name} ({id}): both read one standing"))
+}
+
 /// One field of one record of any open table.
 ///
 /// The table is named because the record is not always a row of the table
@@ -91,6 +110,11 @@ pub(super) fn field_in(
                 let mut value = raw as i32;
                 if number(ui, &mut value).changed() {
                     write(work, table_name, record, column, value as u32);
+                }
+                if table_name == "Faction" && column.field == 1 {
+                    if let Some(problem) = reputation_slot_problem(work, record, raw as i32) {
+                        ui.label(egui::RichText::new(problem).color(theme::WARN));
+                    }
                 }
             }
             Kind::Float => {

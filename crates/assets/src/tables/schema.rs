@@ -357,8 +357,11 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
 /// A kit's model columns and its four procedural slots are `-1` for none in
 /// the shipped rows (a reverse reference treats 0 and -1 alike), and a blank kit
 /// with 0 in `Animation` would resolve to Stand; see the schema's note on that
-/// column. In every other table, zero means none.
+/// column. A blank `Faction` row has no reputation slot (`-1`): slot 0 is
+/// Bloodsail Buccaneers', and a second faction in it takes Bloodsail's
+/// standing. In every other table, zero means none.
 pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
+    const FACTION: &[(usize, u32)] = &[(1, u32::MAX)];
     const KIT: &[(usize, u32)] = &[
         (super::spell::fields::ANIMATION, u32::MAX),
         (3, u32::MAX),
@@ -377,6 +380,7 @@ pub fn blank_defaults(table: &str) -> &'static [(usize, u32)] {
     ];
     match table {
         "SpellVisualKit" => KIT,
+        "Faction" => FACTION,
         _ => &[],
     }
 }
@@ -2926,7 +2930,9 @@ const FACTION_COLUMNS: [Column; 37] = [
         Kind::Signed,
         "The slot of the character's 64-slot reputation list this faction has a bar in, 0 to 54 \
          on 54 shipped rows, and -1 on the other 136, which have no bar. SMSG_INITIALIZE_FACTIONS \
-         sends the slots in this order, so two factions must not share a slot.",
+         sends the slots in this order, so two factions must not share a slot: both would read \
+         one standing, and the panel would list only one of them. The shipped table leaves 49 and \
+         55 to 63 free, and a slot above 63 is never sent.",
     ),
     ca(2, "BaseRepRaceMask 1", Kind::Flags(RACE_BITS), FACTION_RACE_MASK),
     ca(3, "BaseRepRaceMask 2", Kind::Flags(RACE_BITS), FACTION_RACE_MASK),

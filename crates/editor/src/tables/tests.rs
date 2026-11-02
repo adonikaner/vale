@@ -570,6 +570,26 @@ fn a_music_set_is_labelled_by_its_name_and_its_sounds() {
     let _ = std::fs::remove_dir_all(&install);
 }
 
+/// A copied `Faction` row takes the lowest reputation slot no other row holds,
+/// and a copy of a row with no slot has none. A copy that kept its source's
+/// slot would read its source's standing, and the panel would list only one
+/// of the two.
+#[test]
+fn a_copied_faction_takes_a_free_reputation_slot() {
+    let mut factions = empty(37);
+    add(&mut factions, 87, &[(1, 0)], &[(19, "Bloodsail Buccaneers")]);
+    add(&mut factions, 47, &[(1, 1)], &[(19, "Ironforge")]);
+    add(&mut factions, 14, &[(1, u32::MAX)], &[(19, "Monster")]);
+    let (mut session, install) = session("faction-slots");
+    session.tables.insert("Faction".to_string(), factions);
+    let slot = |session: &EditSession, record: usize| session.table("Faction").unwrap().u32_at(record, 1).unwrap() as i32;
+    let copy = rows::clone_row(&mut session, "Faction", 0).expect("copied");
+    assert_eq!(slot(&session, copy), 2, "0 and 1 are taken");
+    let copy = rows::clone_row(&mut session, "Faction", 2).expect("copied");
+    assert_eq!(slot(&session, copy), -1, "a creature faction's copy has no bar");
+    let _ = std::fs::remove_dir_all(&install);
+}
+
 /// A `Faction` row is labelled by its name, with its reputation slot and its
 /// heading under it, and a `FactionTemplate` row by its faction's name with
 /// its groups under it.
