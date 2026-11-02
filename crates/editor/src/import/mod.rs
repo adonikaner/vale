@@ -19,6 +19,11 @@
 //!                Re-import reads
 //! generated.rs   which of the editor's generators made a file, what from,
 //!                and whether it is out of date or unused
+//! worldmap/      the World Map part of the Zones workspace: the pictures the
+//!                world map shows of the world, a continent, a zone or a
+//!                single map, by sector, imported or drawn from the minimap;
+//!                the explored areas' art; new maps and their rows; a
+//!                continent's zone grid and the highlight sheets
 //! ```
 
 pub(crate) mod assets;
@@ -28,3 +33,4 @@ pub(crate) mod images;
 pub(crate) mod models;
 pub(crate) mod sounds;
 pub(crate) mod sources;
+pub(crate) mod worldmap;

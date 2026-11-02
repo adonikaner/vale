@@ -1507,7 +1507,8 @@ fn substitute(format: &str, value: &str) -> String {
 /// 2  subname                               a creature template's tag
 /// 3  Dolgrin's Pet                         the unit's owner
 /// 4  Level <level> <class> (<type>)        the four TOOLTIP_UNIT_LEVEL* keys
-/// 5  PvP                                   on UNIT_FIELD_FLAGS bit 12
+/// 5  Stormwind                             the unit's faction, see below
+/// 6  PvP                                   on UNIT_FIELD_FLAGS bit 12
 /// ```
 ///
 /// The first line is [`vale_assets::look::unitname::titled_name`] with the
@@ -1533,9 +1534,14 @@ fn substitute(format: &str, value: &str) -> String {
 /// less prints `"??"` instead of the number; that is how a unit far above the
 /// player is shown.
 ///
+/// The faction line is the name of the unit's `Faction.dbc` row, for a
+/// faction a character can have reputation with and that is not hidden from
+/// the local character's race and class; [`super::api::UnitTip::faction`]
+/// decides it. It is the same white as the level line.
+///
 /// Not drawn, because the state behind them does not exist in this client:
-/// `RESURRECTABLE`, `PLAYER_OFFLINE`, the faction name, and the `Civilian`
-/// prefix and line of a non-combatant NPC. Each depends on a missing
+/// `RESURRECTABLE`, `PLAYER_OFFLINE`, and the `Civilian` prefix and line of a
+/// non-combatant NPC. Each depends on a missing
 /// subsystem, so the line is omitted rather than filled with a guess; `lua::api::stubs`' first paragraph
 /// gives the same reasoning.
 pub(crate) fn unit_plate(
@@ -1606,6 +1612,10 @@ pub(crate) fn unit_plate(
     // a label.
     if !tip.zone.is_empty() {
         out.push(PlateLine::one(tip.zone.clone(), Ink::White));
+    }
+
+    if !tip.faction.is_empty() {
+        out.push(PlateLine::one(tip.faction.clone(), Ink::White));
     }
 
     if tip.pvp {

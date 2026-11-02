@@ -19,6 +19,9 @@ pub struct CreatureInfo {
     pub sub_name: String,
     /// `CreatureType.dbc` — beast, humanoid, undead…
     pub creature_type: u32,
+    /// The template's type flags. One bit is read:
+    /// [`TYPE_FLAG_NO_FACTION_TOOLTIP`].
+    pub type_flags: u32,
     /// Row in `CreatureFamily.dbc` (wolf, cat, boar). 0 for anything that is
     /// not a tameable beast.
     ///
@@ -69,6 +72,11 @@ impl CreatureInfo {
     }
 }
 
+/// A creature type flag: the unit tooltip has no faction line for a creature
+/// with it. The name follows vmangos' `CreatureDefines.h`
+/// (`CREATURE_TYPEFLAGS_NO_FACTION_TOOLTIP`).
+pub const TYPE_FLAG_NO_FACTION_TOOLTIP: u32 = 0x10;
+
 /// Parse `SMSG_CREATURE_QUERY_RESPONSE`.
 ///
 /// ```text
@@ -116,7 +124,7 @@ pub fn parse_creature_response(body: &[u8]) -> Option<CreatureInfo> {
     if !r.has(20) {
         return Some(info); // truncated tail: keep the name, which is already read
     }
-    let _type_flags = r.u32();
+    info.type_flags = r.u32();
     info.creature_type = r.u32();
     info.pet_family = r.u32();
     info.rank = r.u32();

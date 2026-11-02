@@ -12,7 +12,7 @@ fn parse(list: &[&str]) -> Args {
 
 /// Every flag spelling the parse accepted when it was one `match`, before the
 /// tables. A spelling taken out of a table fails this test.
-const EVERY_FLAG: [&str; 134] = [
+const EVERY_FLAG: [&str; 142] = [
     "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu",
     "--export-heights", "--import-image", "--import-confirm", "--import-model", "--import-sound", "--game-file", "--minimaps", "--tilt",
     "--vertices", "--view", "--reach", "--tool", "--spawn", "--waypoint-add", "--spawn-add",
@@ -34,7 +34,9 @@ const EVERY_FLAG: [&str; 134] = [
     "--apply-items", "--revert-items", "--quest", "--quest-new", "--import-texture",
     "--import-dialog", "--creature-data", "--object-data", "--quest-entry", "--quests-of",
     "--apply-quests", "--revert-quests", "--server", "--publish", "--regenerate", "--migration",
-    "--bits", "--choose", "--set", "--like", "--playtest", "--size",
+    "--bits", "--choose", "--set", "--like", "--playtest", "--size", "--world-map",
+    "--world-map-image", "--world-map-draw", "--world-map-write", "--world-map-sectors",
+    "--world-map-explored", "--world-map-new", "--world-map-places",
 ];
 
 /// Every spelling above is in a table, and none is taken as the map.
@@ -303,6 +305,19 @@ fn the_import_flags_take_their_arguments() {
     let args = parse(&["--game-file", "Sound\\Creature\\Wolf\\"]);
     assert_eq!(args.import.game_file.as_deref(), Some("Sound\\Creature\\Wolf\\"));
     assert_eq!(args.view.tool, Some(tools::Tool::GameFiles));
+    let args = parse(&["--world-map", "Elwynn", "--world-map-draw", "--world-map-write"]);
+    assert_eq!(args.import.world_map.as_deref(), Some("Elwynn"));
+    assert!(args.import.world_map_draw && args.import.world_map_write);
+    assert_eq!(args.view.tool, Some(tools::Tool::WorldMap));
+    let args = parse(&["--world-map", "Elwynn", "--world-map-sectors", "1, 6", "--world-map-explored"]);
+    assert_eq!(args.import.world_map_sectors, vec![1, 6]);
+    assert!(args.import.world_map_explored);
+    let args = parse(&["--world-map", "Kalimdor", "--world-map-places", "4"]);
+    assert_eq!(args.import.world_map_places, Some(4));
+    let args = parse(&["--world-map-new", "single:13:Test"]);
+    assert_eq!(args.import.world_map_new.as_deref(), Some("single:13:Test"));
+    let args = parse(&["--world-map", "World", "--world-map-image", "world.png"]);
+    assert_eq!(args.import.world_map_image, Some("world.png".into()));
     let args = parse(&["--pick-display", "--item-display", "41"]);
     assert!(args.spawns.pick_display);
     assert_eq!(args.spawns.display_id, None);

@@ -1,17 +1,15 @@
-//! **The flags on the world map** — `AreaPOI.dbc`, and the one entry that is not
-//! in it.
+//! The landmark flags on the world map: `AreaPOI.dbc`, and the one entry
+//! that is not in it.
 //!
-//! `WorldMapFrame.lua` draws this layer itself and asks the client two
-//! questions for it:
+//! `WorldMapFrame.lua` draws this layer itself and asks two questions for it:
 //!
 //! ```text
 //! GetNumMapLandmarks()        how many
 //! GetMapLandmarkInfo(i)       name, description, icon, x, y
 //! ```
 //!
-//! Both read one landmark array, and **one function fills it** (re-run
-//! whenever the open map changes):
-//! every row of this table projected onto the view, then the single
+//! Both read one landmark list, which is filled again whenever the open map
+//! changes: every row of this table projected onto the view, then the single
 //! `SMSG_GOSSIP_POI` the session is holding.
 //!
 //! ## The table
@@ -19,38 +17,31 @@
 //! 339 records of 29 fields:
 //!
 //! ```text
-//!   [0] id           [1] importance   [2] icon      the sheet cell — see below
+//!   [0] id           [1] importance   [2] icon      the sheet cell; see below
 //!   [4..7] x, y, z   [7] map          [8] flags
 //!   [9] areaId       -> AreaTable, and the gate
-//!   [10..19] name    [19..28] description          eight locales apiece
+//!   [10..19] name    [19..28] description          eight locales each
 //! ```
 //!
-//! `[9]` is an **`AreaTable` id and not a faction**, which is the one thing here
-//! that reads plausibly wrong: the client looks it up in `AreaTable` and then
-//! tests `[row + 0xc]` — field 3, the *areaBit* — against
-//! `PLAYER_EXPLORED_ZONES`, which is a bit test over the
-//! block at `PLAYER_FIELD_EXPLORED_ZONES_1`. So **a landmark appears when its
-//! area has been explored**, and the gate is skipped entirely for a row
-//! whose `[row + 0x28]` — field 10, the exploration level — is negative, which
-//! is most of them.
+//! Field 9 is an `AreaTable` id, not a faction. The client looks it up in
+//! `AreaTable` and tests that row's field 3, the `areaBit`, against
+//! `PLAYER_EXPLORED_ZONES`, so a landmark appears once its area has been
+//! explored. The test is skipped for a row whose area's field 10, the
+//! exploration level, is negative, which is most of them.
 //!
 //! ## The icon is field 2, except on a continent
 //!
-//! The client reads the row's flags byte and takes field 2 when its bit 7 is
-//! set. Otherwise the *view* decides: a continent-level map answers a flat
-//! **15** and a zone map answers field 2. Both indices are cells of
-//! `Interface\Minimap\POIIcons.blp`, which is 128x128 and an 8x8 grid of 16x16
-//! icons — the same grid `WORLDMAP_POI_TEXTURE_WIDTH = 128` and
+//! The client takes field 2 when bit 7 of the row's flags is set. Otherwise the
+//! view decides: a continent-level map answers 15 and a zone map answers field
+//! 2. Both are cells of `Interface\Minimap\POIIcons.blp`, a 128x128 sheet of
+//! 8x8 icons of 16x16, the grid `WORLDMAP_POI_TEXTURE_WIDTH = 128` and
 //! `NUM_WORLDMAP_POI_COLUMNS = 8` state in `WorldMapFrame.lua`, which cuts the
 //! cell itself.
 //!
-//! ## …and the coordinates are a fraction of the open parchment
+//! ## The coordinates are a fraction of the open map
 //!
-//! **This was read backwards once and every flag in the game was drawn off the
-//! map for it**, which is worth the paragraph: the claim was that
-//! `GetMapLandmarkInfo` answers in `WorldMapButton` units because the file
-//! passes them straight to `SetPoint`. The file does not. `WorldMapFrame.lua`
-//! line 83 is
+//! `GetMapLandmarkInfo` answers a fraction, and `WorldMapFrame.lua` line 83
+//! scales it:
 //!
 //! ```lua
 //! x = x * WorldMapButton:GetWidth();
@@ -58,25 +49,21 @@
 //! worldMapPOI:SetPoint("CENTER", "WorldMapButton", "TOPLEFT", x, y );
 //! ```
 //!
-//! — the same two lines it scales the corpse by (444) and a party dot by (382),
-//! sign included. A projection applied on this side is therefore applied
-//! **twice**, which puts a flag some 1002x further right and 668x above the
-//! parchment's top edge: off screen at every zoom, on every map, with no error
-//! anywhere. Reported as "the corpse marker works and a guard's directions put
-//! up nothing".
+//! These are the lines that scale the corpse (444) and a party dot (382), sign
+//! included. A projection scaled on this side as well is scaled twice, and
+//! puts a flag about 1002 widths to the right and 668 heights above the map:
+//! off screen at every zoom, with no error. This client once did that, and a
+//! guard's directions showed nothing while the corpse marker worked.
 //!
-//! The client agrees: `GetMapLandmarkInfo` returns the landmark's position
-//! exactly as the builder's projection wrote it, and that projection is the
-//! same one `GetCorpseMapPosition` uses. One function, one unit, and the
-//! corpse's is a fraction.
+//! The client's `GetMapLandmarkInfo` returns the position as the projection
+//! wrote it, and that projection is the one `GetCorpseMapPosition` uses.
 //!
-//! ## One leg of the array is dead in 1.12
+//! ## A field of the landmark record that 1.12 never sets
 //!
 //! A landmark record has a field that marks it a `TaxiNodes` row drawn with
-//! icon 6, and **nothing in the client sets it** — the only two writers (for a
-//! table row, and for the gossip point) both leave it zero. Flight points are not landmarks in this build; recorded because the
-//! reader tests it and a reader written from the reader alone would look for
-//! them.
+//! icon 6, and nothing in the client sets it: the two writers, for a table row
+//! and for the gossip point, both leave it zero. Flight points are not
+//! landmarks in this build. It is recorded because the reader tests it.
 
 use crate::tables::area::Areas;
 use crate::tables::dbc::Dbc;
@@ -95,57 +82,49 @@ mod fields {
     pub const DESCRIPTION: usize = 19;
 }
 
-/// `AreaPOI.dbc` field 8, bit 7 — **this row's icon is its own whatever map is
-/// open**.
+/// `AreaPOI.dbc` field 8, bit 7 — this row's icon is its own whatever map is
+/// open.
 pub(crate) const ICON_IS_ABSOLUTE: u32 = 1 << 7;
 
-/// **Which zoom levels a row is drawn at**, as the client gates them — three
-/// bits of field 8, one per parchment, tested before the row is projected at
-/// all:
+/// Which zoom levels a row is drawn at, as the client tests them: three bits
+/// of field 8, one per kind of map, tested before the row is projected:
 ///
 /// ```text
-/// a zone map       requires flags & 0x04
+/// a zone map       requires flags & 0x04   (and a single map)
 /// a continent map  requires flags & 0x08
 /// the cosmic map   requires flags & 0x10
 /// ```
 ///
-/// **This is the rule that keeps a continent from being covered in flags.**
-/// Eight rows land inside Elwynn Forest — Goldshire, Northshire Abbey,
+/// Eight rows land inside Elwynn Forest (Goldshire, Northshire Abbey,
 /// Stormwind, Mirror Lake, Echo Ridge Mine, Northshire Vineyards, Westbrook
-/// Garrison, Jasperlode Mine — and all eight carry `0x04`, so all eight belong
-/// on the zone map and the reference draws them too. Only *Stormwind* carries
-/// `0x08`, so on the Eastern Kingdoms parchment it is the one of the eight that
-/// survives. Without the gate the continent draws every row in the table at the
-/// flat icon 15, which is a plausible picture and the wrong one.
+/// Garrison, Jasperlode Mine) and all eight carry `0x04`, so all eight are
+/// drawn on the zone map, as in the 1.12.1 client. Only Stormwind carries
+/// `0x08`, so it is the only one of the eight on the Eastern Kingdoms map.
+/// Without the test a continent map draws every row in the table.
 ///
-/// **The gossip point is not gated by any of them.** It goes straight to the
-/// projection and never through the gate — so a guard's directions show on
-/// whichever parchment they land
-/// on, whatever the packet's flags word says.
+/// The gossip point is not tested. It goes straight to the projection, so a
+/// guard's directions show on whichever map they land on, whatever the
+/// packet's flags word says.
 pub(crate) const ON_ZONE_MAP: u32 = 1 << 2;
 pub(crate) const ON_CONTINENT_MAP: u32 = 1 << 3;
 pub(crate) const ON_COSMIC_MAP: u32 = 1 << 4;
 
-/// …and what a row without that bit answers on a continent map.
-///
-/// A cell of `POIIcons.blp` like any other; the reference falls back to it
-/// because a continent is drawn small and most of the specific icons are
-/// unreadable at that size.
+/// The icon a row without [`ICON_IS_ABSOLUTE`] answers on a continent map: a
+/// cell of `POIIcons.blp` like any other.
 pub(crate) const CONTINENT_ICON: u32 = 15;
 
-/// **How near zero counts as "off the open map"** — `2^-22`, and the test is
-/// `|u| < e && |v| < e` rather than an
-/// equality against zero.
+/// How near zero counts as off the open map: `2^-22`, tested as
+/// `|u| < e && |v| < e` rather than as equality with zero.
 ///
-/// It matters only for a point that projects onto the parchment's very top-left
-/// texel, which the reference declines to draw and so does this.
+/// It matters only for a point that projects onto the map's top-left texel,
+/// which the 1.12.1 client does not draw, and neither does this.
 const OFF_MAP: f32 = 2.384_185_8e-7;
 
 /// One row, reduced to what the two reads need.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Poi {
     pub id: u32,
-    /// Field 2 — a cell of `POIIcons.blp`, overridden on a continent map unless
+    /// Field 2: a cell of `POIIcons.blp`, overridden on a continent map unless
     /// [`ICON_IS_ABSOLUTE`] is set. See the module comment.
     pub icon: u32,
     /// Field 1. Read and unused: nothing in `WorldMapFrame.lua` sorts on it and
@@ -155,18 +134,18 @@ pub struct Poi {
     /// World yards, and the map they are on.
     pub position: (f32, f32),
     pub map: u32,
-    /// The `AreaTable` row that gates it — see the module comment. Measured
-    /// over the shipped table: **171 rows name one, 98 are `-1` and 70 are
-    /// `0`**, and both of the latter two are "always". The gate then drops out
-    /// again for a named area whose exploration level is negative, so the count
-    /// that actually gates is the survey's rather than this one.
+    /// The `AreaTable` row that gates it; see the module comment. In the
+    /// shipped table 171 rows name one, 98 are `-1` and 70 are `0`, and both
+    /// of the last two are always shown. A named area whose exploration level
+    /// is negative is not tested either, so the number of rows that are gated
+    /// is the survey's, not 171.
     pub area: i32,
     pub name: String,
     pub description: String,
 }
 
-/// `AreaPOI.dbc`, in record order — which is the order the fill walks it and
-/// therefore the order `GetMapLandmarkInfo`'s index runs in.
+/// `AreaPOI.dbc`, in record order: the order the list is filled in, and so the
+/// order `GetMapLandmarkInfo`'s index runs in.
 #[derive(Debug, Clone, Default)]
 pub struct AreaPois(Vec<Poi>);
 
@@ -210,50 +189,49 @@ impl AreaPois {
     }
 }
 
-/// One entry of the array the two reads walk — a table row *or* the gossip
-/// point, already projected.
+/// One entry of the list the two reads walk: a table row or the gossip point,
+/// already projected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Landmark {
     pub name: String,
     pub description: String,
     /// The cell of `POIIcons.blp`, after the continent substitution.
     pub icon: u32,
-    /// **A fraction of the open parchment**, `0..1` from its top left and `y`
-    /// growing *downward* — the same units `GetPlayerMapPosition` and
-    /// `GetCorpseMapPosition` answer in, because the file scales all three the
-    /// same way. See the module comment, which carries what happens when this
-    /// is scaled here as well.
+    /// A fraction of the open map, `0..1` from its top left with `y` growing
+    /// downward: the units `GetPlayerMapPosition` and `GetCorpseMapPosition`
+    /// answer in, because the file scales all three the same way. See the
+    /// module comment.
     pub at: (f32, f32),
-    /// **The one the server sent**, which the file tooltips no differently but
-    /// which is worth telling apart: it is the flag a guard's directions put up
-    /// and it is replaced rather than accumulated.
+    /// Whether this is the point the server sent: the flag a guard's
+    /// directions put up, which a second one replaces. The file shows its
+    /// tooltip as any other.
     pub from_gossip: bool,
 }
 
-/// **The gossip point**, as `SMSG_GOSSIP_POI` states it.
+/// The gossip point, as `SMSG_GOSSIP_POI` states it.
 ///
-/// The reference keeps exactly one, in a synthetic `AreaPOI` row — which is
-/// why `GetMapLandmarkInfo` reads its name and icon the same way as a table
-/// row's, and why a second one replaces the first.
+/// The 1.12.1 client keeps one, in a synthetic `AreaPOI` row, so
+/// `GetMapLandmarkInfo` reads its name and icon as a table row's, and a second
+/// one replaces the first.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct GossipPoi {
     pub flags: u32,
-    /// World yards. The packet carries no map, so it is taken to be the one the
-    /// character is standing on — which is what the server means by it.
+    /// World yards. The packet carries no map; the server means the map the
+    /// character is standing on.
     pub position: (f32, f32),
     pub icon: u32,
     pub data: u32,
     pub name: String,
 }
 
-/// **Every landmark on the open map**, in the order the client fills them.
+/// Every landmark on the open map, in the order the client fills them.
 ///
 /// `explored` answers whether one `AreaTable` bit is set; `None` skips the
 /// gate, which is what a caller with no character has to do and what the CLI's
 /// survey does.
 ///
-/// `map` is the map the *character* is on, for the gossip point — the packet
-/// carries no map of its own.
+/// `gossip_map` is the map the character is on, for the gossip point, whose
+/// packet carries no map.
 pub fn landmarks(
     pois: &AreaPois,
     world_map: &WorldMap,
@@ -266,8 +244,7 @@ pub fn landmarks(
     let continent = matches!(view, MapView::Continent(_) | MapView::Cosmic);
     let mut out = Vec::new();
     for poi in &pois.0 {
-        // **Before the projection, as the reference tests it** — the row is
-        // refused on its flags and never reaches the arithmetic.
+        // Tested before the projection, as the 1.12.1 client tests it.
         if !shown_on(view, poi.flags) {
             continue;
         }
@@ -285,17 +262,16 @@ pub fn landmarks(
             from_gossip: false,
         });
     }
-    // The gossip point is appended after the whole table, so it is
-    // always the last index — and it is dropped, like a row, when it does not
-    // land on the open map.
+    // The gossip point comes after the table, so it is always the last
+    // index. Like a row, it is dropped when it does not land on the open map.
     if let Some(gossip) = gossip {
         if let Some(at) = place(world_map, view, gossip_map, gossip.position) {
             out.push(Landmark {
                 name: gossip.name.clone(),
                 description: String::new(),
-                // **Never substituted**: the client tests the gossip record
-                // before it reaches the continent branch, so a gossip
-                // point keeps the icon the packet named on every map.
+                // Never substituted: the client tests for the gossip
+                // record first, so the gossip point keeps the icon the
+                // packet named on every map.
                 icon: gossip.icon,
                 at,
                 from_gossip: true,
@@ -305,8 +281,8 @@ pub fn landmarks(
     out
 }
 
-/// The row's own cell, or **15** on a continent unless the row
-/// insists.
+/// The row's own cell, or 15 on a continent map unless the row carries
+/// [`ICON_IS_ABSOLUTE`].
 fn icon_for(flags: u32, icon: u32, continent: bool) -> u32 {
     if flags & ICON_IS_ABSOLUTE != 0 || !continent {
         icon
@@ -315,45 +291,44 @@ fn icon_for(flags: u32, icon: u32, continent: bool) -> u32 {
     }
 }
 
-/// The client's three tests: is this row drawn at this zoom at all? See
-/// [`ON_ZONE_MAP`], which carries the bits and the worked example.
+/// Whether a row is drawn at this zoom at all. See [`ON_ZONE_MAP`] for the
+/// bits and an example.
 fn shown_on(view: MapView, flags: u32) -> bool {
     let wanted = match view {
-        MapView::Zone(_, _) => ON_ZONE_MAP,
+        // The client gates a single map's rows as it gates a zone map's.
+        MapView::Zone(_, _) | MapView::Single(_) => ON_ZONE_MAP,
         MapView::Continent(_) => ON_CONTINENT_MAP,
         MapView::Cosmic => ON_COSMIC_MAP,
     };
     flags & wanted != 0
 }
 
-/// The area gate, and it is skipped by most rows.
+/// The area test, which most rows skip.
 fn revealed(poi: &Poi, areas: Option<&Areas>, explored: Option<&dyn Fn(u32) -> bool>) -> bool {
     if poi.area <= 0 {
         return true;
     }
     let (Some(areas), Some(explored)) = (areas, explored) else {
-        // **Shown rather than hidden** with no character to ask, which is the
-        // direction that cannot lose a landmark: the survey wants the whole
-        // table and a client with no exploration mask yet has not lost one, it
-        // has not been told.
+        // Shown when there is no character to ask: the survey wants the whole
+        // table, and a client with no exploration mask yet has not been told
+        // what is explored.
         return true;
     };
     let Some(area) = areas.get(poi.area as u32) else {
         return true;
     };
-    // A negative exploration level is no gate at all.
+    // A negative exploration level is not tested.
     if area.explore_level < 0 {
         return true;
     }
     explored(area.explore_bit)
 }
 
-/// World yards to a fraction of the open parchment, or `None` for a point off
-/// it — the builder's own test, epsilon and all.
+/// World yards to a fraction of the open map, or `None` for a point off it,
+/// with the client's [`OFF_MAP`] test.
 ///
-/// **Nothing is scaled here.** The file does it, for a landmark exactly as for
-/// the corpse and the party dots; see the module comment, which is about the
-/// round this was wrong.
+/// Nothing is scaled here. The file scales a landmark as it scales the corpse
+/// and the party dots; see the module comment.
 fn place(world_map: &WorldMap, view: MapView, map: u32, at: (f32, f32)) -> Option<(f32, f32)> {
     let (u, v) = world_map.position(view, map, at.0, at.1)?;
     if u.abs() < OFF_MAP && v.abs() < OFF_MAP {
@@ -366,22 +341,20 @@ fn place(world_map: &WorldMap, view: MapView, map: u32, at: (f32, f32)) -> Optio
 mod tests {
     use super::*;
 
-    /// **A landmark is in the same units as the corpse and the party dots**,
-    /// which is a fraction of the open parchment — the whole of the bug that
-    /// drew every flag off the map. See the module comment.
+    /// A landmark is in the units of the corpse and the party dots, a
+    /// fraction of the open map. See the module comment.
     ///
-    /// Checked against [`WorldMap::position`] itself rather than against a
-    /// remembered number: the property is that `place` passes its projection
-    /// through, and a scale factor reintroduced here would fail it whatever the
-    /// factor was.
+    /// Checked against [`WorldMap::position`] rather than a fixed number: the
+    /// property is that `place` passes the projection through, so any scale
+    /// factor added here fails it.
     #[test]
     fn a_landmark_is_a_fraction_of_the_parchment_like_the_corpse() {
         let world_map = crate::tables::worldmap::tests::built();
         let view = MapView::Zone(0, 0);
-        // Inside the fixture's first zone rectangle — x within its
-        // top/bottom pair and y within its left/right one, both axes running
-        // backwards as this game's coordinates do — taken through the same call
-        // `GetCorpseMapPosition` goes through.
+        // Inside the fixture's first zone rectangle (x within its top/bottom
+        // pair and y within its left/right one, both axes running backwards as
+        // this game's coordinates do), taken through the call
+        // `GetCorpseMapPosition` uses.
         let (map, x, y) = (1, 0.0, -4000.0);
         let projected = world_map
             .position(view, map, x, y)
@@ -398,8 +371,8 @@ mod tests {
         );
     }
 
-    /// **Each parchment has its own flag bit**, and a row with none of them is
-    /// drawn nowhere — the rule that keeps a continent map from being covered.
+    /// Each kind of map has its own flag bit, and a row with none of them is
+    /// drawn nowhere.
     #[test]
     fn a_row_is_drawn_at_the_zooms_its_flags_name() {
         let zone = MapView::Zone(0, 0);
@@ -410,15 +383,18 @@ mod tests {
         assert!(shown_on(MapView::Cosmic, ON_COSMIC_MAP));
         assert!(!shown_on(MapView::Cosmic, ON_ZONE_MAP | ON_CONTINENT_MAP));
         assert!(!shown_on(zone, 0), "a row with no zoom flags is drawn nowhere");
+        // A single map takes the zone map's bit.
+        assert!(shown_on(MapView::Single(401), ON_ZONE_MAP));
+        assert!(!shown_on(MapView::Single(401), ON_CONTINENT_MAP | ON_COSMIC_MAP));
 
-        // The shipped rows this was checked against: Goldshire is 5 and shows
+        // Two shipped rows: Goldshire is 5 and shows
         // on its zone and not on the continent; Stormwind is 29 and shows on
         // both. See [`ON_ZONE_MAP`].
         assert!(shown_on(zone, 5) && !shown_on(MapView::Continent(0), 5));
         assert!(shown_on(zone, 29) && shown_on(MapView::Continent(0), 29));
     }
 
-    /// **The icon is the row's own on a zone map and 15 on a continent**, and a
+    /// The icon is the row's own on a zone map and 15 on a continent, and a
     /// row with the flag keeps its own everywhere.
     #[test]
     fn a_continent_map_flattens_every_icon_that_does_not_insist() {

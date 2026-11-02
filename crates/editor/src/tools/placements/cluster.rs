@@ -5,7 +5,10 @@
 //! A cluster is up to [`MOST`] doodads spread over a circle around the
 //! pointer, placed in the doodad tool's Cluster mode. The number is the
 //! cluster's count, or, with [`Cluster::random_count`] on, a number drawn
-//! between its two bounds for each click. Each member has an offset from the
+//! between its two bounds for each click; the circle's radius is the
+//! cluster's radius, or, with [`Cluster::random_radius`] on, drawn the same
+//! way, and so is the spacing with [`Cluster::random_spacing`] on. Each member
+//! has an offset from the
 //! centre, a model from the cluster's own list, and, while [`Scatter`] is on,
 //! a turn, scale and tilt of its own drawn inside Scatter's bounds. No two
 //! members are closer than the cluster's spacing; a member that finds no room
@@ -80,8 +83,27 @@ pub(crate) struct Cluster {
     pub(crate) asked: u32,
     /// The radius of the circle the members are spread over, in yards.
     pub(crate) radius: f32,
+    /// Whether each click draws its radius between [`Self::radius_range`]'s
+    /// bounds rather than taking [`Self::radius`].
+    pub(crate) random_radius: bool,
+    /// The least and most radius in yards while [`Self::random_radius`] is
+    /// on.
+    pub(crate) radius_range: (f32, f32),
+    /// The radius the current layout was drawn for: [`Self::radius`], or the
+    /// draw from [`Self::radius_range`]. The circle round the pointer is drawn
+    /// at it.
+    pub(crate) laid_radius: f32,
     /// The least distance between two members, in yards.
     pub(crate) spacing: f32,
+    /// Whether each click draws its spacing between [`Self::spacing_range`]'s
+    /// bounds rather than taking [`Self::spacing`].
+    pub(crate) random_spacing: bool,
+    /// The least and most spacing in yards while [`Self::random_spacing`] is
+    /// on.
+    pub(crate) spacing_range: (f32, f32),
+    /// The spacing the current layout was drawn for: [`Self::spacing`], or
+    /// the draw from [`Self::spacing_range`].
+    pub(crate) laid_spacing: f32,
     /// The models a member is chosen from, each equally likely. Empty leaves
     /// Cluster mode with nothing to place.
     pub(crate) models: Vec<String>,
@@ -101,7 +123,13 @@ impl Default for Cluster {
             count_range: (4, 12),
             asked: 0,
             radius: 8.0,
+            random_radius: false,
+            radius_range: (4.0, 12.0),
+            laid_radius: 8.0,
             spacing: 2.0,
+            random_spacing: false,
+            spacing_range: (1.0, 4.0),
+            laid_spacing: 2.0,
             models: Vec::new(),
             layout: Vec::new(),
             laid_for: None,
@@ -127,6 +155,34 @@ impl Cluster {
         (low.clamp(1, MOST), high.clamp(1, MOST))
     }
 
+    /// The least and most radius a click covers, in order and inside
+    /// `1..=WIDEST` yards.
+    pub(crate) fn radii(&self) -> (f32, f32) {
+        let (low, high) = match self.random_radius {
+            true => self.radius_range,
+            false => (self.radius, self.radius),
+        };
+        let (low, high) = (low.min(high), low.max(high));
+        (low.clamp(1.0, WIDEST), high.clamp(1.0, WIDEST))
+    }
+
+    /// The widest radius a click may cover: the spacing's upper bound in the
+    /// panel.
+    pub(crate) fn widest(&self) -> f32 {
+        self.radii().1
+    }
+
+    /// The least and most spacing a click keeps, in order and inside
+    /// `0..=2 * WIDEST` yards.
+    pub(crate) fn spacings(&self) -> (f32, f32) {
+        let (low, high) = match self.random_spacing {
+            true => self.spacing_range,
+            false => (self.spacing, self.spacing),
+        };
+        let (low, high) = (low.min(high), low.max(high));
+        (low.clamp(0.0, 2.0 * WIDEST), high.clamp(0.0, 2.0 * WIDEST))
+    }
+
     /// Add a model to the list, or take it out if it is there. A click on a
     /// model in the Cluster mode's browser.
     pub(crate) fn toggle(&mut self, path: &str) {
@@ -143,8 +199,8 @@ impl Cluster {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct LaidFor {
     counts: (u32, u32),
-    radius: f32,
-    spacing: f32,
+    radii: (f32, f32),
+    spacings: (f32, f32),
     models: usize,
     scatter: Scatter,
 }
@@ -175,6 +231,11 @@ pub(crate) struct Landing {
 pub(crate) fn draw_count(low: u32, high: u32, seed: &mut u64) -> u32 {
     let span = high.saturating_sub(low) + 1;
     low + ((place::unit(seed) * span as f32) as u32).min(span - 1)
+}
+
+/// Draw a radius or a spacing between `low` and `high` yards.
+pub(crate) fn draw_yards(low: f32, high: f32, seed: &mut u64) -> f32 {
+    low + (high - low).max(0.0) * place::unit(seed)
 }
 
 /// Draw a layout: up to `count` offsets inside a circle of `radius`, no two
@@ -264,8 +325,8 @@ pub(crate) fn lay_out_next(mut placing: ResMut<Placing>) {
     let cluster = &placing.cluster;
     let wanted = LaidFor {
         counts: cluster.counts(),
-        radius: cluster.radius,
-        spacing: cluster.spacing,
+        radii: cluster.radii(),
+        spacings: cluster.spacings(),
         models: cluster.models.len(),
         scatter: placing.scatter,
     };
@@ -274,10 +335,12 @@ pub(crate) fn lay_out_next(mut placing: ResMut<Placing>) {
     }
     let mut seed = *placing.seeded();
     let asked = draw_count(wanted.counts.0, wanted.counts.1, &mut seed);
+    let radius = draw_yards(wanted.radii.0, wanted.radii.1, &mut seed);
+    let spacing = draw_yards(wanted.spacings.0, wanted.spacings.1, &mut seed);
     let layout = lay_out(
         asked,
-        wanted.radius,
-        wanted.spacing,
+        radius,
+        spacing,
         wanted.models,
         &wanted.scatter,
         &mut seed,
@@ -285,6 +348,8 @@ pub(crate) fn lay_out_next(mut placing: ResMut<Placing>) {
     placing.seed = seed;
     placing.cluster.layout = layout;
     placing.cluster.asked = asked;
+    placing.cluster.laid_radius = radius;
+    placing.cluster.laid_spacing = spacing;
     placing.cluster.laid_for = Some(wanted);
 }
 
@@ -318,7 +383,7 @@ pub(crate) fn follow(
                 &mut marks,
                 session,
                 centre,
-                placing.cluster.radius,
+                placing.cluster.laid_radius,
                 vale_edit::ops::brush::Shape::Circle,
                 RING,
                 false,
@@ -520,6 +585,23 @@ mod tests {
         }
         assert_eq!(seen.len(), 4, "{seen:?}");
         assert_eq!(draw_count(5, 5, &mut seed), 5);
+
+        // A random radius or spacing stays between its bounds, and a fixed one
+        // is itself.
+        for _ in 0..200 {
+            let yards = draw_yards(3.0, 9.0, &mut seed);
+            assert!((3.0..=9.0).contains(&yards), "{yards}");
+        }
+        assert_eq!(draw_yards(5.0, 5.0, &mut seed), 5.0);
+        let cluster = Cluster {
+            random_radius: true,
+            radius_range: (500.0, 2.0),
+            random_spacing: true,
+            spacing_range: (6.0, -1.0),
+            ..Cluster::default()
+        };
+        assert_eq!(cluster.radii(), (2.0, WIDEST), "ordered and clamped");
+        assert_eq!(cluster.spacings(), (0.0, 6.0), "ordered and clamped");
     }
 
     /// A member stands on the terrain under its own position, and the

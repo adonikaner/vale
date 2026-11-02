@@ -2588,6 +2588,22 @@ mod tests {
         );
     }
 
+    /// A creature of a faction with a reputation bar has the faction's name
+    /// under the level line and above the PvP line.
+    #[test]
+    fn set_unit_names_the_faction_above_the_pvp_line() {
+        let lua = state();
+        unit_strings(&lua);
+        let world = Stub::default()
+            .unit("target", "Marshal Dughan", 7)
+            .described("", 7, 0, true)
+            .of_faction("Stormwind");
+        assert_eq!(
+            plate(&lua, &world, "target"),
+            ["Marshal Dughan", "Level 60 Humanoid", "Stormwind", "PvP"]
+        );
+    }
+
     /// A player's plate: the class cell is `"%s %s"` of race then class and
     /// the type cell is the `PLAYER` key, giving "Level 60 Human Warrior
     /// (Player)", with the PvP line under it when the flag is set.

@@ -38,9 +38,9 @@
 //!
 //! A merged mesh has to be rebuilt whenever its set of tufts changes, so the
 //! plan ([`ChunkFoliage`], about 1.5 KB) is what is kept from the tile parse.
-//! The geometry is built when a chunk comes within [`FOLIAGE_RANGE`] and
-//! dropped when it leaves. A 3x3 of tiles holds at most about 3.5 MB of plans,
-//! where its tufts merged would be about 30 MB.
+//! The geometry is built when a chunk comes within [`DETAIL_DISTANCE`] and
+//! dropped when it leaves, nearest first. A 3x3 of tiles holds at most about
+//! 3.5 MB of plans. At 300 yards about 300 chunks are built at once.
 //!
 //! The scatter is a hash of the chunk's world position, so a chunk that is
 //! built, dropped and built again comes back identical. A sequence would not
@@ -49,12 +49,28 @@
 //!
 //! ## The range
 //!
-//! [`FOLIAGE_RANGE`] is 50 yards, the 1.12.1 client's cutoff for a small
-//! doodad: `draw_range` in [`crate::render::doodads`] carries the client's
-//! fade bands by bounding radius, and 50 yards is the end of the 0.5-yard
-//! band. The biggest model here, `DskGra05` at 1.03, would take the 126-yard
-//! band. Applying the 0.5-yard band to every model is this client's choice,
-//! not a stated rule of the 1.12.1 client, and it is the cheaper direction.
+//! [`DETAIL_DISTANCE`] is how far out the ground foliage is drawn. The 1.12.1
+//! client plants a chunk when the near side of its bounding sphere is within
+//! that distance of the camera in view depth. It fades each tuft out over the
+//! last quarter of the distance: the fragment's alpha is multiplied by a ramp
+//! that is 252/255 up to three quarters of the distance and falls linearly to
+//! 0 at the distance, before the alpha test. With the foliage's alpha test at
+//! [`DETAIL_ALPHA_KEY`] (128/255) an opaque texel is gone seven eighths of the
+//! way out and a softer one sooner, so the lawn thins out over the last
+//! eighth rather than ending at a line. `m2.wgsl` applies the ramp under the
+//! `DETAIL_FADE` def, which only foliage materials compile.
+//!
+//! The unmodified client's distance is 70 yards. 300 is what the
+//! `vanilla-tweaks` patch sets, and it is used for the reason
+//! [`crate::render::lens::WORLD_FIELD_OF_VIEW`] uses the patch's angle: the
+//! reference this client is compared against runs the patch.
+//!
+//! This client measures the build edge as a straight-line distance from the
+//! player to the chunk's centre plus the chunk's half-diagonal, not as view
+//! depth. That builds the chunks all round the player, so turning the camera
+//! rebuilds nothing. The cost is at the sides of a wide view, where it stops
+//! before the client would: a chunk 300 yards away and 50° off the view axis
+//! is 190 yards deep, inside the client's distance and outside this one.
 //!
 //! ## Two things the 1.12.1 client does not do
 //!
@@ -76,12 +92,10 @@
 //!
 //! ## Chunk granularity
 //!
-//! A chunk is built whole when its centre comes within `FOLIAGE_RANGE` plus its
-//! own half-diagonal, so the near corner of a chunk can be drawn from 74 yards
-//! where the far corner would have been dropped at 50. Foliage therefore
-//! appears in 33-yard blocks rather than tuft by tuft. Splitting a chunk to
-//! tighten that would multiply the draw calls by four, which is not worth it
-//! for a change at the edge of visibility.
+//! A chunk is built whole when its centre comes within `DETAIL_DISTANCE` plus
+//! its own half-diagonal, so the whole chunk is built before any part of it
+//! reaches the fade. The edge of the lawn is the fade, which is per fragment;
+//! the 33-yard blocks the chunks are built in are never seen.
 
 use crate::axes;
 use crate::render::models::{instance_tag, sun_scale, Lookup, M2Material, ModelCache};
@@ -99,10 +113,17 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use std::sync::Arc;
 
-/// How far a tuft is drawn: the 1.12.1 client's small-prop band. The module
-/// doc says which part of that is the client's rule and which is this
-/// client's choice.
-pub(crate) const FOLIAGE_RANGE: f32 = 50.0;
+/// How far out the ground foliage is drawn, in yards: the `vanilla-tweaks`
+/// value, where the unmodified 1.12.1 client's is 70. The module doc says why
+/// and how the fade over its last quarter works.
+///
+/// `m2.wgsl` states the same number for the fade, and a test compares them.
+pub(crate) const DETAIL_DISTANCE: f32 = 300.0;
+
+/// The alpha test the ground foliage is cut at: 128/255, the 1.12.1 client's
+/// default for `detailDoodadAlpha`, whatever the model's own blend mode says.
+/// See [`crate::render::models::Materials::as_foliage`].
+pub(crate) const DETAIL_ALPHA_KEY: f32 = 128.0 / 255.0;
 
 /// Half a chunk's diagonal: how much further out a chunk's centre has to be
 /// watched, since the whole chunk is one mesh.
@@ -126,7 +147,8 @@ const STREAM_STEP: f32 = 8.0;
 /// phase is measured along, and that is the axis the shader leans the tips
 /// down. The two are separate because one is baked into a vertex buffer once
 /// and the other is read every frame; a test checks that they agree.
-pub(crate) const WIND_DIRECTION: Vec2 = Vec2::new(0.7071, 0.7071);
+pub(crate) const WIND_DIRECTION: Vec2 =
+    Vec2::new(std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2);
 
 /// Radians of phase per yard along [`WIND_DIRECTION`], so the gust is a wave
 /// about 20 yards long: a few tufts lean together, rather than the whole field
@@ -136,10 +158,12 @@ pub(crate) const WIND_WAVE: f32 = 0.3;
 /// How many chunks are built in one frame.
 ///
 /// A chunk is at most ~1,150 vertices of transform-and-concatenate at the
-/// default `frillDensity` (about nine a tuft), tens of microseconds; two a
-/// frame fills the ring in well under a second while
-/// leaving the frame that a tile arrives on to the tile.
-const BUILD_BUDGET: usize = 2;
+/// default `frillDensity` (about nine a tuft), and three times that at 48:
+/// tens of microseconds either way. The nearest chunks are built first, so
+/// after a login or a teleport the ground under the player is planted in the
+/// first frames and the ~300 chunks out to [`DETAIL_DISTANCE`] fill in over
+/// about a second.
+const BUILD_BUDGET: usize = 4;
 
 /// Marker for every merged foliage mesh, so the tuning switch can find them,
 /// carrying the mesh's triangle count.
@@ -505,7 +529,7 @@ pub(crate) fn plans_of(tile: TileFoliage, models: &mut FoliageModels, effects: &
 /// [`KEEP_MARGIN`], so a player standing on the boundary does not rebuild the
 /// ring on every step.
 fn wants_built(d2: f32, built: bool) -> bool {
-    let edge = FOLIAGE_RANGE + CHUNK_RADIUS + if built { KEEP_MARGIN } else { 0.0 };
+    let edge = DETAIL_DISTANCE + CHUNK_RADIUS + if built { KEEP_MARGIN } else { 0.0 };
     d2 < edge * edge
 }
 
@@ -528,10 +552,10 @@ fn stream_foliage(
     focus: Res<crate::render::focus::WorldFocus>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut cache: ResMut<ModelCache>,
-    // …and the pool the swaying copy of each foliage material is interned in.
-    // The model cache returns the material the 1.12.1 client would draw a tuft
-    // with; this pass uses that material with one pipeline difference. See
-    // [`crate::render::models::Materials::with_wind`].
+    // …and the pool the foliage copy of each model's material is interned in:
+    // the model's texture and sidedness, with the foliage's own alpha test,
+    // the sway and the fade. See
+    // [`crate::render::models::Materials::as_foliage`].
     mut materials: crate::render::models::Materials,
     mut models: ResMut<FoliageModels>,
     assets: Res<crate::assets::GameAssets>,
@@ -586,66 +610,75 @@ fn stream_foliage(
         return;
     }
 
-    let mut budget = BUILD_BUDGET;
-    let mut complete = true;
+    // Drop what has left, and list what has come within range, by distance.
+    let mut wanted: Vec<(f32, Entity, usize)> = Vec::new();
     for (tile, mut plans) in &mut tiles {
-        let plans = &mut *plans;
-        for chunk in &mut plans.plans {
+        for (index, chunk) in plans.plans.iter_mut().enumerate() {
             let d2 = chunk.centre.distance_squared(player);
             let want = wants_built(d2, !chunk.built.is_empty());
             if want && chunk.built.is_empty() {
-                if budget == 0 {
-                    complete = false;
-                    continue;
-                }
-                match merge_chunk(
-                    &chunk.plan,
-                    chunk.centre,
-                    frill,
-                    &effects,
-                    &models,
-                    &mut cache,
-                    &mut materials,
-                    &mut scratch,
-                ) {
-                    // A model still coming off the loader: leave the chunk
-                    // unbuilt and try again next pass rather than merging half
-                    // its lawn, which would be a mesh nothing ever completes.
-                    None => complete = false,
-                    Some(merged) => {
-                        budget -= 1;
-                        for group in merged {
-                            let entity = commands
-                                .spawn((
-                                    Foliage {
-                                        #[cfg(feature = "diagnostics")]
-                                        triangles: group.triangles,
-                                    },
-                                    Mesh3d(meshes.add(group.mesh)),
-                                    MeshMaterial3d(group.material),
-                                    Transform::from_translation(chunk.centre),
-                                    bevy::mesh::MeshTag(group.tag),
-                                    VisibilityRange::abrupt(0.0, FOLIAGE_RANGE + CHUNK_RADIUS),
-                                    // A child of the tile, so the ground
-                                    // walking out of range takes its grass.
-                                    ChildOf(tile),
-                                ))
-                                .id();
-                            chunk.built.push(entity);
-                        }
-                    }
-                }
+                wanted.push((d2, tile, index));
             } else if !want && !chunk.built.is_empty() {
                 for entity in chunk.built.drain(..) {
                     commands.entity(entity).despawn();
                 }
             }
         }
-        if complete {
-            plans.dirty = false;
+    }
+    // Nearest first, so the ground under the player is planted before the
+    // far field.
+    wanted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut budget = BUILD_BUDGET;
+    let mut complete = true;
+    for (_, tile, index) in wanted {
+        if budget == 0 {
+            complete = false;
+            break;
+        }
+        let Ok((_, mut plans)) = tiles.get_mut(tile) else { continue };
+        let chunk = &mut plans.plans[index];
+        match merge_chunk(
+            &chunk.plan,
+            chunk.centre,
+            frill,
+            &effects,
+            &models,
+            &mut cache,
+            &mut materials,
+            &mut scratch,
+        ) {
+            // A model still coming off the loader: leave the chunk unbuilt
+            // and try again next pass rather than merging half its lawn,
+            // which would be a mesh nothing ever completes.
+            None => complete = false,
+            Some(merged) => {
+                budget -= 1;
+                for group in merged {
+                    let entity = commands
+                        .spawn((
+                            Foliage {
+                                #[cfg(feature = "diagnostics")]
+                                triangles: group.triangles,
+                            },
+                            Mesh3d(meshes.add(group.mesh)),
+                            MeshMaterial3d(group.material),
+                            Transform::from_translation(chunk.centre),
+                            bevy::mesh::MeshTag(group.tag),
+                            VisibilityRange::abrupt(0.0, DETAIL_DISTANCE + CHUNK_RADIUS),
+                            // A child of the tile, so the ground walking out
+                            // of range takes its grass.
+                            ChildOf(tile),
+                        ))
+                        .id();
+                    chunk.built.push(entity);
+                }
+            }
         }
     }
     if complete {
+        for (_, mut plans) in &mut tiles {
+            plans.dirty = false;
+        }
         *last = Some(player);
     }
 }
@@ -701,10 +734,10 @@ fn merge_chunk(
         return None;
     }
 
-    // The swaying copy of each material, interned once per chunk build and
-    // keyed on the still material's id rather than looked up per tuft: a
+    // The foliage copy of each material, interned once per chunk build and
+    // keyed on the model's material id rather than looked up per tuft: a
     // chunk is up to a few hundred tufts over one to three materials, and
-    // `with_wind` is a clone and a hash of 64 words.
+    // `as_foliage` is a clone and a hash of 64 words.
     let mut swaying: HashMap<AssetId<M2Material>, Handle<M2Material>> = HashMap::default();
 
     let mut groups: HashMap<(AssetId<M2Material>, bool), Group> = HashMap::default();
@@ -739,7 +772,7 @@ fn merge_chunk(
                 .entry(draw.material.id())
                 .or_insert_with(|| {
                     materials
-                        .with_wind(&draw.material)
+                        .as_foliage(&draw.material)
                         // Already swaying, or the handle stopped resolving
                         // between the cache's answer and here: draw it still
                         // rather than not at all.
@@ -1024,8 +1057,8 @@ mod tests {
     #[test]
     fn the_build_edge_and_the_keep_edge_are_apart() {
         let d2 = |d: f32| d * d;
-        let edge = FOLIAGE_RANGE + CHUNK_RADIUS;
-        assert!(wants_built(d2(FOLIAGE_RANGE), false), "in range, unbuilt");
+        let edge = DETAIL_DISTANCE + CHUNK_RADIUS;
+        assert!(wants_built(d2(DETAIL_DISTANCE), false), "in range, unbuilt");
         assert!(wants_built(d2(edge - 1.0), false));
         // Between the two edges: an unbuilt chunk stays unbuilt and a built one
         // stays built. That band is the hysteresis.
@@ -1043,8 +1076,28 @@ mod tests {
     /// built exactly when it comes within the visibility range.
     #[test]
     fn the_visibility_cutoff_is_the_build_edge() {
-        assert!(wants_built((FOLIAGE_RANGE + CHUNK_RADIUS - 0.01).powi(2), false));
-        assert!(!wants_built((FOLIAGE_RANGE + CHUNK_RADIUS + 0.01).powi(2), false));
+        assert!(wants_built((DETAIL_DISTANCE + CHUNK_RADIUS - 0.01).powi(2), false));
+        assert!(!wants_built((DETAIL_DISTANCE + CHUNK_RADIUS + 0.01).powi(2), false));
+    }
+
+    /// The detail distance is written in two places and they must agree: here,
+    /// where the chunks are built, and in `m2.wgsl`, where the fade over its
+    /// last quarter is drawn. If the shader's number were smaller the far
+    /// chunks would be built and faded to nothing; if larger, the lawn would
+    /// end at the build edge in a line instead of thinning out.
+    #[test]
+    fn the_detail_distance_is_the_same_number_in_the_shader() {
+        let wgsl = include_str!("models/shaders/m2.wgsl");
+        let line = wgsl
+            .lines()
+            .find(|l| l.contains("const DETAIL_DISTANCE"))
+            .expect("m2.wgsl states the detail distance");
+        let number: f32 = line
+            .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .find(|s| s.contains('.'))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("no number in {line:?}"));
+        assert_eq!(number, DETAIL_DISTANCE);
     }
 
     /// The wind's direction is written in two places and they must agree.

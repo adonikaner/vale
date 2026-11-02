@@ -75,6 +75,26 @@
 #import bevy_render::bindless::{bindless_textures_2d, bindless_samplers_filtering}
 #endif
 
+#ifdef DETAIL_FADE
+#import vale::atmosphere::fog_depth
+
+// How far out the ground foliage is drawn, in yards. It must equal
+// `render::foliage::DETAIL_DISTANCE`, where the chunks are built; a test reads
+// this line and compares.
+const DETAIL_DISTANCE: f32 = 300.0;
+
+// The ground foliage's fade, as a factor on its alpha at a view depth. The
+// 1.12.1 client lays a white 64-texel ramp along view depth from 0.75 to 1.0 of
+// the detail distance, clamped at both ends, whose alpha falls from 252/255 at
+// the near end by 4/255 a texel to 0, and multiplies it into the alpha before
+// the alpha test. Sampled with linear filtering, texel `i` is centred at
+// `(i + 0.5) / 64` along the ramp. See `render::foliage`, "The range".
+fn detail_fade(depth: f32) -> f32 {
+    let along = (depth - 0.75 * DETAIL_DISTANCE) / (0.25 * DETAIL_DISTANCE);
+    return clamp((63.5 - 64.0 * along) * 4.0 / 255.0, 0.0, 252.0 / 255.0);
+}
+#endif
+
 struct M2Params {
     // The building's `MOHD` ambient, added back to the vertex colours the parser
     // subtracted it from. Zero for an M2.
@@ -746,7 +766,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // above does, because it is the same fixed-function arithmetic: the client
     // multiplies bytes by bytes. The alpha is a plain factor, because a fade to
     // zero is the same in any space.
-    let out = select(
+    var out = select(
         drawn,
         vec4<f32>(
             srgb_to_linear(linear_to_srgb(drawn.rgb) * tint.rgb),
@@ -754,6 +774,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         ),
         is_tint,
     );
+
+    // The ground foliage thins out over the last quarter of its distance,
+    // before the test, so a tuft is cut rather than blended away.
+#ifdef DETAIL_FADE
+    out.a = out.a * detail_fade(fog_depth(in.world_position));
+#endif
 
     // The alpha test, here rather than at the texel; see the header. The
     // 1.12.1 client's alpha-test reference depends only on the blend mode: 224

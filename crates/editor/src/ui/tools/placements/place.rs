@@ -324,29 +324,72 @@ fn cluster(
             );
     });
     theme::row(ui, "radius", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut placing.cluster.radius)
+        let cluster = &mut placing.cluster;
+        fn yards(value: &mut f32) -> egui::DragValue<'_> {
+            egui::DragValue::new(value)
                 .speed(0.25)
                 .range(1.0..=WIDEST)
                 .fixed_decimals(1)
-                .suffix(" yd"),
-        )
-        .on_hover_text("The radius of the circle the doodads are spread over, drawn round the pointer.");
+                .suffix(" yd")
+        }
+        match cluster.random_radius {
+            false => {
+                ui.add(yards(&mut cluster.radius)).on_hover_text(
+                    "The radius of the circle the doodads are spread over, drawn round the pointer.",
+                );
+            }
+            true => {
+                ui.add(yards(&mut cluster.radius_range.0))
+                    .on_hover_text("The smallest radius one click covers.");
+                ui.label(egui::RichText::new("to").color(theme::INK_FAINT));
+                ui.add(yards(&mut cluster.radius_range.1))
+                    .on_hover_text("The largest radius one click covers.");
+            }
+        }
     });
-    let widest = placing.cluster.radius * 2.0;
+    theme::row(ui, "", |ui| {
+        ui.checkbox(&mut placing.cluster.random_radius, "random radius")
+            .on_hover_text(
+                "Each click spreads the doodads over a circle whose radius is \
+                 drawn between the two bounds. The circle round the pointer \
+                 shows the next click's.",
+            );
+    });
+    let widest = placing.cluster.widest() * 2.0;
     theme::row(ui, "spacing", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut placing.cluster.spacing)
+        let cluster = &mut placing.cluster;
+        fn apart(value: &mut f32, widest: f32) -> egui::DragValue<'_> {
+            egui::DragValue::new(value)
                 .speed(0.05)
                 .range(0.0..=widest)
                 .fixed_decimals(1)
-                .suffix(" yd"),
-        )
-        .on_hover_text("The least distance between two doodads of one cluster.");
+                .suffix(" yd")
+        }
+        match cluster.random_spacing {
+            false => {
+                ui.add(apart(&mut cluster.spacing, widest))
+                    .on_hover_text("The least distance between two doodads of one cluster.");
+            }
+            true => {
+                ui.add(apart(&mut cluster.spacing_range.0, widest))
+                    .on_hover_text("The smallest spacing one click keeps.");
+                ui.label(egui::RichText::new("to").color(theme::INK_FAINT));
+                ui.add(apart(&mut cluster.spacing_range.1, widest))
+                    .on_hover_text("The largest spacing one click keeps.");
+            }
+        }
+    });
+    theme::row(ui, "", |ui| {
+        ui.checkbox(&mut placing.cluster.random_spacing, "random spacing")
+            .on_hover_text(
+                "Each click keeps its doodads apart by a spacing drawn between \
+                 the two bounds: some clusters dense, some sparse.",
+            );
     });
     let (laid, asked) = (placing.cluster.layout.len() as u32, placing.cluster.asked);
+    let spacing = placing.cluster.laid_spacing;
     let next = match (laid < asked, placing.cluster.random_count) {
-        (true, _) => Some(format!("next click: {laid} of {asked} fit at this spacing")),
+        (true, _) => Some(format!("next click: {laid} of {asked} fit at {spacing:.1} yd spacing")),
         (false, true) => Some(format!("next click: {laid} doodads")),
         (false, false) => None,
     };
@@ -356,7 +399,8 @@ fn cluster(
     if ui
         .small_button("New layout")
         .on_hover_text(
-            "Draw new places, models, a new count if it is random, and with \
+            "Draw new places, models, a new count, radius and spacing where \
+             they are random, and with \
              Scatter on, new turns, sizes and tilts for the next click.",
         )
         .clicked()

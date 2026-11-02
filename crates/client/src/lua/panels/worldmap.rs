@@ -2,7 +2,8 @@
 //! the minimap and the chat line call for the same information.
 //!
 //! ```text
-//! GetCurrentMapContinent()     which map is shown; 0 is the cosmic map
+//! GetCurrentMapContinent()     which map is shown; 0 is the cosmic map, -1 a
+//!                              single map (a map that is no continent's)
 //! GetCurrentMapZone()          which zone of it; 0 for the whole continent
 //! GetMapInfo()                 the art directory, nil on the cosmic map
 //! GetMapContinents()           N names, as N return values
@@ -317,12 +318,15 @@ pub(in crate::lua) fn install<'scope, 'env: 'scope>(
         "GetMapContinents",
         scope.create_function(move |_, ()| Ok(mlua::Variadic::from(answers.map_continents())))?,
     )?;
+    // On a single map `WorldMapZoneDropDown_Initialize` passes
+    // `GetCurrentMapContinent()`, which is -1 there, so the argument is read
+    // signed. The 1.12.1 client answers no zones for an index it has no
+    // continent for.
     globals.set(
         "GetMapZones",
-        scope.create_function(move |_, continent: Option<usize>| {
-            Ok(mlua::Variadic::from(
-                answers.map_zones(continent.unwrap_or(0)),
-            ))
+        scope.create_function(move |_, continent: Option<i64>| {
+            let continent = continent.and_then(|c| usize::try_from(c).ok()).unwrap_or(0);
+            Ok(mlua::Variadic::from(answers.map_zones(continent)))
         })?,
     )?;
 
@@ -540,9 +544,12 @@ pub fn apply(view: MapView, request: MapRequest, zones: impl Fn(usize) -> usize)
         // Resolved by the caller, which knows where the character is; `apply`
         // alone leaves the view unchanged.
         MapRequest::CurrentZone => view,
+        // A single map has no continent above it, so it zooms out to the
+        // cosmic map, as `WorldMapZoomOutButton_OnClick`'s `SetMapZoom(0)`
+        // does when `GetCurrentMapZone()` is 0.
         MapRequest::Out => match view {
             MapView::Zone(c, _) => MapView::Continent(c),
-            MapView::Continent(_) | MapView::Cosmic => MapView::Cosmic,
+            MapView::Continent(_) | MapView::Cosmic | MapView::Single(_) => MapView::Cosmic,
         },
         // A click on a zone map does nothing; there is no level below it. On a
         // continent or the cosmic map the caller resolves the point first, so
@@ -736,6 +743,21 @@ mod tests {
         assert_eq!(out(MapView::Zone(1, 2)), MapView::Continent(1));
         assert_eq!(out(MapView::Continent(1)), MapView::Cosmic);
         assert_eq!(out(MapView::Cosmic), MapView::Cosmic);
+        // A single map has no continent above it.
+        assert_eq!(out(MapView::Single(401)), MapView::Cosmic);
+    }
+
+    /// On a single map `WorldMapZoneDropDown_Initialize` passes
+    /// `GetCurrentMapContinent()`, which is -1 there; the call answers no
+    /// zones rather than raising a conversion error.
+    #[test]
+    fn a_negative_continent_has_no_zones() {
+        let host = LuaHost::new().expect("the interpreter starts");
+        let world = Stub::default();
+        let count: usize = host
+            .run(&world, |lua| lua.load("return select('#', GetMapZones(-1))").eval())
+            .expect("the call runs");
+        assert_eq!(count, 0);
     }
 
     /// `SetMapZoom` is one-based, with 0 meaning the whole map, and a zone

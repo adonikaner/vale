@@ -974,27 +974,38 @@ impl Materials<'_> {
         handle
     }
 
-    /// The same material with its vertices swaying, interned. Only the ground
-    /// foliage asks for it.
+    /// The ground foliage's copy of a model's material, interned: its
+    /// vertices sway, it fades over the detail distance, and it is cut at the
+    /// foliage's own alpha reference. Only `render::foliage` asks for it.
     ///
     /// `None` when the handle no longer resolves (a dressing evicted between
-    /// the model cache's answer and here) or when it is already a wind
+    /// the model cache's answer and here) or when it is already a foliage
     /// material. It goes through [`Self::intern`] for the reason every other
     /// derived material does: a copy handed back into circulation outside the
     /// pool is a second asset, a second bind group and a second batch set for a
     /// material that is bit-for-bit one that already exists.
     ///
-    /// It does not change the texture, the blend, the cutoff or the
-    /// two-sidedness, which are the model cache's own, so the swaying grass is
-    /// drawn through the material the reference would have drawn it through,
-    /// plus a pipeline variant.
-    pub(crate) fn with_wind(&mut self, handle: &Handle<M2Material>) -> Option<Handle<M2Material>> {
+    /// The 1.12.1 client does not draw a detail doodad with its model's own
+    /// blend mode. It draws every one alpha-blended with an alpha test at
+    /// `detailDoodadAlpha`, 128/255 by default
+    /// ([`crate::render::foliage::DETAIL_ALPHA_KEY`]), where a model's alpha
+    /// key would cut at 224/255. The difference is most of a leaf: a texel
+    /// between the two is drawn by the client and was cut here, which left
+    /// each tuft a few thin fragments. This copy is an alpha key at 128/255
+    /// with depth writes, which keeps the foliage in the opaque phase. The
+    /// texels above the reference are drawn solid rather than blended, which
+    /// is the one deviation. The texture and the two-sidedness are the model's
+    /// own.
+    pub(crate) fn as_foliage(&mut self, handle: &Handle<M2Material>) -> Option<Handle<M2Material>> {
         let material = self.assets.get(handle)?;
         if material.wind {
             return None;
         }
         let mut copy = material.clone();
         copy.wind = true;
+        copy.blend = 1;
+        copy.no_depth_write = false;
+        copy.params.alpha_cutoff = crate::render::foliage::DETAIL_ALPHA_KEY;
         Some(self.intern(copy))
     }
 
@@ -1219,6 +1230,13 @@ impl Material for M2Material {
         // suggests to a later reader that something does.
         if material.wind {
             descriptor.vertex.shader_defs.push("WIND".into());
+            // Only ground foliage is a wind material, and only ground foliage
+            // takes the detail fade; see `render::foliage`, "The range". The
+            // prepass (the sun-shadow pass) is not faded, so a tuft past the
+            // fade still casts into that pass.
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("DETAIL_FADE".into());
+            }
         }
 
         // Transcribed from `Models.applyBlend` in web/models.js, which is the

@@ -367,6 +367,8 @@ pub(crate) struct Editing<'w> {
     pub(crate) assets: ResMut<'w, crate::import::assets::Assets>,
     /// The Assets workspace's Game Files part. See [`crate::import::files`].
     pub(crate) files: ResMut<'w, crate::import::files::GameFiles>,
+    /// The Zones workspace's World Map part. See [`crate::import::worldmap`].
+    pub(crate) worldmap: ResMut<'w, crate::import::worldmap::WorldMaps>,
     /// The pop-out window: the workspace in it, and what a panel asked of it.
     /// See [`crate::popout`].
     pub(crate) popout: ResMut<'w, crate::popout::Popout>,

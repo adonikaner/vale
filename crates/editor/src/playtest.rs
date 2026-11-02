@@ -456,13 +456,20 @@ fn arrange(
     }
 }
 
-/// One mode's view settings: everything on the view bar.
+/// One mode's view settings: everything on the view bar, and the hour the
+/// world is lit at.
 #[derive(Clone, Default, PartialEq)]
 struct ViewSet {
     world: WorldTuning,
     frame: RenderTuning,
     #[cfg(feature = "diagnostics")]
     overlay: vale_client::render::overlay::DebugOverlay,
+    /// `WorldClock::override_half_minutes`. The editor fixes the hour (noon
+    /// when a session opens); a playtest's default is `None`, the server's
+    /// clock from `SMSG_LOGIN_SETTIMESPEED`, as in the client. Without it a
+    /// playtest lit the world at the editor's hour and its sky did not match
+    /// the server's time of day.
+    hour: Option<u32>,
 }
 
 /// Each mode's own view settings, kept while the other mode is up.
@@ -505,6 +512,7 @@ fn keep_view_settings(
     #[cfg(feature = "diagnostics")] mut overlay: ResMut<
         vale_client::render::overlay::DebugOverlay,
     >,
+    clock: Option<ResMut<vale_client::render::sky::WorldClock>>,
 ) {
     let editing = state.editing();
     let Some(was) = kept.was_editing.replace(editing) else {
@@ -518,6 +526,7 @@ fn keep_view_settings(
         frame: frame.clone(),
         #[cfg(feature = "diagnostics")]
         overlay: overlay.clone(),
+        hour: clock.as_ref().and_then(|clock| clock.override_half_minutes),
     };
     let restore = match was {
         true => {
@@ -538,6 +547,16 @@ fn keep_view_settings(
     #[cfg(feature = "diagnostics")]
     if *overlay != restore.overlay {
         *overlay = restore.overlay;
+    }
+    // `None` hands the hour back to the server's clock, which `render::sky`
+    // reads on its next pass; a fixed hour is applied at once.
+    if let Some(mut clock) = clock {
+        if clock.override_half_minutes != restore.hour {
+            clock.override_half_minutes = restore.hour;
+            if let Some(hour) = restore.hour {
+                clock.half_minutes = hour;
+            }
+        }
     }
 }
 

@@ -1931,6 +1931,8 @@ impl super::api::UnitAnswers for Login {
             // The harness's character is in Elwynn, and only a group member in
             // another zone draws that line.
             zone: "Stranglethorn Vale".to_string(),
+            // A faction, so the tooltip's faction line runs.
+            faction: "Stormwind".to_string(),
         })
     }
     fn unit_is_unit(&self, a: &str, b: &str) -> bool {

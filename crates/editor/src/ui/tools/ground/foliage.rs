@@ -617,7 +617,7 @@ fn model_list(
                             if on { theme::INK } else { theme::INK_DIM },
                         );
                         if response.on_hover_text(name).clicked() {
-                            picked = Some(model.and_then(|model| catalogue.model(model)).map(|model| model.id));
+                            picked = Some(model.and_then(|model| catalogue.model(model)).map(|model| model.key));
                         }
                     }
                 });

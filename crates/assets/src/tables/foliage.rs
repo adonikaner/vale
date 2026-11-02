@@ -9,18 +9,26 @@
 //!
 //! ```text
 //! GroundEffectTexture   12,742 rows x 7   id, doodad[4], density, terrainType
-//! GroundEffectDoodad       443 rows x 3   id, ordinal, file name
+//! GroundEffectDoodad       443 rows x 3   id, index, file name
 //! ```
 //!
 //! Of the 12,742 texture rows, 730 name a doodad (the rest are
 //! `-1, -1, -1, -1`); 706 of those name four, and 470 name four distinct ones.
 //! Density runs 0..20, and 424 of the 730 rows state 8.
 //!
-//! 49 rows name only doodad ids `GroundEffectDoodad` does not carry (92 such
-//! ids in all) and are dropped, so `vale foliage` reports 681 rows that plant
-//! something. A wrong reading of the id columns would change that number. The
-//! 7 rows that state a density of 0 are kept: the 1.12.1 client plants
-//! [`DEFAULT_DENSITY`] tufts for them.
+//! ## A doodad column names the index, not the id
+//!
+//! A `GroundEffectTexture` doodad column is a `GroundEffectDoodad` row's
+//! field 1, its index, which runs 0..442 without gaps. It is not field 0, the
+//! row's id, which runs 1..573 with gaps. The 1.12.1 client loads the models
+//! into an array by index and looks a tuft's column up in that array.
+//!
+//! The two keys differ by at least one on every row, so joining on the id
+//! plants a neighbouring model, and never plants the models whose index is
+//! no row's id: the Stranglethorn `StlBus01` bush is one. Joined on the index,
+//! 687 rows plant something; 43 name only indices of 443 and up, past the end
+//! of the table, and are dropped. The 7 rows that state a density of 0 are
+//! kept: the 1.12.1 client plants [`DEFAULT_DENSITY`] tufts for them.
 //!
 //! ## What the density is
 //!
@@ -62,8 +70,10 @@ pub mod fields {
     /// seventh field is accounted for.
     pub const TERRAIN_TYPE: usize = 6;
 
-    /// `GroundEffectDoodad`: the bare file name, still with its `.mdl`/`.mdx`
-    /// extension. Field 1 is a plain 0-based ordinal and is read by nothing.
+    /// `GroundEffectDoodad`: the index a `GroundEffectTexture` doodad column
+    /// names, 0-based; see the module doc. Field 0, the row's id, is not it.
+    pub const INDEX: usize = 1;
+    /// …and the bare file name, still with its `.mdl`/`.mdx` extension.
     pub const PATH: usize = 2;
 }
 
@@ -127,12 +137,13 @@ impl GroundEffects {
         let mut out = GroundEffects::default();
 
         // The doodads first, because the texture rows are resolved through
-        // them: a row naming an id this table does not carry names nothing.
-        let mut by_id: HashMap<u32, u16> = HashMap::new();
+        // them, by index: a column naming an index this table does not carry
+        // names nothing.
+        let mut by_index: HashMap<u32, u16> = HashMap::new();
         if let Some(raw) = read("GroundEffectDoodad") {
             if let Ok(dbc) = Dbc::parse(&raw) {
                 for r in 0..dbc.record_count {
-                    let Some(id) = dbc.u32_at(r, 0) else { continue };
+                    let Some(key) = dbc.u32_at(r, fields::INDEX) else { continue };
                     let Some(name) = dbc.string_at(r, fields::PATH) else {
                         continue;
                     };
@@ -141,7 +152,7 @@ impl GroundEffects {
                     }
                     let index = out.models.len() as u16;
                     out.models.push(format!("{DETAIL_DIR}{}", as_m2(&name)));
-                    by_id.insert(id, index);
+                    by_index.insert(key, index);
                 }
             }
         }
@@ -166,7 +177,7 @@ impl GroundEffects {
                         let Some(doodad) = dbc.u32_at(r, field) else {
                             continue;
                         };
-                        let Some(&index) = by_id.get(&doodad) else {
+                        let Some(&index) = by_index.get(&doodad) else {
                             continue;
                         };
                         models[choices] = index;
@@ -210,7 +221,7 @@ impl GroundEffects {
         &self.models
     }
 
-    /// How many texture rows plant anything: 681 on a shipped 1.12 chain.
+    /// How many texture rows plant anything: 687 on a shipped 1.12 chain.
     pub fn effect_count(&self) -> usize {
         self.effects.len()
     }
@@ -262,19 +273,23 @@ mod tests {
         s
     }
 
+    /// Two doodads whose ids (1, 9) differ from their indices (0, 1), and the
+    /// grass's id 1 is the fern's index, as ids and indices overlap in the
+    /// shipped table.
     fn tables() -> GroundEffects {
-        let doodads = dbc(&[vec![7, 0, 1], vec![9, 1, 14]], &doodad_strings());
+        let doodads = dbc(&[vec![1, 0, 1], vec![9, 1, 14]], &doodad_strings());
         let textures = dbc(
             &[
                 // Four slots, two named: grass, fern, nothing, nothing.
-                vec![100, 7, 9, u32::MAX, u32::MAX, 8, 5],
+                vec![100, 0, 1, u32::MAX, u32::MAX, 8, 5],
                 // The same doodad four times, which is how the file weights a
                 // model.
-                vec![101, 7, 7, 7, 7, 3, 0],
+                vec![101, 0, 0, 0, 0, 3, 0],
                 // Density 0: planted at the client's default.
-                vec![102, 7, 9, u32::MAX, u32::MAX, 0, 5],
-                // Names only ids the doodad table does not carry.
-                vec![103, 4242, u32::MAX, u32::MAX, u32::MAX, 8, 5],
+                vec![102, 0, 1, u32::MAX, u32::MAX, 0, 5],
+                // Names only an index the doodad table does not carry; 9 is a
+                // row's id and not its index.
+                vec![103, 9, u32::MAX, u32::MAX, u32::MAX, 8, 5],
             ],
             &[0],
         );
@@ -285,7 +300,10 @@ mod tests {
         })
     }
 
-    /// The join, and the directory and extension the table does not state.
+    /// The join, on the doodad's index and not its id, and the directory and
+    /// extension the table does not state. Joined on the id, column 1 (which
+    /// names index 1, the fern) would answer the grass, whose id is 1: a
+    /// neighbouring model, which draws plausibly and is wrong.
     #[test]
     fn a_row_resolves_to_the_files_the_archive_actually_holds() {
         let tables = tables();
@@ -300,8 +318,8 @@ mod tests {
         assert_eq!(tables.model(effect.models[1]), "World\\NoDXT\\Detail\\Fern.m2");
     }
 
-    /// A row whose doodad ids are in no `GroundEffectDoodad` names nothing and
-    /// is dropped. A row with density 0 is kept at [`DEFAULT_DENSITY`], which
+    /// A row whose doodad indices are in no `GroundEffectDoodad` names nothing
+    /// and is dropped. A row with density 0 is kept at [`DEFAULT_DENSITY`], which
     /// is what the 1.12.1 client plants for it.
     #[test]
     fn a_row_that_names_no_model_is_not_an_effect() {

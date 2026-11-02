@@ -9,6 +9,9 @@
 //! minimap.rs a tile's minimap picture, drawn from the tile
 //! flightmap.rs the row a map needs before the client opens its flight map,
 //!            and the picture drawn behind the nodes
+//! worldmap.rs the twelve pieces a world map picture is drawn from: a
+//!            picture fitted and cut into them, and one drawn from the
+//!            minimap under a zone's rectangle
 //! ops/       the edit operations: how each is applied, inverted and named
 //! undo.rs    the undo stack, from which edits are undone and redone
 //! m2/        writing models: a rigid transform baked into a copy of a model,
@@ -54,6 +57,7 @@ pub mod shadow;
 pub mod sound;
 pub mod undo;
 pub mod wdt;
+pub mod worldmap;
 
 use thiserror::Error;
 

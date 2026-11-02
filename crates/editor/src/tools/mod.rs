@@ -264,6 +264,14 @@ pub(crate) enum Tool {
     /// one says where it is. The server reads its copy from `area_template`
     /// at startup, so it is not available during a playtest.
     Zones,
+    /// The pictures the world map shows for the whole world, each continent
+    /// and each zone: imported from a picture file or drawn from the minimap,
+    /// and written as the twelve pieces the client reads. See
+    /// [`crate::import::worldmap`].
+    ///
+    /// A part of the Zones workspace. Its subject is files the client reads,
+    /// not a table, so it survives a playtest.
+    WorldMap,
     /// `SoundEntries.dbc`: every sound the client plays. See
     /// [`crate::tables::sound_files`].
     ///
@@ -558,6 +566,10 @@ const ASSET_PARTS: [(&str, Tool); 2] = [("Project Files", Tool::Assets), ("Game 
 /// The Spawning workspace's parts: the game events and the pools, the two
 /// sets of spawns that span a map and more.
 const SPAWNING_PARTS: [(&str, Tool); 2] = [("Game Events", Tool::GameEvents), ("Pools", Tool::Pools)];
+
+/// The Zones workspace's parts: the areas, then the pictures the world map
+/// shows of them.
+const ZONE_PARTS: [(&str, Tool); 2] = [("Zones", Tool::Zones), ("World Map", Tool::WorldMap)];
 
 /// The Game Objects workspace's parts.
 const OBJECT_PARTS: [(&str, Tool); 2] = [
@@ -1058,23 +1070,52 @@ pub(crate) const SPECS: &[Spec] = &[
             &crate::tables::tabs::OBJECT_DISPLAY_TABS,
         )
     },
-    browsed(
-        Tool::Zones,
-        // "Zones" and not "Areas": the rail's Areas tool paints an area
-        // onto chunks, and this workspace is what a zone and its
-        // sub-areas are. Two subjects with one name would be two answers
-        // to `--tool areas`.
-        "Zones",
-        Place::Bar("Zones"),
-        "AreaTable.dbc: zones and their sub-areas. Each row's name, parent zone, \
-         music and ambience, duel and rest flags, area level and exploration bit. \
-         Create a zone or sub-area here, then paint it onto the ground with the \
-         Areas tool. The server loads its copy from area_template at startup. \
-         The ZoneMusic, ZoneIntroMusicTable and SoundAmbience rows an area's columns \
-         hold are edited in the Sound workspace.",
-        crate::tables::zones::area::TABLE,
-        &crate::tables::tabs::ZONE_TABS,
-    ),
+    Spec {
+        parts: &ZONE_PARTS,
+        menu: Some(Entry {
+            name: "Zones",
+            about: "AreaTable.dbc: zones and their sub-areas, what each is called and how the \
+                    game treats a character standing in it. The server loads its copy from \
+                    area_template at startup.",
+        }),
+        ..browsed(
+            Tool::Zones,
+            // "Zones" and not "Areas": the rail's Areas tool paints an area
+            // onto chunks, and this workspace is what a zone and its
+            // sub-areas are. Two subjects with one name would be two answers
+            // to `--tool areas`.
+            "Zones",
+            Place::Bar("Zones"),
+            "AreaTable.dbc: zones and their sub-areas. Each row's name, parent zone, \
+             music and ambience, duel and rest flags, area level and exploration bit. \
+             Create a zone or sub-area here, then paint it onto the ground with the \
+             Areas tool. The server loads its copy from area_template at startup. \
+             The ZoneMusic, ZoneIntroMusicTable and SoundAmbience rows an area's columns \
+             hold are edited in the Sound workspace. World Map sets the picture the \
+             world map shows of each zone.",
+            crate::tables::zones::area::TABLE,
+            &crate::tables::tabs::ZONE_TABS,
+        )
+    },
+    Spec {
+        survives_playtest: true,
+        parts: &ZONE_PARTS,
+        menu: Some(Entry {
+            name: "World Map",
+            about: "The picture the world map shows for the whole world, each continent and \
+                    each zone: imported from a PNG, TGA or BLP file, or drawn from the minimap \
+                    under the zone's WorldMapArea rectangle, and written as the twelve BLP \
+                    pieces in Interface\\WorldMap\\. Client files; they need no database.",
+        }),
+        ..middle(
+            Tool::WorldMap,
+            "World Map",
+            Place::Part,
+            "",
+            crate::ui::import::worldmap::inspect,
+            crate::ui::import::worldmap::workspace,
+        )
+    },
     Spec {
         survives_playtest: true,
         parts: &SOUND_PARTS,
@@ -1404,21 +1445,22 @@ impl Tool {
             Tool::GameObjectData => 33,
             Tool::ObjectDisplays => 34,
             Tool::Zones => 35,
-            Tool::Sounds => 36,
-            Tool::CreatureSounds => 37,
-            Tool::NpcSounds => 38,
-            Tool::ZoneMusic => 39,
-            Tool::ZoneIntros => 40,
-            Tool::Ambience => 41,
-            Tool::ItemSounds => 42,
-            Tool::Factions => 43,
-            Tool::FactionTemplates => 44,
-            Tool::FactionGroups => 45,
-            Tool::GameEvents => 46,
-            Tool::Pools => 47,
-            Tool::Tables => 48,
-            Tool::Assets => 49,
-            Tool::GameFiles => 50,
+            Tool::WorldMap => 36,
+            Tool::Sounds => 37,
+            Tool::CreatureSounds => 38,
+            Tool::NpcSounds => 39,
+            Tool::ZoneMusic => 40,
+            Tool::ZoneIntros => 41,
+            Tool::Ambience => 42,
+            Tool::ItemSounds => 43,
+            Tool::Factions => 44,
+            Tool::FactionTemplates => 45,
+            Tool::FactionGroups => 46,
+            Tool::GameEvents => 47,
+            Tool::Pools => 48,
+            Tool::Tables => 49,
+            Tool::Assets => 50,
+            Tool::GameFiles => 51,
         }
     }
 
@@ -1648,7 +1690,7 @@ impl Plugin for ToolPlugin {
                 crate::subjects::located::LocatedPlugin,
             ),
             spawns::spawn::SpawnKeysPlugin,
-            (placements::group::GroupPlugin, placements::swap::SwapPlugin),
+            (placements::group::GroupPlugin, placements::swap::SwapPlugin, crate::import::worldmap::WorldMapPlugin),
             measure::MeasureToolPlugin,
             places::flightpaths::FlightpathToolPlugin,
             // The two place tools as one entry, which keeps the tuple within
@@ -1969,8 +2011,9 @@ mod tests {
     fn only_a_placeless_subject_covers_the_viewport() {
         for tool in ALL {
             // The Assets workspace's subjects are the project folder and the
-            // archives' files, not a table.
-            if tool.covers_viewport() && !matches!(tool, Tool::Assets | Tool::GameFiles) {
+            // archives' files, not a table, and the World Map part's are the
+            // pictures' files.
+            if tool.covers_viewport() && !matches!(tool, Tool::Assets | Tool::GameFiles | Tool::WorldMap) {
                 assert!(
                     tool.table().is_some() || tool.server_table().is_some(),
                     "{} covers the viewport with no table to put there",
@@ -2018,8 +2061,9 @@ mod tests {
                     tool.table()
                 ),
                 // The Assets workspace's subjects are the project folder and
-                // the archives' files.
-                Surface::Middle if matches!(tool, Tool::Assets | Tool::GameFiles) => {}
+                // the archives' files, and the World Map part's are the
+                // pictures' files.
+                Surface::Middle if matches!(tool, Tool::Assets | Tool::GameFiles | Tool::WorldMap) => {}
                 // A client table or a server one. The subject has to be a row
                 // either way. `server_table` says which side of the wire it
                 // lives on, and that decides whether the tool survives a

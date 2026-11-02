@@ -532,6 +532,54 @@ impl Factions {
             .find(|group| group.bit & mask != 0 && !group.localised.is_empty())
     }
 
+    /// The faction name the unit tooltip shows for a unit on `template`, to a
+    /// character of `race` and `class` (the one-based ids), or `None` for no
+    /// line. `reputation` is `Faction.dbc`.
+    ///
+    /// The 1.12.1 client shows the name of the template's `Faction.dbc` row
+    /// when the row has a `reputationListID` of 0 or more, that is when it is a
+    /// faction a character can have reputation with. It then takes the first of
+    /// the row's four race and class alternatives that fits the character, on
+    /// the masks' usual terms: a zero mask is any race or any class, and an
+    /// alternative zero in both is unused. With no alternative that fits there
+    /// is no line, and none when the fitting alternative's reputation flags
+    /// carry [`super::reputation::flags::HIDDEN`]. The character's own
+    /// reputation list is not read: a faction the character has not met is
+    /// named as well.
+    ///
+    /// The first fitting alternative is taken here, where
+    /// [`super::reputation::Factions`]' own builder takes the last. No shipped
+    /// row has two that fit one character, so the two agree on the shipped
+    /// file.
+    ///
+    /// The tooltip also leaves the line out for a creature whose template
+    /// carries `CREATURE_TYPEFLAGS_NO_FACTION_TOOLTIP`; that test is the
+    /// caller's, since the flag is in the creature query answer and not in a
+    /// table.
+    pub fn tooltip_name<'a>(
+        &self,
+        template: u32,
+        reputation: &'a super::reputation::Factions,
+        race: u8,
+        class: u8,
+    ) -> Option<&'a str> {
+        let row = reputation.get(self.0.get(&template)?.faction)?;
+        if row.reputation_list_id < 0 {
+            return None;
+        }
+        let race_bit = 1u32 << race.saturating_sub(1);
+        let class_bit = 1u32 << class.saturating_sub(1);
+        let fits = |i: &usize| {
+            let (races, classes) = (row.race_mask[*i], row.class_mask[*i]);
+            (races != 0 || classes != 0)
+                && (races == 0 || races & race_bit != 0)
+                && (classes == 0 || classes & class_bit != 0)
+        };
+        let i = (0..row.race_mask.len()).find(fits)?;
+        let hidden = row.flags[i] & u32::from(super::reputation::flags::HIDDEN) != 0;
+        (!hidden && !row.name.is_empty()).then_some(row.name.as_str())
+    }
+
     /// A template's `friendlyMask` and `hostileMask`: the groups its units
     /// are friendly and hostile towards. `None` for a template the table does
     /// not have.
@@ -1269,5 +1317,69 @@ mod tests {
         assert_eq!(t.rank(&creature(1), &creature(3), &nothing()), Rank::Friendly);
         assert_eq!(t.rank(&creature(3), &creature(1), &nothing()), Rank::Hostile);
         assert!(t.can_attack(&creature(1), &creature(3), &nothing()));
+    }
+
+    /// The tooltip names a faction with a reputation bar, by the first
+    /// alternative that fits the character, and no faction whose fitting
+    /// alternative is hidden, that has no bar, or that has no alternative for
+    /// the character.
+    #[test]
+    fn the_tooltip_names_a_faction_with_a_reputation_bar() {
+        use crate::tables::reputation::{flags, Factions as Reputation};
+        // `Faction.dbc`'s 37 fields: id, reputationListID, raceMask[4],
+        // classMask[4], base[4], flags[4], parent, name[8] and its flag word,
+        // description[8] and its flag word.
+        let mut strings = vec![0u8];
+        let mut name = |text: &str| {
+            let at = strings.len() as u32;
+            strings.extend_from_slice(text.as_bytes());
+            strings.push(0);
+            at
+        };
+        let (stormwind, defias, hidden, horde) = (name("Stormwind"), name("Defias"), name("Hidden"), name("Orgrimmar"));
+        let row = |id: u32, list: i32, races: [u32; 4], flag: [u32; 4], name: u32| {
+            let mut row = vec![0u32; 37];
+            row[0] = id;
+            row[1] = list as u32;
+            row[2..6].copy_from_slice(&races);
+            row[14..18].copy_from_slice(&flag);
+            row[19] = name;
+            row
+        };
+        let human = 1u32 << 0;
+        let orc = 1u32 << 1;
+        let factions = Reputation::parse(&dbc(
+            &[
+                // Every race, through two alternatives: the first fits a
+                // human and is visible, the second fits an orc and is hidden.
+                row(72, 7, [human, orc, 0, 0], [0, u32::from(flags::HIDDEN), 0, 0], stormwind),
+                // No reputation bar.
+                row(17, -1, [human, 0, 0, 0], [0; 4], defias),
+                // Hidden for every race.
+                row(30, 9, [human | orc, 0, 0, 0], [u32::from(flags::HIDDEN), 0, 0, 0], hidden),
+                // An alternative for orcs alone.
+                row(76, 8, [orc, 0, 0, 0], [0; 4], horde),
+            ],
+            37,
+            &strings,
+        ))
+        .unwrap();
+        // Templates 1 to 4 name the four factions; 5 names one the table does
+        // not have.
+        let templates = Factions::parse(&dbc(
+            &[vec![1, 72], vec![2, 17], vec![3, 30], vec![4, 76], vec![5, 999]],
+            14,
+            &[0],
+        ))
+        .unwrap();
+        let (race_human, race_orc, warrior) = (1, 2, 1);
+        assert_eq!(templates.tooltip_name(1, &factions, race_human, warrior), Some("Stormwind"));
+        assert_eq!(templates.tooltip_name(1, &factions, race_orc, warrior), None, "hidden to an orc");
+        assert_eq!(templates.tooltip_name(2, &factions, race_human, warrior), None, "no reputation bar");
+        assert_eq!(templates.tooltip_name(3, &factions, race_human, warrior), None, "hidden");
+        assert_eq!(templates.tooltip_name(4, &factions, race_human, warrior), None, "no alternative for a human");
+        assert_eq!(templates.tooltip_name(4, &factions, race_orc, warrior), Some("Orgrimmar"));
+        assert_eq!(templates.tooltip_name(5, &factions, race_human, warrior), None);
+        assert_eq!(templates.tooltip_name(99, &factions, race_human, warrior), None);
     }
 }

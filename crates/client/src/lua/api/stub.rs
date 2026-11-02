@@ -10,6 +10,9 @@ pub(crate) struct StubUnit {
     /// The zone line on a party member's plate. Empty for every other
     /// unit. See [`crate::interface::api::UnitTip::zone`].
     pub zone: String,
+    /// The faction line on the unit's plate, empty for none. See
+    /// [`crate::interface::api::UnitTip::faction`].
+    pub faction: String,
     pub level: i32,
     pub(crate) health: u32,
     pub(crate) health_max: u32,
@@ -287,6 +290,7 @@ impl Stub {
             title: Default::default(),
             // Empty for every unit except a group member in another zone.
             zone: String::new(),
+            faction: String::new(),
         });
         self
     }
@@ -305,6 +309,14 @@ impl Stub {
     pub(crate) fn in_zone(mut self, zone: &str) -> Stub {
         if let Some(unit) = self.units.last_mut() {
             unit.zone = zone.to_string();
+        }
+        self
+    }
+
+    /// Sets the faction the unit plate names for the unit added last.
+    pub(crate) fn of_faction(mut self, faction: &str) -> Stub {
+        if let Some(unit) = self.units.last_mut() {
+            unit.faction = faction.to_string();
         }
         self
     }
@@ -1416,6 +1428,7 @@ impl super::UnitAnswers for Stub {
             dead: unit.dead,
             health: Some((unit.health, unit.health_max)),
             zone: unit.zone.clone(),
+            faction: unit.faction.clone(),
         })
     }
     fn unit_is_connected(&self, _: &str) -> bool {

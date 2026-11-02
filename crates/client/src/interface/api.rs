@@ -1199,6 +1199,7 @@ impl Units<'_, '_> {
                     .as_ref()
                     .and_then(|s| Some((u32::from(s.health?), u32::from(s.max_health?)))),
                 zone: String::new(),
+                faction: String::new(),
             });
         };
         let player = unit.kind == vale_protocol::state::update::ObjectType::Player;
@@ -1231,7 +1232,23 @@ impl Units<'_, '_> {
             // Filled in by the caller, which holds `AreaTable` and knows the
             // local player's zone. See [`UnitTip::zone`].
             zone: String::new(),
+            faction: self.faction_line(tables, unit).unwrap_or_default(),
         })
+    }
+
+    /// [`UnitTip::faction`] for `unit`, or `None` for no line.
+    fn faction_line(
+        &self,
+        tables: Option<&vale_assets::tables::dbc::DisplayTables>,
+        unit: &crate::world::entity::WorldEntity,
+    ) -> Option<String> {
+        if unit.type_flags & vale_protocol::state::query::TYPE_FLAG_NO_FACTION_TOOLTIP != 0 {
+            return None;
+        }
+        let tables = tables?;
+        let (race, class) = self.get(UnitId::Player)?.race_class?;
+        let name = tables.factions()?.tooltip_name(unit.faction?, tables.reputation()?, race, class)?;
+        Some(name.to_string())
     }
 
     /// The zone a party member is in, as an `AreaTable` id. `None` for every
@@ -1362,6 +1379,14 @@ pub struct UnitTip {
     /// clears it when it matches the local player's zone. A member in the same
     /// zone gets no line.
     pub zone: String,
+    /// The name of the unit's faction, which the 1.12.1 client shows under
+    /// the level line for a faction a character can have reputation with;
+    /// empty for no line. The rule is
+    /// `vale_assets::tables::faction::Factions::tooltip_name`, asked for the
+    /// local character's race and class. A creature whose template carries
+    /// [`vale_protocol::state::query::TYPE_FLAG_NO_FACTION_TOOLTIP`] has no
+    /// line.
+    pub faction: String,
 }
 
 /// A race's file name from its localised name: the second value `UnitRace`

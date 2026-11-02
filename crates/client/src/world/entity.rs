@@ -89,6 +89,10 @@ pub struct WorldEntity {
     /// that and omits the word.
     pub pet_family: u32,
     pub classification: u32,
+    /// The template's type flags, from the same packet; 0 for every player
+    /// and until the query returns. The unit tooltip reads one bit of them;
+    /// see [`crate::interface::api::UnitTip::faction`].
+    pub type_flags: u32,
     pub entry: Option<u32>,
     pub level: Option<u32>,
     /// `(current, maximum)`: what a bar is filled from, and all that this
@@ -1019,6 +1023,7 @@ pub(super) fn poll_world(
             creature_type: world.creature_of(e).map_or(0, |c| c.creature_type),
             pet_family: world.creature_of(e).map_or(0, |c| c.pet_family),
             classification: world.creature_of(e).map_or(0, |c| c.rank),
+            type_flags: world.creature_of(e).map_or(0, |c| c.type_flags),
             entry: e.entry(),
             level: e.level(),
             health_value: e.health().zip(e.max_health()),

@@ -5,8 +5,9 @@
 //! ## A set is a GroundEffectTexture row
 //!
 //! `MCLY`'s `effectId` names a `GroundEffectTexture` row: up to four
-//! `GroundEffectDoodad` ids, a density, and a `TerrainType` row that picks the
-//! footstep sound. What a row plants, and how, is
+//! `GroundEffectDoodad` indices (field 1 of that table, not its id; see
+//! `vale_assets::tables::foliage`), a density, and a `TerrainType` row that
+//! picks the footstep sound. What a row plants, and how, is
 //! `vale_assets::tables::foliage`; the footsteps are
 //! `vale_assets::tables::sound::SoundBank::terrain_of_ground_effect`. 730 of
 //! the 12,742 shipped rows name a model. Most of the rest only set footsteps,
@@ -53,11 +54,12 @@ pub(crate) const MODELS: &str = "GroundEffectDoodad";
 /// The table a set's footstep column names: one row per kind of ground.
 pub(crate) const TERRAINS: &str = "TerrainType";
 /// `GroundEffectTexture`'s four model columns, its density column, and
-/// `GroundEffectDoodad`'s file name column. See
+/// `GroundEffectDoodad`'s index and file name columns. See
 /// `vale_assets::tables::foliage::fields`.
 pub(crate) const SLOTS: [usize; 4] = [1, 2, 3, 4];
 pub(crate) const DENSITY: usize = 5;
 pub(crate) const TERRAIN: usize = 6;
+const MODEL_INDEX: usize = 1;
 const MODEL_FILE: usize = 2;
 /// `TerrainType`'s name column.
 const TERRAIN_NAME: usize = 1;
@@ -79,7 +81,9 @@ const SETTLE: f64 = 0.4;
 /// One `GroundEffectDoodad` row: a model a set can plant.
 #[derive(Debug, Clone)]
 pub(crate) struct Model {
-    pub(crate) id: u32,
+    /// The number a set's model column names this model by: the row's
+    /// index, field 1, which is not its id.
+    pub(crate) key: u32,
     /// The archive path, `World\NoDXT\Detail\….m2`.
     pub(crate) path: String,
     /// The file name without its directory or extension.
@@ -131,7 +135,7 @@ impl Catalogue {
         }
         let mut model_of: HashMap<u32, usize> = HashMap::new();
         for record in 0..models.record_count() {
-            let (Some(id), Some(file)) = (models.u32_at(record, 0), models.string_at(record, MODEL_FILE)) else {
+            let (Some(key), Some(file)) = (models.u32_at(record, MODEL_INDEX), models.string_at(record, MODEL_FILE)) else {
                 continue;
             };
             if file.is_empty() {
@@ -142,14 +146,14 @@ impl Catalogue {
                 None => file.as_str(),
             };
             out.models.push(Model {
-                id,
+                key,
                 path: format!("{DETAIL_DIR}{stem}.m2"),
                 name: stem.to_string(),
             });
         }
         out.models.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
         for (index, model) in out.models.iter().enumerate() {
-            model_of.insert(model.id, index);
+            model_of.insert(model.key, index);
         }
         for record in 0..sets.record_count() {
             let Some(id) = sets.u32_at(record, 0) else { continue };
@@ -389,7 +393,7 @@ pub(crate) fn new_set(session: &mut EditSession, from: Option<u32>) -> Option<u3
 }
 
 /// Point one of a project set's four model columns at a `GroundEffectDoodad`
-/// row, or at none. One undo entry.
+/// row by its [`Model::key`], or at none. One undo entry.
 pub(crate) fn set_model(session: &mut EditSession, id: u32, slot: usize, model: Option<u32>) -> bool {
     let Some(&field) = SLOTS.get(slot) else {
         return false;
@@ -541,18 +545,21 @@ mod tests {
         DbcFile::parse(&out).expect("a well-formed table")
     }
 
-    /// Two models, `ElwGra01.mdl` at string offset 1 and `Fern.mdx` at 14.
+    /// Two models, `ElwGra01.mdl` at string offset 1 and `Fern.mdx` at 14,
+    /// with ids 10 and 11 and indices 0 and 1.
     fn models() -> DbcFile {
         dbc(&[vec![10, 0, 1], vec![11, 1, 14]], b"\0ElwGra01.mdl\0Fern.mdx\0")
     }
 
+    /// A set's columns name a model by its index, not its id: set 3 names 10,
+    /// which is a row's id, and plants nothing.
     #[test]
     fn a_set_lists_its_models_and_a_row_above_the_shipped_ones_is_the_projects() {
         let sets = dbc(
             &[
-                vec![1, 10, 10, 11, EMPTY, 8, 0],
+                vec![1, 0, 0, 1, EMPTY, 8, 0],
                 vec![2, EMPTY, EMPTY, EMPTY, EMPTY, 8, 0],
-                vec![3, 99, EMPTY, EMPTY, EMPTY, 8, 0],
+                vec![3, 10, EMPTY, EMPTY, EMPTY, 8, 0],
                 vec![4, EMPTY, EMPTY, EMPTY, EMPTY, 8, 0],
             ],
             b"\0",
@@ -564,7 +571,8 @@ mod tests {
         assert!(catalogue.set(4).is_some_and(|set| set.project && !set.plants()));
         assert_eq!(catalogue.describe(1), "ElwGra01 \u{d7}2, Fern");
         assert_eq!(catalogue.describe(0), "None");
-        assert_eq!(catalogue.describe(3), "No foliage", "a model id the doodad table lacks plants nothing");
+        assert_eq!(catalogue.describe(3), "No foliage", "a column naming an id rather than an index plants nothing");
+        assert_eq!(catalogue.models[1].key, 1, "Fern is named by its index");
         assert_eq!(catalogue.describe(9), "Row 9, not in the table");
         assert_eq!(catalogue.footsteps(1), "Dirt");
         assert_eq!(catalogue.footsteps(9), "Dirt", "a row the table lacks walks as Dirt");

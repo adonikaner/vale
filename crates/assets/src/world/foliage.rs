@@ -418,11 +418,12 @@ mod tests {
         }
         let mut names = vec![0u8];
         names.extend_from_slice(b"Gra01.mdl\0");
+        // Id 7, index 0: a texture row's columns name the index.
         let doodads = dbc(&[vec![7, 0, 1]], &names);
         let textures = dbc(
             &[
-                vec![100, 7, 7, 7, 7, 2, 0],
-                vec![101, 7, u32::MAX, u32::MAX, u32::MAX, 4, 0],
+                vec![100, 0, 0, 0, 0, 2, 0],
+                vec![101, 0, u32::MAX, u32::MAX, u32::MAX, 4, 0],
             ],
             &[0],
         );
