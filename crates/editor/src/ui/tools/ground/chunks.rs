@@ -605,6 +605,7 @@ fn chunks_textures(
     // over a selection.
     let mut swap: Option<String> = None;
     let mut drop: Option<String> = None;
+    let mut rebase: Option<String> = None;
     if census.textures.is_empty() {
         theme::note(ui, "nothing selected");
     }
@@ -654,6 +655,18 @@ fn chunks_textures(
                 {
                     swap = Some(path.clone());
                 }
+                if ui
+                    .add_enabled(*based < census.open, egui::Button::new("base").small())
+                    .on_hover_text(
+                        "Move this texture to the base of every selected chunk and \
+                         recompute the blend maps so the ground looks the same. A chunk \
+                         without it gains it under its base. One undo entry.",
+                    )
+                    .on_disabled_hover_text("This texture is already the base of every selected chunk.")
+                    .clicked()
+                {
+                    rebase = Some(path.clone());
+                }
             });
         });
     }
@@ -683,6 +696,13 @@ fn chunks_textures(
     if let Some(path) = &drop {
         let changed = tool::remove_texture(session, &chunks.selected, path);
         session.status = format!("removed {} from {changed} chunk(s)", textures::leaf(path));
+    }
+    if let Some(path) = &rebase {
+        let (changed, full) = tool::move_to_base(session, &chunks.selected, path);
+        session.status = format!("moved {} to the base of {changed} chunk(s)", textures::leaf(path));
+        if full > 0 {
+            session.status += &format!("; {full} chunk(s) skipped: they carry four other textures");
+        }
     }
     ui.add_space(4.0);
     egui::CollapsingHeader::new(egui::RichText::new("Choose a texture").color(theme::INK_DIM))

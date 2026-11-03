@@ -415,6 +415,21 @@ fn chunks(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing) -
         said = Some(format!("base texture set on {n} chunks"));
         chosen = true;
     }
+    if item(
+        ui,
+        "Move texture to base",
+        any && named,
+        "Move the Textures brush's texture to the base of the selected chunks and recompute \
+         the blend maps so the ground looks the same.",
+        "Select chunks, and choose a texture on the Textures tool.",
+    ) {
+        let (n, full) = tool::move_to_base(session, &selected, &texture);
+        said = Some(match full {
+            0 => format!("texture moved to the base of {n} chunks"),
+            _ => format!("texture moved to the base of {n} chunks; {full} skipped: four other textures"),
+        });
+        chosen = true;
+    }
     if item(ui, "Clear to base", any, "Remove every layer above the base on the selected chunks.", none) {
         let n = tool::clear_paint(session, &selected);
         said = Some(format!("{n} chunks cleared to their base texture"));

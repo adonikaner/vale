@@ -20,6 +20,10 @@ pub mod at {
     pub(crate) const AREA_ID: usize = 0x34;
     pub(crate) const BUILDING_REF_COUNT: usize = 0x38;
     pub(crate) const HOLES: usize = 0x3c;
+    /// Eight `u16`s, one per row of the 8x8 detail cells, each holding eight
+    /// 2-bit `MCLY` layer indices: the layer whose ground effect grows in that
+    /// cell. See `vale_assets::world::adt::Mcnk::detail_layer_at`.
+    pub(crate) const DETAIL_LAYERS: usize = 0x40;
     pub(crate) const POSITION: usize = 0x68;
 }
 
@@ -81,7 +85,15 @@ impl<'a> McnkHeader<'a> {
         u16::from_le_bytes([self.bytes[at::HOLES], self.bytes[at::HOLES + 1]])
     }
 
-    /// The chunk origin in world space, which is its **maximum** x and y corner:
+    /// The detail-layer map, one `u16` per row of cells.
+    pub fn detail_layers(&self) -> [u16; 8] {
+        std::array::from_fn(|row| {
+            let at = at::DETAIL_LAYERS + row * 2;
+            u16::from_le_bytes([self.bytes[at], self.bytes[at + 1]])
+        })
+    }
+
+    /// The chunk origin in world space, which is its maximum x and y corner:
     /// `vale_assets`' cells run in decreasing x and y from here.
     pub fn position(&self) -> [f32; 3] {
         [
@@ -128,6 +140,13 @@ impl<'a> McnkHeaderMut<'a> {
 
     pub fn set_holes(&mut self, value: u16) {
         self.bytes[at::HOLES..at::HOLES + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    pub(crate) fn set_detail_layers(&mut self, rows: [u16; 8]) {
+        for (row, value) in rows.iter().enumerate() {
+            let at = at::DETAIL_LAYERS + row * 2;
+            self.bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
+        }
     }
 
     /// Move the chunk origin.

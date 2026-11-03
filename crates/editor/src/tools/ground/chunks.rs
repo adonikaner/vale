@@ -9,7 +9,7 @@
 //! to many chunks, and painting it chunk by chunk is slow and leaves gaps. This
 //! tool holds a set of chunks and writes one value to all of them.
 //!
-//! ## The rules
+//! ## Selection gestures and keys
 //!
 //! The placement tools' rules (`crate::tools::placements::group`), with the one difference a grid
 //! allows: the rectangle is on the ground and not on the screen.
@@ -422,6 +422,29 @@ pub(crate) fn set_base(session: &mut EditSession, cells: &BTreeSet<Cell>, path: 
             paint.set_base(id)
         })
     })
+}
+
+/// Make `path` the base of every selected chunk and recompute the blend maps
+/// so the ground looks the same; see `vale_edit::adt::alpha::Paint::move_to_base`.
+/// A chunk that does not carry `path` gains it under its old base.
+///
+/// Answers the chunks changed, and the chunks refused because they carry four
+/// other textures. One undo entry.
+pub(crate) fn move_to_base(session: &mut EditSession, cells: &BTreeSet<Cell>, path: &str) -> (usize, usize) {
+    let label = format!("Move {} to base", super::textures::leaf(path));
+    let mut full = 0;
+    let changed = over(session, cells, &label, true, |tile, chunk| {
+        repaint(tile, chunk, |tile, paint| {
+            let carried = texture_id(tile, path).is_some_and(|id| paint.layer_of(id).is_some());
+            if !carried && !paint.is_empty() && !paint.has_room() {
+                full += 1;
+                return false;
+            }
+            let id = tile.name_texture(path);
+            paint.move_to_base(id)
+        })
+    });
+    (changed, full)
 }
 
 /// Take every layer but the base off every selected chunk.
@@ -1008,6 +1031,45 @@ mod tests {
         undo(&mut session);
         assert_eq!(chunks.census(&session).textures, vec![(BASE.to_string(), 4, 4)]);
         assert_eq!(names(&session).len(), 1);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// Moving a texture to the base adds it under chunks that lack it, swaps it
+    /// down in chunks that carry it, and is one undo entry that also restores
+    /// the detail-layer map.
+    #[test]
+    fn a_texture_moves_to_the_base_and_back() {
+        let here = (31, 49);
+        let (mut session, install) = session_with("rebase", &[here]);
+        let mut chunks = Chunks::default();
+        chunks.select(block(Cell::of(here, (2, 2)), Cell::of(here, (3, 3))));
+        let dirt = "tileset\\test\\dirt.blp";
+        let detail = |session: &EditSession| {
+            let tile = &session.tiles[&here];
+            let chunk = Cell::of(here, (2, 2)).chunk_in(tile).unwrap();
+            tile.chunk(chunk).unwrap().head().detail_layers()
+        };
+        let before = detail(&session);
+
+        assert_eq!(move_to_base(&mut session, &chunks.selected, dirt), (4, 0));
+        assert_eq!(
+            chunks.census(&session).textures,
+            vec![(BASE.to_string(), 4, 0), (dirt.to_string(), 4, 4)]
+        );
+        // The old base covers the new one at full alpha, so it still grows in
+        // every cell, now as layer 1.
+        assert_eq!(detail(&session), [0x5555; 8]);
+        assert_eq!(move_to_base(&mut session, &chunks.selected, dirt), (0, 0), "already the base");
+
+        assert_eq!(move_to_base(&mut session, &chunks.selected, BASE), (4, 0));
+        assert_eq!(chunks.census(&session).textures[0], (BASE.to_string(), 4, 4));
+        assert_eq!(detail(&session), [0; 8], "the dirt layer above it is transparent");
+        assert_eq!(session.history.depth_done(), 2);
+
+        undo(&mut session);
+        undo(&mut session);
+        assert_eq!(chunks.census(&session).textures, vec![(BASE.to_string(), 4, 4)]);
+        assert_eq!(detail(&session), before);
         let _ = std::fs::remove_dir_all(&install);
     }
 

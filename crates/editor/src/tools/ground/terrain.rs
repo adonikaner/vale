@@ -80,10 +80,11 @@
 //! ([`Terrain::objects_follow`], on by default). It runs at the release and not
 //! per frame, because it reads the ground under every placement of the tile.
 //!
-//! Other items read the heights and are left to a re-read:
+//! Other items read the heights and are left to a re-read or to the release:
 //!
-//! * `recompute_normals` stops at the tile's edge, so a stroke across a border
-//!   leaves a shading seam.
+//! * `recompute_normals` stops at the tile's edge, so while a stroke across a
+//!   border is held it shows a shading seam. [`shade_seams`] shades the
+//!   chunks on the tile's side again from both tiles when the button comes up.
 //!
 //! The draw group's `Aabb` is probably no longer one of them. It is baked when
 //! the mesh is built, so ground raised far above its original range could be
@@ -117,14 +118,14 @@ use bevy::prelude::*;
 /// The upper bound follows from the open block. A stroke can only reach tiles
 /// this session has open, which is [`crate::OPEN_BLOCK`] yards across, so a
 /// brush wider than that paints a circle with pieces missing rather than a
-/// bigger circle. The cap is half of it: a brush centred anywhere in the middle
-/// tile still lands entirely on open ground.
+/// bigger circle. The cap is half of it: a brush centred in the middle of the
+/// block still lands entirely on open ground.
 ///
 /// The bound is derived from [`crate::REACH`], not written as a number, so the
 /// two cannot drift. A run that narrows the block with `--reach` keeps this cap.
 /// That is harmless: a brush past the open ground paints the open part of its
-/// circle and nothing else. Earlier values were 200, a guess that refused work
-/// the tool can do, and then 800, half the 3x3 the editor used to stream.
+/// circle and nothing else. Earlier values were 200, which refused brush sizes
+/// the tool can handle, and then 800, half the 3x3 the editor used to stream.
 pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
 
 /// How strong the height brush may be, in yards a second, for raise and lower.
@@ -501,8 +502,8 @@ fn stroke(
     // Every tile the circle reaches is edited, not only the one the stroke
     // began on. A brush that stopped at the tile border left a step in the
     // ground there: one side raised and the other not, with both files valid.
-    // The four corners of the brush's bounding box name the tiles, which is at
-    // most four and usually one.
+    // Every tile in the brush's bounding box is edited, which is usually one;
+    // see [`tiles_under`].
     // A pen's pressure scales this frame's strength and radius. See
     // `crate::tablet::Pressure`.
     let mut brush = terrain.brush;
@@ -535,8 +536,9 @@ fn stroke(
     for coord in tiles_under(&brush, at) {
         let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
-            // Not open yet. `open_tiles` opens the 3x3 one tile a frame and
-            // will reach this one shortly. Skipping it costs a few frames in
+            // Not open yet. `open_tiles` opens the block around the focus on
+            // the task pool, a few tiles at a time, and will reach this one
+            // shortly. Skipping it costs a few frames in
             // which the stroke does not reach that side. Opening it here would
             // be a two-megabyte parse in the middle of a drag.
             continue;
@@ -1131,8 +1133,8 @@ fn live_ground(
         };
         // The new vertices, as one run per changed chunk, not a map. Every
         // vertex of every draw group of the tile is looked up here, up to
-        // 81,840 on every frame of a stroke, and a stroke touches at most four
-        // chunks. At that count four integer comparisons are measurably faster
+        // 81,840 on every frame of a stroke, and a brush smaller than a chunk
+        // touches at most four chunks. At that count four integer comparisons are measurably faster
         // than a hash lookup.
         let mut moved: Vec<(u32, Vec<vale_assets::world::adt::MeshVertex>)> = Vec::new();
         for chunk in &chunks {
@@ -1185,7 +1187,8 @@ fn live_ground(
         if reached {
             session.dirty.remove(&coord);
         } else if !tiles.iter().any(|(tile, _)| tile.coord == coord) {
-            // The tile is not on screen at all — off the 3x3, or still loading.
+            // The tile is not on screen at all: outside the streamed block, or
+            // still loading.
             // Its bytes are already right, so whatever streams it next draws the
             // edit; there is nothing to patch and nothing to reload.
             session.dirty.remove(&coord);
@@ -1210,8 +1213,16 @@ fn live_ground(
 /// at the height the raise had reached. Everything that reads the ground outside
 /// the tile's own mesh has the same problem. See [`remesh`] for the ones this
 /// does not cover.
+///
+/// It also plans the foliage again on chunks whose paint changed
+/// (`EditSession::replant`): a texture stroke, an undo or redo of one, a road.
+/// The paint decides which cells grow what, through the `MCNK` detail-layer
+/// map and the layers' `effectId`s, so a repainted chunk's plan is made again
+/// from the tile's bytes rather than regrounded. Without this, the lawn kept
+/// growing where the paint had been until the tile was read again.
 fn live_foliage(
     mut session: Option<ResMut<EditSession>>,
+    assets: Res<vale_client::assets::GameAssets>,
     mut tiles: Query<(&TerrainTile, &mut TileFoliagePlans)>,
     mut commands: Commands,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -1219,34 +1230,67 @@ fn live_foliage(
     let Some(session) = session.as_mut() else {
         return;
     };
-    if buttons.pressed(MouseButton::Left) || session.regrow.is_empty() {
+    if buttons.pressed(MouseButton::Left) || (session.regrow.is_empty() && session.replant.is_empty()) {
         return;
     }
     // Taken whole: a chunk whose tile is not on screen has nothing to replant
     // and must not be kept waiting for one, because the tile's own bytes are
     // already right and whatever streams it next grows the new lawn from them.
-    let regrow = std::mem::take(&mut session.regrow);
+    let mut regrow = std::mem::take(&mut session.regrow);
+    let replant = std::mem::take(&mut session.replant);
     let mut dead: Vec<Entity> = Vec::new();
     let mut replanted = 0;
+    let effects = assets.ground_effects();
+    for (coord, chunks) in replant {
+        if !tiles.iter().any(|(tile, _)| tile.coord == coord) {
+            continue;
+        }
+        let Some(tile) = session.tiles.get(&coord) else {
+            continue;
+        };
+        let Ok(adt) = vale_assets::world::adt::Adt::parse(&tile.write()) else {
+            session.stale.insert(coord);
+            continue;
+        };
+        // A new plan stands on the current heights, so a chunk here needs no
+        // reground as well.
+        if let Some(moved) = regrow.get_mut(&coord) {
+            moved.retain(|index| !chunks.contains(index));
+        }
+        // Every drawn copy: while a tile is being replaced there are two, and
+        // the one on screen is not always the first the query yields. See
+        // `swap`.
+        for (_, mut plans) in tiles.iter_mut().filter(|(tile, _)| tile.coord == coord) {
+            for &index in &chunks {
+                let Some(chunk) = adt.chunks.get(index) else {
+                    continue;
+                };
+                let plan = vale_assets::world::foliage::ChunkFoliage::plan(chunk, &effects);
+                if plans.replant(index, plan, &mut dead) {
+                    replanted += 1;
+                }
+            }
+        }
+    }
     for (coord, chunks) in regrow {
         let Some(tile) = session.tiles.get(&coord) else {
             continue;
         };
-        let Some((_, mut plans)) = tiles.iter_mut().find(|(tile, _)| tile.coord == coord) else {
-            continue;
-        };
-        for index in chunks {
-            let Some(chunk) = tile.chunk(index) else {
-                continue;
-            };
-            // The heights and the recomputed normals. The stroke has already
-            // run `vale_edit::adt::heights::recompute_normals`. A lawn
-            // regrounded onto the old normals is lit as the hill was before it
-            // was raised.
-            let ground = vale_edit::adt::heights::ground(chunk);
-            let normals = vale_edit::adt::heights::normals(chunk);
-            if plans.reground(index, ground, &normals, &mut dead) {
-                replanted += 1;
+        // Every drawn copy, as for a replant above.
+        for (_, mut plans) in tiles.iter_mut().filter(|(tile, _)| tile.coord == coord) {
+            for &index in &chunks {
+                let Some(chunk) = tile.chunk(index) else {
+                    continue;
+                };
+                // The heights and the recomputed normals. The stroke has
+                // already run `vale_edit::adt::heights::recompute_normals`. A
+                // lawn regrounded onto the old normals is lit as the hill was
+                // before it was raised.
+                let ground = vale_edit::adt::heights::ground(chunk);
+                let normals = vale_edit::adt::heights::normals(chunk);
+                if plans.reground(index, ground, &normals, &mut dead) {
+                    replanted += 1;
+                }
             }
         }
     }
@@ -1254,7 +1298,7 @@ fn live_foliage(
         commands.entity(entity).despawn();
     }
     if replanted > 0 {
-        debug!("{replanted} chunks of foliage regrounded");
+        debug!("{replanted} chunks of foliage planted again");
     }
 }
 
@@ -1606,8 +1650,8 @@ fn draw_brush(
         Mode::Smooth => Color::srgb(0.9, 0.9, 0.4),
         Mode::Noise => Color::srgb(0.8, 0.5, 0.9),
     };
-    // Two rings: the radius, and the half-radius where a smooth falloff still
-    // has most of its strength. Both follow the ground rather than lying flat.
+    // Two rings: the radius, and the core inside it (see [`rings`]). Both
+    // follow the ground rather than lying flat.
     // A flat circle seen on a slope would look like an ellipse in the wrong
     // place.
     // At the radius a pen's pressure gives it, which is what the stroke
@@ -1762,7 +1806,7 @@ pub(crate) fn ring(
 ///
 /// The floor is the 4.17 yards between vertices: below that the lattice is finer
 /// than the ground can express and the result is the white noise this replaced.
-/// The ceiling is about a chunk and a half, past which one brush sits inside a
+/// The ceiling is six chunks, past which one brush sits inside a
 /// single feature and the stroke is a raise or a lower depending on where it
 /// landed.
 pub(crate) const SCALE: std::ops::RangeInclusive<f32> = 4.17..=200.0;

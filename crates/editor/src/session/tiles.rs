@@ -196,8 +196,8 @@ impl EditSession {
         self.changed(coord);
     }
 
-    /// …and for one chunk's shading, which moves a vertex attribute and
-    /// nothing else.
+    /// Note that a chunk's shading has changed, which moves a vertex attribute
+    /// and nothing else.
     ///
     /// `dirty` and not `regrow`: `MCCV` does not move the ground, so the grass
     /// standing on it is exactly where it was. Marking it would rebuild a
@@ -210,31 +210,33 @@ impl EditSession {
         self.changed(coord);
     }
 
-    /// …and the same for one `MDDF` entry, whose drawn copy has to be put where
-    /// its record now says.
+    /// Note that one `MDDF` entry has moved, so its drawn copy has to be put
+    /// where its record now says.
     pub(crate) fn moved(&mut self, coord: (u32, u32), index: usize) {
         self.moved.entry(coord).or_default().insert(index);
         self.unsaved.insert(coord);
         self.changed(coord);
     }
 
-    /// …and the same for one `MODF` entry.
+    /// Note that one `MODF` entry has moved, as [`Self::moved`] does for an
+    /// `MDDF` entry.
     pub(crate) fn moved_building(&mut self, coord: (u32, u32), index: usize) {
         self.moved_buildings.entry(coord).or_default().insert(index);
         self.unsaved.insert(coord);
         self.changed(coord);
     }
 
-    /// …and for one chunk's paint, whose blend maps on the GPU are behind the
-    /// file.
+    /// Note that a chunk's paint has changed: its blend maps on the GPU are
+    /// behind the file, and its foliage is behind it once the stroke is over.
     pub(crate) fn repainted(&mut self, coord: (u32, u32), chunk: usize) {
         self.repaint.entry(coord).or_default().insert(chunk);
+        self.replant.entry(coord).or_default().insert(chunk);
         self.unsaved.insert(coord);
         self.changed(coord);
     }
 
-    /// Does the map claim this tile? — `MAIN`'s one bit, off
-    /// [`EditSession::claimed`].
+    /// Whether the map claims this tile: its bit in the WDT's `MAIN` grid, read
+    /// from [`EditSession::claimed`].
     pub(crate) fn wdt_claims(&self, coord: (u32, u32)) -> bool {
         self.claimed.contains(&coord)
     }

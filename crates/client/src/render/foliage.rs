@@ -14,9 +14,10 @@
 //! the 3x3 around the character about 130,000. At the maximum `frillDensity`
 //! of 256 it is up to sixteen times that. This is an order of magnitude past
 //! the population [`crate::render::doodads`] is built for. Its per-frame render
-//! cost scales with the number of spawned meshes, and spawning even the few
-//! thousand tufts within sight would cost more in ECS, transform propagation
-//! and visibility than the triangles do.
+//! cost scales with the number of spawned meshes, and spawning even the tufts
+//! within [`DETAIL_DISTANCE`] (about 300 chunks at about 58 tufts each, so some
+//! 17,000 at the default `frillDensity`) would cost more in ECS, transform
+//! propagation and visibility than the triangles do.
 //!
 //! So foliage is merged, not instanced. A chunk's tufts become one mesh per
 //! material: they are transformed on the CPU and concatenated into one vertex
@@ -24,9 +25,9 @@
 //! one per tuft. `vale foliage <Map> <x> <y>` reports the distinct textures
 //! over the models a chunk plants, which is the number of meshes per chunk: 1
 //! on `Azeroth_34_51` (Duskwood), up to 2 on `Azeroth_32_48` and up to 3 on
-//! `Kalimdor_39_30`. A chunk of grass is one to three draws, and the ~20 chunks
-//! in range are ~40, sharing a few materials that merge again under
-//! multidraw.
+//! `Kalimdor_39_30`. A chunk of grass is one to three draws, so the ~300
+//! chunks in range are a few hundred draws, sharing a few materials that merge
+//! again under multidraw.
 //!
 //! The merge is affordable because a detail doodad is small: all 411 models
 //! that exist are a single batch of 4–8 triangles (`vale foliage`). A chunk
@@ -47,7 +48,7 @@
 //! guarantee that, and grass that rearranged itself each time it came back
 //! into range would look wrong.
 //!
-//! ## The range
+//! ## Draw distance and fade
 //!
 //! [`DETAIL_DISTANCE`] is how far out the ground foliage is drawn. The 1.12.1
 //! client plants a chunk when the near side of its bounding sphere is within
@@ -193,8 +194,8 @@ pub(crate) struct Foliage {
 ///
 /// The batches are in [`crate::render::models::loader::batch_draw`]'s order,
 /// produced by the same function, so `batches[i]` is the geometry of
-/// `ModelAssets::draws[i]` and takes its material. Two lists built by two
-/// filters could differ; two lists built by one cannot.
+/// `ModelAssets::draws[i]` and takes its material. Because one function
+/// filters both lists, they have the same length and order.
 pub(crate) struct FoliageProto {
     /// The archive path, which is also [`ModelCache`]'s key for the material.
     #[cfg(test)]
@@ -293,8 +294,45 @@ impl TileFoliagePlans {
         };
         planned.plan.reground(ground, normals);
         dead.extend(planned.built.drain(..));
-        // …so `stream_foliage` looks at this tile again even if the player has
-        // not moved, which during an edit is every frame.
+        // Marked so `stream_foliage` looks at this tile again even if the
+        // player has not moved, which during an edit is every frame.
+        self.dirty = true;
+        true
+    }
+
+    /// Replace one chunk's plan with one made from its edited paint.
+    ///
+    /// A paint edit changes which cells grow and what they grow, through the
+    /// `MCNK` detail-layer map and the layers' `effectId`s, so the plan is
+    /// replaced whole rather than regrounded. `None` drops the chunk's plan,
+    /// for a chunk that no longer grows anything. The entities built from the
+    /// old plan are handed back for the caller to despawn, and
+    /// `stream_foliage` builds the new plan on its next pass. A cell that
+    /// grows what it grew before keeps its tufts, because the scatter is a
+    /// hash of the chunk's world position.
+    ///
+    /// `false` when the chunk had no plan and is given none.
+    ///
+    /// Nothing in this crate calls it, because a chunk's paint does not change
+    /// during a session. It is here for a host that changes it.
+    pub fn replant(&mut self, chunk: usize, plan: Option<ChunkFoliage>, dead: &mut Vec<Entity>) -> bool {
+        let at = self.plans.iter().position(|planned| planned.chunk == chunk);
+        match (at, plan) {
+            (None, None) => return false,
+            (Some(at), None) => dead.extend(self.plans.swap_remove(at).built),
+            (Some(at), Some(plan)) => {
+                let planned = &mut self.plans[at];
+                dead.append(&mut planned.built);
+                planned.centre = centre_of(&plan);
+                planned.plan = plan;
+            }
+            (None, Some(plan)) => self.plans.push(PlannedChunk {
+                chunk,
+                centre: centre_of(&plan),
+                plan,
+                built: Vec::new(),
+            }),
+        }
         self.dirty = true;
         true
     }
@@ -325,6 +363,9 @@ pub(crate) struct FoliageModels {
     /// with no ground-effect tables, which draws bare ground and is not a
     /// failure.
     effects: Option<Arc<GroundEffects>>,
+    /// Models [`Self::fetch`] could not read or parse, so it does not try them
+    /// again on every pass.
+    unreadable: bevy::platform::collections::HashSet<u16>,
 }
 
 impl FoliageModels {
@@ -336,6 +377,36 @@ impl FoliageModels {
         }
         for (index, proto) in protos {
             self.protos.entry(index).or_insert_with(|| Arc::new(proto));
+        }
+    }
+
+    /// Read the models `plan` names that no tile has brought, on the calling
+    /// thread.
+    ///
+    /// A tile brings the models its own plans name (see [`read_tile_foliage`]),
+    /// so this reads nothing for a plan that came with its tile. It reads for
+    /// a plan a host has replaced ([`TileFoliagePlans::replant`]) with one that
+    /// grows a ground effect the tile did not have, and for a table published
+    /// since the tile arrived. A model that is not in the archives is a failed
+    /// lookup, which is cheap, and is tried once.
+    fn fetch(&mut self, plan: &ChunkFoliage, effects: &GroundEffects, assets: &crate::assets::GameAssets) {
+        let mut wanted = Vec::new();
+        models_of(plan, effects, &mut wanted);
+        wanted.retain(|model| !self.protos.contains_key(model) && !self.unreadable.contains(model));
+        if wanted.is_empty() {
+            return;
+        }
+        let read = assets.reader();
+        for model in wanted {
+            let path = effects.model(model);
+            match read(path).and_then(|raw| read_proto(path, &raw)) {
+                Some(proto) => {
+                    self.protos.insert(model, Arc::new(proto));
+                }
+                None => {
+                    self.unreadable.insert(model);
+                }
+            }
         }
     }
 }
@@ -355,7 +426,7 @@ impl Plugin for FoliagePlugin {
                 crate::render::tuning::switch::<Foliage>(|tuning| tuning.foliage),
             ),
         );
-        // …and the HUD line for what it holds: chunks built, meshes and
+        // The HUD line for what the foliage holds: chunks built, meshes and
         // triangles. `ui::report` says why the line is written here and not
         // in `hud.rs`.
         #[cfg(feature = "diagnostics")]
@@ -429,16 +500,7 @@ pub(crate) fn read_tile_foliage(
         let Some(plan) = ChunkFoliage::plan(chunk, effects) else {
             continue;
         };
-        for &id in &plan.cells {
-            let Some(effect) = effects.effect(id) else {
-                continue;
-            };
-            for &model in &effect.models[..usize::from(effect.choices)] {
-                if !wanted.contains(&model) {
-                    wanted.push(model);
-                }
-            }
-        }
+        models_of(&plan, effects, &mut wanted);
         out.chunks.push((index, plan));
     }
 
@@ -448,52 +510,72 @@ pub(crate) fn read_tile_foliage(
         // The tufts that would have used it are not drawn, which is the same
         // degradation `ModelCache` reports once for the material.
         let Ok(raw) = archive.read(path) else { continue };
-        let Ok(parsed) = M2::parse(&raw) else { continue };
-        let batches = parsed
-            .batches
-            .iter()
-            // The same filter the renderer's own build uses, through the same
-            // function, so the batch lists cannot come out different lengths
-            // and give a batch its neighbour's material. No folded layers: a
-            // blade of grass is one batch, and this build merges thousands of
-            // them rather than building one model.
-            .filter_map(|batch| {
-                crate::render::models::loader::batch_draw(&parsed, batch, None, Default::default())
-            })
-            .map(|draw| {
-                // Bevy's up is `+Y`, and a detail model's base is its origin.
-                let top = draw
-                    .positions
-                    .iter()
-                    .map(|p| p[1])
-                    .fold(0.0f32, f32::max)
-                    .max(1e-3);
-                let sway = draw
-                    .positions
-                    .iter()
-                    .map(|p| {
-                        let t = (p[1] / top).clamp(0.0, 1.0);
-                        t * t
-                    })
-                    .collect();
-                FoliageGeometry {
-                    positions: draw.positions,
-                    uvs: draw.uvs,
-                    indices: draw.indices,
-                    sway,
-                }
-            })
-            .collect();
-        out.protos.push((
-            model,
-            FoliageProto {
-                #[cfg(test)]
-                path: path.to_string(),
-                batches,
-            },
-        ));
+        let Some(proto) = read_proto(path, &raw) else { continue };
+        out.protos.push((model, proto));
     }
     out
+}
+
+/// The models `plan` can plant, by [`GroundEffects::models`] index, appended
+/// to `out` where `out` does not already hold them.
+fn models_of(plan: &ChunkFoliage, effects: &GroundEffects, out: &mut Vec<u16>) {
+    for &id in &plan.cells {
+        let Some(effect) = effects.effect(id) else {
+            continue;
+        };
+        for &model in &effect.models[..usize::from(effect.choices)] {
+            if !out.contains(&model) {
+                out.push(model);
+            }
+        }
+    }
+}
+
+/// One foliage model's geometry, from the file at `path`. `None` when the
+/// file is not an M2 this crate can parse.
+#[cfg_attr(not(test), allow(unused_variables))]
+fn read_proto(path: &str, raw: &[u8]) -> Option<FoliageProto> {
+    let parsed = M2::parse(raw).ok()?;
+    let batches = parsed
+        .batches
+        .iter()
+        // The same filter the renderer's own build uses, through the same
+        // function, so the batch lists cannot come out different lengths and
+        // give a batch its neighbour's material. No folded layers: a blade of
+        // grass is one batch, and this build merges thousands of them rather
+        // than building one model.
+        .filter_map(|batch| {
+            crate::render::models::loader::batch_draw(&parsed, batch, None, Default::default())
+        })
+        .map(|draw| {
+            // Bevy's up is `+Y`, and a detail model's base is its origin.
+            let top = draw
+                .positions
+                .iter()
+                .map(|p| p[1])
+                .fold(0.0f32, f32::max)
+                .max(1e-3);
+            let sway = draw
+                .positions
+                .iter()
+                .map(|p| {
+                    let t = (p[1] / top).clamp(0.0, 1.0);
+                    t * t
+                })
+                .collect();
+            FoliageGeometry {
+                positions: draw.positions,
+                uvs: draw.uvs,
+                indices: draw.indices,
+                sway,
+            }
+        })
+        .collect();
+    Some(FoliageProto {
+        #[cfg(test)]
+        path: path.to_string(),
+        batches,
+    })
 }
 
 /// The plans a tile arrived with, as the component the streamer walks.
@@ -501,25 +583,26 @@ pub(crate) fn plans_of(tile: TileFoliage, models: &mut FoliageModels, effects: &
     let plans = tile
         .chunks
         .into_iter()
-        .map(|(chunk, plan)| {
-            // The chunk's centre: half a chunk in from its origin along both
-            // axes, which run away from it. The height is the origin's, which
-            // is within a few yards of the middle and only decides a distance.
-            let centre = axes::to_bevy([
-                plan.ground.position[0] - CHUNK_SIZE / 2.0,
-                plan.ground.position[1] - CHUNK_SIZE / 2.0,
-                plan.ground.position[2],
-            ]);
-            PlannedChunk {
-                chunk,
-                plan,
-                centre,
-                built: Vec::new(),
-            }
+        .map(|(chunk, plan)| PlannedChunk {
+            chunk,
+            centre: centre_of(&plan),
+            plan,
+            built: Vec::new(),
         })
         .collect();
     models.absorb(effects, tile.protos);
     TileFoliagePlans { plans, dirty: true }
+}
+
+/// A chunk's centre, in Bevy's axes: half a chunk in from its origin along
+/// both axes, which run away from it. The height is the origin's, which is
+/// within a few yards of the middle and only decides a distance.
+fn centre_of(plan: &ChunkFoliage) -> Vec3 {
+    axes::to_bevy([
+        plan.ground.position[0] - CHUNK_SIZE / 2.0,
+        plan.ground.position[1] - CHUNK_SIZE / 2.0,
+        plan.ground.position[2],
+    ])
 }
 
 /// Whether a chunk at `distance²` should have geometry, given whether it has.
@@ -552,7 +635,7 @@ fn stream_foliage(
     focus: Res<crate::render::focus::WorldFocus>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut cache: ResMut<ModelCache>,
-    // …and the pool the foliage copy of each model's material is interned in:
+    // The pool the foliage copy of each model's material is interned in:
     // the model's texture and sidedness, with the foliage's own alpha test,
     // the sway and the fade. See
     // [`crate::render::models::Materials::as_foliage`].
@@ -589,6 +672,7 @@ fn stream_foliage(
             plans.dirty = true;
         }
         models.effects = Some(Arc::clone(&effects));
+        models.unreadable.clear();
     }
     let frill = frill_density(cvars.as_deref());
     // A changed density changes every chunk's lawn, so everything built at
@@ -637,6 +721,7 @@ fn stream_foliage(
         }
         let Ok((_, mut plans)) = tiles.get_mut(tile) else { continue };
         let chunk = &mut plans.plans[index];
+        models.fetch(&chunk.plan, &effects, &assets);
         match merge_chunk(
             &chunk.plan,
             chunk.centre,
@@ -757,7 +842,7 @@ fn merge_chunk(
         // one normal for the whole tuft, so the basis change happens once here
         // rather than per vertex.
         let normal = axes::to_bevy(tuft.normal).normalize_or(Vec3::Y);
-        // …and the phase the wind reads: the tuft's own hashed phase plus a
+        // The phase the wind reads: the tuft's own hashed phase plus a
         // term in how far along the wind it stands. The second term makes the
         // tufts move as a wave crossing the field rather than independently.
         // It is baked, so the shader adds a clock and takes one sine.
@@ -951,7 +1036,7 @@ mod tests {
         // A quarter turn about the up axis: the same length, still level.
         assert!(((tip - base).length() - 1.0).abs() < 1e-5, "the blade changed length");
         assert!((tip.y - base.y).abs() < 1e-5, "the blade tipped over");
-        // …and it really turned: the model's own +X is not where it started.
+        // The tip has turned: the model's own +X is not where it started.
         let unturned = axes::to_bevy([1.0, 0.0, 0.0]);
         assert!((tip - base - unturned).length() > 0.5, "the yaw did nothing");
     }
@@ -1125,8 +1210,8 @@ mod tests {
             (Vec2::new(numbers[0], numbers[1]) - WIND_DIRECTION).length() < 1e-4,
             "the shader leans along {numbers:?}, the buffer is phased along {WIND_DIRECTION:?}"
         );
-        // …and it has to be a unit vector, or the amplitude is not what the
-        // shader's comment says it is.
+        // The direction must be a unit vector, or the amplitude is not what
+        // the shader's comment says it is.
         assert!((WIND_DIRECTION.length() - 1.0).abs() < 1e-3);
     }
 
@@ -1148,5 +1233,46 @@ mod tests {
         assert_eq!(models.protos.len(), 2);
         assert!(Arc::ptr_eq(&held, models.protos.get(&3).unwrap()));
         assert_eq!(models.protos[&3].path, "first");
+    }
+
+    /// A replaced plan hands back what was built from the old one, a dropped
+    /// plan leaves the list, and a chunk that had no plan gains one. Each
+    /// marks the tile for the streamer.
+    #[test]
+    fn a_replanted_chunk_drops_its_old_lawn() {
+        let plan = |effect: u32| ChunkFoliage {
+            ground: vale_assets::world::adt::ChunkGround {
+                position: [CHUNK_SIZE, CHUNK_SIZE, 0.0],
+                heights: vec![0.0; vale_assets::world::adt::HEIGHTS_PER_CHUNK],
+                holes: 0,
+            },
+            cells: [effect; vale_assets::world::foliage::CELLS_PER_CHUNK],
+            shadow: [0; vale_assets::world::adt::ALPHA_SIDE],
+            normals: [[0, 0, 127]; vale_assets::world::foliage::CELLS_PER_CHUNK],
+        };
+        let built = Entity::from_raw_u32(7).expect("a valid index");
+        let mut plans = TileFoliagePlans {
+            plans: vec![PlannedChunk {
+                chunk: 5,
+                centre: centre_of(&plan(100)),
+                plan: plan(100),
+                built: vec![built],
+            }],
+            dirty: false,
+        };
+        let mut dead = Vec::new();
+
+        assert!(plans.replant(5, Some(plan(101)), &mut dead));
+        assert_eq!(dead, vec![built]);
+        assert_eq!(plans.plans[0].plan.cells[0], 101);
+        assert!(plans.plans[0].built.is_empty());
+        assert!(plans.dirty);
+
+        assert!(plans.replant(9, Some(plan(100)), &mut dead));
+        assert_eq!(plans.plans.iter().map(|p| p.chunk).collect::<Vec<_>>(), vec![5, 9]);
+
+        assert!(plans.replant(5, None, &mut dead));
+        assert_eq!(plans.plans.iter().map(|p| p.chunk).collect::<Vec<_>>(), vec![9]);
+        assert!(!plans.replant(5, None, &mut dead));
     }
 }

@@ -21,8 +21,8 @@ pub(super) fn open(
     mut focus: ResMut<WorldFocus>,
     mut live: ResMut<vale_client::render::terrain::LiveEdits>,
     mut clock: ResMut<vale_client::render::sky::WorldClock>,
-    // The camera is where the focus comes from from the next frame on, so
-    // `--at` has to reach it here. Setting only the focus would put the world at
+    // From the next frame on the focus is taken from the camera, so `--at`
+    // has to reach the camera here. Setting only the focus would put the world at
     // the asked-for place for one frame and then move it to the camera's own
     // origin, which is the middle of the map.
     mut camera: ResMut<crate::camera::EditorCamera>,
@@ -79,17 +79,18 @@ pub(super) fn open(
     // one and the archives' otherwise — so a tile made in a previous session is
     // there when this one opens. See `EditSession::claimed`.
     let claimed = claimed_tiles(&assets, &project, &args.view.map);
-    // …and what it changes on the server, which is a file of the project's own
-    // because no client file carries a `creature_template` row.
+    // What the project changes on the server, which is a file of the
+    // project's own because no client file carries a `creature_template` row.
     let rows = crate::server::store::ServerRows::read(&project);
-    // …and which of its tiles are the archives' own, which it should not keep.
+    // Which of the project's tiles are the archives' own, which it should not
+    // keep.
     // See [`Shipped::look_for_unchanged`].
     let shipped = Shipped::new(&assets);
     let unchanged = Some(shipped.look_for_unchanged(&project));
 
     let at = args.view.at.unwrap_or((0.0, 0.0));
     camera.go_to(Vec2::new(at.0, at.1));
-    // …and `--view`, which is how far back and at what angle. Written after
+    // `--view` sets how far back the camera is and at what angle. Written after
     // `go_to` because that keeps the framing and only moves the focus.
     if let Some((distance, pitch, yaw)) = args.view.camera {
         camera.distance = distance.max(1.0);
@@ -119,6 +120,7 @@ pub(super) fn open(
         changes: HashMap::default(),
         unpublished: HashSet::default(),
         repaint: HashMap::default(),
+        replant: HashMap::default(),
         regroup: HashSet::default(),
         stale: HashSet::default(),
         unsaved: HashSet::default(),

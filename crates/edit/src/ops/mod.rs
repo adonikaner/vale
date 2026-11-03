@@ -37,11 +37,10 @@
 //! exact. The same argument holds for a placement, where adding or removing one
 //! renumbers every reference in the tile.
 //!
-//! ## …and why a paint stroke records the whole of a chunk's paint
+//! ## Why a paint stroke records a chunk's whole paint
 //!
-//! For a third reason, which is stronger than either: **a layer edit changes the
-//! length of a region.** The blend maps are packed one after another in `MCAL`,
-//! so painting with a texture the chunk does not yet carry adds a layer, moves
+//! A layer edit changes the length of a region. The blend maps are packed one
+//! after another in `MCAL`, so painting with a texture the chunk does not yet carry adds a layer, moves
 //! every map after it and renumbers every offset in `MCLY` — and it appends to
 //! the tile's `MTEX` as well. There is no smaller unit than "the chunk's paint,
 //! and the tile's texture list" that inverts correctly, which is what
@@ -83,10 +82,10 @@ pub enum Edit {
     /// reference list does either — the same shape as [`Edit::Doodad`], one list
     /// along.
     ///
-    /// **It has no scale.** `MODF` in 1.12 carries a position, three angles, a
+    /// It has no scale. `MODF` in 1.12 carries a position, three angles, a
     /// world-space box, a doodad set and a name set, and the field later versions
-    /// put a scale in is two bytes of padding here. A tool that offered one would
-    /// be offering to write a number the reference client does not read.
+    /// put a scale in is two bytes of padding here. The 1.12.1 client does not
+    /// read those bytes, so no tool writes a scale.
     Building {
         index: usize,
         before: Building,
@@ -99,7 +98,7 @@ pub enum Edit {
         before: Box<ChunkPaint>,
         after: Box<ChunkPaint>,
     },
-    /// One map chunk's **liquid**, whole — see [`ChunkLiquid`], and the module
+    /// One map chunk's liquid, whole — see [`ChunkLiquid`], and the module
     /// comment for why there is no smaller unit.
     Liquid {
         chunk: usize,
@@ -109,23 +108,22 @@ pub enum Edit {
     /// One map chunk's area id — one `u32` in its header, an `AreaTable.dbc`
     /// row.
     ///
-    /// **The one edit in this crate that reaches the screen by no route at
-    /// all**: nothing the renderer builds is made of it. See
-    /// `crate::adt::area`, where what *does* read it is.
+    /// The only edit in this crate that changes nothing on screen: the renderer
+    /// builds nothing from it. `crate::adt::area` describes what reads it.
     Area {
         chunk: usize,
         before: u32,
         after: u32,
     },
     /// One map chunk's `MCCV` — the shading painted onto its 145 vertices,
-    /// whole, and **`None` for the chunk having none at all**.
+    /// whole, and `None` when the chunk has no `MCCV`.
     ///
     /// Whole rather than per vertex for the reason [`Edit::Heights`] is: a
     /// stroke touches an arbitrary set of them and 580 bytes recorded twice is
-    /// a kilobyte a chunk. The `Option` is the part that is not like the
-    /// heights — no shipped 1.12 chunk carries this region, so *creating* it is
-    /// half of what the first stroke on a chunk does and an undo has to be able
-    /// to take it away again. See `crate::adt::colours`.
+    /// a kilobyte a chunk. The `Option` differs from the heights: no shipped
+    /// 1.12 chunk carries this region, so the first stroke on a chunk creates
+    /// it, and an undo of that stroke removes it again. See
+    /// `crate::adt::colours`.
     Colours {
         chunk: usize,
         before: Option<Vec<u8>>,
@@ -142,13 +140,12 @@ pub enum Edit {
         before: u16,
         after: u16,
     },
-    /// **A map chunk's flags word, whole.**
+    /// A map chunk's flags word, whole.
     ///
     /// The word carries the shadow bit, the four liquid bits and the
     /// impassability bit, and an edit that set one by writing a value it had
-    /// computed would clobber the rest. So what is recorded is the *whole* word
-    /// before and after, which makes undo exact however many bits an operation
-    /// happened to move.
+    /// computed would overwrite the rest. The whole word is recorded before and
+    /// after, so undo is exact however many bits an operation changed.
     ///
     /// Today only `crate::adt::impass` writes it.
     Flags {
@@ -156,7 +153,7 @@ pub enum Edit {
         before: u32,
         after: u32,
     },
-    /// **The tile's three path lists, whole** — see [`TileNames`].
+    /// The tile's three path lists, whole. See [`TileNames`].
     ///
     /// The unit a find-and-replace over a model or a tileset works in. Whole
     /// rather than "entry 4 of `MMDX` became this", because changing a name's
@@ -174,9 +171,9 @@ pub enum Edit {
 ///
 /// Every index in the file is a position in one of these lists — `MCLY` into
 /// `MTEX`, `MDDF` into `MMID`, `MODF` into `MWID` — so an operation that keeps
-/// the order of all three can change what the names *are* and renumber nothing.
-/// That is what makes a map-wide swap one undo entry per tile rather than a
-/// rewrite of every record on it.
+/// the order of all three can change the names and renumber nothing. A
+/// map-wide swap is therefore one undo entry per tile rather than a rewrite of
+/// every record on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileNames {
     textures: Vec<u8>,
@@ -208,8 +205,9 @@ impl TileNames {
 
 /// One map chunk's paint, and the tile's texture list with it.
 ///
-/// `MCLY` and `MCAL` are the chunk's; `MTEX` is the tile's and is in here anyway,
-/// because painting with a texture the tile does not name appends to it. A
+/// `MCLY`, `MCAL`, and the header's layer count and detail-layer map are the
+/// chunk's; `MTEX` is the tile's and is in here anyway, because painting with a
+/// texture the tile does not name appends to it. A
 /// stroke that crosses several chunks therefore carries several copies of a list
 /// a few hundred bytes long, and reverting them in the order [`Change::revert`]
 /// already uses — last first — leaves the earliest `before` standing, which is
@@ -221,6 +219,7 @@ pub struct ChunkPaint {
     mcly: Vec<u8>,
     mcal: Vec<u8>,
     layer_count: u32,
+    detail_layers: [u16; 8],
     textures: Vec<u8>,
 }
 
@@ -239,6 +238,10 @@ impl ChunkPaint {
                 .chunk(index)
                 .map(|chunk| chunk.head().layer_count())
                 .unwrap_or(0),
+            detail_layers: tile
+                .chunk(index)
+                .map(|chunk| chunk.head().detail_layers())
+                .unwrap_or_default(),
             textures: tile.textures.clone(),
         }
     }
@@ -260,17 +263,19 @@ impl ChunkPaint {
                 }
             }
         }
-        chunk.head_mut().set_layer_count(self.layer_count);
+        let mut head = chunk.head_mut();
+        head.set_layer_count(self.layer_count);
+        head.set_detail_layers(self.detail_layers);
     }
 }
 
 /// One map chunk's liquid, and the header flags that declare it.
 ///
-/// **Both, because neither is the whole truth.** `MCLQ` holds one block per
-/// liquid and says nothing about how many or of what kind; the `MCNK` flags say
-/// that and hold no geometry. An undo that put the bytes back and left the flags
-/// would describe a chunk with water nothing reads, or read a block that is not
-/// there. See `crate::adt::liquid`.
+/// Both are recorded because each holds half of the description. `MCLQ` holds
+/// one block per liquid and says nothing about how many or of what type; the
+/// `MCNK` flags say that and hold no geometry. An undo that put the bytes back
+/// and left the flags would describe a chunk with water nothing reads, or read
+/// a block that is not there. See `crate::adt::liquid`.
 ///
 /// The whole region rather than one cell, for the reason [`ChunkPaint`] is the
 /// whole of a chunk's paint: giving a dry chunk water adds 804 bytes in the
@@ -278,7 +283,7 @@ impl ChunkPaint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChunkLiquid {
     mclq: Vec<u8>,
-    /// …and the size field as the file wrote it, which for `MCLQ` is zero and
+    /// The size field as the file wrote it, which for `MCLQ` is zero and
     /// is not derivable from the length. See
     /// `crate::adt::SubChunk::set_keeping_size`.
     declared: u32,
@@ -421,16 +426,16 @@ impl Edit {
         }
     }
 
-    /// Which map chunk's **ground** this edit moved, for a caller that patches
+    /// Which map chunk's ground this edit moved, for a caller that patches
     /// vertices. `None` for a placement change, which is about the whole tile,
-    /// and **`None` for a paint change**, which moves no vertex: a repaint is
-    /// [`Edit::painted`]'s business and takes a different route to the screen.
+    /// and `None` for a paint change, which moves no vertex: a repaint is
+    /// reported by [`Edit::painted`] and takes a different route to the screen.
     pub fn chunk(&self) -> Option<usize> {
         match self {
-            // **A colour edit is a vertex edit**, and that is the whole reason
-            // it is cheap: `MCCV` is one length or absent, so the mesh keeps
-            // its shape, its indices and its length and only an attribute
-            // moves. It goes down the same live path a height stroke does.
+            // A colour edit is a vertex edit, which is why it is cheap: `MCCV`
+            // is one length or absent, so the mesh keeps its shape, its indices
+            // and its length and only an attribute changes. It goes down the
+            // same live path a height stroke does.
             Edit::Heights { chunk, .. }
             | Edit::Normals { chunk, .. }
             | Edit::Colours { chunk, .. } => Some(*chunk),
@@ -438,24 +443,23 @@ impl Edit {
             | Edit::Building { .. }
             | Edit::Placements { .. }
             | Edit::Paint { .. }
-            // **A hole is not a moved vertex.** It takes cells out of the mesh
-            // rather than moving any, so a caller that patched the chunk's
-            // vertices from this would write 320 positions into a run that is
-            // now a different length. See [`Edit::remeshes`].
+            // A hole edit moves no vertex. It takes cells out of the mesh, so
+            // a caller that patched the chunk's vertices from this would write
+            // 320 positions into a run that is now a different length. See
+            // [`Edit::remeshes`].
             | Edit::Holes { .. }
             | Edit::Flags { .. }
-            // …and an area id is not anything the screen holds at all, and a
-            // liquid is a surface the tile was *built* with. See
-            // [`Edit::remeshes`].
+            // An area id is not held by anything on screen, and a liquid is a
+            // surface built when the tile is read. See [`Edit::remeshes`].
             | Edit::Area { .. }
             | Edit::Liquid { .. }
-            // …and a path list is about the whole tile, which is why it
-            // remeshes rather than patches. See [`Edit::remeshes`].
+            // A path list is about the whole tile, so it remeshes rather than
+            // patches. See [`Edit::remeshes`].
             | Edit::Names { .. } => None,
         }
     }
 
-    /// …and which map chunk's **paint** it changed, for a caller that has the
+    /// Which map chunk's paint this edit changed, for a caller that has the
     /// blend maps on the GPU.
     pub fn painted(&self) -> Option<usize> {
         match self {
@@ -464,11 +468,10 @@ impl Edit {
         }
     }
 
-    /// Whether this edit changes which *textures* a chunk carries, rather than
+    /// Whether this edit changes which textures a chunk carries, rather than
     /// only how much of each is showing.
     ///
-    /// The distinction decides how it reaches the screen, and it is the whole of
-    /// why the two are separated. A chunk's blend maps are texels in an atlas
+    /// The two cases reach the screen by different routes. A chunk's blend maps are texels in an atlas
     /// and can be written into the one already drawn; the set of textures a
     /// chunk names is part of the material its draw group was built with, so
     /// changing it means the tile has to be read again.
@@ -479,11 +482,11 @@ impl Edit {
         }
     }
 
-    /// …and which `MDDF` entry it is about, for a caller that has that
+    /// Which `MDDF` entry this edit is about, for a caller that has that
     /// placement drawn and wants to move what is on screen rather than read the
     /// tile again.
     ///
-    /// `None` for everything else, **including [`Edit::Placements`]** — adding
+    /// `None` for everything else, including [`Edit::Placements`]: adding
     /// or removing one entry renumbers the rest, so there is no single index
     /// that names what changed and a caller has to reconcile the whole list.
     pub fn placement(&self) -> Option<usize> {
@@ -493,7 +496,8 @@ impl Edit {
         }
     }
 
-    /// …and which `MODF` entry, on exactly the same terms.
+    /// Which `MODF` entry this edit is about, on the same terms as
+    /// [`Edit::placement`].
     ///
     /// A separate accessor and not a shared one, because the two lists are
     /// numbered separately: `MDDF` entry 3 and `MODF` entry 3 are different
@@ -506,31 +510,26 @@ impl Edit {
         }
     }
 
-    /// One placement moved, with **`before` read from the tile** rather than
+    /// One placement moved, with `before` read from the tile rather than
     /// supplied by the caller.
     ///
-    /// ## This is the only correct way to build an `Edit`, and the reason is the
-    /// invariant the whole stack rests on
+    /// ## Why `before` is read from the tile
     ///
     /// A change is only reversible if its `before` is the state the file was
-    /// actually in when the change was made. Every caller that supplies one is
-    /// supplying its own *idea* of that state, and an editor is full of places
-    /// where that idea goes stale without anything saying so: an undo puts the
-    /// file back without telling the panel holding a copy of the record, a tile
-    /// is read again and every cached record with it, a second tool writes the
-    /// same placement.
+    /// in when the change was made. A caller that supplies `before` supplies
+    /// its own copy of that state, and in the editor such a copy can go stale
+    /// without notice: an undo puts the file back without telling the panel
+    /// holding a copy of the record, a tile is read again and every cached
+    /// record with it, a second tool writes the same placement.
     ///
-    /// The symptom is not a crash and not a wrong picture. It is a stack that
-    /// **stops chaining**: entry *n*'s `before` is no longer entry *n-1*'s
-    /// `after`, so undoing them in order walks through states the file was never
-    /// in and does not arrive back at the start. It was reported as "the history
-    /// gets out of sync after a few moves", which is exactly what it looks like
-    /// from outside.
+    /// A stale `before` does not crash and does not draw a wrong picture. It
+    /// breaks the chain of the undo stack: entry n's `before` is no longer
+    /// entry n-1's `after`, so undoing them in order walks through states the
+    /// file was never in and does not arrive back at the start. The visible
+    /// symptom is a history that gets out of sync after a few moves.
     ///
-    /// Reading `before` off the tile makes the invariant hold **by
-    /// construction** rather than by every caller being careful, which is the
-    /// only way it can hold across four callers that each have their own reason
-    /// to think they know the current value.
+    /// Reading `before` off the tile keeps the stack chained by construction,
+    /// without each of the four callers having to keep its copy current.
     ///
     /// `None` when the index is not in the list, which is a caller holding an
     /// index the tile no longer has.
@@ -560,27 +559,27 @@ impl Edit {
         matches!(self, Edit::Placements { .. })
     }
 
-    /// Whether the tile has to be **read again** for this edit to be on screen,
+    /// Whether the tile has to be read again for this edit to be on screen,
     /// because what it changed is the ground mesh itself rather than anything
     /// the mesh holds.
     ///
-    /// The third fork of the same question [`Edit::changes_the_texture_set`] and
-    /// [`Edit::renumbers_placements`] ask, and the bluntest: a hole mask decides
-    /// how many vertices a chunk contributes at all, so there is no patch that
-    /// reaches it — not the vertices (the run changed length), not the indices
-    /// (every group after it moved), not the foliage (its cells are gone).
+    /// The same question [`Edit::changes_the_texture_set`] and
+    /// [`Edit::renumbers_placements`] answer for paint and placements. A hole
+    /// mask decides how many vertices a chunk contributes, so no patch can
+    /// apply it: not to the vertices (the run changed length), not to the
+    /// indices (every group after it moved), not to the foliage (its cells are
+    /// gone).
     ///
-    /// Answering `false` here and patching anyway is a tile whose draw ranges
-    /// name other chunks' vertices, which draws as ground folded through itself.
+    /// If this answers `false` and the tile is patched anyway, its draw ranges
+    /// name other chunks' vertices and the ground draws folded through itself.
     pub fn remeshes(&self) -> bool {
-        // **Liquid as well as holes**, and for the same reason one step along:
-        // a tile's water is a mesh built at load from `MCLQ` — one quad per wet
-        // cell, merged into one draw per liquid kind — so a cell going wet or
-        // dry changes the geometry rather than anything in it.
-        // **…and a rename**, which is the bluntest of the three: what a tile's
-        // paths name reaches the screen as the *textures a draw group's
-        // material was built with* and the *model each placement resolved to*,
-        // and neither is anything the drawn tile still holds a reference to.
+        // Liquid remeshes as well as holes: a tile's water is a mesh built at
+        // load from `MCLQ`, one quad per wet cell merged into one draw per
+        // liquid type, so a cell going wet or dry changes the geometry.
+        // A rename remeshes too: the paths a tile names reach the screen as
+        // the textures a draw group's material was built with and the model
+        // each placement resolved to, and the drawn tile holds a reference to
+        // neither.
         matches!(
             self,
             Edit::Holes { .. } | Edit::Liquid { .. } | Edit::Names { .. }
@@ -645,30 +644,30 @@ fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
         .map(|sub| sub.data.clone())
 }
 
-/// **Recompute the shading of every chunk a run of height edits moved**, and
+/// Recompute the shading of every chunk a run of height edits moved, and
 /// record it beside them.
 ///
 /// `edits` is read for which chunks moved and appended to with one
 /// [`Edit::Normals`] per chunk whose `MCNR` actually changed.
 ///
-/// Two properties, and each of them is a bug this has already been:
+/// Two properties, each of which fixed a bug:
 ///
-/// * **The four neighbours are reshaded as well as the chunk itself.**
+/// * The four neighbours are reshaded as well as the chunk itself.
 ///   `heights::recompute_normals` takes a central difference, so a vertex on a
-///   chunk's edge is a vertex of the chunk beside it too — reshading only what
+///   chunk's edge is a vertex of the chunk beside it too. Reshading only what
 ///   moved leaves a lit seam along every boundary the edit reached.
-/// * **The result is recorded.** A height edit that recomputes normals without
+/// * The result is recorded. A height edit that recomputes normals without
 ///   putting them on the stack is a change undo cannot take back, so the ground
-///   returns to its old shape wearing the shading of the new one. That reads as
-///   flat ground lit as though a ramp were still cut into it.
+///   returns to its old shape with the shading of the new one: flat ground lit
+///   as though a ramp were still cut into it.
 ///
-/// It is shared because there is more than one way to move the ground — see
-/// [`Brush::stroke`](brush::Brush::stroke) and [`grade::Grade::write_into`] —
-/// and every one of them owes both properties.
+/// It is shared because more than one operation moves the ground (see
+/// [`Brush::stroke`](brush::Brush::stroke) and [`grade::Grade::write_into`]),
+/// and each of them needs both properties.
 fn reshade(tile: &mut AdtFile, edits: &mut Vec<Edit>) {
-    // **`Edit::Heights` and not `Edit::chunk`**, which answers for the paint,
-    // the area and the holes too. Only a height moves a normal, and a caller
-    // handing over a mixed list should not have the rest of it reshaded.
+    // `Edit::Heights` and not `Edit::chunk`, which also answers for
+    // `Edit::Normals` and `Edit::Colours`. Only a height moves a normal, and a caller handing over a mixed
+    // list should not have the rest of it reshaded.
     let changed: Vec<usize> = edits
         .iter()
         .filter_map(|edit| match edit {

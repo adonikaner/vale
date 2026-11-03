@@ -72,17 +72,18 @@ impl EditSession {
         self.tables.clear();
         self.unsaved.clear();
         self.unsaved_tables.clear();
-        // …and every set naming work that is still owed on a tile. They are
-        // keyed by coordinate and survived a project switch, so a tile marked
-        // stale or unsaved under the old project was still named under the new
-        // one — which for a project that had just been emptied meant the
-        // session wrote its files back out again. Nothing in them can be true
-        // of a project that has not been opened yet.
+        // The sets naming work still owed on a tile are cleared too. They are
+        // keyed by coordinate, so without this a tile marked stale or unsaved
+        // under the old project was still named under the new one, and for a
+        // project that had just been emptied the session wrote its files back
+        // out again. Nothing in them can be true of a project that has not
+        // been opened yet.
         self.dirty.clear();
         self.regrow.clear();
         self.moved.clear();
         self.moved_buildings.clear();
         self.repaint.clear();
+        self.replant.clear();
         self.stale.clear();
         self.restream.clear();
         self.history = History::new();
@@ -92,9 +93,9 @@ impl EditSession {
         self.claimed = claimed_tiles(assets, &self.project, &self.map);
         self.claims_for = self.map.clone();
         // The maps are `Map.dbc`'s, which the project may change: a map the
-        // old project made is not one this project has. Read again through
-        // the new overlay, the list kept the old project's maps, and a new map
-        // given the same id was listed twice.
+        // old project made is not one this project has. Without this re-read
+        // through the new overlay, the list kept the old project's maps, and a
+        // new map given the same id was listed twice.
         self.maps = map_directories(assets);
         // The server's half is a project's too. Its edits live in the
         // project folder, so a switch reads the new folder's and forgets the

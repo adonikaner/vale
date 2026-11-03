@@ -29,13 +29,13 @@
 //! opened in a new session draws what it saved last time without having to load
 //! every tile it ever touched.
 //!
-//! ## Open tiles and the six sets of pending work
+//! ## Open tiles and the seven sets of pending work
 //!
 //! * Open — parsed into an [`AdtFile`] in [`EditSession::tiles`], which is
 //!   what a tool edits.
 //! * Dirty — the ground on screen is behind the heights, per chunk.
-//!   [`crate::tools::live_ground`] clears it by pushing the new vertices into
-//!   the meshes already on the GPU, every frame of a stroke.
+//!   [`crate::tools::ground::terrain::live_ground`] clears it by pushing the
+//!   new vertices into the meshes already on the GPU, every frame of a stroke.
 //! * Regrow — the foliage on that ground is behind it, per chunk. A lawn
 //!   is a merged mesh and has to be built again rather than patched, so
 //!   [`crate::tools::ground::terrain::live_foliage`] drains this once, when the button
@@ -47,8 +47,13 @@
 //!   The paint is in a texture rather than in a mesh or a transform, so
 //!   neither of the two sets above reaches it.
 //!   [`crate::tools::ground::textures::live_paint`] drains it.
+//! * Replant — the foliage is behind the paint, per chunk. The paint decides
+//!   which cells grow what, so the chunk's foliage is planned again from its
+//!   bytes, once, when the button comes up. `live_foliage` drains it with
+//!   Regrow.
 //! * Stale — the whole tile has to be read again: what the live path could
-//!   not reach. [`crate::tools::remesh`] forgets it and lets the streamer do it.
+//!   not reach. [`crate::tools::ground::terrain::remesh`] forgets it and lets
+//!   the streamer do it.
 //! * Unsaved — its bytes have moved ahead of the project folder. Saving
 //!   clears it. A save of a tile whose bytes are the archives' own removes
 //!   the tile's file instead of writing it; see [`EditSession::save_one`].
@@ -107,14 +112,14 @@ pub(crate) struct EditSession {
     pub(crate) project: Project,
     /// The map being edited, by its `World\Maps\` directory name.
     pub(crate) map: String,
-    /// …and its id, which is what the light chain and the collision world are
-    /// keyed by.
+    /// The id of [`Self::map`], which is what the light chain and the
+    /// collision world are keyed by.
     pub(crate) map_id: u32,
     /// Every map the archives name, so a panel can offer them. Sorted by name.
     pub(crate) maps: Vec<(u32, String)>,
     /// Tiles parsed for editing.
     pub(crate) tiles: HashMap<(u32, u32), AdtFile>,
-    /// …and client tables, by their bare name (`"Spell"`).
+    /// Client tables parsed for editing, by their bare name (`"Spell"`).
     ///
     /// The same arrangement as `tiles` and for the same reasons: opened on
     /// demand, edited in memory, written to the project folder and into the
@@ -124,8 +129,8 @@ pub(crate) struct EditSession {
     pub(crate) history: History,
     /// The chunks whose ground on screen is behind their heights, per tile.
     ///
-    /// Cleared by [`crate::tools::live_ground`], which pushes the new vertices
-    /// straight into the meshes already on the GPU.
+    /// Cleared by [`crate::tools::ground::terrain::live_ground`], which pushes
+    /// the new vertices straight into the meshes already on the GPU.
     pub(crate) dirty: HashMap<(u32, u32), HashSet<usize>>,
     /// The chunks whose foliage is behind their heights, per tile.
     ///
@@ -148,8 +153,9 @@ pub(crate) struct EditSession {
     /// which it can afford to be, because moving a placement is writing one
     /// transform where moving the ground is writing a buffer.
     pub(crate) moved: HashMap<(u32, u32), HashSet<usize>>,
-    /// …and the `MODF` entries, which is a separate set because the two
-    /// lists are numbered separately: `MDDF` entry 3 and `MODF` entry 3 are
+    /// The `MODF` entries whose drawn placement is behind their record, per
+    /// tile. A separate set from `moved` because the two lists are numbered
+    /// separately: `MDDF` entry 3 and `MODF` entry 3 are
     /// different objects, and one set of indices shared between them moves the
     /// wrong thing. Cleared by [`crate::tools::placements::wmos::reconcile`].
     pub(crate) moved_buildings: HashMap<(u32, u32), HashSet<usize>>,
@@ -166,6 +172,16 @@ pub(crate) struct EditSession {
     /// cell, and its tile is in `regroup`: the set is part of the material a
     /// draw group was built with, so the chunk has to move to another group.
     pub(crate) repaint: HashMap<(u32, u32), HashSet<usize>>,
+    /// The chunks whose foliage is behind their paint, per tile.
+    ///
+    /// Separate from `repaint` because that set is drained on every frame of a
+    /// stroke and this one once, when the button comes up: planning a chunk
+    /// again means parsing its tile, and rebuilding its lawn on every frame
+    /// would replace the visible mesh on every frame. Separate from `regrow`
+    /// because a height edit only moves a plan, which needs no parse.
+    ///
+    /// Cleared by [`crate::tools::ground::terrain::live_foliage`].
+    pub(crate) replant: HashMap<(u32, u32), HashSet<usize>>,
     /// Tiles whose ground has to be cut into draw groups again because a chunk
     /// carries a different set of textures: done in place, replacing only the
     /// groups that changed, by [`crate::tools::ground::textures::live_regroup`]. A tile
@@ -324,7 +340,7 @@ pub(crate) struct EditSession {
     /// the database between one launch and the next is not this editor's to
     /// know, since a row may have been changed by hand or by another project.
     pub(crate) applied_signature: Option<u64>,
-    /// …and the same for each row subject, indexed by
+    /// [`Self::applied_signature`] for each row subject, indexed by
     /// [`crate::server::stack::Subject::index`]: what the last Apply of that
     /// subject that succeeded in this process put in the database, as
     /// `crate::server::subject::Plan::signature` measures it.
@@ -395,6 +411,7 @@ impl EditSession {
             changes: HashMap::default(),
             unpublished: HashSet::default(),
             repaint: HashMap::default(),
+            replant: HashMap::default(),
             regroup: HashSet::default(),
             stale: HashSet::default(),
             unsaved: HashSet::default(),
@@ -436,19 +453,19 @@ pub(crate) struct SessionPlugin;
 impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, open)
-            // After the client's own writer, and it never fights it — see
-            // [`vale_client::render::focus`], which stands the client's
-            // writer down while there is no session. Ordered anyway, because an
-            // ordering that matters is stated: without it the two would take
-            // turns on the frames a playtest starts and ends.
+            // After the client's own focus writer. The two do not conflict,
+            // because [`vale_client::render::focus`] stands the client's
+            // writer down while there is no session. The order is stated
+            // anyway: without it the two would take turns on the frames a
+            // playtest starts and ends.
             .add_systems(
                 Update,
                 (
                     // Before anything reads the claims, since switching maps
                     // leaves them describing the old one — see [`refresh_claims`].
                     refresh_claims,
-                    // …and the tiles on screen, which a project switch makes
-                    // stale wholesale. Before the claims are read rather than
+                    // The tiles on screen, which a project switch makes stale
+                    // wholesale. Before the claims are read rather than
                     // after: both are about a folder that has changed.
                     reread_after_a_switch,
                     // As soon as the ground under the camera is open, for
@@ -456,7 +473,7 @@ impl Plugin for SessionPlugin {
                     // a place on the map and not a height. See
                     // [`crate::camera::drop_to_the_ground`].
                     crate::camera::drop_to_the_ground,
-                    // …and the list of places a jump can name, which is a join
+                    // The list of places a jump can name, which is a join
                     // over two tables and is rebuilt only when the map changes.
                     crate::places::follow_the_map,
                     crate::camera::follow_the_camera,
@@ -471,7 +488,7 @@ impl Plugin for SessionPlugin {
             // what changed before this frame, which covers every other
             // publish. See [`forget_what_changed`].
             //
-            // …and the publish before the drain, so an edit that settles on
+            // The publish runs before the drain, so an edit that settles on
             // this frame is told about on this frame rather than the next.
             //
             // The client's banks forget in `ForgetChanged`, between the drain

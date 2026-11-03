@@ -44,10 +44,10 @@ impl Opening {
 /// nothing closes one, so a session that jumps around a map holds every tile
 /// it has been near: two megabytes of parsed file each, forty-nine per stop.
 /// Memory climbed with every teleport and was only partly released. This
-/// system drops the
-/// tiles further than the reach plus one from the focus that nothing needs
-/// kept: not unsaved, not named by the history (undo writes into an open tile
-/// and skips a closed one), and not waiting on any of the session's live sets.
+/// system drops the tiles further than the reach plus one from the focus that
+/// nothing needs kept: not unsaved, not named by the history (undo writes into
+/// an open tile and skips a closed one), and not waiting on any of the
+/// session's live sets.
 ///
 /// It keeps one ring past the reach, so a focus moving along a border does
 /// not close and re-parse the same row of tiles. Chained after `open_tiles`,
@@ -89,6 +89,7 @@ pub(crate) fn close_tiles(
                 && !session.moved.contains_key(coord)
                 && !session.moved_buildings.contains_key(coord)
                 && !session.repaint.contains_key(coord)
+                && !session.replant.contains_key(coord)
         })
         .collect();
     for coord in far {
