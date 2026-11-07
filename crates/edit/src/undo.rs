@@ -9,7 +9,7 @@
 //! stroke has already touched keeps the `before` from the first time and takes
 //! the `after` from the last.
 //!
-//! ## …and it is one entry however many tiles it crosses
+//! ## A stroke across a tile border is one entry
 //!
 //! A brush is a circle in the world and a tile is a 533-yard square, so a stroke
 //! near a border edits both sides of it. Every edit therefore carries the
@@ -17,7 +17,7 @@
 //! touched. A change that could only name one tile is a change that has to stop
 //! at the border, which leaves a step in the ground exactly there.
 //!
-//! ## …and a gesture with no end is one entry too
+//! ## A gesture with no release is one entry
 //!
 //! A stroke has a press and a release to be opened and closed by. Three of the
 //! things this editor does have neither: turning the wheel, holding an arrow
@@ -718,7 +718,7 @@ impl History {
     /// nothing, because the next `begin` or `begin_gesture` closes it.
     ///
     /// `now` is any monotonic clock in seconds — the caller's frame time. This
-    /// crate has none of its own and is not going to grow one.
+    /// crate has no clock of its own.
     ///
     /// A change is never continued across an undo. Anything on the redo
     /// branch means the last thing that happened was an undo and not an edit, so
@@ -930,6 +930,23 @@ impl History {
     pub fn forget_table(&mut self, table: &str) -> usize {
         self.strip(|change| {
             change.forget_table(table);
+        })
+    }
+
+    /// Forget everything on the stack about one tile, on both branches and
+    /// in the stroke being held. An entry that was only about that tile goes;
+    /// one that also touched another tile, a table or a server row keeps that
+    /// half. The map is compared without case. Returns how many entries were
+    /// dropped.
+    ///
+    /// For a tile whose file has been deleted from the project, for
+    /// [`Self::forget_table`]'s reason: the entries were made against bytes
+    /// that are gone, and undoing one against the archives' tile, or against
+    /// no tile, would write a plausible wrong value.
+    pub fn forget_tile(&mut self, tile: &TileKey) -> usize {
+        let same = |had: &TileKey| had.x == tile.x && had.y == tile.y && had.map.eq_ignore_ascii_case(&tile.map);
+        self.strip(|change| {
+            change.entries.retain(|entry| !matches!(entry, Entry::Tile(had, _) if same(had)));
         })
     }
 
@@ -1241,10 +1258,10 @@ mod tests {
 
     /// …and a discard of one subject leaves the other subject's entries.
     ///
-    /// The stack holds every subject's server rows together, as the store does,
-    /// so a filter that forgot both would be the store's own fault one layer
-    /// up: giving up a creature edit would make the item edits beside it
-    /// un-undoable while the project went on claiming them.
+    /// The stack holds every subject's server rows together, as the store does.
+    /// A filter that forgot both subjects would make the item edits beside a
+    /// discarded creature edit un-undoable while the project went on claiming
+    /// them.
     #[test]
     fn forgetting_one_subjects_rows_leaves_the_others() {
         let mut history = History::new();
@@ -1889,5 +1906,22 @@ mod tests {
         assert_eq!(crate::adt::heights::heights(tile.chunk(0).unwrap())[0], 3.0);
         change.apply(&key(32, 48), &mut tile);
         assert_eq!(crate::adt::heights::heights(tile.chunk(0).unwrap())[0], 7.0);
+    }
+
+    /// Forgetting a tile drops every entry only about it, keeps another
+    /// tile's half of a change, and matches the map without case.
+    #[test]
+    fn forgetting_a_tile_keeps_the_other_tiles() {
+        let mut h = History::new();
+        h.begin("Raise");
+        h.record(&key(1, 1), [edit(0, 0.0, 1.0)]);
+        h.record(&key(2, 2), [edit(0, 0.0, 1.0)]);
+        h.end();
+        h.begin("Raise");
+        h.record(&key(1, 1), [edit(1, 0.0, 1.0)]);
+        h.end();
+        assert_eq!(h.forget_tile(&TileKey::new("AZEROTH", 1, 1)), 1);
+        assert_eq!(h.depth_done(), 1);
+        assert_eq!(h.next_undo().expect("the first change").tiles(), [key(2, 2)]);
     }
 }

@@ -56,6 +56,28 @@
 //! The file dialog is the system's own and blocks while it is open, so it is
 //! run by [`answer`], outside the panel, as the tile tool runs its picture
 //! dialogs.
+//!
+//! ## Deleting files
+//!
+//! Several files can be chosen in the list at once ([`super::picked`]) and
+//! deleted together, after the panel's confirmation. [`delete_files`] takes
+//! each file out of the project folder and out of whatever the session holds
+//! of it, by its type:
+//!
+//! ```text
+//! map tile     crate::map::tiles::delete: unsaved edits and undo entries
+//!              dropped, the archives' tile read again; a tile the archives
+//!              do not have is also unclaimed in its map's WDT, and its
+//!              minimap picture deleted
+//! DBC table    an open table discarded and read again from the archives,
+//!              its undo entries dropped
+//! tile index   the open map's claims read again from the archives' WDT
+//! texture      a ground texture with its _s file
+//! any file     its line in the import record dropped
+//! ```
+//!
+//! A patch archive already published keeps its copy of a deleted file until
+//! the next publish, which builds the archive again from the project's files.
 
 use crate::session::EditSession;
 use vale_assets::world::blp::{self, Encoding};
@@ -549,8 +571,9 @@ pub(crate) enum Ask {
     /// `purpose` (a texture imported elsewhere made a ground texture). A
     /// ground texture without its `_s` file is written as the pair this way.
     Rewrite { vpath: String, purpose: Option<Purpose> },
-    /// Remove one of the project's files.
-    Remove(String),
+    /// Delete these project files, which the panel has confirmed. See
+    /// [`delete_files`].
+    Delete(Vec<String>),
     /// Choose a file with the system's file dialog and import it at the
     /// archive path `vpath`, in its folder and under its name, so the
     /// project's file is read in place of the archives': a picture for a BLP
@@ -562,8 +585,15 @@ pub(crate) enum Ask {
 /// The workspace's state.
 #[derive(Resource, Default)]
 pub(crate) struct Assets {
-    /// The selected file's archive path.
+    /// The selected file's archive path: the file whose details and preview
+    /// are shown, and one of [`Self::picked`].
     pub(crate) selected: Option<String>,
+    /// Every file chosen in the list, by its archive path as the project
+    /// spells it.
+    pub(crate) picked: super::picked::Picked,
+    /// The files a Delete waits on the confirmation for, while the panel
+    /// shows it.
+    pub(crate) deleting: Option<Vec<String>>,
     /// What the search box holds.
     pub(crate) query: String,
     /// The open import dialog.
@@ -782,7 +812,7 @@ fn on_the_command_line(
 }
 
 /// Carry out what the panel asked for: the file dialog, the write, the
-/// removal.
+/// deletion.
 fn answer(
     mut assets: ResMut<Assets>,
     mut session: Option<ResMut<EditSession>>,
@@ -792,6 +822,8 @@ fn answer(
     // field, so the open form reads the table again instead of the text it
     // showed before.
     mut browser: Option<ResMut<crate::tables::browser::Browser>>,
+    // Told to read which tiles the project has again after a delete.
+    mut map_view: Option<ResMut<crate::ui::map::mapview::MapView>>,
 ) {
     let Some(ask) = assets.ask.take() else { return };
     let Some(session) = session.as_mut() else { return };
@@ -1174,33 +1206,223 @@ fn answer(
                 _ => session.status = format!("{vpath} is not a texture, a model or a sound, which are the files an import writes"),
             }
         }
-        Ask::Remove(vpath) => {
-            // A ground texture is removed with its `_s` file. The client
-            // reads one or the other depending on its `specular` setting, so
-            // with either file left alone the ground is drawn as a missing
-            // texture under one of the two settings.
-            let mut gone = vec![vpath.clone()];
-            if let Some(gloss) = gloss_of(&vpath) {
-                if session.project.has(&gloss) {
-                    gone.push(gloss);
+        Ask::Delete(vpaths) => {
+            for vpath in &vpaths {
+                thumbnails.forget(vpath);
+                if let Some(gloss) = gloss_of(vpath) {
+                    thumbnails.forget(&gloss);
                 }
             }
-            for path in gone {
-                thumbnails.forget(&path);
-                session.remove_file(&path);
-                super::sources::Sources::forget(&session.project, &path);
+            let deleted = delete_files(session, &game, &vpaths);
+            if deleted.tables > 0 {
+                if let Some(browser) = browser.as_mut() {
+                    browser.forget_buffers();
+                }
+            }
+            if let Some(view) = map_view.as_mut() {
+                view.edited_stale = true;
             }
             assets.surveys.forget();
-            if assets.selected.as_deref() == Some(vpath.as_str()) {
+            let listed: std::collections::HashSet<String> = session.project.files().into_iter().collect();
+            assets.picked.retain(|vpath| listed.contains(vpath));
+            if assets.selected.as_ref().is_some_and(|vpath| !listed.contains(vpath)) {
                 assets.selected = None;
             }
+            session.status = deleted.words();
         }
+    }
+}
+
+/// What [`delete_files`] did, for the status line.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Deleted {
+    /// How many files were deleted, a ground texture's `_s` file included.
+    pub(crate) files: usize,
+    /// How many of them were map tiles the archives do not have.
+    pub(crate) created_tiles: usize,
+    /// How many of them were DBC tables.
+    pub(crate) tables: usize,
+    /// Each file that could not be deleted, with the reason.
+    pub(crate) failed: Vec<String>,
+}
+
+impl Deleted {
+    /// The status line: how many files went, and the first failure.
+    pub(crate) fn words(&self) -> String {
+        let mut said = match self.files {
+            1 => "deleted 1 file from the project".to_string(),
+            n => format!("deleted {n} files from the project"),
+        };
+        match self.created_tiles {
+            0 => {}
+            1 => said.push_str(", 1 a tile the project created, now unclaimed in its WDT"),
+            n => said.push_str(&format!(", {n} tiles the project created, now unclaimed in their WDTs")),
+        }
+        if let Some(first) = self.failed.first() {
+            said.push_str(&format!("; {} failed, first: {first}", self.failed.len()));
+        }
+        said
+    }
+}
+
+/// The files a delete of `vpaths` removes: each one the project has, a
+/// ground texture with its `_s` file, and the tile indexes before the tiles,
+/// so a tile deleted after its map's WDT finds the archives' WDT. A ground
+/// texture's two files are removed together because the client reads one or
+/// the other depending on its `specular` setting, and with either file left
+/// the ground is drawn as a missing texture under one of the two settings.
+fn deleted_paths(project: &Project, vpaths: &[String]) -> Vec<String> {
+    let mut all: Vec<String> = Vec::new();
+    for vpath in vpaths {
+        all.push(vpath.clone());
+        if let Some(gloss) = gloss_of(vpath) {
+            all.push(gloss);
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    all.retain(|vpath| project.has(vpath) && seen.insert(vpath.to_ascii_lowercase()));
+    all.sort_by_key(|vpath| Kind::of(vpath) != Kind::Wdt);
+    all
+}
+
+/// Delete project files from the project folder and from what the session
+/// holds of them. See the module comment's "Deleting files". Nothing here
+/// asks for confirmation: the panel has.
+pub(crate) fn delete_files(session: &mut EditSession, game: &vale_client::assets::GameAssets, vpaths: &[String]) -> Deleted {
+    let mut out = Deleted::default();
+    let mut claims = false;
+    for vpath in deleted_paths(&session.project, vpaths) {
+        let done = match Kind::of(&vpath) {
+            Kind::Tile => match vale_edit::TileKey::from_vpath(&vpath) {
+                Some(key) => crate::map::tiles::delete(session, game, &key).map(|created| {
+                    out.created_tiles += usize::from(created);
+                }),
+                None => removed(session, &vpath),
+            },
+            Kind::Table => removed(session, &vpath).map(|()| {
+                let open = session
+                    .tables
+                    .keys()
+                    .find(|name| vale_assets::tables::dbc::dbc_path(name).eq_ignore_ascii_case(&vpath))
+                    .cloned();
+                if let Some(name) = open {
+                    session.discard_table(game, &name);
+                }
+                // The client keeps every table it parsed; see
+                // `EditSession::tables_republished`.
+                session.tables_republished = true;
+                out.tables += 1;
+            }),
+            Kind::Wdt => removed(session, &vpath).map(|()| {
+                claims |= vpath.eq_ignore_ascii_case(&vale_edit::wdt::wdt_path(&session.map));
+            }),
+            _ => removed(session, &vpath),
+        };
+        match done {
+            Ok(()) => {
+                out.files += 1;
+                super::sources::Sources::forget(&session.project, &vpath);
+            }
+            Err(why) => out.failed.push(why),
+        }
+    }
+    if claims {
+        session.reread_claims(game);
+    }
+    out
+}
+
+/// [`EditSession::remove_file`], with its status line as the error.
+fn removed(session: &mut EditSession, vpath: &str) -> Result<(), String> {
+    match session.remove_file(vpath) {
+        true => Ok(()),
+        false => Err(session.status.clone()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A test project under the temporary folder, empty.
+    fn project(name: &str) -> (PathBuf, Project) {
+        let install = std::env::temp_dir().join(format!("vale-assets-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = Project::open(&install, "default").expect("a project");
+        (install, project)
+    }
+
+    /// Several files are deleted at once, a ground texture with its `_s`
+    /// file, and a file the project does not have is passed over.
+    #[test]
+    fn several_files_are_deleted_together() {
+        let (install, project) = project("delete-several");
+        for vpath in ["Tileset\\Custom\\Rock.blp", "Tileset\\Custom\\Rock_s.blp", "Sound\\Custom\\Howl.wav", "Textures\\Custom\\Kept.blp"] {
+            project.write(vpath, b"bytes").expect("written");
+        }
+        let mut session = EditSession::for_tests(project);
+        let game = vale_client::assets::GameAssets::new(String::new());
+        let asked = ["Tileset\\Custom\\Rock.blp", "Sound\\Custom\\Howl.wav", "Sound\\Custom\\Gone.wav"].map(str::to_string);
+        let deleted = delete_files(&mut session, &game, &asked);
+        assert_eq!((deleted.files, deleted.failed.len()), (3, 0));
+        assert_eq!(session.project.files(), ["Textures\\Custom\\Kept.blp"]);
+        assert_eq!(deleted.words(), "deleted 3 files from the project");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A tile the project created and then deletes leaves nothing behind: no
+    /// file, no claim in the WDT or the session, no unsaved edit, no undo
+    /// entry and no minimap picture, so the map window no longer draws it as
+    /// the project's. A table's open edits are discarded with its file.
+    #[test]
+    fn a_created_tile_is_deleted_with_every_record_of_it() {
+        let (install, project) = project("delete-tile");
+        project
+            .write(&vale_edit::wdt::wdt_path("Azeroth"), &vale_edit::wdt::WdtFile::blank().write())
+            .expect("a WDT");
+        let mut session = EditSession::for_tests(project);
+        let game = vale_client::assets::GameAssets::new(String::new());
+        let at = (30, 40);
+        let tiles = crate::map::tiles::Tiles::default();
+        crate::map::tiles::create(&mut session, &game, &tiles, at).expect("created");
+        session.set_claimed(at, true);
+        let key = session.key(at);
+        let vpath = key.vpath();
+        // The tile opened, edited and left unsaved, with an undo entry.
+        let tile = vale_edit::adt::AdtFile::parse(&session.project.read(&vpath).expect("the tile")).expect("parses");
+        session.insert_opened(at, tile);
+        session.touched(at, 0);
+        session.history.begin("Raise");
+        session.history.record(
+            &key,
+            [vale_edit::ops::Edit::Heights { chunk: 0, before: vec![0.0; 145], after: vec![1.0; 145] }],
+        );
+        session.history.end();
+        // A minimap picture drawn of it, named by the project's index.
+        let picture = vale_edit::minimap::texture_path("0123abcd.blp");
+        let index = vale_edit::minimap::with_entries(b"", &[("Azeroth".to_string(), at.0, at.1, "0123abcd.blp".to_string())]);
+        session.project.write(vale_assets::tables::minimap::MD5_TRANSLATE, &index).expect("an index");
+        session.project.write(&picture, b"picture").expect("a picture");
+
+        let deleted = delete_files(&mut session, &game, &[vpath.clone()]);
+        assert_eq!((deleted.files, deleted.created_tiles), (1, 1), "{:?}", deleted.failed);
+        assert!(!session.project.has(&vpath));
+        assert!(!session.project.has(&picture), "the minimap picture went with it");
+        assert!(
+            !session.project.files().iter().any(|file| vale_edit::TileKey::from_vpath(file).is_some()),
+            "the map window reads the project's tiles from its files"
+        );
+        let wdt = vale_edit::wdt::WdtFile::parse(
+            &session.project.read(&vale_edit::wdt::wdt_path("Azeroth")).expect("the WDT"),
+        )
+        .expect("parses");
+        assert!(!wdt.has_tile(at.0, at.1));
+        assert!(!session.wdt_claims(at));
+        assert!(!session.unsaved.contains(&at), "the map window draws an unsaved tile as the project's");
+        assert!(!session.tiles.contains_key(&at));
+        assert_eq!(session.history.depth_done(), 0);
+        let _ = std::fs::remove_dir_all(&install);
+    }
 
     /// A body texture is written with `_U` and its field names it without.
     /// A name that already ends in a body's suffix is kept as it is.

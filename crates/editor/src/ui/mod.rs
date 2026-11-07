@@ -19,6 +19,8 @@
 //!               Import Sound dialogs
 //! workspace.rs  the workspace a tool puts in the middle of a window, drawn
 //!               the same in the main window and a pop-out window
+//! labels.rs     the text drawn over the world at a projected point: the
+//!               measuring tool's numbers and the texture count guide
 //! ```
 //!
 //! ## Layout: four docked regions
@@ -61,8 +63,8 @@
 //! no `Context` form of it. bevy_egui hands out a `Context`, so the shell opens
 //! a root `Ui` over `ctx.viewport_rect()` on the background layer and docks
 //! into that, as bevy_egui's own `side_panel` example does. Without the root
-//! `Ui` no panel can be docked from a `Context`, and the shell was one
-//! floating window before it was added.
+//! `Ui` no panel can be docked from a `Context`, and the shell would have to
+//! be one floating window.
 //!
 //! ## How the viewport rectangle is decided
 //!
@@ -93,6 +95,7 @@
 //! pointer position is over the world.
 
 pub(crate) mod import;
+pub(crate) mod labels;
 pub(crate) mod map;
 pub(crate) mod preview;
 pub(crate) mod shell;
@@ -313,6 +316,9 @@ pub(crate) struct Editing<'w> {
     /// Where each near creature's service icons go this frame. Read-only
     /// here; see [`shell::servicemarks`].
     pub(crate) service_marks: Res<'w, crate::tools::spawns::creatures::ServiceMarks>,
+    /// The text drawn over the world this frame. Read-only here; see
+    /// [`labels`].
+    pub(crate) labels: Res<'w, crate::labels::Labels>,
     /// The game-object subject's state, which has the same shape. See
     /// [`crate::tools::spawns::gameobjects`].
     pub(crate) objects: ResMut<'w, crate::tools::spawns::gameobjects::GameObjects>,
@@ -705,7 +711,6 @@ fn draw(
                     map_view: &mut map_view,
                     flight: &mut flight,
                     editing: playing.state.editing(),
-                    areas_shown: *tool == Tool::Areas,
                     open_guides: editing.args.view.guides_menu
                         && time.elapsed_secs() > 3.0
                         && !std::mem::replace(&mut editing.projects.guides_shown_once, true),
@@ -909,6 +914,9 @@ fn draw(
         &editing.service_marks.0,
         &mut editing.thumbnails,
     );
+    // The measuring tool's numbers and the texture counts, painted into the
+    // viewport in the same way. See [`labels`].
+    labels::draw(&ctx, viewport.rect.unwrap_or(egui::Rect::NOTHING), &editing.labels);
     // The floating windows follow, which the panels cannot shrink around; see
     // [`Viewport`]. They are drawn after the panels, against the context
     // rather than into the root, so a popover is above the bar it hangs from.
@@ -992,19 +1000,19 @@ fn draw(
             // The guide is written back only when it changed, as the view
             // bar writes its switches, so the resource is not marked changed
             // on every frame.
-            let mut full_chunks = viewing.guides.layers;
+            let mut texture_count = viewing.guides.texture_count;
             let bar = crate::ui::tools::ground::textures::toolbar(
                 &ctx,
                 world_rect,
                 corner,
                 &mut editing.textures,
-                &mut full_chunks,
+                &mut texture_count,
                 &mut editing.tablet,
                 &editing.pen,
                 &mut editing.brushes,
             );
-            if full_chunks != viewing.guides.layers {
-                viewing.guides.layers = full_chunks;
+            if texture_count != viewing.guides.texture_count {
+                viewing.guides.texture_count = texture_count;
             }
             viewport.floating.extend(bar);
         }
@@ -1180,6 +1188,7 @@ fn draw(
         &mut tools::spawns::waypoints::Subject {
             session,
             waypoints: &mut editing.waypoints,
+            behaviour: &mut editing.behaviour,
             now: time.elapsed_secs_f64(),
             fly: &mut editing.fly,
         },

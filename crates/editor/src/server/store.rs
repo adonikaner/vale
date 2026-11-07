@@ -347,13 +347,18 @@ impl EditSession {
     /// one entry, and a drag that calls this on every frame keeps folding into
     /// the same entry because the subject does not change.
     ///
-    /// Writes made by an undo carry no gesture and are unaffected.
+    /// Writes made by an undo carry no gesture and are unaffected. Inside an
+    /// outer call, an inner one keeps the outer label and subject, so a
+    /// placement that also joins a pool is one entry and not two.
     pub(crate) fn as_one<R>(
         &mut self,
         label: &str,
         subject: &str,
         write: impl FnOnce(&mut EditSession) -> R,
     ) -> R {
+        if self.rows.one_gesture.is_some() {
+            return write(self);
+        }
         let outer = self
             .rows
             .one_gesture

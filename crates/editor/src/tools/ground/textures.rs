@@ -32,11 +32,12 @@
 //! in the frame of the stroke. [`Edit::changes_the_texture_set`] distinguishes
 //! the two cases. It is asked per edit, not per stroke.
 //!
-//! That used to be a whole read of the tile: a third of a second in a debug
-//! build, the parse, the 5 MiB atlas, every texture, doodad and pool, handed
-//! over a little each frame and swapped in. A stroke paid it on every chunk it
-//! entered that lacked the texture, and the paint on that chunk did not show
-//! until the swap, so a stroke over new ground went down in blocks.
+//! Before [`live_regroup`], this case read the whole tile again: a third of a
+//! second in a debug build, the parse, the 5 MiB atlas, every texture, doodad
+//! and pool, handed over a little each frame and swapped in. A stroke paid
+//! that on every chunk it entered that lacked the texture, and the paint on
+//! that chunk did not show until the swap, so a stroke over new ground
+//! appeared one chunk at a time.
 //!
 //! ## What a stroke can be told
 //!
@@ -51,7 +52,7 @@
 //! reuse hidden       on a full chunk, take the layer that shows under 2%
 //! ```
 //!
-//! The last two and the Full chunks guide are the panel's answers to the
+//! The last two and the Texture count guide are the panel's answers to the
 //! four-texture limit, grouped under that heading. The stroke reports what it
 //! could not do on the status line, a refusal before anything else, pins the
 //! first chunk that refused it, and while the chunk under the pointer is one

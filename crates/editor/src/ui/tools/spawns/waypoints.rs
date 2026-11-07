@@ -1,26 +1,46 @@
-//! **The waypoint window**: a creature's path as a list of points, beside the
+//! The waypoint window: a creature's path as a list of points, beside the
 //! same path drawn in the world.
 //!
-//! A window on the root context rather than a block in the inspector, for
-//! [`super::spawn::template_window`]'s reason and one of its own. The
-//! reason it shares: a window inside a panel is clipped to it, and this wants
-//! to sit where it does not cover the ground the points are on. The reason of
-//! its own: the pointer is doing the editing, so the panel has to be somewhere
-//! a person can put it out of the way of the thing they are pointing at.
+//! It is a window on the root context rather than a block in the inspector,
+//! for two reasons. The first is the one [`super::spawn::template_window`]
+//! gives: a window inside a panel is clipped to it, and this window has to
+//! sit where it does not cover the ground the points are on. The second is
+//! that the pointer does the editing, so the window has to be movable out of
+//! the way of what the pointer is on.
 //!
-//! ## The list and the world are one selection
+//! ## One selection for the list and the world
 //!
 //! [`crate::tools::spawns::waypoints::Waypoints::selected`] is an index into the path,
-//! and both the row here and the ring out there read it. Clicking a row selects
-//! the point; clicking the point selects the row. There is no second notion of
-//! what is chosen, which is what stops the two disagreeing.
+//! and both the row in the list and the ring in the world read it. Clicking a
+//! row selects the point; clicking the point selects the row. There is no
+//! second selection, so the list and the world cannot disagree.
 //!
-//! ## Every number is a drag, and the reason is in the creature form
+//! ## Why every number field is a `DragValue`
 //!
 //! `-8817.5` is typed one character at a time and `-` alone is not a number, so
 //! a box rebuilt from the stored value each frame snaps back on the first
 //! keystroke. `egui::DragValue` keeps its own draft while it has focus. See
-//! `super::creatures`, where this was found.
+//! [`crate::ui::widgets::rowform::number_cell`].
+//!
+//! ## A point's script
+//!
+//! A point's `script_id` names a `creature_movement_scripts` script, which
+//! the server runs when the creature reaches the point. A creature that stops
+//! and plays an emote does it this way: a point with a waittime runs a script
+//! that sets the emote, and the next point runs one that clears it. The row
+//! under the id carries the event form's script buttons
+//! ([`script_controls`]): open the script in the script window, choose an
+//! existing one, make a new one, or clear the id. The chooser cannot write
+//! the id itself, because a path is written whole and this window holds it,
+//! so it leaves the choice in
+//! [`crate::subjects::behaviour::Behaviour::chosen_for_point`] and this
+//! window writes it on its next frame.
+//!
+//! The behaviour tool reads the scripts every point names
+//! (`Behaviour::other_scripts`, filled by `crate::ui::subjects::windows`).
+//! A script id the table does not hold is shown as a warning on the point and
+//! in the window's head, because the server skips that point when it loads
+//! the path.
 
 use bevy_egui::egui;
 
@@ -28,13 +48,19 @@ use crate::ui::widgets::theme;
 use crate::server::creatures::{PATHS_VPATH, SQL_VPATH};
 use crate::server::store::Gesture;
 use crate::session::EditSession;
+use crate::subjects::behaviour::{Behaviour, PathPoint, ScriptAnswer};
 use crate::tools::spawns::waypoints::Waypoints;
+use crate::ui::subjects::behaviour::script_controls;
 use vale_mangos::path::{self, Node, Path, Walk, Which};
+use vale_mangos::scripts::CREATURE_MOVEMENT;
 
 /// Everything the window needs, as one argument.
 pub(crate) struct Subject<'a> {
     pub(crate) session: &'a mut EditSession,
     pub(crate) waypoints: &'a mut Waypoints,
+    /// The behaviour tool, which reads the points' scripts and holds the
+    /// script window and its chooser.
+    pub(crate) behaviour: &'a mut Behaviour,
     /// The frame clock the undo stack folds a gesture by.
     pub(crate) now: f64,
     /// Where the Fly here button and a double-click on a point send its request. See
@@ -42,7 +68,7 @@ pub(crate) struct Subject<'a> {
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
-/// **The window**, or nothing when no creature's path is open.
+/// Draws the window, or nothing when no creature's path is open.
 ///
 /// Returns its rectangle so the viewport can keep a click inside it from also
 /// being a click on the ground behind it.
@@ -54,26 +80,27 @@ pub(crate) fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<e
     // of the way, as the template window beside it does. It has not been shut
     // — `showing` is still on — so clicking another creature brings it back.
     subject.waypoints.subject.as_ref()?;
-    // **…but a creature whose read is still in flight keeps the window up.**
-    // Which table answers is decided by that read, so there is a frame or two
-    // with a creature and no path; letting the window vanish there made it
-    // blink on every click, which reads as the panel closing itself.
+    // A creature whose path is still being read keeps the window up. The read
+    // decides which table answers, so for a frame or two there is a creature
+    // and no path. Hiding the window in those frames made it blink on every
+    // click, which looks like the window closing itself.
     let Some((which, owner)) = subject.waypoints.open else {
         return reading(ctx, subject);
     };
     let mut path = subject.waypoints.path(Some(subject.session))?;
+    take_the_chosen_script(subject, &mut path);
     let mut open = true;
-    // **The title names the table, not just the id.** `id 80849` and
-    // `entry 330` are different rows with different blast radiuses and the
-    // window is the only thing that can say which one is open.
+    // The title names the table as well as the id. `id 80849` and
+    // `entry 330` are different rows, an edit to each reaches a different set
+    // of spawns, and nothing but the window says which one is open.
     // The reading form below shares the window's id, so the switch between
     // the two moves nothing on screen.
     let response = theme::window(format!("Waypoints — {} {owner}", which.table()), "waypoints")
         .open(&mut open)
-        // **Wide enough for the list and the form side by side** — see the
-        // note on the two columns below. In one column the form sat under a
-        // list that is as long as the path, so editing point 40 of 60 meant
-        // scrolling the thing being edited off the screen to reach it.
+        // Wide enough for the list and the form side by side; see the comment
+        // on the two columns below. In one column the form sat under the list,
+        // which is as long as the path, so reaching the form for point 40 of 60
+        // scrolled point 40 off the screen.
         .default_size([640.0, 560.0])
         // Narrower than this, the toolbar's two ends meet in the middle.
         .min_width(560.0)
@@ -85,12 +112,12 @@ pub(crate) fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<e
             ui.add_space(4.0);
             controls(ui, subject, &mut path);
             ui.add_space(2.0);
-            // **The list and the chosen point's form are two columns**, each
-            // scrolling on its own, so the form is on screen whatever the list
-            // is scrolled to. A path is as long as somebody makes it — 227
-            // points on the longest one shipped — and stacked vertically the
-            // form was reached by scrolling the point being edited out of
-            // sight.
+            // The list and the selected point's form are two columns, each
+            // with its own scroll, so the form stays on screen wherever the
+            // list is scrolled. A path has as many points as somebody gives it
+            // (the longest shipped path has 227), and with the form stacked
+            // under the list, reaching the form scrolled the point being
+            // edited out of sight.
             ui.columns(2, |columns| {
                 theme::heading(&mut columns[0], "Points");
                 list(&mut columns[0], subject, &mut path);
@@ -107,12 +134,12 @@ pub(crate) fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<e
     response.map(|response| response.response.rect)
 }
 
-/// **The window while the path is still being read**, which is the same window
-/// with one line in it.
+/// The window while the path is still being read: the same window, with one
+/// line in it.
 ///
-/// Drawn rather than skipped so that clicking from creature to creature does
-/// not blink the panel out and back. It keeps the title and the frame, so the
-/// thing that moves on screen is the contents rather than the window.
+/// It is drawn rather than skipped so that clicking from creature to creature
+/// does not hide the window and show it again. It keeps the title bar and the
+/// frame, so only the contents change on screen.
 fn reading(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect> {
     let guid = subject.waypoints.subject.map(|open| open.guid)?;
     let mut open = true;
@@ -134,6 +161,37 @@ fn reading(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<egui::Rect>
     response.map(|response| response.response.rect)
 }
 
+/// Write a script chosen in the script chooser into the point it was chosen
+/// for. The chooser cannot write it, because the path is written whole and
+/// this window holds it. A choice for a path that is no longer open is
+/// dropped, and the status line says so.
+fn take_the_chosen_script(subject: &mut Subject<'_>, path: &mut Path) {
+    let Some((point, id)) = subject.behaviour.chosen_for_point.take() else {
+        return;
+    };
+    let index = point.index;
+    if (point.which, point.owner) != (path.which, path.owner) || index >= path.nodes.len() {
+        subject.session.status = format!(
+            "script {id} not written: {} {} point {} is not open",
+            point.which.table(),
+            point.owner,
+            index + 1
+        );
+        return;
+    }
+    path.nodes[index].script_id = id;
+    write(subject, path, "Choose waypoint script");
+    subject.session.status = format!("point {} runs {CREATURE_MOVEMENT} {id}", index + 1);
+}
+
+/// Whether `creature_movement_scripts` holds a script once this project is
+/// applied: the project's script where it has one, otherwise the database's.
+/// `None` while the database's rows are being read.
+fn script_exists(subject: &Subject<'_>, id: u32) -> Option<bool> {
+    let script = subject.behaviour.script_of(CREATURE_MOVEMENT, id, subject.session)?;
+    Some(!script.rows.is_empty())
+}
+
 /// Small text in the warning colour, for what makes an edit here do
 /// something other than it seems to.
 fn warning(ui: &mut egui::Ui, text: impl Into<String>) {
@@ -144,8 +202,8 @@ fn warning(ui: &mut egui::Ui, text: impl Into<String>) {
 fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
     let (which, _owner) = subject.waypoints.open.expect("the window is open");
 
-    // The totals first, as the line the eye lands on: a number in the body
-    // colour and what it counts in the dim one.
+    // The totals come first: each number in the body colour, and the unit it
+    // counts in the dim colour.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let count = path.nodes.len();
@@ -169,11 +227,11 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
         }
     });
 
-    // **Which table answered, and what changing it changes.** A creature with
-    // no path of its own walks its template's, and editing that moves every
-    // spawn of the kind that has none — the same *this spawn* against *its
-    // template* split the creature panel makes, and just as invisible in the
-    // thing being edited.
+    // Which table answered, and which spawns an edit changes. A creature with
+    // no path of its own walks its template's, and editing that path changes
+    // every spawn of the creature that has none. The creature panel makes the
+    // same split between this spawn and its template, and the points
+    // themselves do not show which of the two is being edited.
     match which {
         Which::Spawn => theme::note(ui, which.about()),
         Which::Template => warning(
@@ -182,9 +240,9 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
         ),
     }
 
-    // **Whether an edit here does anything**, which is the first thing to say.
-    // A path on a creature whose movement type is idle or random is loaded by
-    // the server and never used, and nothing else on screen would say so.
+    // Whether an edit here has any effect. The server loads the path of a
+    // creature whose movement type is idle or random but never uses it, and
+    // nothing else on screen says so.
     let walk = subject.waypoints.walk();
     match walk {
         Walk::Never => warning(
@@ -198,8 +256,8 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
             format!("movement_type {} — {}", subject.waypoints.movement_type, walk.about()),
         ),
     }
-    // …and the generator's own floor, which is the other way a path does
-    // nothing: a cyclic path of one node is refused outright.
+    // The movement generator's minimum number of nodes is the other way a
+    // path has no effect: it refuses a cyclic path of one node.
     if path.nodes.len() < walk.needs_nodes() {
         warning(
             ui,
@@ -208,6 +266,27 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
                  creature stands still.",
                 path.nodes.len(),
                 walk.needs_nodes()
+            ),
+        );
+    }
+
+    // A point whose script the table does not hold is dropped by the server
+    // when it loads the path, so the creature walks a shorter path than the
+    // one drawn here.
+    let missing: Vec<String> = path
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.script_id != 0 && script_exists(subject, node.script_id) == Some(false))
+        .map(|(index, _)| (index + 1).to_string())
+        .collect();
+    if !missing.is_empty() {
+        warning(
+            ui,
+            format!(
+                "Point(s) {} name a script id that {CREATURE_MOVEMENT} does not hold. When the server \
+                 loads this path it skips those points and writes the reason to its database error log.",
+                missing.join(", ")
             ),
         );
     }
@@ -226,9 +305,10 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
 /// is on that point's form.
 fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     ui.horizontal(|ui| {
-        // **Add is armed rather than held**, so a scripted run can build a
-        // path — see the tool's module comment. Armed, it is drawn the way a
-        // chosen segment is, so it reads as a mode that is on.
+        // Add points stays on after a click rather than acting only while
+        // held, so a scripted run can build a path; see the module comment of
+        // `crate::tools::spawns::waypoints`. While on, it is drawn the way a
+        // chosen segment is, to show that a mode is on.
         let armed = subject.waypoints.adding;
         let add = egui::Button::new(egui::RichText::new("Add points").color(match armed {
             true => theme::INK,
@@ -263,9 +343,9 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         // The two that undo or delete the whole path, at the other end of the
         // row from the switches.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // **Two different undos, and the labels say which.** One gives up
-            // this project's claim on the path; the other empties the path,
-            // which is an edit that deletes every row.
+            // Two different undos, with labels that say which. Discard path
+            // edits gives up this project's claim on the path; Clear all
+            // points empties the path, which is an edit that deletes every row.
             if ui
                 .add_enabled(
                     !path.nodes.is_empty(),
@@ -309,11 +389,11 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         });
     });
 
-    // **The narrower edit**, offered where it is the one somebody means: a
-    // template path is shared, and giving this guard a copy is what "change
-    // this one guard's route" actually is. `GetDefaultPath` takes the spawn's
-    // own path first, so the copy wins from the moment it is applied and the
-    // template is left as it was for everything else.
+    // Copy path to spawn, offered while the template's path is open. A
+    // template path is shared, so changing one spawn's route means giving
+    // that spawn its own copy. The server's `GetDefaultPath` takes the spawn's
+    // own path first, so the copy is used from the moment it is applied, and
+    // the template's path is unchanged for every other spawn.
     if subject.waypoints.editing_the_template() {
         let guid = subject.waypoints.subject.map(|open| open.guid);
         if let Some(guid) = guid {
@@ -343,12 +423,11 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     }
 
     if subject.waypoints.edited(Some(subject.session)) {
-        // **Two states and they read very differently.** The first draft said
-        // "Not applied" whenever the project claimed the path, which stays true
-        // after an apply — the store is the project's claim and outlives the
-        // button — so the window went on denying a change that was in the
-        // database. What separates them is the revert file: a path named there
-        // is a path whose rows have been written.
+        // The revert file tells an applied path from an unapplied one: a path
+        // named there has had its rows written. The project's claim on the
+        // path cannot tell them apart, because the store keeps the claim after
+        // Apply; a line that tested the claim showed "Not applied" for a
+        // change that was already in the database.
         let applied = crate::server::creatures::path_applied(subject.session, path);
         let line = match applied {
             false => format!(
@@ -427,9 +506,9 @@ fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
                 let (rect, row) =
                     ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW), egui::Sense::click());
                 let painter = ui.painter();
-                // Selected as a list row is everywhere in the editor; hovered,
-                // here or as the point under the pointer in the world, as a
-                // raised fill.
+                // A selected row is drawn as a selected list row is everywhere
+                // in the editor. A hovered row, hovered here or as the point
+                // under the pointer in the world, gets a raised fill.
                 if chosen == Some(index) {
                     painter.rect(
                         rect,
@@ -468,8 +547,8 @@ fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
                 if row.clicked() {
                     subject.waypoints.selected = Some(index);
                 }
-                // **Double-click flies to it**, which is the only way to reach a
-                // point of a path that runs off the edge of what is streamed.
+                // A double-click flies the camera to the point, which is the only
+                // way to reach a point of a path that runs past the streamed area.
                 if row.double_clicked() {
                     subject.fly.write(crate::camera::FlyTo::at(bevy::prelude::Vec3::new(node.x, node.y, node.z)));
                 }
@@ -494,6 +573,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
 
     let mut edited = node.clone();
     let mut changed = false;
+    let point = PathPoint { which: path.which, owner: path.owner, index };
     let field = |ui: &mut egui::Ui, value: egui::DragValue<'_>| {
         ui.add_sized([FIELD, ui.spacing().interact_size.y], value).changed()
     };
@@ -531,11 +611,34 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
 
             ui.label(egui::RichText::new("script_id").color(theme::INK_DIM))
                 .on_hover_text(
-                    "A creature_movement_scripts id, or 0. If that table has no such id, the \
-                     server drops this point at load without an error message, and the path \
-                     is one point shorter.",
+                    "A creature_movement_scripts id, or 0. The script runs when the creature \
+                     reaches this point. If that table has no such id, the server skips this \
+                     point when it loads the path, and the path is one point shorter.",
                 );
             changed |= field(ui, egui::DragValue::new(&mut edited.script_id).speed(1.0));
+            ui.end_row();
+
+            // The script's buttons go on a row of their own, because the
+            // form's column is narrower than the id box and four buttons.
+            ui.label("");
+            let answered = ui
+                .horizontal(|ui| {
+                    script_controls(
+                        ui,
+                        subject.session,
+                        subject.behaviour,
+                        CREATURE_MOVEMENT,
+                        edited.script_id,
+                        None,
+                        ScriptAnswer::Point(point),
+                        subject.now,
+                    )
+                })
+                .inner;
+            if let Some(id) = answered.and_then(|id| id.parse::<u32>().ok()) {
+                edited.script_id = id;
+                changed = true;
+            }
             ui.end_row();
 
             ui.label(egui::RichText::new("path_id").color(theme::INK_DIM))
@@ -543,7 +646,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             changed |= field(ui, egui::DragValue::new(&mut edited.path_id).speed(1.0));
             ui.end_row();
 
-            // **The facing is a checkbox and a number**, because the column's
+            // The facing is a checkbox and a number, because the column's
             // empty value is 100 rather than 0 and a person typing 0 into it
             // would be setting a real facing of due east. See
             // `vale_mangos::path::NO_FACING`.
@@ -583,6 +686,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
              waittime, and this point's waittime is 0.",
         );
     }
+    script_line(ui, subject, edited.script_id);
 
     if changed {
         if let Some(slot) = path.nodes.get_mut(index) {
@@ -649,6 +753,39 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             subject.session.status = format!("removed point {}", index + 1);
         }
     });
+}
+
+/// The line under the form that says what a point's script is: how many
+/// steps it has and its first step's comment, or that the table does not
+/// hold it. Nothing for a point with no script.
+fn script_line(ui: &mut egui::Ui, subject: &Subject<'_>, id: u32) {
+    if id == 0 {
+        return;
+    }
+    let Some(script) = subject.behaviour.script_of(CREATURE_MOVEMENT, id, subject.session) else {
+        match subject.behaviour.trouble() {
+            Some(why) => warning(ui, format!("The database query for {CREATURE_MOVEMENT} {id} failed: {why}")),
+            None => theme::waiting(ui, format!("Reading {CREATURE_MOVEMENT} {id}\u{2026}")),
+        }
+        return;
+    };
+    if script.rows.is_empty() {
+        warning(
+            ui,
+            format!(
+                "{CREATURE_MOVEMENT} has no script {id}. When the server loads this path it skips \
+                 this point. Use + new to create the script, or clear to remove the id."
+            ),
+        );
+        return;
+    }
+    let steps = script.rows.len();
+    let comment = script.sorted().first().map(|row| row.comments.clone()).unwrap_or_default();
+    let plural = if steps == 1 { "step" } else { "steps" };
+    match comment.is_empty() {
+        true => theme::note(ui, format!("{CREATURE_MOVEMENT} {id}: {steps} {plural}")),
+        false => theme::note(ui, format!("{CREATURE_MOVEMENT} {id}: {steps} {plural}, \"{comment}\"")),
+    }
 }
 
 /// Put the working path into the project's store, under one undo entry.

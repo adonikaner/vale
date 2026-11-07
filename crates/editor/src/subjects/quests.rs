@@ -487,6 +487,10 @@ pub(crate) enum PickFor {
     /// [`Quests::spawn_pick`], because what a choice comes to is
     /// `crate::subjects::pools`' or `crate::subjects::game_events`' decision.
     SpawnData { into: SpawnInto, spawns: Vec<u64> },
+    /// A pool or a game event every spawn placed afterwards joins: the spawn
+    /// tools' Place Into section. Answered into [`Quests::place_pick`] and
+    /// held by the tool, since no spawn exists yet.
+    PlaceInto { into: SpawnInto },
     /// A quest an event offers only while it is on: the Game Events
     /// workspace's use of the same dialog. Answered into
     /// [`Quests::event_quest_pick`], because an add is
@@ -657,6 +661,10 @@ pub(crate) struct Quests {
     /// spawns and the id chosen: taken by the section on the frame after.
     /// See [`PickFor::SpawnData`].
     pub(crate) spawn_pick: Option<(SpawnInto, Vec<u64>, u32)>,
+    /// A pool or a game event chosen for the spawns placed next, as what it
+    /// is for and the id chosen: taken by the spawn tool's picker on the
+    /// frame after. See [`PickFor::PlaceInto`].
+    pub(crate) place_pick: Option<(SpawnInto, u32)>,
     /// A quest chosen for an event, as the event and the quest: taken by the
     /// Game Events workspace on the frame after. See [`PickFor::EventQuest`].
     pub(crate) event_quest_pick: Option<(u32, u32)>,

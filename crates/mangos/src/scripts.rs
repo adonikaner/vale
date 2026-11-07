@@ -65,7 +65,7 @@ use crate::row::Key;
 pub use crate::schema::{mask_words, value_word, Bit, Column, Group, Kind, Row, RowValue, Value};
 
 pub const CREATURE_AI: &str = "creature_ai_scripts";
-pub(crate) const CREATURE_MOVEMENT: &str = "creature_movement_scripts";
+pub const CREATURE_MOVEMENT: &str = "creature_movement_scripts";
 pub const CREATURE_SPELLS: &str = "creature_spells_scripts";
 pub const GOSSIP: &str = "gossip_scripts";
 pub const GENERIC: &str = "generic_scripts";
@@ -370,7 +370,7 @@ pub const COMMANDS: [Command; 94] = [
     c(25, "Set run", "Creature", [yes("run", ""), None, None, None], NONE, false, false),
     c(26, "Attack start", "Creature", NONE, NONE, false, true),
     c(27, "Update entry", "Creature", [p("creature_entry", Kind::Ref("creature_template"), ""), None, None, None], NONE, false, false),
-    c(28, "Stand state", "Unit", [n("stand_state", "UnitStandStateType: 0 stand, 1 sit, 2 sit chair, 3 sleep, 4 sit low chair, 5 sit medium chair, 6 sit high chair, 7 dead, 8 kneel"), None, None, None], NONE, false, false),
+    c(28, "Stand state", "Unit", [p("stand_state", Kind::Choice(&crate::addon::STAND_STATES), "UnitStandStateType"), None, None, None], NONE, false, false),
     c(29, "Modify threat", "Creature", [n("targets", "eModifyThreatTargets, or a ScriptTarget"), None, None, None], NONE, true, true),
     c(30, "Send taxi path", "Player", [p("taxi_path_id", Kind::Ref("TaxiPath"), ""), None, None, None], NONE, false, false),
     c(31, "Terminate script", "Any", [p("creature_entry", Kind::Ref("creature_template"), "0 for no search"), n("search_distance", ""), n("options", "eTerminateScriptOptions: 0 if found, 1 if not found"), None], NONE, false, false),
@@ -1411,6 +1411,10 @@ mod tests {
         let mut talk = ScriptRow::new(0);
         talk.dataint[0] = 1234;
         assert_eq!(talk.summary(), "Talk: chat_type Say, broadcast_text 1234");
+        let mut kneel = ScriptRow::new(28);
+        kneel.datalong[0] = 8;
+        assert_eq!(kneel.summary(), "Stand state: stand_state Kneeling");
+        assert_eq!(kneel.sentence(&crate::schema::no_names), "Stand state: stand_state Kneeling");
         assert_eq!(ScriptRow::new(33).summary(), "Enter evade mode");
         assert_eq!(ScriptRow::new(200).summary(), "command 200");
     }

@@ -9,7 +9,10 @@
 //!                archives, and a picture turned into a BLP file the 1.12.1
 //!                client reads
 //! files.rs       the Game Files part of the Assets workspace: every file the
-//!                archives list, and a file or a folder exported to disk
+//!                archives list, and a file, a folder or several chosen files
+//!                exported to disk
+//! picked.rs      several files chosen at once in the Project Files and Game
+//!                Files lists, and which files a right-click acts on
 //! models.rs      a glTF model turned into an M2 with its skeleton and
 //!                animations, and its pictures into BLP files beside it
 //! sounds.rs      WAV and MP3 files written at archive paths the client
@@ -31,6 +34,7 @@ pub(crate) mod files;
 pub(crate) mod generated;
 pub(crate) mod images;
 pub(crate) mod models;
+pub(crate) mod picked;
 pub(crate) mod sounds;
 pub(crate) mod sources;
 pub(crate) mod worldmap;

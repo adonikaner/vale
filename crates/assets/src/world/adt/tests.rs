@@ -1,15 +1,14 @@
 use super::*;
 
-/// **`MCCV` is blue, green, red, alpha — and 0x7F is 1.0, not 0.5.**
+/// `MCCV` stores each vertex colour as blue, green, red, alpha, and 0x7F
+/// decodes to 1.0, not 0.5.
 ///
-/// Two claims that are invisible on grey and wrong in the same picture: a
-/// decoder that read the bytes in the order they are written would swap a
-/// chunk's warm and cool halves, and one that divided by 255 would darken every
-/// painted vertex by half while leaving an unpainted one alone. Both would look
-/// like *the shading is a bit off* rather than like a bug.
+/// Neither fault shows on a neutral grey chunk. A decoder that read the bytes
+/// in file order would swap red and blue on painted vertices; one that divided
+/// by 255 would halve the brightness of every painted vertex and leave
+/// unpainted ones unchanged.
 ///
-/// See `vale_edit::adt::colours`, which is the writing half of the same two
-/// claims.
+/// The code that writes `MCCV` follows the same two rules.
 #[test]
 fn vertex_colours_are_bgra_and_centred_on_one() {
     // One vertex: blue 0x00, green 0x7F, red 0xFF, alpha 0x7F.
@@ -38,11 +37,10 @@ fn vertex_colours_are_bgra_and_centred_on_one() {
 }
 
 
-/// **The two halves of the placement conversion are inverses.** Loading the
-/// game's own tiles exercises one direction and nothing exercises the other,
-/// which is the direction anything that *writes* a placement uses — so a
-/// swapped axis there is a doodad saved a hundred yards from where it was put,
-/// on a file that still parses.
+/// `placement_to_world` and `placement_from_world` are inverses. Loading tiles
+/// uses only the first; code that writes a placement uses the second. A swapped
+/// axis in the second would save a doodad far from where it was placed, in a
+/// file that still parses.
 #[test]
 fn a_placement_survives_the_trip_out_to_the_world_and_back() {
     for record in [
@@ -69,23 +67,23 @@ fn placement_positions_are_measured_back_from_the_map_origin() {
     let at_origin = placement_to_world([MAP_ORIGIN, 42.0, MAP_ORIGIN]);
     assert_eq!(at_origin, [0.0, 0.0, 42.0]);
 
-    // Real numbers: the first doodad of Azeroth_34_51, a Duskwood tree.
-    // That tile's terrain runs x -10666..-10133 and y -1600..-1066, and the
-    // tree must land on it — allowing the overhang of objects listed in
-    // every tile they touch, which on this tile reaches about 50 yards.
+    // The first doodad of Azeroth_34_51, a Duskwood tree. That tile's terrain
+    // runs x -10666..-10133 and y -1600..-1066, and the tree must land on it,
+    // allowing about 50 yards of overhang: an object is listed in every tile
+    // it touches.
     let [x, y, z] = placement_to_world([18117.72, 30.206, 27210.664]);
     assert!((-10716.0..-10083.0).contains(&x), "x {x}");
     assert!((-1650.0..-1016.0).contains(&y), "y {y}");
-    // Transposing the two horizontal axes is the classic failure and is not
-    // subtle here: it would put this tree ten thousand yards away.
+    // Transposing the two horizontal axes would put this tree about ten
+    // thousand yards away.
     assert!(x < -10000.0 && y > -2000.0);
     assert_eq!(z, 30.206);
 }
 
 #[test]
 fn an_unrotated_placement_keeps_the_model_upright() {
-    // Whatever else the matrix does, a tree must not lie down: the model's
-    // +Z has to come out as world +Z, and the scale has to reach it.
+    // With no rotation, the model's +Z maps to world +Z, multiplied by the
+    // scale.
     let m = placement_matrix([10.0, 20.0, 30.0], [0.0, 0.0, 0.0], 2.0);
     assert_eq!(transform(&m, [0.0, 0.0, 1.0]), [10.0, 20.0, 32.0]);
     // Position is the fourth column.
@@ -105,7 +103,7 @@ fn yaw_turns_about_the_vertical_and_starts_half_a_turn_round() {
     let m = placement_matrix([0.0, 0.0, 0.0], [0.0, 90.0, 0.0], 1.0);
     let f = transform(&m, [1.0, 0.0, 0.0]);
     assert!(f[0].abs() < 1e-5 && (f[1] + 1.0).abs() < 1e-5, "{f:?}");
-    // And it is still a rotation: up stays up.
+    // The rotation leaves +Z unchanged.
     assert_eq!(transform(&m, [0.0, 0.0, 1.0]), [0.0, 0.0, 1.0]);
 }
 
@@ -216,8 +214,8 @@ fn four_bit_alpha_unpacks_low_nibble_first_and_reaches_opaque() {
     let out = expand_4bit_alpha(&src);
     assert_eq!(out.len(), ALPHA_LEN);
     assert_eq!(out[0], 0, "low nibble comes first");
-    // 0xF scaled by 17, not 16: a layer meant to be opaque must actually
-    // reach 255 or the layer beneath it shows through everywhere.
+    // 0xF is scaled by 17, not 16, so an opaque layer reaches 255. At 240 the
+    // layer beneath would show through everywhere.
     assert_eq!(out[1], 255);
 }
 
@@ -254,11 +252,10 @@ fn the_base_layer_is_opaque_and_has_no_map_in_the_file() {
     assert!(alphas[1].iter().all(|&a| a == 0));
 }
 
-/// **Every value the decode can produce survives the encode.** The pair is
-/// multiply-by-17 one way and nearest-nibble the other, so the check is that
-/// they are inverses on the sixteen values that can actually be in a file — a
-/// truncating encode turns 255 into 0xE and every fully-opaque layer into one
-/// that leaves a ghost.
+/// `pack_4bit_alpha` and `expand_4bit_alpha` are inverses on the sixteen values
+/// a 4-bit map can hold. The decode multiplies by 17 and the encode rounds to
+/// the nearest nibble. A truncating encode would turn 255 into 0xE, and a
+/// fully opaque layer would no longer be opaque.
 #[test]
 fn the_four_bit_alpha_pair_round_trips() {
     let mut map = vec![0u8; ALPHA_LEN];
@@ -270,17 +267,17 @@ fn the_four_bit_alpha_pair_round_trips() {
     assert_eq!(expand_4bit_alpha(&packed), map);
 }
 
-/// …and so does a whole chunk's `MCAL`, at either stride, with the layer
-/// offsets the encoder hands back reading the maps out again.
+/// A whole chunk's `MCAL` round-trips at either stride: the layer offsets that
+/// `encode_alpha_maps` returns read the same maps back.
 ///
-/// **`alpha_stride` is asked rather than told**, because that is what a reader
-/// of the written file does: the offsets the encoder produced have to be far
-/// enough apart for the gap rule to measure the stride back.
+/// The test measures the stride with `alpha_stride` instead of passing it in,
+/// as a reader of the written file does, so the encoder's offsets must be far
+/// enough apart for the gap rule to recover the stride.
 #[test]
 fn a_chunks_alpha_maps_survive_the_write() {
     for stride in [ALPHA_LEN / 2, ALPHA_LEN] {
-        // Layer 0 is the base and is opaque by definition, so it is the one
-        // map the pair cannot carry anything else in.
+        // Layer 0 is the base layer. It is opaque by definition and has no map
+        // in the file, so it can only hold 255.
         let mut maps: Vec<Vec<u8>> = vec![vec![255u8; ALPHA_LEN]];
         maps.extend((1..4).map(|which| {
             (0..ALPHA_LEN)
@@ -306,17 +303,18 @@ fn a_chunks_alpha_maps_survive_the_write() {
     }
 }
 
-/// **A writer's decode is the file's bytes and a renderer's is not.** They
-/// differ in the last row and column by construction — see `fix_alpha_edge` — so
-/// a caller that decoded through the renderer's copy, changed nothing and wrote
-/// it back would overwrite every chunk's far edge with its neighbour.
+/// `decode_alpha_layer` returns the file's bytes; `decode_alpha_maps` returns
+/// the renderer's copy, whose last row and column are replaced by
+/// `fix_alpha_edge`. A caller that decoded through the renderer's copy,
+/// changed nothing and wrote it back would overwrite every chunk's far edge
+/// with the row and column inside it.
 #[test]
 fn the_writers_decode_leaves_the_far_edge_alone() {
     let mut map = vec![0u8; ALPHA_LEN];
     for row in 0..ALPHA_SIDE {
         for col in 0..ALPHA_SIDE {
-            // 255 on the last row and column, 0 everywhere else: the edge the
-            // renderer replaces is the only thing in the map.
+            // 255 on the last row and column, 0 everywhere else, so the map
+            // holds nothing but the edge the renderer replaces.
             map[row * ALPHA_SIDE + col] = match row == ALPHA_SIDE - 1 || col == ALPHA_SIDE - 1 {
                 true => 255,
                 false => 0,
@@ -355,19 +353,19 @@ fn a_truncated_alpha_stream_still_yields_a_full_map() {
     assert_eq!(alphas[1][ALPHA_LEN - 1], 0, "past the data reads as empty");
 }
 
-/// **The seam-grid regression.** A 64x64 alpha map holds 63x63 of blend: the
-/// pre-Cataclysm client puts texel 62's centre on the chunk's far edge and
-/// never reads row or column 63, so nothing meaningful was ever written
-/// there. Drawing it paints a line on the far edge of all 256 chunks in
-/// every tile, and because it appears on a chunk's far edges but not its
-/// near ones, it reads as a checkerboard rather than as an error.
+/// The last row and column of an alpha map are replaced on decode. A 64x64
+/// alpha map holds 63x63 texels of blend: the pre-Cataclysm client puts the
+/// centre of texel 62 on the chunk's far edge and never reads row or column
+/// 63, so the files hold no meaningful data there. Drawing those texels paints
+/// a line on the far edges of all 256 chunks in every tile, which shows as a
+/// grid of seams across the terrain.
 ///
-/// Measured on real tiles by `vale textures` — see [`fix_alpha_edge`].
+/// Measured on real tiles by `vale textures`; see [`fix_alpha_edge`].
 #[test]
 fn the_unwritten_last_row_and_column_are_replaced_by_their_neighbours() {
     let layers = vec![layer(0, 0), layer(layer_flags::USE_ALPHA_MAP, 0)];
     // 4-bit source: every nibble 0xF (=> 255) except the last column and the
-    // last row of the map, which are 0 — the shape of the real artefact.
+    // last row of the map, which are 0, as in the real files.
     let mut src = vec![0xFFu8; ALPHA_LEN / 2];
     for t in 0..ALPHA_SIDE {
         let zero = |src: &mut Vec<u8>, i: usize| {
@@ -386,7 +384,7 @@ fn the_unwritten_last_row_and_column_are_replaced_by_their_neighbours() {
     assert_eq!(map[63 * ALPHA_SIDE + 10], 255, "last row was not fixed");
     // The corner takes the row fix, which itself took the column fix.
     assert_eq!(map[63 * ALPHA_SIDE + 63], 255);
-    // And nothing else moved.
+    // Other texels are unchanged.
     assert_eq!(map[10 * ALPHA_SIDE + 5], 255);
     assert_eq!(map.len(), ALPHA_LEN);
 }
@@ -418,10 +416,9 @@ fn alpha_images_pack_layers_1_to_3_into_rgb() {
 
 #[test]
 fn each_chunk_lands_in_its_own_cell_of_the_alpha_atlas() {
-    // The cell is the chunk's *position in the list*, and `atlas_uv` has to
-    // agree with `alpha_atlas` about that or every chunk is blended with some
-    // other chunk's map — which looks like a wrong alpha decode, not like a
-    // wrong lookup.
+    // The cell is chosen by the chunk's position in the list. `atlas_uv` and
+    // `alpha_atlas` must agree on it, or every chunk is blended with another
+    // chunk's map, which looks like a wrong alpha decode.
     let mut chunks = Vec::new();
     for i in 0..20u8 {
         let mut c = test_chunk(vec![0.0; HEIGHTS_PER_CHUNK], 0);
@@ -434,8 +431,8 @@ fn each_chunk_lands_in_its_own_cell_of_the_alpha_atlas() {
     let atlas = adt.alpha_atlas();
 
     for i in 0..20usize {
-        // Sample where the middle of the chunk maps to, through the very
-        // function the mesh uses.
+        // Sample the middle of the chunk through `atlas_uv`, the function the
+        // mesh uses.
         let [u, v] = atlas_uv(i, 0.5, 0.5);
         let (x, y) = (
             (u * ATLAS_SIDE as f32) as usize,
@@ -445,8 +442,8 @@ fn each_chunk_lands_in_its_own_cell_of_the_alpha_atlas() {
         assert_eq!(atlas[o], i as u8 + 1, "chunk {i} at atlas ({x}, {y})");
     }
 
-    // Chunk 16 starts the second row of cells — the wrap is the thing most
-    // easily got backwards.
+    // Chunk 16 starts the second row of cells, which checks that the index
+    // wraps into rows and not columns.
     let [u, v] = atlas_uv(16, 0.0, 0.0);
     assert!(u < 1.0 / CHUNKS_PER_SIDE as f32, "{u} should be in column 0");
     assert!(v > 1.0 / CHUNKS_PER_SIDE as f32, "{v} should be past row 0");
@@ -454,10 +451,9 @@ fn each_chunk_lands_in_its_own_cell_of_the_alpha_atlas() {
 
 #[test]
 fn an_atlas_lookup_stays_inside_its_own_cell() {
-    // The whole cost of the atlas: a lookup exactly on a cell boundary has
-    // bilinear filtering average in the neighbouring chunk's blend, which
-    // paints a seam grid over the landscape. Both ends of the range have to
-    // sit a half texel inside.
+    // A lookup exactly on a cell boundary makes bilinear filtering average in
+    // the neighbouring chunk's blend, which draws a grid of seams over the
+    // terrain. Both ends of the range must sit half a texel inside the cell.
     let cell = 1.0 / CHUNKS_PER_SIDE as f32;
     let half_texel = 0.5 / ATLAS_SIDE as f32;
     for chunk_index in [0usize, 1, 15, 16, 255] {
@@ -472,17 +468,14 @@ fn an_atlas_lookup_stays_inside_its_own_cell() {
     }
 }
 
-/// **The claim that kept the atlas unmipped for a milestone, tested.** It
-/// was left at one level because "a level below the top averages across its
-/// cells" — and it does not, not while a cell is wider than a level's texel.
-/// A level-`n` texel is an aligned `2^n` block of level-0 texels and a cell
-/// is 64 wide, so no block straddles two cells until a cell *is* one texel,
-/// which is where [`ALPHA_ATLAS_MIPS`] stops.
+/// No mip level of the alpha atlas averages texels from two cells. A level-`n`
+/// texel is an aligned `2^n` block of level-0 texels and a cell is 64 texels
+/// wide, so no block straddles two cells until a cell is one texel wide, which
+/// is the last level [`ALPHA_ATLAS_MIPS`] counts.
 ///
-/// Two neighbouring cells filled with values that could not be confused —
-/// 255 and 0 — must therefore stay 255 and 0 the whole way down. Anything
-/// else is a chunk being blended with its neighbour's map, which renders as
-/// slightly wrong ground rather than as an error.
+/// Neighbouring cells filled with 255 and 0 must therefore stay 255 and 0 at
+/// every level. Any other value means a chunk is blended with its neighbour's
+/// map, which renders as slightly wrong ground and raises no error.
 #[test]
 fn minifying_the_alpha_atlas_never_mixes_two_cells() {
     let mut atlas = vec![0u8; ATLAS_SIDE * ATLAS_SIDE * 4];
@@ -517,7 +510,7 @@ fn minifying_the_alpha_atlas_never_mixes_two_cells() {
             }
         }
     }
-    // And the last level is one texel per chunk: 16x16 for a 16x16 tile.
+    // The last level is one texel per chunk: 16x16 for a 16x16 tile.
     let last = levels.last().expect("a chain");
     assert_eq!(last.len(), CHUNKS_PER_SIDE * CHUNKS_PER_SIDE * 4);
 }
@@ -544,9 +537,9 @@ fn mesh_uvs_span_the_chunk_and_match_the_alpha_map_space() {
 
 #[test]
 fn chunks_sharing_a_texture_set_share_one_draw() {
-    // The draw-call fix. Four chunks, two texture sets, and the result has to
-    // be two draws over contiguous index ranges — contiguous because a draw
-    // is one `index_start`/`index_count` pair and not a scan.
+    // Chunks with the same texture set are grouped into one draw. Four chunks
+    // with two texture sets must give two draws over contiguous index ranges:
+    // a draw is one `index_start`/`index_count` pair, not a scan.
     let heights = vec![0.0; HEIGHTS_PER_CHUNK];
     let with_textures = |ids: &[u32]| {
         let mut c = test_chunk(heights.clone(), 0);
@@ -557,8 +550,8 @@ fn chunks_sharing_a_texture_set_share_one_draw() {
         c
     };
     let adt = Adt {
-        // Deliberately interleaved: the grouping has to gather chunks that
-        // are not adjacent in the file.
+        // Interleaved, so the grouping must gather chunks that are not
+        // adjacent in the file.
         chunks: vec![
             with_textures(&[0, 1]),
             with_textures(&[2]),
@@ -581,16 +574,15 @@ fn chunks_sharing_a_texture_set_share_one_draw() {
     let total: u32 = mesh.draws.iter().map(|d| d.index_count).sum();
     assert_eq!(total as usize, mesh.indices.len());
 
-    // And every index still points at a vertex that exists — the reorder is
-    // where that would go wrong.
+    // Every index still points at an existing vertex after the reorder.
     let vertices = mesh.positions.len() as u32;
     assert!(mesh.indices.iter().all(|&i| i < vertices));
 }
 
 #[test]
 fn a_group_bounding_sphere_covers_every_chunk_in_it() {
-    // Two chunks a tile apart sharing a texture set: the merged sphere has to
-    // reach both, or half the group vanishes when the other half is on screen.
+    // Two chunks 400 yards apart on each axis share a texture set. The merged sphere must
+    // contain both, or one chunk is culled while the other is on screen.
     let heights = vec![0.0; HEIGHTS_PER_CHUNK];
     let mut far = test_chunk(heights.clone(), 0);
     far.position = [400.0, 400.0, 0.0];
@@ -608,7 +600,8 @@ fn a_group_bounding_sphere_covers_every_chunk_in_it() {
         .sqrt();
         assert!(dist <= d.radius + 0.01, "{p:?} is {dist} from the centre");
     }
-    // And the tile's own sphere, which is what the renderer culls by.
+    // The tile's own sphere, which the renderer culls by, also contains
+    // every vertex.
     for p in &mesh.positions {
         let dist = ((p[0] - mesh.centre[0]).powi(2)
             + (p[1] - mesh.centre[1]).powi(2)
@@ -620,9 +613,8 @@ fn a_group_bounding_sphere_covers_every_chunk_in_it() {
 
 #[test]
 fn every_chunk_vertex_is_inside_its_own_bounding_sphere() {
-    // The renderer culls by these spheres, and a sphere that is too small
-    // makes chunks blink out at the edge of the view — a bug that only
-    // shows up while the camera is moving.
+    // The renderer culls by these spheres. A sphere that is too small culls
+    // chunks that are still partly in view, at the edge of the screen.
     let mut heights = vec![0.0; HEIGHTS_PER_CHUNK];
     heights[40] = 60.0; // one spike, so the sphere has to grow vertically
     heights[41] = -20.0;
@@ -641,8 +633,8 @@ fn every_chunk_vertex_is_inside_its_own_bounding_sphere() {
 
 #[test]
 fn holes_shrink_a_draw_range_rather_than_shifting_its_neighbours() {
-    // Two chunks with *different* texture sets, so they stay two draws and
-    // the effect of the holes on the ranges is visible.
+    // Two chunks with different texture sets, so they stay two draws and the
+    // effect of the holes on each range can be checked.
     let heights = vec![0.0; HEIGHTS_PER_CHUNK];
     let mut holed = test_chunk(heights.clone(), 0b1);
     holed.layers = vec![TextureLayer { texture_id: 0, ..layer(0, 0) }];
@@ -665,9 +657,8 @@ fn holes_shrink_a_draw_range_rather_than_shifting_its_neighbours() {
 
 #[test]
 fn a_chunk_that_is_all_holes_gets_no_draw_at_all() {
-    // 0xFFFF is every one of the 4x4 hole sub-cells set, so the chunk has no
-    // geometry — and an empty range in a group would be a draw call for
-    // nothing, which is the opposite of the point.
+    // 0xFFFF sets all 4x4 hole bits, so the chunk has no geometry. An empty
+    // range in a group would be a draw call that draws nothing.
     let heights = vec![0.0; HEIGHTS_PER_CHUNK];
     let mut empty = test_chunk(heights.clone(), 0xFFFF);
     empty.layers = vec![TextureLayer { texture_id: 5, ..layer(0, 0) }];
@@ -725,12 +716,11 @@ fn one_chunk_tile(heights: Vec<f32>, holes: u16) -> Adt {
     }
 }
 
-/// **`shadowed_at` samples the same texel the atlas puts under that
-/// ground.** The mapping has two ways to be plausibly wrong — the two axes
-/// swapped, or the texel taken from the wrong end of the chunk — and both
-/// still return an in-range bit, so the test sets exactly one texel and
-/// asks on both sides of both axes. The chunk origin is (0, 0) and the
-/// chunk runs in *decreasing* x and y, like `to_mesh`'s vertices.
+/// `shadowed_at` samples the same `MCSH` texel the atlas puts under that
+/// ground. Swapped axes, or a texel taken from the wrong end of the chunk,
+/// would still return an in-range bit, so the test sets one texel and checks
+/// both sides of it on both axes. The chunk origin is (0, 0) and the chunk
+/// runs in decreasing x and y, like the vertices from `to_mesh`.
 #[test]
 fn a_placements_shadow_bit_is_the_texel_under_it() {
     let mut chunk = test_chunk(vec![0.0; HEIGHTS_PER_CHUNK], 0);
@@ -750,8 +740,8 @@ fn a_placements_shadow_bit_is_the_texel_under_it() {
     assert!(!at(2.5, 10.5), "one row up is lit");
     assert!(!at(3.5, 11.5), "one column over is lit");
 
-    // Outside the tile, and over a chunk with no MCSH at all, the answer
-    // is "lit" — the conservative default for a sun scale.
+    // Outside the tile, and over a chunk with no MCSH, the answer is lit,
+    // which is the default for a sun scale.
     assert!(!adt.shadowed_at(100.0, 100.0));
     let bald = one_chunk_tile(vec![0.0; HEIGHTS_PER_CHUNK], 0);
     assert!(!bald.shadowed_at(-1.0, -1.0));
@@ -793,8 +783,8 @@ fn height_lookup_interpolates_a_slope_linearly() {
     }
     let adt = one_chunk_tile(heights, 0);
 
-    // A quarter of the way into the first cell should read 0.25 on every
-    // one of the four wedges, which is the point of matching the topology.
+    // A quarter of the way into the first cell reads 0.25 on each of the four
+    // triangles, because the lookup uses the same triangles as the mesh.
     let q = -UNIT_SIZE * 0.25;
     for y in [q, -UNIT_SIZE * 0.75] {
         let h = adt.height_at(q, y).expect("inside");
@@ -802,20 +792,20 @@ fn height_lookup_interpolates_a_slope_linearly() {
     }
 }
 
-/// **The slope a model is stood on comes off the same triangle its height
-/// did.** A normal read from a different wedge — or from `MCNR`, whose smoothed
-/// shading normals are the tempting alternative — tilts a mount by a number
-/// that disagrees with the ground under its feet.
+/// `normal_at` returns the normal of the triangle that `height_at`
+/// interpolates on. A normal taken from a different triangle, or from the
+/// smoothed shading normals in `MCNR`, would tilt a model to a slope that
+/// does not match the ground under it.
 #[test]
 fn the_ground_normal_is_the_slope_the_height_is_interpolated_on() {
-    // Flat: straight up, and *exactly* so, since this is what every model in
-    // the world that does not lean is measured against.
+    // Flat ground gives exactly (0, 0, 1), so a model on level ground is not
+    // tilted at all.
     let flat = one_chunk_tile(vec![5.0; HEIGHTS_PER_CHUNK], 0);
     assert_eq!(flat.normal_at(-1.0, -1.0), Some([0.0, 0.0, 1.0]));
 
-    // A plane sloping one yard up per yard of *decreasing* x — walking away
-    // from the chunk origin is walking uphill. The normal therefore leans
-    // toward +x, and at 45° it is exactly `(1, 0, 1)/sqrt(2)`.
+    // A plane rising one yard per yard of decreasing x, so the ground rises
+    // away from the chunk origin. The normal leans toward +x, and at 45° it
+    // is `(1, 0, 1)/sqrt(2)`.
     let mut heights = vec![0.0; HEIGHTS_PER_CHUNK];
     for r in 0..OUTER_SIDE {
         for c in 0..OUTER_SIDE {
@@ -829,8 +819,8 @@ fn the_ground_normal_is_the_slope_the_height_is_interpolated_on() {
     }
     let slope = one_chunk_tile(heights, 0);
     let root_half = std::f32::consts::FRAC_1_SQRT_2;
-    // Every wedge of the cell, because the four are separate branches and a
-    // sign that is right in one is not necessarily right in the others.
+    // All four triangles of the cell are checked: each is a separate branch,
+    // and a sign can be right in one and wrong in another.
     for (x, y) in [
         (-UNIT_SIZE * 0.25, -UNIT_SIZE * 0.25),
         (-UNIT_SIZE * 0.75, -UNIT_SIZE * 0.25),
@@ -845,8 +835,8 @@ fn the_ground_normal_is_the_slope_the_height_is_interpolated_on() {
         );
     }
 
-    // …and it answers nothing exactly where the height does: over a hole and
-    // off the tile.
+    // `normal_at` returns `None` where `height_at` does: over a hole and off
+    // the tile.
     let holed = one_chunk_tile(vec![5.0; HEIGHTS_PER_CHUNK], 0b1);
     assert_eq!(holed.normal_at(0.0, 0.0), None);
     assert_eq!(flat.normal_at(10.0, 0.0), None);
@@ -859,7 +849,7 @@ fn holes_and_positions_outside_the_tile_have_no_height() {
     assert_eq!(holed.height_at(0.0, 0.0), None, "cell (0,0) is a hole");
 
     let solid = one_chunk_tile(heights, 0);
-    // Positive x is off the chunk entirely — cells only run downwards.
+    // Positive x is off the chunk, because cells run in decreasing x.
     assert_eq!(solid.height_at(10.0, 0.0), None);
     assert_eq!(solid.height_at(-CHUNK_SIZE - 1.0, 0.0), None);
 }
@@ -890,13 +880,13 @@ fn mesh_emits_four_triangles_per_cell_and_skips_holes() {
 }
 
 // -----------------------------------------------------------------------
-// MCLQ — the terrain's own liquid
+// MCLQ: liquid stored in the terrain chunks
 // -----------------------------------------------------------------------
 
 /// One MCLQ block: min/max, 81 vertices, 64 tile bytes, the flow tail.
 ///
 /// Byte 0 of each vertex is its own file index and the height is `height`,
-/// so the re-order into the grid frame is visible in the assertions.
+/// so the assertions can check where each vertex lands in the grid frame.
 fn mclq_block(height: f32, wet: impl Fn(usize, usize) -> bool) -> Vec<u8> {
     let mut b = Vec::new();
     b.extend_from_slice(&height.to_le_bytes()); // min
@@ -908,7 +898,8 @@ fn mclq_block(height: f32, wet: impl Fn(usize, usize) -> bool) -> Vec<u8> {
     }
     for row in 0..INNER_SIDE {
         for col in 0..INNER_SIDE {
-            b.push(if wet(row, col) { 0x00 } else { 0x0F });
+            // Water's type, 4, on a wet cell; a cell of type 0 reads as dry.
+            b.push(if wet(row, col) { 0x04 } else { 0x0F });
         }
     }
     b.extend_from_slice(&0u32.to_le_bytes()); // nFlowvs
@@ -917,9 +908,9 @@ fn mclq_block(height: f32, wet: impl Fn(usize, usize) -> bool) -> Vec<u8> {
     b
 }
 
-/// An MCNK payload whose MCLQ is written the way the real tools wrote it:
-/// the sub-chunk's own size field is **zero**, and the honest extent is the
-/// header's `sizeLiquid`.
+/// An MCNK payload whose MCLQ is laid out as in the shipped files: the
+/// sub-chunk's own size field is zero, and the real extent is the header's
+/// `sizeLiquid`.
 fn mcnk_with_liquid(flags: u32, blocks: &[Vec<u8>]) -> Vec<u8> {
     let mut payload = vec![0u8; MCNK_HEADER_SIZE];
     payload[0x00..0x04].copy_from_slice(&flags.to_le_bytes());
@@ -929,7 +920,7 @@ fn mcnk_with_liquid(flags: u32, blocks: &[Vec<u8>]) -> Vec<u8> {
     let data: Vec<u8> = blocks.iter().flatten().copied().collect();
     payload[0x64..0x68].copy_from_slice(&((data.len() + 8) as u32).to_le_bytes());
     payload.extend_from_slice(b"QLCM");
-    payload.extend_from_slice(&0u32.to_le_bytes()); // the famous lie
+    payload.extend_from_slice(&0u32.to_le_bytes()); // size field, always 0
     payload.extend_from_slice(&data);
     payload
 }
@@ -949,11 +940,11 @@ fn mcnk_with_shadow(flags: u32, bits: &[u8]) -> Vec<u8> {
     payload
 }
 
-/// **`MCSH` unpacks LSB first, and nothing in the file says so.** The other
-/// order is not a failure — it mirrors every group of eight texels inside
-/// its own byte, which draws a shadow with a comb through it at a period of
-/// 8 texels along one axis only. The fixture is one lit texel at the start
-/// of a byte: under the wrong order it comes out at the *end* of that byte.
+/// `MCSH` unpacks least significant bit first; the file does not record the
+/// order. The other order raises no error: it mirrors each group of eight
+/// texels within its byte, which draws a shadow striped at a period of 8
+/// texels along one axis. The fixture sets the texel at the start of a byte;
+/// under the wrong order it comes out at the end of that byte.
 #[test]
 fn a_shadow_map_unpacks_lsb_first() {
     // Byte 0 = 0b0000_0001: texel 0 shadowed, texels 1..7 lit.
@@ -963,34 +954,35 @@ fn a_shadow_map_unpacks_lsb_first() {
     assert_eq!(chunk.shadow[0], 255, "bit 0 is texel 0, not texel 7");
     assert_eq!(&chunk.shadow[1..8], &[0; 7]);
 
-    // And the high bit is the eighth texel, which is the other end.
+    // The high bit is the eighth texel.
     let high = parse_mcnk(&mcnk_with_shadow(mcnk_flags::HAS_MCSH, &[0x80]))
         .expect("parses");
     assert_eq!(&high.shadow[..7], &[0; 7]);
     assert_eq!(high.shadow[7], 255);
 }
 
-/// **The header flag is what says to read it.** The sub-chunk is written
-/// whether or not anything is shadowed, so a chunk that declares no shadow
-/// gets none however many bits are sitting in the file — and the empty
-/// vector is what puts 0 in the atlas's alpha rather than a stale bitmap.
+/// `MCSH` is read only when the header flag `HAS_MCSH` is set. The sub-chunk
+/// is written whether or not anything is shadowed, so a chunk without the
+/// flag gets no shadow, whatever bits the file holds. The empty vector puts 0
+/// in the atlas's alpha channel.
 #[test]
 fn a_chunk_that_declares_no_shadow_reads_none() {
     let chunk = parse_mcnk(&mcnk_with_shadow(0, &[0xFF; 64])).expect("parses");
     assert!(chunk.shadow.is_empty());
 
-    // …and a chunk that declares one but has no sub-chunk is empty too,
-    // rather than a panic on a missing block.
+    // A chunk with the flag but no sub-chunk also reads an empty shadow,
+    // and does not panic.
     let mut headerless = vec![0u8; MCNK_HEADER_SIZE];
     headerless[0x00..0x04].copy_from_slice(&mcnk_flags::HAS_MCSH.to_le_bytes());
     headerless[0x64..0x68].copy_from_slice(&8u32.to_le_bytes());
     assert!(parse_mcnk(&headerless).expect("parses").shadow.is_empty());
 }
 
-/// The last row and column are the neighbours' copies, exactly as an alpha
-/// map's are: the client stretches a 64x64 map so texel 62's centre sits on
-/// the chunk's edge and never reads 63. Drawing the unwritten strip puts a
-/// shadow seam on the far edge of all 256 chunks in a tile.
+/// The last row and column of a shadow map are copies of the row and column
+/// beside them, as with an alpha map: the client stretches a 64x64 map so the
+/// centre of texel 62 sits on the chunk's edge, and never reads texel 63.
+/// Drawing the unwritten strip puts a shadow seam on the far edge of all 256
+/// chunks in a tile.
 #[test]
 fn a_shadow_maps_unwritten_edge_is_the_one_beside_it() {
     // Every bit set except the whole last row and column, which the file
@@ -1010,9 +1002,9 @@ fn a_shadow_maps_unwritten_edge_is_the_one_beside_it() {
     assert_eq!(chunk.shadow[last * ALPHA_SIDE + 3], 255, "the last row");
 }
 
-/// The shadow rides in the atlas's alpha, in the same cell and at the same
-/// texel as the chunk's blend maps — which is the whole reason it is in
-/// there rather than in a texture of its own.
+/// The shadow is stored in the atlas's alpha channel, in the same cell and at
+/// the same texel as the chunk's blend maps. That is why it shares the atlas
+/// instead of having a texture of its own.
 #[test]
 fn the_atlas_carries_the_shadow_in_its_alpha() {
     let chunks: Vec<Mcnk> = (0..2)
@@ -1045,9 +1037,8 @@ fn the_atlas_carries_the_shadow_in_its_alpha() {
     assert_eq!(at(1, 200), 0, "no MCSH is no shadow");
 }
 
-/// The blocks appear in flag-bit order and the broken size field is
-/// ignored; a second block is read one whole stride — flow tail included —
-/// after the first.
+/// The blocks appear in flag-bit order and the zero size field is ignored. A
+/// second block is read one whole stride after the first, flow tail included.
 #[test]
 fn mclq_reads_one_block_per_flag_bit_past_the_zero_size_field() {
     let payload = mcnk_with_liquid(
@@ -1062,15 +1053,15 @@ fn mclq_reads_one_block_per_flag_bit_past_the_zero_size_field() {
     assert_eq!(chunk.liquids[1].1.height(4, 4), 99.0, "the stride skipped the flow tail");
 
     // Magma's byte 0 is a texture coordinate, so its opacity is a constant
-    // 255 — the union rule, unchanged from the WMO path.
+    // 255. The same rule applies to WMO liquid.
     assert_eq!(chunk.liquids[1].1.opacity(40, Liquid::Magma), 255);
 }
 
-/// The file's rows run in *decreasing* world x from the chunk origin and
-/// `WmoLiquid` runs +X from its base, so file vertex `(0, 0)` is grid
-/// vertex `(8, 8)` — the chunk origin itself — and file tile `(0, 0)` is
-/// grid tile `(7, 7)`. Getting this turn wrong still draws a plausible
-/// lake; what it misplaces is every depth and every wet flag in it.
+/// The file's rows run in decreasing world x from the chunk origin and
+/// `WmoLiquid` runs +X from its base, so file vertex `(0, 0)` is grid vertex
+/// `(8, 8)`, the chunk origin, and file tile `(0, 0)` is grid tile `(7, 7)`.
+/// A wrong mapping still draws a plausible lake, but misplaces every depth
+/// and every wet flag in it.
 #[test]
 fn mclq_lands_in_world_space_with_the_file_frame_turned_around() {
     let payload = mcnk_with_liquid(
@@ -1090,7 +1081,7 @@ fn mclq_lands_in_world_space_with_the_file_frame_turned_around() {
 
     // File vertex (0, 0) carried depth byte 0; it must land at grid (8, 8).
     assert_eq!(grid.opacity(8 * 9 + 8, Liquid::Water), 0);
-    // File vertex (1, 0) — one row down, index 9 — lands at grid (7, 8).
+    // File vertex (1, 0), one row down at index 9, lands at grid (7, 8).
     assert_eq!(grid.opacity(8 * 9 + 7, Liquid::Water), 9);
 
     // Only file tile (0, 0) is wet, which is grid tile (7, 7).
@@ -1101,10 +1092,10 @@ fn mclq_lands_in_world_space_with_the_file_frame_turned_around() {
     assert_eq!(wet, [(7, 7)]);
 }
 
-/// The same block with a **sloping** surface: file vertex `(row, col)` stands
-/// at `base + row`, so the height falls as world x rises (the file's rows run
-/// in decreasing world x). Flat water cannot tell an interpolation from a
-/// nearest-vertex lookup; this can.
+/// The same block with a sloping surface: file vertex `(row, col)` is at
+/// height `base + row`, so the height falls as world x rises (the file's rows
+/// run in decreasing world x). Flat water gives the same answer under
+/// interpolation and under a nearest-vertex lookup; a slope does not.
 fn mclq_sloped(base: f32) -> Vec<u8> {
     let side = INNER_SIDE + 1;
     let mut b = Vec::new();
@@ -1116,26 +1107,28 @@ fn mclq_sloped(base: f32) -> Vec<u8> {
         b.extend_from_slice(&[0, 0, 0]);
         b.extend_from_slice(&(base + row as f32).to_le_bytes());
     }
-    b.extend_from_slice(&[0u8; MCLQ_TILES]); // every tile wet
+    b.extend_from_slice(&[0x04u8; MCLQ_TILES]); // every tile wet, water's type
     b.extend_from_slice(&0u32.to_le_bytes());
     b.extend_from_slice(&[0u8; 80]);
     assert_eq!(b.len(), MCLQ_BLOCK_SIZE);
     b
 }
 
-/// **Where the water stands over a point** — the question the mover asks
-/// twenty times a second, and the one thing that turns a lake from something
-/// drawn into something swum in.
+/// `liquid_at` returns the liquid and its surface height over a point. The
+/// movement code calls it twenty times a second to decide whether the
+/// character is swimming.
 ///
-/// Three properties, and each has its own failure. A **dry tile answers
-/// nothing**, which is what makes a pool a shape rather than a rectangle — a
-/// lookup that ignored the low-nibble-15 flag would put an invisible surface
-/// over the whole chunk and start the character swimming on dry land. The
-/// surface is **interpolated across the tile**, matching the quad
-/// [`Adt::liquid_surface`] emits, so a swimmer's water line and the one they
-/// can see are the same ramp. And where two liquids stand over one point the
-/// **higher wins**, because nothing in the file orders them and a river running
-/// into the sea is the shipped case.
+/// The test checks three properties:
+///
+/// * A dry tile returns `None`. A lookup that ignored the low-nibble-15 flag
+///   would put an invisible surface over the whole chunk and make the
+///   character swim on dry land.
+/// * The surface is interpolated across the tile, matching the quad
+///   [`Adt::liquid_surface`] emits, so the water line used for swimming is
+///   the one drawn.
+/// * Where two liquids cover one point, the higher surface is returned. The
+///   file does not order them, and shipped tiles have rivers that run into
+///   the sea.
 #[test]
 fn liquid_at_answers_the_surface_over_a_point_and_nothing_over_a_dry_tile() {
     let tile = crate::world::wmo::LIQUID_TILE_SIZE;
@@ -1150,23 +1143,23 @@ fn liquid_at_answers_the_surface_over_a_point_and_nothing_over_a_dry_tile() {
     // File tile (0, 0) is grid tile (7, 7), the corner at the chunk origin.
     let inside = chunk.liquid_at(100.0 - tile * 0.5, 200.0 - tile * 0.5);
     assert_eq!(inside, Some((Liquid::Water, 30.0)));
-    // …and four tiles over is dry, however much water the grid declares.
+    // Four tiles over is dry, although the grid covers it.
     assert_eq!(chunk.liquid_at(100.0 - tile * 4.5, 200.0 - tile * 4.5), None);
     // Off the grid entirely.
     assert_eq!(chunk.liquid_at(500.0, 200.0), None);
 
-    // The ramp: grid vertex x = 8 sits at world x = 100 and carries the base,
-    // and each tile back along x is a yard higher.
+    // The slope: grid vertex x = 8 is at world x = 100 and has the base
+    // height, and each tile back along x is a yard higher.
     let sloped = parse_mcnk(&mcnk_with_liquid(mcnk_flags::LQ_RIVER, &[mclq_sloped(30.0)]))
         .expect("parses");
     let at = |x: f32| sloped.liquid_at(x, 200.0 - tile * 0.5).expect("wet").1;
     assert!((at(100.0 - tile * 0.001) - 30.0).abs() < 0.05, "{}", at(100.0));
     assert!((at(100.0 - tile) - 31.0).abs() < 0.01);
-    // Half a tile in is half a yard — which is the whole of what interpolating
-    // buys: a nearest-vertex read would answer 30.0 or 31.0 here.
+    // Half a tile in is half a yard higher. A nearest-vertex lookup would
+    // return 30.0 or 31.0 here.
     assert!((at(100.0 - tile * 0.5) - 30.5).abs() < 0.01, "{}", at(100.0 - tile * 0.5));
 
-    // Two liquids over one point: the higher surface is the one you are in.
+    // Two liquids over one point: the higher surface is returned.
     let both = parse_mcnk(&mcnk_with_liquid(
         mcnk_flags::LQ_RIVER | mcnk_flags::LQ_OCEAN,
         &[mclq_block(30.0, |_, _| true), mclq_block(44.0, |_, _| true)],
@@ -1178,9 +1171,9 @@ fn liquid_at_answers_the_surface_over_a_point_and_nothing_over_a_dry_tile() {
     );
 }
 
-/// A dry chunk is `sizeLiquid == 8`; a chunk with no liquid flag reads
-/// nothing whatever the size claims; a truncated block costs the blocks,
-/// not the chunk.
+/// A dry chunk has `sizeLiquid == 8`. A chunk with no liquid flag reads no
+/// liquid, whatever the size field says. A truncated block drops the liquid
+/// blocks and keeps the rest of the chunk.
 #[test]
 fn mclq_absence_and_damage_cost_the_liquid_and_nothing_else() {
     let dry = mcnk_with_liquid(mcnk_flags::LQ_RIVER, &[]);
@@ -1197,9 +1190,27 @@ fn mclq_absence_and_damage_cost_the_liquid_and_nothing_else() {
     assert_eq!(chunk.heights.len(), HEIGHTS_PER_CHUNK, "the terrain survives");
 }
 
-/// The assembled surface is the WMO emission on the terrain's grids: two
-/// up-facing triangles per wet tile, the depth byte as the vertex alpha,
-/// merged into one draw per kind.
+/// A cell whose low nibble is 0 is dry, whatever its high nibble, and a cell
+/// of any other type is wet; the high nibble is kept on a wet cell.
+#[test]
+fn mclq_cell_of_type_zero_is_dry() {
+    let mut block = mclq_block(30.0, |_, _| true);
+    let tiles = 8 + MCLQ_VERTS * LIQUID_VERTEX_SIZE;
+    block[tiles] = 0x40;
+    block[tiles + 1] = 0xC1;
+    let chunk = parse_mcnk(&mcnk_with_liquid(mcnk_flags::LQ_RIVER, &[block])).expect("parses");
+    let (_, grid) = &chunk.liquids[0];
+    // File cell (row 0, col 0) is grid tile x 7, y 7, and file cell (row 0,
+    // col 1) is x 7, y 6.
+    assert!(!grid.has_liquid(7, 7), "type 0 is dry");
+    assert!(grid.has_liquid(7, 6), "type 1 is wet");
+    assert_eq!(grid.tile_flags[6 * INNER_SIDE + 7], 0xC1);
+    assert!(grid.has_liquid(0, 0), "the rest of the block is still wet");
+}
+
+/// The terrain liquid surface is built the same way as WMO liquid: two
+/// up-facing triangles per wet tile, the depth byte as the vertex alpha, and
+/// one draw per liquid type.
 #[test]
 fn terrain_liquid_surface_faces_up_and_carries_depth_as_alpha() {
     let grid = WmoLiquid {
@@ -1238,7 +1249,7 @@ fn terrain_liquid_surface_faces_up_and_carries_depth_as_alpha() {
     assert_eq!(alphas, [3 * 9 + 2, 3 * 9 + 3, 4 * 9 + 3, 4 * 9 + 2]);
     assert!(draw.colours.iter().all(|c| c[0] == 0 && c[1] == 0 && c[2] == 0));
 
-    // And the winding faces +Z, like a WMO pool's.
+    // The winding faces +Z, as WMO liquid does.
     let p = |i: usize| {
         let v = draw.positions[draw.indices[i] as usize];
         (v[0], v[1], v[2])
@@ -1248,20 +1259,20 @@ fn terrain_liquid_surface_faces_up_and_carries_depth_as_alpha() {
     assert!(cross_z > 0.0, "the surface faces up, not into the lake");
 }
 
-/// **A building the caller has not staged is a hole in the answer, not a
-/// licence to use the ground.** `MODF` states the box before anything reads the
-/// `.wmo`, so the tile that answers a height also knows a building stands over
-/// it — and Stormwind's terrain is far below Stormwind's floors, so the caller
-/// that takes it in the meantime falls through the world.
+/// A point inside the `MODF` box of a building the caller has not loaded yet
+/// has no floor, instead of taking the terrain height. `MODF` gives the box
+/// before the `.wmo` is read, so the tile that answers a height also knows a
+/// building stands over that point. Stormwind's terrain is far below its
+/// floors, so a caller that used the terrain height in the meantime would
+/// fall through the world.
 ///
-/// The point is the whole of what the client tests before it waits for the
-/// object to load, so this checks all three ways it can be wrong:
-/// inside, outside, and inside-but-already-settled.
+/// The box test is all the client checks before it waits for the object to
+/// load. This test covers a point inside, a point outside, and a point inside
+/// a building the caller has already settled.
 #[test]
 fn a_point_inside_an_unstaged_modf_box_has_no_floor_yet() {
-    // A ten-yard cube around the map origin, in the file's own
-    // (westward, up, northward) frame — so its world box is x/y -5..5 and
-    // z 20..30.
+    // A ten-yard cube around the map origin, in the file's (westward, up,
+    // northward) frame, so its world box is x/y -5..5 and z 20..30.
     let placement = WmoPlacement {
         name_id: 0,
         unique_id: 77,
@@ -1273,9 +1284,9 @@ fn a_point_inside_an_unstaged_modf_box_has_no_floor_yet() {
         doodad_set: 0,
         name_set: 0,
     };
-    // The conversion is the one `vale wmos` checks the built geometry
-    // against, and it re-sorts: a lower corner in the file is not a lower
-    // corner in the world on the two axes that are measured backwards.
+    // `vale wmos` checks the built geometry against this conversion. It
+    // re-sorts the corners: on the two axes measured backwards, the file's
+    // lower corner is not the world's lower corner.
     let world = modf_world_box(&placement);
     assert_eq!(world, [[-5.0, -5.0, 20.0], [5.0, 5.0, 30.0]]);
 
@@ -1288,69 +1299,66 @@ fn a_point_inside_an_unstaged_modf_box_has_no_floor_yet() {
     assert!(adt.awaiting_building([0.0, 0.0, 25.0], pending), "inside");
     assert!(!adt.awaiting_building([0.0, 0.0, 40.0], pending), "over the roof");
     assert!(!adt.awaiting_building([50.0, 0.0, 25.0], pending), "beside it");
-    // …and once the caller has decided about it, the ground is the answer
-    // again — which is what stops a building with no hull at all being a
-    // permanent hole.
+    // Once the caller has settled the placement, the terrain height applies
+    // again, so a building with no hull does not leave a permanent hole.
     assert!(!adt.awaiting_building([0.0, 0.0, 25.0], |_| false), "settled");
     // The predicate is asked about the placement's own id and no other.
     assert!(adt.awaiting_building([0.0, 0.0, 25.0], |id| id == 77));
     assert!(!adt.awaiting_building([0.0, 0.0, 25.0], |id| id == 78));
 
-    // **…and the same boxes asked the other question**, which is the one that
-    // does *not* stop being true when the building lands: a point inside a
-    // `MODF` box is inside a building whatever its hull has decided. That is
-    // what stops the mover taking the mountain over Ironforge as a floor at a
-    // spot the city's own hull happens to answer nothing for — see
-    // `Standing::standable`.
+    // `inside_building` asks the same boxes a different question, and its
+    // answer does not change when the building loads: a point inside a
+    // `MODF` box is inside a building whatever its hull answers. This stops
+    // the movement code from taking the mountain over Ironforge as a floor
+    // where the city's hull has no surface; see `Standing::standable`.
     assert!(adt.inside_building([0.0, 0.0, 25.0]), "inside, hull or no hull");
     assert!(!adt.inside_building([0.0, 0.0, 40.0]), "over the roof");
     assert!(!adt.inside_building([50.0, 0.0, 25.0]), "beside it");
-    // The difference between the two, stated: settling the placement retires
-    // the first question and leaves the second exactly where it was.
+    // Settling the placement changes `awaiting_building` and leaves
+    // `inside_building` unchanged.
     assert!(!adt.awaiting_building([0.0, 0.0, 25.0], |_| false));
     assert!(adt.inside_building([0.0, 0.0, 25.0]));
 }
 
-/// The `_s` name goes **before** the extension and not after it, which is the
-/// difference between a file the archives hold and one they never will.
+/// The `_s` suffix goes before the extension, not after it. The archives hold
+/// `_s.blp` files; a name with the suffix after the extension matches none.
 #[test]
 fn the_specular_variant_is_named_before_the_extension() {
     assert_eq!(
         specular_texture(r"Tileset\Duskwood\DuskwoodCobblestone.blp"),
         r"Tileset\Duskwood\DuskwoodCobblestone_s.blp"
     );
-    // The *last* dot, since a path may carry others.
+    // The suffix goes before the last dot, since a path may contain others.
     assert_eq!(specular_texture(r"a.b\c.blp"), r"a.b\c_s.blp");
-    // No extension at all: the client walks back to a dot it does not find
-    // and appends, which is the same string this returns.
+    // With no extension, the client appends `_s` to the whole name, and so
+    // does this function.
     assert_eq!(specular_texture("bare"), "bare_s");
-    // And it is not idempotent by accident — asking twice is a name nothing
-    // ships, which is what makes a double application show up as a magenta
-    // ground rather than as nothing.
+    // The function is not idempotent. Applying it twice gives a name no
+    // archive holds, so a double application shows as magenta ground
+    // instead of passing unnoticed.
     assert_eq!(specular_texture("a_s.blp"), "a_s_s.blp");
 }
 
-/// **A cell written into a built atlas lands exactly where the builder put it,
-/// at every level of the mip chain.**
+/// `write_alpha_atlas_cell` writes a cell into a built atlas at the same place
+/// `alpha_atlas` put it, at every level of the mip chain.
 ///
-/// This is what lets a host change one chunk's blend without rebuilding the
-/// tile, and the failure it guards against is silent: a level indexed at the
-/// wrong stride writes a chunk's blend over its neighbour's, which reads as
-/// "the paint appears one chunk along" at distance and is correct up close.
+/// This lets a host change one chunk's blend without rebuilding the tile. A
+/// level indexed at the wrong stride writes a chunk's blend over its
+/// neighbour's: up close the blend is correct, and at a distance it appears
+/// one chunk along. No error is raised.
 #[test]
 fn a_cell_written_into_an_atlas_lands_where_the_builder_put_it() {
     let levels = alpha_atlas_levels();
     assert_eq!(levels.len(), 1 + ALPHA_ATLAS_MIPS);
     assert_eq!(levels[0], (0, ATLAS_SIDE));
     assert_eq!(levels[1], (ATLAS_SIDE * ATLAS_SIDE * 4, ATLAS_SIDE / 2));
-    // The last level is where a cell has become one texel, which is where the
-    // chain stops.
+    // The chain stops at the level where a cell is one texel.
     assert_eq!(levels[ALPHA_ATLAS_MIPS].1, ATLAS_SIDE / ALPHA_SIDE);
 
     let total: usize = levels.iter().map(|&(_, side)| side * side * 4).sum();
     let mut atlas = vec![0u8; total];
-    // One cell in the middle of the grid, filled with a value no other cell
-    // has, so anything landing outside it is visible as a stray byte.
+    // One cell in the middle of the grid, filled with values no other cell
+    // has, so a byte written outside it shows as a nonzero value.
     let which = 5 * CHUNKS_PER_SIDE + 9;
     let cell = alpha_atlas_cell(
         &[
@@ -1392,17 +1400,10 @@ fn a_cell_written_into_an_atlas_lands_where_the_builder_put_it() {
     }
 }
 
-/// **The three `MDDF` angles are turns about the world's z, y and x, in that
-/// order and with those signs**, and the pair that says so round trips.
-///
-/// The check is against [`placement_matrix`] itself rather than against the
-/// arithmetic: turning one angle has to move the model the way the named world
-/// axis says, or a panel that labels a field "about z" is lying about what
-/// dragging it does.
-/// **A lean stands the model's up on the normal, whatever the turn**, checked
-/// through the matrix itself rather than through the derivation: the record
-/// [`lean_to_normal`] produces is pushed through [`placement_matrix`] and the
-/// model's own `+Z` has to come out along the normal it was asked for.
+/// [`lean_to_normal`] tilts the model so its `+Z` lies along the given normal,
+/// for any turn. The test passes the record it produces through
+/// [`placement_matrix`] and checks where the model's `+Z` lands, instead of
+/// checking the derivation.
 #[test]
 fn a_lean_carries_the_models_up_onto_the_normal() {
     let up_of = |world: [f32; 3]| {
@@ -1433,12 +1434,20 @@ fn a_lean_carries_the_models_up_onto_the_normal() {
             }
         }
     }
-    // Straight up leans nothing, and a normal under the horizon is refused
-    // rather than standing the model on its head.
+    // A normal straight up gives no lean. A normal below the horizon is
+    // refused and also gives no lean, instead of turning the model upside
+    // down.
     assert_eq!(lean_to_normal([0.0, 0.0, 1.0], 45.0), [0.0, 0.0, 45.0]);
     assert_eq!(lean_to_normal([0.0, 0.0, -1.0], 45.0), [0.0, 0.0, 45.0]);
 }
 
+/// The three `MDDF` angles are turns about the world's z, y and x, in that
+/// order and with those signs, and `placement_euler_to_world` and
+/// `placement_euler_from_world` are inverses.
+///
+/// The test checks [`placement_matrix`] itself, not the arithmetic: turning
+/// one angle must move the model about the named world axis, or a control
+/// labelled "about z" would turn the model about a different axis.
 #[test]
 fn the_placement_angles_are_turns_about_the_worlds_axes() {
     let there_and_back = |rot: [f32; 3]| {
@@ -1447,10 +1456,9 @@ fn the_placement_angles_are_turns_about_the_worlds_axes() {
     assert_eq!(there_and_back([10.0, 20.0, 30.0]), [10.0, 20.0, 30.0]);
     assert_eq!(placement_euler_to_world([10.0, 20.0, 30.0]), [-30.0, -10.0, 20.0]);
 
-    // A 90° turn about the world's z takes the model's own forward round to the
-    // next axis, and the matrix is what says which. Compare the basis a
-    // right-handed 90° about z produces against the one the file's own angle
-    // produces.
+    // A 90° turn about the world's z moves the model's forward axis to the
+    // next axis. Compare the basis a right-handed 90° turn about z produces
+    // with the one the file's angle produces.
     let column = |m: &[f32; 16], col: usize| [m[col * 4], m[col * 4 + 1], m[col * 4 + 2]];
     let flat = placement_matrix([0.0; 3], [0.0; 3], 1.0);
     let about_z = placement_matrix(
@@ -1467,14 +1475,13 @@ fn the_placement_angles_are_turns_about_the_worlds_axes() {
     assert!((now[2] - was[2]).abs() < 1e-4, "{was:?} -> {now:?}");
 }
 
-/// **The bit a hole tool cuts is the bit the mesher skips.**
+/// The bit `hole_bit` returns for a point is the bit the mesher skips there.
 ///
-/// `hole_bit` exists so that a tool does not work the mask out again from the
-/// chunk origin, and the failure it guards against is the quiet one: a quadrant
-/// away from the pointer is still a hole, on a file that still parses, so
-/// nothing anywhere says it went in the wrong place. The check is therefore
-/// against the two readings that already exist — `Mcnk::is_hole`, and the ground
-/// itself refusing a height where a hole is.
+/// `hole_bit` saves a tool from computing the mask again from the chunk
+/// origin. A hole cut one square away from the pointer is still a valid hole
+/// in a file that still parses, so nothing reports it. The test therefore
+/// checks against the two existing readers: `Mcnk::is_hole`, and the ground
+/// returning no height over a hole.
 #[test]
 fn the_bit_a_hole_tool_cuts_is_the_bit_the_mesher_skips() {
     let origin = [100.0f32, 200.0, 0.0];
@@ -1487,8 +1494,7 @@ fn the_bit_a_hole_tool_cuts_is_the_bit_the_mesher_skips() {
             "the middle of bit {bit}'s own square is bit {bit}"
         );
 
-        // …and the same square is the one `is_hole` answers for, over every
-        // cell it covers.
+        // `is_hole` reports the same square, over every cell it covers.
         let mut chunk = test_chunk(vec![0.0; HEIGHTS_PER_CHUNK], 1 << bit);
         chunk.position = origin;
         for row in 0..INNER_SIDE {
@@ -1497,8 +1503,7 @@ fn the_bit_a_hole_tool_cuts_is_the_bit_the_mesher_skips() {
                 assert_eq!(chunk.is_hole(row, col), covered, "bit {bit} at {row},{col}");
             }
         }
-        // The ground refuses a height in the square and answers outside it,
-        // which is the property a person cutting a hole is actually asking for.
+        // The ground returns no height in the square.
         assert_eq!(
             chunk.ground().height_at(middle[0], middle[1]),
             None,
@@ -1506,17 +1511,16 @@ fn the_bit_a_hole_tool_cuts_is_the_bit_the_mesher_skips() {
         );
     }
 
-    // Off the chunk in either axis is no bit at all rather than the nearest.
+    // A point off the chunk on either axis has no bit, not the nearest one.
     assert_eq!(hole_bit(origin, origin[0] + 1.0, origin[1] - 1.0), None);
     assert_eq!(hole_bit(origin, origin[0] - 1.0, origin[1] + 1.0), None);
     assert_eq!(hole_bit(origin, origin[0] - CHUNK_SIZE - 1.0, origin[1] - 1.0), None);
 }
 
-/// One real tile out of the install, or `None` where there is not one.
+/// One real tile from the game data, or `None` when it is not available.
 ///
-/// The same arrangement `vale_edit`'s tests use: most of this file works on
-/// invented bytes, and the two checks below cannot — what they are about is
-/// what the shipped files actually carry.
+/// Most tests in this file use synthetic bytes. The two tests that call this
+/// check what the shipped files contain, so they need a real tile.
 fn real_tile(map: &str, x: u32, y: u32) -> Option<Adt> {
     let dir = std::env::var("VALE_GAMEDATA").unwrap_or_else(|_| "../../Data".into());
     let mut assets = crate::Assets::open(&dir).ok()?;
@@ -1524,17 +1528,19 @@ fn real_tile(map: &str, x: u32, y: u32) -> Option<Adt> {
     Adt::parse(&raw).ok()
 }
 
-/// **The animation bits come out as a UV velocity, and only when the switch is
-/// on.**
+/// `layer_flags::scroll` turns a layer's animation bits into a UV velocity,
+/// and returns `None` unless `ANIMATION_ENABLED` is set.
 ///
-/// Three properties, each of which would draw plausibly if it were wrong.
-/// Direction 0 must crawl along +V and *not* +U: the two are indistinguishable
-/// on a tileset with no grain and obvious on lava. Each speed step must double
-/// the last, because the field is three bits covering a drifting shadow and a
-/// running waterfall and a linear reading would put seven steps inside a factor
-/// of eight. And the switch has to gate both, because a layer with a direction
-/// and no switch is a still layer and there are 42 more of those in Azeroth
-/// than there are moving ones.
+/// Each of three properties would still draw plausibly if it were wrong:
+///
+/// * Direction 0 scrolls along +V, not +U. The two look the same on a
+///   tileset with no grain and differ visibly on lava.
+/// * Each speed step doubles the previous one. The field is three bits and
+///   covers rates from a drifting shadow to a running waterfall; a linear
+///   reading would put seven steps inside a factor of eight.
+/// * `ANIMATION_ENABLED` gates both direction and speed. A layer with a
+///   direction and no enable bit is still, and Azeroth has 42 more of those
+///   than moving layers.
 #[test]
 fn a_layers_animation_bits_become_a_uv_velocity() {
     use layer_flags as f;
@@ -1575,14 +1581,14 @@ fn a_layers_animation_bits_become_a_uv_velocity() {
     assert!((rate(7) / rate(0) - 128.0).abs() < 1e-3);
 }
 
-/// …and it reaches a draw group, which is what decides whether the shader ever
-/// sees it.
+/// A layer's scroll velocity reaches its draw group, which is how the shader
+/// receives it.
 ///
-/// **A still chunk must not be folded in with a crawling one**, because the
-/// velocity is one number per draw group: a grouping that keyed on the textures
-/// alone would make every chunk sharing the lava's tileset crawl, including the
-/// dry rock beside it. `vale textures` says Azeroth 36 46 carries 46
-/// animated layers, which is the tile with both on it.
+/// A still chunk must not share a draw group with a scrolling one, because
+/// the velocity is one value per draw group. Grouping by textures alone
+/// would make every chunk that shares the lava's tileset scroll, including
+/// the dry rock beside it. `vale textures` reports 46 animated layers on
+/// Azeroth 36 46, a tile that has both still and scrolling chunks.
 #[test]
 fn a_scrolling_layer_reaches_its_own_draw_group() {
     let Some(adt) = real_tile("Azeroth", 36, 46) else {
@@ -1603,13 +1609,13 @@ fn a_scrolling_layer_reaches_its_own_draw_group() {
         mesh.draws.iter().any(|d| d.scrolls.iter().all(|s| *s == [0.0, 0.0])),
         "…and the dry ground on the same tile is not moving"
     );
-    // Every draw group's scroll list is as long as its texture list, or the
-    // pairing into the material's two vectors puts one layer's velocity on
-    // another layer.
+    // Every draw group's scroll list is as long as its texture list.
+    // Otherwise the pairing into the material's two vectors puts one layer's
+    // velocity on another layer.
     for draw in &mesh.draws {
         assert_eq!(draw.scrolls.len(), draw.textures.len());
     }
-    // …and the same textures with different scrolls are different groups.
+    // The same textures with different scrolls are different groups.
     for a in &moving {
         for b in &mesh.draws {
             if a.textures == b.textures && a.scrolls != b.scrolls {
@@ -1669,8 +1675,9 @@ fn two_chunks_share_their_edge_vertices_exactly() {
 }
 
 /// On a shipped tile, every vertex position that two chunks' meshes share is
-/// the same `f32` triple in both. Before the lattice every chunk edge on
-/// `Azeroth_32_48` was 0.65 mm apart from its neighbour's.
+/// the same `f32` triple in both. Vertex x and y come from the map's vertex
+/// lattice; computed from each chunk's own origin, every chunk edge on
+/// `Azeroth_32_48` was 0.65 mm from its neighbour's.
 #[test]
 fn a_real_tiles_chunks_share_their_edges_exactly() {
     let Some(adt) = real_tile("Azeroth", 32, 48) else {

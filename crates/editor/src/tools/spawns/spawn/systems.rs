@@ -658,6 +658,9 @@ pub(super) fn aim<S: SpawnSubject>(
 /// faces the way the player placing it is looking; the editor's camera looks
 /// at the spot rather than from it, so the equivalent here is facing the
 /// camera.
+///
+/// The spawn joins the pool and game event chosen in the picker, on the same
+/// undo entry. See [`SpawnTool::place`].
 #[allow(clippy::too_many_arguments)]
 fn place_one<S: SpawnSubject>(
     tool: &mut SpawnTool<S>,
@@ -668,6 +671,7 @@ fn place_one<S: SpawnSubject>(
     windows: &Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: &Query<&GlobalTransform, With<WorldCamera>>,
     time: &Time,
+    holders: (&crate::subjects::pools::Pools, &crate::subjects::game_events::GameEvents),
 ) {
     if !crate::ui::over_the_world(viewport, wants, windows) {
         return;
@@ -696,10 +700,10 @@ fn place_one<S: SpawnSubject>(
         }
         Err(_) => 0.0,
     });
-    let guid = tool.create(session, &known, ground, facing, time.elapsed_secs_f64());
+    let (guid, status) = tool.place(session, &known, ground, facing, holders.0, holders.1, time.elapsed_secs_f64());
     tool.roll_facing();
     tool.template_window = false;
-    session.status = format!("{} placed as guid {guid}", known.label());
+    session.status = status;
     info!(
         "{}: placed {} as guid {guid} at {:.1}, {:.1}, {:.1}",
         S::WORDS.nouns,
@@ -733,7 +737,8 @@ pub(crate) fn press<S: SpawnSubject>(
     gizmo: Res<crate::tools::placements::gizmo::Gizmo>,
     keys: Res<ButtonInput<KeyCode>>,
     mut marquee: ResMut<crate::tools::placements::group::Marquee>,
-    hover: Res<SpawnHover>,
+    // One parameter, as a system takes sixteen at most.
+    (hover, pools, events): (Res<SpawnHover>, Res<crate::subjects::pools::Pools>, Res<crate::subjects::game_events::GameEvents>),
 ) {
     if !state.editing() || *chosen != S::TOOL {
         return;
@@ -761,7 +766,7 @@ pub(crate) fn press<S: SpawnSubject>(
     // also select whatever was under the pointer, which would open the form
     // on a spawn the user did not click.
     if tool.placing() {
-        place_one(&mut tool, &mut session, &cursor, &viewport, &wants, &windows, &camera, &time);
+        place_one(&mut tool, &mut session, &cursor, &viewport, &wants, &windows, &camera, &time, (&pools, &events));
         return;
     }
     let adding = crate::tools::placements::group::shift(&keys);

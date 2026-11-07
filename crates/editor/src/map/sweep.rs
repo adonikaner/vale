@@ -1,51 +1,62 @@
-//! A find-and-replace over every tile of a map.
+//! A find-and-replace over every tile of a map, and the liquid type repair,
+//! which walks the same tiles.
 //!
-//! ## The one operation whose subject is the map rather than the tile
+//! ## The liquid type repair
 //!
-//! Every tool in `crate::tools` edits what is open: a brush reaches the
-//! 7x7 the camera is streaming, a layer swap reaches a chunk the pointer is
-//! over. Retiring a tileset from a zone, or changing one tree across a forest,
-//! is neither — the tiles are mostly not open and mostly not near the camera,
-//! and there are hundreds of them.
+//! A wet liquid cell's low nibble is its liquid's type, and the 1.12.1 client
+//! draws nothing on a cell of type 0. Tiles wetted before
+//! `vale_edit::adt::liquid::Pool::set_wet` wrote the type carry 0 on every
+//! wet cell. [`Sweep::repair_liquid`] runs
+//! `vale_edit::ops::water::repair_liquid_types` over every tile the map
+//! claims, as one undo entry, and saves each tile it changes. A tile's bytes
+//! say nothing scannable about a cell's type, so unlike a rename it opens
+//! every tile.
 //!
-//! What makes it a small operation anyway is that **every index in an ADT is a
-//! position in a name list**. `MCLY` indexes `MTEX`, `MDDF` indexes `MMID`,
-//! `MODF` indexes `MWID`; so changing what a name *is*, in place, renumbers
-//! nothing and touches no record. One `Edit::Names` per tile is the whole of
-//! it, and a forest of two thousand trees changes model without a single
-//! placement moving.
+//! ## The sweep edits the whole map, not the open tiles
 //!
-//! ## It is spread over frames, not put on a thread
+//! Every tool in `crate::tools` edits what is open: a brush reaches the 7x7
+//! the camera is streaming, a layer swap reaches the chunk under the pointer.
+//! Retiring a tileset from a zone, or changing one tree model across a forest,
+//! reaches tiles that are mostly not open and mostly not near the camera, and
+//! there are hundreds of them.
 //!
-//! The work wants `&mut EditSession` — the history, the open tiles, the
-//! overlay — none of which crosses a thread, so `crate::jobs` is the wrong
-//! shape for it. Instead [`Run`] holds a queue and [`advance`] takes
-//! [`PER_FRAME`] tiles off it each frame, which keeps the window answering and
-//! gives the panel something true to draw a bar from.
+//! A rename stays a small operation because every index in an ADT is a
+//! position in a name list. `MCLY` indexes `MTEX`, `MDDF` indexes `MMID`,
+//! `MODF` indexes `MWID`; so changing a name in place renumbers nothing and
+//! touches no record. One `Edit::Names` per tile is the whole edit, and a
+//! forest of two thousand trees changes model without any placement moving.
+//!
+//! ## Spread over frames, not run on a thread
+//!
+//! The work needs `&mut EditSession` (the history, the open tiles, the
+//! overlay), none of which can be sent to another thread, so `crate::jobs`
+//! does not fit it. Instead [`Run`] holds a queue and [`advance`] takes
+//! [`PER_FRAME`] tiles off it each frame. The window stays responsive, and the
+//! panel's progress bar shows the real count.
 //!
 //! ## Most tiles are rejected without being parsed
 //!
-//! A map is 687 tiles on Azeroth and about 2 MB of parse each. A sweep that
-//! parsed all of them would be eleven seconds of work to change forty of them.
+//! Azeroth has 687 tiles, each about 2 MB to parse. A sweep that parsed all of
+//! them would take eleven seconds to change forty of them.
 //!
-//! So the queue is filtered on the **bytes**: a tile whose file does not
-//! contain the path as a substring cannot name it, and the check is a scan of a
-//! buffer already in hand. It is deliberately a cheap over-approximation — the
-//! path could appear inside some other string — and a tile that passes it and
-//! turns out not to name the path simply reports no change.
+//! So a rename filters the queue on the raw bytes: a tile whose file does not
+//! contain the path as a substring cannot name it, and the check scans a
+//! buffer already in hand. It is a deliberate cheap over-approximation, since
+//! the path could appear inside some other string; a tile that passes the
+//! check and turns out not to name the path reports no change.
 //!
-//! **Case is the one trap in that.** The archives answer case-insensitively and
-//! one texture is spelled three ways across a map, so the scan is
-//! case-insensitive too; a case-sensitive one would skip the tiles that spell
-//! it differently and report a swap that had missed half the zone.
+//! The scan ignores case. The archives look paths up case-insensitively and
+//! one texture is spelled three ways across a map; a case-sensitive scan would
+//! skip the tiles that spell it differently, and a swap could miss half the
+//! zone.
 //!
-//! ## What it does not do
+//! ## Duplicates are not merged
 //!
-//! It does not fold a duplicate. Renaming `A` to `B` on a tile that already
-//! names `B` leaves two entries reading `B` — correct on screen, one slot of
-//! `MTEX`'s wasted. Folding them would renumber the list and every record
-//! indexing it, which is a different operation with its own way of going
-//! wrong. See `vale_edit::adt::place::AdtFile::rename_texture`.
+//! Renaming `A` to `B` on a tile that already names `B` leaves two entries
+//! reading `B`: correct on screen, with one `MTEX` slot wasted. Merging them
+//! would renumber the list and every record indexing it, which is a different
+//! operation with its own failure modes. See
+//! `vale_edit::adt::place::AdtFile::rename_texture`.
 
 use crate::session::EditSession;
 use vale_client::assets::GameAssets;
@@ -55,8 +66,8 @@ use bevy::prelude::*;
 /// How many tiles a frame the sweep gets through.
 ///
 /// Above the one-a-frame [`crate::map::open::open_tiles`] streams at, because these tiles
-/// are opened and closed again rather than kept, and because a person watching
-/// a progress bar is not also flying the camera. Eight puts Azeroth's 687 at
+/// are opened and closed again rather than kept, and because the user is
+/// waiting on the progress bar rather than moving the camera. Eight puts Azeroth's 687 at
 /// about a second and a half in a debug build, and the frame stays inside its
 /// budget on the tiles that are only scanned.
 const PER_FRAME: usize = 8;
@@ -64,8 +75,8 @@ const PER_FRAME: usize = 8;
 /// Which list of paths a sweep is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Subject {
-    /// `MTEX`, the ground textures — the map-wide half of the Chunk list's
-    /// **swap**, which does one chunk.
+    /// `MTEX`, the ground textures: the map-wide counterpart of the Chunk
+    /// list's swap, which changes one chunk.
     #[default]
     Texture,
     /// `MMDX`, the placed models.
@@ -83,8 +94,8 @@ impl Subject {
         }
     }
 
-    /// The archive folder each one lives under, for a panel that wants to say
-    /// what kind of path is wanted.
+    /// The archive folder each one lives under, for a panel to show which type
+    /// of path is wanted.
     pub(crate) fn root(self) -> &'static str {
         match self {
             Subject::Texture => r"Tileset\",
@@ -119,11 +130,19 @@ pub(crate) struct Report {
     pub(crate) what: String,
 }
 
+/// What a sweep does to each tile.
+#[derive(Debug, Clone)]
+enum Job {
+    /// Find or replace one path in one of the three name lists.
+    Rename { subject: Subject, from: String, to: String },
+    /// Give every wet liquid cell whose type is 0 its liquid's type. See
+    /// `vale_edit::ops::water::repair_liquid_types`.
+    LiquidTypes,
+}
+
 /// A sweep in progress.
 pub(crate) struct Run {
-    subject: Subject,
-    from: String,
-    to: String,
+    job: Job,
     /// The tiles still to look at, popped from the back.
     queue: Vec<(u32, u32)>,
     total: usize,
@@ -136,10 +155,10 @@ pub(crate) struct Run {
     /// `Ctrl+Z` to land on.
     begun: bool,
     report: Report,
-    /// Tiles this sweep opened and the session did not have. Closed again on
-    /// the way out, or a find over a continent leaves the whole continent
-    /// resident — which is the growth `close_tiles` was written to stop, from
-    /// a direction it cannot see.
+    /// Tiles this sweep opened and the session did not have. They are closed
+    /// again when the sweep finishes; otherwise a find over a continent would
+    /// leave the whole continent resident. `close_tiles` exists to stop that
+    /// growth, but it does not see tiles opened this way.
     opened: Vec<(u32, u32)>,
 }
 
@@ -164,19 +183,19 @@ pub(crate) struct Sweep {
 }
 
 impl Sweep {
-    /// **Count, without writing anything.**
+    /// Count the tiles and names that match, without writing anything.
     ///
-    /// The half of "select every instance of this model" this editor can
-    /// honestly offer: not a selection — that is one decision for placements,
-    /// chunks and tiles together and is not made here — but the answer to *how
-    /// many and where*, which is the question a person asks before deciding to
-    /// replace. It is also the only way to find out whether a path is spelled
-    /// the way you think it is before changing 400 tiles.
+    /// This is the part of "select every instance of this model" that the
+    /// editor supports. It makes no selection: a selection is one decision
+    /// covering placements, chunks and tiles together, and it is not made
+    /// here. It answers how many and where, which a user needs to know before
+    /// deciding to replace, and it is the only way to check that a path is
+    /// spelled as intended before changing 400 tiles.
     pub(crate) fn find(&mut self, session: &EditSession, assets: &GameAssets) {
         self.start(session, assets, false);
     }
 
-    /// …and the same walk, writing.
+    /// The same walk as [`Self::find`], writing the replacement.
     pub(crate) fn replace(&mut self, session: &EditSession, assets: &GameAssets) {
         self.start(session, assets, true);
     }
@@ -188,11 +207,28 @@ impl Sweep {
         if replace && self.to.trim().is_empty() {
             return;
         }
-        let from = self.from.trim().to_string();
-        let to = self.to.trim().to_string();
-        // **Every tile the map claims**, and the claims are the session's own
-        // copy of the WDT — which is the grid the tiles tool writes, so a tile
-        // made this session is swept and one unclaimed this session is not.
+        let job = Job::Rename {
+            subject: self.subject,
+            from: self.from.trim().to_string(),
+            to: self.to.trim().to_string(),
+        };
+        self.begin(session, assets, job, replace);
+    }
+
+    /// Give every wet liquid cell of type 0 on every tile of the map its
+    /// liquid's type, as one undo entry. The 1.12.1 client draws nothing on a
+    /// cell of type 0; see `vale_edit::adt::liquid::cell_type`.
+    pub(crate) fn repair_liquid(&mut self, session: &EditSession, assets: &GameAssets) {
+        if self.running.is_some() {
+            return;
+        }
+        self.begin(session, assets, Job::LiquidTypes, true);
+    }
+
+    fn begin(&mut self, session: &EditSession, assets: &GameAssets, job: Job, replace: bool) {
+        // Every tile the map claims. The claims are the session's own copy of
+        // the WDT, which is the grid the tiles tool writes, so a tile made this
+        // session is swept and one unclaimed this session is not.
         let mut queue: Vec<(u32, u32)> = session.claimed.iter().copied().collect();
         // Sorted, so a run that is watched proceeds up the map rather than in
         // hash order, and so two runs over the same map report in the same
@@ -202,9 +238,7 @@ impl Sweep {
         let total = queue.len();
         let _ = assets;
         self.running = Some(Run {
-            subject: self.subject,
-            from,
-            to,
+            job,
             queue,
             total,
             replace,
@@ -245,13 +279,17 @@ pub(crate) fn advance(
 fn step(run: &mut Run, session: &mut EditSession, assets: &GameAssets, coord: (u32, u32)) {
     run.report.scanned += 1;
     let already_open = session.tiles.contains_key(&coord);
-    // The cheap rejection, on the bytes. See the module comment.
     if !already_open {
-        let Some(bytes) = session.tile_bytes(assets, coord) else {
-            return;
-        };
-        if !mentions(&bytes, &run.from) {
-            return;
+        // The cheap rejection, on the bytes, for a rename. See the module
+        // comment. A liquid cell's type has no text to scan for, so the
+        // liquid repair opens every tile.
+        if let Job::Rename { from, .. } = &run.job {
+            let Some(bytes) = session.tile_bytes(assets, coord) else {
+                return;
+            };
+            if !mentions(&bytes, from) {
+                return;
+            }
         }
         if !session.open(assets, coord) {
             return;
@@ -259,46 +297,55 @@ fn step(run: &mut Run, session: &mut EditSession, assets: &GameAssets, coord: (u
         run.opened.push(coord);
     }
     let key = session.key(coord);
-    let (subject, from, to) = (run.subject, run.from.clone(), run.to.clone());
     let Some(tile) = session.tiles.get_mut(&coord) else {
         return;
     };
-    let before = TileNames::capture(tile);
-    let moved = subject.rename(tile, &from, &to);
-    if moved == 0 {
-        // Nothing here after all — an open tile that never named it, or a
-        // false positive from the byte scan.
-        return;
-    }
-    run.report.tiles += 1;
-    run.report.names += moved;
-    if !run.replace {
-        // A find puts the tile back exactly as it was. The rename is how the
-        // count is taken, because it is the one piece of code that knows what
-        // "names this path" means — asking twice, two ways, is how the two
-        // answers come to disagree.
-        before.restore(tile);
-        return;
-    }
-    let after = TileNames::capture(tile);
+    let (edits, label) = match &run.job {
+        Job::Rename { subject, from, to } => {
+            let before = TileNames::capture(tile);
+            let moved = subject.rename(tile, from, to);
+            if moved == 0 {
+                // Nothing here after all — an open tile that never named it,
+                // or a false positive from the byte scan.
+                return;
+            }
+            run.report.tiles += 1;
+            run.report.names += moved;
+            if !run.replace {
+                // A find puts the tile back exactly as it was. The rename is
+                // how the count is taken, because it is the one piece of code
+                // that knows what "names this path" means; counting a second
+                // way could give a different answer.
+                before.restore(tile);
+                return;
+            }
+            let after = TileNames::capture(tile);
+            let edit = Edit::Names {
+                before: Box::new(before),
+                after: Box::new(after),
+            };
+            (vec![edit], format!("Replace {} {from} with {to}", subject.name()))
+        }
+        Job::LiquidTypes => {
+            let repaired = vale_edit::ops::water::repair_liquid_types(tile);
+            if repaired.edits.is_empty() {
+                return;
+            }
+            run.report.tiles += 1;
+            run.report.names += repaired.cells;
+            (repaired.edits, "Repair liquid cell types".to_string())
+        }
+    };
     if !run.begun {
-        // **One entry for the whole sweep**, opened here so that a replace
-        // matching nothing pushes none. It stays open across every frame the
-        // run takes and is closed in `finish`; nothing else can edit in
+        // One history entry for the whole sweep, opened here so that a run
+        // that changes nothing pushes none. It stays open across every frame
+        // the run takes and is closed in `finish`. Nothing else can edit in
         // between, because the panel's own controls are the only route in and
         // they are disabled while a run is going.
-        session
-            .history
-            .begin(format!("Replace {} {from} with {to}", subject.name()));
+        session.history.begin(label);
         run.begun = true;
     }
-    session.history.record(
-        &key,
-        [Edit::Names {
-            before: Box::new(before),
-            after: Box::new(after),
-        }],
-    );
+    session.history.record(&key, edits);
     session.publish(coord);
     session.stale.insert(coord);
     session.save(coord);
@@ -307,9 +354,7 @@ fn step(run: &mut Run, session: &mut EditSession, assets: &GameAssets, coord: (u
 /// Close what was opened, close the change, and say what happened.
 fn finish(run: Run, session: &mut EditSession, sweep: &mut Sweep) {
     let Run {
-        subject,
-        from,
-        to,
+        job,
         replace,
         begun: run_begun,
         mut report,
@@ -319,21 +364,37 @@ fn finish(run: Run, session: &mut EditSession, sweep: &mut Sweep) {
     if replace && run_begun {
         session.history.end();
     }
-    // **Everything this sweep opened goes again, changed or not.**
+    // Close every tile this sweep opened, changed or not.
     //
     // A tile this sweep had to open is by construction one the session did not
-    // have, and the session has the block around the camera — so it is a tile
-    // nothing is drawing and nobody is looking at. Its bytes are in the overlay
-    // and in the project folder before it closes, and `EditSession::undo` opens
-    // what it names, so nothing is lost by letting go of the parse.
+    // have, and the session has the block around the camera, so nothing is
+    // drawing the tile and nobody is looking at it. Its bytes are in the
+    // overlay and in the project folder before it closes, and
+    // `EditSession::undo` opens what it names, so nothing is lost by dropping
+    // the parse.
     //
-    // Keeping the changed ones was the first draft and it is wrong at the only
-    // scale this tool matters at: a replace over a zone is four hundred tiles
-    // and eight hundred megabytes, held for the rest of the session by a
-    // `stale` flag that the next frame drains anyway.
+    // Keeping the changed tiles open does not scale: a replace over a zone is
+    // four hundred tiles and eight hundred megabytes, which would stay resident
+    // for the rest of the session because of a `stale` flag that the next frame
+    // drains anyway.
     for coord in opened {
         session.close(coord);
     }
+    let (subject, from, to) = match job {
+        Job::Rename { subject, from, to } => (subject, from, to),
+        Job::LiquidTypes => {
+            report.what = "liquid cell types".to_string();
+            session.status = match report.tiles {
+                0 => format!("no liquid cell needed a type ({} tiles scanned)", report.scanned),
+                tiles => format!(
+                    "gave {} liquid cell(s) their type on {tiles} tile(s); {} tiles scanned",
+                    report.names, report.scanned
+                ),
+            };
+            sweep.last = Some(report);
+            return;
+        }
+    };
     report.what = match replace {
         true => format!("{} {from} → {to}", subject.name()),
         false => format!("{} {from}", subject.name()),
@@ -356,11 +417,12 @@ fn finish(run: Run, session: &mut EditSession, sweep: &mut Sweep) {
     sweep.last = Some(report);
 }
 
-/// **Does this tile's file mention that path at all**, ignoring case.
+/// Whether this tile's file contains that path anywhere, ignoring case.
 ///
-/// The filter that keeps a sweep off 600 parses. An over-approximation on
-/// purpose: it says *maybe* where the real answer needs the name lists parsed,
-/// and the tiles it lets through are then asked properly.
+/// The filter that spares a sweep 600 parses. It over-approximates on purpose:
+/// a match means only that the tile may name the path, because the exact
+/// answer needs the name lists parsed, and the tiles it passes are then
+/// parsed and checked.
 fn mentions(bytes: &[u8], path: &str) -> bool {
     let needle = path.as_bytes();
     if needle.is_empty() || bytes.len() < needle.len() {
@@ -393,9 +455,9 @@ mod tests {
     /// The byte filter finds the path however it is spelled, and says no to a
     /// tile that does not carry it.
     ///
-    /// Case is the half that matters: the archives answer case-insensitively,
-    /// so one tileset is spelled three ways across a map and a case-sensitive
-    /// scan would quietly sweep a third of the zone.
+    /// Case matters here: the archives look paths up case-insensitively, so
+    /// one tileset is spelled three ways across a map, and a case-sensitive
+    /// scan would sweep only a third of the zone and report no error.
     #[test]
     fn the_byte_filter_ignores_case_and_refuses_what_is_absent() {
         let tile = b"MTEX\0\0\0\0Tileset\\Elwynn\\ElwynnGrass01.blp\0Tileset\\Dun.blp\0";
@@ -408,8 +470,8 @@ mod tests {
         assert!(!mentions(b"ab", r"Tileset\Elwynn\ElwynnGrass01.blp"));
     }
 
-    /// A rename over a tile's three lists keeps every index, which is the whole
-    /// reason this operation is cheap.
+    /// A rename over a tile's three lists keeps every index, which is why this
+    /// operation is cheap.
     #[test]
     fn a_rename_keeps_every_index_in_the_tile() {
         use vale_edit::adt::AdtFile;
@@ -445,14 +507,15 @@ mod tests {
     }
 }
 
-/// `--find <path>` — arm the sweep and run it, once, on the first frame the
-/// session is up.
+/// `--find <path>` and `--repair-liquid` — arm the sweep and run it, once, on
+/// the first frame the session is up.
 ///
-/// The scripted route into this tool, on `crate::tools::placements::place::scripted`'s own
-/// terms and for the same reason: the panel is two text fields and a button,
-/// none of which a `--shot` run can press, so without this the only thing a
-/// script could do with a sweep is photograph an empty form. It finds and never
-/// replaces — see [`crate::args::tools::Tools::find`].
+/// The scripted route into this tool, working like
+/// `crate::tools::placements::place::scripted` and for the same reason: the
+/// panel is two text fields and buttons, none of which a `--shot` run can
+/// press, so without this a script could only capture the empty form. `--find` finds and
+/// never replaces — see [`crate::args::tools::Tools::find`]. `--repair-liquid`
+/// writes; see [`crate::args::tools::Tools::repair_liquid`].
 ///
 /// The report goes to the log as well as to the status line, because a run that
 /// quits on `--after` is read from its output rather than from its last frame.
@@ -467,29 +530,40 @@ fn scripted(
     if *done {
         return;
     }
-    let (Some(asked), Some(session)) = (args.tools.find.clone(), session) else {
+    let wanted = args.tools.find.is_some() || args.tools.repair_liquid;
+    let (true, Some(session)) = (wanted, session) else {
         // No flag is nothing to do; no session yet is a frame too early, and
         // the session is inserted within the first few.
-        *done = args.tools.find.is_none();
+        *done = !wanted;
         return;
     };
     if *tool != crate::tools::Tool::Sweep {
         return;
     }
     *done = true;
-    sweep.from = asked;
-    sweep.find(&session, &assets);
+    match args.tools.find.clone() {
+        Some(asked) => {
+            sweep.from = asked;
+            sweep.find(&session, &assets);
+        }
+        None => sweep.repair_liquid(&session, &assets),
+    }
 }
 
-/// …and say what it came to, once it is over.
+/// Log what a scripted sweep came to, once it has finished.
 fn report(sweep: Res<Sweep>, args: Res<crate::args::Args>, mut said: Local<bool>) {
-    if *said || args.tools.find.is_none() || sweep.running.is_some() {
+    let wanted = args.tools.find.is_some() || args.tools.repair_liquid;
+    if *said || !wanted || sweep.running.is_some() {
         return;
     }
     let Some(report) = &sweep.last else { return };
     *said = true;
+    let flag = match args.tools.find.is_some() {
+        true => "--find",
+        false => "--repair-liquid",
+    };
     info!(
-        "--find: {} — {} tile(s), {} name(s), {} of the map's tiles scanned",
+        "{flag}: {} — {} tile(s), {} name(s) or cell(s), {} of the map's tiles scanned",
         report.what, report.tiles, report.names, report.scanned
     );
 }

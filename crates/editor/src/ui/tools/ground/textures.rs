@@ -1,7 +1,7 @@
 //! The texture brush's controls, in two places.
 //!
 //! ```text
-//! viewport toolbar   the brush preset, Paint or Erase, Show Full Chunks, the
+//! viewport toolbar   the brush preset, Paint or Erase, Texture Count, the
 //!                    drawing tablet, and the keys
 //! inspector          the brush presets and the brush's settings, the brush's
 //!                    texture and its foliage, the tileset list, and the layers
@@ -186,21 +186,21 @@ fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
 /// The texture brush's toolbar over the viewport:
 ///
 /// ```text
-/// Brush | Paint  Erase | Show Full Chunks  Tablet
+/// Brush | Paint  Erase | Texture Count  Tablet
 /// the keys
 /// ```
 ///
 /// The toolbar holds what decides what a stroke does and the switches about
 /// the view. The brush's settings are in the inspector beside the presets,
 /// because a preset is those settings. Shift held is the other of Paint and
-/// Erase for the length of a stroke. `full_chunks` is the view bar's Full
-/// chunks guide. See [`theme::toolbar`].
+/// Erase for the length of a stroke. `texture_count` is the view bar's Texture
+/// count guide. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     viewport: egui::Rect,
     corner: Option<egui::Rect>,
     textures: &mut Textures,
-    full_chunks: &mut bool,
+    texture_count: &mut bool,
     tablet: &mut crate::tablet::Tablet,
     pen: &crate::tablet::Pen,
     brushes: &mut Brushes,
@@ -234,14 +234,16 @@ pub(crate) fn toolbar(
                 brush.erase = true;
             }
             bar_gap(ui);
-            if bar_toggle(ui, *full_chunks, "Show Full Chunks")
+            if bar_toggle(ui, *texture_count, "Texture Count")
                 .on_hover_text(
-                    "Tint red the chunks that carry four textures. The same switch as Full chunks \
-                     in the view bar's Guides menu.",
+                    "Write over each chunk near the camera the number of texture layers it \
+                     carries, 1 to 4, in red where it carries four and a stroke adding a \
+                     texture is refused. The same switch as Texture count in the view bar's \
+                     Guides menu.",
                 )
                 .clicked()
             {
-                *full_chunks = !*full_chunks;
+                *texture_count = !*texture_count;
             }
             ui.menu_button("Tablet", |ui| crate::ui::tools::tablet::tablet(ui, tablet, pen))
                 .response

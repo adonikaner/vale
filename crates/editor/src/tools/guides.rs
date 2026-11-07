@@ -1,6 +1,6 @@
 //! What is drawn on the ground to read it by: the chunk and tile borders, the
-//! ground that is too steep, contour lines, and which chunks carry as many
-//! textures as a chunk can.
+//! ground that is too steep, contour lines, and how many textures each chunk
+//! carries.
 //!
 //! None of these edits anything. They are switches on the view bar's Guides
 //! menu, they apply under every tool, and they are off during a playtest.
@@ -13,20 +13,30 @@
 //! contours                and `TerrainParams::guides`. No geometry and no
 //!                         image; [`apply`] writes the two fields onto every
 //!                         ground material
-//! full chunks             the per-chunk tint image the Areas tool also
-//!                         uses, one texel per chunk: `areas::wash`
+//! texture count           a number over each near chunk's centre, painted
+//!                         by the shell: [`label_counts`] and `crate::labels`
 //! ```
 //!
 //! The first four are functions of where a fragment is, so the shader can
-//! compute them. Whether a chunk is full is a fact about its `MCLY` and has no
-//! place in the picture except the chunk itself, which is what the tint image
-//! is for. The Areas tool draws its own wash through the same image, so while
-//! that tool is chosen the full chunks are not marked.
+//! compute them. How many textures a chunk carries is a fact about its `MCLY`,
+//! which the shader does not have, so it is written as text.
 //!
-//! Only a full chunk is washed. A chunk holds four textures, and a brush
-//! stroke with a fifth is refused there; a chunk with three still takes one.
-//! Between half and three quarters of the shipped chunks carry three or four,
-//! so a wash over both left almost no ground unwashed.
+//! ## The texture count
+//!
+//! Each chunk near the camera has its number of texture layers, 1 to 4,
+//! written over its centre at the ground height there. A chunk holds at most
+//! four ([`vale_edit::adt::alpha::MAX_LAYERS`]), and a brush stroke that adds
+//! a fifth texture is refused on it, so a chunk at four is written larger and
+//! in red ([`is_full`]); one with three still takes a texture.
+//!
+//! Two limits keep it cheap and readable. Only chunks within
+//! [`COUNT_RANGE`] of the camera are written, and of those at most
+//! [`COUNT_LABELS`], nearest first: the session's open tiles hold over two
+//! thousand chunks, and a number for each one drawn over a whole map is
+//! unreadable and costs a text layout each. The counts and the chunk centres
+//! are kept per tile in [`TextureCounts`] and read again only when the tile
+//! has changed ([`TextureCounts::follow`]), so a frame costs a distance test
+//! per chunk and a projection per number drawn.
 //!
 //! ## The slope limit
 //!
@@ -37,8 +47,11 @@
 //! slope than a creature is.
 
 use crate::playtest::Playtest;
+use crate::session::EditSession;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use vale_client::render::terrain::{TerrainGround, TerrainMaterial};
+use vale_client::world::camera::WorldCamera;
 
 /// The angle the slope guide starts at, in degrees from level. See the module
 /// comment.
@@ -53,6 +66,15 @@ pub(crate) const CONTOUR_INTERVAL: f32 = 10.0;
 
 /// The range the contour interval may be set to, in yards.
 pub(crate) const CONTOUR_RANGE: std::ops::RangeInclusive<f32> = 1.0..=200.0;
+
+/// How far from the camera a chunk's texture count is written, in yards. 200
+/// yards is six chunks: about 113 chunk centres are within it of a camera at
+/// ground level, and fewer the higher the camera is.
+pub(crate) const COUNT_RANGE: f32 = 200.0;
+
+/// The most texture counts written in one frame, nearest first. Above what
+/// [`COUNT_RANGE`] admits, so it binds only if the range is raised.
+pub(crate) const COUNT_LABELS: usize = 160;
 
 /// Which guides are on, and the two numbers two of them take.
 #[derive(Resource, Debug, Clone, PartialEq)]
@@ -69,9 +91,8 @@ pub(crate) struct Guides {
     pub(crate) contours: bool,
     /// Yards.
     pub(crate) contour_interval: f32,
-    /// Wash the chunks that carry four textures, which is the most a chunk
-    /// can hold.
-    pub(crate) layers: bool,
+    /// Write over each near chunk how many texture layers it carries.
+    pub(crate) texture_count: bool,
 }
 
 impl Default for Guides {
@@ -83,7 +104,7 @@ impl Default for Guides {
             slope_angle: SLOPE_ANGLE,
             contours: false,
             contour_interval: CONTOUR_INTERVAL,
-            layers: false,
+            texture_count: false,
         }
     }
 }
@@ -94,8 +115,13 @@ const NAMES: [(&str, fn(&mut Guides) -> &mut bool); 5] = [
     ("tiles", |guides| &mut guides.tiles),
     ("slope", |guides| &mut guides.slope),
     ("contours", |guides| &mut guides.contours),
-    ("layers", |guides| &mut guides.layers),
+    ("texturecount", |guides| &mut guides.texture_count),
 ];
+
+/// Names `--guides` still reads for a switch that was renamed, and the name
+/// each now has. `layers` was the guide that shaded the chunks carrying four
+/// textures, which the texture count replaced.
+const FORMER_NAMES: [(&str, &str); 1] = [("layers", "texturecount")];
 
 impl Guides {
     /// The guides `--guides <list>` names, at the default angle and interval.
@@ -103,6 +129,10 @@ impl Guides {
     pub(crate) fn with(list: &str) -> Guides {
         let mut guides = Guides::default();
         for name in list.split(',').map(str::trim).filter(|name| !name.is_empty()) {
+            let name = FORMER_NAMES
+                .iter()
+                .find(|(former, _)| former.eq_ignore_ascii_case(name))
+                .map_or(name, |(_, now)| *now);
             match NAMES.iter().find(|(known, _)| known.eq_ignore_ascii_case(name)) {
                 Some((_, field)) => *field(&mut guides) = true,
                 None => warn!(
@@ -127,7 +157,7 @@ impl Guides {
 
     /// How many guides are on.
     pub(crate) fn count(&self) -> usize {
-        [self.chunks, self.tiles, self.slope, self.contours, self.layers]
+        [self.chunks, self.tiles, self.slope, self.contours, self.texture_count]
             .into_iter()
             .filter(|on| *on)
             .count()
@@ -154,19 +184,155 @@ impl Guides {
     }
 }
 
-/// The colour a chunk is washed by how many textures it carries, and how
-/// opaque: red for four, which is full, and nothing for fewer.
-pub(crate) fn layer_colour(layers: u32) -> [u8; 4] {
-    match layers >= vale_edit::adt::alpha::MAX_LAYERS as u32 {
-        true => [230, 60, 50, 255],
-        false => [0, 0, 0, 0],
+/// Whether a chunk with this many texture layers is full: it carries the most
+/// a chunk can, and a stroke that adds another texture is refused on it.
+pub(crate) fn is_full(layers: u32) -> bool {
+    layers as usize >= vale_edit::adt::alpha::MAX_LAYERS
+}
+
+/// One chunk's texture count and where it is written.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ChunkCount {
+    /// The chunk's centre at the ground height there, in world axes. Over a
+    /// hole, the height the ground would have without it.
+    pub(crate) centre: Vec3,
+    /// How many texture layers the chunk's `MCLY` lists.
+    pub(crate) layers: u32,
+}
+
+/// What a tile's counts were read against: the tile's change count
+/// (`EditSession::changes`), the undo stack's depth, and whether there is a
+/// redo. An undo reverts the bytes without always counting a change, which
+/// the depth catches.
+type Stamp = (u64, usize, bool);
+
+/// The texture counts of every open tile, kept until the tile changes. See
+/// the module comment.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct TextureCounts {
+    tiles: HashMap<(u32, u32), (Stamp, Vec<ChunkCount>)>,
+    /// The map the counts are of. A tile coordinate names a different tile on
+    /// another map, so a change of map forgets every count.
+    map: String,
+}
+
+impl TextureCounts {
+    /// Bring the counts in step with the session: forget the tiles that are
+    /// no longer open and every tile when the map changed, and read again each
+    /// open tile whose stamp moved. Answers how many tiles were read.
+    pub(crate) fn follow(&mut self, session: &EditSession) -> usize {
+        if self.map != session.map {
+            self.tiles.clear();
+            self.map.clone_from(&session.map);
+        }
+        self.tiles.retain(|coord, _| session.tiles.contains_key(coord));
+        let mut read = 0;
+        for (coord, tile) in &session.tiles {
+            let stamp: Stamp = (
+                session.changes(*coord),
+                session.history.depth_done(),
+                session.history.next_redo().is_some(),
+            );
+            if self.tiles.get(coord).is_some_and(|(had, _)| *had == stamp) {
+                continue;
+            }
+            self.tiles.insert(*coord, (stamp, count_tile(tile)));
+            read += 1;
+        }
+        read
+    }
+
+    /// Every counted chunk of every open tile.
+    pub(crate) fn chunks(&self) -> impl Iterator<Item = &ChunkCount> {
+        self.tiles.values().flat_map(|(_, chunks)| chunks.iter())
+    }
+
+    /// Forget every count.
+    pub(crate) fn clear(&mut self) {
+        self.tiles.clear();
     }
 }
 
-/// How much of the full-chunk wash is shown over the ground. Less than the
-/// Areas tool's, because the ground's own textures are what the mark is about
-/// and they have to stay readable under it.
-pub(crate) const LAYER_WASH: f32 = 0.4;
+/// A tile's chunks: each one's texture layer count, out of its header, and its
+/// centre on the ground.
+fn count_tile(tile: &vale_edit::adt::AdtFile) -> Vec<ChunkCount> {
+    let half = vale_assets::world::adt::CHUNK_SIZE * 0.5;
+    (0..256)
+        .filter_map(|index| {
+            let chunk = tile.chunk(index)?;
+            let mut ground = vale_edit::adt::heights::ground(chunk);
+            // The hole mask is cleared so a chunk with a hole at its centre
+            // still has a height to be written at.
+            ground.holes = 0;
+            let [x, y, z] = ground.position;
+            let (cx, cy) = (x - half, y - half);
+            let height = ground.height_at(cx, cy).unwrap_or(z);
+            Some(ChunkCount {
+                centre: Vec3::new(cx, cy, height),
+                layers: chunk.head().layer_count(),
+            })
+        })
+        .collect()
+}
+
+/// The chunks whose counts are written this frame: those within `range` of
+/// `eye`, nearest first, at most `most`. Each with its distance in yards.
+pub(crate) fn nearest(
+    chunks: impl Iterator<Item = ChunkCount>,
+    eye: Vec3,
+    range: f32,
+    most: usize,
+) -> Vec<(f32, ChunkCount)> {
+    let mut near: Vec<(f32, ChunkCount)> = chunks
+        .filter_map(|chunk| {
+            let away = chunk.centre.distance_squared(eye);
+            (away <= range * range).then_some((away.sqrt(), chunk))
+        })
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    near.truncate(most);
+    near
+}
+
+/// The colour of a count under four, and of a count of four.
+const COUNT_COLOUR: Color = Color::srgb(0.93, 0.94, 0.96);
+const FULL_COLOUR: Color = Color::srgb(1.0, 0.22, 0.18);
+
+/// Write the texture count over each near chunk, while the guide is on and the
+/// editor is editing. See the module comment.
+fn label_counts(
+    guides: Res<Guides>,
+    state: Res<Playtest>,
+    session: Option<Res<EditSession>>,
+    mut counts: ResMut<TextureCounts>,
+    mut labels: ResMut<crate::labels::Labels>,
+    camera: Query<(&Camera, &Transform), With<WorldCamera>>,
+) {
+    use crate::labels::{Label, Source, View, Weight};
+    let (true, true, Some(session)) = (guides.texture_count, state.editing(), session) else {
+        labels.clear(Source::TextureCount);
+        counts.clear();
+        return;
+    };
+    let Some(view) = View::of(&camera) else {
+        labels.clear(Source::TextureCount);
+        return;
+    };
+    counts.follow(&session);
+    let near = nearest(counts.chunks().copied(), view.eye(), COUNT_RANGE, COUNT_LABELS);
+    let placed = near.into_iter().filter_map(|(_, chunk)| {
+        let (at, away) = view.project(chunk.centre)?;
+        let full = is_full(chunk.layers);
+        Some(Label {
+            at,
+            text: chunk.layers.to_string(),
+            colour: if full { FULL_COLOUR } else { COUNT_COLOUR },
+            weight: if full { Weight::Strong } else { Weight::Normal },
+            away,
+        })
+    });
+    labels.replace(Source::TextureCount, placed);
+}
 
 /// Write the grid, the slope limit and the contour interval onto every ground
 /// material.
@@ -202,7 +368,12 @@ pub(crate) struct GuidesPlugin;
 impl Plugin for GuidesPlugin {
     fn build(&self, app: &mut App) {
         // The resource is inserted by `crate::run`, from `--guides`.
-        app.init_resource::<Guides>().add_systems(Update, apply);
+        app.init_resource::<Guides>()
+            .init_resource::<TextureCounts>()
+            .add_systems(Update, apply)
+            // After the camera has moved, so the counts are projected through
+            // this frame's view. See `crate::labels`.
+            .add_systems(Update, label_counts.after(vale_client::world::camera::place));
     }
 }
 
@@ -241,18 +412,90 @@ mod tests {
     /// The list a status line echoes is the list the flag reads.
     #[test]
     fn the_list_reads_back_as_itself() {
-        let guides = Guides::with("tiles,contours,layers");
-        assert_eq!(guides.list(), "tiles,contours,layers");
+        let guides = Guides::with("tiles,contours,texturecount");
+        assert_eq!(guides.list(), "tiles,contours,texturecount");
         assert_eq!(Guides::with(&guides.list()), guides);
         assert_eq!(guides.count(), 3);
         assert_eq!(Guides::with("nothing-by-this-name"), Guides::default());
     }
 
-    /// A chunk under the limit is not washed, and one at it is.
+    /// A command line written before the rename still turns the guide on.
     #[test]
-    fn only_a_full_chunk_is_washed() {
-        assert_eq!(layer_colour(0)[3], 0);
-        assert_eq!(layer_colour(3)[3], 0);
-        assert_eq!(layer_colour(4)[3], 255);
+    fn the_former_name_still_reads() {
+        let guides = Guides::with("layers");
+        assert!(guides.texture_count);
+        assert_eq!(guides.list(), "texturecount");
+    }
+
+    /// Four layers is full and three is not.
+    #[test]
+    fn only_four_layers_is_full() {
+        assert!(!is_full(1));
+        assert!(!is_full(3));
+        assert!(is_full(4));
+    }
+
+    /// The nearest chunks inside the range are kept, nearest first, up to the
+    /// cap.
+    #[test]
+    fn the_nearest_chunks_in_range_are_written() {
+        let at = |x: f32| ChunkCount {
+            centre: Vec3::new(x, 0.0, 0.0),
+            layers: 1,
+        };
+        let chunks = [at(50.0), at(10.0), at(250.0), at(30.0), at(-20.0)];
+        let near = nearest(chunks.into_iter(), Vec3::ZERO, 200.0, 3);
+        let xs: Vec<f32> = near.iter().map(|(_, chunk)| chunk.centre.x).collect();
+        assert_eq!(xs, vec![10.0, -20.0, 30.0]);
+        assert_eq!(near[1].0, 20.0);
+        assert_eq!(nearest(chunks.into_iter(), Vec3::ZERO, 200.0, 10).len(), 4, "250 is out of range");
+    }
+
+    /// The counts are read once, kept while the tile is unchanged, read again
+    /// after an edit and after its undo, and forgotten with the tile.
+    #[test]
+    fn the_counts_are_read_again_only_when_the_tile_changes() {
+        use crate::tools::ground::chunks::{move_to_base, Cell};
+        let here = (31, 49);
+        let install = std::env::temp_dir().join(format!("vale-guides-counts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        session.tiles.insert(
+            here,
+            vale_edit::adt::blank::blank_tile(here.0, here.1, "tileset\\test\\base.blp", 7.0, 12),
+        );
+        let layers = |counts: &TextureCounts| {
+            let mut all: Vec<u32> = counts.chunks().map(|chunk| chunk.layers).collect();
+            all.sort_unstable();
+            all
+        };
+
+        let mut counts = TextureCounts::default();
+        assert_eq!(counts.follow(&session), 1);
+        assert_eq!(counts.chunks().count(), 256);
+        assert!(counts.chunks().all(|chunk| chunk.layers == 1 && chunk.centre.z == 7.0));
+        assert_eq!(counts.follow(&session), 0, "nothing changed");
+
+        let cell = Cell::of(here, (2, 2));
+        let cells: std::collections::BTreeSet<Cell> = [cell].into_iter().collect();
+        assert_eq!(move_to_base(&mut session, &cells, "tileset\\test\\dirt.blp"), (1, 0));
+        assert_eq!(counts.follow(&session), 1);
+        assert_eq!(*layers(&counts).last().unwrap(), 2);
+
+        // An undo that puts the bytes back without counting a change.
+        let change = session.history.undo().unwrap();
+        for key in change.tiles() {
+            if let Some(tile) = session.tiles.get_mut(&(key.x, key.y)) {
+                change.revert(&key, tile);
+            }
+        }
+        assert_eq!(counts.follow(&session), 1);
+        assert_eq!(*layers(&counts).last().unwrap(), 1);
+
+        session.tiles.clear();
+        assert_eq!(counts.follow(&session), 0);
+        assert_eq!(counts.chunks().count(), 0);
+        let _ = std::fs::remove_dir_all(&install);
     }
 }

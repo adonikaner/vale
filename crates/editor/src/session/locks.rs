@@ -73,13 +73,19 @@ impl PlacementLocks {
     }
 }
 
+/// Where the locked vertices of the tile at `coord` of `map` are stored in
+/// the project. See [`EditSession::locked`].
+pub(crate) fn locks_vpath_of(map: &str, coord: (u32, u32)) -> String {
+    format!(r"editor\locks\{map}_{}_{}.txt", coord.0, coord.1)
+}
+
 impl EditSession {
     /// Where a tile's locked vertices are stored in the project, outside the
     /// game data: `editor\locks\<Map>_<x>_<y>.txt`.
     /// `editor` is one of `Project::NOT_GAME_DATA`, so a publish never packs
     /// it.
     fn locks_vpath(&self, coord: (u32, u32)) -> String {
-        format!(r"editor\locks\{}_{}_{}.txt", self.map, coord.0, coord.1)
+        locks_vpath_of(&self.map, coord)
     }
 
     /// A tile's locked vertices: the ones no height operation may move. Read

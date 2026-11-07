@@ -3,12 +3,12 @@
 //! ## The three playtest states
 //!
 //! The app contains the whole client, so playing an edit needs no second binary
-//! and no mode to load. Without this file, reaching the login screen took five
-//! steps: the editor switches the game's interface off at startup, and turning
-//! it back on (press `F4`, find the world tab, tick `interface`) drew the game's
-//! login over a viewport still showing the editor's own camera and panel. Three
-//! of the five steps went through a diagnostics window that is not part of the
-//! editor.
+//! and no mode to load. The editor switches the game's interface off at
+//! startup. Reaching the login screen by hand takes five steps, three of them
+//! in a diagnostics window that is not part of the editor: the interface is
+//! turned back on (press `F4`, find the world tab, tick `interface`), and the
+//! game's login is then drawn over a viewport that still shows the editor's own
+//! camera and panel.
 //!
 //! [`Playtest`] replaces that procedure with one button and three states. Every
 //! switch a playtest implies is written from the state rather than by hand:
@@ -166,7 +166,7 @@ pub(crate) struct ShellOpen(pub(crate) bool);
 /// Seeded from the install folder and the command line — see [`seed`] — and
 /// editable in the panel for the session. Nothing here is written back: the
 /// account is already a CVar the interface writes when the game's own login
-/// screen remembers it, and the password is deliberately stored nowhere at all.
+/// screen remembers it, and the password is deliberately not stored.
 #[derive(Resource, Debug, Default, Clone)]
 pub(crate) struct Login {
     /// `realmlist.wtf`'s address, kept so a logon can be built without reading
@@ -358,12 +358,13 @@ fn on_the_command_line(
     }
 }
 
-/// Follow the two edges the session decides, and neither of the two it does not.
+/// Make the two transitions the session decides, between `Entering` and
+/// `Playing`, and neither of the two a person decides.
 ///
 /// It never leaves `Editing`. A playtest is started by a person, so a client
-/// that found itself with a session for any other reason must not be able to
-/// take the tools away — and equally, a playtest that has come back to the
-/// character screen stays a playtest until somebody says otherwise.
+/// that has a session for any other reason must not take the tools away. A
+/// playtest that has come back to the character screen stays a playtest until
+/// a person stops it.
 fn follow_the_session(session: Res<Session>, mut state: ResMut<Playtest>) {
     if state.editing() {
         return;
@@ -475,8 +476,8 @@ struct ViewSet {
 /// Each mode's own view settings, kept while the other mode is up.
 ///
 /// `None` is a mode that has never been left: the first crossing into a
-/// playtest restores the client's own defaults, because that is what a
-/// playtest is, and the first crossing back restores whatever the editor had
+/// playtest restores the client's own defaults, because a playtest runs as the
+/// client does, and the first crossing back restores whatever the editor had
 /// when it left.
 #[derive(Resource, Default)]
 pub(crate) struct ViewSettings {
@@ -565,8 +566,9 @@ fn keep_view_settings(
 /// The reference client holds no world at its login screen, and this one holds
 /// nine tiles: `render::glue` spawns `UI_MainMenu.m2` at the world origin and
 /// aims the camera at it, so an editor sitting anywhere near tile (32, 32)
-/// would have its own terrain standing inside the login screen's sky. The
-/// five-step route described in the module comment produced that picture.
+/// would have its own terrain standing inside the login screen's sky. Turning
+/// the interface on by hand, as the module comment describes, gives that
+/// picture.
 ///
 /// It also makes the playtest show the edit. A tile forgotten here is a tile
 /// the streamer reads again when the character arrives, out of the overlay and
@@ -575,8 +577,9 @@ fn keep_view_settings(
 /// The live patch in [`crate::tools`] keeps a stroke smooth; this makes the
 /// ground the character walks on match the file on disk.
 ///
-/// Both halves, or the tile never comes back: `LoadedTiles::reload`'s own note
-/// says why, and `forget` is that note over the whole 3x3.
+/// It needs both the despawn and `LoadedTiles::forget`, or the tile is never
+/// streamed again. `LoadedTiles::reload`'s note says why; `forget` does the
+/// same for the whole 3x3.
 fn stand_the_world_down(
     state: Res<Playtest>,
     mut was_editing: Local<bool>,
@@ -594,10 +597,10 @@ fn stand_the_world_down(
         }
         loaded.forget();
     }
-    // Every frame of the login and not only its first, because the focus
-    // is one bool away from a streamer that would fill the screen behind the
-    // backdrop again. `crate::camera::follow_the_camera` stands down for the
-    // same reason and says so; this is the value it would have written.
+    // Every frame of the login and not only its first, because anything that
+    // sets `focus.present` again makes the streamer fill the screen behind the
+    // backdrop. `crate::camera::follow_the_camera` stands down for the same
+    // reason and says so; this is the value it would have written.
     if *state == Playtest::Entering && focus.present {
         focus.present = false;
     }
@@ -757,10 +760,10 @@ mod tests {
         assert!(Playtest::Playing.playing());
     }
 
-    /// A playtest is never started by the client. The guard is the whole of
-    /// [`follow_the_session`]'s first two lines and it is what stops a stray
-    /// session — a reconnect, a scripted login, anything — from taking the
-    /// tools away from somebody who is painting.
+    /// A playtest is never started by the client. The guard is the first two
+    /// lines of [`follow_the_session`]. It stops a session nobody asked for (a
+    /// reconnect, a scripted login) from taking the tools away from a person
+    /// who is editing.
     #[test]
     fn the_session_cannot_start_a_playtest() {
         let mut app = App::new();
@@ -837,7 +840,7 @@ mod tests {
 
         // Editing with two things off.
         app.world_mut().resource_mut::<WorldTuning>().fog = false;
-        app.world_mut().resource_mut::<RenderTuning>().msaa = true;
+        app.world_mut().resource_mut::<RenderTuning>().msaa = false;
         app.update();
         assert!(!app.world().resource::<WorldTuning>().fog, "still editing");
 
@@ -864,8 +867,8 @@ mod tests {
         assert!(!world.fog, "the editor's own fog setting is back");
         assert!(world.terrain, "…and the playtest's change did not follow");
         assert!(
-            app.world().resource::<RenderTuning>().msaa,
-            "the editor's MSAA is back"
+            !app.world().resource::<RenderTuning>().msaa,
+            "the editor's MSAA setting is back"
         );
 
         // The next playtest restores the previous playtest's set.
@@ -878,7 +881,8 @@ mod tests {
         assert!(app.world().resource::<WorldTuning>().fog);
     }
 
-    /// The switches are the state's, in both directions.
+    /// The switches [`arrange`] writes follow the state, into a playtest and
+    /// back to editing.
     #[test]
     fn the_switches_follow_the_state() {
         use vale_client::render::terrain::TerrainReach;

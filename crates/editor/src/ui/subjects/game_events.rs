@@ -175,14 +175,14 @@ fn membership(ui: &mut egui::Ui, sec: &mut Section<'_>, events: &mut GameEvents,
             true => "Removed during",
             false => "Added during",
         };
-        ui.label(egui::RichText::new(how).small().color(theme::INK_DIM));
+        ui.label(egui::RichText::new(how).color(theme::INK_DIM));
         let room = (ui.available_width() - BUTTONS_ROOM).max(60.0);
         ui.allocate_ui_with_layout(
             egui::vec2(room, ui.spacing().interact_size.y),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_max_width(room);
-                ui.add(egui::Label::new(egui::RichText::new(name).small().color(theme::INK)).truncate());
+                ui.add(egui::Label::new(egui::RichText::new(name).color(theme::INK)).truncate());
             },
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -318,7 +318,7 @@ pub(in crate::ui) fn event_view(ui: &mut egui::Ui, view: &mut View<'_>, events: 
                 counts.changes,
                 counts.quests
             ))
-            .small(),
+            .color(theme::INK),
         );
     });
     if shown.kept() {
@@ -387,7 +387,7 @@ fn spawns(ui: &mut egui::Ui, view: &mut View<'_>, events: &mut GameEvents, entry
                 format!("Map {map} \u{b7} {name} ({})", rows.len())
             }
         };
-        egui::CollapsingHeader::new(egui::RichText::new(heading).small().strong())
+        egui::CollapsingHeader::new(egui::RichText::new(heading).strong())
             .id_salt(("event-spawns", entry, rank, map))
             .default_open(rows.len() <= FOLDED_PAST)
             .show(ui, |ui| {
@@ -414,7 +414,7 @@ fn spawn_line(ui: &mut egui::Ui, view: &mut View<'_>, events: &mut GameEvents, k
         true => "Removed during",
         false => "Added during",
     };
-    ui.label(egui::RichText::new(how).small().color(theme::INK_DIM));
+    ui.label(egui::RichText::new(how).color(theme::INK_DIM));
     ui.horizontal(|ui| {
         view.go_to_button(ui, spawn);
         if shown.kept() && switch_button(ui, &member) {
@@ -549,25 +549,28 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .collect();
     listing::shown_count(ui, shown.len());
     let open = work.events.open;
-    // One line of small text, not the two-line rows of the template lists:
-    // the list draws only as many rows as fit at this height.
-    let height = ui.spacing().interact_size.y;
+    let height = listing::ROW_HEIGHT;
     let mut clicked = None;
     theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
         for at in range {
             let event = shown[at];
-            let colour = match (event.in_database.is_none(), event.kept(), event.row.enabled_at(work.patch)) {
+            let tint = match (event.in_database.is_none(), event.kept(), event.row.enabled_at(work.patch)) {
                 (_, false, _) => theme::BAD,
                 (true, _, _) => theme::WARN,
                 (false, true, true) => theme::INK,
                 (false, true, false) => theme::INK_FAINT,
             };
-            let text = format!("{} \u{b7} {}", event.row.entry, event.row.description);
-            let response = ui.add(
-                egui::Button::selectable(open == Some(event.row.entry), egui::RichText::new(text).small().color(colour))
-                    .truncate()
-                    .min_size(egui::vec2(0.0, height)),
-            );
+            let title = match event.row.description.is_empty() {
+                true => "(no description)",
+                false => event.row.description.as_str(),
+            };
+            let sub = line_words(event, work.patch);
+            let response = theme::list_row(
+                ui,
+                theme::ListRow { title, sub: &sub, trailing: &event.row.entry.to_string(), tint, picture: false },
+                open == Some(event.row.entry),
+            )
+            .response;
             let response = match event.row.enabled_at(work.patch) {
                 true => response,
                 false => response.on_hover_text(format!("Not enabled at patch {}.", work.patch)),
@@ -582,6 +585,26 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     }
 }
 
+/// The line under an event's name in the list: when it runs, and what the
+/// colour of the name means when it is not the plain ink.
+fn line_words(event: &Shown<Event>, patch: u32) -> String {
+    let row = &event.row;
+    let runs = match row.hardcoded != 0 {
+        true => "started by the server's code".to_string(),
+        false => format!(
+            "every {}, for {}",
+            game_event::minutes_words(row.occurence),
+            game_event::minutes_words(row.length)
+        ),
+    };
+    match (event.in_database.is_none(), event.kept(), row.enabled_at(patch)) {
+        (_, false, _) => format!("{runs} \u{b7} removed"),
+        (true, _, _) => format!("{runs} \u{b7} new"),
+        (false, true, true) => runs,
+        (false, true, false) => format!("{runs} \u{b7} not enabled at patch {patch}"),
+    }
+}
+
 /// The right side: the open event.
 fn form(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let Some(entry) = work.events.open else {
@@ -592,7 +615,7 @@ fn form(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let edits = work.view.session.rows.edits.clone();
     let life = work.events.event(entry, &edits).map(|shown| shown.life);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).strong().size(15.0).color(theme::INK));
+        ui.label(egui::RichText::new(title).strong().size(17.0).color(theme::INK));
         if ui
             .button("Show in World")
             .on_hover_text(

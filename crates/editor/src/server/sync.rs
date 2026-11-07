@@ -81,9 +81,15 @@ use vale_client::assets::GameAssets;
 /// which is two small reads a frame for a number that only changes when a
 /// button is pressed.
 ///
-/// Each answer is therefore recomputed at most every [`REFRESH`] seconds, and
-/// [`Self::forget`] drops them all as soon as anything is applied, put back or
-/// discarded. Those presses are the only events after which a stale number
+/// Each row subject's answer is therefore recomputed at most every
+/// [`REFRESH`] seconds. The client-table answer is recomputed only when
+/// [`EditSession::files_revision`] has moved since it was taken, because the
+/// plan reads only the project's saved DBC files and the archives: on
+/// `MyTestPatch` it took 8.4 s in a debug build, and recomputing it every
+/// [`REFRESH`] seconds stalled the window while the panel was open. Its
+/// `unsaved` flag reads the session and is refreshed on every call.
+/// [`Self::forget`] drops every answer as soon as anything is applied, put
+/// back or discarded. Those presses are the only events after which a stale number
 /// could be shown for longer than [`REFRESH`] and be wrong about the block's
 /// line or which of its buttons are enabled.
 ///
@@ -94,6 +100,9 @@ use vale_client::assets::GameAssets;
 pub(crate) struct Standings {
     /// `(taken at, what it said)` per subject, in [`Half::ALL`]'s order.
     held: [Option<(f64, Standing)>; HALVES],
+    /// The [`EditSession::files_revision`] the held [`Half::Tables`] answer
+    /// was taken at.
+    tables_at: u64,
     /// How the server's tile files stand ([`TileCounts`]). It is held longer
     /// than the others because computing it hashes every tile the project
     /// carries.
@@ -184,13 +193,21 @@ impl Standings {
         now: f64,
     ) -> &Standing {
         let at = half.index();
-        let fresh = self.held[at]
-            .as_ref()
-            .is_some_and(|(taken, _)| now - *taken < REFRESH);
+        let fresh = self.held[at].as_ref().is_some_and(|(taken, _)| match half {
+            Half::Tables => self.tables_at == session.files_revision,
+            Half::Row(_) => now - *taken < REFRESH,
+        });
         if !fresh {
             self.held[at] = Some((now, standing(half, session, assets)));
+            if half == Half::Tables {
+                self.tables_at = session.files_revision;
+            }
         }
-        &self.held[at].as_ref().expect("filled above").1
+        let held = &mut self.held[at].as_mut().expect("filled above").1;
+        if half == Half::Tables {
+            held.unsaved = tables_unsaved(session);
+        }
+        held
     }
 
     /// Where the project's server DBC files stand against the live folder,
@@ -478,6 +495,11 @@ impl Standing {
 /// Reads no database. Every number comes from the project folder, so the
 /// panel can be drawn with no server to reach. See `OnTheServer`, whose
 /// record is the revert file.
+/// Whether any table the server reads has edits not yet saved.
+fn tables_unsaved(session: &EditSession) -> bool {
+    rows::server_tables().any(|(table, _)| session.unsaved_tables.contains(table))
+}
+
 pub(crate) fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Standing {
     match half {
         Half::Tables => {
@@ -502,7 +524,7 @@ pub(crate) fn standing(half: Half, session: &EditSession, assets: &GameAssets) -
                     .count(),
                 applied: undo.entries.len(),
                 current: session.applied_signature == Some(plan.signature()),
-                unsaved: rows::server_tables().any(|(table, _)| session.unsaved_tables.contains(table)),
+                unsaved: tables_unsaved(session),
                 refused: plan
                     .refused
                     .iter()

@@ -221,7 +221,7 @@ pub(crate) fn name_cell(ui: &mut egui::Ui, name: String) {
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_width(NAME_CELL);
-            ui.add(egui::Label::new(egui::RichText::new(name).small()).truncate());
+            ui.add(egui::Label::new(egui::RichText::new(name)).truncate());
         },
     );
 }
@@ -243,8 +243,8 @@ pub(crate) fn template_cell(
         |ui| {
             ui.set_width(NAME_CELL);
             ui.spacing_mut().item_spacing.x = 0.0;
-            crate::ui::widgets::reference::template_link(ui, asks, kind, entry, egui::RichText::new(named).small());
-            ui.add(egui::Label::new(egui::RichText::new(rest).small()).truncate());
+            crate::ui::widgets::reference::template_link(ui, asks, kind, entry, egui::RichText::new(named));
+            ui.add(egui::Label::new(egui::RichText::new(rest)).truncate());
         },
     );
 }
@@ -333,7 +333,7 @@ pub(in crate::ui) fn listed_row(
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.set_max_width(room);
-                    ui.add(egui::Label::new(egui::RichText::new(title).small()).truncate());
+                    ui.add(egui::Label::new(egui::RichText::new(title)).truncate());
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

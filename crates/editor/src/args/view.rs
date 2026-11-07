@@ -43,8 +43,9 @@ pub(crate) struct View {
     pub(crate) overlay: Option<String>,
     /// `--guides <name>[,<name>…]`: draw those ground guides, which are
     /// otherwise the switches in the view bar's Guides menu: `chunks`,
-    /// `tiles`, `slope`, `contours`, `layers`. A scripted run cannot open the
-    /// menu, and a misspelling warns. See `tools::guides`.
+    /// `tiles`, `slope`, `contours`, `texturecount` (also read as its former
+    /// name, `layers`). A scripted run cannot open the menu, and a misspelling
+    /// warns. See `tools::guides`.
     pub(crate) guides: Option<String>,
     /// `--guides-menu`: open the view bar's Guides menu, for a picture of it.
     pub(crate) guides_menu: bool,

@@ -110,7 +110,8 @@ impl EditSession {
     ///
     /// A tombstone rather than a removal, because the tile is still in the
     /// archives: dropping the override would hand the shipped bytes straight
-    /// back. It is undone by `create`, which writes real bytes over it.
+    /// back. `crate::map::tiles::create` and a paste take it off again with
+    /// [`Self::clear_tombstone`] after they write the tile's file.
     pub(crate) fn tombstone(&mut self, coord: (u32, u32)) {
         let path = self.key(coord).vpath().to_ascii_lowercase();
         if let Ok(mut edited) = self.edited.write() {
@@ -118,6 +119,76 @@ impl EditSession {
         }
         self.tiles.remove(&coord);
         self.restream.insert(coord);
+    }
+
+    /// Take a [`Self::tombstone`] off a tile's path, so the project folder or
+    /// the archives answer for it again. An overlay entry with bytes in it is
+    /// an edit and is left.
+    pub(crate) fn clear_tombstone(&mut self, coord: (u32, u32)) {
+        let path = self.key(coord).vpath().to_ascii_lowercase();
+        if let Ok(mut edited) = self.edited.write() {
+            if edited.get(&path).is_some_and(Vec::is_empty) {
+                edited.remove(&path);
+            }
+        }
+    }
+
+    /// Drop everything the session holds about a tile of the open map whose
+    /// file has been deleted from the project: the parsed copy and its overlay
+    /// entry, every set of pending work, its undo entries and its locked
+    /// vertices. Unsaved edits are dropped, not saved. Answers how many undo
+    /// entries were dropped.
+    ///
+    /// The streamer is told to read the tile again, and the path then answers
+    /// with the archives' tile, or with nothing for a tile the archives do not
+    /// have. A tile the map no longer claims is given a [`Self::tombstone`] by
+    /// the caller. The two revision counters move, so a re-read already in
+    /// flight is not taken for the new state; see [`Self::changes`].
+    pub(crate) fn forget_tile(&mut self, coord: (u32, u32)) -> usize {
+        let key = self.key(coord);
+        self.tiles.remove(&coord);
+        for set in [
+            &mut self.dirty,
+            &mut self.regrow,
+            &mut self.moved,
+            &mut self.moved_buildings,
+            &mut self.repaint,
+            &mut self.replant,
+        ] {
+            set.remove(&coord);
+        }
+        self.regroup.remove(&coord);
+        self.stale.remove(&coord);
+        self.unsaved.remove(&coord);
+        self.unpublished.remove(&coord);
+        self.locks.remove(&coord);
+        *self.revision.entry(coord).or_default() += 1;
+        *self.changes.entry(coord).or_default() += 1;
+        if let Ok(mut edited) = self.edited.write() {
+            edited.remove(&key.vpath().to_ascii_lowercase());
+        }
+        self.restream.insert(coord);
+        self.history.forget_tile(&key)
+    }
+
+    /// Read the open map's claims again from its WDT, the project's copy
+    /// first, after that copy was written or deleted outside the map window.
+    /// A tile the map stops claiming is taken off the screen with a
+    /// [`Self::tombstone`]; a tile it starts claiming loses any tombstone an
+    /// earlier unclaim left, and the streamer is told to read it.
+    pub(crate) fn reread_claims(&mut self, assets: &GameAssets) {
+        let now = claimed_tiles(assets, &self.project, &self.map);
+        let gone: Vec<(u32, u32)> = self.claimed.difference(&now).copied().collect();
+        let came: Vec<(u32, u32)> = now.difference(&self.claimed).copied().collect();
+        for coord in gone {
+            self.tombstone(coord);
+        }
+        for coord in came {
+            self.clear_tombstone(coord);
+            self.restream.insert(coord);
+        }
+        self.claimed = now;
+        self.claims_for = self.map.clone();
     }
 
     /// Open another map.

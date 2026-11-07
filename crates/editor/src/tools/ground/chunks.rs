@@ -88,7 +88,9 @@
 //! operations publish the tile and do nothing else. A hole changes how many
 //! vertices a chunk contributes and a texture change alters the chunk's
 //! texture set, so those operations mark the tile stale and it is read again,
-//! as the hole tool and the texture tool's own buttons do.
+//! as the hole tool and the texture tool's own buttons do. Removing buried
+//! water changes the liquid mesh, which is also built when a tile is read, so
+//! it marks the tile stale too.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -177,6 +179,7 @@ pub(crate) enum Page {
     Holes,
     Textures,
     Foliage,
+    Water,
 }
 
 impl Chunks {
@@ -509,6 +512,21 @@ pub(crate) fn set_foliage(session: &mut EditSession, cells: &BTreeSet<Cell>, pat
             changed
         })
     })
+}
+
+/// Dry every liquid cell of the selected chunks that the ground covers
+/// entirely; see `vale_edit::ops::water::is_buried`. A cell the ground covers
+/// only in part is kept. One undo entry. Answers the cells dried and the
+/// chunks changed. Each written tile is read again, because the water is
+/// meshed when a tile is read.
+pub(crate) fn drain_buried(session: &mut EditSession, cells: &BTreeSet<Cell>) -> (usize, usize) {
+    let mut dried = 0;
+    let changed = over(session, cells, "Remove buried water", true, |tile, chunk| {
+        let (edit, count) = vale_edit::ops::water::drain_buried(tile, chunk)?;
+        dried += count;
+        Some(edit)
+    });
+    (dried, changed)
 }
 
 /// Take the layer that draws `path` off every selected chunk that carries it
@@ -1393,6 +1411,45 @@ mod tests {
 
         undo(&mut session);
         assert!(heights_of(&session, at).iter().all(|&h| h == 0.0));
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// Water flooded below the ground of two tiles is removed from the selected
+    /// chunks in one undo entry, each written tile is read again, the census
+    /// counts the buried cells before and none after, and the undo puts the
+    /// water back.
+    #[test]
+    fn buried_water_is_removed_in_one_entry() {
+        use vale_edit::ops::water::{WaterAction, WaterBrush};
+        let (here, there) = ((31, 49), (32, 49));
+        let (mut session, install) = session_with("buried", &[here, there]);
+        let cells: BTreeSet<Cell> = [Cell::of(here, (15, 4)), Cell::of(there, (0, 4))].into();
+        let brush = WaterBrush {
+            radius: 1.0,
+            level: -3.0,
+            ..WaterBrush::default()
+        };
+        for &cell in &cells {
+            let tile = session.tiles.get_mut(&cell.tile()).unwrap();
+            let origin = tile.chunk(cell.chunk_in(tile).unwrap()).unwrap().head().position();
+            let at = [origin[0] - CHUNK_SIZE / 2.0, origin[1] - CHUNK_SIZE / 2.0];
+            let done = brush.stroke(tile, at, WaterAction::Flood, |_, _| Some(0.0));
+            assert!(done.cells > 0);
+        }
+        let mut chunks = Chunks::default();
+        chunks.select(cells.iter().copied());
+        let census = chunks.census(&session).clone();
+        assert!(census.wet > 0);
+        assert_eq!(census.buried, census.wet);
+
+        assert_eq!(drain_buried(&mut session, &cells), (census.wet, 2));
+        assert_eq!(session.history.depth_done(), 1);
+        assert!(session.stale.contains(&here) && session.stale.contains(&there));
+        assert_eq!((chunks.census(&session).wet, chunks.census(&session).buried), (0, 0));
+        assert_eq!(drain_buried(&mut session, &cells), (0, 0));
+
+        undo(&mut session);
+        assert_eq!(chunks.census(&session).buried, census.wet);
         let _ = std::fs::remove_dir_all(&install);
     }
 

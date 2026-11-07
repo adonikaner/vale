@@ -36,8 +36,8 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
     let object_focus = Focus::object(tool, &editing.objects, &session.rows.edits);
 
     // The quest window of a creature or a game object, on the root context
-    // for the same reason. It follows the selection as the template window
-    // does: it shows the chosen holder's quests, so selecting another holder
+    // as the template window is, because a window inside a panel is clipped
+    // to it. It follows the selection as the template window does: it shows the chosen holder's quests, so selecting another holder
     // shows that one's. It is drawn only under the creature and game object
     // tools and their workspaces; elsewhere the same rows are edited
     // in the quest workspace.
@@ -81,8 +81,7 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
         floating.extend(quest_window);
     }
     // The loot window of a creature, a game object or an item, on the root
-    // context for the same reason, following the selection as the quest
-    // window does. Its subject is rebuilt here every frame it is open, from
+    // context like the quest window and following the selection as it does. Its subject is rebuilt here every frame it is open, from
     // the selection with the project's edits applied, so a `loot_id` typed
     // into the template form changes the tab on the next frame. See
     // [`crate::subjects::loot::Window`].
@@ -128,8 +127,8 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
     );
     floating.extend(loot_window);
 
-    // The behaviour, Vendor, Trainer and gossip windows of a creature, on the
-    // same terms: each subject is rebuilt each frame from the selection with
+    // The behaviour, Vendor, Trainer and gossip windows of a creature are
+    // built the same way as the loot window: each subject is rebuilt each frame from the selection with
     // the project's edits over the template row, so `ai_name`, `vendor_id`,
     // `npc_flags` or `gossip_menu_id` typed into the template form changes the
     // window on the next frame. They are drawn under the creature tool and
@@ -160,6 +159,18 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
         false => Vec::new(),
     };
     editing.behaviour.numbering_texts = editing.gossip.open || editing.gossip.numbering;
+    // The scripts the waypoint window's points name are read by the behaviour
+    // tool too, so the window can say which ids `creature_movement_scripts`
+    // does not hold, and number a new one above the table's highest id.
+    let path = editing.waypoints.path(Some(&*session)).filter(|_| editing.waypoints.showing);
+    let table = vale_mangos::scripts::CREATURE_MOVEMENT;
+    editing.behaviour.other_scripts = path
+        .map(|path| path.script_ids().into_iter().map(|id| (table, id)).collect())
+        .unwrap_or_default();
+    editing.behaviour.numbering_scripts = match editing.waypoints.showing && editing.waypoints.open.is_some() {
+        true => vec![table],
+        false => Vec::new(),
+    };
     subjects::gossip::make_pending(session, &mut editing.gossip, &mut editing.behaviour, now);
     let gossip_window = subjects::gossip::window(
         ctx,
@@ -216,9 +227,11 @@ pub(in crate::ui) fn subject_windows(ctx: &egui::Context, tool: Tool, bench: Ben
         floating.extend(equipment_windows);
     }
     // The script window also opens from a trigger's script id, and from the
-    // gossip window's script columns under any tool.
+    // gossip window's script columns and a waypoint point's script id under
+    // any tool.
     if matches!(tool, Tool::Creatures | Tool::CreatureData | Tool::Triggers)
         || editing.gossip.open
+        || editing.waypoints.showing
     {
         let behaviour_windows = subjects::behaviour::windows(
             ctx,

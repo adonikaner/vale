@@ -1992,6 +1992,12 @@ pub(in crate::ui) fn picker(
                     format!("Choose a game event to remove {} spawn(s) during", spawns.len())
                 }
             },
+            PickFor::PlaceInto { into } => match into {
+                crate::subjects::quests::SpawnInto::Pool { .. } => "Choose a pool for the spawns placed next".to_string(),
+                crate::subjects::quests::SpawnInto::Event { .. } => {
+                    "Choose a game event to add the spawns placed next to".to_string()
+                }
+            },
             PickFor::EventQuest { event } => format!("Choose a quest offered during game event {event}"),
             PickFor::ScriptCell { column, .. } => format!("Choose {column}"),
             PickFor::TableField { column, .. } => format!("Choose {column}"),
@@ -2163,6 +2169,10 @@ pub(in crate::ui) fn picker(
         }
         (PickFor::SpawnData { into, spawns }, Some(hit), _) => {
             quests.spawn_pick = Some((*into, spawns.clone(), hit.id));
+            close = true;
+        }
+        (PickFor::PlaceInto { into }, Some(hit), _) => {
+            quests.place_pick = Some((*into, hit.id));
             close = true;
         }
         (PickFor::EventQuest { event }, Some(hit), _) => {

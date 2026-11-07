@@ -5,7 +5,8 @@ use bevy_egui::egui;
 use crate::session::EditSession;
 use crate::ui::widgets::theme;
 
-/// The sweep tool: a find-and-replace over every tile of the map.
+/// The sweep tool: a find-and-replace over every tile of the map, and the
+/// liquid type repair.
 ///
 /// Find and Replace walk the tiles the same way; only Replace writes. Both are
 /// offered because a path is easy to misspell, and a misspelled path reports
@@ -95,6 +96,29 @@ pub(in crate::ui) fn sweep(
             sweep.replace(session, assets);
         }
     });
+
+    ui.add_space(8.0);
+    theme::heading(ui, "Liquid cell types");
+    theme::note(
+        ui,
+        "Each wet liquid cell carries its liquid's type. Water painted before \
+         the editor wrote the type carries none, and the 1.12.1 client does not \
+         draw it.",
+    );
+    if ui
+        .add_enabled(
+            !running,
+            egui::Button::new("Repair liquid types").min_size(egui::vec2(ui.available_width(), 24.0)),
+        )
+        .on_hover_text(
+            "Give every wet liquid cell with no type its liquid's type, on every \
+             tile of this map, as one undo entry. Each changed tile is written to \
+             the project folder.",
+        )
+        .clicked()
+    {
+        sweep.repair_liquid(session, assets);
+    }
 
     if let Some(run) = &sweep.running {
         ui.add_space(4.0);

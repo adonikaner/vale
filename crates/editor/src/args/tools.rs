@@ -64,6 +64,12 @@ pub(crate) struct Tools {
     /// means textures, and the panel's own control is what chooses models or
     /// buildings for a person.
     pub(crate) find: Option<String>,
+    /// `--repair-liquid`: run the sweep tool's liquid type repair over every
+    /// tile of the map once the session is up, as the Repair liquid types
+    /// button does. It writes: each tile it changes is saved to the project
+    /// folder. Run a second time it finds nothing to change. See
+    /// `map::sweep::Sweep::repair_liquid`.
+    pub(crate) repair_liquid: bool,
     /// `--enclose <x0,y0,x1,y1>`: a rectangle in window pixels, released over
     /// the world once it has streamed in, as though it had been dragged on
     /// empty ground with the chosen tool. See `tools::placements::group`.
@@ -126,6 +132,10 @@ pub(super) const FLAGS: &[Flag] = &[
     // The path is optional, so a following flag is not eaten.
     Flag::new("--place", Optional, |a, v| a.tools.place = Some(v.first().cloned())),
     Flag::new("--find", One, |a, v| a.tools.find = named(v)),
+    Flag::new("--repair-liquid", Switch, |a, _| {
+        a.tools.repair_liquid = true;
+        a.view.tool = Some(Tool::Sweep);
+    }),
     Flag::new("--enclose", One, |a, v| a.tools.enclose = first(v).and_then(parse_rect)),
     Flag::new("--trigger", One, |a, v| {
         a.tools.trigger = number(v);

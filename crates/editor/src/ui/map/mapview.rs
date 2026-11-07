@@ -20,14 +20,12 @@
 //! ## All tile operations are in this window
 //!
 //! Creating ground, deleting it, copying it, and the three files derived from
-//! a tile are all here. They were first a Tiles row on the rail with its
-//! own panel, which was wrong for two reasons: the rail lists what the pointer
-//! edits, and none of these operations uses the pointer; and the split left
-//! the map choosing the tiles while a panel elsewhere acted on them. After a
-//! report from the window, the operations were moved to where the selection
-//! is. The rail lost the row and the top bar gained a button, because which
-//! tiles this map has is a fact about the session, and the top bar holds
-//! session facts.
+//! a tile are all here, beside the selection they act on. None of them uses
+//! the pointer, so none is a row on the rail, which lists what the pointer
+//! edits. A panel elsewhere would leave the map choosing the tiles while
+//! another place acted on them. The window is opened from the top bar,
+//! because which tiles this map has is a fact about the session, and the top
+//! bar holds session facts.
 //!
 //! ## Making a new map
 //!
@@ -393,7 +391,7 @@ fn contents(
         if ui
             .add_enabled(exist > 0, egui::Button::new(format!("Delete {exist}")))
             .on_hover_text(
-                "Clears the WDT bit. The ADT stays in the project, so this is reversible.",
+                "Clears each selected tile's WDT bit. A tile of the archives keeps its ADT in the                  project. A tile the project created, which the archives do not have, is deleted                  from the project with its ADT and minimap picture; this cannot be undone.",
             )
             .clicked()
         {

@@ -12,7 +12,7 @@ fn parse(list: &[&str]) -> Args {
 
 /// Every flag spelling the parse accepted when it was one `match`, before the
 /// tables. A spelling taken out of a table fails this test.
-const EVERY_FLAG: [&str; 142] = [
+const EVERY_FLAG: [&str; 143] = [
     "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu",
     "--export-heights", "--import-image", "--import-confirm", "--import-model", "--import-sound", "--game-file", "--minimaps", "--tilt",
     "--vertices", "--view", "--reach", "--tool", "--spawn", "--waypoint-add", "--spawn-add",
@@ -36,7 +36,7 @@ const EVERY_FLAG: [&str; 142] = [
     "--apply-quests", "--revert-quests", "--server", "--publish", "--regenerate", "--migration",
     "--bits", "--choose", "--set", "--like", "--playtest", "--size", "--world-map",
     "--world-map-image", "--world-map-draw", "--world-map-write", "--world-map-sectors",
-    "--world-map-explored", "--world-map-new", "--world-map-places",
+    "--world-map-explored", "--world-map-new", "--world-map-places", "--repair-liquid",
 ];
 
 /// Every spelling above is in a table, and none is taken as the map.

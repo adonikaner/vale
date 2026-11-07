@@ -31,8 +31,8 @@
 //! A file is imported when the import record has it, and generated when one
 //! of the editor's generators wrote it ([`crate::import::generated`]). A client
 //! table, a map tile or a tile index is edited: it is written by the table,
-//! terrain and map tools, and changed and undone there, so this part offers
-//! no Remove for it. The list is filtered by the three. A generated file says what it was made from
+//! terrain and map tools, and changed and undone there. The list is filtered
+//! by the three. A generated file says what it was made from
 //! and whether that changed after it was made, and offers to make it again: a
 //! minimap picture is drawn again from its tile, a baked skin is baked again
 //! from the rows that name it, a flight map is drawn again from the minimap
@@ -44,6 +44,17 @@
 //! project, each with the action that brings it up to date: tiles changed
 //! after their minimap was drawn, appearances changed after their skin was
 //! baked, and generated files nothing names.
+//!
+//! ## Choosing several files, and Delete
+//!
+//! A click chooses a file, ctrl + click adds one or takes it out, and
+//! shift + click chooses a range in the order the list shows
+//! ([`crate::import::picked`]). With several chosen, the middle names them.
+//! Right-click opens a menu over the chosen files, or over the file clicked
+//! when it is not one of them, with Delete. Delete, there or in a file's
+//! details, opens a confirmation that says how many files go, that it cannot
+//! be undone, and what else the deletion changes; the deletion itself is
+//! `crate::import::assets::delete_files`.
 //!
 //! ## What a file is to the game, not its format
 //!
@@ -86,7 +97,7 @@ use crate::session::EditSession;
 use crate::ui::subjects::listing;
 use crate::ui::widgets::folders::{folder_row, split_folder, INDENT};
 use crate::ui::widgets::theme;
-use super::sounds;
+use super::{picked, sounds};
 use vale_assets::world::blp::Encoding;
 use vale_edit::manifest::Kind;
 
@@ -476,13 +487,23 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         return;
     }
     let height = listing::ROW_HEIGHT;
-    let mut clicked = None;
+    work.assets.picked.follow(work.assets.selected.as_deref());
+    let mut hit: Option<(String, picked::Hit)> = None;
+    // The files in the order the list shows them, for a shift + click range.
+    let order: Vec<&str>;
     if words.is_empty() {
         // The folders the viewer closed; every other folder is open.
         let closed_id = egui::Id::new("assets-closed");
         let mut closed: std::collections::BTreeSet<String> =
             ui.data(|data| data.get_temp(closed_id)).unwrap_or_default();
         let rows = tree_rows(&shown, &closed);
+        order = rows
+            .iter()
+            .filter_map(|row| match row {
+                TreeRow::File { index, .. } => Some(shown[*index].vpath.as_str()),
+                TreeRow::Folder { .. } => None,
+            })
+            .collect();
         let mut toggled: Option<String> = None;
         theme::list_area(ui, None, height).show_rows(ui, height, rows.len(), |ui, range| {
             for row in &rows[range] {
@@ -495,8 +516,9 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
                     TreeRow::File { index, depth } => {
                         let own = shown[*index];
                         let (sub, warn) = row_words(own, sort_of(own), &all, &survey, false);
-                        if own_row(ui, work, own, &sub, warn, *depth) {
-                            clicked = Some(own.vpath.clone());
+                        let response = own_row(ui, work, own, &sub, warn, *depth);
+                        if let Some(pressed) = picked::hit_of(ui, &response) {
+                            hit = Some((own.vpath.clone(), pressed));
                         }
                     }
                 }
@@ -509,17 +531,158 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
             ui.data_mut(|data| data.insert_temp(closed_id, closed));
         }
     } else {
+        order = shown.iter().map(|own| own.vpath.as_str()).collect();
         theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
             for own in &shown[range] {
                 let (sub, warn) = row_words(own, sort_of(own), &all, &survey, true);
-                if own_row(ui, work, own, &sub, warn, 0) {
-                    clicked = Some(own.vpath.clone());
+                let response = own_row(ui, work, own, &sub, warn, 0);
+                if let Some(pressed) = picked::hit_of(ui, &response) {
+                    hit = Some((own.vpath.clone(), pressed));
                 }
             }
         });
     }
-    if clicked.is_some() {
-        work.assets.selected = clicked;
+    if let Some((vpath, pressed)) = hit {
+        work.assets.selected = picked::apply(ui, pressed, &mut work.assets.picked, &vpath, &order, egui::Id::new(MENU));
+    }
+    picked::menu(ui.ctx(), egui::Id::new(MENU), |ui, targets| {
+        let label = match targets.len() {
+            1 => "Delete\u{2026}".to_string(),
+            n => format!("Delete {n} Files\u{2026}"),
+        };
+        let pressed = crate::ui::shell::context::item(
+            ui,
+            &label,
+            true,
+            "Delete from the project folder, after a confirmation that says what else it changes.",
+            "",
+        );
+        if pressed {
+            work.assets.deleting = Some(targets.to_vec());
+        }
+        pressed
+    });
+    delete_confirmation(ui, work);
+}
+
+/// The id the Project Files right-click menu is kept under.
+const MENU: &str = "assets-menu";
+
+/// The confirmation a Delete waits on, while one does: how many files go,
+/// that it cannot be undone, and what else deleting them changes. Delete
+/// hands the files to `crate::import::assets::delete_files`.
+fn delete_confirmation(ui: &mut egui::Ui, work: &mut Work<'_>) {
+    let Some(vpaths) = work.assets.deleting.clone() else { return };
+    let count = vpaths.len();
+    let in_game = |vpath: &str| in_archives(ui.ctx(), work.game, vpath);
+    let replaced = vpaths.iter().filter(|vpath| in_game(vpath)).count();
+    let tiles: Vec<&String> = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Tile).collect();
+    let created = tiles.iter().filter(|vpath| !in_game(vpath)).count();
+    let tables = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Table).count();
+    let indexes = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Wdt).count();
+    let paired = vpaths
+        .iter()
+        .filter(|vpath| gloss_of(vpath).is_some_and(|gloss| work.session.project.has(&gloss)))
+        .count();
+    let mut decided = false;
+    let response = egui::Modal::new(egui::Id::new("assets-delete")).show(ui.ctx(), |ui| {
+        ui.set_width(460.0);
+        ui.label(
+            egui::RichText::new(match count {
+                1 => format!("Delete {} from the project?", basename(&vpaths[0])),
+                n => format!("Delete {n} files from the project?"),
+            })
+            .strong()
+            .size(14.0)
+            .color(theme::INK),
+        );
+        ui.add_space(4.0);
+        for vpath in vpaths.iter().take(8) {
+            ui.label(egui::RichText::new(vpath).small().color(theme::INK_DIM));
+        }
+        if count > 8 {
+            ui.label(egui::RichText::new(format!("and {} more", count - 8)).small().color(theme::INK_DIM));
+        }
+        ui.add_space(4.0);
+        theme::note(
+            ui,
+            format!(
+                "{} deleted from the project folder, {}. This cannot be undone.",
+                match count {
+                    1 => "The file is".to_string(),
+                    n => format!("{n} files are"),
+                },
+                work.session.project.path_for("").unwrap_or_default().display()
+            ),
+        );
+        if paired > 0 {
+            theme::note(ui, "A ground texture's _s file is deleted with it.");
+        }
+        if replaced > 0 {
+            theme::note(
+                ui,
+                format!(
+                    "{replaced} of them replace the archives' file at their path. The game reads the \
+                     archives' file there again."
+                ),
+            );
+        }
+        if !tiles.is_empty() {
+            theme::note(
+                ui,
+                "Unsaved edits to the map tiles and their undo entries are dropped. Server tile files \
+                 regenerated from them stay in the server's DataDir.",
+            );
+        }
+        if created > 0 {
+            theme::note(
+                ui,
+                format!(
+                    "{created} of the tiles are tiles the project created, which the archives do not \
+                     have. Each is also unclaimed in its map's WDT, and its minimap picture is deleted."
+                ),
+            );
+        }
+        if tables > 0 {
+            theme::note(ui, "Unsaved edits to those DBC tables and their undo entries are dropped.");
+        }
+        if indexes > 0 {
+            theme::note(
+                ui,
+                "A map whose tile index is deleted claims the tiles of the archives' index again; a \
+                 map the archives do not have claims no tiles.",
+            );
+        }
+        theme::note(
+            ui,
+            "A patch archive already published keeps these files until the next publish, which builds \
+             it again from the project's files.",
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new(match count {
+                            1 => "Delete File".to_string(),
+                            n => format!("Delete {n} Files"),
+                        })
+                        .color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)),
+                    )
+                    .fill(theme::BAD),
+                )
+                .clicked()
+            {
+                work.assets.ask = Some(Ask::Delete(vpaths.clone()));
+                decided = true;
+            }
+            if ui.button("Cancel").clicked() {
+                decided = true;
+            }
+        });
+    });
+    if decided || response.should_close() {
+        work.assets.deleting = None;
     }
 }
 
@@ -614,10 +777,11 @@ fn row_words(own: &Own, sort: Sort, all: &[Own], survey: &Survey, with_folder: b
 }
 
 /// One project file's row, indented `depth` levels: its picture, its name and
-/// `sub` under it. Answers whether it was clicked.
-fn own_row(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, sub: &str, warn: bool, depth: usize) -> bool {
-    let chosen = work.assets.selected.as_deref() == Some(own.vpath.as_str());
-    let mut clicked = false;
+/// `sub` under it, drawn as chosen when it is one of the chosen files.
+/// Answers the row's response.
+fn own_row(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, sub: &str, warn: bool, depth: usize) -> egui::Response {
+    let chosen = work.assets.picked.contains(&own.vpath);
+    let mut response = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(depth as f32 * INDENT);
@@ -636,9 +800,9 @@ fn own_row(ui: &mut egui::Ui, work: &mut Work<'_>, own: &Own, sub: &str, warn: b
             chosen,
         );
         picture(ui, work, own, shape.picture);
-        clicked = shape.response.clicked();
+        response = Some(shape.response);
     });
-    clicked
+    response.expect("drawn above")
 }
 
 /// The lines of what has fallen behind, in the list column, each with its
@@ -1121,6 +1285,10 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         }
         return;
     };
+    if work.assets.picked.len() > 1 {
+        several_details(ui, work);
+        return;
+    }
     let Some(own) = all.iter().find(|own| own.vpath == vpath).cloned() else {
         theme::heading(ui, "No file chosen");
         theme::note(ui, "The chosen file is no longer in the project.");
@@ -1325,49 +1493,43 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 any: false,
             });
         }
-        // A table, a tile or a tile index is changed and undone in the
-        // workspace that edits it, which holds it open; deleting the file here
-        // would go behind that workspace's back.
-        if !sort.edited() {
-            // Removal takes two presses: the file is deleted from the project
-            // folder, which no undo puts back.
-            let confirm_id = egui::Id::new(("asset-remove", own.vpath.clone()));
-            let confirming = ui.data(|data| data.get_temp::<bool>(confirm_id).unwrap_or(false));
-            match confirming {
-                false => {
-                    if ui
-                        .button(egui::RichText::new("Remove").color(theme::BAD))
-                        .on_hover_text(match gloss_own {
-                            Some(_) => {
-                                "Delete the texture and its _s file from the project. The archives' \
-                                 files at these paths, if there are any, are read again. Undo does \
-                                 not restore them."
-                            }
-                            None => {
-                                "Delete the file from the project. The archives' file at this path, \
-                                 if there is one, is read again. Undo does not restore it."
-                            }
-                        })
-                        .clicked()
-                    {
-                        ui.data_mut(|data| data.insert_temp(confirm_id, true));
-                    }
-                }
-                true => {
-                    if ui
-                        .button(egui::RichText::new("Confirm Remove").color(theme::BAD))
-                        .clicked()
-                    {
-                        work.assets.ask = Some(Ask::Remove(own.vpath.clone()));
-                        ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
-                    }
-                    if ui.button("Cancel").clicked() {
-                        ui.data_mut(|data| data.remove_temp::<bool>(confirm_id));
-                    }
-                }
-            }
+        if ui
+            .button(egui::RichText::new("Delete\u{2026}").color(theme::BAD))
+            .on_hover_text(
+                "Delete the file from the project, after a confirmation. The archives' file at this \
+                 path, if there is one, is read again. Undo does not restore it.",
+            )
+            .clicked()
+        {
+            work.assets.deleting = Some(vec![own.vpath.clone()]);
         }
     });
+}
+
+/// The middle with several files chosen: how many, their names, and Delete.
+fn several_details(ui: &mut egui::Ui, work: &mut Work<'_>) {
+    let chosen = work.assets.picked.paths();
+    theme::heading(ui, &format!("{} chosen", picked::files_words(chosen.len())));
+    theme::note(
+        ui,
+        "Ctrl + click adds a file or takes it out, and shift + click chooses a range. Right-click \
+         a chosen file for what can be done to them all.",
+    );
+    ui.add_space(4.0);
+    for vpath in chosen.iter().take(12) {
+        ui.label(egui::RichText::new(vpath).small().color(theme::INK_DIM));
+    }
+    if chosen.len() > 12 {
+        ui.label(egui::RichText::new(format!("and {} more", chosen.len() - 12)).small().color(theme::INK_DIM));
+    }
+    ui.add_space(8.0);
+    if ui
+        .button(egui::RichText::new(format!("Delete {} Files\u{2026}", chosen.len())).color(theme::BAD))
+        .on_hover_text("Delete the chosen files from the project, after a confirmation. Undo does not restore them.")
+        .clicked()
+    {
+        work.assets.deleting = Some(chosen);
+    }
 }
 
 /// Export… and, for a BLP texture, Export as PNG…: the file at `vpath`

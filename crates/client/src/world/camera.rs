@@ -341,19 +341,17 @@ impl Plugin for CameraPlugin {
 /// re-inserts the camera's components on every change.
 #[derive(Resource, Clone, PartialEq, Eq)]
 pub struct RenderTuning {
-    /// Off by default, where Bevy's default is 4x. `Camera3d::default()`
-    /// carries no `Msaa` and `Msaa::default()` is `Sample4`, so without this
-    /// field the camera resolves four samples a pixel over a city's overdraw.
-    /// MSAA does not smooth alpha-keyed foliage, where aliasing is worst,
-    /// because foliage coverage comes from a `discard`, not from the edge of a
-    /// triangle.
+    /// 4x MSAA on the world camera. On by default; F5 toggles it, and
+    /// `--tune nomsaa` turns it off from a script. MSAA smooths the edges of
+    /// triangles; it does not smooth alpha-keyed foliage, because foliage
+    /// coverage comes from a `discard`, not from the edge of a triangle.
     pub msaa: bool,
     /// Wait for the display. On by default, for play. It distorts every
-    /// measurement: under vsync a frame is 16.7 ms
-    /// or 33.3 ms and nothing in between, so a scene that misses the budget by
-    /// one millisecond shows as the frame rate halving, and the wait itself is
-    /// indistinguishable from CPU cost in the frame-against-gpu-spans
-    /// comparison. F9, and `--tune novsync` from a script.
+    /// measurement: under vsync a frame is 16.7 ms or 33.3 ms and nothing in
+    /// between, so a scene that misses the budget by one millisecond shows as
+    /// the frame rate halving, and the wait itself is indistinguishable from
+    /// CPU cost in the frame-against-gpu-spans comparison. F9 toggles it, and
+    /// `--tune novsync` turns it off from a script.
     pub vsync: bool,
     /// Shadow maps from the sun, which 1.12 does not have.
     ///
@@ -363,7 +361,8 @@ pub struct RenderTuning {
     /// a shadow map. This setting is therefore not a fidelity option; it is an
     /// A/B comparison against a world with sun shadows. It is the most expensive
     /// switch on this list, since a cascade re-draws every caster in the view.
-    /// Off, on F10.
+    /// Off by default; F10 toggles it, and `--tune shadows` turns it on from a
+    /// script.
     pub(crate) sun_shadows: bool,
 }
 
@@ -386,7 +385,7 @@ pub const SWITCHES: [(&str, &str, fn(&mut RenderTuning) -> &mut bool); 3] = [
 impl Default for RenderTuning {
     fn default() -> Self {
         RenderTuning {
-            msaa: false,
+            msaa: true,
             vsync: true,
             sun_shadows: false,
         }
@@ -594,8 +593,8 @@ fn tuning_keys(keys: Res<ButtonInput<KeyCode>>, mut tuning: ResMut<RenderTuning>
 /// would not choose `Immediate`, which tears; a saving here is a measurement
 /// rather than a switch on the render tab. It overrides unconditionally so
 /// that the A/B can be taken in the configuration every other render
-/// measurement was taken in: the default framing, with vsync on. A number measured in
-/// any other configuration cannot be compared with the rest.
+/// measurement was taken in: the default framing, with vsync on. A number
+/// measured in any other configuration cannot be compared with the rest.
 fn present_mode(vsync: bool) -> bevy::window::PresentMode {
     use bevy::window::PresentMode;
     match std::env::var("VALE_PRESENT").as_deref() {
@@ -1197,9 +1196,8 @@ pub(crate) fn follow_player(
     // [`crate::world::camera_ease`].
     mut ease: crate::world::camera_ease::Eases,
 ) {
-    // The camera always follows. A `CameraRig::follow` flag that a shift-pan
-    // cleared used to be here; the pan has been removed (see `camera::orbit`),
-    // so the rig can no longer stop following the character.
+    // The camera always follows the character. The rig has no flag that stops
+    // it, because there is no pan to set one; see `camera::orbit`.
     let Ok((player, transform, model, mount)) = player.single() else {
         return;
     };
@@ -1299,15 +1297,14 @@ pub(crate) fn follow_player(
     // deck's plus their own, and the carry rotates it every step
     // (`Ferry::carry`). Outside a right-drag the branch below already follows
     // that, because it reads the character's facing and the deck's turn is in
-    // it. During a right-drag that branch is suppressed on purpose, and the
-    // deck's rotation was then missing from the camera entirely.
+    // it. During a right-drag that branch is suppressed, so without this block
+    // the deck's rotation is missing from the camera.
     //
-    // That caused the second report. The rig stayed fixed in world space, so
-    // `mouse_look_heading` did too, and `send_input` re-aimed the character at
-    // that fixed world bearing on the next pixel of drag. The character was
-    // carried by the boat but steered in world space ("we are moving in world
-    // coordinate space rather than local ship space"), and only while
-    // steering, which is why the report was only partly right.
+    // The rig then stays fixed in world space, so `mouse_look_heading` does
+    // too, and `send_input` re-aims the character at that fixed world bearing
+    // on the next pixel of drag. The character is carried by the boat but
+    // steered in world space rather than in the ship's local space, and only
+    // while steering.
     //
     // Added as the deck's delta rather than by parenting, for the same reason
     // as the character's: a drag's offset must be kept.

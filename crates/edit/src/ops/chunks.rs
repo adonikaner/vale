@@ -49,7 +49,7 @@ use crate::adt::{alpha, colours, heights, impass, liquid, AdtFile};
 use crate::ops::{ChunkLiquid, ChunkPaint, Edit};
 use vale_assets::world::adt::{
     chunk_index, chunk_on_grid, inner_index, outer_index, outer_row_col, vertex_offset, CHUNKS_PER_SIDE,
-    CHUNK_SIZE, HEIGHTS_PER_CHUNK, OUTER_SIDE, UNIT_SIZE,
+    CHUNK_SIZE, HEIGHTS_PER_CHUNK, INNER_SIDE, OUTER_SIDE, UNIT_SIZE,
 };
 use vale_assets::world::wdt::MAP_TILES;
 
@@ -284,6 +284,11 @@ pub struct Census {
     pub cut: usize,
     /// How many carry four textures, which is the most a chunk may.
     pub full: usize,
+    /// How many liquid cells are wet, counted once per liquid on the cell.
+    pub wet: usize,
+    /// How many of those the ground covers entirely; see
+    /// [`super::water::is_buried`].
+    pub buried: usize,
     /// Each texture among them paired with a ground effect its layers carry
     /// (`MCLY` `effectId`, 0 for none), with the number of layers that carry
     /// the pair. By texture, then the largest count first.
@@ -359,7 +364,7 @@ pub fn census(loaded: &impl Tiles, selected: &BTreeSet<Cell>) -> Census {
         tiles.insert(coord);
         let names = tile.texture_names();
         for cell in cells {
-            let Some(chunk) = cell.chunk_in(tile).and_then(|index| tile.chunk(index)) else {
+            let Some((index, chunk)) = cell.chunk_in(tile).and_then(|index| Some((index, tile.chunk(index)?))) else {
                 census.closed += 1;
                 continue;
             };
@@ -369,6 +374,14 @@ pub fn census(loaded: &impl Tiles, selected: &BTreeSet<Cell>) -> Census {
             census.cut += head.holes().count_ones() as usize;
             if head.flags() & impass::IMPASSABLE != 0 {
                 census.impassable += 1;
+            }
+            let pools = liquid::pools(tile, index);
+            if !pools.is_empty() {
+                census.wet += pools
+                    .iter()
+                    .map(|pool| (0..INNER_SIDE * INNER_SIDE).filter(|n| pool.is_wet(n / INNER_SIDE, n % INNER_SIDE)).count())
+                    .sum::<usize>();
+                census.buried += super::water::buried_cells(tile, index);
             }
             let layers = alpha::paint(chunk).layers;
             if layers.len() >= alpha::MAX_LAYERS {

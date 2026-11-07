@@ -22,8 +22,10 @@
 //! program opens and the texture import reads back. Export Folder writes
 //! every file under a folder into a chosen directory at its whole archive
 //! path, so `Sound\Creature\Wolf\` lands in `<directory>\sound\creature\wolf\`
-//! and a file's way back in is its own path. A folder export runs off the
-//! main thread as a [`crate::jobs::Job`].
+//! and a file's way back in is its own path. Several files chosen in the list
+//! ([`super::picked`]) are exported the same way, into one directory chosen
+//! once. A folder or several files export off the main thread as a
+//! [`crate::jobs::Job`].
 //!
 //! ## Replace
 //!
@@ -60,8 +62,11 @@ pub(crate) struct GameFiles {
     /// Show in Game Files or `--game-file`, which choose a file the list has
     /// not shown.
     pub(crate) reveal: bool,
-    /// The chosen file's archive path, as the listing spells it.
+    /// The chosen file's archive path, as the listing spells it: the file
+    /// whose details and preview are shown, and one of [`Self::picked`].
     pub(crate) selected: Option<String>,
+    /// Every file chosen in the list, by its lower-case archive path.
+    pub(crate) picked: super::picked::Picked,
     /// What the search box holds. Words in it search every path, not the
     /// open folder.
     pub(crate) query: String,
@@ -72,8 +77,8 @@ pub(crate) struct GameFiles {
     pub(crate) export_dir: Option<PathBuf>,
     /// What the panel asked for, carried out by [`answer`].
     pub(crate) ask: Option<Ask>,
-    /// The folder export running, what it is called and how far it has got,
-    /// for the panel's bar. One runs at a time.
+    /// The folder or files export running, what it is called and how far it
+    /// has got, for the panel's bar. One runs at a time.
     pub(crate) exporting: Option<(String, crate::jobs::Progress)>,
     /// Every path the archives list, read once.
     listed: Option<Arc<Vec<String>>>,
@@ -93,10 +98,14 @@ pub(crate) enum Ask {
     /// Write every file under the archive folder `folder` into a directory
     /// chosen with the system's folder dialog, in the background.
     ExportFolder { folder: String },
+    /// Write these files, by their lower-case archive paths, into a
+    /// directory chosen with the system's folder dialog, at their whole
+    /// archive paths, in the background: each BLP as a PNG with `as_png`.
+    ExportFiles { vpaths: Vec<String>, as_png: bool },
 }
 
-/// One folder export's outcome: how many files were written, and the first
-/// failures.
+/// One folder or files export's outcome: what was exported, where, how many
+/// files were written, and the first failures.
 pub(crate) struct Exported {
     pub(crate) folder: String,
     pub(crate) into: PathBuf,
@@ -289,12 +298,7 @@ pub(crate) fn answer(
                 session.status = "a folder export is already running".to_string();
                 return;
             }
-            let mut dialog = rfd::FileDialog::new();
-            if let Some(dir) = &files.export_dir {
-                dialog = dialog.set_directory(dir);
-            }
-            let Some(into) = dialog.pick_folder() else { return };
-            files.export_dir = Some(into.clone());
+            let Some(into) = pick_directory(&mut files) else { return };
             // Written at the paths as the archives spell them.
             let spell = session.spellings(&game);
             let paths: Vec<String> = files
@@ -303,43 +307,85 @@ pub(crate) fn answer(
                 .filter(|path| path.starts_with(&folder))
                 .map(|path| spell.of(path).to_string())
                 .collect();
-            let progress = crate::jobs::Progress::new(paths.len());
             let shown = match folder.is_empty() {
                 true => "the archives".to_string(),
                 false => spell.of(&folder).trim_end_matches('\\').to_string(),
             };
             let label = format!("exporting {} files of {shown}", paths.len());
-            let worker = progress.clone();
             let as_png = files.as_png;
-            let read = game.shared_reader_past_overlay();
-            let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
-                let mut written = 0;
-                let mut failed = Vec::new();
-                for (index, vpath) in paths.iter().enumerate() {
-                    let result = read(vpath)
-                        .ok_or_else(|| "not in the archives".to_string())
-                        .and_then(|bytes| exported(vpath, bytes, as_png))
-                        .and_then(|(name, bytes)| {
-                            let path = export_path(&into, vpath, &name);
-                            if let Some(parent) = path.parent() {
-                                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-                            }
-                            std::fs::write(&path, bytes).map_err(|e| e.to_string())
-                        });
-                    match result {
-                        Ok(()) => written += 1,
-                        Err(why) if failed.len() < FAILURES_KEPT => failed.push(format!("{vpath}: {why}")),
-                        Err(_) => {}
-                    }
-                    worker.set(index + 1);
-                }
-                Exported { folder: shown, into, written, failed }
-            });
-            session.status = label.clone();
-            files.exporting = Some((label.clone(), progress.clone()));
-            running.jobs.push(crate::jobs::Job { label, progress, task });
+            start_export(&mut files, &mut session, &game, &mut running, label, shown, into, paths, as_png);
+        }
+        Ask::ExportFiles { vpaths, as_png } => {
+            if files.exporting.is_some() {
+                session.status = "an export is already running".to_string();
+                return;
+            }
+            let Some(into) = pick_directory(&mut files) else { return };
+            let spell = session.spellings(&game);
+            let paths: Vec<String> = vpaths.iter().map(|path| spell.of(path).to_string()).collect();
+            let shown = format!("the {} chosen files", paths.len());
+            let label = format!("exporting {shown}");
+            start_export(&mut files, &mut session, &game, &mut running, label, shown, into, paths, as_png);
         }
     }
+}
+
+/// A directory chosen with the system's folder dialog, opened where the last
+/// export was written, and remembered for the next.
+fn pick_directory(files: &mut GameFiles) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(dir) = &files.export_dir {
+        dialog = dialog.set_directory(dir);
+    }
+    let into = dialog.pick_folder()?;
+    files.export_dir = Some(into.clone());
+    Some(into)
+}
+
+/// Write each of `paths` into `into` at its whole archive path
+/// ([`export_path`]), on the task pool, as the job `label`. `shown` names
+/// what was exported in the status line when it finishes.
+#[allow(clippy::too_many_arguments)]
+fn start_export(
+    files: &mut GameFiles,
+    session: &mut EditSession,
+    game: &GameAssets,
+    running: &mut crate::jobs::Running<Exported>,
+    label: String,
+    shown: String,
+    into: PathBuf,
+    paths: Vec<String>,
+    as_png: bool,
+) {
+    let progress = crate::jobs::Progress::new(paths.len());
+    let worker = progress.clone();
+    let read = game.shared_reader_past_overlay();
+    let task = bevy::tasks::AsyncComputeTaskPool::get().spawn(async move {
+        let mut written = 0;
+        let mut failed = Vec::new();
+        for (index, vpath) in paths.iter().enumerate() {
+            let result = read(vpath)
+                .ok_or_else(|| "not in the archives".to_string())
+                .and_then(|bytes| exported(vpath, bytes, as_png))
+                .and_then(|(name, bytes)| {
+                    let path = export_path(&into, vpath, &name);
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                    }
+                    std::fs::write(&path, bytes).map_err(|e| e.to_string())
+                });
+            match result {
+                Ok(()) => written += 1,
+                Err(why) if failed.len() < FAILURES_KEPT => failed.push(format!("{vpath}: {why}")),
+                Err(_) => {}
+            }
+            worker.set(index + 1);
+        }
+        Exported { folder: shown, into, written, failed }
+    });
+    session.status = label.clone();
+    files.exporting = Some((label.clone(), progress.clone()));
+    running.jobs.push(crate::jobs::Job { label, progress, task });
 }
 
 #[cfg(test)]

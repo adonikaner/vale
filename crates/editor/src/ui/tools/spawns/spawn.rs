@@ -188,6 +188,10 @@ pub(crate) trait SpawnView: SpawnSubject {
     /// The windows a template has besides its row, in the workspace's
     /// inspector.
     fn list_windows(ui: &mut egui::Ui, subject: &mut Subject<'_, Self>, known: &Self::Known);
+    /// The pool and game event state the picker's Place Into section reads.
+    fn holders<'s>(
+        own: &'s Self::Panel<'_>,
+    ) -> (&'s crate::subjects::pools::Pools, &'s crate::subjects::game_events::GameEvents);
 }
 
 /// Draw a subject's panel, and the two dialogs its forms open.
@@ -673,6 +677,7 @@ pub(crate) fn toolbar<S: SpawnView>(
 /// separate button press would add a step to every placement and give two
 /// ways to reach the same state.
 fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
+    place_into(ui, subject);
     match subject.tool.new_spawn.chosen.clone() {
         Some(chosen) => {
             title(ui, &chosen.label(), None);
@@ -759,6 +764,118 @@ fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
         });
     if matches.len() >= 50 {
         theme::note(ui, "Showing the first 50 matches. Type more of the name to narrow the list.");
+    }
+}
+
+/// The picker's Place Into section: the pool and game event every placed
+/// spawn joins ([`crate::tools::spawns::spawn::PlaceInto`]), each chosen in
+/// the reference picker, with New for a pool and Clear for both. Takes a
+/// choice the reference picker answered for this tool's type of spawn.
+fn place_into<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
+    use crate::subjects::quests::{PickFor, Picker, SpawnInto, Target};
+    let objects = S::KIND == crate::tools::spawns::spawn::SpawnKind::GameObject;
+    match subject.quests.place_pick {
+        Some((SpawnInto::Pool { objects: of }, entry)) if of == objects => {
+            subject.tool.new_spawn.into.pool = Some(entry);
+            subject.quests.place_pick = None;
+        }
+        Some((SpawnInto::Event { objects: of, .. }, entry)) if of == objects => {
+            subject.tool.new_spawn.into.event = Some(entry);
+            subject.quests.place_pick = None;
+        }
+        _ => {}
+    }
+    let (pools, events) = S::holders(&subject.own);
+    let edits = &subject.session.rows.edits;
+    let patch = crate::server::settings::server_patch(subject.server);
+    let into = subject.tool.new_spawn.into;
+    // Each target's line, and whether a spawn placed now joins it: a target
+    // the read tables and the project no longer hold is drawn as a warning.
+    let pool_name = into.pool.map(|entry| {
+        let row = pools
+            .pool_at(entry, patch, edits)
+            .or_else(|| pools.pool_rows(entry, edits).into_iter().find(|shown| shown.kept()));
+        match row {
+            Some(shown) => (format!("{entry} \u{b7} {}", shown.row.description), true),
+            None => (format!("{entry} \u{b7} no pool_template row"), !pools.is_read()),
+        }
+    });
+    let event_name = into.event.map(|entry| match events.event(entry, edits).filter(|shown| shown.kept()) {
+        Some(shown) => (format!("{entry} \u{b7} {}", shown.row.description), true),
+        None => (format!("{entry} \u{b7} no game_event row"), !events.is_read()),
+    });
+
+    theme::heading(ui, "Place Into");
+    theme::note(
+        ui,
+        format!(
+            "Every {} placed joins the pool and the game event chosen here, on the same undo entry.",
+            S::WORDS.spawn
+        ),
+    );
+    let mut ask: Option<SpawnInto> = None;
+    let mut new_pool = false;
+    for (label, name, pick) in [
+        ("Pool", pool_name, SpawnInto::Pool { objects }),
+        ("Game event", event_name, SpawnInto::Event { objects, removed: false }),
+    ] {
+        theme::row(ui, label, |ui| match &name {
+            Some((text, true)) => {
+                ui.add(egui::Label::new(egui::RichText::new(text).color(theme::INK)).truncate());
+            }
+            Some((text, false)) => {
+                ui.add(egui::Label::new(egui::RichText::new(text).color(theme::WARN)).truncate())
+                    .on_hover_text("Not found. A spawn placed now does not join it.");
+            }
+            None => {
+                ui.label(egui::RichText::new("None").color(theme::INK_DIM));
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(theme::LABEL_WIDTH + ui.spacing().item_spacing.x);
+            if ui.small_button("Choose\u{2026}").clicked() {
+                ask = Some(pick);
+            }
+            if matches!(pick, SpawnInto::Pool { .. })
+                && ui
+                    .small_button("New")
+                    .on_hover_text(
+                        "Make a pool that spawns one member at a time, read at every patch, named after the chosen template, and place into it.",
+                    )
+                    .clicked()
+            {
+                new_pool = true;
+            }
+            if name.is_some() && ui.small_button("Clear").clicked() {
+                match pick {
+                    SpawnInto::Pool { .. } => subject.tool.new_spawn.into.pool = None,
+                    SpawnInto::Event { .. } => subject.tool.new_spawn.into.event = None,
+                }
+            }
+        });
+    }
+    if let Some(into) = ask {
+        let table = match into {
+            SpawnInto::Pool { .. } => vale_mangos::pool::TEMPLATE,
+            SpawnInto::Event { .. } => vale_mangos::game_event::EVENT,
+        };
+        subject.quests.picker = Some(Picker::new(Target::List(table), PickFor::PlaceInto { into }));
+    }
+    if new_pool {
+        let description = subject
+            .tool
+            .new_spawn
+            .chosen
+            .as_ref()
+            .map_or_else(|| "New pool".to_string(), |known| known.label());
+        let (pools, _) = S::holders(&subject.own);
+        match pools.new_pool(subject.session, &description, subject.now) {
+            Ok(entry) => {
+                subject.tool.new_spawn.into.pool = Some(entry);
+                subject.session.status = format!("pool {entry} created; placed spawns join it");
+            }
+            Err(e) => subject.session.status = format!("no new pool: {e}"),
+        }
     }
 }
 

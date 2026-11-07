@@ -5,7 +5,8 @@
 //! ```text
 //! mod.rs      SpawnSubject and the two row traits under it, SpawnTool (the
 //!             spawns on the open map, the selection, the picker, the two
-//!             whole rows a form draws) and its operations: create, duplicate,
+//!             whole rows a form draws) and its operations: create, place
+//!             (create and join the picker's pool and game event), duplicate,
 //!             remove, keep, and a template's create, copy, renumber and discard
 //! systems.rs  the systems over a SpawnTool: the map read, the created rows,
 //!             the picker's search, the near list and its tags, the pointer's
@@ -494,6 +495,22 @@ pub(crate) struct NewSpawn<K> {
     pub(crate) trouble: Option<String>,
     /// The `EditSession::database_writes` the matches were read at.
     searched_at: Option<u64>,
+    /// The pool and game event a placed spawn joins. Kept until cleared,
+    /// through Escape and a change of template, so a run of placements all
+    /// join.
+    pub(crate) into: PlaceInto,
+}
+
+/// The pool and the game event every spawn the tool places is put in, chosen
+/// in the picker before placing. See [`SpawnTool::place`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PlaceInto {
+    /// The pool a placed spawn becomes a member of, with an equal share of
+    /// its chances.
+    pub(crate) pool: Option<u32>,
+    /// The game event a placed spawn is added during, so it exists only
+    /// while the event is on.
+    pub(crate) event: Option<u32>,
 }
 
 impl<K> Default for NewSpawn<K> {
@@ -507,6 +524,7 @@ impl<K> Default for NewSpawn<K> {
             chosen: None,
             trouble: None,
             searched_at: None,
+            into: PlaceInto::default(),
         }
     }
 }
@@ -1432,6 +1450,58 @@ impl<S: SpawnSubject> SpawnTool<S> {
         guid
     }
 
+    /// Create a spawn as [`Self::create`] does and put it in the picker's
+    /// pool and game event ([`NewSpawn::into`]), as one undo entry. Answers
+    /// the guid and the status line.
+    ///
+    /// A pool or event that the read tables and the project no longer hold
+    /// is not joined, and the status line says so. While the tables are
+    /// unread nothing can be checked, and the rows are written.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn place(
+        &mut self,
+        session: &mut EditSession,
+        known: &S::Known,
+        at: Vec3,
+        orientation: f32,
+        pools: &crate::subjects::pools::Pools,
+        events: &crate::subjects::game_events::GameEvents,
+        now: f64,
+    ) -> (u64, String) {
+        let into = self.new_spawn.into;
+        let label = format!("New {}", S::WORDS.spawn);
+        let subject = format!("{} {}", S::SPAWN, self.next_guid(&session.rows.edits));
+        session.as_one(&label, &subject, |session| {
+            let guid = self.create(session, known, at, orientation, now);
+            let mut status = format!("{} placed as guid {guid}", known.label());
+            if let Some(entry) = into.pool {
+                let gone = pools.is_read() && !pools.pool_rows(entry, &session.rows.edits).iter().any(|shown| shown.kept());
+                match gone {
+                    true => status.push_str(&format!("; pool {entry} no longer exists, not joined")),
+                    false => {
+                        let of = match S::KIND {
+                            SpawnKind::Creature => vale_mangos::pool::Of::Creature,
+                            SpawnKind::GameObject => vale_mangos::pool::Of::GameObject,
+                        };
+                        pools.join(session, of, &[(guid, known.label())], entry, now);
+                        status.push_str(&format!(", in pool {entry}"));
+                    }
+                }
+            }
+            if let Some(entry) = into.event {
+                let gone = events.is_read() && events.event(entry, &session.rows.edits).is_none_or(|shown| !shown.kept());
+                match gone {
+                    true => status.push_str(&format!("; game event {entry} no longer exists, not joined")),
+                    false => {
+                        events.add(session, S::KIND, &[guid], entry, false, now);
+                        status.push_str(&format!(", added during game event {entry}"));
+                    }
+                }
+            }
+            (guid, status)
+        })
+    }
+
     /// Create another spawn of the same template beside the selected one.
     ///
     /// A second guard on the other side of a gate is the first one's row with
@@ -2192,6 +2262,34 @@ mod tests {
         assert_eq!(column(first, "wander_distance").as_deref(), Some("3"));
         assert_eq!(column(second, "wander_distance").as_deref(), Some("7"));
         assert_eq!(number(second, "orientation"), Some(1.0));
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A spawn placed with a pool and a game event chosen is created, made a
+    /// member of the pool and added during the event, as one undo entry.
+    #[test]
+    fn a_placed_spawn_joins_the_chosen_pool_and_event_in_one_entry() {
+        let install = std::env::temp_dir().join(format!("vale-spawn-into-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let mut session = EditSession::for_tests(project);
+        let mut tool = SpawnTool::<CreatureSubject>::default();
+        tool.new_spawn.into = PlaceInto { pool: Some(40), event: Some(7) };
+        let pools = crate::subjects::pools::Pools::default();
+        let events = crate::subjects::game_events::GameEvents::default();
+        let known = CreatureSubject::unknown(100);
+
+        let (guid, status) = tool.place(&mut session, &known, Vec3::new(1.0, 2.0, 3.0), 0.0, &pools, &events, 1.0);
+        assert_eq!(guid, CreatureSubject::RESERVED_GUID_BASE);
+        assert!(status.contains("in pool 40") && status.contains("game event 7"), "{status}");
+        let edits = &session.rows.edits;
+        assert!(edits.row("creature", &CreatureSubject::spawn_key(guid)).is_some());
+        let member = edits.row(vale_mangos::pool::CREATURE, &vale_mangos::pool::member_key(guid)).expect("a member row");
+        assert_eq!(member.columns.get("pool_entry").map(String::as_str), Some("40"));
+        assert!(edits.row(vale_mangos::game_event::CREATURE, &vale_mangos::game_event::member_key(guid, 7)).is_some());
+
+        assert_eq!(session.history.undo().map(|change| change.label), Some("New spawn".to_string()));
+        assert!(session.history.undo().is_none(), "the placement is one undo entry");
         let _ = std::fs::remove_dir_all(&install);
     }
 }

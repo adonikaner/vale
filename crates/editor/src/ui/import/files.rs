@@ -23,6 +23,14 @@
 //! Names and paths are drawn as the archives spell them, and looked up in
 //! lower case. See `crate::session::files::Spellings`.
 //!
+//! Several files are chosen as in the Project Files part: ctrl + click adds
+//! or takes out, shift + click chooses a range in the order the list shows
+//! ([`crate::import::picked`]). Right-click opens a menu over the chosen
+//! files, or over the file clicked when it is not one of them, with Export.
+//! One file is exported through the system's save dialog; several are written
+//! into one directory chosen once, each at its whole archive path, as Export
+//! Folder writes them.
+//!
 //! A table (`.dbc`) is listed and exported as a file. Its rows are edited in
 //! the table editor, which Open in Table Editor opens on it
 //! ([`crate::ui::shell::asks::ShellAsk::ShowTable`]).
@@ -38,7 +46,7 @@ use bevy_egui::egui;
 use super::assets::{
     basename, content_of, content_rows, export_buttons, picture, preview, sequences, size_words, Whose, Work,
 };
-use super::sounds;
+use super::{picked, sounds};
 use crate::import::assets::{Ask as ImportAsk, Own};
 use crate::import::files::{folder_of, Ask};
 use crate::session::files::Spellings;
@@ -143,7 +151,8 @@ fn found(ui: &egui::Ui, catalogue: &[String], query: &str) -> Arc<Vec<String>> {
 
 /// One file's row, indented `depth` levels: its picture, its name, and its
 /// type, after its folder in a search's hits (`with_folder`), with a note
-/// when the project replaces it. Answers whether it was clicked.
+/// when the project replaces it, drawn as chosen when it is one of the chosen
+/// files. Answers the row's response.
 fn file_row(
     ui: &mut egui::Ui,
     work: &mut Work<'_>,
@@ -152,8 +161,8 @@ fn file_row(
     replaced: bool,
     depth: usize,
     with_folder: bool,
-) -> bool {
-    let chosen = work.files.selected.as_deref() == Some(vpath);
+) -> egui::Response {
+    let chosen = work.files.picked.contains(vpath);
     let folder = spell.of(folder_of(vpath)).trim_end_matches('\\');
     let mut sub = match with_folder && !folder.is_empty() {
         true => format!("{folder} \u{b7} {}", type_words(vpath)),
@@ -162,7 +171,7 @@ fn file_row(
     if replaced {
         sub.push_str(" \u{b7} the project replaces it");
     }
-    let mut clicked = false;
+    let mut response = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.add_space(depth as f32 * INDENT);
@@ -182,9 +191,9 @@ fn file_row(
         );
         let own = Own { vpath: vpath.to_string(), kind: Kind::of(vpath), bytes: 0 };
         picture(ui, work, &own, shape.picture);
-        clicked = shape.response.clicked();
+        response = Some(shape.response);
     });
-    clicked
+    response.expect("drawn above")
 }
 
 /// The left column: the part strip, the search, and the tree, or the
@@ -217,7 +226,8 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
             .desired_width(width),
     );
     let height = listing::ROW_HEIGHT;
-    let mut clicked: Option<String> = None;
+    work.files.picked.follow(work.files.selected.as_deref());
+    let mut hit: Option<(String, picked::Hit)> = None;
     let query = work.files.query.trim().to_string();
     if !query.is_empty() {
         let hits = found(ui, &catalogue, &query);
@@ -225,11 +235,16 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
         ui.add_space(4.0);
         theme::list_area(ui, None, height).show_rows(ui, height, hits.len(), |ui, range| {
             for vpath in &hits[range] {
-                if file_row(ui, work, &spell, vpath, own.contains(vpath), 0, true) {
-                    clicked = Some(vpath.clone());
+                let response = file_row(ui, work, &spell, vpath, own.contains(vpath), 0, true);
+                if let Some(pressed) = picked::hit_of(ui, &response) {
+                    hit = Some((vpath.clone(), pressed));
                 }
             }
         });
+        if let Some((vpath, pressed)) = hit.take() {
+            let order: Vec<&str> = hits.iter().map(String::as_str).collect();
+            work.files.selected = picked::apply(ui, pressed, &mut work.files.picked, &vpath, &order, egui::Id::new(MENU));
+        }
     } else {
         let rows = tree(ui, &catalogue, &work.files.open, work.files.open_revision);
         let mut toggled: Option<String> = None;
@@ -264,31 +279,154 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
                         }
                     }
                     Row::File { path, depth } => {
-                        if file_row(ui, work, &spell, path, own.contains(path), *depth, false) {
-                            clicked = Some(path.clone());
+                        let response = file_row(ui, work, &spell, path, own.contains(path), *depth, false);
+                        if let Some(pressed) = picked::hit_of(ui, &response) {
+                            hit = Some((path.clone(), pressed));
                         }
                     }
                 }
             }
         });
+        if let Some((vpath, pressed)) = hit.take() {
+            let order: Vec<&str> = rows
+                .iter()
+                .filter_map(|row| match row {
+                    Row::File { path, .. } => Some(path.as_str()),
+                    Row::Folder { .. } => None,
+                })
+                .collect();
+            work.files.selected = picked::apply(ui, pressed, &mut work.files.picked, &vpath, &order, egui::Id::new(MENU));
+        }
         if let Some(folder) = toggled {
             work.files.toggle(&folder);
             work.files.folder = folder;
             work.files.selected = None;
+            work.files.picked.clear();
         }
     }
-    if clicked.is_some() {
-        work.files.selected = clicked;
+    picked::menu(ui.ctx(), egui::Id::new(MENU), |ui, targets| export_items(ui, work, targets));
+}
+
+/// The id the Game Files right-click menu is kept under.
+const MENU: &str = "game-files-menu";
+
+/// The right-click menu's entries for `targets`: Export, and Export as PNG
+/// when there is a texture among them. Answers whether one was pressed.
+fn export_items(ui: &mut egui::Ui, work: &mut Work<'_>, targets: &[String]) -> bool {
+    use crate::ui::shell::context::item;
+    let textures = targets.iter().any(|vpath| crate::import::files::is_texture(vpath));
+    let running = work.files.exporting.is_some();
+    let spell = work.session.spellings(work.game);
+    if let [vpath] = targets {
+        let spelled = spell.of(vpath).to_string();
+        let export = |as_png: bool| Ask::Export { vpath: spelled.clone(), as_png, from_project: false };
+        if item(ui, "Export\u{2026}", true, "Write the archives' file to disk, byte for byte.", "") {
+            work.files.ask = Some(export(false));
+            return true;
+        }
+        if textures
+            && item(
+                ui,
+                "Export as PNG\u{2026}",
+                true,
+                "Write the archives' file's largest mip as an 8-bit RGBA PNG, which a paint program opens \
+                 and Replace imports back.",
+                "",
+            )
+        {
+            work.files.ask = Some(export(true));
+            return true;
+        }
+        return false;
+    }
+    let count = targets.len();
+    let about = format!(
+        "Choose a directory and write the {count} files into it at their whole archive paths, byte for \
+         byte. The archives' files are written, not the project's."
+    );
+    if item(ui, &format!("Export {count} Files\u{2026}"), !running, &about, "An export is running.") {
+        work.files.ask = Some(Ask::ExportFiles { vpaths: targets.to_vec(), as_png: false });
+        return true;
+    }
+    if textures
+        && item(
+            ui,
+            &format!("Export {count} Files, BLP as PNG\u{2026}"),
+            !running,
+            "As Export, with each BLP texture written as an 8-bit RGBA PNG of its largest mip, under the \
+             same name with .png.",
+            "An export is running.",
+        )
+    {
+        work.files.ask = Some(Ask::ExportFiles { vpaths: targets.to_vec(), as_png: true });
+        return true;
+    }
+    false
+}
+
+/// The middle with several files chosen: how many, their names, and Export
+/// with the bar of the export running.
+fn several_details(ui: &mut egui::Ui, work: &mut Work<'_>) {
+    let chosen = work.files.picked.paths();
+    let spell = work.session.spellings(work.game);
+    theme::heading(ui, &format!("{} chosen", picked::files_words(chosen.len())));
+    theme::note(
+        ui,
+        "Ctrl + click adds a file or takes it out, and shift + click chooses a range. Right-click \
+         a chosen file for what can be done to them all.",
+    );
+    ui.add_space(4.0);
+    for vpath in chosen.iter().take(12) {
+        ui.label(egui::RichText::new(spell.of(vpath)).small().color(theme::INK_DIM));
+    }
+    if chosen.len() > 12 {
+        ui.label(egui::RichText::new(format!("and {} more", chosen.len() - 12)).small().color(theme::INK_DIM));
+    }
+    ui.add_space(6.0);
+    ui.checkbox(&mut work.files.as_png, "Write BLP textures as PNG").on_hover_text(
+        "Each BLP texture is written as an 8-bit RGBA PNG of its largest mip, under the same name with \
+         .png. Every other file is written byte for byte.",
+    );
+    let running = work.files.exporting.clone();
+    if ui
+        .add_enabled(running.is_none(), egui::Button::new(format!("Export {} Files\u{2026}", chosen.len())))
+        .on_hover_text(
+            "Choose a directory and write the chosen files into it at their whole archive paths, so each \
+             file's way back in is its own path. The archives' files are written, not the project's.",
+        )
+        .on_disabled_hover_text("An export is running.")
+        .clicked()
+    {
+        work.files.ask = Some(Ask::ExportFiles { vpaths: chosen, as_png: work.files.as_png });
+    }
+    export_progress(ui, running);
+}
+
+/// The bar of the export running, if one is.
+fn export_progress(ui: &mut egui::Ui, running: Option<(String, crate::jobs::Progress)>) {
+    if let Some((label, progress)) = running {
+        ui.add_space(4.0);
+        ui.add(egui::ProgressBar::new(progress.fraction()).text(format!(
+            "{label}: {} of {}",
+            progress.done(),
+            progress.total()
+        )));
+        ui.ctx().request_repaint();
     }
 }
 
 /// The middle: the chosen file's path, what it is and holds, and what can be
-/// done to it; with no file chosen, the chosen folder and Export Folder.
+/// done to it; with several files chosen, their names and Export; with no
+/// file chosen, the chosen folder and Export Folder.
 fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let Some(vpath) = work.files.selected.clone() else {
         folder_details(ui, work);
         return;
     };
+    if work.files.picked.len() > 1 {
+        several_details(ui, work);
+        return;
+    }
     let spell = work.session.spellings(work.game);
     // Shown, copied, exported and replaced as the archives spell it.
     let spelled = spell.of(&vpath).to_string();
@@ -445,22 +583,14 @@ fn folder_details(ui: &mut egui::Ui, work: &mut Work<'_>) {
              project's."
         ))
         .on_disabled_hover_text(match running {
-            Some(_) => "A folder export is running.",
+            Some(_) => "An export is running.",
             None => "No file is under this folder.",
         })
         .clicked()
     {
         work.files.ask = Some(Ask::ExportFolder { folder: folder.clone() });
     }
-    if let Some((label, progress)) = running {
-        ui.add_space(4.0);
-        ui.add(egui::ProgressBar::new(progress.fraction()).text(format!(
-            "{label}: {} of {}",
-            progress.done(),
-            progress.total()
-        )));
-        ui.ctx().request_repaint();
-    }
+    export_progress(ui, running);
 }
 
 /// The part's third column, in the shell's inspector: the chosen file,

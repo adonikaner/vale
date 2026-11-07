@@ -9,7 +9,7 @@
 //!            buttons from the command line
 //! ```
 //!
-//! ## One lifecycle, thirteen subjects
+//! ## How every row subject is written and applied
 //!
 //! Every row subject is written and applied the same way. The project's row
 //! store (`server\rows.txt`, shared by all of them and keyed by table) holds
@@ -144,7 +144,9 @@ pub(crate) trait RowSubject: Sync {
     }
 
     /// The statements that undo a removed row, read immediately before it is
-    /// removed. `None` when the row is not there: nothing to put back.
+    /// removed. `None` when there is nothing to put back. The default answers
+    /// the `DELETE` alone for a row that is not there; see
+    /// [`undo_of_removing`].
     fn undo_of_a_removal(&self, db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
         snapshot_one_row(db, row)
     }
@@ -299,7 +301,7 @@ pub(crate) struct Plan {
     /// edit tried to move, a row a table cannot create or remove, a creation
     /// that does not name every column or that the server would skip. Reported
     /// rather than skipped silently: the store is a text file somebody may have
-    /// edited, and an edit that reaches no statement never happens.
+    /// edited, and an edit that reaches no statement is lost with no message.
     pub(crate) refused: Vec<String>,
 }
 
@@ -368,8 +370,8 @@ impl Plan {
     /// whose edits are in the database. The revert file cannot answer that: it
     /// records what a row held before this project touched it, which does not
     /// change when the edit does. The hash is over the statements rather than
-    /// the row count: two edits to one row are one row and two different
-    /// databases.
+    /// the row count: two different edits to one row are one row each, and
+    /// leave the database in two different states.
     pub(crate) fn signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -579,13 +581,30 @@ pub(crate) fn refuse_a_present_key(db: &mut Db, row: &Row) -> Result<(), String>
 
 /// The default undo of a removal: the `DELETE` first, so the entry can be run
 /// against a row it has already restored (see [`super::reconcile`]), then the
-/// row as it stands. `None` when the row is not there.
+/// row as it stands. See [`undo_of_removing`].
 pub(crate) fn snapshot_one_row(db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
-    Ok(db.row(&row::row_query(row.table.name, &row.key))?.map(|held| {
-        let mut out = vec![row::delete(row.table.name, &row.key)];
-        out.extend(row::insert_from_row(row.table.name, &held));
-        out
-    }))
+    let held = db.row(&row::row_query(row.table.name, &row.key))?;
+    Ok(Some(undo_of_removing(row, held.as_ref())))
+}
+
+/// The undo of removing one row that takes no other row with it, given what
+/// the database holds at its key immediately before the removal runs.
+///
+/// A row that is not there still gets an undo: the `DELETE` alone, which
+/// restores "no row at this key". The store keeps a removal of a row this
+/// project created and then removed, or of an equipment row whose items were
+/// changed twice, and the database holds neither. Without an entry in the
+/// revert file such a removal was never counted as applied, and the Server
+/// panel showed it as "not applied yet" after every Apply.
+pub(crate) fn undo_of_removing(
+    row: &Row,
+    held: Option<&std::collections::HashMap<String, Option<String>>>,
+) -> Vec<String> {
+    let mut out = vec![row::delete(row.table.name, &row.key)];
+    if let Some(held) = held {
+        out.extend(row::insert_from_row(row.table.name, held));
+    }
+    out
 }
 
 /// Refuse a row created or moved to an id that is taken or that something
@@ -639,4 +658,90 @@ pub(crate) fn plan_of(subject: &'static dyn RowSubject, edits: &Edits) -> Plan {
     let paths = vale_mangos::path::Paths::default();
     let scripts = vale_mangos::scripts::Scripts::default();
     plan_from(subject, &Stores { edits, paths: &paths, scripts: &scripts })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::reconcile::Undo;
+    use vale_mangos::addon::{self, Equipment};
+    use vale_mangos::eventai;
+    use vale_mangos::row::RowEdit;
+
+    fn store(edits: &mut Edits, table: &str, key: &Key, life: Life, changes: Vec<Assignment>) {
+        let mut row = RowEdit { life, ..RowEdit::default() };
+        for change in changes {
+            row.columns.insert(change.column.to_string(), change.value);
+        }
+        edits.set_row_line(table, key, Some(&row.to_line()));
+    }
+
+    /// The revert file an Apply writes against a database that holds none of
+    /// the plan's rows, as `apply::undo_of_a_row` and `reconcile::apply` build
+    /// it: a creation's undo, and a removal's from [`undo_of_removing`] with
+    /// nothing held. It is read back through the file's own text, as the
+    /// Server panel reads it.
+    fn applied_to_an_empty_database(plan: &Plan) -> Undo {
+        let mut undo = Undo { entries: Vec::new() };
+        for row in &plan.rows {
+            let statements = match row.life {
+                Life::Insert => plan.subject.undo_of_a_creation(row),
+                Life::Delete => undo_of_removing(row, None),
+                Life::Update => continue,
+            };
+            undo.add_many(row.table.name, &row.key, &statements);
+        }
+        Undo::from_text(&undo.entries.iter().map(Undo::entry_text).collect::<String>())
+    }
+
+    /// A removal of a row the database does not hold is applied, and the panel
+    /// counts it so. The project's store keeps such removals: an equipment row
+    /// whose items were changed twice leaves a removal of the intermediate key,
+    /// and an event created and then removed leaves a removal of its id. Their
+    /// undo was `None`, so the revert file never named them and "Addons and
+    /// equipment" and "Behaviour" each showed rows "not applied yet" after
+    /// every Apply.
+    #[test]
+    fn a_removal_of_a_row_that_is_not_there_counts_as_applied() {
+        let mut edits = Edits::default();
+        let gone = addon::equipment_key(2_000_007, [1906, 0, 0]);
+        store(&mut edits, addon::EQUIPMENT, &gone, Life::Delete, Vec::new());
+        let set = Equipment::new(2_000_007, [1906, 15932, 0]);
+        store(&mut edits, addon::EQUIPMENT, &set.key(), Life::Insert, set.assignments());
+        let plan = plan_of(&super::super::addons::Addons, &edits);
+        assert!(plan.refused.is_empty(), "{:?}", plan.refused);
+        assert_eq!(plan.counts(), (1, 0, 1));
+
+        let removal = plan.rows.iter().find(|row| row.life == Life::Delete).expect("the removal");
+        assert_eq!(undo_of_removing(removal, None), vec![row::delete(addon::EQUIPMENT, &gone)]);
+
+        let undo = applied_to_an_empty_database(&plan);
+        let outstanding: Vec<String> =
+            plan.rows.iter().filter(|row| !undo.covers(row.table.name, &row.key)).map(Row::names).collect();
+        assert!(outstanding.is_empty(), "not applied after an Apply: {outstanding:?}");
+
+        let mut edits = Edits::default();
+        store(&mut edits, eventai::TABLE, &eventai::key(200_000_301), Life::Delete, Vec::new());
+        let plan = plan_of(&super::super::behaviour::Behaviour, &edits);
+        assert_eq!(plan.counts(), (0, 0, 1));
+        let undo = applied_to_an_empty_database(&plan);
+        assert!(undo.covers(eventai::TABLE, &eventai::key(200_000_301)));
+    }
+
+    /// A removal of a row the database holds puts it back: the `DELETE`, then
+    /// the row as it was read.
+    #[test]
+    fn a_removal_of_a_row_that_is_there_restores_it() {
+        let mut edits = Edits::default();
+        let key = eventai::key(6801);
+        store(&mut edits, eventai::TABLE, &key, Life::Delete, Vec::new());
+        let plan = plan_of(&super::super::behaviour::Behaviour, &edits);
+        let mut held = std::collections::HashMap::new();
+        held.insert("id".to_string(), Some("6801".to_string()));
+        held.insert("creature_id".to_string(), Some("68".to_string()));
+        let undo = undo_of_removing(&plan.rows[0], Some(&held));
+        assert_eq!(undo.len(), 2);
+        assert_eq!(undo[0], row::delete(eventai::TABLE, &key));
+        assert!(undo[1].starts_with("INSERT INTO `creature_ai_events`"), "{}", undo[1]);
+    }
 }

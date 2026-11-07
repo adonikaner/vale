@@ -284,6 +284,12 @@ impl SpawnView for GameObjectSubject {
         groups(ui, subject, &form, &[Group::Identity, Group::Appearance, Group::Stats]);
     }
 
+    fn holders<'s>(
+        own: &'s Self::Panel<'_>,
+    ) -> (&'s crate::subjects::pools::Pools, &'s crate::subjects::game_events::GameEvents) {
+        (&*own.pools, &*own.game_events)
+    }
+
     fn renumber_reaches() -> String {
         format!(
             "vmangos has no foreign keys, so Apply updates the references itself: the row, \

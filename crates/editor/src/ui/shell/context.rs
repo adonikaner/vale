@@ -22,7 +22,7 @@ use crate::tools::Tool;
 use vale_client::assets::GameAssets;
 
 /// How wide the menu is, in points.
-const WIDTH: f32 = 230.0;
+pub(crate) const WIDTH: f32 = 230.0;
 
 /// Draw the open menu, if there is one, and carry out what is pressed.
 pub(crate) fn draw(
@@ -64,7 +64,7 @@ pub(crate) fn draw(
 }
 
 /// One item. Answers whether it was pressed.
-fn item(ui: &mut egui::Ui, label: &str, enabled: bool, about: &str, why_not: &str) -> bool {
+pub(crate) fn item(ui: &mut egui::Ui, label: &str, enabled: bool, about: &str, why_not: &str) -> bool {
     let response = ui.add_enabled(
         enabled,
         egui::Button::new(label)
@@ -1310,22 +1310,23 @@ fn spawns_ground(
         ui,
         &place_label,
         chosen_label.is_some() && at.is_some(),
-        "Create a spawn of the chosen row at the clicked point, facing as the one on the pointer.",
+        "Create a spawn of the chosen row at the clicked point, facing as the one on the pointer. It joins the pool and game event chosen in Place, if any.",
         "Choose a row in Place, and click on open ground.",
     ) {
         if let Some(at) = at {
+            let (pools, events) = (&*editing.pools, &*editing.game_events);
             let made = match tool {
                 Tool::Creatures => editing.creatures.new_spawn.chosen.clone().map(|known| {
                     let facing = editing.creatures.ghost_facing.unwrap_or(0.0);
-                    editing.creatures.create(session, &known, at, facing, now)
+                    editing.creatures.place(session, &known, at, facing, pools, events, now)
                 }),
                 _ => editing.objects.new_spawn.chosen.clone().map(|known| {
                     let facing = editing.objects.ghost_facing.unwrap_or(0.0);
-                    editing.objects.create(session, &known, at, facing, now)
+                    editing.objects.place(session, &known, at, facing, pools, events, now)
                 }),
             };
-            if let Some(guid) = made {
-                session.status = format!("placed as guid {guid}");
+            if let Some((_, status)) = made {
+                session.status = status;
             }
         }
         chosen = true;

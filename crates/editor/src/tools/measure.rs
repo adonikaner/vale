@@ -18,7 +18,7 @@
 //! area         the chunk's AreaTable id, named in the panel
 //! slope        the ground's slope in degrees, against the 50-degree limit a
 //!              character can climb
-//! water        the liquid over the point: kind, surface height, depth, flags
+//! water        the liquid over the point: type, surface height, depth, flags
 //! flags        a hole in the ground, or the chunk's impassable bit
 //! ```
 //!
@@ -31,6 +31,16 @@
 //! height difference, the slope of the line, and the facing from the first
 //! point to the second in radians, which is the value a `creature` or
 //! `gameobject` row's `orientation` column takes.
+//!
+//! ## What is drawn in the viewport
+//!
+//! Each point is a sphere and a pole, and a point on a model has a line down
+//! to the ground under it. A line joins the two points, or runs from the first
+//! point to the pointer while only the first is picked. The distance is
+//! written at the middle of that line, and a point's height above the ground
+//! at the middle of its line down to the ground ([`Measuring::tags`]). The
+//! numbers are projected every frame, so they follow the camera and the
+//! pointer; see `crate::labels`.
 //!
 //! ## Gestures
 //!
@@ -82,7 +92,7 @@ pub(crate) struct Probe {
     pub(crate) area: Option<u32>,
     /// The ground's slope, in degrees from level.
     pub(crate) slope: Option<f32>,
-    /// The liquid over the point: kind, surface height and the cell's flag
+    /// The liquid over the point: type, surface height and the cell's flag
     /// nibble.
     pub(crate) water: Option<(Liquid, f32, u8)>,
     /// The ground under the point is cut out of the mesh.
@@ -263,9 +273,7 @@ fn draw(
         return;
     }
     let bevy = |p: Vec3| vale_client::render::axes::to_bevy(p.to_array());
-    let first_colour = Color::srgb(0.35, 0.9, 0.45);
-    let second_colour = Color::srgb(0.95, 0.65, 0.25);
-    for (probe, colour) in [(measuring.first, first_colour), (measuring.second, second_colour)] {
+    for (probe, colour) in [(measuring.first, FIRST_COLOUR), (measuring.second, SECOND_COLOUR)] {
         let Some(probe) = probe else { continue };
         // A sphere and a two-yard pole, so the point shows from above and
         // from the side.
@@ -278,15 +286,99 @@ fn draw(
         }
     }
     let Some(first) = measuring.first else { return };
-    let end = measuring.second.map(|p| p.at).or(cursor.surface);
-    if let Some(end) = end {
-        marks.line(bevy(first.at), bevy(end), Color::srgb(0.95, 0.85, 0.35), crate::marks::Look::Ghosted);
+    if let Some(end) = measuring.end(cursor.surface) {
+        marks.line(bevy(first.at), bevy(end), LINE_COLOUR, crate::marks::Look::Ghosted);
     }
 }
 
 /// The radius of a point's sphere, and the height of its pole, in yards.
 const MARK: f32 = 0.8;
 const POLE: f32 = 2.0;
+
+/// The colours of the first point, the second point and the line between
+/// them. A point's line down to the ground is in the point's colour.
+const FIRST_COLOUR: Color = Color::srgb(0.35, 0.9, 0.45);
+const SECOND_COLOUR: Color = Color::srgb(0.95, 0.65, 0.25);
+const LINE_COLOUR: Color = Color::srgb(0.95, 0.85, 0.35);
+
+/// One number the tool writes in the viewport: where, in world axes, what it
+/// says, and in the colour of the line it is about.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Tag {
+    pub(crate) at: Vec3,
+    pub(crate) text: String,
+    pub(crate) colour: Color,
+}
+
+impl Measuring {
+    /// Where the line from the first point ends: at the second point, or at
+    /// the surface under the pointer while only the first is picked.
+    pub(crate) fn end(&self, pointer: Option<Vec3>) -> Option<Vec3> {
+        self.first?;
+        self.second.map(|p| p.at).or(pointer)
+    }
+
+    /// The numbers written beside the lines [`draw`] draws: the distance at
+    /// the middle of the line between the points, and, for a point on a model
+    /// with ground under it, its height above the ground at the middle of its
+    /// line down to the ground. In yards with one decimal, as the status line
+    /// prints the span.
+    pub(crate) fn tags(&self, pointer: Option<Vec3>) -> Vec<Tag> {
+        let mut tags = Vec::new();
+        if let (Some(first), Some(end)) = (self.first, self.end(pointer)) {
+            tags.push(Tag {
+                at: crate::labels::midpoint(first.at, end),
+                text: format!("{:.1} yd", first.at.distance(end)),
+                colour: LINE_COLOUR,
+            });
+        }
+        for (probe, colour) in [(self.first, FIRST_COLOUR), (self.second, SECOND_COLOUR)] {
+            let Some(probe) = probe else { continue };
+            if let (On::Model, Some(ground)) = (probe.on, probe.ground) {
+                let below = Vec3::new(probe.at.x, probe.at.y, ground);
+                tags.push(Tag {
+                    at: crate::labels::midpoint(probe.at, below),
+                    text: format!("{:.1} yd above ground", probe.at.z - ground),
+                    colour,
+                });
+            }
+        }
+        tags
+    }
+}
+
+/// Project [`Measuring::tags`] into the viewport's labels, every frame the
+/// tool is chosen, so they follow the camera and the pointer. Painted by
+/// `crate::ui::labels`.
+fn label(
+    mut labels: ResMut<crate::labels::Labels>,
+    measuring: Res<Measuring>,
+    tool: Res<super::Tool>,
+    state: Res<crate::playtest::Playtest>,
+    cursor: Res<Cursor>,
+    camera: Query<(&Camera, &Transform), With<vale_client::world::camera::WorldCamera>>,
+) {
+    use crate::labels::{Label, Source, View, Weight};
+    if *tool != super::Tool::Measure || !state.editing() {
+        labels.clear(Source::Measure);
+        return;
+    }
+    let Some(view) = View::of(&camera) else {
+        labels.clear(Source::Measure);
+        return;
+    };
+    let placed = measuring.tags(cursor.surface).into_iter().filter_map(|tag| {
+        let (at, away) = view.project(tag.at)?;
+        Some(Label {
+            at,
+            text: tag.text,
+            colour: tag.colour,
+            weight: Weight::Normal,
+            away,
+        })
+    });
+    labels.replace(Source::Measure, placed);
+}
 
 /// `--measure`: keep the points the command line names, once every one of
 /// them is over an open tile with ground under it. Runs until it has.
@@ -330,7 +422,13 @@ pub(crate) struct MeasureToolPlugin;
 impl Plugin for MeasureToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Measuring>()
-            .add_systems(Update, (scripted, aim, draw).chain().after(crate::pick::aim));
+            .add_systems(Update, (scripted, aim, draw).chain().after(crate::pick::aim))
+            // After the camera has moved, so the labels are projected through
+            // this frame's view. See `crate::labels`.
+            .add_systems(
+                Update,
+                label.after(aim).after(vale_client::world::camera::place),
+            );
     }
 }
 
@@ -387,8 +485,37 @@ mod tests {
         assert!(facing(1.0, 0.0).abs() < 1e-5);
         assert!((facing(0.0, 1.0) - FRAC_PI_2).abs() < 1e-5);
         assert!((facing(-1.0, 0.0) - PI).abs() < 1e-5);
-        // South-east of the first point is a facing past π, never negative.
+        // Due east (-y) of the first point is a facing past π, never negative.
         assert!((facing(0.0, -1.0) - 3.0 * FRAC_PI_2).abs() < 1e-5);
+    }
+
+    /// The distance is written at the middle of the line, which follows the
+    /// pointer while one point is picked, and a point on a model has its
+    /// height written at the middle of its line down to the ground.
+    #[test]
+    fn the_numbers_sit_at_the_middle_of_their_lines() {
+        let mut measuring = Measuring::default();
+        assert!(measuring.tags(Some(Vec3::ONE)).is_empty(), "nothing is picked");
+
+        measuring.pick(point(0.0, 0.0, 0.0));
+        assert!(measuring.tags(None).is_empty(), "no second point and no pointer");
+        let tags = measuring.tags(Some(Vec3::new(6.0, 8.0, 0.0)));
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].at, Vec3::new(3.0, 4.0, 0.0));
+        assert_eq!(tags[0].text, "10.0 yd");
+
+        let mut top = point(10.0, 0.0, 30.0);
+        top.on = On::Model;
+        top.ground = Some(5.0);
+        measuring.pick(top);
+        // The pointer is ignored once both points are picked.
+        let tags = measuring.tags(Some(Vec3::splat(100.0)));
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].at, Vec3::new(5.0, 0.0, 15.0));
+        assert_eq!(tags[0].text, format!("{:.1} yd", Vec3::new(10.0, 0.0, 30.0).length()));
+        assert_eq!(tags[1].at, Vec3::new(10.0, 0.0, 17.5));
+        assert_eq!(tags[1].text, "25.0 yd above ground");
+        assert_eq!(tags[1].colour, SECOND_COLOUR);
     }
 
     #[test]

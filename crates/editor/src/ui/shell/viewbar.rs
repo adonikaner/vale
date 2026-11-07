@@ -253,9 +253,6 @@ pub(crate) struct Bar<'a> {
     /// Whether the editor is editing. The map view is the editor camera's, so
     /// it is unavailable during a playtest.
     pub(crate) editing: bool,
-    /// Whether the Areas tool is drawing its own wash, which takes the place
-    /// of the texture count while it is. The menu says so.
-    pub(crate) areas_shown: bool,
     /// `--guides-menu`: open the Guides menu, which a scripted run cannot
     /// press.
     pub(crate) open_guides: bool,
@@ -357,7 +354,7 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
         events_menu(ui, bar.phase, bar.events);
 
         rule(ui);
-        guides_menu(ui, bar.guides, bar.areas_shown, bar.open_guides);
+        guides_menu(ui, bar.guides, bar.open_guides);
 
         // The editor camera's top-down view. Its own group, because it changes
         // how the world is looked at rather than what is drawn.
@@ -500,12 +497,7 @@ fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, eve
 /// open while its switches are pressed and closes on a press outside it, so
 /// several guides are set in one visit. A guide that takes a number has it
 /// on its own row, in the sentence the switch begins.
-fn guides_menu(
-    ui: &mut Ui,
-    guides: &mut crate::tools::guides::Guides,
-    areas_shown: bool,
-    open: bool,
-) {
+fn guides_menu(ui: &mut Ui, guides: &mut crate::tools::guides::Guides, open: bool) {
     use crate::tools::guides::{CONTOUR_RANGE, SLOPE_RANGE};
     let on = guides.count();
     let label = match on {
@@ -584,21 +576,20 @@ fn guides_menu(
 
             ui.add_space(2.0);
             theme::heading(ui, "Textures");
-            ui.checkbox(&mut guides.layers, "Full chunks").on_hover_text(
-                "Shade red the chunks that have four texture layers. A chunk holds at \
-                 most four, so a brush stroke that adds a fifth texture is refused there. \
-                 The texture brush panel has the same checkbox.",
+            ui.checkbox(&mut guides.texture_count, "Texture count").on_hover_text(
+                "Write over each chunk within 200 yards of the camera the number of \
+                 texture layers it carries, 1 to 4. A chunk carries at most four, so a \
+                 brush stroke that adds a fifth texture is refused there; a count of four \
+                 is drawn larger and in red. The texture brush's toolbar has the same \
+                 switch.",
             );
-            if guides.layers && areas_shown {
-                theme::note(ui, "not drawn while the Areas tool shows areas");
-            }
         });
     if open {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
     }
     response.on_hover_text(
-        "ground guides: lines and shading drawn on the terrain. They change no data and \
-         are hidden during a playtest.",
+        "ground guides: lines, shading and numbers drawn on the terrain. They change no \
+         data and are hidden during a playtest.",
     );
 }
 
@@ -720,15 +711,15 @@ fn toggle(
 
 /// What differs from the default view, as the command-line flags that
 /// reproduce it: `--without <list>`, `--overlay <list>`, `--navmesh` and
-/// `--guides <list>`, each present only when it has something to say. `--without` lists the world
-/// switches that are off and on in `baseline`, so a switch the editor turns off
-/// itself is not echoed.
+/// `--guides <list>`, each present only when its list is not empty or its
+/// switch is on. `--without` lists the world switches that are off and on in
+/// `baseline`, so a switch the editor turns off itself is not echoed.
 ///
 /// The status line prints them, so a view set up by clicking can be taken
 /// again in a scripted `--shot` without looking up how each flag is spelled.
 ///
 /// The frame settings are not echoed: they are on function keys, and
-/// `--tune` spells them differently (`novsync`, `shadows`).
+/// `--tune` spells them differently (`nomsaa`, `novsync`, `shadows`).
 ///
 /// With the map view on, `--map-view` is echoed and the five switches it
 /// turns off are measured against a baseline that has them off, so they are

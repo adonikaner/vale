@@ -25,18 +25,18 @@
 //!
 //! ## The wash is one 16x16 image per tile
 //!
-//! An earlier version drew the boundaries, every edge where two chunks
-//! disagree, as draped lines. An outline says where an area ends and not what
-//! is inside it, and every line had to be draped over the ground by sampling
-//! it, which is a search per sample.
+//! The wash is an image and not a set of boundary lines along every edge where
+//! two chunks disagree. An outline shows where an area ends but not what is
+//! inside it, and each line has to be draped over the ground by sampling it,
+//! which is a search per sample.
 //!
 //! The ground is already addressed per chunk. `Adt::atlas_uv` maps a vertex to
 //! its own chunk's cell of a 16x16 grid over the alpha atlas, inset by half a
 //! texel so no sample can leave its cell. A 16x16 image sampled with that
 //! coordinate, nearest, is therefore this chunk's own texel and no other's.
 //! `render::terrain::TileTint` is that image and `TerrainParams::tint` is how
-//! much of it to show. Both are the client's and both are off in the client;
-//! together they cost a kilobyte per tile and no triangle.
+//! much of it to show. Both belong to the client's renderer and are unused
+//! there; together they cost one kilobyte per tile and add no triangles.
 //!
 //! Only the brush preview is drawn as lines. It is a handful of chunks and
 //! has to be told apart from the wash.
@@ -111,9 +111,9 @@ pub(crate) struct Areas {
     /// the picker's folder, which are fields of the same struct.
     pub(crate) table: Option<std::sync::Arc<vale_assets::tables::area::Areas>>,
     table_at: Option<u64>,
-    /// Whether the press that began this stroke belonged to the world, and
-    /// whether one is open — *a drag belongs to where it began*, the rule every
-    /// tool in this directory keeps arriving at.
+    /// Whether the press that began this stroke was over the world, and
+    /// whether a stroke is open. A drag is handled by where its press began,
+    /// as in the other tools in this directory.
     armed: bool,
     painting: bool,
 }
@@ -210,38 +210,36 @@ impl Plugin for AreaToolPlugin {
             (aim, stroke).chain().after(crate::pick::aim),
         );
         // After the stroke, so a chunk painted this frame is washed this
-        // frame rather than next. Without it the one thing the tool shows lags
-        // the one thing it does by a frame, which on a held stroke reads as the
-        // brush trailing the pointer.
+        // frame rather than next. Without the ordering the wash lags the
+        // stroke by a frame, and on a held stroke the brush appears to trail
+        // the pointer.
         app.add_systems(Update, (draw, wash).after(stroke));
     }
 }
 
 /// How much of the area colour is washed over the ground, 0..1.
 ///
-/// Not 1. The point is to see the *zones*, and a flat replacement throws away
-/// the shading and the shape of the land with it — a hillside and a valley in
-/// one area become one colour and the map stops being a place. Three quarters
-/// leaves the terrain's own light and a hint of its texture underneath, which is
-/// enough to navigate by while the colour is unmistakable.
+/// Less than 1. A full replacement removes the shading and the shape of the
+/// land: a hillside and a valley in one area become one flat colour. At three
+/// quarters the terrain's own light and some of its texture show through,
+/// which is enough to navigate by, and the area colour stays clear.
 const WASH: f32 = 0.75;
 
 /// Draw the ground as its area, while this tool is chosen.
 ///
-/// The tool is the picture — see the module comment. What this does is fill
-/// each open tile's `TileTint` from its chunks' area ids and raise
-/// `TerrainParams::tint` on that tile's ground materials; when the tool is not
-/// chosen it lowers them again, which is the whole of putting the world back.
+/// See the module comment. This fills each open tile's `TileTint` from its
+/// chunks' area ids and raises `TerrainParams::tint` on that tile's ground
+/// materials. When the tool is not chosen it lowers the tint again, which
+/// restores the normal ground.
 ///
-/// The image is rewritten only when the tile's areas have actually changed,
-/// which is checked by hashing its 256 ids — 256 four-byte reads per tile per
-/// frame against a 1 KB upload and a texture re-prepare. That also catches, for
-/// free, the three things that change a tile's areas without this tool doing
-/// anything: an undo, a redo, and a tile being read again.
+/// The image is rewritten only when the tile's areas have changed, which is
+/// checked by hashing its 256 ids: 256 four-byte reads per tile per frame,
+/// against a 1 KB upload and a texture re-prepare. The same check also catches
+/// the three things that change a tile's areas without this tool: an undo, a
+/// redo, and a tile being read again.
 fn wash(
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
-    guides: Res<crate::tools::guides::Guides>,
     session: Option<Res<EditSession>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
@@ -249,23 +247,11 @@ fn wash(
     ground: Query<(&ChildOf, &MeshMaterial3d<TerrainMaterial>), With<TerrainGround>>,
     mut shown: Local<HashMap<(u32, u32), u64>>,
 ) {
-    // The tint image holds one picture at a time. This tool's areas come
-    // first while it is chosen; under any other tool the image is the
-    // texture count, when that guide is on. See `crate::tools::guides`.
-    let picture = match (state.editing(), *tool == Tool::Areas, guides.layers) {
-        (false, _, _) | (true, false, false) => None,
-        (true, true, _) => Some(Picture::Areas),
-        (true, false, true) => Some(Picture::Layers),
-    };
-    let on = picture.is_some();
+    let on = state.editing() && *tool == Tool::Areas;
     // Every ground material, not only the open tiles'. Turning the tool off
     // has to put back every tile that was ever washed, including ones that have
     // since streamed out of the session's own 3x3.
-    let wanted = match picture {
-        Some(Picture::Areas) => WASH,
-        Some(Picture::Layers) => crate::tools::guides::LAYER_WASH,
-        None => 0.0,
-    };
+    let wanted = if on { WASH } else { 0.0 };
     for (_, handle) in &ground {
         if let Some(mut material) = materials.get_mut(&handle.0) {
             if material.params.tint != wanted {
@@ -283,16 +269,11 @@ fn wash(
         let Some(open) = session.tiles.get(&tile.coord) else {
             continue;
         };
-        let layers = picture == Some(Picture::Layers);
-        let grid = match layers {
-            true => layers_of(open),
-            false => grid_of(open),
-        };
-        // A cheap order-dependent hash of the 256 values: what is being asked
-        // is only "is this the same picture", and a collision costs one frame
-        // of a stale wash rather than anything wrong. Seeded by which picture
-        // it is, so a switch between the two repaints every tile.
-        let mut mark = 0xcbf2_9ce4_8422_2325u64 ^ u64::from(layers);
+        let grid = grid_of(open);
+        // A cheap order-dependent hash of the 256 ids. The question is only
+        // whether the picture is the same, and a collision leaves a stale
+        // wash for one frame.
+        let mut mark = 0xcbf2_9ce4_8422_2325u64;
         for id in grid {
             mark = (mark ^ u64::from(id)).wrapping_mul(0x1000_0000_01b3);
         }
@@ -308,20 +289,13 @@ fn wash(
             continue;
         };
         for (index, id) in grid.iter().enumerate() {
-            let texel = match layers {
-                true => crate::tools::guides::layer_colour(*id),
-                false => {
-                    let [r, g, b, _] = colour_of(*id).to_srgba().to_u8_array();
-                    // `0` is transparent, which is what leaves a chunk
-                    // belonging to nowhere looking like ground rather than
-                    // like a zone of its own. It is a real value and the
-                    // shipped tiles have it; painting it a colour would say
-                    // it was somewhere.
-                    let alpha = if *id == 0 { 0 } else { 255 };
-                    [r, g, b, alpha]
-                }
-            };
-            data[index * 4..index * 4 + 4].copy_from_slice(&texel);
+            let [r, g, b, _] = colour_of(*id).to_srgba().to_u8_array();
+            // Area `0` is transparent, so a chunk that belongs to no area
+            // looks like ground and not like a zone of its own. The shipped
+            // tiles have chunks with `0`, and a colour on them would say they
+            // belong somewhere.
+            let alpha = if *id == 0 { 0 } else { 255 };
+            data[index * 4..index * 4 + 4].copy_from_slice(&[r, g, b, alpha]);
         }
         shown.insert(tile.coord, mark);
     }
@@ -375,8 +349,8 @@ fn aim(
     };
     areas.at = Some((coord, chunk));
     areas.under = area::area(tile, chunk);
-    // From the brush's own rule and not a second one, which is what makes
-    // the preview a preview rather than a guess. See `AreaBrush::covers`.
+    // Computed by the brush's own rule and not a second one, so the preview
+    // is exactly what a press paints. See `AreaBrush::covers`.
     areas.covered = areas.brush.covers(tile, [point.x, point.y]);
 
     if keys.just_pressed(EYEDROP) && !wants.wants_keyboard_input() {
@@ -422,9 +396,9 @@ fn stroke(
         return;
     }
 
-    // Every tile the circle reaches, on the height brush's own argument: a
-    // stroke that stopped at a tile border would leave the zone ending in a
-    // straight line exactly there with nothing about either file wrong.
+    // Every tile the circle reaches, as with the height brush: a stroke that
+    // stopped at a tile border would end the zone in a straight line along
+    // that border, and neither file would show anything wrong.
     let Some(point) = crate::pick::solid_under(session, &windows, &camera) else {
         return;
     };
@@ -478,26 +452,25 @@ fn tiles_under(radius: f32, at: Vec3) -> Vec<(u32, u32)> {
 /// How many segments each chunk edge of the overlay is drawn in.
 ///
 /// A chunk is 33 yards and a boundary runs across whatever is under it, so the
-/// line has to follow the ground rather than cut through the hill it is on —
-/// the lesson the hole outline paid for. Four is a sample every eight yards.
+/// line has to follow the ground rather than cut through the hill it is on.
+/// The hole outline is draped for the same reason. Four is a sample every
+/// eight yards.
 const DRAPE: usize = 4;
 
 /// How far above the ground the preview is lifted, in yards. Its hidden part
-/// is drawn faint anyway (see [`crate::marks`]); this is so it reads as lying
-/// *on* the ground rather than inside it.
+/// is drawn faint anyway (see [`crate::marks`]); the lift makes it read as
+/// lying on the ground rather than inside it.
 const LIFT: f32 = 0.1;
 
 /// Outline what a press would paint.
 ///
-/// All that is left of the overlay. The ground itself is drawn as its area
-/// by [`wash`] — see the module comment — so what lines are still for is the one
-/// thing a wash cannot say: *which chunks the next press takes*. They are drawn
-/// in the area's own colour against a ground already washed in it, so the
-/// outline is what reads rather than the fill.
+/// [`wash`] draws the ground as its area (see the module comment). This
+/// outline shows what the wash cannot: which chunks the next press paints. It
+/// is drawn in white rather than the area's own colour, because the ground
+/// under it is already washed in that colour.
 ///
-/// It is a handful of chunks, which is why this can afford to drape at all: each
-/// chunk's ground is built once and sampled directly, so there is no search per
-/// sample.
+/// It covers a handful of chunks, so it can be draped: each chunk's ground is
+/// built once and sampled directly, with no search per sample.
 fn draw(
     mut marks: ResMut<crate::marks::Marks>,
     areas: Res<Areas>,
@@ -515,8 +488,7 @@ fn draw(
         return;
     };
     // A light edge and not the area's own colour. The ground under it is
-    // already washed in that colour, so drawing the outline in it would be
-    // drawing the preview in the one shade guaranteed to be invisible.
+    // already washed in that colour, so an outline in it would not show.
     let colour = Color::srgb(1.0, 1.0, 1.0);
     for &chunk in &areas.covered {
         let Some(square) = tile.chunk(chunk) else {
@@ -534,27 +506,6 @@ fn draw(
 ///
 /// `index_y * 16 + index_x`, which is what `vale_edit::ops`' own tests
 /// already rest on. Built once per tile per frame: 256 reads of four bytes.
-/// Which of its two pictures the tint image holds. See [`wash`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Picture {
-    /// A colour per area id.
-    Areas,
-    /// How many textures each chunk carries.
-    Layers,
-}
-
-/// How many textures each of a tile's 256 chunks carries, out of its header.
-fn layers_of(tile: &vale_edit::adt::AdtFile) -> [u32; 256] {
-    let mut grid = [0u32; 256];
-    for (index, slot) in grid.iter_mut().enumerate() {
-        *slot = tile
-            .chunk(index)
-            .map(|chunk| chunk.head().layer_count())
-            .unwrap_or(0);
-    }
-    grid
-}
-
 fn grid_of(tile: &vale_edit::adt::AdtFile) -> [u32; 256] {
     let mut grid = [0u32; 256];
     for (index, slot) in grid.iter_mut().enumerate() {
@@ -568,11 +519,10 @@ fn grid_of(tile: &vale_edit::adt::AdtFile) -> [u32; 256] {
 
 /// A colour for an area id.
 ///
-/// A hash and not a table. There are 1,081 rows in `AreaTable` and the point
-/// is only that two neighbouring zones look different; a palette anybody chose
-/// would be a hundred colours nobody agreed on and would still collide. The
-/// saturation and value are fixed so every zone reads at the same weight
-/// against the ground.
+/// A hash and not a table. `AreaTable` has 1,081 rows and the colours only
+/// need to tell neighbouring zones apart; a hand-picked palette would need
+/// hundreds of entries and would still repeat colours. The saturation and
+/// value are fixed so every zone shows at the same weight against the ground.
 fn colour_of(area: u32) -> Color {
     // A cheap integer hash, so neighbouring ids — which zones very often have —
     // land far apart on the wheel rather than next to each other.
@@ -589,13 +539,13 @@ fn colour_of(area: u32) -> Color {
 /// of them. The two negative ones exist only for drawing a single chunk's whole
 /// outline, which the brush preview does.
 ///
-/// It is an enum and not an axis index, because the first draft used an
-/// index and got the pairing wrong: the probe looked at the neighbour along y
-/// and the line was drawn along the edge shared with the one along x. Every
-/// boundary was therefore drawn one edge away from where it is, which on a
-/// staircase of 33-yard squares looks exactly like a boundary and is not one.
-/// Naming them makes [`Self::neighbour`], [`Self::next`] and [`Self::edge`]
-/// answer about the same thing by construction.
+/// It is an enum and not an axis index. An axis index once paired them
+/// wrongly: the probe looked at the neighbour along y and the line was drawn
+/// along the edge shared with the neighbour along x, so every boundary was
+/// drawn one edge away from where it is. On a staircase of 33-yard squares
+/// that still looks like a boundary. With named variants,
+/// [`Self::neighbour`], [`Self::next`] and [`Self::edge`] refer to the same
+/// side by construction.
 #[derive(Clone, Copy)]
 enum Along {
     X,
@@ -607,12 +557,11 @@ enum Along {
 impl Along {
     /// The centre of the neighbouring chunk one step this way, in the world.
     ///
-    /// Only the check calls it, and that is what it is for: the midpoint of
-    /// a shared edge is halfway between the two chunk centres, which is true of
-    /// a shared edge and of nothing else — so this is how [`Self::edge`] is
-    /// held to naming the side it says it does. Stating the neighbour a second
-    /// way is the whole value of the test; deriving it from `edge` would be
-    /// checking `edge` against itself.
+    /// Only the test calls it. The midpoint of a shared edge is halfway
+    /// between the two chunk centres, which is true of a shared edge and of
+    /// nothing else, so the test uses this to check that [`Self::edge`]
+    /// returns the side it names. The neighbour is stated here independently
+    /// of `edge`; deriving it from `edge` would check `edge` against itself.
     #[cfg(test)]
     fn neighbour(self, origin: [f32; 3]) -> [f32; 2] {
         let size = vale_assets::world::adt::CHUNK_SIZE;
@@ -688,9 +637,9 @@ const INSET: f32 = 0.05;
 /// tool of its own, because a rail tile for one checkbox is hard to find.
 ///
 /// It is the server's flag and not the client's. vmangos reads `MCNK`'s
-/// `0x02` when it builds `mmaps`, and nothing in this client reads it at all —
-/// so marking a hill changes where a *character* may go once the server's maps
-/// are rebuilt from the edited files, and changes nothing on screen ever. See
+/// `0x02` when it builds `mmaps`, and nothing in this client reads it. Marking
+/// a hill changes where a character may go once the server's maps are rebuilt
+/// from the edited files, and never changes anything on screen. See
 /// `vale_edit::adt::impass`, which carries the measurement that no shipped
 /// 1.12 tile sets it.
 pub(crate) fn set_impassable(
@@ -744,12 +693,12 @@ mod tests {
 
     /// The edge drawn is the edge shared with the neighbour looked at.
     ///
-    /// The one thing here that is silently wrong when it is wrong. The first
-    /// draft indexed the two by an axis number and crossed them: the area was
-    /// compared against the chunk one step along y and the line was drawn on the
-    /// side shared with the one along x, so every boundary in the world was
-    /// drawn one square away from where it is. On a staircase of 33-yard
-    /// squares that looks exactly like a boundary.
+    /// A mistake here shows no visible failure. When the two were indexed by
+    /// an axis number they were crossed: the area was compared against the
+    /// chunk one step along y and the line was drawn on the side shared with
+    /// the one along x, so every boundary in the world was drawn one square
+    /// away from where it is. On a staircase of 33-yard squares that still
+    /// looks like a boundary.
     ///
     /// The check is the geometry rather than a second reading of the table: the
     /// midpoint of the shared edge is halfway between the two chunk centres,

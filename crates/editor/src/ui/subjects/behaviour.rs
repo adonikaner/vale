@@ -785,9 +785,9 @@ fn script_buttons(
 
 /// [`script_buttons`] for a form outside this module, which holds the
 /// session and the behaviour tool but not this module's subject: the gossip
-/// window's script columns.
+/// window's script columns, and a waypoint point's `script_id`.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn script_controls(
+pub(crate) fn script_controls(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     behaviour: &mut Behaviour,
@@ -1869,6 +1869,7 @@ fn script_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, table: &'static 
     let into = match answer {
         ScriptAnswer::Column(target) => format!("{} {} {}", target.table, target.key.text(), target.column),
         ScriptAnswer::Cell { table, id, row, column } => format!("{table} {id}, step {}, {column}", row + 1),
+        ScriptAnswer::Point(point) => format!("{} {}, point {}, script_id", point.which.table(), point.owner, point.index + 1),
     };
     ui.label(egui::RichText::new(format!("Choose a {table} script")).strong().size(14.0));
     ui.label(egui::RichText::new(format!("for {into}")).small().color(theme::INK_DIM));
@@ -1939,11 +1940,13 @@ fn script_chooser(ui: &mut egui::Ui, subject: &mut Subject<'_>, table: &'static 
 }
 
 /// Write a chosen id into the column or script cell the chooser was opened
-/// for.
+/// for. A waypoint point's id is left for the waypoint window, which holds
+/// the path and writes it on its next frame.
 fn answer_with(subject: &mut Subject<'_>, answer: &ScriptAnswer, id: u32) {
     match answer {
         ScriptAnswer::Column(target) => target.write(subject.session, id.to_string(), subject.now),
         ScriptAnswer::Cell { table, id: script, row, column } => write_cell(subject, table, *script, *row, column, id),
+        ScriptAnswer::Point(point) => subject.behaviour.chosen_for_point = Some((*point, id)),
     }
 }
 

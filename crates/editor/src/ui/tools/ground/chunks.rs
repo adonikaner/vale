@@ -1,5 +1,5 @@
 //! The chunks tool's panel and its pages: copy and paste, stitching, areas,
-//! holes and textures over a selection of chunks. The state is
+//! holes, textures, foliage and buried water over a selection of chunks. The state is
 //! [`crate::tools::ground::chunks`].
 
 use bevy_egui::egui;
@@ -20,17 +20,19 @@ use crate::ui::widgets::thumbnails::Thumbnails;
 const CENSUS_ROWS: usize = 6;
 
 /// The chunk panel's pages, in the order the control lists them, in two rows
-/// of three. Six in one row at the inspector's width cut "Foliage" short.
-const PAGES: [[(&str, crate::tools::ground::chunks::Page); 3]; 2] = [
-    [
+/// of four and three. Seven in one row at the inspector's width cut "Foliage"
+/// short.
+const PAGES: [&[(&str, crate::tools::ground::chunks::Page)]; 2] = [
+    &[
         ("Paste", crate::tools::ground::chunks::Page::Paste),
         ("Stitch", crate::tools::ground::chunks::Page::Stitch),
         ("Area", crate::tools::ground::chunks::Page::Area),
-    ],
-    [
         ("Holes", crate::tools::ground::chunks::Page::Holes),
+    ],
+    &[
         ("Paint", crate::tools::ground::chunks::Page::Textures),
         ("Foliage", crate::tools::ground::chunks::Page::Foliage),
+        ("Water", crate::tools::ground::chunks::Page::Water),
     ],
 ];
 
@@ -48,7 +50,7 @@ fn counted(n: usize, noun: &str) -> String {
 /// The selection's count and the buttons that grow or drop it are above the
 /// pages, since every page acts on the selection. The pages are the
 /// operations grouped by what they write: a paste, a stitch, the area id with
-/// the impassable flag, the holes, the textures. One page is open at a time,
+/// the impassable flag, the holes, the textures, the foliage, the water. One page is open at a time,
 /// so the panel is about a screen tall whichever is open.
 ///
 /// The area and the texture an operation writes are the area brush's and the
@@ -148,6 +150,7 @@ pub(in crate::ui::tools) fn chunks(
         tool::Page::Holes => chunks_holes(ui, chunks, session, &census),
         tool::Page::Textures => chunks_textures(ui, chunks, textures, thumbnails, session, &census),
         tool::Page::Foliage => chunks_foliage(ui, &chunks.selected, thumbnails, session, assets, foliage, portraits, &census),
+        tool::Page::Water => chunks_water(ui, chunks, session, &census),
     }
 
     ui.add_space(10.0);
@@ -539,6 +542,47 @@ fn chunks_holes(
     theme::note(
         ui,
         "To cut or fill one square at a time, use the Holes tool.",
+    );
+}
+
+/// The Water page: the liquid cells the ground covers entirely, and the
+/// button that removes them.
+fn chunks_water(
+    ui: &mut egui::Ui,
+    chunks: &mut crate::tools::ground::chunks::Chunks,
+    session: &mut EditSession,
+    census: &crate::tools::ground::chunks::Census,
+) {
+    use crate::tools::ground::chunks as tool;
+
+    theme::note(
+        ui,
+        "A liquid cell is buried when the ground is above its surface at all four          corners and at the centre, so no part of it can be seen. A cell at a shore          that the ground covers only in part is kept, and so is a cell under a hole.",
+    );
+    ui.add_space(4.0);
+    theme::row(ui, "liquid cells", |ui| {
+        ui.label(
+            egui::RichText::new(format!("{} wet, {} buried", census.wet, census.buried)).color(
+                match census.buried > 0 {
+                    true => theme::WARN,
+                    false => theme::INK,
+                },
+            ),
+        )
+        .on_hover_text(
+            "Cells of MCLQ's 8x8 grid in the selected chunks, counted once for each              liquid on the cell.",
+        );
+    });
+    ui.add_space(6.0);
+    ui.add_enabled_ui(census.buried > 0, |ui| {
+        if theme::primary(ui, &format!("Remove {}", counted(census.buried, "buried cell"))).clicked() {
+            let (dried, changed) = tool::drain_buried(session, &chunks.selected);
+            session.status = format!("removed {} from {}", counted(dried, "buried liquid cell"), counted(changed, "chunk"));
+        }
+    });
+    theme::note(
+        ui,
+        "One undo entry. A chunk left with no wet cell loses its liquid.",
     );
 }
 

@@ -164,6 +164,9 @@ pub(crate) fn create(
         .write(&path, &tile.write())
         .map_err(|e| e.to_string())?;
     save_wdt(session, &wdt)?;
+    // A tile unclaimed earlier in the session left an empty overlay entry,
+    // which the overlay answers before the file just written.
+    session.clear_tombstone(at);
     // Tell the streamer, or the ground stays invisible: it asked for this
     // tile once, got nothing, and does not ask again. See [`restream`].
     session.publish(at);
@@ -175,19 +178,27 @@ pub(crate) fn create(
     ))
 }
 
-/// Unclaim a tile.
+/// Unclaim a tile. Answers `true` when the tile was one the project created,
+/// and was deleted.
 ///
-/// The `MAIN` bit is cleared and the ADT is left in the project. Clearing the
-/// claim can be reversed at once and deleting the file cannot, and a tile that
-/// nothing asks for costs only a file on disk. The project folder holds loose
-/// files, so the ADT can be deleted by hand with `del`.
+/// A tile of the archives has its `MAIN` bit cleared, and its ADT, if the
+/// project has one, is left in the project. A tile the archives do not have
+/// is one the project created ([`create`]), and is deleted with [`delete`]:
+/// its ADT file, its minimap picture and its claim. Left in the project, its
+/// file kept the tile listed in Project Files and drawn as the project's in
+/// the map window, and Create writes flat ground over it in any case.
 pub(crate) fn remove(
     session: &mut EditSession,
     assets: &GameAssets,
     at: (u32, u32),
-) -> Result<String, String> {
+) -> Result<bool, String> {
     if !session.wdt_claims(at) {
         return Err(format!("tile {}, {} does not exist", at.0, at.1));
+    }
+    let key = session.key(at);
+    if !in_archives(assets, &key.vpath()) {
+        delete(session, assets, &key)?;
+        return Ok(true);
     }
     let mut wdt = load_wdt(session, assets)?;
     wdt.set_tile(at.0, at.1, false);
@@ -195,10 +206,82 @@ pub(crate) fn remove(
     // Take the ground off the screen, which clearing the WDT bit alone does
     // not do; see [`restream`].
     session.tombstone(at);
-    Ok(format!(
-        "removed tile {}, {} from the WDT; its ADT file stays in the project",
-        at.0, at.1
-    ))
+    Ok(false)
+}
+
+/// Whether the archives have the file at `vpath`, read past the project.
+fn in_archives(assets: &GameAssets, vpath: &str) -> bool {
+    crate::import::files::shipped(assets, vpath).is_some()
+}
+
+/// Delete a tile's file from the project, with every record that keeps the
+/// tile in the project. Answers `true` when the tile was one the project
+/// created.
+///
+/// A tile of the archives is read from the archives again, and the WDT's
+/// claim on it is left as it is. A tile the archives do not have is one the
+/// project created: the project's copy of its map's WDT stops claiming it,
+/// and the minimap picture drawn of it is deleted too, so nothing in the
+/// project names the tile afterwards. A WDT that this leaves equal to the
+/// archives' own is removed from the project. The entry `md5translate.trs`
+/// has for the picture is left; it names a file nothing reads.
+///
+/// The tile's locked vertices are deleted. On the open map the session lets
+/// go of the tile ([`EditSession::forget_tile`]): its unsaved edits and its
+/// undo entries are dropped, and a tile the map no longer claims is taken off
+/// the screen.
+pub(crate) fn delete(session: &mut EditSession, assets: &GameAssets, key: &vale_edit::TileKey) -> Result<bool, String> {
+    let vpath = key.vpath();
+    let coord = (key.x, key.y);
+    let created = !in_archives(assets, &vpath);
+    let open = key.map.eq_ignore_ascii_case(&session.map);
+    let picture = match created {
+        true => minimap_of(session, assets, key),
+        false => None,
+    };
+    if session.project.has(&vpath) && !session.remove_file(&vpath) {
+        return Err(session.status.clone());
+    }
+    let locks = crate::session::locks::locks_vpath_of(&key.map, coord);
+    session.project.revert(&locks).map_err(|e| format!("{locks}: {e}"))?;
+    if open {
+        session.forget_tile(coord);
+    }
+    if created {
+        // A map with no WDT anywhere claims nothing, and there is nothing to
+        // clear.
+        if let Ok(mut wdt) = load_wdt_of(session, assets, &key.map) {
+            if wdt.has_tile(key.x, key.y) {
+                wdt.set_tile(key.x, key.y, false);
+                save_wdt_of(session, &key.map, &wdt)?;
+            }
+        }
+        if open {
+            session.set_claimed(coord, false);
+        }
+        if let Some(picture) = picture {
+            session.remove_file(&picture);
+        }
+    }
+    if open && !session.wdt_claims(coord) {
+        session.tombstone(coord);
+    }
+    session.files_revision += 1;
+    Ok(created)
+}
+
+/// The project's own minimap picture of a tile the archives have no picture
+/// of, by the minimap index the project or the archives carry.
+fn minimap_of(session: &EditSession, assets: &GameAssets, key: &vale_edit::TileKey) -> Option<String> {
+    use vale_assets::tables::minimap::{MinimapTiles, MD5_TRANSLATE};
+    let index = session.project.read(MD5_TRANSLATE).or_else(|| {
+        assets
+            .with_archive(|chain| Ok(chain.read(MD5_TRANSLATE).ok()))
+            .ok()
+            .flatten()
+    })?;
+    let picture = MinimapTiles::parse(&index).texture(&key.map, key.x, key.y)?;
+    (session.project.has(&picture) && !in_archives(assets, &picture)).then_some(picture)
 }
 
 /// Start a rebake of one tile's `MCSH`, on the task pool.
@@ -747,6 +830,20 @@ fn save_wdt(session: &EditSession, wdt: &wdt::WdtFile) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Write any map's WDT to the project, or remove the project's copy when its
+/// bytes are the archives' own, as [`EditSession::save_bytes`] does for any
+/// other file.
+fn save_wdt_of(session: &mut EditSession, map: &str, wdt: &wdt::WdtFile) -> Result<(), String> {
+    let path = wdt::wdt_path(map);
+    let bytes = wdt.write();
+    let done = match session.changes_nothing(&path, &bytes) {
+        true => session.project.revert(&path).map(|_| ()),
+        false => session.project.write(&path, &bytes).map(|_| ()),
+    };
+    session.files_revision += 1;
+    done.map_err(|e| format!("{path}: {e}"))
+}
+
 /// Read a picture for import and hold it for the map window's dialog. A
 /// height map with no range of its own starts at the selected tiles' lowest
 /// and highest ground.
@@ -1055,19 +1152,31 @@ pub(crate) fn run_asked(
             }
         }
         Asked::Delete => {
-            let mut gone = 0usize;
+            let (mut unclaimed, mut deleted) = (0usize, 0usize);
+            let mut failed = None;
             let present: Vec<(u32, u32)> = chosen
                 .iter()
                 .copied()
                 .filter(|&at| session.wdt_claims(at))
                 .collect();
             for at in present {
-                if remove(&mut session, &assets, at).is_ok() {
-                    session.set_claimed(at, false);
-                    gone += 1;
+                match remove(&mut session, &assets, at) {
+                    Ok(true) => deleted += 1,
+                    Ok(false) => {
+                        session.set_claimed(at, false);
+                        unclaimed += 1;
+                    }
+                    Err(why) => failed = Some(why),
                 }
             }
-            format!("removed {gone} tiles from the WDT; their ADT files stay in the project")
+            let mut said = format!(
+                "removed {unclaimed} of the archives' tiles from the WDT, their ADT files stay in the \
+                 project; deleted {deleted} tiles the project created"
+            );
+            if let Some(why) = failed {
+                said.push_str(&format!("; failed: {why}"));
+            }
+            said
         }
         Asked::Paste => {
             // One copied tile fills the selection; several move as a block.
@@ -1316,6 +1425,9 @@ fn paste_one(
     // Set the claim, which is what makes a client ask for the tile.
     wdt.set_tile(to.0, to.1, true);
     session.set_claimed(to, true);
+    // A tile unclaimed earlier in the session left an empty overlay entry,
+    // which the overlay answers before the file just written.
+    session.clear_tombstone(to);
     session.restream.insert(to);
     Ok(format!("{}, {} -> {}, {}", from.0, from.1, to.0, to.1))
 }

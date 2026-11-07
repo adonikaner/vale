@@ -340,7 +340,7 @@ fn pool_row(ui: &mut egui::Ui, view: &mut View<'_>, pools: &mut Pools, shown: &S
     }
     ui.horizontal(|ui| {
         state_dot(ui, shown.life, &faults);
-        ui.label(egui::RichText::new(format!("Patches {} to {}", shown.row.patch_min, shown.row.patch_max)).small());
+        ui.label(egui::RichText::new(format!("Patches {} to {}", shown.row.patch_min, shown.row.patch_max)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             match remove_keep(ui, shown.life, "Removes this row of the pool. Its members are left naming it.") {
                 Some(RowAct::Keep) => keep_row(view, pool::TEMPLATE, &key),
@@ -479,15 +479,16 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
     listing::shown_count(ui, shown.len());
     let mut clicked = None;
     let mut toggled = None;
-    // One line of small text, not the two-line rows of the template lists:
-    // the list draws only as many rows as fit at this height.
-    let height = ui.spacing().interact_size.y;
+    let patch = work.patch;
+    let height = listing::ROW_HEIGHT;
     theme::list_area(ui, None, height).show_rows(ui, height, shown.len(), |ui, range| {
         for at in range {
             let (index, depth) = shown[at];
             let line = &lines[index];
             ui.horizontal(|ui| {
-                ui.set_min_height(height);
+                // The height of the row the list draws, set before the fold
+                // button so the button is centred on the row.
+                ui.set_min_height(theme::LIST_ROW - 2.0);
                 ui.add_space(depth as f32 * 14.0);
                 match line.children.is_empty() || !search.is_empty() {
                     true => {
@@ -506,16 +507,22 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
                         }
                     }
                 }
-                let colour = match (line.created, line.read) {
+                let tint = match (line.created, line.read) {
                     (true, _) => theme::WARN,
                     (false, true) => theme::INK,
                     (false, false) => theme::INK_FAINT,
                 };
-                let text = format!("{} \u{b7} {} \u{b7} {}", line.entry, line.description, members_word(line));
-                let response = ui.add(
-                    egui::Button::selectable(open == Some(line.entry), egui::RichText::new(text).small().color(colour))
-                        .truncate(),
-                );
+                let title = match line.description.is_empty() {
+                    true => "(no description)",
+                    false => line.description.as_str(),
+                };
+                let sub = line_words(line, patch);
+                let response = theme::list_row(
+                    ui,
+                    theme::ListRow { title, sub: &sub, trailing: &line.entry.to_string(), tint, picture: false },
+                    open == Some(line.entry),
+                )
+                .response;
                 if response.clicked() {
                     clicked = Some(line.entry);
                 }
@@ -538,6 +545,17 @@ fn members_word(line: &PoolLine) -> String {
         (1, 0) => "1 member".to_string(),
         (n, 0) => format!("{n} members"),
         (n, children) => format!("{n} members, {children} pools"),
+    }
+}
+
+/// The line under a pool's name in the list: its members, and what the
+/// colour of the name means when it is not the plain ink.
+fn line_words(line: &PoolLine, patch: u32) -> String {
+    let words = members_word(line);
+    match (line.created, line.read) {
+        (true, _) => format!("{words} \u{b7} new"),
+        (false, true) => words,
+        (false, false) => format!("{words} \u{b7} not read at patch {patch}"),
     }
 }
 
@@ -586,7 +604,7 @@ fn form(ui: &mut egui::Ui, work: &mut Work<'_>) {
     };
     let title = title(work.pools, entry, work.patch, &work.view.session.rows.edits);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).strong().size(15.0).color(theme::INK));
+        ui.label(egui::RichText::new(title).strong().size(17.0).color(theme::INK));
         if ui
             .button("Show in World")
             .on_hover_text(

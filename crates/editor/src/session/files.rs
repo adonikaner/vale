@@ -193,7 +193,7 @@ impl EditSession {
     /// with the same rows, any other file with the same bytes. False when
     /// the archives have no such file or there are no archives to ask. See
     /// [`changes_nothing`].
-    pub(super) fn changes_nothing(&self, vpath: &str, bytes: &[u8]) -> bool {
+    pub(crate) fn changes_nothing(&self, vpath: &str, bytes: &[u8]) -> bool {
         self.shipped
             .as_ref()
             .and_then(|shipped| shipped.original(&self.project, vpath))

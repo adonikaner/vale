@@ -27,6 +27,8 @@
 //!              each polygon
 //! marks.rs     what the tools draw in the world: handles, domes, dashed
 //!              rings, volumes, as meshes the ground can hide
+//! labels.rs    the text the tools write over the world at a projected
+//!              point: the measuring tool's numbers, the texture counts
 //! tablet.rs    drawing tablet input: pen taps and pressure from the pen's
 //!              pointer messages, and pointer motion read from the cursor's
 //!              position while a pen is in range
@@ -94,6 +96,7 @@ pub(crate) mod context;
 pub(crate) mod import;
 pub(crate) mod instruments;
 pub(crate) mod jobs;
+pub(crate) mod labels;
 pub(crate) mod map;
 pub(crate) mod marks;
 pub(crate) mod navmesh;
@@ -260,7 +263,7 @@ impl Plugin for EditorPlugins {
             ui::PanelPlugin,
         ));
         // Outside the tuple, which Bevy implements for at most fifteen plugins.
-        app.add_plugins((tablet::TabletPlugin, popout::PopoutPlugin));
+        app.add_plugins((tablet::TabletPlugin, popout::PopoutPlugin, labels::LabelsPlugin));
         app.init_resource::<prefs::favourites::Favourites>()
             .init_resource::<prefs::bookmarks::Bookmarks>()
             .init_resource::<prefs::brushes::Brushes>();

@@ -9,7 +9,11 @@
 //! buttons on a selected creature open two windows
 //! ([`crate::ui::subjects::behaviour`]) that follow the selection as the loot window
 //! does, and a script is opened from an event's action or a slot's script
-//! into a third.
+//! into a third. The script window also opens from a trigger's script id,
+//! the gossip window's script columns and a waypoint point's `script_id`.
+//! The waypoint window's script ids are read here through
+//! [`Behaviour::other_scripts`], so that window can say which ones
+//! `creature_movement_scripts` does not hold.
 //!
 //! ## What is read
 //!
@@ -194,6 +198,19 @@ pub(crate) enum ScriptAnswer {
         row: usize,
         column: &'static str,
     },
+    /// One point's `script_id` in a waypoint path. A path is written whole
+    /// and the waypoint window holds it, so the chooser leaves the chosen id
+    /// in [`Behaviour::chosen_for_point`] and that window writes it.
+    Point(PathPoint),
+}
+
+/// One point of a waypoint path: the path's table and key, and the point's
+/// index in it, 0-based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PathPoint {
+    pub(crate) which: vale_mangos::path::Which,
+    pub(crate) owner: u64,
+    pub(crate) index: usize,
 }
 
 /// The chooser that is open, at most one.
@@ -302,6 +319,16 @@ pub(crate) struct Behaviour {
     /// Whether another window makes new texts and gossip scripts (the gossip
     /// window), so the two tables' highest ids are read to number them.
     pub(crate) numbering_texts: bool,
+    /// The scripts another window names, which this tool reads with its own:
+    /// the `creature_movement_scripts` ids of the waypoint window's points.
+    /// Written by that window's host each frame.
+    pub(crate) other_scripts: Vec<(&'static str, u32)>,
+    /// The script tables another window makes new scripts in, so their
+    /// highest ids are read to number them. Written with `other_scripts`.
+    pub(crate) numbering_scripts: Vec<&'static str>,
+    /// A script chosen in the chooser for a waypoint point, with that point,
+    /// until the waypoint window writes it into the path.
+    pub(crate) chosen_for_point: Option<(PathPoint, u32)>,
 }
 
 impl Behaviour {
@@ -720,6 +747,7 @@ impl Behaviour {
                 wanted.extend(shown.list.slots.iter().map(|slot| (scripts::CREATURE_SPELLS, slot.script)));
             }
         }
+        wanted.extend(self.other_scripts.iter().copied());
         let table = wanted
             .iter()
             .find(|(table, id)| *id != 0 && !self.script_read(table, *id))
@@ -769,6 +797,7 @@ impl Behaviour {
         if self.numbering_texts {
             wanted.extend([broadcast::TABLE, scripts::GOSSIP]);
         }
+        wanted.extend(self.numbering_scripts.iter().copied());
         wanted.into_iter().find(|table| !self.max_ids.contains_key(table))
     }
 }
@@ -1290,6 +1319,31 @@ mod tests {
         claimed.set(&Script::empty(scripts::CREATURE_AI, 5_000));
         assert_eq!(behaviour.new_script_id(scripts::CREATURE_AI, None, &claimed, &[]), Some(5_001));
         assert_eq!(behaviour.new_script_id(scripts::GENERIC, None, &claimed, &[]), None);
+    }
+
+    /// The scripts and tables another window names are read with this
+    /// tool's own: each script id once, and each table's highest id once.
+    #[test]
+    fn another_windows_scripts_are_read_once() {
+        let install = std::env::temp_dir().join(format!("vale-behaviour-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let project = vale_edit::project::Project::open(&install, "default").unwrap();
+        let session = EditSession::for_tests(project);
+        let mut behaviour = Behaviour::default();
+        assert_eq!(behaviour.scripts_wanted(&session), None);
+        assert_eq!(behaviour.max_wanted(), None);
+        behaviour.other_scripts = vec![(scripts::CREATURE_MOVEMENT, 1_484_902), (scripts::CREATURE_MOVEMENT, 0), (scripts::CREATURE_MOVEMENT, 1_484_901)];
+        behaviour.numbering_scripts = vec![scripts::CREATURE_MOVEMENT];
+        assert_eq!(behaviour.scripts_wanted(&session), Some((scripts::CREATURE_MOVEMENT, vec![1_484_901, 1_484_902])));
+        assert_eq!(behaviour.max_wanted(), Some(scripts::CREATURE_MOVEMENT));
+        cache_scripts(&mut behaviour, scripts::CREATURE_MOVEMENT, &[1_484_901, 1_484_902], Vec::new());
+        behaviour.max_ids.insert(scripts::CREATURE_MOVEMENT, 2_000_000);
+        assert_eq!(behaviour.scripts_wanted(&session), None);
+        assert_eq!(behaviour.max_wanted(), None);
+        // An id the table does not hold is read as no rows.
+        assert!(behaviour.script_read(scripts::CREATURE_MOVEMENT, 1_484_901));
+        assert!(!behaviour.script_in_database(scripts::CREATURE_MOVEMENT, 1_484_901));
+        let _ = std::fs::remove_dir_all(&install);
     }
 
     /// A search is sent once per text, for three characters or a number, and

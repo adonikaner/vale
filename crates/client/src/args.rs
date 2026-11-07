@@ -15,16 +15,16 @@ use crate::world::camera;
 /// ```text
 /// vale-client <Character>
 /// vale-client <Character> --shot <path> [--after <seconds>] [--view <distance,pitch°,yaw°>]
-///                            [--tune none|msaa,novsync,shadows]
+///                            [--tune none|nomsaa,novsync,shadows]
 ///                            [--without doodads,buildings,entities,water,particles,interface,...]
 ///                            [--night off|0..1] [--hour <hh:mm>] [--weather <kind>[,<grade>]]
 ///                            [--script <lua>] [--overlay wireframe,collision,…]
 ///                            [--panel <tab>] [--relogin <seconds>[,<gap>]]
 /// ```
 ///
-/// These are flags rather than environment variables so that a check runs in
-/// one line. The environment-variable form needed three `$env:` assignments,
-/// did not end, and had to be killed. The `--shot` form logs in, frames the
+/// These are flags rather than environment variables so that a check is one
+/// command that ends by itself. An environment-variable form needs three
+/// `$env:` assignments and does not exit. The `--shot` form logs in, frames the
 /// view, writes the PNG and quits.
 pub(crate) struct Args {
     /// Enters the world without waiting to be clicked, mirroring `vale live
@@ -34,30 +34,30 @@ pub(crate) struct Args {
     /// `--tune`: the render settings to start with, `None` for the defaults.
     pub(crate) tuning: Option<camera::RenderTuning>,
     /// `--without`: the world layers to leave out; see
-    /// [`render::tuning::WorldTuning::without`]. The counterpart of `--tune`:
-    /// it prices a pass where `--tune` prices a setting.
+    /// [`render::tuning::WorldTuning::without`]. `--tune` measures the cost of
+    /// a setting; `--without` measures the cost of a pass.
     pub(crate) world: Option<render::tuning::WorldTuning>,
-    /// `--night <off|0..1>`: how deep the deep night is. `None` keeps the
-    /// default, which is on.
+    /// `--night <off|0..1>`: the strength of the deep night, or `off`. `None`
+    /// keeps the default, which is on.
     ///
     /// `--tune` trades CPU against GPU against image quality on this machine,
-    /// and `--without` removes a layer so a pass can be priced. This flag adds
-    /// something the game does not have, which is why it is separate from both.
-    /// It exists so the option can be compared with a shot of the same framing
-    /// under `--night off`, which is the comparison that shows whether it is too
+    /// and `--without` removes a layer so the cost of a pass can be measured.
+    /// This flag adds something the game does not have, which is why it is
+    /// separate from both. It lets a shot be compared with a shot of the same
+    /// framing under `--night off`, which shows whether the deep night is too
     /// dark.
     ///
     /// See [`render::night`], which owns it and says why the default is on:
     /// the grade is exactly the identity in daylight, so an unflagged run at
-    /// noon renders the same client every earlier measurement was taken against.
+    /// noon renders the same image every earlier measurement was taken against.
     pub(crate) night: Option<render::night::NightTuning>,
     /// `--hour <hh:mm>`: sets the world's clock by hand for the whole run.
     ///
     /// The scripted counterpart of the debug window's hour slider, which exists
     /// for the same reason: the world's clock runs at the server's rate, so
     /// waiting for dusk takes up to twenty-four minutes. A script cannot reach
-    /// the slider any more than it can press `F4` or move the mouse. Before this
-    /// flag, no `--shot` could photograph the night.
+    /// the slider, press `F4` or move the mouse. Without this flag, no `--shot`
+    /// can photograph the night.
     ///
     /// `hh:mm`, or a bare hour. It sets `WorldClock::override_half_minutes`,
     /// the same latch the slider sets, so the server's clock is still read
@@ -74,8 +74,8 @@ pub(crate) struct Args {
     /// An interface path that cannot be driven from a script cannot be checked
     /// without a person at the keyboard.
     /// `--script 'ActionButtonDown(1); ActionButtonUp(1)'` confirms that the
-    /// casting chain reaches the server, and it is how the fix for a
-    /// casting-chain regression was confirmed.
+    /// casting chain reaches the server; that run confirmed the fix for a
+    /// casting-chain regression.
     pub(crate) script: Option<String>,
     /// `--overlay <names>`: the visualisations to turn on; see
     /// [`render::overlay::DebugOverlay::with`]. The counterpart of `--without`:
@@ -88,12 +88,12 @@ pub(crate) struct Args {
     pub(crate) overlay: Option<render::overlay::DebugOverlay>,
     /// `--panel <tab>`: open the debug window at that tab on the first frame.
     ///
-    /// The debug window is the one thing on screen a script could not
-    /// otherwise reach. A `--shot` checks the world by framing it and the
-    /// interface through `--script`, but the window is behind `F4`, and a
-    /// scripted run cannot press a key any more than it can move the mouse (see
-    /// [`crate::HoverProbe`] for the pointer). Without this flag a rebuilt panel could
-    /// only be checked by a person, which is the cost to design against.
+    /// The debug window is the one thing on screen a script cannot otherwise
+    /// reach. A `--shot` checks the world by framing it and the interface
+    /// through `--script`, but the window is behind `F4`, and a scripted run
+    /// can neither press a key nor move the mouse (see [`crate::HoverProbe`]
+    /// for the pointer). Without this flag a rebuilt panel can only be checked
+    /// by a person.
     ///
     /// The value is a tab name as the tab strip spells it: `frame`, `scene`,
     /// `render`, `world`, `net`, `interface`. A name that matches nothing logs a
@@ -102,11 +102,10 @@ pub(crate) struct Args {
     pub(crate) panel: Option<String>,
     /// `--capture`: arm the recent-packet ring as soon as there is a session.
     ///
-    /// The ring is armed by a checkbox, and a scripted run cannot tick one any
-    /// more than it can press `F4`; `--panel` and `--overlay` exist for the same
-    /// reason. Without this flag the one instrument that shows what a packet
-    /// contained could only be used by a person at the keyboard, which is the
-    /// cost to design against.
+    /// The ring is armed by a checkbox, and a scripted run can neither tick a
+    /// checkbox nor press `F4`; `--panel` and `--overlay` exist for the same
+    /// reason. Without this flag the ring, the one instrument that shows what a
+    /// packet contained, can only be used by a person at the keyboard.
     ///
     /// Arming it costs a lock and a bounded copy per packet (see
     /// [`vale_protocol::socket::world::Capture`]), so it is off unless asked
@@ -133,10 +132,11 @@ pub(crate) struct Args {
     #[cfg(feature = "diagnostics")]
     pub(crate) spin: usize,
     /// `--party <n>`, with `--audit`: how many people the double is grouped
-    /// with, 0..4. The party size is the one dimension of the harness's world
-    /// that a report blamed, so it is a subtraction: two runs that differ only
-    /// in this flag price the party frames, as `--without` prices a render
-    /// pass. Defaults to 2, which every earlier round measured against.
+    /// with, 0..4. A report attributed a cost to the party size, the one
+    /// dimension of the harness's world it named, so this flag is a
+    /// subtraction: two runs that differ only in it measure the cost of the
+    /// party frames, as `--without` does for a render pass. Defaults to 2,
+    /// which every earlier measurement was taken against.
     #[cfg(feature = "diagnostics")]
     pub(crate) party: Option<usize>,
     /// `--raid <n>`, with `--audit`: how many people are in the double's raid,
@@ -148,8 +148,8 @@ pub(crate) struct Args {
     pub(crate) raid: Option<usize>,
     /// `--events`, with `--audit`: fire every event this client can raise at
     /// the frames that registered for it, and report what the handlers broke
-    /// on. The load exercises only `OnLoad`, one of the game's 36 script kinds;
-    /// this exercises `OnEvent`, the one that runs during play.
+    /// on. The load runs only `OnLoad`, one of the game's 36 script types; this
+    /// runs `OnEvent`, the one that runs during play.
     #[cfg(feature = "diagnostics")]
     pub(crate) events: bool,
     /// `--type <line>`, with `--audit`: open the chat line, type that into it
@@ -159,22 +159,22 @@ pub(crate) struct Args {
     #[cfg(feature = "diagnostics")]
     pub(crate) typed: Option<String>,
     /// `--panels`, with `--audit`: open every panel `UIPanelWindows` names and
-    /// report what its `OnShow` broke on. The fourth script kind an instrument
-    /// reaches, and the one in which 1.12 fills a panel; see
+    /// report what its `OnShow` broke on. `OnShow` is the fourth script type
+    /// the audit runs, and the one in which 1.12 fills a panel; see
     /// [`crate::lua::audit::open_every_panel`].
     #[cfg(feature = "diagnostics")]
     pub(crate) panels: bool,
     /// `--clicks`, with `--audit`: press every visible button on every one of
     /// those panels, re-collecting after each round so the tabs are followed,
-    /// and report what the `OnClick` bodies broke on. The fifth script kind an
-    /// instrument reaches, and the one a player uses most; see
+    /// and report what the `OnClick` bodies broke on. `OnClick` is the fifth
+    /// script type the audit runs, and the one a player uses most; see
     /// [`crate::lua::audit::click_everything`].
     #[cfg(feature = "diagnostics")]
     pub(crate) clicks: bool,
     /// `--bindings`, with `--audit`: run the `<Binding>` body of every command
     /// the game's own default key table binds, on both edges where the
-    /// declaration wants one, and report what they broke on. The sixth script
-    /// kind an instrument reaches, and the only one a keystroke runs; see
+    /// declaration wants one, and report what they broke on. `<Binding>` is the
+    /// sixth script type the audit runs, and the only one a keystroke runs; see
     /// [`crate::lua::audit::press_every_binding`].
     #[cfg(feature = "diagnostics")]
     pub(crate) bindings: bool,
@@ -187,22 +187,22 @@ pub(crate) struct Args {
     /// `--size <w>x<h>` and `--resize <w>x<h>`: the window to open at, and the
     /// window to become part way through the run.
     ///
-    /// The same reasoning as `--tune` and `--without`, for an input that could
-    /// not be varied from a script at all. Every aspect-ratio report is about a
-    /// window somebody resized. Before these flags, only a person at the
-    /// keyboard could see such a fault: a scripted shot always ran at Bevy's
-    /// default 1280x720, the one shape at which nothing goes wrong.
+    /// The same reasoning as `--tune` and `--without`, for an input that cannot
+    /// otherwise be varied from a script. Every aspect-ratio report is about a
+    /// window somebody resized. Without these flags a scripted shot runs at
+    /// Bevy's default 1280x720, a shape at which no such fault shows, so only a
+    /// person resizing the window can see one.
     pub(crate) window: WindowScript,
     /// `--hover <x>,<y>`: plant the pointer on the window and report what it
     /// landed on, in logical window pixels from the top left.
     ///
-    /// The one input a scripted run could not otherwise supply. Everything
-    /// else this client does can be driven from `--script`, but the mouse pick
-    /// reads `Window::cursor_position` and Lua cannot move the mouse, so
-    /// hovering had no check that did not involve a person. The substitute was
-    /// a PowerShell loop moving the OS cursor across the window while the
-    /// client logged what it saw. Two game-object hover bugs were found that
-    /// way, and each would have been a one-line run with this flag. See
+    /// The pointer is the one input a scripted run cannot otherwise supply.
+    /// Everything else this client does can be driven from `--script`, but the
+    /// mouse pick reads `Window::cursor_position` and Lua cannot move the
+    /// mouse. Without this flag, hovering is checked by a person or by a
+    /// PowerShell loop that moves the OS cursor across the window while the
+    /// client logs what it sees; two game-object hover bugs were found with
+    /// such a loop. With it, such a check is a one-line run. See
     /// [`crate::scripted::hover_probe`].
     pub(crate) hover: Option<Vec2>,
     /// `--relogin <seconds>`: leave the world for character select and come
@@ -229,12 +229,13 @@ pub(crate) struct Args {
     /// gap allows at least one purge.
     pub(crate) relogin: Option<(f32, f32)>,
     /// `--crowd <players>[,<mobs>]`: fill the frame with entities the server
-    /// never sent, to price the entity pass, which had no subtraction.
+    /// never sent, to measure the cost of the entity pass.
     ///
     /// `--without` does this for a render layer and `--party` for the
-    /// interface; neither reaches the entity population. The only other way to
-    /// get forty players into one frame is forty people, so the entity pass was
-    /// the one cost in this renderer that could not be measured from a script.
+    /// interface; neither changes the entity population. The only other way to
+    /// get forty players into one frame is forty people, so without this flag
+    /// the entity pass is the one cost in this renderer that cannot be measured
+    /// from a script.
     /// See [`world::crowd`].
     #[cfg(feature = "diagnostics")]
     pub(crate) crowd: Option<crate::world::crowd::Crowd>,
@@ -401,8 +402,11 @@ fn parse_hour(text: &str) -> Option<u32> {
     parsed
 }
 
-/// `--tune`'s value: the settings that are on, by name, comma-separated.
-/// `none` (or anything else that names nothing) leaves them all off.
+/// `--tune`'s value: the settings to change from their defaults, by name,
+/// comma-separated. A setting that is off by default is named to turn it on
+/// (`shadows`); one that is on by default is named with `no` to turn it off
+/// (`nomsaa`, `novsync`). `none`, or anything else that names nothing, keeps
+/// every default.
 ///
 /// F5, F9 and F10 toggle the same three settings at the keyboard, but a
 /// scripted shot has no keyboard, and a setting that cannot be scripted cannot
@@ -412,11 +416,11 @@ fn parse_hour(text: &str) -> Option<u32> {
 fn tune(list: &str) -> camera::RenderTuning {
     let on = |name: &str| list.split(',').any(|p| p.trim().eq_ignore_ascii_case(name));
     camera::RenderTuning {
-        msaa: on("msaa"),
-        // Spelled as the off switch because vsync is the one setting whose
-        // default is on, and leaving it out of a list like `msaa,shadows` must
-        // not silently unlock the frame rate. An unlocked frame is a different
+        // MSAA and vsync are on by default, so each is spelled as its off
+        // switch: leaving it out of a list like `shadows` must not silently
+        // change it. An unlocked frame, or one without MSAA, is a different
         // measurement and has to be asked for by name.
+        msaa: !on("nomsaa"),
         vsync: !on("novsync"),
         sun_shadows: on("shadows"),
     }
@@ -459,7 +463,8 @@ mod tests {
     }
 
     /// `--night` and `--hour`, which exist for the same reason as `--without`:
-    /// a view that cannot be set up from a script is not compared twice.
+    /// a view that cannot be set up from a script cannot be repeated for a
+    /// comparison.
     /// `--night` always takes its value, since a bare one would swallow the
     /// character, and `--hour` is the only way a scripted shot can show the
     /// night.
@@ -513,21 +518,23 @@ mod tests {
         }
     }
 
-    /// `--tune` names the settings that are on; everything unnamed is off,
-    /// and `none` is the all-off spelling. No flag at all keeps the defaults —
-    /// which are not all-off, so `--tune` and its absence must stay distinct.
+    /// `--tune` names the settings that move from their defaults: `shadows`
+    /// turns sun shadows on, `nomsaa` and `novsync` turn MSAA and vsync off.
+    /// `none` names nothing and gives the defaults. No flag at all also keeps
+    /// the defaults, by leaving the resource as `CameraPlugin` made it.
     #[test]
-    fn tune_names_the_settings_that_are_on() {
+    fn tune_names_the_settings_that_move_from_their_defaults() {
         assert!(parse("Alden").tuning.is_none(), "no flag keeps the defaults");
 
         let none = parse("G --tune none").tuning.unwrap();
-        assert!(!none.msaa && !none.sun_shadows);
-        assert!(none.vsync, "vsync is off only by name, never by omission");
+        assert!(none == camera::RenderTuning::default(), "none is the defaults");
+        assert!(none.msaa && none.vsync, "MSAA and vsync are off only by name, never by omission");
+        assert!(!none.sun_shadows);
 
-        let some = parse("G --tune msaa,shadows").tuning.unwrap();
-        assert!(some.msaa && some.sun_shadows);
-        assert!(some.vsync);
+        let some = parse("G --tune shadows").tuning.unwrap();
+        assert!(some.msaa && some.sun_shadows && some.vsync);
 
-        assert!(!parse("G --tune novsync").tuning.unwrap().vsync);
+        let off = parse("G --tune nomsaa,novsync").tuning.unwrap();
+        assert!(!off.msaa && !off.vsync && !off.sun_shadows);
     }
 }
