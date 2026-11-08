@@ -15,7 +15,7 @@
 //! the people in it as list rows, each in their colour, where they are and
 //! what tool they hold; a press on a row goes to them, and the host's right
 //! click on a row removes that editor. Under the list, the address to give
-//! the others, and End Session or Leave.
+//! the other editors, and End Session or Leave.
 
 use crate::collab::{colour, Ask, Collab, Mode, State};
 use crate::ui::widgets::theme;
@@ -50,12 +50,12 @@ pub(crate) fn button(ui: &mut egui::Ui, collab: &Collab) -> egui::Response {
         None => label,
     };
     let hover = match &collab.state {
-        State::Off => "Host a shared session on this network, or join one: several editors working on one project at once.".to_string(),
+        State::Off => "Host a shared session on this network, or join one. In a shared session several editors work on one project at once.".to_string(),
         State::Ended(reason) => format!("No session. The last one ended: {reason}"),
-        State::Hosting { addr, .. } => format!("Hosting on {addr}. Others join at this address."),
+        State::Hosting { addr, .. } => format!("Hosting on {addr}. Other editors join at this address."),
         State::Connecting { to } => format!("Connecting to {to}."),
         State::Fetching { .. } => "Fetching the host's project.".to_string(),
-        State::Joined { project } => format!("Joined; {project} is the host's project, kept here as a copy."),
+        State::Joined { project } => format!("Joined. {project} is a copy of the host's project."),
     };
     let response = ui.button(text).on_hover_text(hover);
     if let Some(dot) = dot {
@@ -77,11 +77,11 @@ pub(crate) fn panel(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
             title(ui, "Hosting", &project);
             theme::row(ui, "Address", |ui| {
                 ui.label(theme::number(addr.to_string()).color(theme::INK));
-                if ui.small_button("Copy").on_hover_text("Copy the address to give the others.").clicked() {
+                if ui.small_button("Copy").on_hover_text("Copy the address for the other editors.").clicked() {
                     ui.ctx().copy_text(addr.to_string());
                 }
             });
-            theme::note(ui, "Others on this network join at this address with the password. Each join saves your project first, so they start from what is on disk.");
+            theme::note(ui, "Other editors on this network join at this address with the password. Each join saves your project first, so that the editor joining starts from the files on disk.");
             people(ui, collab, true);
             counts(ui, collab);
             ui.add_space(6.0);
@@ -110,13 +110,15 @@ pub(crate) fn panel(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
             title(ui, &format!("Joined {host}'s session"), &project);
             theme::note(
                 ui,
-                "Your edits and imports reach the others as you make them, and theirs reach you. An edit \
-                 that clashes with one made first is taken back, and the status line says who.",
+                "Your edits and imports reach the other editors as you make them, and their edits reach \
+                 you. When two editors change the same thing, the change that reaches the host second is \
+                 undone, and the status line names the other editor.",
             );
             theme::note(
                 ui,
-                "The host saves, publishes, playtests, writes to the server, makes and deletes tiles, and \
-                 adds or removes doodads, table records and server rows. Your Delete asks the host.",
+                "Only the host saves, publishes, makes and deletes tiles, and adds or removes doodads, \
+                 table records and server rows. Delete asks the host to delete the files. The playtest \
+                 login chooses between the local server and the host's server.",
             );
             people(ui, collab, false);
             counts(ui, collab);
@@ -135,7 +137,7 @@ fn title(ui: &mut egui::Ui, what: &str, of: &str) {
 /// Host and Join, with no session running.
 fn forms(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
     ui.label(egui::RichText::new("Shared Session").strong().size(14.0).color(theme::INK));
-    theme::note(ui, "Several editors on one project at once, over this network. Every edit the host makes is seen by the others as it is made.");
+    theme::note(ui, "Several editors work on one project at once over this network. Each edit reaches the other editors as it is made.");
     if let State::Ended(reason) = &collab.state {
         ui.add_space(2.0);
         ui.label(egui::RichText::new(reason).size(theme::SMALL).color(theme::BAD));
@@ -145,7 +147,7 @@ fn forms(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
     ui.add_space(6.0);
     let field = ui.available_width() - theme::LABEL_WIDTH - ui.spacing().item_spacing.x;
     theme::row(ui, "Name", |ui| {
-        ui.add(egui::TextEdit::singleline(&mut collab.form.name).hint_text("Shown to the others").desired_width(field));
+        ui.add(egui::TextEdit::singleline(&mut collab.form.name).hint_text("Shown to the other editors").desired_width(field));
     });
     match collab.form.mode {
         Mode::Host => {
@@ -156,7 +158,7 @@ fn forms(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
                 ui.add(egui::TextEdit::singleline(&mut collab.form.port).desired_width(60.0));
             });
             let at = crate::collab::lan_address().map_or_else(|| "this machine's address".to_string(), |ip| ip.to_string());
-            theme::note(ui, format!("Others join at {at}:{} with the password. {project} is the project they work on.", collab.form.port.trim()));
+            theme::note(ui, format!("Other editors join at {at}:{} with the password. They work on {project}.", collab.form.port.trim()));
             ui.add_space(6.0);
             if theme::primary(ui, "Start Hosting").clicked() {
                 collab.ask = Some(Ask::Host);
@@ -226,8 +228,8 @@ fn people(ui: &mut egui::Ui, collab: &mut Collab, hosting: bool) {
 /// The steps shared so far.
 fn counts(ui: &mut egui::Ui, collab: &Collab) {
     let mut line = format!("{} edits sent \u{b7} {} received", collab.sent, collab.received);
-    if collab.taken_back > 0 {
-        line.push_str(&format!(" \u{b7} {} of yours taken back", collab.taken_back));
+    if collab.reverted > 0 {
+        line.push_str(&format!(" \u{b7} {} of yours undone", collab.reverted));
     }
     theme::note(ui, line);
 }

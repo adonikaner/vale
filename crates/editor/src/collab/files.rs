@@ -33,25 +33,26 @@
 //! ## The host's steps are forced
 //!
 //! A file step from the host is forced ([`vale_collab::Payload::forced`]):
-//! accepted where it arrives in the host's order and never taken back. A
+//! accepted where it arrives in the host's order and never reverted. A
 //! delete drops unsaved edits and undo entries that writing the old bytes back
 //! would not restore.
 //!
 //! ## What a joined editor may write
 //!
-//! Textures, models, sounds and lock files ([`joinable`]). Anything else, such
-//! as a tile, a table, a tile index, the minimap index or a zone grid, is the
-//! host's: a joined editor's step that writes one is taken back before it is
-//! sent. The host checks the same rule ([`Files::check`]) and refuses a step
-//! that breaks it or names a path outside the project. A joined editor deletes
-//! nothing itself; it asks the host ([`super::Step::Delete`]).
+//! Textures, models, sounds and lock files ([`joinable`]). Only the host
+//! writes any other file, such as a tile, a table, a tile index, the minimap
+//! index or a zone grid. A joined editor's step that writes one is reverted
+//! before it is sent. The host checks the same rule ([`Files::check`]) and
+//! refuses a step that breaks it or names a path outside the project. A joined
+//! editor deletes no file itself; it asks the host ([`super::Step::Delete`]).
 //!
 //! ## Applying a step
 //!
 //! [`apply`] writes or removes every file unjournaled, merges the import
 //! record's lines, and has the session read the files again
-//! ([`EditSession::reread_files`]). A joined editor's step the host refuses is
-//! taken back by applying [`Files::backward`]: each file as it was before.
+//! ([`EditSession::reread_files`]). A joined editor's step that the host
+//! refuses is reverted by applying [`Files::backward`]: each file as it was
+//! before.
 //! Those bytes ([`File::before`]) stay with the editor that made the step and
 //! are not sent.
 
@@ -83,8 +84,8 @@ pub(crate) struct File {
     /// The bytes it holds now, or `None` when it was removed.
     pub(crate) bytes: Option<Vec<u8>>,
     /// The bytes it held before the step, for the editor that made the step
-    /// to take it back. Not sent: an editor that receives a step never takes
-    /// it back.
+    /// to revert it. Not sent: an editor that receives a step never reverts
+    /// it.
     #[serde(skip)]
     pub(crate) before: Option<Vec<u8>>,
 }
@@ -191,10 +192,10 @@ fn inside(vpath: &str) -> bool {
 }
 
 /// Whether a joined editor may write or remove the file at `vpath`, or why
-/// not. Textures, models and sounds are what the import dialogs, the lab and
-/// the bakes a joined editor can run write; lock files are written by every
-/// lock. Tiles, tables, tile indexes, the minimap index and the world map's
-/// zone grids are the host's.
+/// not. The import dialogs, the lab and the bakes that a joined editor can run
+/// write textures, models and sounds; every lock writes a lock file. Only the
+/// host writes tiles, tables, tile indexes, the minimap index and the world
+/// map's zone grids.
 pub(crate) fn joinable(vpath: &str) -> Result<(), &'static str> {
     if !inside(vpath) {
         return Err("not a path inside the project");
@@ -281,9 +282,9 @@ pub(super) fn apply(session: &mut EditSession, game: &GameAssets, step: &Files) 
 mod tests {
     use super::*;
 
-    /// Textures, models, sounds and locks are a joined editor's to write;
-    /// tiles, tables, tile indexes, minimaps and paths outside the project are
-    /// not.
+    /// A joined editor may write textures, models, sounds and locks, and may
+    /// not write tiles, tables, tile indexes, minimaps or paths outside the
+    /// project.
     #[test]
     fn a_joined_editor_writes_assets_and_locks_only() {
         for good in [r"Textures\Ground\Grass.blp", r"Creature\Wolf\Wolf.m2", r"Sound\Wolf.wav", r"editor\locks\Azeroth_32_48.txt"] {
@@ -373,7 +374,7 @@ mod tests {
         apply(&mut other, &game, &step.backward()).unwrap();
         assert!(!other.project.has(r"Textures\New.blp"));
         assert_eq!(other.project.read(r"Textures\Old.blp").as_deref(), Some(&b"old"[..]));
-        assert!(Sources::read(&other.project).of(r"textures\new.blp").is_none(), "an import taken back loses its line");
+        assert!(Sources::read(&other.project).of(r"textures\new.blp").is_none(), "a reverted import loses its line");
         let _ = std::fs::remove_dir_all(&install);
     }
 

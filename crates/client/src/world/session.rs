@@ -815,9 +815,16 @@ fn logon_blocking(credentials: Credentials) -> Result<Handshake, LoginFailure> {
     })?;
     let world_addr = world_address(realm);
 
+    // The detail names the address realmd gave for the world server, since a
+    // realm row that advertises an address this machine cannot reach is the
+    // usual cause of this failure.
     let mut session =
         world::WorldSession::connect(&world_addr, &credentials.account, outcome.session_key)
-            .map_err(|e| LoginFailure::refused(&e, "LOGIN_SERVER_DOWN"))?;
+            .map_err(|e| {
+                let mut failure = LoginFailure::refused(&e, "LOGIN_SERVER_DOWN");
+                failure.detail = format!("world server {world_addr}: {}", failure.detail);
+                failure
+            })?;
     let characters = session
         .char_enum()
         .map_err(|e| LoginFailure::local("CHAR_LIST_FAILED", format!("char enum: {e}")))?;

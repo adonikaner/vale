@@ -1,12 +1,13 @@
 //! A joining editor's copy of the host's project.
 //!
 //! The copy is `Edit\<project> (shared)\`. The host's manifest names every
-//! file of its project but its `sql\` folder ([`listed`]) with its size and
-//! blake3 hash. A file the copy holds with the same hash is kept; the others
-//! are fetched; a file of the copy the manifest does not name is removed.
-//! Each fetched file is checked against its hash before it is written, so a
-//! host that saved while the editor was joining is caught rather than opened
-//! half old.
+//! file of its project with its size and blake3 hash, except the files that
+//! describe the host's own server ([`machine_local`]). A file the copy holds
+//! with the same hash is kept; the other files are fetched; a file of the copy
+//! the manifest does not name is removed, except a file that describes this
+//! machine's own server. Each fetched file is checked against its hash before
+//! it is written, so a host that saved while the editor was joining is caught
+//! rather than opened half old.
 
 use std::collections::HashMap;
 use vale_client::assets::GameAssets;
@@ -43,7 +44,7 @@ impl Fetch {
         let copy = Project::open(&assets.root, &name).map_err(|e| e.to_string())?;
         let listed: HashMap<String, FileEntry> = files.into_iter().map(|file| (key(&file.path), file)).collect();
         for path in copy.files() {
-            if !listed.contains_key(&key(&path)) {
+            if !listed.contains_key(&key(&path)) && !machine_local(&path) {
                 let _ = copy.revert(&path);
             }
         }
@@ -103,11 +104,24 @@ impl Fetch {
     }
 }
 
-/// Whether a project file goes in the manifest. Everything does but `sql\`:
-/// its revert files record what the host applied to its own database, and a
-/// joined editor that ran them would restore the host's rows into its own.
+/// Whether a project file describes the server of the machine it is on: the
+/// SQL files and revert files under `sql\`, the server DBC files saved under
+/// `server\dbc-before\` before an Apply replaced them, and the record of the
+/// tiles regenerated into the `DataDir`. Each editor keeps its own. A joined
+/// editor that applies to its own server writes these files into its copy,
+/// and a join neither sends the host's nor removes the joined editor's.
+pub(super) fn machine_local(path: &str) -> bool {
+    let lower = path.replace('/', "\\").to_ascii_lowercase();
+    let before = format!("{}\\", crate::server::dbcs::BEFORE_DIR.to_ascii_lowercase());
+    vale_edit::manifest::Kind::of(path) == vale_edit::manifest::Kind::Sql
+        || lower.starts_with(&before)
+        || lower == crate::server::datadir::LIVE_RECORD.to_ascii_lowercase()
+}
+
+/// Whether a project file goes in the manifest: every file that is not
+/// [`machine_local`].
 pub(super) fn listed(path: &str) -> bool {
-    vale_edit::manifest::Kind::of(path) != vale_edit::manifest::Kind::Sql
+    !machine_local(path)
 }
 
 /// The manifest of a project as it stands on disk: every file [`listed`], its
@@ -136,7 +150,8 @@ mod tests {
 
     /// A copy that matches a file keeps it, one that differs or lacks it asks
     /// for it, and a file the host does not have is removed; a fetched file
-    /// with the wrong hash fails the join.
+    /// with the wrong hash fails the join. The files that describe a
+    /// machine's own server are neither listed nor removed.
     #[test]
     fn the_copy_fetches_only_what_differs() {
         let install = std::env::temp_dir().join(format!("vale-collab-fetch-{}", std::process::id()));
@@ -144,16 +159,27 @@ mod tests {
         let host = Project::open(&install, "Host").unwrap();
         host.write("World\\a.adt", b"same").unwrap();
         host.write("World\\b.adt", b"new bytes").unwrap();
+        host.write("sql\\creatures-revert.sql", b"host's database").unwrap();
+        host.write("server\\rows.txt", b"rows").unwrap();
         let copy = Project::open(&install, &copy_name("Host")).unwrap();
         copy.write("World\\a.adt", b"same").unwrap();
         copy.write("World\\b.adt", b"old").unwrap();
         copy.write("World\\gone.adt", b"x").unwrap();
+        copy.write("sql\\creatures-revert.sql", b"this machine's database").unwrap();
+        copy.write("server\\dbc-before\\Spell.dbc", b"this machine's DataDir").unwrap();
+        copy.write("server\\rows.txt", b"rows").unwrap();
+
+        let listed: Vec<String> = manifest(&host).into_iter().map(|file| file.path).collect();
+        assert!(!listed.contains(&"sql\\creatures-revert.sql".to_string()));
+        assert!(listed.contains(&"server\\rows.txt".to_string()), "the project's rows are shared");
 
         let mut assets = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
         assets.root = install.to_string_lossy().into_owned();
         let (mut fetch, wanted) = Fetch::start(&assets, "Host", manifest(&host)).unwrap();
         assert_eq!(wanted, vec!["World\\b.adt".to_string()]);
         assert!(!copy.has("World\\gone.adt"));
+        assert_eq!(copy.read("sql\\creatures-revert.sql").as_deref(), Some(&b"this machine's database"[..]));
+        assert!(copy.has("server\\dbc-before\\Spell.dbc"));
         fetch.piece("World\\b.adt", 0, 9, b"new ".to_vec());
         fetch.piece("World\\b.adt", 4, 9, b"bytes".to_vec());
         assert_eq!(fetch.finish(Vec::new()), Ok(copy_name("Host")));

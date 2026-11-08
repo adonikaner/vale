@@ -129,8 +129,8 @@ pub(crate) fn draw(
     // The kept views the Map menu lists. See [`crate::prefs::bookmarks`].
     bookmarks: &crate::prefs::bookmarks::Bookmarks,
     // The shared session: the Session… button's label, and whether this
-    // editor is joined to another's, which disables Save, Publish and
-    // Playtest.
+    // editor is joined to another editor's session, which disables Save and
+    // Publish, and which server a playtest logs in to.
     collab: &crate::collab::Collab,
 ) {
     ui.horizontal(|ui| {
@@ -210,7 +210,7 @@ pub(crate) fn draw(
             let start = ui.cursor().max.x;
             match in_world {
                 true => running(ui, playing, session),
-                false => not_running(ui, session, assets, popovers, playing, collab.is_joined()),
+                false => not_running(ui, session, assets, popovers, playing, collab),
             }
             let used = start - ui.min_rect().min.x;
             ui.data_mut(|data| data.insert_temp(right_id, used));
@@ -269,16 +269,16 @@ fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) 
 /// The right-hand end of the bar while no playtest is running: who it would
 /// log in as, and the button that starts it.
 ///
-/// The login control is a separate button beside the Playtest button. A
-/// joined editor's Playtest is disabled: a playtest saves and applies to the
-/// server, which in a shared session the host does.
+/// The login control is a separate button beside the Playtest button. In a
+/// shared session its label also names the host's server when a joined
+/// editor playtests there. See `crate::collab::PlaytestServer`.
 fn not_running(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     assets: &GameAssets,
     popovers: &mut Popovers,
     playing: &mut Session,
-    joined: bool,
+    collab: &crate::collab::Collab,
 ) {
     // The button's label states the answer rather than a word like "Login":
     // `as Corwin`, or `login screen` when there is no password to skip it
@@ -293,6 +293,10 @@ fn not_running(
     if !playing.server.disable_caching {
         label.push_str(" \u{b7} cached");
     }
+    if playing.login.realm.is_some() {
+        let host = collab.host_name().unwrap_or("host");
+        label.push_str(&format!(" \u{b7} {host}'s server"));
+    }
     let who = ui
         .button(label)
         .on_hover_text("Playtest login: account, character, whether the login screen is skipped, and whether the client keeps its query cache.");
@@ -301,8 +305,7 @@ fn not_running(
         popovers.login.toggle(&who);
     }
     if ui
-        .add_enabled(
-            !joined,
+        .add(
             egui::Button::new(
                 egui::RichText::new("Playtest").color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)),
             )
@@ -313,7 +316,6 @@ fn not_running(
             "Save the project and start a playtest on the open map. Ctrl+P starts it; \
              Ctrl+P again ends it.",
         )
-        .on_disabled_hover_text("In a shared session the host playtests.")
         .clicked()
     {
         crate::playtest::start(
@@ -325,6 +327,7 @@ fn not_running(
             playing.queue,
             playing.server,
             playing.caches,
+            &collab.server_gate(),
         );
     }
 }
@@ -406,7 +409,7 @@ fn project(
                      Nothing is applied to this machine.",
                 )
                 .on_disabled_hover_text(match (joined, playing) {
-                    (true, _) => "In a shared session the host publishes.",
+                    (true, _) => "In a shared session only the host publishes.",
                     (false, true) => "Not while a playtest is running.",
                     (false, false) => "A server write is still running.",
                 })
@@ -475,7 +478,7 @@ fn project(
             ),
         })
         .on_disabled_hover_text(match joined {
-            true => "In a shared session the host saves. Your copy of its project follows its edits as they are made.",
+            true => "In a shared session only the host saves. Your copy of the host's project receives each edit as it is made.",
             false => "Nothing has changed since the last save.",
         })
         .clicked()
@@ -646,7 +649,7 @@ fn map(
                      in Edit Map.",
                 )
                 .on_disabled_hover_text(match joined {
-                    true => "In a shared session the host makes new maps.",
+                    true => "In a shared session only the host makes new maps.",
                     false => HELD,
                 })
                 .clicked()

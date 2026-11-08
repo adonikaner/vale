@@ -329,7 +329,7 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 "write {table_name}.dbc into the project folder. Ctrl+S writes every table and tile."
             ))
             .on_disabled_hover_text(match work.role.joined() {
-                true => "in a shared session the host saves",
+                true => "in a shared session only the host saves",
                 false => "nothing has changed since the last save",
             })
             .clicked()
@@ -344,7 +344,7 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                  to the archives' copy when the project has none."
             ))
             .on_disabled_hover_text(match work.role.shared() {
-                true => "not in a shared session: a discard is not sent to the others. Undo your own edits instead",
+                true => "Discard is not available in a shared session, because a discard is not sent to the other editors. Undo your own edits instead",
                 false => "nothing has changed since the last save",
             })
             .clicked()

@@ -83,6 +83,18 @@
 //! The only condition is a password. Without one the button opens the login
 //! screen, which is also where a wrong password is reported.
 //!
+//! ## Playtesting in a shared session
+//!
+//! A joined editor's playtest logs in to the local server in `realmlist.wtf`
+//! or to the host's server, as chosen in the login popover
+//! (`crate::collab::PlaytestServer`). For the host's server,
+//! [`Login::realm`] holds the host's address, and [`follow_the_realm`] puts
+//! it in `ClientConfig` for the game's own login screen. On the host's
+//! server the playtest saves the joined editor's copy of the project and
+//! applies nothing to a database: only the host applies changes to that
+//! server. [`explain_a_loopback_realm`] names the usual cause when the login
+//! then fails at the world server.
+//!
 //! ## The three readers of an edited tile
 //!
 //! Three readers load an edited tile, and each must see the edit. The
@@ -173,6 +185,10 @@ pub(crate) struct Login {
     /// the config again. Not shown and not editable: which server to talk to is
     /// a property of the install.
     host: String,
+    /// The host's realm address, set by `crate::collab` while this editor is
+    /// joined to a shared session and playtests on the host's server. Used in
+    /// place of [`Self::host`] while it is set.
+    pub(crate) realm: Option<String>,
     /// `WTF\Config.wtf`'s `accountName`, or `VALE_ACCOUNT`.
     pub(crate) account: String,
     /// `VALE_PASSWORD`. Empty is the ordinary case and means the login
@@ -199,6 +215,12 @@ impl Login {
         }
     }
 
+    /// The realm address a playtest logs in to: the shared session host's
+    /// while [`Self::realm`] is set, otherwise `realmlist.wtf`'s.
+    pub(crate) fn address(&self) -> &str {
+        self.realm.as_deref().unwrap_or(&self.host)
+    }
+
     /// Whether a click could actually get in without a screen.
     pub(crate) fn can_go_straight_in(&self) -> bool {
         !self.account.trim().is_empty() && !self.password.is_empty()
@@ -216,7 +238,7 @@ impl Login {
             return None;
         }
         Some(Credentials {
-            host: self.host.clone(),
+            host: self.address().to_string(),
             account: self.account.trim().to_string(),
             password: self.password.clone(),
             realm: None,
@@ -243,6 +265,53 @@ fn seed(mut login: ResMut<Login>, config: Res<ClientConfig>, args: Res<crate::ar
     login.straight_in = login.can_go_straight_in();
 }
 
+/// Keep the client's realm address at [`Login::address`]. The game's own login
+/// screen logs in to `ClientConfig`'s host, so a playtest on a shared
+/// session host's server needs the host's address there too. The address
+/// returns to `realmlist.wtf`'s when [`Login::realm`] is cleared. Nothing is
+/// written to `realmlist.wtf`.
+fn follow_the_realm(login: Res<Login>, mut config: ResMut<ClientConfig>) {
+    if config.0.host != login.address() {
+        config.0.host = login.address().to_string();
+    }
+}
+
+/// Explain a failed playtest login on a shared session host's server when the
+/// host's realmd gave a loopback address for its world server. realmd sends
+/// the address in the `address` column of its `realmlist` table. When that is
+/// `127.0.0.1`, the client connects to a world server on its own machine
+/// instead of the host's, and the login fails. Each failure is explained once.
+fn explain_a_loopback_realm(
+    client: Res<Session>,
+    login: Res<Login>,
+    session: Option<ResMut<EditSession>>,
+    mut explained: Local<Option<String>>,
+) {
+    if login.realm.is_none() {
+        return;
+    }
+    let Some(failure) = client.error.as_ref() else {
+        *explained = None;
+        return;
+    };
+    if explained.as_deref() == Some(failure.detail.as_str()) {
+        return;
+    }
+    *explained = Some(failure.detail.clone());
+    let Some(rest) = failure.detail.strip_prefix("world server ") else { return };
+    let address = rest.split(": ").next().unwrap_or("");
+    let host = address.rsplit_once(':').map_or(address, |(host, _)| host);
+    if !matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]") {
+        return;
+    }
+    if let Some(mut session) = session {
+        session.status = format!(
+            "The host's realmd gives {address} as its world server address, which is this machine. \
+             Set the address in the realmlist table of the host's realmd database to the host's network address."
+        );
+    }
+}
+
 pub(crate) struct PlaytestPlugin;
 
 impl Plugin for PlaytestPlugin {
@@ -263,6 +332,7 @@ impl Plugin for PlaytestPlugin {
             .init_resource::<Login>()
             .init_resource::<ViewSettings>()
             .add_systems(Startup, seed)
+            .add_systems(Update, (follow_the_realm, explain_a_loopback_realm))
             .add_systems(
                 Update,
                 (
@@ -309,6 +379,8 @@ fn on_the_command_line(
     // go on, where the database is, and whether this session keeps its query
     // answers. See [`start`], and `crate::server::Reach`.
     mut reach: crate::server::Reach,
+    // Whether the playtest may apply to this machine's server. See [`start`].
+    collab: Res<crate::collab::Collab>,
     mut done: Local<u8>,
 ) {
     // `--shell` is read every frame rather than once at the start. A
@@ -341,6 +413,7 @@ fn on_the_command_line(
             &mut reach.queue,
             &reach.settings,
             &mut reach.caches,
+            &collab.server_gate(),
         );
         return;
     }
@@ -669,7 +742,15 @@ pub(crate) fn start(
     // whether the session about to start keeps its query answers.
     server: &crate::server::settings::ServerSettings,
     caches: &mut vale_client::world::session::QueryCaches,
+    // Whether this editor may apply to its server. In a shared session a
+    // joined editor that playtests on the host's server, or whose database is
+    // the host's, saves its copy of the project and applies nothing. See
+    // `crate::collab`'s *Server writes*.
+    gate: &crate::collab::ServerGate,
 ) {
+    let mut held = server.clone();
+    held.apply_on_save &= gate.writes();
+    let server = &held;
     session.save_all();
     session.save_all_tables();
     // Save the server half as well, for the same reason. See

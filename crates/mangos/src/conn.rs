@@ -122,6 +122,11 @@ impl Where {
     pub fn line(&self) -> String {
         format!("{}@{}:{}/{}", self.user, self.host, self.port, self.database)
     }
+
+    /// The server's TCP port.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 }
 
 /// An open connection.

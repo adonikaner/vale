@@ -289,10 +289,11 @@ fn frame(zoom: usize, session: &EditSession, selection: &HashSet<(u32, u32)>, ro
 /// Draw the window. Returns its rectangle, so the shell can keep clicks in it
 /// out of the world, and whatever was asked for.
 ///
-/// `joined` is whether this editor is joined to another's shared session. Its
-/// buttons that make, delete or paste tiles, draw minimaps, rebake shadows or
-/// regenerate server files are disabled: those are the host's. See
-/// `crate::collab`.
+/// `gate` says what this editor may do in a shared session. When it is joined
+/// to another editor's session, the buttons that make, delete or paste tiles,
+/// draw minimaps and rebake shadows are disabled, because only the host does
+/// those. Server files is disabled when `gate` says this editor may not write
+/// to its server. See `crate::collab::ServerGate`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     ctx: &egui::Context,
@@ -304,7 +305,7 @@ pub(crate) fn draw(
     camera_tile: (u32, u32),
     camera_at: [f32; 2],
     screens: &vale_assets::tables::loading::LoadingScreens,
-    joined: bool,
+    gate: &crate::collab::ServerGate,
 ) -> (Option<egui::Rect>, Option<Asked>) {
     // The New map form is opened from the top bar's Map menu and is a modal of
     // its own, so it is drawn whether or not this window is open.
@@ -337,7 +338,7 @@ pub(crate) fn draw(
         // window covering that button hides the control that closes it.
         .default_pos([40.0, 52.0])
         .show(ctx, |ui| {
-            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile, joined);
+            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile, gate);
         });
     view.open = open;
 
@@ -348,7 +349,7 @@ pub(crate) fn draw(
 /// `otherwise` when it is disabled for another reason.
 fn host_only(joined: bool, otherwise: &'static str) -> &'static str {
     match joined {
-        true => "In a shared session the host changes tiles and their files.",
+        true => "In a shared session only the host changes tiles and their files.",
         false => otherwise,
     }
 }
@@ -362,8 +363,9 @@ fn contents(
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     tiles: &mut crate::map::tiles::Tiles,
     camera_tile: (u32, u32),
-    joined: bool,
+    gate: &crate::collab::ServerGate,
 ) -> Option<Asked> {
+    let joined = gate.role.joined();
     let mut asked = None;
 
     // ------------------------------------------------------------- the bar
@@ -488,7 +490,7 @@ fn contents(
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 ui.separator();
-                if let Some(more) = foot_panel(ui, view, session, tiles, joined) {
+                if let Some(more) = foot_panel(ui, view, session, tiles, gate) {
                     asked = Some(more);
                 }
             });
@@ -730,8 +732,9 @@ fn foot_panel(
     view: &MapView,
     session: &EditSession,
     tiles: &mut crate::map::tiles::Tiles,
-    joined: bool,
+    gate: &crate::collab::ServerGate,
 ) -> Option<Asked> {
+    let joined = gate.role.joined();
     use crate::map::tiles as tool;
 
     let mut asked = None;
@@ -930,7 +933,7 @@ fn foot_panel(
     ui.horizontal(|ui| {
         label(ui, "Server");
         if ui
-            .add_enabled(exist > 0 && !joined, egui::Button::new(format!("Server files ({exist})")))
+            .add_enabled(exist > 0 && gate.writes(), egui::Button::new(format!("Server files ({exist})")))
             .on_hover_text(
                 "Save, rebuild this project's archive, and regenerate the server's maps, \
                  vmaps and mmaps for each selected tile that exists — from this project \
@@ -939,7 +942,7 @@ fn foot_panel(
                  building moved. The bar says which step is running; restart the server \
                  afterwards. Publish does this for every changed tile.",
             )
-            .on_disabled_hover_text(host_only(joined, "None of the selection exists."))
+            .on_disabled_hover_text(gate.refused.clone().unwrap_or_else(|| "None of the selection exists.".to_string()))
             .clicked()
         {
             asked = Some(Asked::ServerFiles);

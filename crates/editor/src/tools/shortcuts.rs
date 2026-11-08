@@ -40,7 +40,8 @@ pub(crate) fn shortcuts(
     // answers. See [`crate::server::Reach`], which bundles them into one
     // parameter because this system is at Bevy's limit of sixteen.
     mut reach: crate::server::Reach,
-    // A joined editor does not save or playtest: the host does. See
+    // In a shared session only the host saves, and a joined editor's playtest
+    // applies to its server only when the session allows it. See
     // `crate::collab`.
     collab: Res<crate::collab::Collab>,
 ) {
@@ -53,7 +54,6 @@ pub(crate) fn shortcuts(
     }
     if taken.p {
         match state.editing() {
-            true if collab.is_joined() => session.status = "in a shared session the host playtests".to_string(),
             true => crate::playtest::start(
                 &mut state,
                 session,
@@ -63,6 +63,7 @@ pub(crate) fn shortcuts(
                 &mut reach.queue,
                 &reach.settings,
                 &mut reach.caches,
+                &collab.server_gate(),
             ),
             false => crate::playtest::stop(&mut state, &mut client, &mut auto, session),
         }
@@ -83,7 +84,7 @@ pub(crate) fn shortcuts(
     // client reads it, so the next cast, the next entity and the next model
     // are the edited ones.
     if taken.s && collab.is_joined() {
-        session.status = "in a shared session the host saves".to_string();
+        session.status = "in a shared session only the host saves".to_string();
         return;
     }
     if taken.s {

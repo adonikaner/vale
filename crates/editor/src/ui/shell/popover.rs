@@ -219,7 +219,7 @@ pub(crate) fn draw(
     }
     if popovers.login.open {
         if let Some(response) = window(ctx, "playtest-login", popovers.login.under, |ui| {
-            who(ui, login, server, assets);
+            who(ui, login, server, assets, collab);
         }) {
             seen[1] = (true, response);
             rects.push(response);
@@ -267,24 +267,23 @@ pub(crate) fn draw(
     }
     if popovers.server.open {
         let mut ask_tile_files = false;
+        // In a shared session the Server panel's own buttons say what this
+        // editor may write to its server. See `crate::collab::ServerGate`.
         if let Some(response) = window(ctx, "server", popovers.server.under, |ui| {
-            hosts_do_this(ui, joined, "applies and restores the server rows");
-            ui.add_enabled_ui(!joined, |ui| {
-                the_server(
-                    ui,
-                    &mut popovers.server_tab,
-                    session,
-                    assets,
-                    server,
-                    queue,
-                    standings,
-                    now,
-                    playing,
-                    step,
-                    &mut ask_tile_files,
-                    collab.role(),
-                );
-            });
+            the_server(
+                ui,
+                &mut popovers.server_tab,
+                session,
+                assets,
+                server,
+                queue,
+                standings,
+                now,
+                playing,
+                step,
+                &mut ask_tile_files,
+                &collab.server_gate(),
+            );
         }) {
             seen[3] = (true, response);
             rects.push(response);
@@ -330,7 +329,7 @@ pub(crate) fn draw(
 fn hosts_do_this(ui: &mut egui::Ui, joined: bool, what: &str) {
     if joined {
         ui.label(
-            egui::RichText::new(format!("In a shared session the host {what}."))
+            egui::RichText::new(format!("In a shared session only the host {what}."))
                 .size(theme::SMALL)
                 .color(theme::WARN),
         );
@@ -537,9 +536,9 @@ fn the_server(
     // Set when the Server tile files button is pressed; the caller opens the
     // dialog. See [`super::tilefiles`].
     ask_tile_files: &mut bool,
-    // Whether a shared session is running, which disables a joined editor's
-    // server writes. See `crate::collab`'s *Server writes*.
-    role: crate::collab::Role,
+    // Whether this editor may write to its server in a shared session. See
+    // `crate::collab::ServerGate`.
+    gate: &crate::collab::ServerGate,
 ) {
     ui.set_width(540.0);
     ui.horizontal(|ui| {
@@ -582,7 +581,7 @@ fn the_server(
                     }
                 });
             }
-            this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files, role);
+            this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files, gate);
         }
         ServerTab::Setup => setup(ui, assets, server, queue),
     }
@@ -602,7 +601,7 @@ fn this_project(
     playing: bool,
     step: &crate::server::datadir::Step,
     ask_tile_files: &mut bool,
-    role: crate::collab::Role,
+    gate: &crate::collab::ServerGate,
 ) {
     // Every server operation of the project. See [`super::sync`], whose
     // module comment says why they are in one panel.
@@ -616,7 +615,7 @@ fn this_project(
             standings,
             now,
         },
-        role,
+        gate,
     );
 
     // The server's tiles, which are files and not rows. The tile step on its
@@ -637,7 +636,7 @@ fn this_project(
         };
         if ui
             .add_enabled(
-                !playing && !busy && changed != Some(0) && !role.joined(),
+                !playing && !busy && changed != Some(0) && gate.writes(),
                 egui::Button::new(format!("Regenerate changed tiles ({count})")),
             )
             .on_hover_text(
@@ -646,8 +645,8 @@ fn this_project(
                  step of Publish. Takes minutes; the status line shows the current step. \
                  Restart the server afterwards.",
             )
-            .on_disabled_hover_text(match (role.joined(), playing, busy) {
-                (true, _, _) => "In a shared session the host regenerates its server's tiles.",
+            .on_disabled_hover_text(match (gate.refused.as_deref(), playing, busy) {
+                (Some(refused), _, _) => refused,
                 (_, true, _) => "Not while a playtest is running: regeneration rewrites the \
                                  archive the client has open.",
                 (_, _, true) => "A server write is still running.",
@@ -675,13 +674,13 @@ fn this_project(
     );
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!role.joined(), egui::Button::new("Server tile files\u{2026}"))
+            .add_enabled(gate.writes(), egui::Button::new("Server tile files\u{2026}"))
             .on_hover_text(
                 "The tile files a regeneration no longer produces, the files each project \
                  wrote, and a check for files nothing uses. Remove and put back from there; \
                  a regeneration removes no file.",
             )
-            .on_disabled_hover_text("In a shared session the host manages its server's tile files.")
+            .on_disabled_hover_text(gate.refused.clone().unwrap_or_default())
             .clicked()
         {
             *ask_tile_files = true;
@@ -712,14 +711,14 @@ fn this_project(
     };
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!role.joined(), egui::Button::new("Write migration"))
+            .add_enabled(!gate.role.joined(), egui::Button::new("Write migration"))
             .on_hover_text(
                 "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
                  vmangos' add_migration format, containing the changes since this project's \
                  last migration. This runs only the row step of Publish. Nothing is written \
                  when no row changed. Apply the file with the mysql client.",
             )
-            .on_disabled_hover_text("In a shared session the host saves and writes migrations.")
+            .on_disabled_hover_text("In a shared session only the host writes migrations.")
             .clicked()
         {
             session.status = crate::server::publish::release::migrate(session, assets);
@@ -1610,6 +1609,33 @@ fn typed(ui: &mut egui::Ui, text: &mut String, hint: &str) -> bool {
     field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
+/// A joined editor's choice of the server a playtest logs in to: the local
+/// server in `realmlist.wtf`, or the host's server at the address this editor
+/// joined. On the host's server the Server panel is disabled, since only the
+/// host applies changes to that server.
+fn playtest_server(ui: &mut egui::Ui, collab: &mut crate::collab::Collab) {
+    use crate::collab::PlaytestServer;
+    let host = collab.host_name().unwrap_or("Host").to_string();
+    let address = collab.host_address().unwrap_or("").to_string();
+    theme::heading(ui, "Server");
+    let hosts = format!("{host}'s server");
+    theme::segmented(
+        ui,
+        &mut collab.playtest_server,
+        &[("Local server", PlaytestServer::Local), (hosts.as_str(), PlaytestServer::Host)],
+        |a, b| a == b,
+    );
+    match collab.playtest_server {
+        PlaytestServer::Local => theme::note(ui, "Logs in to the realm in realmlist.wtf."),
+        PlaytestServer::Host => {
+            theme::note(ui, format!("Logs in to the realm at {address}. Use an account that exists on that server."))
+        }
+    }
+    if let Some(refused) = collab.server_gate().refused {
+        ui.label(egui::RichText::new(format!("Server panel disabled. {refused}")).small().color(theme::INK_DIM));
+    }
+}
+
 /// The playtest login popover: who a playtest logs in as, whether it shows the
 /// login screen, and whether its client caches query answers.
 ///
@@ -1625,8 +1651,15 @@ fn who(
     login: &mut Login,
     server: &mut crate::server::settings::ServerSettings,
     assets: &vale_client::assets::GameAssets,
+    collab: &mut crate::collab::Collab,
 ) {
     ui.set_min_width(300.0);
+    // In a shared session a joined editor chooses which server the playtest
+    // logs in to. See `crate::collab::PlaytestServer`.
+    if matches!(collab.state, crate::collab::State::Joined { .. }) {
+        playtest_server(ui, collab);
+        ui.add_space(6.0);
+    }
     theme::heading(ui, "Log in as");
     egui::Grid::new("playtest-login-grid")
         .num_columns(2)

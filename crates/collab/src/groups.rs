@@ -78,7 +78,7 @@ pub trait Payload: Clone + std::fmt::Debug + Serialize + serde::de::DeserializeO
     fn groups(&self) -> Vec<Group>;
 
     /// Whether this edit, made by the host's own editor, is accepted whatever
-    /// was accepted before it: for an edit that cannot be taken back, such as
+    /// was accepted before it: for an edit that cannot be reverted, such as
     /// a file deleted with unsaved edits dropped. See [`crate::peer`]'s
     /// *Forced edits*. Ignored for an edit from any other editor.
     fn forced(&self) -> bool {

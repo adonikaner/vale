@@ -577,10 +577,11 @@ const MENU: &str = "assets-menu";
 /// that it cannot be undone, and what else deleting them changes. Delete
 /// hands the files to `crate::import::assets::delete_files`.
 ///
-/// In a shared session the delete is the host's. A joined editor's
+/// In a shared session only the host deletes files. A joined editor's
 /// confirmation asks the host instead ([`crate::collab::Ask::Delete`]), and
-/// the host answers in [`requested_delete`]. The host's own says the files go
-/// for everyone, and names the others whose unsaved edits go with them.
+/// the host answers in [`requested_delete`]. The host's confirmation says
+/// that the files are deleted for every editor, and names the other editors
+/// whose unsaved edits are lost with them.
 fn delete_confirmation(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let Some(vpaths) = work.assets.deleting.clone() else { return };
     let count = vpaths.len();
@@ -726,13 +727,13 @@ fn delete_details(
         crate::collab::Role::Joined => theme::note(
             ui,
             format!(
-                "In a shared session the host deletes files. {} is asked to confirm, and the files are \
-                 then deleted for everyone. This cannot be undone.",
+                "In a shared session only the host deletes files. {} is asked to confirm, and the files are \
+                 then deleted for every editor. This cannot be undone.",
                 shared.host
             ),
         ),
         crate::collab::Role::Hosting => {
-            theme::note(ui, format!("{files} deleted for everyone in the session. This cannot be undone."))
+            theme::note(ui, format!("{files} deleted for every editor in the session. This cannot be undone."))
         }
         crate::collab::Role::Alone => theme::note(
             ui,

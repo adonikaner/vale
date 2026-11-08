@@ -11,7 +11,7 @@
 //!             and the check that refuses an edit made on out-of-date state
 //! peer.rs     every editor's half, the host's own included: its edits not
 //!             yet accepted, and which of them a remote edit makes the host
-//!             refuse, so they are taken back before the remote edit lands
+//!             refuse, so they are reverted before the remote edit lands
 //! ids.rs      blocks of new numbers handed out by the host, so two editors
 //!             never give two new spawns the same guid
 //! auth.rs     the password check: a challenge answered with a keyed hash,
@@ -38,12 +38,12 @@
 //!
 //! ## A refusal
 //!
-//! A refused edit is taken back on the editor that made it, and so is every
+//! A refused edit is reverted on the editor that made it, and so is every
 //! edit it made after it that the host has not accepted yet: the host refuses
 //! those too, by the epoch they carry. An editor does not wait for the refusal.
 //! A remote edit that conflicts with one of its waiting edits is proof that
 //! the host will refuse that edit, because the host sends messages in the
-//! order it decided them. So the editor takes its waiting edits back from that
+//! order it decided them. So the editor reverts its waiting edits from that
 //! one on, newest first, and then applies the remote edit. See
 //! [`peer::Peer::receive`].
 //!

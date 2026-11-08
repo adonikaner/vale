@@ -1,6 +1,6 @@
 //! The TCP connections of a session.
 //!
-//! [`Listener`] is the host's: it accepts connections and numbers each one as
+//! [`Listener`] runs on the host: it accepts connections and numbers each one as
 //! a user, from 1. [`Connection`] is a joining editor's. Each connection is a
 //! reader thread and a writer thread over the one socket, and the editor's
 //! frame loop reaches them through channels: [`Listener::poll`] and

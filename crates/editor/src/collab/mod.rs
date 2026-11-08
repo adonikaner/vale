@@ -1,17 +1,17 @@
 //! A shared editing session from the editor's side: hosting one or joining
-//! one, the project a joining editor fetches, every edit the host makes
-//! applied on the others as it is made, and where everyone is. The protocol
-//! is `vale_collab`'s; the panel is `crate::ui::shell::session`.
+//! one, the project a joining editor fetches, every edit applied on the other
+//! editors as it is made, and where each editor is. The protocol is
+//! `vale_collab`'s; the panel is `crate::ui::shell::session`.
 //!
 //! ```text
 //! mod.rs     the session's state, the frame's work and the plugin
 //! files.rs   project files written or removed by an operation, sent as one
-//!            step and applied on the others
+//!            step and applied on the other editors
 //! fetch.rs   a joining editor's copy of the host's project: what it lacks,
 //!            the pieces as they arrive, and the hash check
-//! people.rs  the others in the session drawn in the viewport: a ring at each
-//!            one's pointer, a pole with their name at what they look at, and
-//!            the chunks they changed in the last moments outlined
+//! people.rs  the other editors drawn in the viewport: a ring at each one's
+//!            pointer, a pole with their name at what they look at, and the
+//!            chunks they changed in the last moments outlined
 //! ```
 //!
 //! ## What is shared
@@ -21,51 +21,63 @@
 //! server rows. The undo stack's journal
 //! ([`vale_edit::undo::History::journal`]) hands each one over as it is made,
 //! a held stroke in parts ten times a second, and each undo and redo. Each is
-//! applied on the others through [`EditSession::apply_step`], the path an
-//! undo takes.
+//! applied on the other editors through [`EditSession::apply_step`], the path
+//! an undo takes.
 //!
 //! The second is project files written or removed whole, which the project's
 //! own journal records: imports, deletes, created and pasted tiles, minimaps,
-//! bakes, world map art and locks. See [`files`]. A save is not sent: every
-//! editor already holds what it writes.
+//! bakes, world map art and locks. See [`files`]. A save is not sent, because
+//! every editor already holds the edits it writes.
 //!
-//! Not shared: the shadow rebake, which replaces a tile in memory and is not
-//! on the undo stack.
+//! The shadow rebake is not shared: it replaces a tile in memory and makes no
+//! entry on the undo stack.
 //!
-//! A joined editor's edits go to the host like the host's own, except the
-//! ones that need a number or a list only the host may hand out
-//! ([`joinable`]): adding, removing or renaming doodads and buildings,
-//! adding or removing DBC table records, and creating, removing or replacing
-//! whole server rows. Its file steps may write textures, models, sounds and
-//! locks only ([`files::joinable`]). Anything else is taken back with a line
-//! saying so, and the host refuses it as well.
+//! A joined editor's edits go to the host like the host's own edits, except
+//! the edits that need a number or a list that only the host hands out
+//! ([`joinable`]): adding, removing or renaming doodads and buildings, adding
+//! or removing DBC table records, and creating, removing or replacing whole
+//! server rows. A joined editor's file steps may write textures, models,
+//! sounds and locks only ([`files::joinable`]). Any other edit is reverted
+//! on the joined editor with a status line, and the host refuses it as well.
 //!
 //! ## Deleting files
 //!
-//! A delete is the host's. A joined editor's Delete asks the host
-//! ([`Step::Delete`] in a `vale_collab::wire::ToHost::Ask`); the host sees
-//! the same confirmation its own Delete shows, naming who asked, and deletes
-//! the files or keeps them. Either way the editor that asked is told. The
-//! host's delete is a forced file step, so it reaches everyone in the host's
-//! order and is never taken back. The confirmation names the others whose
-//! unsaved edits to the files are lost with them ([`Collab::unsaved_by`]).
+//! Only the host deletes files. A joined editor's Delete asks the host
+//! ([`Step::Delete`] in a `vale_collab::wire::ToHost::Ask`). The host sees the
+//! confirmation its own Delete shows, with the name of the editor that asked,
+//! and deletes the files or keeps them. Either way the editor that asked is
+//! told. The host's delete is a forced file step, so it reaches every editor
+//! in the host's order and is never reverted. The confirmation names the
+//! other editors whose unsaved edits to the files are lost with them
+//! ([`Collab::unsaved_by`]).
 //!
 //! ## Server writes
 //!
-//! Applying to a database, restoring it, regenerating server tiles and
-//! playtesting are the host's: a joined editor's Server panel and Playtest
-//! button are disabled. The join leaves out the host's `sql\` folder, whose
-//! revert files describe the host's database. Discard is disabled for
-//! everyone in a session, since a discard is not sent.
+//! A joined editor's playtest logs in to the local server in `realmlist.wtf`
+//! or to the host's server ([`PlaytestServer`]), as chosen in the playtest
+//! login popover. With the local server, the joined editor's Server panel
+//! applies to the database in its own `Edit\server.txt`. With the host's
+//! server, the Server panel is disabled, because only the host applies
+//! changes to that server. The Server panel is also disabled when the joined
+//! editor's `Edit\server.txt` names the host's database: the host sends a
+//! fingerprint of its database location in the welcome
+//! ([`database_fingerprint`]), and the two fingerprints are compared. See
+//! [`ServerGate`].
+//!
+//! The files that record what an editor applied to its own server are kept on
+//! that editor's machine: a join neither sends the host's nor removes the
+//! joined editor's (`fetch::machine_local`). Publishing and writing a
+//! migration stay with the host. Discard is disabled for every editor in a
+//! session, because a discard is not sent to the other editors.
 //!
 //! ## When two editors change the same thing
 //!
-//! The host accepts whichever edit reaches it first and refuses the other;
-//! `vale_collab::peer` says how the editor whose edit lost learns of it
-//! before the refusal arrives. Here, an edit taken back is reverted through
+//! The host accepts whichever edit reaches it first and refuses the other
+//! edit; `vale_collab::peer` says how the editor whose edit lost learns of it
+//! before the refusal arrives. Here, a refused edit is reverted through
 //! [`EditSession::apply_step`], and so is the part of a held stroke not sent
-//! yet (the journal's open segment), and the status line names who changed
-//! the same thing first.
+//! yet (the journal's open segment), and the status line names the editor that
+//! changed the same thing first.
 //!
 //! ## Undo
 //!
@@ -73,18 +85,19 @@
 //! applied beside it. Undoing an entry writes the state it found, which
 //! would overwrite whatever another editor did there since. So when a remote
 //! edit lands, every entry of this editor's stack that touches the same
-//! groups is dropped ([`vale_edit::undo::History::forget_where`]): what
-//! someone else has changed since cannot be undone from here.
+//! groups is dropped ([`vale_edit::undo::History::forget_where`]): an editor
+//! cannot undo over a change another editor made since.
 //!
 //! ## Joining
 //!
 //! The host saves its tiles, tables and server rows and sends the list of its
 //! project's files, with a hash of each. The joining editor keeps a copy of
 //! the host's project in `Edit\<project> (shared)\`, asks for the files its
-//! copy lacks or holds different bytes of, and removes the ones the host does
-//! not have. Once every file is in, it opens the copy, applies the edits that
-//! arrived meanwhile, and goes to the host's map and view. Its own project is
-//! saved and closed while it is joined and opened again when it leaves.
+//! copy lacks or holds different bytes of, and removes the files the host
+//! does not have. Once every file is in, it opens the copy, applies the edits
+//! that arrived meanwhile, and goes to the host's map and view. Its own
+//! project is saved and closed while it is joined and opened again when it
+//! leaves.
 
 mod fetch;
 pub(crate) mod files;
@@ -127,7 +140,7 @@ impl Payload for Step {
 
     fn check(&self) -> Result<(), String> {
         match self {
-            Step::Edit { change, .. } => joinable(change).map_err(|what| format!("{what} is the host's")),
+            Step::Edit { change, .. } => joinable(change).map_err(str::to_string),
             Step::Files(files) => files.check(),
             Step::Delete(_) => Err("a delete is asked for, not sent".to_string()),
         }
@@ -211,6 +224,36 @@ impl Role {
     }
 }
 
+/// Which server a joined editor's playtest logs in to. See *Server writes*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PlaytestServer {
+    /// The realm in this machine's `realmlist.wtf`.
+    #[default]
+    Local,
+    /// The realm on the host's machine, at the address this editor joined.
+    Host,
+}
+
+/// Whether this editor may write to the server its Server panel names: apply,
+/// restore, regenerate server tiles. Every editor may, except a joined editor
+/// that playtests on the host's server or whose `Edit\server.txt` names the
+/// host's world database. See *Server writes*.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ServerGate {
+    pub(crate) role: Role,
+    /// The reason this editor may not write to its server, for the hover text
+    /// of a disabled button. `None` when it may.
+    pub(crate) refused: Option<String>,
+    /// The host's name, while this editor is joined.
+    pub(crate) host: Option<String>,
+}
+
+impl ServerGate {
+    pub(crate) fn writes(&self) -> bool {
+        self.refused.is_none()
+    }
+}
+
 /// A joined editor's request to delete project files, waiting for the host
 /// to answer it.
 #[derive(Debug, Clone, PartialEq)]
@@ -271,10 +314,10 @@ pub(crate) struct Collab {
     own_project: Option<String>,
     presence_at: f64,
     segment_at: f64,
-    /// Steps sent and received, and this editor's taken back, for the panel.
+    /// Steps sent and received, and this editor's steps reverted, for the panel.
     pub(crate) sent: u64,
     pub(crate) received: u64,
-    pub(crate) taken_back: u64,
+    pub(crate) reverted: u64,
     /// The chunks each other editor changed, by tile and chunk, and when:
     /// outlined in their colour for [`people::RECENT`] seconds.
     pub(crate) recent: HashMap<(UserId, vale_edit::TileKey, usize), f64>,
@@ -287,6 +330,18 @@ pub(crate) struct Collab {
     /// Project files another editor's step wrote or removed this frame, for
     /// the Assets workspace to forget what it read of them.
     changed: Vec<String>,
+    /// Which server this editor's playtest logs in to while it is joined.
+    pub(crate) playtest_server: PlaytestServer,
+    /// The host's address as this editor joined it, without the session's
+    /// port: the realm address of a playtest on the host's server.
+    host_address: Option<String>,
+    /// The fingerprint of the host's world database location, from the
+    /// welcome. See [`database_fingerprint`].
+    host_database: Option<[u8; 32]>,
+    /// The fingerprint of the world database this machine's
+    /// `Edit\server.txt` names, read again once a second.
+    own_database: Option<[u8; 32]>,
+    database_at: f64,
     /// The frame's clock, for the actions that note a time.
     now: f64,
 }
@@ -312,7 +367,7 @@ impl Collab {
         self.people.get(&0).map(|person| person.name.as_str())
     }
 
-    /// The names of the others whose edits to any of these files are not
+    /// The names of the other editors whose edits to any of these files are not
     /// saved yet, and so are lost when the files are deleted.
     pub(crate) fn unsaved_by(&self, vpaths: &[String]) -> Vec<String> {
         let mut users = BTreeSet::new();
@@ -322,6 +377,63 @@ impl Collab {
             }
         }
         users.iter().filter_map(|user| self.people.get(user)).map(|person| person.name.clone()).collect()
+    }
+
+    /// Whether this editor may write to its server. See [`ServerGate`].
+    pub(crate) fn server_gate(&self) -> ServerGate {
+        let role = self.role();
+        let host = self.host_name().unwrap_or("the host");
+        let refused = match (&self.state, self.playtest_server) {
+            (State::Connecting { .. } | State::Fetching { .. }, _) => {
+                Some("Not available while joining a shared session.".to_string())
+            }
+            (State::Joined { .. }, PlaytestServer::Host) => {
+                Some(format!("You playtest on {host}'s server. Only {host} applies changes to that server."))
+            }
+            (State::Joined { .. }, PlaytestServer::Local) if self.shares_the_hosts_database() => Some(format!(
+                "Edit\\server.txt names the same world database as {host}'s. Only {host} applies changes to that database."
+            )),
+            _ => None,
+        };
+        let host = role.joined().then(|| host.to_string());
+        ServerGate { role, refused, host }
+    }
+
+    /// Whether this machine's world database is the same database as the host's.
+    fn shares_the_hosts_database(&self) -> bool {
+        self.own_database.is_some() && self.own_database == self.host_database
+    }
+
+    /// The host's address, for a playtest on the host's server.
+    pub(crate) fn host_address(&self) -> Option<&str> {
+        self.host_address.as_deref()
+    }
+}
+
+/// A fingerprint of a world database's location: its host, port and database
+/// name, hashed, so it can be compared between editors without sending the
+/// location. A loopback host (`127.0.0.1`, `localhost`, `::1`) is replaced by
+/// this machine's network address first. The host's own `127.0.0.1` and a
+/// joined editor's `192.168.1.20` for the same machine then give the same
+/// fingerprint. A machine name and an address for one machine give different
+/// fingerprints.
+pub(crate) fn database_fingerprint(at: &vale_mangos::conn::Where) -> [u8; 32] {
+    let host = at.host.trim().to_ascii_lowercase();
+    let loopback = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | ".");
+    let host = match loopback {
+        true => lan_address().map_or(host, |ip| ip.to_string()),
+        false => host,
+    };
+    let text = format!("{host}\n{}\n{}", at.port(), at.database.trim().to_ascii_lowercase());
+    *blake3::hash(text.as_bytes()).as_bytes()
+}
+
+/// The host part of an address typed into the Join form: `192.168.1.20` for
+/// `192.168.1.20:7878`, and the whole of an address with no port.
+fn host_part(address: &str) -> String {
+    match address.parse::<std::net::SocketAddr>() {
+        Ok(at) => at.ip().to_string(),
+        Err(_) => address.rsplit_once(':').map_or(address, |(host, _)| host).to_string(),
     }
 }
 
@@ -417,11 +529,29 @@ fn run(
     // Told which project files another editor changed, so the Project Files
     // list and its pictures are read again.
     mut project_files: ResMut<crate::import::assets::Assets>,
+    // This machine's world database, to compare with the host's database.
+    server: Res<crate::server::settings::ServerSettings>,
+    // Given the host's realm address while this editor playtests on the
+    // host's server.
+    mut login: ResMut<crate::playtest::Login>,
 ) {
     let Some(session) = session.as_mut() else { return };
     let collab = &mut *collab;
     let now = time.elapsed_secs_f64();
     collab.now = now;
+    // `ServerSettings::resolve` reads `mangosd.conf`, so it is read once a
+    // second rather than every frame.
+    if now - collab.database_at >= 1.0 {
+        collab.database_at = now;
+        collab.own_database = server.resolve().map(|(at, _)| database_fingerprint(&at));
+    }
+    let realm = match (&collab.state, collab.playtest_server) {
+        (State::Joined { .. }, PlaytestServer::Host) => collab.host_address.clone(),
+        _ => None,
+    };
+    if login.realm != realm {
+        login.realm = realm;
+    }
     collab.recent.retain(|_, at| now - *at < people::RECENT);
     // An edit saved since is not lost by a delete.
     collab.edited.retain(|vpath, _| still_unsaved(session, vpath));
@@ -443,7 +573,7 @@ fn run(
     share_own_steps(collab, session, &assets, now);
 
     // The part of a held stroke not sent yet, which a remote edit over it
-    // takes back. See `vale_collab::peer`.
+    // reverts. See `vale_collab::peer`.
     let open = session.history.segment().cloned().map(|change| Step::Edit { change, forward: true });
     let actions = collab.session.as_mut().map(|running| running.poll(open.as_ref())).unwrap_or_default();
     let mut admits = Vec::new();
@@ -544,6 +674,7 @@ fn carry_out(
                 let _ = done.send(Joined::connect(&to, &name, &password, BUILD, archives));
             });
             collab.connecting = Some(std::sync::Mutex::new(connecting));
+            collab.host_address = Some(host_part(&address));
             collab.state = State::Connecting { to: address };
         }
         Ask::Leave => {
@@ -626,7 +757,7 @@ fn take_the_connection(collab: &mut Collab, session: &mut EditSession) {
 /// Send the steps this editor made: the files it wrote or removed first, so a
 /// paint that uses an imported texture arrives after the texture, then the
 /// undo stack's steps. A joined editor's step that only the host may make
-/// ([`joinable`], [`files::joinable`]) is taken back instead.
+/// ([`joinable`], [`files::joinable`]) is reverted instead.
 fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, now: f64) {
     if now - collab.segment_at >= SEGMENT_EVERY {
         collab.segment_at = now;
@@ -640,16 +771,16 @@ fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &Game
     let (steps, too_large) = files::take(session);
     if let Some(first) = too_large.first() {
         let mb = files::STEP_BYTES >> 20;
-        session.status = format!("{first} is over {mb} MB and was not sent: the others do not have it");
+        session.status = format!("{first} is larger than {mb} MB and was not sent to the other editors");
     }
     for step in steps {
         if joined {
             if let Err(why) = step.check() {
                 let _ = files::apply(session, assets, &step.backward());
                 collab.changed.extend(step.files.iter().map(|file| file.path.clone()));
-                collab.taken_back += 1;
+                collab.reverted += 1;
                 let why = why.split_once(": ").map_or(why.as_str(), |(_, why)| why);
-                session.status = format!("{} was taken back: {why}", step.what());
+                session.status = format!("{} was undone: {why}", step.what());
                 continue;
             }
         }
@@ -663,8 +794,8 @@ fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &Game
             if let Err(what) = joinable(&change) {
                 session.apply_step(assets, &change, !forward);
                 forget_overlapping(session, &change.groups());
-                collab.taken_back += 1;
-                session.status = format!("{} was taken back: {what} is the host's in this version", change.label);
+                collab.reverted += 1;
+                session.status = format!("{} was undone: {what}", change.label);
                 continue;
             }
         }
@@ -686,11 +817,11 @@ pub(crate) fn joinable(change: &Change) -> Result<(), &'static str> {
     for entry in change.in_order(true) {
         match entry {
             Entry::Tile(_, Edit::Placements { .. } | Edit::Names { .. }) => {
-                return Err("adding, removing and renaming doodads and buildings")
+                return Err("only the host adds, removes and renames doodads and buildings")
             }
-            Entry::Row(..) => return Err("adding and removing table records"),
+            Entry::Row(..) => return Err("only the host adds and removes table records"),
             Entry::Server(server) if server.shape == Shape::Row => {
-                return Err("creating, removing and replacing whole server rows")
+                return Err("only the host creates, removes and replaces whole server rows")
             }
             _ => {}
         }
@@ -706,14 +837,14 @@ fn forget_overlapping(session: &mut EditSession, groups: &[Group]) -> usize {
         .forget_where(|change| change.groups().iter().any(|group| groups.binary_search(group).is_ok()))
 }
 
-/// The status line for one of this editor's edits taken back.
-fn taken_back(collab: &Collab, label: &str, cause: &Cause) -> String {
+/// The status line for one of this editor's edits that was reverted.
+fn reverted_line(collab: &Collab, label: &str, cause: &Cause) -> String {
     match cause {
         Cause::Changed { user } => {
             let name = collab.people.get(user).map_or("another editor", |person| person.name.as_str());
-            format!("{label} was taken back: {name} changed the same thing first")
+            format!("{label} was undone: {name} changed the same thing first")
         }
-        Cause::Refused(reason) => format!("{label} was taken back: the host refused it ({reason})"),
+        Cause::Refused(reason) => format!("{label} was undone: the host refused it ({reason})"),
     }
 }
 
@@ -727,9 +858,17 @@ fn act(
     action: Action<Step>,
 ) {
     match action {
-        Action::Welcome { user, users } => {
+        Action::Welcome { user, users, database } => {
             collab.me = Some(user);
             collab.people = users.into_iter().map(|(user, name)| (user, Person { name, presence: None })).collect();
+            collab.host_database = database;
+            // An editor with a world database of its own playtests on its local
+            // server. An editor with no database, or with the same database as
+            // the host, playtests on the host's server.
+            collab.playtest_server = match collab.own_database {
+                Some(own) if Some(own) != database => PlaytestServer::Local,
+                _ => PlaytestServer::Host,
+            };
         }
         Action::Refused(reason) | Action::Closed(reason) => {
             let reason = match collab.state {
@@ -749,14 +888,14 @@ fn act(
             Step::Edit { change, forward } => {
                 session.apply_step(assets, change, !forward);
                 forget_overlapping(session, &payload.groups());
-                collab.taken_back += 1;
-                session.status = taken_back(collab, &change.label, &cause);
+                collab.reverted += 1;
+                session.status = reverted_line(collab, &change.label, &cause);
             }
             Step::Files(step) => {
                 let _ = files::apply(session, assets, &step.backward());
                 collab.changed.extend(step.files.iter().map(|file| file.path.clone()));
-                collab.taken_back += 1;
-                session.status = taken_back(collab, &step.what(), &cause);
+                collab.reverted += 1;
+                session.status = reverted_line(collab, &step.what(), &cause);
             }
             Step::Delete(_) => {}
         },
@@ -791,8 +930,8 @@ fn act(
             if let Some(segment) = session.history.drop_segment() {
                 session.apply_step(assets, &segment, false);
                 forget_overlapping(session, &segment.groups());
-                collab.taken_back += 1;
-                session.status = taken_back(collab, &segment.label, &cause);
+                collab.reverted += 1;
+                session.status = reverted_line(collab, &segment.label, &cause);
             }
         }
         Action::Presence { user, presence } => {
@@ -904,7 +1043,7 @@ fn admit(collab: &mut Collab, session: &mut EditSession, user: UserId, name: &st
     let files = fetch::manifest(&session.project);
     let project = session.project.name.clone();
     let Some(Session::Hosting(hosting)) = collab.session.as_mut() else { return };
-    for action in hosting.admit(user, project, files) {
+    for action in hosting.admit(user, project, files, collab.own_database) {
         if let Action::Joined { user, name } = action {
             session.status = format!("{name} joined the session; the project was saved for them");
             collab.people.insert(user, Person { name, presence: None });
@@ -954,6 +1093,8 @@ fn end(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, reas
     collab.people.clear();
     collab.requests.clear();
     collab.edited.clear();
+    collab.host_address = None;
+    collab.host_database = None;
     collab.me = None;
     session.history.journal(false);
     session.project.journal(false);
@@ -1062,6 +1203,47 @@ mod tests {
         let lists = vale_edit::ops::Placements::capture(&blank);
         let placed = one(&|h| h.record(&tile, [vale_edit::ops::Edit::Placements { before: Box::new(lists.clone()), after: Box::new(lists.clone()) }]));
         assert!(joinable(&placed).is_err());
+    }
+
+    /// A loopback host and this machine's network address give one
+    /// fingerprint; another port or database gives another. The host part of
+    /// a typed address drops the session's port.
+    #[test]
+    fn a_database_fingerprint_names_the_machine_and_not_the_spelling() {
+        let at = |info: &str| vale_mangos::conn::Where::parse(info).unwrap();
+        let local = database_fingerprint(&at("127.0.0.1;3306;mangos;secret;mangos"));
+        assert_eq!(local, database_fingerprint(&at("LOCALHOST;3306;other;password;Mangos")));
+        if let Some(ip) = lan_address() {
+            assert_eq!(local, database_fingerprint(&at(&format!("{ip};3306;mangos;secret;mangos"))));
+        }
+        assert_ne!(local, database_fingerprint(&at("127.0.0.1;3307;mangos;secret;mangos")));
+        assert_ne!(local, database_fingerprint(&at("127.0.0.1;3306;mangos;secret;world")));
+        assert_eq!(host_part("192.168.1.20:7878"), "192.168.1.20");
+        assert_eq!(host_part("hostpc:7878"), "hostpc");
+        assert_eq!(host_part("192.168.1.20"), "192.168.1.20");
+    }
+
+    /// A joined editor may write to its server only when it playtests on the
+    /// local server and that server's database is not the host's. The host
+    /// and an editor in no session always may.
+    #[test]
+    fn a_joined_editor_writes_only_to_a_server_that_is_not_the_hosts() {
+        let mut collab = Collab::default();
+        assert!(collab.server_gate().writes());
+        collab.state = State::Joined { project: "Goldshire".into() };
+        collab.people.insert(0, Person { name: "Sam".into(), presence: None });
+        collab.own_database = Some([1; 32]);
+        collab.host_database = Some([2; 32]);
+        collab.playtest_server = PlaytestServer::Local;
+        assert!(collab.server_gate().writes());
+        collab.playtest_server = PlaytestServer::Host;
+        let refused = collab.server_gate().refused.unwrap();
+        assert!(refused.contains("Only Sam applies changes"), "{refused}");
+        collab.playtest_server = PlaytestServer::Local;
+        collab.host_database = Some([1; 32]);
+        assert!(!collab.server_gate().writes(), "the same database as the host's");
+        collab.state = State::Hosting { project: "Goldshire".into(), addr: "127.0.0.1:7878".parse().unwrap() };
+        assert!(collab.server_gate().writes());
     }
 
     /// A remote edit on a chunk drops this editor's undo entries that touch

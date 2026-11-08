@@ -951,7 +951,7 @@ fn draw(
         camera_tile,
         [focus.position.x, focus.position.y],
         &assets.loading_screens(),
-        editing.collab.is_joined(),
+        &editing.collab.server_gate(),
     );
     if asked.is_some() {
         editing.tiles.asked = asked;

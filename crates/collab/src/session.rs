@@ -43,10 +43,11 @@ impl<P: Payload> Hosting<P> {
 
     /// Let in an editor that waits after [`Action::Admit`]: it is welcomed at
     /// the current sequence and sent the manifest, `project` and `files`,
-    /// which must describe the project as it stands now, saved. Answers what
+    /// which must describe the project as it stands now, saved. `database` is
+    /// the host's database fingerprint; see [`ToPeer::Welcome`]. Answers what
     /// this editor is to do, which is the [`Action::Joined`].
-    pub fn admit(&mut self, user: UserId, project: String, files: Vec<FileEntry>) -> Vec<Action<P>> {
-        let outs = self.host.admit(user);
+    pub fn admit(&mut self, user: UserId, project: String, files: Vec<FileEntry>, database: Option<[u8; 32]>) -> Vec<Action<P>> {
+        let outs = self.host.admit(user, database);
         let mut actions = Vec::new();
         self.carry(outs, None, &mut actions);
         self.net.send(user, ToPeer::Manifest { project, files });
@@ -270,7 +271,7 @@ mod tests {
                 // The host lets each editor in at once, with an empty project.
                 for action in &actions {
                     if let (Action::Admit { user, .. }, Session::Hosting(hosting)) = (action, &mut **session) {
-                        gathered[at].extend(hosting.admit(*user, "Test".into(), Vec::new()));
+                        gathered[at].extend(hosting.admit(*user, "Test".into(), Vec::new(), None));
                     }
                 }
                 gathered[at].extend(actions);
@@ -286,7 +287,7 @@ mod tests {
     /// Over loopback TCP: two editors join a host, a wrong password is
     /// refused, an edit by one reaches the other two, and two edits to one
     /// chunk made at once end with one accepted everywhere and the other
-    /// taken back by the editor that made it.
+    /// reverted by the editor that made it.
     #[test]
     fn two_editors_join_and_share_edits_over_tcp() {
         let mut host = Session::Hosting(Hosting::<Toy>::start("127.0.0.1:0", "Host", "pw", "b1", [1; 32]).unwrap());

@@ -10,21 +10,21 @@
 //! editor in that order. So when a remote edit arrives that shares a
 //! [`Group`] with a waiting edit, the host has already accepted the remote
 //! edit and will refuse the waiting one. The waiting edit, and every waiting
-//! edit after it, is taken back at once, newest first, and the epoch goes up;
+//! edit after it, is reverted at once, newest first, and the epoch goes up;
 //! the host refuses those edits by the old epoch. Only then is the remote
 //! edit applied, onto the state it was made against.
 //!
 //! The waiting edits after the conflicting one may not conflict with
-//! anything, and are taken back anyway: each was made on the state the ones
+//! anything, and are reverted anyway: each was made on the state the ones
 //! before it left. The same holds for the edit being made now, the open
 //! gesture, which is passed to [`Peer::receive`] for that reason.
 //!
 //! ## Forced edits
 //!
-//! The host's own editor can send an edit that cannot be taken back
+//! The host's own editor can send an edit that cannot be reverted
 //! ([`crate::groups::Payload::forced`]): a file deleted with the unsaved edits
 //! to it dropped. The host accepts it whatever came before it, so it is never
-//! taken back here: a take-back skips it and it stays waiting.
+//! reverted here: a revert skips it and it stays waiting.
 //!
 //! A remote edit can still arrive over a waiting forced edit. The host put the
 //! remote edit first, since its message came before the forced edit's
@@ -39,7 +39,7 @@ use crate::ids::Blocks;
 use crate::wire::{FileEntry, Presence, Seq, ToHost, ToPeer, UserId, PROTOCOL};
 use std::collections::VecDeque;
 
-/// Why one of this editor's edits is taken back.
+/// Why one of this editor's edits is reverted.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cause {
     /// This user's edit, accepted first, changed something it touches, or
@@ -52,14 +52,15 @@ pub enum Cause {
 /// What the editor does with a message from the host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action<P> {
-    /// This editor is in, as `user`, with these others.
-    Welcome { user: UserId, users: Vec<(UserId, String)> },
+    /// This editor is in, as `user`, with these other editors. `database` is
+    /// the host's database fingerprint; see [`ToPeer::Welcome`].
+    Welcome { user: UserId, users: Vec<(UserId, String)>, database: Option<[u8; 32]> },
     /// This editor is not let in, or is put out.
     Refused(String),
-    /// Take back the edit being made now and end the gesture. See
+    /// Revert the edit being made now and end the gesture. See
     /// [`Peer::receive`].
     CancelOpen { cause: Cause },
-    /// Take back one of this editor's own edits. Several come newest first.
+    /// Revert one of this editor's own edits. Several come newest first.
     Revert { payload: P, cause: Cause },
     /// Apply another editor's edit.
     Apply { user: UserId, payload: P },
@@ -203,19 +204,19 @@ impl<P: Payload> Peer<P> {
     }
 
     /// One message from the host, and what the editor is to do. `open` is the
-    /// edit the editor is in the middle of making, if any: it is taken back
+    /// edit the editor is in the middle of making, if any: it is reverted
     /// when a remote edit conflicts with it, and whenever waiting edits are
-    /// taken back, since it was made on top of them.
+    /// reverted, since it was made on top of them.
     pub fn receive(&mut self, message: ToPeer<P>, open: Option<&P>) -> Vec<Action<P>> {
         match message {
             ToPeer::Challenge { nonce } => {
                 self.outbox.push(ToHost::Proof(auth::proof(&self.key, &nonce, &self.name)));
                 Vec::new()
             }
-            ToPeer::Welcome { user, seq, users } => {
+            ToPeer::Welcome { user, seq, users, database } => {
                 self.user = Some(user);
                 self.seq = seq;
-                vec![Action::Welcome { user, users }]
+                vec![Action::Welcome { user, users, database }]
             }
             ToPeer::Refused(reason) => vec![Action::Refused(reason)],
             ToPeer::Accepted { id, seq } => {
@@ -225,13 +226,13 @@ impl<P: Payload> Peer<P> {
             }
             ToPeer::Rejected { id, reason } => match self.waiting.iter().position(|waiting| waiting.id == id) {
                 // The host accepts every forced edit, so this is not expected;
-                // one that cannot be taken back is only let go.
+                // one that cannot be reverted is only removed from the waiting edits.
                 Some(at) if self.waiting[at].forced => {
                     self.waiting.remove(at);
                     Vec::new()
                 }
-                Some(at) => self.take_back(at, open, Cause::Refused(reason)),
-                // Already taken back when the conflicting edit arrived.
+                Some(at) => self.revert_from(at, open, Cause::Refused(reason)),
+                // Already reverted when the conflicting edit arrived.
                 None => Vec::new(),
             },
             ToPeer::Change { seq, user, payload } => {
@@ -239,7 +240,7 @@ impl<P: Payload> Peer<P> {
                 let cause = Cause::Changed { user };
                 let first = self.waiting.iter().position(|waiting| !waiting.forced && overlaps(&waiting.groups, &groups));
                 let mut out = match first {
-                    Some(at) => self.take_back(at, open, cause),
+                    Some(at) => self.revert_from(at, open, cause),
                     None => match open.is_some_and(|open| overlaps(&open.groups(), &groups)) {
                         true => vec![Action::CancelOpen { cause }],
                         false => Vec::new(),
@@ -270,10 +271,10 @@ impl<P: Payload> Peer<P> {
         }
     }
 
-    /// Take back the open gesture and the waiting edits from `at` on, newest
+    /// Revert the open gesture and the waiting edits from `at` on, newest
     /// first, and go to the next epoch. A forced edit among them stays
     /// waiting; see *Forced edits*.
-    fn take_back(&mut self, at: usize, open: Option<&P>, cause: Cause) -> Vec<Action<P>> {
+    fn revert_from(&mut self, at: usize, open: Option<&P>, cause: Cause) -> Vec<Action<P>> {
         let mut out = Vec::new();
         if open.is_some() {
             out.push(Action::CancelOpen { cause: cause.clone() });
@@ -332,7 +333,7 @@ mod tests {
                         let at = user as usize;
                         actions[at].extend(peers[at].receive(message, open[at]));
                     }
-                    Out::Admit { user, .. } => admitted.extend(host.admit::<Toy>(user)),
+                    Out::Admit { user, .. } => admitted.extend(host.admit::<Toy>(user, None)),
                     _ => {}
                 }
             }
@@ -355,7 +356,7 @@ mod tests {
     }
 
     /// Two editors edit one chunk at once. The host's edit is accepted first;
-    /// Alex takes back his edit and the disjoint one he made after it, newest
+    /// Alex reverts his edit and the disjoint one he made after it, newest
     /// first, then applies the host's. Both end at the host's sequence and
     /// Alex's next edit is accepted.
     #[test]

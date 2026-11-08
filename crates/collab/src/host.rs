@@ -12,7 +12,7 @@
 //! For every [`Group`] the host keeps the last accepted edit that touched it
 //! and who made it. An edit is refused when another editor touched one of its
 //! groups after the edit's `base`: the editor that made it had not seen that
-//! change, so the state it recorded as "before" is not the state the others
+//! change, so the state it recorded as "before" is not the state the other editors
 //! now hold. Edits by the same editor never conflict with each other, since
 //! that editor applied each one before making the next.
 //!
@@ -25,7 +25,7 @@
 //!
 //! * An edit from the host's own editor that is [`Payload::forced`] is
 //!   accepted whatever its epoch and whatever touched its groups after its
-//!   base. It cannot be taken back, so it is put in the order where it
+//!   base. It cannot be reverted, so it is put in the order where it
 //!   arrives.
 //! * An edit from any other editor must also pass [`Payload::check`], which
 //!   says what a joined editor may send. A failed check is a refusal like a
@@ -126,14 +126,15 @@ impl Host {
     /// Let in an editor that answered the challenge: it is welcomed at the
     /// current sequence and receives every edit after it. The caller sends
     /// the manifest straight after the welcome. Nothing for an editor that is
-    /// not waiting to be let in.
-    pub fn admit<P: Payload>(&mut self, user: UserId) -> Vec<Out<P>> {
+    /// not waiting to be let in. `database` is the host's database
+    /// fingerprint; see [`ToPeer::Welcome`].
+    pub fn admit<P: Payload>(&mut self, user: UserId, database: Option<[u8; 32]>) -> Vec<Out<P>> {
         let Some(State::Admitting { name }) = self.users.get(&user) else {
             return Vec::new();
         };
         let name = name.clone();
         self.users.insert(user, State::In { name: name.clone(), epoch: 0 });
-        let mut out = vec![Out::To(user, ToPeer::Welcome { user, seq: self.seq, users: self.users() })];
+        let mut out = vec![Out::To(user, ToPeer::Welcome { user, seq: self.seq, users: self.users(), database })];
         out.extend(self.to_all(Some(user), ToPeer::Joined { user, name }));
         out
     }
@@ -286,7 +287,7 @@ pub(crate) mod tests {
 
         fn check(&self) -> Result<(), String> {
             match self.refused {
-                true => Err("the host's alone".to_string()),
+                true => Err("only the host makes this edit".to_string()),
                 false => Ok(()),
             }
         }
@@ -312,8 +313,8 @@ pub(crate) mod tests {
         let Out::To(1, ToPeer::Challenge { nonce }) = out[0] else { panic!("{out:?}") };
         let out = host.receive::<Toy>(1, ToHost::Proof(auth::proof(&auth::key("pw"), &nonce, "Alex")));
         assert_eq!(out, vec![Out::Admit { user: 1, name: "Alex".into() }]);
-        let out = host.admit::<Toy>(1);
-        assert!(matches!(&out[0], Out::To(1, ToPeer::Welcome { user: 1, seq: 0, .. })), "{out:?}");
+        let out = host.admit::<Toy>(1, None);
+        assert!(matches!(&out[0], Out::To(1, ToPeer::Welcome { user: 1, seq: 0, database: None, .. })), "{out:?}");
         assert_eq!(out[1], Out::To(0, ToPeer::Joined { user: 1, name: "Alex".into() }));
         host
     }
@@ -413,12 +414,12 @@ pub(crate) mod tests {
         assert!(host.receive::<Toy>(1, ToHost::Presence(presence)).is_empty());
         let out = host.receive(0, ToHost::Propose { id: 1, epoch: 0, base: 0, payload: toy("early", &[chunk(1)]) });
         assert_eq!(out, vec![Out::To(0, ToPeer::Accepted { id: 1, seq: 1 })]);
-        let out = host.admit::<Toy>(1);
-        assert!(matches!(&out[0], Out::To(1, ToPeer::Welcome { user: 1, seq: 1, .. })), "{out:?}");
-        assert!(host.admit::<Toy>(1).is_empty(), "admitting twice does nothing");
+        let out = host.admit::<Toy>(1, Some([7; 32]));
+        assert!(matches!(&out[0], Out::To(1, ToPeer::Welcome { user: 1, seq: 1, database: Some([7, ..]), .. })), "{out:?}");
+        assert!(host.admit::<Toy>(1, None).is_empty(), "admitting twice does nothing");
     }
 
-    /// Leaving tells the others; a message before the handshake is refused.
+    /// Leaving tells the other editors; a message before the handshake is refused.
     #[test]
     fn leaving_is_announced_and_an_early_message_refused() {
         let mut host = with_one_joined();

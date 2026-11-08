@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 /// The version of these messages. A joining editor sends it in
 /// [`ToHost::Hello`] and the host refuses any other, since postcard encodes
 /// fields by position and two builds that differ read each other wrongly.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// The largest frame either end reads, in bytes: 64 MiB.
 pub const MAX_FRAME: usize = 64 << 20;
@@ -25,7 +25,7 @@ pub type UserId = u32;
 pub type Seq = u64;
 
 /// Where an editor is and what it is doing, sent a few times a second and
-/// drawn by the others.
+/// drawn by the other editors.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Presence {
     /// The map the editor has open, by its directory name.
@@ -55,14 +55,15 @@ pub const FILE_PIECE: usize = 4 << 20;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ToHost<P> {
     /// The first message on a connection. `build` and `archives` must match
-    /// the host's: the editor's own build, and a fingerprint of the game's
-    /// archives, since an edit is applied to the bytes those archives hold.
+    /// the host's build and archives: the editor's own build, and a
+    /// fingerprint of the game's archives, since an edit is applied to the
+    /// bytes those archives hold.
     Hello { protocol: u32, name: String, build: String, archives: [u8; 32] },
     /// The answer to [`ToPeer::Challenge`]. See [`crate::auth::proof`].
     Proof([u8; 32]),
     /// An edit this editor has made and applied. `id` is the editor's own
     /// number for it, `base` the last edit it had received, and `epoch` the
-    /// count of times it has taken waiting edits back.
+    /// count of times it has reverted its waiting edits.
     Propose { id: u64, epoch: u32, base: Seq, payload: P },
     /// A block of `size` new numbers of `kind`, none below `floor`. See
     /// [`crate::ids`].
@@ -88,7 +89,12 @@ pub enum ToPeer<P> {
     Challenge { nonce: [u8; 32] },
     /// The editor is in: its number, the last edit accepted so far, and who
     /// else is in. [`ToPeer::Manifest`] follows at once.
-    Welcome { user: UserId, seq: Seq, users: Vec<(UserId, String)> },
+    ///
+    /// `database` is a fingerprint of the host's world database location, or
+    /// `None` when the host has no database. A joined editor compares it with
+    /// its own, and writes nothing to the host's database. The
+    /// fingerprint is a hash, so no server address or name is sent.
+    Welcome { user: UserId, seq: Seq, users: Vec<(UserId, String)>, database: Option<[u8; 32]> },
     /// The host's project as it stood at the welcome's `seq`, saved: its name
     /// and every file. Every [`ToPeer::Change`] after it is made on top of
     /// these files.
