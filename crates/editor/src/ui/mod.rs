@@ -951,6 +951,7 @@ fn draw(
         camera_tile,
         [focus.position.x, focus.position.y],
         &assets.loading_screens(),
+        editing.collab.is_joined(),
     );
     if asked.is_some() {
         editing.tiles.asked = asked;
@@ -1089,6 +1090,11 @@ fn draw(
             viewport.floating.push(ctx.content_rect());
         }
         import::assets::import_dialog(&ctx, &mut editing.assets, &mut editing.browser, session, &assets);
+    }
+    // A joined editor's request to delete files, which the host answers under
+    // any tool. See `crate::collab`'s *Deleting files*.
+    if import::assets::requested_delete(&ctx, &mut editing.assets, &mut editing.collab, session, &assets) {
+        viewport.floating.push(ctx.content_rect());
     }
 
     // The creature template's own window, drawn on the root context like the

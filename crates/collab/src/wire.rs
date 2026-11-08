@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 /// The version of these messages. A joining editor sends it in
 /// [`ToHost::Hello`] and the host refuses any other, since postcard encodes
 /// fields by position and two builds that differ read each other wrongly.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The largest frame either end reads, in bytes: 64 MiB.
 pub const MAX_FRAME: usize = 64 << 20;
@@ -68,6 +68,11 @@ pub enum ToHost<P> {
     /// [`crate::ids`].
     Ids { kind: String, floor: u64, size: u64 },
     Presence(Presence),
+    /// An edit this editor may not make, for the host's editor to make
+    /// itself or decline: a joined editor's request to delete files. It is
+    /// not numbered and reaches no other editor. A decline is answered with
+    /// [`ToPeer::Note`].
+    Ask(P),
     /// The files of the [`ToPeer::Manifest`] this editor lacks, or holds
     /// different bytes of. Answered with their [`ToPeer::File`] pieces and
     /// then [`ToPeer::FilesDone`], also when the list is empty.
@@ -106,6 +111,9 @@ pub enum ToPeer<P> {
     /// The numbers `start..end` of `kind` are this editor's to give out.
     Ids { kind: String, start: u64, end: u64 },
     Presence { user: UserId, presence: Presence },
+    /// A line from the host's editor for this editor's status line: what it
+    /// did with an [`ToHost::Ask`].
+    Note(String),
     Joined { user: UserId, name: String },
     Left { user: UserId },
 }

@@ -27,6 +27,9 @@ impl EditSession {
     /// dialog lists tiles by, does not compare every chunk, so a tile it calls
     /// the same can still differ.
     fn save_one(&mut self, coord: (u32, u32)) -> Option<Saved> {
+        // Every editor in a shared session holds the edits being saved, so
+        // the write is not sent to them. See `crate::collab::files`.
+        let _unjournaled = self.project.unjournaled();
         let tile = self.tiles.get(&coord)?;
         let key = self.key(coord);
         let vpath = key.vpath();

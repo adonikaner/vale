@@ -324,23 +324,29 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             work.browser.forget_buffers();
         }
         if ui
-            .add_enabled(unsaved, egui::Button::new("Save").min_size(size))
+            .add_enabled(unsaved && !work.role.joined(), egui::Button::new("Save").min_size(size))
             .on_hover_text(format!(
                 "write {table_name}.dbc into the project folder. Ctrl+S writes every table and tile."
             ))
-            .on_disabled_hover_text("nothing has changed since the last save")
+            .on_disabled_hover_text(match work.role.joined() {
+                true => "in a shared session the host saves",
+                false => "nothing has changed since the last save",
+            })
             .clicked()
         {
             work.session.save_table(&table_name);
         }
         if ui
-            .add_enabled(unsaved, egui::Button::new("Discard").min_size(size))
+            .add_enabled(unsaved && !work.role.shared(), egui::Button::new("Discard").min_size(size))
             .on_hover_text(format!(
                 "discard every unsaved change to {table_name}: reload the file and remove its \
                  entries from the undo stack. The rows return to the project folder's copy, or \
                  to the archives' copy when the project has none."
             ))
-            .on_disabled_hover_text("nothing has changed since the last save")
+            .on_disabled_hover_text(match work.role.shared() {
+                true => "not in a shared session: a discard is not sent to the others. Undo your own edits instead",
+                false => "nothing has changed since the last save",
+            })
             .clicked()
             && work.session.discard_table(work.assets, &table_name)
         {

@@ -54,7 +54,9 @@
 //! when it is not one of them, with Delete. Delete, there or in a file's
 //! details, opens a confirmation that says how many files go, that it cannot
 //! be undone, and what else the deletion changes; the deletion itself is
-//! `crate::import::assets::delete_files`.
+//! `crate::import::assets::delete_files`. In a shared session a joined
+//! editor's confirmation asks the host instead, and the host answers in the
+//! same confirmation, shown under any tool ([`requested_delete`]).
 //!
 //! ## What a file is to the game, not its format
 //!
@@ -119,6 +121,9 @@ pub(crate) struct Work<'a> {
     pub(crate) flights: &'a mut crate::tools::places::flightpaths::Flightpaths,
     /// The table browser, told when a rebake changes a row.
     pub(crate) browser: &'a mut crate::tables::browser::Browser,
+    /// The shared session: a joined editor's Delete asks the host, and the
+    /// host's names whose unsaved edits it drops. See `crate::collab`.
+    pub(crate) collab: &'a mut crate::collab::Collab,
     pub(crate) now: f64,
 }
 
@@ -571,109 +576,42 @@ const MENU: &str = "assets-menu";
 /// The confirmation a Delete waits on, while one does: how many files go,
 /// that it cannot be undone, and what else deleting them changes. Delete
 /// hands the files to `crate::import::assets::delete_files`.
+///
+/// In a shared session the delete is the host's. A joined editor's
+/// confirmation asks the host instead ([`crate::collab::Ask::Delete`]), and
+/// the host answers in [`requested_delete`]. The host's own says the files go
+/// for everyone, and names the others whose unsaved edits go with them.
 fn delete_confirmation(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let Some(vpaths) = work.assets.deleting.clone() else { return };
     let count = vpaths.len();
-    let in_game = |vpath: &str| in_archives(ui.ctx(), work.game, vpath);
-    let replaced = vpaths.iter().filter(|vpath| in_game(vpath)).count();
-    let tiles: Vec<&String> = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Tile).collect();
-    let created = tiles.iter().filter(|vpath| !in_game(vpath)).count();
-    let tables = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Table).count();
-    let indexes = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Wdt).count();
-    let paired = vpaths
-        .iter()
-        .filter(|vpath| gloss_of(vpath).is_some_and(|gloss| work.session.project.has(&gloss)))
-        .count();
+    let role = work.collab.role();
+    let host = work.collab.host_name().unwrap_or("the host").to_string();
+    let shared = Shared { role, host: &host, lost: work.collab.unsaved_by(&vpaths) };
     let mut decided = false;
     let response = egui::Modal::new(egui::Id::new("assets-delete")).show(ui.ctx(), |ui| {
         ui.set_width(460.0);
-        ui.label(
-            egui::RichText::new(match count {
-                1 => format!("Delete {} from the project?", basename(&vpaths[0])),
-                n => format!("Delete {n} files from the project?"),
-            })
-            .strong()
-            .size(14.0)
-            .color(theme::INK),
-        );
-        ui.add_space(4.0);
-        for vpath in vpaths.iter().take(8) {
-            ui.label(egui::RichText::new(vpath).small().color(theme::INK_DIM));
-        }
-        if count > 8 {
-            ui.label(egui::RichText::new(format!("and {} more", count - 8)).small().color(theme::INK_DIM));
-        }
-        ui.add_space(4.0);
-        theme::note(
-            ui,
-            format!(
-                "{} deleted from the project folder, {}. This cannot be undone.",
-                match count {
-                    1 => "The file is".to_string(),
-                    n => format!("{n} files are"),
-                },
-                work.session.project.path_for("").unwrap_or_default().display()
-            ),
-        );
-        if paired > 0 {
-            theme::note(ui, "A ground texture's _s file is deleted with it.");
-        }
-        if replaced > 0 {
-            theme::note(
-                ui,
-                format!(
-                    "{replaced} of them replace the archives' file at their path. The game reads the \
-                     archives' file there again."
-                ),
-            );
-        }
-        if !tiles.is_empty() {
-            theme::note(
-                ui,
-                "Unsaved edits to the map tiles and their undo entries are dropped. Server tile files \
-                 regenerated from them stay in the server's DataDir.",
-            );
-        }
-        if created > 0 {
-            theme::note(
-                ui,
-                format!(
-                    "{created} of the tiles are tiles the project created, which the archives do not \
-                     have. Each is also unclaimed in its map's WDT, and its minimap picture is deleted."
-                ),
-            );
-        }
-        if tables > 0 {
-            theme::note(ui, "Unsaved edits to those DBC tables and their undo entries are dropped.");
-        }
-        if indexes > 0 {
-            theme::note(
-                ui,
-                "A map whose tile index is deleted claims the tiles of the archives' index again; a \
-                 map the archives do not have claims no tiles.",
-            );
-        }
-        theme::note(
-            ui,
-            "A patch archive already published keeps these files until the next publish, which builds \
-             it again from the project's files.",
-        );
+        let what = match count {
+            1 => basename(&vpaths[0]).to_string(),
+            n => format!("{n} files"),
+        };
+        let title = match role.joined() {
+            true => format!("Ask {host} to delete {what}?"),
+            false => format!("Delete {what} from the project?"),
+        };
+        ui.label(egui::RichText::new(title).strong().size(14.0).color(theme::INK));
+        delete_details(ui, work.session, work.game, &vpaths, &shared);
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(match count {
-                            1 => "Delete File".to_string(),
-                            n => format!("Delete {n} Files"),
-                        })
-                        .color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)),
-                    )
-                    .fill(theme::BAD),
-                )
-                .clicked()
-            {
-                work.assets.ask = Some(Ask::Delete(vpaths.clone()));
+            let label = match (role.joined(), count) {
+                (true, _) => "Ask to Delete".to_string(),
+                (false, 1) => "Delete File".to_string(),
+                (false, n) => format!("Delete {n} Files"),
+            };
+            if danger(ui, &label).clicked() {
+                match role.joined() {
+                    true => work.collab.ask = Some(crate::collab::Ask::Delete(vpaths.clone())),
+                    false => work.assets.ask = Some(Ask::Delete(vpaths.clone())),
+                }
                 decided = true;
             }
             if ui.button("Cancel").clicked() {
@@ -683,6 +621,193 @@ fn delete_confirmation(ui: &mut egui::Ui, work: &mut Work<'_>) {
     });
     if decided || response.should_close() {
         work.assets.deleting = None;
+    }
+}
+
+/// The host's answer to a joined editor's request to delete files, under any
+/// tool: the first of [`crate::collab::Collab::requests`], as the same
+/// confirmation the host's own Delete shows. Delete hands the files to
+/// `crate::import::assets::delete_files`; Keep tells the editor that asked.
+/// Closing the confirmation keeps the files. Answers whether it is showing,
+/// so the shell can keep a press on it off the ground.
+pub(crate) fn requested_delete(
+    ctx: &egui::Context,
+    assets: &mut Assets,
+    collab: &mut crate::collab::Collab,
+    session: &EditSession,
+    game: &vale_client::assets::GameAssets,
+) -> bool {
+    let Some(request) = collab.requests.front().cloned() else { return false };
+    let count = request.paths.len();
+    let shared = Shared { role: collab.role(), host: "", lost: collab.unsaved_by(&request.paths) };
+    let mut answer = None;
+    let response = egui::Modal::new(egui::Id::new("assets-delete-requested")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        let what = match count {
+            1 => basename(&request.paths[0]).to_string(),
+            n => format!("{n} files"),
+        };
+        ui.label(
+            egui::RichText::new(format!("{} asks to delete {what}", request.name))
+                .strong()
+                .size(14.0)
+                .color(theme::INK),
+        );
+        delete_details(ui, session, game, &request.paths, &shared);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let label = match count {
+                1 => "Delete File".to_string(),
+                n => format!("Delete {n} Files"),
+            };
+            if danger(ui, &label).clicked() {
+                answer = Some(true);
+            }
+            if ui.button("Keep").on_hover_text(format!("Keep the files and tell {}.", request.name)).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if answer.is_none() && response.should_close() {
+        answer = Some(false);
+    }
+    match answer {
+        Some(true) => {
+            collab.requests.pop_front();
+            assets.ask = Some(Ask::Delete(request.paths));
+        }
+        Some(false) => collab.ask = Some(crate::collab::Ask::Keep),
+        None => {}
+    }
+    true
+}
+
+/// What a delete confirmation says about the shared session.
+struct Shared<'a> {
+    role: crate::collab::Role,
+    /// The host's name, for a joined editor's confirmation.
+    host: &'a str,
+    /// The others whose unsaved edits to the files are lost with them.
+    lost: Vec<String>,
+}
+
+/// A delete confirmation's body: the files, and what deleting them changes.
+fn delete_details(
+    ui: &mut egui::Ui,
+    session: &EditSession,
+    game: &vale_client::assets::GameAssets,
+    vpaths: &[String],
+    shared: &Shared<'_>,
+) {
+    let count = vpaths.len();
+    let in_game = |vpath: &str| in_archives(ui.ctx(), game, vpath);
+    let replaced = vpaths.iter().filter(|vpath| in_game(vpath)).count();
+    let tiles: Vec<&String> = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Tile).collect();
+    let created = tiles.iter().filter(|vpath| !in_game(vpath)).count();
+    let tables = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Table).count();
+    let indexes = vpaths.iter().filter(|vpath| Kind::of(vpath) == Kind::Wdt).count();
+    let paired = vpaths
+        .iter()
+        .filter(|vpath| gloss_of(vpath).is_some_and(|gloss| session.project.has(&gloss)))
+        .count();
+    ui.add_space(4.0);
+    for vpath in vpaths.iter().take(8) {
+        ui.label(egui::RichText::new(vpath).small().color(theme::INK_DIM));
+    }
+    if count > 8 {
+        ui.label(egui::RichText::new(format!("and {} more", count - 8)).small().color(theme::INK_DIM));
+    }
+    ui.add_space(4.0);
+    let files = match count {
+        1 => "The file is".to_string(),
+        n => format!("{n} files are"),
+    };
+    match shared.role {
+        crate::collab::Role::Joined => theme::note(
+            ui,
+            format!(
+                "In a shared session the host deletes files. {} is asked to confirm, and the files are \
+                 then deleted for everyone. This cannot be undone.",
+                shared.host
+            ),
+        ),
+        crate::collab::Role::Hosting => {
+            theme::note(ui, format!("{files} deleted for everyone in the session. This cannot be undone."))
+        }
+        crate::collab::Role::Alone => theme::note(
+            ui,
+            format!(
+                "{files} deleted from the project folder, {}. This cannot be undone.",
+                session.project.path_for("").unwrap_or_default().display()
+            ),
+        ),
+    }
+    if !shared.lost.is_empty() && (!tiles.is_empty() || tables > 0) {
+        ui.label(
+            egui::RichText::new(format!("Unsaved edits by {} to these files are lost.", names(&shared.lost)))
+                .small()
+                .color(theme::WARN),
+        );
+    }
+    if paired > 0 {
+        theme::note(ui, "A ground texture's _s file is deleted with it.");
+    }
+    if replaced > 0 {
+        theme::note(
+            ui,
+            format!(
+                "{replaced} of them replace the archives' file at their path. The game reads the \
+                 archives' file there again."
+            ),
+        );
+    }
+    if !tiles.is_empty() {
+        theme::note(
+            ui,
+            "Unsaved edits to the map tiles and their undo entries are dropped. Server tile files \
+             regenerated from them stay in the server's DataDir.",
+        );
+    }
+    if created > 0 {
+        theme::note(
+            ui,
+            format!(
+                "{created} of the tiles are tiles the project created, which the archives do not \
+                 have. Each is also unclaimed in its map's WDT, and its minimap picture is deleted."
+            ),
+        );
+    }
+    if tables > 0 {
+        theme::note(ui, "Unsaved edits to those DBC tables and their undo entries are dropped.");
+    }
+    if indexes > 0 {
+        theme::note(
+            ui,
+            "A map whose tile index is deleted claims the tiles of the archives' index again; a \
+             map the archives do not have claims no tiles.",
+        );
+    }
+    theme::note(
+        ui,
+        "A patch archive already published keeps these files until the next publish, which builds \
+         it again from the project's files.",
+    );
+}
+
+/// The red button that confirms a delete.
+fn danger(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)))
+            .fill(theme::BAD),
+    )
+}
+
+/// Names as a list in a sentence: `Alex`, `Alex and Sam`, `Alex, Sam and Kim`.
+fn names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -909,6 +1034,18 @@ fn catch_up(ui: &mut egui::Ui, work: &mut Work<'_>, survey: &Survey) {
              rebake becomes, and baked models no SpellVisualEffectName row names. They are \
              published with the project all the same.",
         );
+        // A joined editor asks the host, through the Delete confirmation.
+        if work.collab.role().joined() {
+            let host = work.collab.host_name().unwrap_or("the host");
+            if ui
+                .button(egui::RichText::new(format!("Remove {}\u{2026}", survey.unused.len())).color(theme::BAD))
+                .on_hover_text(format!("Ask {host} to delete them from the project."))
+                .clicked()
+            {
+                work.assets.deleting = Some(survey.unused.clone());
+            }
+            return;
+        }
         // Removal takes two presses: the files are deleted from the project
         // folder, which no undo puts back.
         let confirm_id = egui::Id::new("assets-remove-unused");
@@ -2009,6 +2146,7 @@ pub(super) fn work<'a>(
         tiles: &mut editing.tiles,
         flights: &mut editing.flightpaths,
         browser: &mut editing.browser,
+        collab: &mut editing.collab,
         now,
     }
 }

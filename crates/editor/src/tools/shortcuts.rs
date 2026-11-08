@@ -40,7 +40,8 @@ pub(crate) fn shortcuts(
     // answers. See [`crate::server::Reach`], which bundles them into one
     // parameter because this system is at Bevy's limit of sixteen.
     mut reach: crate::server::Reach,
-    // A joined editor does not save: the host does. See `crate::collab`.
+    // A joined editor does not save or playtest: the host does. See
+    // `crate::collab`.
     collab: Res<crate::collab::Collab>,
 ) {
     let taken = std::mem::take(&mut *taken);
@@ -52,6 +53,7 @@ pub(crate) fn shortcuts(
     }
     if taken.p {
         match state.editing() {
+            true if collab.is_joined() => session.status = "in a shared session the host playtests".to_string(),
             true => crate::playtest::start(
                 &mut state,
                 session,

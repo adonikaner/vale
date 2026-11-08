@@ -1,11 +1,12 @@
 //! A joining editor's copy of the host's project.
 //!
 //! The copy is `Edit\<project> (shared)\`. The host's manifest names every
-//! file of its project with its size and blake3 hash. A file the copy holds
-//! with the same hash is kept; the others are fetched; a file of the copy the
-//! manifest does not name is removed. Each fetched file is checked against
-//! its hash before it is written, so a host that saved while the editor was
-//! joining is caught rather than opened half old.
+//! file of its project but its `sql\` folder ([`listed`]) with its size and
+//! blake3 hash. A file the copy holds with the same hash is kept; the others
+//! are fetched; a file of the copy the manifest does not name is removed.
+//! Each fetched file is checked against its hash before it is written, so a
+//! host that saved while the editor was joining is caught rather than opened
+//! half old.
 
 use std::collections::HashMap;
 use vale_client::assets::GameAssets;
@@ -102,12 +103,20 @@ impl Fetch {
     }
 }
 
-/// The manifest of a project as it stands on disk: every file, its size and
-/// its hash.
+/// Whether a project file goes in the manifest. Everything does but `sql\`:
+/// its revert files record what the host applied to its own database, and a
+/// joined editor that ran them would restore the host's rows into its own.
+pub(super) fn listed(path: &str) -> bool {
+    vale_edit::manifest::Kind::of(path) != vale_edit::manifest::Kind::Sql
+}
+
+/// The manifest of a project as it stands on disk: every file [`listed`], its
+/// size and its hash.
 pub(super) fn manifest(project: &Project) -> Vec<FileEntry> {
     project
         .files()
         .into_iter()
+        .filter(|path| listed(path))
         .filter_map(|path| {
             let bytes = project.read(&path)?;
             Some(FileEntry { size: bytes.len() as u64, hash: *blake3::hash(&bytes).as_bytes(), path })

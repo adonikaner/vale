@@ -41,16 +41,21 @@ use crate::server::sync::{apply, discard, put_back, Half, Standing, Work};
 use crate::ui::widgets::theme;
 
 /// Draws the whole section: the *Apply on save* switch, then one block per
-/// subject.
-pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
+/// subject. In a shared session a joined editor's switch, Apply and Restore
+/// are disabled, since the host writes to its own database; Discard is
+/// disabled for everyone, since a discard is not sent to the others.
+pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>, role: crate::collab::Role) {
     theme::heading(ui, "Server operations");
     let have_a_database = work.server.resolve().is_some();
+    if role.joined() {
+        theme::note(ui, "In a shared session the host saves and applies to its own database.");
+    }
 
     // One switch covers every subject, as its label says. See
     // `ServerSettings::apply_on_save`.
     if ui
         .add_enabled(
-            have_a_database,
+            have_a_database && !role.joined(),
             egui::Checkbox::new(&mut work.server.apply_on_save, "Apply on save"),
         )
         .on_hover_text(
@@ -58,7 +63,10 @@ pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
              subject. A save made with the panels open over a playtest also sends .reload \
              for each table that has one. When off, a save only writes the SQL files.",
         )
-        .on_disabled_hover_text("No world database is set.")
+        .on_disabled_hover_text(match role.joined() {
+            true => "In a shared session the host saves.",
+            false => "No world database is set.",
+        })
         .changed()
     {
         work.server.save(&work.assets.root);
@@ -71,13 +79,13 @@ pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>) {
 
     ui.add_space(4.0);
     for half in Half::ALL {
-        block(ui, work, half, have_a_database);
+        block(ui, work, half, have_a_database, role);
         ui.add_space(4.0);
     }
 }
 
 /// Draws one subject's block. The module comment shows its layout.
-fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bool) {
+fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bool, role: crate::collab::Role) {
     let standing = work
         .standings
         .of(half, work.session, work.assets, work.now)
@@ -101,7 +109,7 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
         .inner_margin(egui::Margin::symmetric(8, 5))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            block_body(ui, work, half, have_a_database, &standing, colour);
+            block_body(ui, work, half, have_a_database, role, &standing, colour);
         });
 }
 
@@ -113,6 +121,7 @@ fn block_body(
     work: &mut Work<'_>,
     half: Half,
     have_a_database: bool,
+    role: crate::collab::Role,
     standing: &Standing,
     colour: egui::Color32,
 ) {
@@ -154,6 +163,7 @@ fn block_body(
                 have_a_database && (standing.appliable() || files_outstanding) && !busy,
                 have_a_database && (standing.applied > 0 || files_saved > 0) && !busy,
                 have_a_database,
+                role,
                 busy,
                 standing.changed > 0,
                 &mut said,
@@ -235,13 +245,14 @@ fn buttons(
     can_apply: bool,
     can_put_back: bool,
     have_a_database: bool,
+    role: crate::collab::Role,
     busy: bool,
     changed: bool,
     said: &mut Option<Result<String, String>>,
 ) {
     {
         if ui
-            .add_enabled(can_apply, egui::Button::new("Apply"))
+            .add_enabled(can_apply && !role.joined(), egui::Button::new("Apply"))
             .on_hover_text(format!(
                 "Write {} and run it against the world database, after writing the \
                  statements that put every row back into {}.{}",
@@ -249,27 +260,29 @@ fn buttons(
                 half.revert_file(),
                 half.order_note()
             ))
-            .on_disabled_hover_text(match (have_a_database, busy) {
-                (false, _) => "No world database is set.",
-                (true, true) => "A server write is running.",
-                (true, false) => "This project changes no row of these tables.",
+            .on_disabled_hover_text(match (role.joined(), have_a_database, busy) {
+                (true, _, _) => "In a shared session the host applies to its own database.",
+                (false, false, _) => "No world database is set.",
+                (false, true, true) => "A server write is running.",
+                (false, true, false) => "This project changes no row of these tables.",
             })
             .clicked()
         {
             *said = Some(apply(half, work));
         }
         if ui
-            .add_enabled(can_put_back, egui::Button::new("Restore"))
+            .add_enabled(can_put_back && !role.joined(), egui::Button::new("Restore"))
             .on_hover_text(format!(
                 "Run {}, which restores every row this project has applied to its value \
                  before the project first changed it, then discard the revert record.{}",
                 half.revert_file(),
                 half.order_note()
             ))
-            .on_disabled_hover_text(match (have_a_database, busy) {
-                (false, _) => "No world database is set.",
-                (true, true) => "A server write is running.",
-                (true, false) => "This project has applied nothing.",
+            .on_disabled_hover_text(match (role.joined(), have_a_database, busy) {
+                (true, _, _) => "In a shared session the host restores its own database.",
+                (false, false, _) => "No world database is set.",
+                (false, true, true) => "A server write is running.",
+                (false, true, false) => "This project has applied nothing.",
             })
             .clicked()
         {
@@ -277,13 +290,16 @@ fn buttons(
         }
         if half.discardable() {
             if ui
-                .add_enabled(changed, egui::Button::new("Discard"))
+                .add_enabled(changed && !role.shared(), egui::Button::new("Discard"))
                 .on_hover_text(
                     "Discard every edit this project holds for these tables. The database \
                      is not changed and the revert record is kept: Restore still works, \
                      and the next Apply restores the applied rows first.",
                 )
-                .on_disabled_hover_text("This project changes no row of these tables.")
+                .on_disabled_hover_text(match role.shared() {
+                    true => "Not in a shared session: a discard is not sent to the others. Undo your own edits instead.",
+                    false => "This project changes no row of these tables.",
+                })
                 .clicked()
             {
                 *said = Some(Ok(discard(half, work.session)));

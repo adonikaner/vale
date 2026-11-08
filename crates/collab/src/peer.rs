@@ -18,6 +18,20 @@
 //! anything, and are taken back anyway: each was made on the state the ones
 //! before it left. The same holds for the edit being made now, the open
 //! gesture, which is passed to [`Peer::receive`] for that reason.
+//!
+//! ## Forced edits
+//!
+//! The host's own editor can send an edit that cannot be taken back
+//! ([`crate::groups::Payload::forced`]): a file deleted with the unsaved edits
+//! to it dropped. The host accepts it whatever came before it, so it is never
+//! taken back here: a take-back skips it and it stays waiting.
+//!
+//! A remote edit can still arrive over a waiting forced edit. The host put the
+//! remote edit first, since its message came before the forced edit's
+//! acceptance, so the forced edit's result is the one that stands. The remote
+//! edit is applied and then [`Action::Reapply`] applies the forced edit again
+//! over it. A forced edit carries the whole result, the bytes of the files it
+//! writes, so applying it twice leaves what applying it once does.
 
 use crate::auth;
 use crate::groups::{Group, Payload};
@@ -49,7 +63,12 @@ pub enum Action<P> {
     Revert { payload: P, cause: Cause },
     /// Apply another editor's edit.
     Apply { user: UserId, payload: P },
+    /// Apply one of this editor's own forced edits again, over the remote edit
+    /// applied just before. See *Forced edits*.
+    Reapply { payload: P },
     Presence { user: UserId, presence: Presence },
+    /// A line from the host's editor for the status line.
+    Note(String),
     Joined { user: UserId, name: String },
     Left { user: UserId },
     /// The connection to the host is gone.
@@ -66,6 +85,9 @@ pub enum Action<P> {
     Admit { user: UserId, name: String },
     /// The host's editor only: an editor asks for files.
     Fetch { user: UserId, paths: Vec<String> },
+    /// The host's editor only: an editor asks it to make an edit. See
+    /// [`ToHost::Ask`].
+    Ask { user: UserId, payload: P },
 }
 
 #[derive(Debug)]
@@ -73,6 +95,8 @@ struct Waiting<P> {
     id: u64,
     groups: Vec<Group>,
     payload: P,
+    /// Sent by the host's editor as forced. See *Forced edits*.
+    forced: bool,
 }
 
 /// One editor's half of a session. See the module comment.
@@ -138,8 +162,15 @@ impl<P: Payload> Peer<P> {
         let id = self.next_id;
         self.next_id += 1;
         let groups = payload.groups();
+        let forced = self.user == Some(0) && payload.forced();
         self.outbox.push(ToHost::Propose { id, epoch: self.epoch, base: self.seq, payload: payload.clone() });
-        self.waiting.push_back(Waiting { id, groups, payload });
+        self.waiting.push_back(Waiting { id, groups, payload, forced });
+    }
+
+    /// Ask the host's editor to make an edit this editor may not. See
+    /// [`ToHost::Ask`].
+    pub fn ask(&mut self, payload: P) {
+        self.outbox.push(ToHost::Ask(payload));
     }
 
     /// Say where this editor is.
@@ -193,6 +224,12 @@ impl<P: Payload> Peer<P> {
                 Vec::new()
             }
             ToPeer::Rejected { id, reason } => match self.waiting.iter().position(|waiting| waiting.id == id) {
+                // The host accepts every forced edit, so this is not expected;
+                // one that cannot be taken back is only let go.
+                Some(at) if self.waiting[at].forced => {
+                    self.waiting.remove(at);
+                    Vec::new()
+                }
                 Some(at) => self.take_back(at, open, Cause::Refused(reason)),
                 // Already taken back when the conflicting edit arrived.
                 None => Vec::new(),
@@ -200,7 +237,8 @@ impl<P: Payload> Peer<P> {
             ToPeer::Change { seq, user, payload } => {
                 let groups = payload.groups();
                 let cause = Cause::Changed { user };
-                let mut out = match self.waiting.iter().position(|waiting| overlaps(&waiting.groups, &groups)) {
+                let first = self.waiting.iter().position(|waiting| !waiting.forced && overlaps(&waiting.groups, &groups));
+                let mut out = match first {
                     Some(at) => self.take_back(at, open, cause),
                     None => match open.is_some_and(|open| overlaps(&open.groups(), &groups)) {
                         true => vec![Action::CancelOpen { cause }],
@@ -208,7 +246,14 @@ impl<P: Payload> Peer<P> {
                     },
                 };
                 self.seq = seq;
+                let again: Vec<Action<P>> = self
+                    .waiting
+                    .iter()
+                    .filter(|waiting| waiting.forced && overlaps(&waiting.groups, &groups))
+                    .map(|waiting| Action::Reapply { payload: waiting.payload.clone() })
+                    .collect();
                 out.push(Action::Apply { user, payload });
+                out.extend(again);
                 out
             }
             ToPeer::Ids { kind, start, end } => {
@@ -216,6 +261,7 @@ impl<P: Payload> Peer<P> {
                 Vec::new()
             }
             ToPeer::Presence { user, presence } => vec![Action::Presence { user, presence }],
+            ToPeer::Note(line) => vec![Action::Note(line)],
             ToPeer::Manifest { project, files } => vec![Action::Manifest { project, files }],
             ToPeer::File { path, offset, total, bytes } => vec![Action::File { path, offset, total, bytes }],
             ToPeer::FilesDone { missing } => vec![Action::FilesDone { missing }],
@@ -225,15 +271,22 @@ impl<P: Payload> Peer<P> {
     }
 
     /// Take back the open gesture and the waiting edits from `at` on, newest
-    /// first, and go to the next epoch.
+    /// first, and go to the next epoch. A forced edit among them stays
+    /// waiting; see *Forced edits*.
     fn take_back(&mut self, at: usize, open: Option<&P>, cause: Cause) -> Vec<Action<P>> {
         let mut out = Vec::new();
         if open.is_some() {
             out.push(Action::CancelOpen { cause: cause.clone() });
         }
-        for waiting in self.waiting.drain(at..).rev() {
-            out.push(Action::Revert { payload: waiting.payload, cause: cause.clone() });
+        let later: Vec<Waiting<P>> = self.waiting.drain(at..).collect();
+        let mut kept = Vec::new();
+        for waiting in later.into_iter().rev() {
+            match waiting.forced {
+                true => kept.push(waiting),
+                false => out.push(Action::Revert { payload: waiting.payload, cause: cause.clone() }),
+            }
         }
+        self.waiting.extend(kept.into_iter().rev());
         self.epoch += 1;
         out
     }
@@ -360,6 +413,44 @@ mod tests {
         peers[0].propose(toy("other", &[chunk(6)]));
         let actions = settle(&mut host, &mut peers, [None, Some(&open)]);
         assert_eq!(actions[1], vec![Action::Apply { user: 0, payload: toy("other", &[chunk(6)]) }]);
+    }
+
+    /// The host's forced edit waits while Alex's edit over the same chunk is
+    /// accepted first. The host's editor applies Alex's edit and then its own
+    /// forced edit again, takes nothing back, and Alex applies the forced
+    /// edit after his own.
+    #[test]
+    fn a_forced_edit_is_applied_again_over_a_remote_edit_put_before_it() {
+        use crate::host::tests::forced;
+        let (mut host, mut peers) = two();
+        peers[0].propose(forced("delete", &[chunk(3)]));
+        peers[1].propose(toy("a", &[chunk(3)]));
+        let mut outs = Vec::new();
+        for message in peers[1].take_outbox() {
+            outs.extend(host.receive(1, message));
+        }
+        let mut local = Vec::new();
+        for out in outs {
+            match out {
+                Out::To(0, message) => local.extend(peers[0].receive(message, None)),
+                Out::To(1, message) => {
+                    peers[1].receive(message, None);
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            local,
+            vec![
+                Action::Apply { user: 1, payload: toy("a", &[chunk(3)]) },
+                Action::Reapply { payload: forced("delete", &[chunk(3)]) },
+            ]
+        );
+        assert_eq!(peers[0].waiting(), 1, "the forced edit still waits for its answer");
+        let actions = settle(&mut host, &mut peers, [None, None]);
+        assert!(actions[0].is_empty(), "{actions:?}");
+        assert_eq!(actions[1], vec![Action::Apply { user: 0, payload: forced("delete", &[chunk(3)]) }]);
+        assert_eq!((peers[0].waiting(), host.seq()), (0, 2));
     }
 
     #[test]

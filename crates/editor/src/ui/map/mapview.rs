@@ -288,6 +288,12 @@ fn frame(zoom: usize, session: &EditSession, selection: &HashSet<(u32, u32)>, ro
 
 /// Draw the window. Returns its rectangle, so the shell can keep clicks in it
 /// out of the world, and whatever was asked for.
+///
+/// `joined` is whether this editor is joined to another's shared session. Its
+/// buttons that make, delete or paste tiles, draw minimaps, rebake shadows or
+/// regenerate server files are disabled: those are the host's. See
+/// `crate::collab`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     ctx: &egui::Context,
     view: &mut MapView,
@@ -298,6 +304,7 @@ pub(crate) fn draw(
     camera_tile: (u32, u32),
     camera_at: [f32; 2],
     screens: &vale_assets::tables::loading::LoadingScreens,
+    joined: bool,
 ) -> (Option<egui::Rect>, Option<Asked>) {
     // The New map form is opened from the top bar's Map menu and is a modal of
     // its own, so it is drawn whether or not this window is open.
@@ -330,13 +337,23 @@ pub(crate) fn draw(
         // window covering that button hides the control that closes it.
         .default_pos([40.0, 52.0])
         .show(ctx, |ui| {
-            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile);
+            asked = contents(ui, view, session, thumbnails, minimaps, tiles, camera_tile, joined);
         });
     view.open = open;
 
     (response.map(|r| r.response.rect), asked.or(made))
 }
 
+/// The hover text of a button that is disabled for a joined editor, or
+/// `otherwise` when it is disabled for another reason.
+fn host_only(joined: bool, otherwise: &'static str) -> &'static str {
+    match joined {
+        true => "In a shared session the host changes tiles and their files.",
+        false => otherwise,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn contents(
     ui: &mut egui::Ui,
     view: &mut MapView,
@@ -345,6 +362,7 @@ fn contents(
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     tiles: &mut crate::map::tiles::Tiles,
     camera_tile: (u32, u32),
+    joined: bool,
 ) -> Option<Asked> {
     let mut asked = None;
 
@@ -382,17 +400,21 @@ fn contents(
         // something to act on, and neither silently does nothing.
         let (exist, absent) = view.split(session);
         if ui
-            .add_enabled(absent > 0, egui::Button::new(format!("Create {absent}")))
+            .add_enabled(absent > 0 && !joined, egui::Button::new(format!("Create {absent}")))
             .on_hover_text("Claims each selected empty tile in the WDT and writes flat ground.")
+            .on_disabled_hover_text(host_only(joined, "Select empty tiles."))
             .clicked()
         {
             asked = Some(Asked::Create);
         }
         if ui
-            .add_enabled(exist > 0, egui::Button::new(format!("Delete {exist}")))
+            .add_enabled(exist > 0 && !joined, egui::Button::new(format!("Delete {exist}")))
             .on_hover_text(
-                "Clears each selected tile's WDT bit. A tile of the archives keeps its ADT in the                  project. A tile the project created, which the archives do not have, is deleted                  from the project with its ADT and minimap picture; this cannot be undone.",
+                "Clears each selected tile's WDT bit. A tile of the archives keeps its ADT in the \
+                 project. A tile the project created, which the archives do not have, is deleted \
+                 from the project with its ADT and minimap picture; this cannot be undone.",
             )
+            .on_disabled_hover_text(host_only(joined, "Select tiles that exist."))
             .clicked()
         {
             asked = Some(Asked::Delete);
@@ -411,13 +433,14 @@ fn contents(
         let holding = view.clipboard.len();
         if ui
             .add_enabled(
-                holding > 0 && !view.selection.is_empty(),
+                holding > 0 && !view.selection.is_empty() && !joined,
                 egui::Button::new("Paste"),
             )
             .on_hover_text(
                 "Writes each copied tile into the selected slot, rewriting its positions \
                  for the new place. Its terrain, doodads and buildings move with it.",
             )
+            .on_disabled_hover_text(host_only(joined, "Copy tiles, then select where they go."))
             .clicked()
         {
             asked = Some(Asked::Paste);
@@ -465,7 +488,7 @@ fn contents(
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 ui.separator();
-                if let Some(more) = foot_panel(ui, view, session, tiles) {
+                if let Some(more) = foot_panel(ui, view, session, tiles, joined) {
                     asked = Some(more);
                 }
             });
@@ -707,6 +730,7 @@ fn foot_panel(
     view: &MapView,
     session: &EditSession,
     tiles: &mut crate::map::tiles::Tiles,
+    joined: bool,
 ) -> Option<Asked> {
     use crate::map::tiles as tool;
 
@@ -792,13 +816,13 @@ fn foot_panel(
             .count();
         label(ui, "Shadows");
         if ui
-            .add_enabled(open > 0, egui::Button::new(format!("Rebake ({open})")))
+            .add_enabled(open > 0 && !joined, egui::Button::new(format!("Rebake ({open})")))
             .on_hover_text(format!(
                 "Recomputes the baked shadow of each open selected tile from the objects on \
                  it, in the background. About {} s per tile.",
                 tool::REBAKE_SECONDS
             ))
-            .on_disabled_hover_text("None of the selection is open: fly to it first.")
+            .on_disabled_hover_text(host_only(joined, "None of the selection is open: fly to it first."))
             .clicked()
         {
             asked = Some(Asked::Rebake);
@@ -840,24 +864,25 @@ fn foot_panel(
                 }
             };
             if ui
-                .add_enabled(selected > 0, egui::Button::new(format!("Selected ({selected})")))
+                .add_enabled(selected > 0 && !joined, egui::Button::new(format!("Selected ({selected})")))
                 .on_hover_text(format!(
                     "Draw the selected tiles' minimap pictures into the project, in the \
                      background: {}.",
                     minutes(selected)
                 ))
-                .on_disabled_hover_text("Select tiles that exist.")
+                .on_disabled_hover_text(host_only(joined, "Select tiles that exist."))
                 .clicked()
             {
                 asked = Some(Asked::Minimap);
             }
             if ui
-                .add_enabled(whole > 0, egui::Button::new(format!("Whole map ({whole})")))
+                .add_enabled(whole > 0 && !joined, egui::Button::new(format!("Whole map ({whole})")))
                 .on_hover_text(format!(
                     "Draw every tile's minimap picture into the project, in the background: \
                      {}. New tiles are added to the minimap index.",
                     minutes(whole)
                 ))
+                .on_disabled_hover_text(host_only(joined, "The map has no tiles."))
                 .clicked()
             {
                 asked = Some(Asked::MinimapsAll);
@@ -905,7 +930,7 @@ fn foot_panel(
     ui.horizontal(|ui| {
         label(ui, "Server");
         if ui
-            .add_enabled(exist > 0, egui::Button::new(format!("Server files ({exist})")))
+            .add_enabled(exist > 0 && !joined, egui::Button::new(format!("Server files ({exist})")))
             .on_hover_text(
                 "Save, rebuild this project's archive, and regenerate the server's maps, \
                  vmaps and mmaps for each selected tile that exists — from this project \
@@ -914,7 +939,7 @@ fn foot_panel(
                  building moved. The bar says which step is running; restart the server \
                  afterwards. Publish does this for every changed tile.",
             )
-            .on_disabled_hover_text("None of the selection exists.")
+            .on_disabled_hover_text(host_only(joined, "None of the selection exists."))
             .clicked()
         {
             asked = Some(Asked::ServerFiles);

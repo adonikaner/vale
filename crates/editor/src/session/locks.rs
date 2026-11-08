@@ -84,7 +84,7 @@ impl EditSession {
     /// game data: `editor\locks\<Map>_<x>_<y>.txt`.
     /// `editor` is one of `Project::NOT_GAME_DATA`, so a publish never packs
     /// it.
-    fn locks_vpath(&self, coord: (u32, u32)) -> String {
+    pub(super) fn locks_vpath(&self, coord: (u32, u32)) -> String {
         locks_vpath_of(&self.map, coord)
     }
 
@@ -114,7 +114,7 @@ impl EditSession {
 
     /// Where the open map's locked placements are stored. See
     /// [`PlacementLocks`].
-    fn placement_locks_vpath(&self) -> String {
+    pub(super) fn placement_locks_vpath(&self) -> String {
         format!(r"editor\locks\{}.placements.txt", self.map)
     }
 

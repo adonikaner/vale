@@ -110,9 +110,13 @@ pub(crate) fn panel(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
             title(ui, &format!("Joined {host}'s session"), &project);
             theme::note(
                 ui,
-                "Your edits go to the host and everyone's reach you as they are made. An edit that clashes \
-                 with one made first is taken back, and the status line says who. Adding or removing \
-                 doodads, table records and server rows, saving, publishing and applying are the host's.",
+                "Your edits and imports reach the others as you make them, and theirs reach you. An edit \
+                 that clashes with one made first is taken back, and the status line says who.",
+            );
+            theme::note(
+                ui,
+                "The host saves, publishes, playtests, writes to the server, makes and deletes tiles, and \
+                 adds or removes doodads, table records and server rows. Your Delete asks the host.",
             );
             people(ui, collab, false);
             counts(ui, collab);

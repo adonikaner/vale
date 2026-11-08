@@ -1,5 +1,6 @@
 //! Any other file of the project: its bytes in the overlay, written to or
-//! removed from the folder, and the paths listed under a folder.
+//! removed from the folder, read again after another editor in a shared
+//! session changed it, and the paths listed under a folder.
 
 use vale_client::assets::GameAssets;
 use vale_edit::project::Project;
@@ -146,6 +147,80 @@ impl EditSession {
             Err(e) => {
                 self.status = format!("{vpath}: {e}");
                 false
+            }
+        }
+    }
+
+    /// Read again what the session holds of files another editor in a shared
+    /// session wrote into or removed from the project folder. The folder
+    /// already holds the new bytes; this drops what stands in front of them.
+    ///
+    /// ```text
+    /// map tile       on the open map, [`Self::forget_tile`]: the parsed copy,
+    ///                its unsaved edits and undo entries dropped and the tile
+    ///                read again; on another map, its overlay entry dropped
+    /// DBC table      an open table read again with [`Self::discard_table`]
+    /// tile index     the open map's claims read again
+    /// locks          the tile's or the map's locks read again when next asked
+    /// any file       its overlay entry dropped, and named in
+    ///                [`Self::republished`] so a cache of it reads it again
+    /// ```
+    ///
+    /// A tile of the open map whose file is gone and that the map no longer
+    /// claims is taken off the screen, as a deleted tile is.
+    pub(crate) fn reread_files(&mut self, assets: &GameAssets, vpaths: &[String]) {
+        use vale_edit::manifest::Kind;
+        let mut claims = false;
+        let mut tiles = Vec::new();
+        for vpath in vpaths {
+            self.unpublish_scratch(vpath);
+            match Kind::of(vpath) {
+                Kind::Tile => {
+                    if let Some(key) = vale_edit::TileKey::from_vpath(vpath) {
+                        if key.map.eq_ignore_ascii_case(&self.map) {
+                            self.forget_tile((key.x, key.y));
+                            tiles.push((key.x, key.y));
+                        }
+                    }
+                }
+                Kind::Table => {
+                    let open = self
+                        .tables
+                        .keys()
+                        .find(|name| vale_assets::tables::dbc::dbc_path(name).eq_ignore_ascii_case(vpath))
+                        .cloned();
+                    if let Some(name) = open {
+                        self.discard_table(assets, &name);
+                    }
+                    // The client keeps every table it parsed; see
+                    // `Self::tables_republished`.
+                    self.tables_republished = true;
+                }
+                Kind::Wdt => claims |= vpath.eq_ignore_ascii_case(&vale_edit::wdt::wdt_path(&self.map)),
+                _ => {
+                    self.republished.push(vpath.to_ascii_lowercase());
+                    if vpath.eq_ignore_ascii_case(vale_assets::tables::minimap::MD5_TRANSLATE) {
+                        // The client keeps the parsed minimap index with the
+                        // tables.
+                        self.tables_republished = true;
+                    }
+                    if vpath.eq_ignore_ascii_case(&self.placement_locks_vpath()) {
+                        self.placement_locks = None;
+                    }
+                    let locks = self.locks.keys().copied().find(|&at| vpath.eq_ignore_ascii_case(&self.locks_vpath(at)));
+                    if let Some(at) = locks {
+                        self.locks.remove(&at);
+                    }
+                }
+            }
+        }
+        self.files_revision += 1;
+        if claims {
+            self.reread_claims(assets);
+        }
+        for coord in tiles {
+            if !self.wdt_claims(coord) {
+                self.tombstone(coord);
             }
         }
     }

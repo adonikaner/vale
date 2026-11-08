@@ -41,6 +41,7 @@
 
 use crate::EditError;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// A folder of edited files.
 #[derive(Debug, Clone)]
@@ -49,6 +50,43 @@ pub struct Project {
     pub root: PathBuf,
     /// What to call it in an interface, which is the folder's own name.
     pub name: String,
+    /// The writes a shared session reads. Every clone of this project holds
+    /// the same one. See [`Project::journal`].
+    journal: Arc<Mutex<Journal>>,
+}
+
+/// The paths written or removed since the last [`Project::take_journal`].
+#[derive(Debug, Default)]
+struct Journal {
+    /// Whether writes are recorded.
+    on: bool,
+    /// How many [`Unjournaled`] guards are held. A write made while one is
+    /// held is not recorded.
+    paused: usize,
+    written: Vec<Written>,
+}
+
+/// One path in the journal: written or removed at least once since the last
+/// take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    /// The virtual path, as its first write spelled it.
+    pub vpath: String,
+    /// What the path held before that first write. `None` when the project
+    /// did not carry it.
+    pub before: Option<Vec<u8>>,
+}
+
+/// While held, writes to the project are not recorded in its journal. See
+/// [`Project::unjournaled`].
+#[derive(Debug)]
+pub struct Unjournaled(Arc<Mutex<Journal>>);
+
+impl Drop for Unjournaled {
+    fn drop(&mut self) {
+        let mut journal = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        journal.paused = journal.paused.saturating_sub(1);
+    }
 }
 
 /// Where a project folder goes when the caller does not say: `Edit\<name>` under
@@ -192,6 +230,7 @@ fn summary_at(root: impl AsRef<Path>, name: &str) -> Summary {
     let project = Project {
         root: root.as_ref().to_path_buf(),
         name: name.to_string(),
+        journal: Arc::default(),
     };
     let mut out = Summary::default();
     for vpath in project.files() {
@@ -344,7 +383,45 @@ impl Project {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "project".into());
-        Ok(Project { root, name })
+        Ok(Project { root, name, journal: Arc::default() })
+    }
+
+    /// Start or stop recording every path [`Self::write`] and
+    /// [`Self::revert`] change, with what each held before, for a shared
+    /// session to send. Turning it off drops what was not taken.
+    pub fn journal(&self, on: bool) {
+        let mut journal = self.journal.lock().unwrap_or_else(|e| e.into_inner());
+        journal.on = on;
+        journal.written.clear();
+    }
+
+    /// The paths written or removed since the last call, oldest first, each
+    /// once. Empty when the journal is off.
+    pub fn take_journal(&self) -> Vec<Written> {
+        std::mem::take(&mut self.journal.lock().unwrap_or_else(|e| e.into_inner()).written)
+    }
+
+    /// Stop recording until the guard is dropped. A save of edits every
+    /// editor in a session already holds is written under one, so it is not
+    /// sent to them as well.
+    pub fn unjournaled(&self) -> Unjournaled {
+        self.journal.lock().unwrap_or_else(|e| e.into_inner()).paused += 1;
+        Unjournaled(Arc::clone(&self.journal))
+    }
+
+    /// Record that `vpath`, at `path` on disk, is about to change, with what
+    /// it holds now. A path already recorded since the last take keeps its
+    /// first `before`.
+    fn note(&self, vpath: &str, path: &Path) {
+        let mut journal = self.journal.lock().unwrap_or_else(|e| e.into_inner());
+        if !journal.on || journal.paused > 0 {
+            return;
+        }
+        if journal.written.iter().any(|written| same_path(&written.vpath, vpath)) {
+            return;
+        }
+        let before = std::fs::read(path).ok();
+        journal.written.push(Written { vpath: vpath.to_string(), before });
     }
 
     /// Where a virtual path lands on disk: under `project\`, or under
@@ -405,6 +482,7 @@ impl Project {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        self.note(vpath, &path);
         write_replacing(&path, bytes)?;
         Ok(path)
     }
@@ -417,6 +495,7 @@ impl Project {
         if !path.is_file() {
             return Ok(false);
         }
+        self.note(vpath, &path);
         std::fs::remove_file(path)?;
         Ok(true)
     }
@@ -750,6 +829,16 @@ const TEMPORARY: &str = ".vale-tmp";
 fn is_temporary(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| name.to_string_lossy().ends_with(TEMPORARY))
+}
+
+/// Whether two virtual paths name one file, compared without regard to case
+/// or separator, as the archives compare them.
+fn same_path(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes().zip(b.bytes()).all(|(x, y)| {
+            let fold = |c: u8| if c == b'/' { b'\\' } else { c.to_ascii_lowercase() };
+            fold(x) == fold(y)
+        })
 }
 
 /// Replace a file's contents in one step: write a temporary file beside it
@@ -1160,6 +1249,42 @@ mod tests {
             .join(".creatures-revert.sql.1.vale-tmp");
         std::fs::write(&leftover, b"half").unwrap();
         assert_eq!(project.files(), vec![vpath.to_string()]);
+    }
+
+    /// With the journal on, a write and a removal are recorded once each with
+    /// what the path held first, in the order they happened; a clone's write
+    /// is recorded in the same journal; nothing is recorded under an
+    /// unjournaled guard or with the journal off.
+    #[test]
+    fn the_journal_records_each_path_once_with_its_first_bytes() {
+        let project = Project::at(scratch("journal")).unwrap();
+        project.write(r"Textures\a.blp", b"old").unwrap();
+        project.write(r"Textures\gone.blp", b"was").unwrap();
+        assert!(project.take_journal().is_empty(), "off by default");
+
+        project.journal(true);
+        project.write(r"Textures\a.blp", b"new").unwrap();
+        project.write(r"textures/A.BLP", b"newer").unwrap();
+        project.clone().write(r"Textures\b.blp", b"b").unwrap();
+        project.revert(r"Textures\gone.blp").unwrap();
+        {
+            let _saving = project.unjournaled();
+            project.write(r"Textures\saved.blp", b"saved").unwrap();
+        }
+        let written = project.take_journal();
+        assert_eq!(
+            written,
+            vec![
+                Written { vpath: r"Textures\a.blp".into(), before: Some(b"old".to_vec()) },
+                Written { vpath: r"Textures\b.blp".into(), before: None },
+                Written { vpath: r"Textures\gone.blp".into(), before: Some(b"was".to_vec()) },
+            ]
+        );
+        assert!(project.take_journal().is_empty(), "taken");
+
+        project.journal(false);
+        project.write(r"Textures\c.blp", b"c").unwrap();
+        assert!(project.take_journal().is_empty());
     }
 
     #[test]

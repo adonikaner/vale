@@ -179,6 +179,9 @@ pub(super) fn drop_unchanged_tiles(session: Option<ResMut<EditSession>>) {
         return;
     };
     session.unchanged = None;
+    // Each editor in a shared session runs this check on its own folder, so
+    // the removals are not sent.
+    let _unjournaled = session.project.unjournaled();
     let mut dropped = 0;
     for one in found {
         let unsaved = match &one.held {

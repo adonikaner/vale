@@ -20,6 +20,19 @@
 //! old epoch is refused as well, accepted or not on its own merits. Those
 //! edits were made on top of the refused one. The editor takes them back
 //! itself; see [`crate::peer`].
+//!
+//! Two exceptions to the check:
+//!
+//! * An edit from the host's own editor that is [`Payload::forced`] is
+//!   accepted whatever its epoch and whatever touched its groups after its
+//!   base. It cannot be taken back, so it is put in the order where it
+//!   arrives.
+//! * An edit from any other editor must also pass [`Payload::check`], which
+//!   says what a joined editor may send. A failed check is a refusal like a
+//!   conflict.
+//!
+//! A [`ToHost::Ask`] is not an edit. It is passed to the host's editor as
+//! [`Out::Ask`], unnumbered, for the person hosting to answer.
 
 use crate::auth;
 use crate::groups::{Group, Payload};
@@ -39,6 +52,9 @@ pub enum Out<P> {
     Admit { user: UserId, name: String },
     /// This editor asks for files of the manifest. See [`ToHost::Fetch`].
     Fetch { user: UserId, paths: Vec<String> },
+    /// This editor asks the host's editor to make an edit. See
+    /// [`ToHost::Ask`].
+    Ask { user: UserId, payload: P },
 }
 
 /// The longest name an editor is shown by, in characters.
@@ -162,12 +178,19 @@ impl Host {
                 vec![Out::Admit { user: from, name }]
             }
             (State::In { epoch: required, .. }, ToHost::Propose { id, epoch, base, payload }) => {
-                if epoch < *required {
+                let forced = from == 0 && payload.forced();
+                if epoch < *required && !forced {
                     let reason = "made after an edit of yours that was refused".to_string();
                     return vec![Out::To(from, ToPeer::Rejected { id, reason })];
                 }
+                if from != 0 {
+                    if let Err(reason) = payload.check() {
+                        *required = epoch + 1;
+                        return vec![Out::To(from, ToPeer::Rejected { id, reason })];
+                    }
+                }
                 let groups = payload.groups();
-                let conflict = groups.iter().find_map(|group| {
+                let conflict = groups.iter().filter(|_| !forced).find_map(|group| {
                     self.touched.get(group).filter(|(seq, by)| *seq > base && *by != from).map(|(_, by)| *by)
                 });
                 if let Some(by) = conflict {
@@ -190,6 +213,7 @@ impl Host {
             }
             (State::In { .. }, ToHost::Presence(presence)) => self.to_all(Some(from), ToPeer::Presence { user: from, presence }),
             (State::In { .. }, ToHost::Fetch(paths)) => vec![Out::Fetch { user: from, paths }],
+            (State::In { .. }, ToHost::Ask(payload)) => vec![Out::Ask { user: from, payload }],
             // Where an editor is says nothing that matters before it is in,
             // and one sent while the welcome is on its way is not a fault.
             (_, ToHost::Presence(_)) => Vec::new(),
@@ -241,16 +265,30 @@ pub(crate) mod tests {
     use serde::{Deserialize, Serialize};
     use vale_edit::TileKey;
 
-    /// A payload for tests: the groups it says it touches, and a name.
+    /// A payload for tests: the groups it says it touches, a name, whether
+    /// it is forced, and whether a joined editor may send it.
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub(crate) struct Toy {
         pub(crate) name: String,
         pub(crate) groups: Vec<Group>,
+        pub(crate) forced: bool,
+        pub(crate) refused: bool,
     }
 
     impl Payload for Toy {
         fn groups(&self) -> Vec<Group> {
             self.groups.clone()
+        }
+
+        fn forced(&self) -> bool {
+            self.forced
+        }
+
+        fn check(&self) -> Result<(), String> {
+            match self.refused {
+                true => Err("the host's alone".to_string()),
+                false => Ok(()),
+            }
         }
     }
 
@@ -259,7 +297,11 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn toy(name: &str, groups: &[Group]) -> Toy {
-        Toy { name: name.to_string(), groups: groups.to_vec() }
+        Toy { name: name.to_string(), groups: groups.to_vec(), forced: false, refused: false }
+    }
+
+    pub(crate) fn forced(name: &str, groups: &[Group]) -> Toy {
+        Toy { forced: true, ..toy(name, groups) }
     }
 
     /// A host with user 1 joined under the password `pw`.
@@ -319,6 +361,41 @@ pub(crate) mod tests {
         let out = host.receive(1, ToHost::Propose { id: 4, epoch: 1, base: 1, payload: toy("d", &[chunk(3)]) });
         assert_eq!(out[0], Out::To(1, ToPeer::Accepted { id: 4, seq: 3 }));
         assert_eq!(host.seq(), 3);
+    }
+
+    /// The host's forced edit is accepted over a conflict and at a refused
+    /// epoch, and is a conflict for the edits after it; a joined editor's
+    /// forced edit is checked as any other.
+    #[test]
+    fn a_forced_edit_from_the_host_is_accepted_over_a_conflict() {
+        let mut host = with_one_joined();
+        let out = host.receive(1, ToHost::Propose { id: 1, epoch: 0, base: 0, payload: toy("a", &[chunk(3)]) });
+        assert_eq!(out[0], Out::To(1, ToPeer::Accepted { id: 1, seq: 1 }));
+        // The host had not seen edit 1, and its epoch is behind.
+        host.receive(0, ToHost::Propose { id: 1, epoch: 0, base: 0, payload: toy("host", &[chunk(3)]) });
+        let out = host.receive(0, ToHost::Propose { id: 2, epoch: 0, base: 0, payload: forced("delete", &[chunk(3)]) });
+        assert_eq!(out[0], Out::To(0, ToPeer::Accepted { id: 2, seq: 2 }));
+        let out = host.receive(1, ToHost::Propose { id: 2, epoch: 0, base: 1, payload: toy("b", &[chunk(3)]) });
+        assert!(matches!(&out[..], [Out::To(1, ToPeer::Rejected { id: 2, .. })]), "{out:?}");
+        let out = host.receive(1, ToHost::Propose { id: 3, epoch: 1, base: 1, payload: forced("c", &[chunk(3)]) });
+        assert!(matches!(&out[..], [Out::To(1, ToPeer::Rejected { id: 3, .. })]), "{out:?}");
+    }
+
+    /// A joined editor's edit that fails the check is refused and raises its
+    /// epoch; the host's own edit is not checked; an ask goes to the host's
+    /// editor and to nobody else.
+    #[test]
+    fn a_checked_edit_is_refused_and_an_ask_reaches_the_host() {
+        let mut host = with_one_joined();
+        let refused = Toy { refused: true, ..toy("place", &[chunk(1)]) };
+        let out = host.receive(1, ToHost::Propose { id: 1, epoch: 0, base: 0, payload: refused.clone() });
+        assert!(matches!(&out[..], [Out::To(1, ToPeer::Rejected { id: 1, .. })]), "{out:?}");
+        let out = host.receive(1, ToHost::Propose { id: 2, epoch: 0, base: 0, payload: toy("raise", &[chunk(2)]) });
+        assert!(matches!(&out[..], [Out::To(1, ToPeer::Rejected { id: 2, .. })]), "the epoch rose: {out:?}");
+        let out = host.receive(0, ToHost::Propose { id: 1, epoch: 0, base: 0, payload: refused });
+        assert_eq!(out[0], Out::To(0, ToPeer::Accepted { id: 1, seq: 1 }));
+        let out = host.receive(1, ToHost::Ask(toy("delete", &[])));
+        assert_eq!(out, vec![Out::Ask { user: 1, payload: toy("delete", &[]) }]);
     }
 
     /// An editor that has answered the challenge is sent no edit until it is

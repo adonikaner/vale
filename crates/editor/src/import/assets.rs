@@ -78,6 +78,10 @@
 //!
 //! A patch archive already published keeps its copy of a deleted file until
 //! the next publish, which builds the archive again from the project's files.
+//!
+//! In a shared session the files a delete removes or rewrites reach the other
+//! editors as one file step, which each applies the same way. See
+//! `crate::collab::files`.
 
 use crate::session::EditSession;
 use vale_assets::world::blp::{self, Encoding};
@@ -594,6 +598,9 @@ pub(crate) struct Assets {
     /// The files a Delete waits on the confirmation for, while the panel
     /// shows it.
     pub(crate) deleting: Option<Vec<String>>,
+    /// Project files another editor in a shared session wrote or removed,
+    /// whose pictures and lists [`answer`] reads again.
+    pub(crate) changed: Vec<String>,
     /// What the search box holds.
     pub(crate) query: String,
     /// The open import dialog.
@@ -825,8 +832,12 @@ fn answer(
     // Told to read which tiles the project has again after a delete.
     mut map_view: Option<ResMut<crate::ui::map::mapview::MapView>>,
 ) {
-    let Some(ask) = assets.ask.take() else { return };
     let Some(session) = session.as_mut() else { return };
+    let changed = std::mem::take(&mut assets.changed);
+    if !changed.is_empty() {
+        forget_read(&mut assets, session, &mut thumbnails, browser.as_deref_mut(), map_view.as_deref_mut(), &changed);
+    }
+    let Some(ask) = assets.ask.take() else { return };
     let tables = game.display_tables().ok();
     let animations = tables.as_deref().and_then(|t| t.animations());
     match ask {
@@ -1207,29 +1218,45 @@ fn answer(
             }
         }
         Ask::Delete(vpaths) => {
-            for vpath in &vpaths {
-                thumbnails.forget(vpath);
-                if let Some(gloss) = gloss_of(vpath) {
-                    thumbnails.forget(&gloss);
-                }
-            }
             let deleted = delete_files(session, &game, &vpaths);
-            if deleted.tables > 0 {
-                if let Some(browser) = browser.as_mut() {
-                    browser.forget_buffers();
-                }
-            }
-            if let Some(view) = map_view.as_mut() {
-                view.edited_stale = true;
-            }
-            assets.surveys.forget();
-            let listed: std::collections::HashSet<String> = session.project.files().into_iter().collect();
-            assets.picked.retain(|vpath| listed.contains(vpath));
-            if assets.selected.as_ref().is_some_and(|vpath| !listed.contains(vpath)) {
-                assets.selected = None;
-            }
+            forget_read(&mut assets, session, &mut thumbnails, browser.as_deref_mut(), map_view.as_deref_mut(), &vpaths);
             session.status = deleted.words();
         }
+    }
+}
+
+/// Forget what the workspace and the windows beside it read of project files
+/// that were deleted, or written by another editor: each file's picture and a
+/// ground texture's `_s` picture, a table form's text, the map window's list
+/// of the project's tiles and the generated files' survey. A chosen file that
+/// is gone is no longer chosen.
+fn forget_read(
+    assets: &mut Assets,
+    session: &EditSession,
+    thumbnails: &mut crate::ui::widgets::thumbnails::Thumbnails,
+    browser: Option<&mut crate::tables::browser::Browser>,
+    map_view: Option<&mut crate::ui::map::mapview::MapView>,
+    vpaths: &[String],
+) {
+    for vpath in vpaths {
+        thumbnails.forget(vpath);
+        if let Some(gloss) = gloss_of(vpath) {
+            thumbnails.forget(&gloss);
+        }
+    }
+    if vpaths.iter().any(|vpath| Kind::of(vpath) == Kind::Table) {
+        if let Some(browser) = browser {
+            browser.forget_buffers();
+        }
+    }
+    if let Some(view) = map_view {
+        view.edited_stale = true;
+    }
+    assets.surveys.forget();
+    let listed: std::collections::HashSet<String> = session.project.files().into_iter().collect();
+    assets.picked.retain(|vpath| listed.contains(vpath));
+    if assets.selected.as_ref().is_some_and(|vpath| !listed.contains(vpath)) {
+        assets.selected = None;
     }
 }
 

@@ -129,7 +129,8 @@ pub(crate) fn draw(
     // The kept views the Map menu lists. See [`crate::prefs::bookmarks`].
     bookmarks: &crate::prefs::bookmarks::Bookmarks,
     // The shared session: the Session… button's label, and whether this
-    // editor is joined to another's, which disables Save and Publish.
+    // editor is joined to another's, which disables Save, Publish and
+    // Playtest.
     collab: &crate::collab::Collab,
 ) {
     ui.horizontal(|ui| {
@@ -173,7 +174,7 @@ pub(crate) fn draw(
             popovers.session.toggle(&at_session);
         }
         separator(ui);
-        map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world);
+        map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world, collab.is_joined());
         separator(ui);
         // The workspace control: World, then each workspace that replaces the
         // viewport. See [`super::rail`], which holds the world tools' rail too.
@@ -209,7 +210,7 @@ pub(crate) fn draw(
             let start = ui.cursor().max.x;
             match in_world {
                 true => running(ui, playing, session),
-                false => not_running(ui, session, assets, popovers, playing),
+                false => not_running(ui, session, assets, popovers, playing, collab.is_joined()),
             }
             let used = start - ui.min_rect().min.x;
             ui.data_mut(|data| data.insert_temp(right_id, used));
@@ -268,13 +269,16 @@ fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) 
 /// The right-hand end of the bar while no playtest is running: who it would
 /// log in as, and the button that starts it.
 ///
-/// The login control is a separate button beside the Playtest button.
+/// The login control is a separate button beside the Playtest button. A
+/// joined editor's Playtest is disabled: a playtest saves and applies to the
+/// server, which in a shared session the host does.
 fn not_running(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     assets: &GameAssets,
     popovers: &mut Popovers,
     playing: &mut Session,
+    joined: bool,
 ) {
     // The button's label states the answer rather than a word like "Login":
     // `as Corwin`, or `login screen` when there is no password to skip it
@@ -297,7 +301,8 @@ fn not_running(
         popovers.login.toggle(&who);
     }
     if ui
-        .add(
+        .add_enabled(
+            !joined,
             egui::Button::new(
                 egui::RichText::new("Playtest").color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)),
             )
@@ -308,6 +313,7 @@ fn not_running(
             "Save the project and start a playtest on the open map. Ctrl+P starts it; \
              Ctrl+P again ends it.",
         )
+        .on_disabled_hover_text("In a shared session the host playtests.")
         .clicked()
     {
         crate::playtest::start(
@@ -618,6 +624,9 @@ fn map(
     map_open: &mut bool,
     new_map: &mut Option<crate::map::maps::Form>,
     playing: bool,
+    // A joined editor makes no new map: a new map adds a Map.dbc record,
+    // which in a shared session is the host's.
+    joined: bool,
 ) {
     const HELD: &str = "Not while a playtest is running: the playtest controls the camera and the \
                         character is on this map. Press Ctrl+P to end the playtest.";
@@ -630,13 +639,16 @@ fn map(
             // The form is a modal of its own, drawn whether or not the map
             // window is open. See [`crate::ui::map::mapview`].
             if ui
-                .add_enabled(!playing, egui::Button::new("New map\u{2026}"))
+                .add_enabled(!playing && !joined, egui::Button::new("New map\u{2026}"))
                 .on_hover_text(
                     "Create a new map: a Map.dbc row, a WDT with no tiles and the server's \
                      map_template row. The map opens with no tiles; add them with Create \
                      in Edit Map.",
                 )
-                .on_disabled_hover_text(HELD)
+                .on_disabled_hover_text(match joined {
+                    true => "In a shared session the host makes new maps.",
+                    false => HELD,
+                })
                 .clicked()
             {
                 *new_map = Some(crate::map::maps::Form::default());

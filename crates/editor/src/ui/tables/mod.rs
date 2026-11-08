@@ -219,8 +219,8 @@ const TEXT: f32 = crate::ui::widgets::rowform::FORM_TEXT;
 
 /// Everything the workspace reads, as one parameter.
 ///
-/// Its four fields come from four different places in the shell. Bundling them
-/// keeps the two entry points here to three arguments each rather than seven.
+/// Its fields come from several places in the shell. Bundling them keeps the
+/// two entry points here to a few arguments each.
 pub(crate) struct Workspace<'a> {
     /// The data subject, which decides the chain's tabs (see
     /// [`crate::tools::Tool::tabs`]). It is passed in rather than derived from
@@ -266,6 +266,10 @@ pub(crate) struct Workspace<'a> {
     /// Where a light's Fly to button sends its request. See
     /// [`crate::camera::FlyTo`].
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+    /// What this editor may do in a shared session: a joined editor does not
+    /// save a table, and nobody in a session discards one. See
+    /// `crate::collab`.
+    pub(crate) role: crate::collab::Role,
 }
 
 /// What the workspace's middle draws besides the form, which the
@@ -328,6 +332,7 @@ impl<'a> Workspace<'a> {
             hour: editing.clock.half_minutes,
             asks: &mut editing.asks,
             fly: &mut editing.fly,
+            role: editing.collab.role(),
         };
         (work, story)
     }

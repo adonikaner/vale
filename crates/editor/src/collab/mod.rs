@@ -5,6 +5,8 @@
 //!
 //! ```text
 //! mod.rs     the session's state, the frame's work and the plugin
+//! files.rs   project files written or removed by an operation, sent as one
+//!            step and applied on the others
 //! fetch.rs   a joining editor's copy of the host's project: what it lacks,
 //!            the pieces as they arrive, and the hash check
 //! people.rs  the others in the session drawn in the viewport: a ring at each
@@ -14,20 +16,47 @@
 //!
 //! ## What is shared
 //!
-//! What the undo stack holds: terrain, paint, liquid, areas, holes,
-//! placements, client table fields and records, and server rows. The undo
-//! stack's journal ([`vale_edit::undo::History::journal`]) hands each one
-//! over as it is made, a held stroke in parts ten times a second, and each
-//! undo and redo. Every one is a [`Step`], sent to the host, and applied on
-//! the others through [`EditSession::apply_step`], the path an undo takes.
-//! What the undo stack does not hold is not shared: imported files, new and
-//! deleted tiles, locks and the world map.
+//! Two kinds of [`Step`]. The first is what the undo stack holds: terrain,
+//! paint, liquid, areas, holes, placements, DBC table fields and records, and
+//! server rows. The undo stack's journal
+//! ([`vale_edit::undo::History::journal`]) hands each one over as it is made,
+//! a held stroke in parts ten times a second, and each undo and redo. Each is
+//! applied on the others through [`EditSession::apply_step`], the path an
+//! undo takes.
+//!
+//! The second is project files written or removed whole, which the project's
+//! own journal records: imports, deletes, created and pasted tiles, minimaps,
+//! bakes, world map art and locks. See [`files`]. A save is not sent: every
+//! editor already holds what it writes.
+//!
+//! Not shared: the shadow rebake, which replaces a tile in memory and is not
+//! on the undo stack.
 //!
 //! A joined editor's edits go to the host like the host's own, except the
 //! ones that need a number or a list only the host may hand out
 //! ([`joinable`]): adding, removing or renaming doodads and buildings,
-//! adding or removing client table records, and creating, removing or
-//! replacing whole server rows. Those are taken back with a line saying so.
+//! adding or removing DBC table records, and creating, removing or replacing
+//! whole server rows. Its file steps may write textures, models, sounds and
+//! locks only ([`files::joinable`]). Anything else is taken back with a line
+//! saying so, and the host refuses it as well.
+//!
+//! ## Deleting files
+//!
+//! A delete is the host's. A joined editor's Delete asks the host
+//! ([`Step::Delete`] in a `vale_collab::wire::ToHost::Ask`); the host sees
+//! the same confirmation its own Delete shows, naming who asked, and deletes
+//! the files or keeps them. Either way the editor that asked is told. The
+//! host's delete is a forced file step, so it reaches everyone in the host's
+//! order and is never taken back. The confirmation names the others whose
+//! unsaved edits to the files are lost with them ([`Collab::unsaved_by`]).
+//!
+//! ## Server writes
+//!
+//! Applying to a database, restoring it, regenerating server tiles and
+//! playtesting are the host's: a joined editor's Server panel and Playtest
+//! button are disabled. The join leaves out the host's `sql\` folder, whose
+//! revert files describe the host's database. Discard is disabled for
+//! everyone in a session, since a discard is not sent.
 //!
 //! ## When two editors change the same thing
 //!
@@ -58,27 +87,50 @@
 //! saved and closed while it is joined and opened again when it leaves.
 
 mod fetch;
+pub(crate) mod files;
 mod people;
 
 use crate::session::EditSession;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use vale_client::assets::GameAssets;
 use vale_collab::{Action, Cause, Group, Hosting, Joined, Payload, Presence, Session, UserId};
 use vale_edit::undo::Change;
 
-/// One shared step: a change, applied forward (an edit or a redo) or
-/// reverted (an undo).
+/// One shared step.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Step {
-    pub(crate) change: Change,
-    pub(crate) forward: bool,
+pub(crate) enum Step {
+    /// A change off the undo stack, applied forward (an edit or a redo) or
+    /// reverted (an undo).
+    Edit { change: Change, forward: bool },
+    /// Project files written or removed whole. See [`files`].
+    Files(files::Files),
+    /// Project files a joined editor asks the host to delete. Sent only as
+    /// an ask, never as an edit. See *Deleting files*.
+    Delete(Vec<String>),
 }
 
 impl Payload for Step {
     fn groups(&self) -> Vec<Group> {
-        self.change.groups()
+        match self {
+            Step::Edit { change, .. } => change.groups(),
+            Step::Files(files) => files.groups(),
+            Step::Delete(_) => Vec::new(),
+        }
+    }
+
+    /// The host's file steps. See [`files`]'s *The host's steps are forced*.
+    fn forced(&self) -> bool {
+        matches!(self, Step::Files(_))
+    }
+
+    fn check(&self) -> Result<(), String> {
+        match self {
+            Step::Edit { change, .. } => joinable(change).map_err(|what| format!("{what} is the host's")),
+            Step::Files(files) => files.check(),
+            Step::Delete(_) => Err("a delete is asked for, not sent".to_string()),
+        }
     }
 }
 
@@ -129,6 +181,43 @@ pub(crate) enum Ask {
     Leave,
     GoTo(UserId),
     Remove(UserId),
+    /// A joined editor: ask the host to delete these project files.
+    Delete(Vec<String>),
+    /// The host: keep the files of the first request in [`Collab::requests`]
+    /// and tell the editor that asked.
+    Keep,
+}
+
+/// What this editor may do in a shared session, for the panels whose
+/// buttons depend on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Role {
+    /// No session.
+    #[default]
+    Alone,
+    Hosting,
+    /// Joined to another's session, or joining one.
+    Joined,
+}
+
+impl Role {
+    pub(crate) fn joined(self) -> bool {
+        self == Role::Joined
+    }
+
+    /// Whether a session is running, hosted or joined.
+    pub(crate) fn shared(self) -> bool {
+        self != Role::Alone
+    }
+}
+
+/// A joined editor's request to delete project files, waiting for the host
+/// to answer it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Request {
+    pub(crate) user: UserId,
+    pub(crate) name: String,
+    pub(crate) paths: Vec<String>,
 }
 
 /// The panel's fields.
@@ -175,8 +264,9 @@ pub(crate) struct Collab {
     pub(crate) form: Form,
     pub(crate) ask: Option<Ask>,
     fetch: Option<fetch::Fetch>,
-    /// Edits received while the project is fetched, applied once it is open.
-    held: Vec<Step>,
+    /// Edits received while the project is fetched, and who made each,
+    /// applied once it is open.
+    held: Vec<(UserId, Step)>,
     /// The project this editor had open before it joined.
     own_project: Option<String>,
     presence_at: f64,
@@ -187,7 +277,16 @@ pub(crate) struct Collab {
     pub(crate) taken_back: u64,
     /// The chunks each other editor changed, by tile and chunk, and when:
     /// outlined in their colour for [`people::RECENT`] seconds.
-    pub(crate) recent: std::collections::HashMap<(UserId, vale_edit::TileKey, usize), f64>,
+    pub(crate) recent: HashMap<(UserId, vale_edit::TileKey, usize), f64>,
+    /// The host: joined editors' requests to delete files, oldest first. The
+    /// first is shown as a confirmation until it is answered.
+    pub(crate) requests: VecDeque<Request>,
+    /// Who else has edited each tile and table file since it was last saved,
+    /// by lower-case virtual path. See [`Collab::unsaved_by`].
+    edited: HashMap<String, BTreeSet<UserId>>,
+    /// Project files another editor's step wrote or removed this frame, for
+    /// the Assets workspace to forget what it read of them.
+    changed: Vec<String>,
     /// The frame's clock, for the actions that note a time.
     now: f64,
 }
@@ -199,9 +298,30 @@ impl Collab {
         matches!(self.state, State::Connecting { .. } | State::Fetching { .. } | State::Joined { .. })
     }
 
+    /// What this editor may do in the session. See [`Role`].
+    pub(crate) fn role(&self) -> Role {
+        match self.state {
+            State::Hosting { .. } => Role::Hosting,
+            _ if self.is_joined() => Role::Joined,
+            _ => Role::Alone,
+        }
+    }
+
     /// The host's name, when joined.
     pub(crate) fn host_name(&self) -> Option<&str> {
         self.people.get(&0).map(|person| person.name.as_str())
+    }
+
+    /// The names of the others whose edits to any of these files are not
+    /// saved yet, and so are lost when the files are deleted.
+    pub(crate) fn unsaved_by(&self, vpaths: &[String]) -> Vec<String> {
+        let mut users = BTreeSet::new();
+        for vpath in vpaths {
+            if let Some(by) = self.edited.get(&vpath.to_ascii_lowercase()) {
+                users.extend(by.iter().copied().filter(|user| Some(*user) != self.me));
+            }
+        }
+        users.iter().filter_map(|user| self.people.get(user)).map(|person| person.name.clone()).collect()
     }
 }
 
@@ -294,12 +414,18 @@ fn run(
     tool: Res<crate::tools::Tool>,
     time: Res<Time>,
     mut fly: MessageWriter<crate::camera::FlyTo>,
+    // Told which project files another editor changed, so the Project Files
+    // list and its pictures are read again.
+    mut project_files: ResMut<crate::import::assets::Assets>,
 ) {
     let Some(session) = session.as_mut() else { return };
     let collab = &mut *collab;
     let now = time.elapsed_secs_f64();
     collab.now = now;
     collab.recent.retain(|_, at| now - *at < people::RECENT);
+    // An edit saved since is not lost by a delete.
+    collab.edited.retain(|vpath, _| still_unsaved(session, vpath));
+    project_files.changed.append(&mut collab.changed);
     if let Some(ask) = collab.ask.take() {
         carry_out(collab, session, &assets, &mut camera, &mut fly, ask);
     }
@@ -318,7 +444,7 @@ fn run(
 
     // The part of a held stroke not sent yet, which a remote edit over it
     // takes back. See `vale_collab::peer`.
-    let open = session.history.segment().cloned().map(|change| Step { change, forward: true });
+    let open = session.history.segment().cloned().map(|change| Step::Edit { change, forward: true });
     let actions = collab.session.as_mut().map(|running| running.poll(open.as_ref())).unwrap_or_default();
     let mut admits = Vec::new();
     for action in actions {
@@ -353,6 +479,20 @@ fn run(
             running.presence(presence);
         }
     }
+    project_files.changed.append(&mut collab.changed);
+}
+
+/// Whether the tile or table file at `vpath` has edits the session has not
+/// saved. A tile of another map than the open one is written as it is
+/// changed, so it never has.
+fn still_unsaved(session: &EditSession, vpath: &str) -> bool {
+    if let Some(key) = vale_edit::TileKey::from_vpath(vpath) {
+        return key.map.eq_ignore_ascii_case(&session.map) && session.unsaved.contains(&(key.x, key.y));
+    }
+    session
+        .unsaved_tables
+        .iter()
+        .any(|name| vale_assets::tables::dbc::dbc_path(name).eq_ignore_ascii_case(vpath))
 }
 
 /// Carry out what the panel asked.
@@ -381,6 +521,7 @@ fn carry_out(
                     collab.sent = 0;
                     collab.received = 0;
                     session.history.journal(true);
+                    session.project.journal(true);
                     session.status = format!("hosting {} on {addr}", session.project.name);
                     info!("collab: hosting {} on {addr}", session.project.name);
                 }
@@ -434,7 +575,29 @@ fn carry_out(
                 }
             }
         }
+        Ask::Delete(paths) if matches!(collab.state, State::Joined { .. }) => {
+            let host = collab.host_name().unwrap_or("the host").to_string();
+            session.status = format!("asked {host} to delete {}", count_files(paths.len()));
+            if let Some(running) = collab.session.as_mut() {
+                running.ask(Step::Delete(paths));
+            }
+        }
+        Ask::Keep => {
+            let Some(request) = collab.requests.pop_front() else { return };
+            if let Some(Session::Hosting(hosting)) = collab.session.as_ref() {
+                hosting.note(request.user, format!("{name} kept the {} you asked to delete", count_files(request.paths.len())));
+            }
+            session.status = format!("kept the {} {} asked to delete", count_files(request.paths.len()), request.name);
+        }
         _ => {}
+    }
+}
+
+/// `1 file` or `n files`.
+fn count_files(n: usize) -> String {
+    match n {
+        1 => "1 file".to_string(),
+        n => format!("{n} files"),
     }
 }
 
@@ -460,8 +623,10 @@ fn take_the_connection(collab: &mut Collab, session: &mut EditSession) {
     }
 }
 
-/// Send the steps this editor made. A joined editor's step that only the
-/// host may make ([`joinable`]) is taken back instead.
+/// Send the steps this editor made: the files it wrote or removed first, so a
+/// paint that uses an imported texture arrives after the texture, then the
+/// undo stack's steps. A joined editor's step that only the host may make
+/// ([`joinable`], [`files::joinable`]) is taken back instead.
 fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, now: f64) {
     if now - collab.segment_at >= SEGMENT_EVERY {
         collab.segment_at = now;
@@ -472,6 +637,27 @@ fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &Game
         State::Hosting { .. } => false,
         _ => return,
     };
+    let (steps, too_large) = files::take(session);
+    if let Some(first) = too_large.first() {
+        let mb = files::STEP_BYTES >> 20;
+        session.status = format!("{first} is over {mb} MB and was not sent: the others do not have it");
+    }
+    for step in steps {
+        if joined {
+            if let Err(why) = step.check() {
+                let _ = files::apply(session, assets, &step.backward());
+                collab.changed.extend(step.files.iter().map(|file| file.path.clone()));
+                collab.taken_back += 1;
+                let why = why.split_once(": ").map_or(why.as_str(), |(_, why)| why);
+                session.status = format!("{} was taken back: {why}", step.what());
+                continue;
+            }
+        }
+        if let Some(running) = collab.session.as_mut() {
+            running.propose(Step::Files(step));
+            collab.sent += 1;
+        }
+    }
     for (change, forward) in session.history.take_journal() {
         if joined {
             if let Err(what) = joinable(&change) {
@@ -483,7 +669,7 @@ fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &Game
             }
         }
         if let Some(running) = collab.session.as_mut() {
-            running.propose(Step { change, forward });
+            running.propose(Step::Edit { change, forward });
             collab.sent += 1;
         }
     }
@@ -555,23 +741,51 @@ fn act(
         Action::Apply { user, payload } => {
             collab.received += 1;
             match collab.state {
-                State::Joined { .. } | State::Hosting { .. } => {
-                    session.apply_step(assets, &payload.change, payload.forward);
-                    forget_overlapping(session, &payload.groups());
-                    for redraw in payload.change.invalidates().tiles {
-                        for chunk in redraw.chunks.iter().chain(&redraw.painted) {
-                            collab.recent.insert((user, redraw.tile.clone(), *chunk), collab.now);
-                        }
-                    }
-                }
-                _ => collab.held.push(payload),
+                State::Joined { .. } | State::Hosting { .. } => apply_remote(collab, session, assets, user, &payload),
+                _ => collab.held.push((user, payload)),
             }
         }
-        Action::Revert { payload, cause } => {
-            session.apply_step(assets, &payload.change, !payload.forward);
-            forget_overlapping(session, &payload.groups());
-            collab.taken_back += 1;
-            session.status = taken_back(collab, &payload.change.label, &cause);
+        Action::Revert { payload, cause } => match &payload {
+            Step::Edit { change, forward } => {
+                session.apply_step(assets, change, !forward);
+                forget_overlapping(session, &payload.groups());
+                collab.taken_back += 1;
+                session.status = taken_back(collab, &change.label, &cause);
+            }
+            Step::Files(step) => {
+                let _ = files::apply(session, assets, &step.backward());
+                collab.changed.extend(step.files.iter().map(|file| file.path.clone()));
+                collab.taken_back += 1;
+                session.status = taken_back(collab, &step.what(), &cause);
+            }
+            Step::Delete(_) => {}
+        },
+        Action::Reapply { payload } => {
+            if let Step::Files(step) = &payload {
+                if let Err(e) = files::apply(session, assets, step) {
+                    session.status = format!("{} could not be written again: {e}", step.what());
+                }
+                collab.changed.extend(step.files.iter().map(|file| file.path.clone()));
+            }
+        }
+        Action::Note(line) => session.status = line,
+        Action::Ask { user, payload } => {
+            let Step::Delete(paths) = payload else { return };
+            let name = collab.people.get(&user).map_or_else(|| format!("Editor {user}"), |person| person.name.clone());
+            // Only the files the Project Files list shows, which are the ones
+            // a joined editor's Delete can name.
+            let paths: Vec<String> = paths
+                .into_iter()
+                .filter(|path| vale_edit::project::Project::is_game_data(path) && session.project.has(path))
+                .collect();
+            if paths.is_empty() {
+                if let Some(Session::Hosting(hosting)) = collab.session.as_ref() {
+                    hosting.note(user, format!("none of the files you asked to delete is in {}", session.project.name));
+                }
+                return;
+            }
+            session.status = format!("{name} asks to delete {}", count_files(paths.len()));
+            collab.requests.push_back(Request { user, name, paths });
         }
         Action::CancelOpen { cause } => {
             if let Some(segment) = session.history.drop_segment() {
@@ -591,6 +805,7 @@ fn act(
             collab.people.insert(user, Person { name, presence: None });
         }
         Action::Left { user } => {
+            collab.requests.retain(|request| request.user != user);
             if let Some(person) = collab.people.remove(&user) {
                 session.status = format!("{} left the session", person.name);
             }
@@ -619,8 +834,11 @@ fn act(
             }
         }
         Action::Fetch { user, paths } => {
+            // Only what a manifest can list: a joined editor asks by path,
+            // and the host's `sql\` folder is not sent.
             let files = paths
                 .into_iter()
+                .filter(|path| fetch::listed(path))
                 .filter_map(|path| {
                     let on_disk = session.project.path_for(&path)?;
                     Some((path, on_disk))
@@ -631,6 +849,43 @@ fn act(
             }
         }
         Action::Admit { user, name } => admit(collab, session, user, &name),
+    }
+}
+
+/// Apply another editor's step, and note what it changed: the chunks to
+/// outline in that editor's colour, who has unsaved edits in which file, and
+/// the files the Assets workspace reads again.
+fn apply_remote(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, user: UserId, step: &Step) {
+    match step {
+        Step::Edit { change, forward } => {
+            session.apply_step(assets, change, *forward);
+            forget_overlapping(session, &step.groups());
+            let invalidated = change.invalidates();
+            for redraw in &invalidated.tiles {
+                for chunk in redraw.chunks.iter().chain(&redraw.painted) {
+                    collab.recent.insert((user, redraw.tile.clone(), *chunk), collab.now);
+                }
+                collab.edited.entry(redraw.tile.vpath().to_ascii_lowercase()).or_default().insert(user);
+            }
+            for name in &invalidated.tables {
+                let vpath = vale_assets::tables::dbc::dbc_path(name).to_ascii_lowercase();
+                collab.edited.entry(vpath).or_default().insert(user);
+            }
+        }
+        Step::Files(files) => {
+            let name = collab.people.get(&user).map_or("another editor", |person| person.name.as_str());
+            session.status = match files::apply(session, assets, files) {
+                Ok(()) => format!("{name} {}", files.words()),
+                Err(e) => format!("{name} {}, but {e}", files.words()),
+            };
+            forget_overlapping(session, &step.groups());
+            for file in &files.files {
+                // The file replaces whatever was edited in it.
+                collab.edited.remove(&file.path.to_ascii_lowercase());
+                collab.changed.push(file.path.clone());
+            }
+        }
+        Step::Delete(_) => {}
     }
 }
 
@@ -674,9 +929,10 @@ fn opened_the_copy(
         return;
     }
     session.history.journal(true);
+    session.project.journal(true);
     collab.state = State::Joined { project: project.clone() };
-    for step in std::mem::take(&mut collab.held) {
-        session.apply_step(assets, &step.change, step.forward);
+    for (user, step) in std::mem::take(&mut collab.held) {
+        apply_remote(collab, session, assets, user, &step);
     }
     session.status = match collab.host_name() {
         Some(host) => format!("joined {host}'s session; {project} is open"),
@@ -696,8 +952,11 @@ fn end(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, reas
     collab.fetch = None;
     collab.held.clear();
     collab.people.clear();
+    collab.requests.clear();
+    collab.edited.clear();
     collab.me = None;
     session.history.journal(false);
+    session.project.journal(false);
     if let (true, Some(own)) = (was_joined, collab.own_project.take()) {
         if own != session.project.name {
             session.switch_to(assets, &own);
@@ -760,19 +1019,22 @@ mod tests {
         let mut sent = Vec::new();
         for (change, forward) in steps {
             let mut bytes = Vec::new();
-            vale_collab::wire::write_frame(&mut bytes, &Step { change, forward }).unwrap();
-            sent.push(vale_collab::wire::read_frame::<Step>(&mut bytes.as_slice()).unwrap());
+            vale_collab::wire::write_frame(&mut bytes, &Step::Edit { change, forward }).unwrap();
+            match vale_collab::wire::read_frame::<Step>(&mut bytes.as_slice()).unwrap() {
+                Step::Edit { change, forward } => sent.push((change, forward)),
+                other => panic!("{other:?}"),
+            }
         }
 
-        other.apply_step(&assets, &sent[0].change, sent[0].forward);
+        other.apply_step(&assets, &sent[0].0, sent[0].1);
         assert_ne!(other.tiles[&coord].write(), original, "the raise reached the other session");
-        let raised = sent[0].change.clone();
+        let raised = sent[0].0.clone();
         let mut host_raised = host.tiles[&coord].clone();
         raised.apply(&host.key(coord), &mut host_raised);
         assert_eq!(other.tiles[&coord].write(), host_raised.write());
         assert!(other.unsaved.contains(&coord));
 
-        other.apply_step(&assets, &sent[1].change, sent[1].forward);
+        other.apply_step(&assets, &sent[1].0, sent[1].1);
         assert_eq!(other.tiles[&coord].write(), original);
         let _ = std::fs::remove_dir_all(&install);
     }

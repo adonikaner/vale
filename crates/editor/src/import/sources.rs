@@ -101,6 +101,38 @@ impl Sources {
         project.write(RECORD, sources.text().as_bytes()).map(|_| ()).map_err(|e| e.to_string())
     }
 
+    /// The record's lines for `vpaths`, as [`Self::text`] writes them. A
+    /// shared session sends these with the files instead of the whole
+    /// record, which every import rewrites; see `crate::collab::files`.
+    pub(crate) fn lines_for(project: &Project, vpaths: &[&str]) -> String {
+        let entries = Sources::read(project)
+            .entries
+            .into_iter()
+            .filter(|entry| vpaths.iter().any(|vpath| entry.vpath.eq_ignore_ascii_case(vpath)))
+            .collect();
+        Sources { entries }.text()
+    }
+
+    /// Put another editor's lines into this project's record, each in place
+    /// of this record's line for the same path, and drop the lines for
+    /// `removed`. Only a line for one of `written` is taken. The record is
+    /// written only when it changes.
+    pub(crate) fn merge(project: &Project, lines: &str, written: &[&str], removed: &[&str]) -> Result<(), String> {
+        let named = |list: &[&str], vpath: &str| list.iter().any(|other| other.eq_ignore_ascii_case(vpath));
+        let mut sources = Sources::read(project);
+        let before = sources.clone();
+        sources.entries.retain(|entry| !named(removed, &entry.vpath));
+        for entry in Sources::parse(lines).entries.into_iter().filter(|entry| named(written, &entry.vpath)) {
+            sources.entries.retain(|e| !e.vpath.eq_ignore_ascii_case(&entry.vpath));
+            sources.entries.push(entry);
+        }
+        sources.entries.sort_by_key(|e| e.vpath.to_ascii_lowercase());
+        if sources == before {
+            return Ok(());
+        }
+        project.write(RECORD, sources.text().as_bytes()).map(|_| ()).map_err(|e| e.to_string())
+    }
+
     /// Remove the line for `vpath`, if there is one, and write the record.
     pub(crate) fn forget(project: &Project, vpath: &str) {
         let mut sources = Sources::read(project);

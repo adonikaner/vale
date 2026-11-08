@@ -282,6 +282,7 @@ pub(crate) fn draw(
                     playing,
                     step,
                     &mut ask_tile_files,
+                    collab.role(),
                 );
             });
         }) {
@@ -536,6 +537,9 @@ fn the_server(
     // Set when the Server tile files button is pressed; the caller opens the
     // dialog. See [`super::tilefiles`].
     ask_tile_files: &mut bool,
+    // Whether a shared session is running, which disables a joined editor's
+    // server writes. See `crate::collab`'s *Server writes*.
+    role: crate::collab::Role,
 ) {
     ui.set_width(540.0);
     ui.horizontal(|ui| {
@@ -578,7 +582,7 @@ fn the_server(
                     }
                 });
             }
-            this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files);
+            this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files, role);
         }
         ServerTab::Setup => setup(ui, assets, server, queue),
     }
@@ -598,6 +602,7 @@ fn this_project(
     playing: bool,
     step: &crate::server::datadir::Step,
     ask_tile_files: &mut bool,
+    role: crate::collab::Role,
 ) {
     // Every server operation of the project. See [`super::sync`], whose
     // module comment says why they are in one panel.
@@ -611,6 +616,7 @@ fn this_project(
             standings,
             now,
         },
+        role,
     );
 
     // The server's tiles, which are files and not rows. The tile step on its
@@ -631,7 +637,7 @@ fn this_project(
         };
         if ui
             .add_enabled(
-                !playing && !busy && changed != Some(0),
+                !playing && !busy && changed != Some(0) && !role.joined(),
                 egui::Button::new(format!("Regenerate changed tiles ({count})")),
             )
             .on_hover_text(
@@ -640,10 +646,11 @@ fn this_project(
                  step of Publish. Takes minutes; the status line shows the current step. \
                  Restart the server afterwards.",
             )
-            .on_disabled_hover_text(match (playing, busy) {
-                (true, _) => "Not while a playtest is running: regeneration rewrites the \
-                              archive the client has open.",
-                (_, true) => "A server write is still running.",
+            .on_disabled_hover_text(match (role.joined(), playing, busy) {
+                (true, _, _) => "In a shared session the host regenerates its server's tiles.",
+                (_, true, _) => "Not while a playtest is running: regeneration rewrites the \
+                                 archive the client has open.",
+                (_, _, true) => "A server write is still running.",
                 _ => "No tile has changed since the last regeneration.",
             })
             .clicked()
@@ -668,12 +675,13 @@ fn this_project(
     );
     ui.horizontal(|ui| {
         if ui
-            .button("Server tile files\u{2026}")
+            .add_enabled(!role.joined(), egui::Button::new("Server tile files\u{2026}"))
             .on_hover_text(
                 "The tile files a regeneration no longer produces, the files each project \
                  wrote, and a check for files nothing uses. Remove and put back from there; \
                  a regeneration removes no file.",
             )
+            .on_disabled_hover_text("In a shared session the host manages its server's tile files.")
             .clicked()
         {
             *ask_tile_files = true;
@@ -704,13 +712,14 @@ fn this_project(
     };
     ui.horizontal(|ui| {
         if ui
-            .button("Write migration")
+            .add_enabled(!role.joined(), egui::Button::new("Write migration"))
             .on_hover_text(
                 "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
                  vmangos' add_migration format, containing the changes since this project's \
                  last migration. This runs only the row step of Publish. Nothing is written \
                  when no row changed. Apply the file with the mysql client.",
             )
+            .on_disabled_hover_text("In a shared session the host saves and writes migrations.")
             .clicked()
         {
             session.status = crate::server::publish::release::migrate(session, assets);

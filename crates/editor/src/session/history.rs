@@ -132,6 +132,9 @@ impl EditSession {
 
     /// [`Self::apply_step`] for a tile of a map that is not open.
     fn step_elsewhere(&mut self, assets: &GameAssets, change: &vale_edit::undo::Change, tile: &vale_edit::TileKey, forward: bool) {
+        // In a shared session the change itself is sent, and each editor
+        // writes this file for itself.
+        let _unjournaled = self.project.unjournaled();
         let path = tile.vpath();
         let Ok(Some(bytes)) = assets.with_archive(|chain| Ok(chain.read(&path).ok())) else {
             self.status = format!("{path}: not found, so a change to it was not applied");

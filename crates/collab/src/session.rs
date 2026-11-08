@@ -63,6 +63,12 @@ impl<P: Payload> Hosting<P> {
         actions
     }
 
+    /// Send an editor a line for its status line: the answer to its
+    /// [`Action::Ask`].
+    pub fn note(&self, user: UserId, line: String) {
+        self.net.send(user, ToPeer::Note(line));
+    }
+
     /// Send files an editor fetched, from a thread of their own, in
     /// [`FILE_PIECE`] pieces and then [`ToPeer::FilesDone`]. Each is the
     /// virtual path and where it is on disk. A file that cannot be read is
@@ -132,6 +138,7 @@ impl<P: Payload> Hosting<P> {
                     Out::Close(user) => self.net.close(user),
                     Out::Admit { user, name } => actions.push(Action::Admit { user, name }),
                     Out::Fetch { user, paths } => actions.push(Action::Fetch { user, paths }),
+                    Out::Ask { user, payload } => actions.push(Action::Ask { user, payload }),
                 }
             }
         }
@@ -214,6 +221,12 @@ impl<P: Payload> Session<P> {
     /// next [`Self::poll`].
     pub fn propose(&mut self, payload: P) {
         self.peer().propose(payload);
+    }
+
+    /// Ask the host's editor to make an edit, on the next poll. See
+    /// [`Peer::ask`].
+    pub fn ask(&mut self, payload: P) {
+        self.peer().ask(payload);
     }
 
     /// Say where this editor is, on the next poll.

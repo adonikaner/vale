@@ -153,6 +153,9 @@ impl EditSession {
     /// the Assets workspace's Project Files until another kind of file was
     /// saved.
     pub(crate) fn save_table(&mut self, name: &str) -> bool {
+        // Not sent in a shared session, as a tile save is not; see
+        // `Self::save`.
+        let _unjournaled = self.project.unjournaled();
         let Some(table) = self.tables.get(name) else {
             return false;
         };

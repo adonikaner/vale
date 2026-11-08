@@ -5,7 +5,8 @@
 //! wire.rs     the messages: what an editor sends the host and what the host
 //!             sends an editor, and their framing on a stream
 //! groups.rs   what two edits conflict over: a chunk's shape, a tile's
-//!             textures, a tile's placements, a client table, a server row
+//!             textures, a tile's placements, a DBC table, a server row, a
+//!             project file
 //! host.rs     the host's half: who is in, the order of every accepted edit,
 //!             and the check that refuses an edit made on out-of-date state
 //! peer.rs     every editor's half, the host's own included: its edits not
@@ -30,9 +31,10 @@
 //! `base`. An accepted edit is numbered and sent to every other editor, which
 //! applies it through the same path a redo takes.
 //!
-//! An edit is a [`vale_edit::undo::Change`]: the state of everything it
-//! touched before and after. Applying one needs no recomputation, so every
-//! editor ends with the same bytes.
+//! An edit is any [`groups::Payload`]. The editor sends two kinds: a
+//! [`vale_edit::undo::Change`], the state of everything it touched before and
+//! after, and the bytes of project files written or removed whole. Applying
+//! either needs no recomputation, so every editor ends with the same bytes.
 //!
 //! ## A refusal
 //!
@@ -44,6 +46,10 @@
 //! order it decided them. So the editor takes its waiting edits back from that
 //! one on, newest first, and then applies the remote edit. See
 //! [`peer::Peer::receive`].
+//!
+//! An edit the host's own editor marks as forced is never refused or taken
+//! back, because it cannot be: a delete drops unsaved edits. See
+//! [`peer`]'s *Forced edits*.
 //!
 //! The connections are plain TCP and carry no encryption: a session is for a
 //! local network. The password keeps strangers out; it does not hide the
