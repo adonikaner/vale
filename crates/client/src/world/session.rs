@@ -1088,7 +1088,13 @@ fn finish_login(mut session: ResMut<Session>) {
             session.connecting = None;
             match result {
                 Ok(handshake) => session.selection = Some(handshake),
-                Err(e) => session.error = Some(e),
+                // The dialog shows only the key's sentence, which is the same
+                // for a realmd that refuses the socket and for a world server
+                // that does. The detail names which, so it is logged.
+                Err(e) => {
+                    warn!("login failed ({}): {}", e.key, e.detail);
+                    session.error = Some(e);
+                }
             }
         }
     }

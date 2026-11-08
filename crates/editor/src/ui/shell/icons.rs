@@ -1,13 +1,12 @@
-//! The toolbar icons. Two files draw them: [`super::viewbar`] for the bottom
-//! toolbar's view toggles, and [`super::rail`] for the side and top toolbars'
-//! tool tiles, the workspace control and the two pointer buttons.
+//! The view bar's icons, drawn by [`super::viewbar`] for the bottom toolbar's
+//! view toggles. The rail's tools and the two pointer tools have icons of
+//! their own, painted with egui's painter ([`super::toolicons`]).
 //!
 //! ## No icons are shipped yet
 //!
-//! [`EMBEDDED`] is empty, so every button draws its text label: a view toggle
-//! its short label (`FOG`, `WMO`), a tool tile its name. A button with no icon
-//! is a complete button, so nothing here decides whether a toggle or a tool
-//! exists.
+//! [`EMBEDDED`] is empty, so every view toggle draws its short label (`FOG`,
+//! `WMO`). A button with no icon
+//! is a complete button, so nothing here decides whether a toggle exists.
 //!
 //! ## Adding an icon
 //!
@@ -17,14 +16,12 @@
 //!    file's bytes from `include_bytes!` (the path is relative to this file):
 //!
 //!    ```text
-//!    ("terrain", include_bytes!("<path to terrain.png>")),
+//!    ("fog", include_bytes!("<path to fog.png>")),
 //!    ```
 //!
-//! The name is the button's own, compared without case: a rail subject's name
-//! (`Terrain`, `Doodads`, `Spells`) or a view toggle's switch label (`fog`,
+//! The name is the view toggle's switch label, compared without case (`fog`,
 //! `doodads`, `collision`, `navmesh`). `every_embedded_name_is_a_button`
-//! fails the build for a name that matches no button. A tool tile grows to
-//! fit an icon over its name as soon as any icon is present.
+//! fails the build for a name that matches no button.
 //!
 //! The files are compiled into the binary rather than read from a folder, so
 //! the editor has the same toolbars whether it is run from the repository or
@@ -56,8 +53,8 @@ impl Icons {
         self.ready.get(&name.to_lowercase()).copied()
     }
 
-    /// Whether any icon is registered. The rail uses it to choose the height
-    /// of a tool tile.
+    /// Whether any icon is registered.
+    #[cfg(test)]
     pub(crate) fn any(&self) -> bool {
         !self.ready.is_empty()
     }
@@ -134,7 +131,6 @@ mod tests {
     fn every_embedded_name_is_a_button() {
         let buttons: Vec<String> = super::super::viewbar::names()
             .into_iter()
-            .chain(super::super::rail::names())
             .map(str::to_lowercase)
             .collect();
         for (name, _) in EMBEDDED {

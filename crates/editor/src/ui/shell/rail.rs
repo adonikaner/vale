@@ -52,21 +52,25 @@
 //!
 //! ## Icons
 //!
-//! A tile, part or corner button draws the icon [`super::icons`] has under the
-//! subject's name, and its name alone when there is none. No icons are shipped
-//! yet, so every button is drawn by name.
+//! A tile and a corner button draw their tool's icon alone
+//! ([`super::toolicons`]), painted with egui's painter as the brush presets'
+//! icons are. The tool's name and what it does are in the tooltip. Icons
+//! rather than names let a tile be square, so the rail is 96 points wide
+//! rather than the width of the longest name. The workspace control on the
+//! top bar names its workspaces in text.
 
 use bevy::prelude::Resource;
 use bevy_egui::egui;
 
-use super::icons::Icons;
+use super::toolicons::ToolIcon;
 use crate::ui::widgets::theme;
 use crate::tools::{Place, Surface, Tool, SPECS};
 
 /// One subject: its name, its tool, and what it does. Read from the tool's
 /// row of [`SPECS`].
 struct Subject {
-    /// The label, and the key [`super::icons`] looks an icon up by.
+    /// The name: a top bar button's label, and the first line of a tile's
+    /// tooltip.
     name: &'static str,
     tool: Tool,
     /// What it does, for the tooltip.
@@ -77,8 +81,8 @@ struct Subject {
 /// heading in [`Place::Rail`].
 const HEADINGS: [&str; 3] = ["Terrain", "World", "Spawns"];
 
-/// The tiles under `heading`, in the order the rail draws them. A tile is
-/// labelled with its tool's name.
+/// The tiles under `heading`, in the order the rail draws them. A tile shows
+/// its tool's icon.
 fn tiles(heading: &str) -> Vec<Subject> {
     SPECS
         .iter()
@@ -110,19 +114,6 @@ fn corner() -> impl Iterator<Item = Subject> {
         .iter()
         .filter(|spec| spec.place == Place::Corner)
         .map(|spec| Subject { name: spec.name, tool: spec.tool, about: spec.about })
-}
-
-/// The name of every subject this file draws a button for, which is what
-/// [`super::icons`] checks its icon names against.
-#[cfg(test)]
-pub(crate) fn names() -> impl Iterator<Item = &'static str> {
-    HEADINGS
-        .iter()
-        .flat_map(|heading| tiles(heading))
-        .chain(bar())
-        .chain(SPECS.iter().filter_map(|spec| part(spec.tool)))
-        .chain(corner())
-        .map(|subject| subject.name)
 }
 
 /// The rail's memory between frames.
@@ -184,13 +175,16 @@ fn tooltip(subject: &Subject, held: Option<&str>) -> String {
     text
 }
 
-/// How tall a tile is: an icon over its name when any icon is registered, or
-/// the name alone when none is.
-const TILE_WITH_ICON: f32 = 46.0;
-const TILE_NAME_ONLY: f32 = 26.0;
+/// How tall a tile is. Two tiles and [`GAP`] fill the rail's 80 points inside
+/// its margins, so a tile is square. See `theme::RAIL_WIDTH`.
+const TILE: f32 = 38.0;
 
-/// The icon's size on a tile and on a corner button.
+/// The icon's size on a tile.
 const PICTURE: f32 = 24.0;
+
+/// How large a corner button is, and its icon.
+const CORNER: f32 = 28.0;
+const CORNER_PICTURE: f32 = 20.0;
 
 /// Space between two tiles, across and down.
 const GAP: f32 = 4.0;
@@ -198,23 +192,11 @@ const GAP: f32 = 4.0;
 /// Draw the rail.
 ///
 /// The rail's height at 1280x720 is what the top bar, the view bar and the
-/// status line leave, about 615 points. Eight rows of tiles and three headings
-/// take about 470 with icons and 310 without. The rail is still a
-/// `ScrollArea`, because more subjects will be added; the scroll area draws
-/// nothing while everything fits.
-pub(crate) fn draw(
-    ui: &mut egui::Ui,
-    tool: &mut Tool,
-    rail: &mut Rail,
-    icons: &Icons,
-    playing: bool,
-    server: bool,
-) {
+/// status line leave, about 615 points. Ten rows of tiles and three headings
+/// take about 500. The rail is still a `ScrollArea`, because more subjects
+/// will be added; the scroll area draws nothing while everything fits.
+pub(crate) fn draw(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: bool, server: bool) {
     rail.follow(*tool);
-    let height = match icons.any() {
-        true => TILE_WITH_ICON,
-        false => TILE_NAME_ONLY,
-    };
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
@@ -227,8 +209,8 @@ pub(crate) fn draw(
                     ui.horizontal(|ui| {
                         for subject in pair {
                             let why = held(subject.tool, playing, server);
-                            let size = egui::vec2(width, height);
-                            if tile(ui, icons, subject, *tool == subject.tool, why, size) {
+                            let size = egui::vec2(width, TILE);
+                            if tile(ui, subject, *tool == subject.tool, why, size, PICTURE) {
                                 *tool = subject.tool;
                                 rail.follow(subject.tool);
                             }
@@ -240,16 +222,11 @@ pub(crate) fn draw(
         });
 }
 
-/// One tile: the icon over the name, lit when it is the tool in use, greyed
-/// with a reason when it is unavailable. Answers whether it was clicked.
-fn tile(
-    ui: &mut egui::Ui,
-    icons: &Icons,
-    subject: &Subject,
-    on: bool,
-    held: Option<&str>,
-    size: egui::Vec2,
-) -> bool {
+/// One tile: the tool's icon, `picture` points square, lit when it is the
+/// tool in use, greyed with a reason when it is unavailable. The name is in
+/// the tooltip. Answers whether it was clicked. The corner buttons are tiles
+/// too.
+fn tile(ui: &mut egui::Ui, subject: &Subject, on: bool, held: Option<&str>, size: egui::Vec2, picture: f32) -> bool {
     let sense = match held {
         Some(_) => egui::Sense::hover(),
         None => egui::Sense::click(),
@@ -279,62 +256,17 @@ fn tile(
         (false, true) => theme::INK,
         (false, false) => theme::INK_DIM,
     };
-    let picture = icons.get(subject.name);
-    match (picture, rect.height() >= TILE_WITH_ICON) {
-        (Some(id), true) => {
-            let at = egui::Rect::from_center_size(
-                egui::pos2(rect.center().x, rect.top() + 4.0 + PICTURE / 2.0),
-                egui::Vec2::splat(PICTURE),
-            );
-            let tint = match (held.is_some(), on) {
-                (true, _) => egui::Color32::from_gray(0x44),
-                (false, true) => egui::Color32::WHITE,
-                (false, false) => egui::Color32::from_gray(0xb0),
-            };
-            egui::Image::new((id, egui::Vec2::splat(PICTURE)))
-                .tint(tint)
-                .corner_radius(egui::CornerRadius::same(2))
-                .paint_at(ui, at);
-            painter.text(
-                egui::pos2(rect.center().x, rect.bottom() - 4.0),
-                egui::Align2::CENTER_BOTTOM,
-                subject.name,
-                fitted(ui, subject.name, theme::SMALL, rect.width()),
-                ink,
-            );
-        }
-        // No picture: the name alone, larger, in the middle of the tile. This
-        // is every tile while no icons are registered.
-        _ => {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                subject.name,
-                fitted(ui, subject.name, 12.0, rect.width()),
-                ink,
-            );
+    let at = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(picture));
+    match ToolIcon::of(subject.tool) {
+        Some(icon) => icon.paint(&painter, at, ink, fill),
+        // A tool with no icon yet is drawn by name. Every rail and corner
+        // tool has one; see `every_rail_and_corner_tool_has_an_icon`.
+        None => {
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, subject.name, egui::FontId::proportional(theme::SMALL), ink);
         }
     }
     let response = response.on_hover_text(tooltip(subject, held));
     held.is_none() && response.clicked()
-}
-
-/// The font a tile's name is drawn in: `size`, or smaller when the name at
-/// `size` is wider than the tile less a margin, so a long name is never
-/// clipped at the tile's edges.
-fn fitted(ui: &egui::Ui, name: &str, size: f32, width: f32) -> egui::FontId {
-    let font = egui::FontId::proportional(size);
-    let room = (width - 6.0).max(1.0);
-    let needed = ui.fonts_mut(|fonts| {
-        fonts
-            .layout_no_wrap(name.to_string(), font.clone(), egui::Color32::WHITE)
-            .size()
-            .x
-    });
-    match needed > room {
-        true => egui::FontId::proportional((size * room / needed).max(8.0)),
-        false => font,
-    }
 }
 
 /// The workspace control on the top bar: *World*, then each workspace that
@@ -488,13 +420,7 @@ pub(crate) fn parts(ui: &mut egui::Ui, tool: Tool) -> Option<Tool> {
 /// Select and Measure, drawn over the viewport's top-left corner. Answers the
 /// rectangle drawn, which the caller adds to the viewport's floating list so a
 /// click on a button is not also a click on the ground behind it.
-pub(crate) fn pointer(
-    ctx: &egui::Context,
-    viewport: egui::Rect,
-    tool: &mut Tool,
-    rail: &mut Rail,
-    icons: &Icons,
-) -> Option<egui::Rect> {
+pub(crate) fn pointer(ctx: &egui::Context, viewport: egui::Rect, tool: &mut Tool, rail: &mut Rail) -> Option<egui::Rect> {
     if !viewport.is_positive() {
         return None;
     }
@@ -512,15 +438,7 @@ pub(crate) fn pointer(
                         ui.spacing_mut().item_spacing.x = 3.0;
                         for subject in corner() {
                             let on = *tool == subject.tool;
-                            let button = match icons.get(subject.name) {
-                                Some(id) => egui::Button::image(
-                                    egui::Image::new((id, egui::Vec2::splat(20.0)))
-                                        .corner_radius(egui::CornerRadius::same(2)),
-                                ),
-                                None => egui::Button::new(subject.name),
-                            };
-                            let button = button.selected(on).min_size(egui::vec2(26.0, 26.0));
-                            if ui.add(button).on_hover_text(tooltip(&subject, None)).clicked() {
+                            if tile(ui, &subject, on, None, egui::Vec2::splat(CORNER), CORNER_PICTURE) {
                                 *tool = subject.tool;
                                 rail.follow(subject.tool);
                             }
@@ -545,6 +463,15 @@ mod tests {
 
     fn corner_tools() -> Vec<Tool> {
         corner().map(|subject| subject.tool).collect()
+    }
+
+    /// Every rail and corner tool has an icon, so no tile falls back to its
+    /// name.
+    #[test]
+    fn every_rail_and_corner_tool_has_an_icon() {
+        for tool in rail_tools().into_iter().chain(corner_tools()) {
+            assert!(ToolIcon::of(tool).is_some(), "{} has no icon", tool.name());
+        }
     }
 
     /// Every heading a tile names is one the rail draws, and every heading

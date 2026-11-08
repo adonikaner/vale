@@ -92,8 +92,8 @@
 //! it in `ClientConfig` for the game's own login screen. On the host's
 //! server the playtest saves the joined editor's copy of the project and
 //! applies nothing to a database: only the host applies changes to that
-//! server. [`explain_a_loopback_realm`] names the usual cause when the login
-//! then fails at the world server.
+//! server. [`explain_the_world_address`] names the usual causes when the
+//! login then fails at the world server.
 //!
 //! ## The three readers of an edited tile
 //!
@@ -277,11 +277,14 @@ fn follow_the_realm(login: Res<Login>, mut config: ResMut<ClientConfig>) {
 }
 
 /// Explain a failed playtest login on a shared session host's server when the
-/// host's realmd gave a loopback address for its world server. realmd sends
-/// the address in the `address` column of its `realmlist` table. When that is
+/// host's realmd accepted the login and the world server it named could not be
+/// reached. realmd sends the world server's address in the `address` column of
+/// its `realmlist` table. Two causes are common. When the address is
 /// `127.0.0.1`, the client connects to a world server on its own machine
-/// instead of the host's, and the login fails. Each failure is explained once.
-fn explain_a_loopback_realm(
+/// instead of the host's. When the address is the host's, the host's firewall
+/// can block the world server's port while it allows realmd's. Each failure is
+/// explained once.
+fn explain_the_world_address(
     client: Res<Session>,
     login: Res<Login>,
     session: Option<ResMut<EditSession>>,
@@ -300,15 +303,20 @@ fn explain_a_loopback_realm(
     *explained = Some(failure.detail.clone());
     let Some(rest) = failure.detail.strip_prefix("world server ") else { return };
     let address = rest.split(": ").next().unwrap_or("");
-    let host = address.rsplit_once(':').map_or(address, |(host, _)| host);
-    if !matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]") {
-        return;
-    }
-    if let Some(mut session) = session {
-        session.status = format!(
+    let (host, port) = address.rsplit_once(':').unwrap_or((address, "8085"));
+    let line = match matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]") {
+        true => format!(
             "The host's realmd gives {address} as its world server address, which is this machine. \
              Set the address in the realmlist table of the host's realmd database to the host's network address."
-        );
+        ),
+        false => format!(
+            "The world server at {address}, which the host's realmd gives, could not be reached. \
+             Check that the host's firewall allows incoming TCP connections on port {port}."
+        ),
+    };
+    warn!("playtest: {line}");
+    if let Some(mut session) = session {
+        session.status = line;
     }
 }
 
@@ -332,7 +340,7 @@ impl Plugin for PlaytestPlugin {
             .init_resource::<Login>()
             .init_resource::<ViewSettings>()
             .add_systems(Startup, seed)
-            .add_systems(Update, (follow_the_realm, explain_a_loopback_realm))
+            .add_systems(Update, (follow_the_realm, explain_the_world_address))
             .add_systems(
                 Update,
                 (

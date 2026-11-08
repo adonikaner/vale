@@ -766,7 +766,6 @@ fn draw(
                     ui,
                     &mut tool,
                     &mut viewing.rail,
-                    &viewing.icons,
                     in_world,
                     playing.server.resolve().is_some(),
                 );
@@ -980,7 +979,7 @@ fn draw(
     // Select and Measure over the viewport's corner. Drawn only while the
     // viewport is the world's, which excludes a workspace and a playtest.
     let world_rect = viewport.rect.unwrap_or(egui::Rect::NOTHING);
-    let corner = shell::rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail, &viewing.icons);
+    let corner = shell::rail::pointer(&ctx, world_rect, &mut tool, &mut viewing.rail);
     viewport.floating.extend(corner);
     // A tool's toolbar, beside Select and Measure over the top of the
     // viewport, where the clicks and strokes it sets up land. See
