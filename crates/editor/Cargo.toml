@@ -41,6 +41,14 @@ vale-protocol.workspace = true
 # save turns the project's edited DBCs into the statements that change the
 # server's own tables. No connection comes with it.
 vale-mangos.workspace = true
+# A shared editing session with other editors: the messages, the host's
+# ordering of edits and the connections. See `src/collab/`.
+vale-collab.workspace = true
+# A shared step is encoded as the undo stack's own `Change`.
+serde.workspace = true
+# The hashes a shared session's project manifest lists each file by, and the
+# archives' fingerprint. Already in the tree.
+blake3 = "1"
 bevy.workspace = true
 bevy_egui.workspace = true
 # A tile's height map and blend map, written and read as PNG files. See

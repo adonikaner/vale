@@ -257,6 +257,9 @@ pub(crate) struct Playing<'w> {
 /// takes, and nothing else in this file touches any of them.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct Editing<'w> {
+    /// The shared session: the top bar's Session… button and popover. See
+    /// [`crate::collab`].
+    pub(crate) collab: ResMut<'w, crate::collab::Collab>,
     pub(crate) terrain: ResMut<'w, Terrain>,
     pub(crate) grading: ResMut<'w, crate::tools::ground::grade::Grading>,
     pub(crate) road: ResMut<'w, crate::tools::ground::road::RoadTool>,
@@ -580,6 +583,10 @@ fn draw(
         }
     }
     // `--server`, once, for the same reason.
+    if editing.args.server.session_panel && !popovers.session_shown_once {
+        popovers.session_shown_once = true;
+        popovers.session.show();
+    }
     if editing.args.server.panel && !popovers.server_shown_once {
         popovers.server_shown_once = true;
         popovers.server.show();
@@ -613,6 +620,7 @@ fn draw(
                     popped: editing.popout.tools().collect(),
                 },
                 &editing.bookmarks,
+                &editing.collab,
             );
         });
 
@@ -965,6 +973,7 @@ fn draw(
         time.elapsed_secs_f64(),
         playing.state.playing(),
         &playing.step,
+        &mut editing.collab,
     );
     viewport.floating.extend(map_rect);
     // Select and Measure over the viewport's corner. Drawn only while the

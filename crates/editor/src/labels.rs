@@ -40,17 +40,20 @@ pub(crate) enum Source {
     TextureCount,
     /// The measuring tool. See `crate::tools::measure`.
     Measure,
+    /// The others in a shared session. See `crate::collab`.
+    People,
 }
 
 impl Source {
     /// Every source, in the order the lists are painted: a later list is
     /// painted over an earlier one.
-    pub(crate) const ALL: [Source; 2] = [Source::TextureCount, Source::Measure];
+    pub(crate) const ALL: [Source; 3] = [Source::TextureCount, Source::Measure, Source::People];
 
     fn index(self) -> usize {
         match self {
             Source::TextureCount => 0,
             Source::Measure => 1,
+            Source::People => 2,
         }
     }
 }

@@ -20,6 +20,9 @@ vale-assets.workspace = true
 # through, so what the editor writes and what the client reads cannot drift.
 wow-mpq.workspace = true
 thiserror.workspace = true
+# Every edit and undo entry derives `Serialize` and `Deserialize`, so a shared
+# session (`vale-collab`) sends the same values the undo stack holds.
+serde.workspace = true
 # Reading a glTF 2.0 file for `src/m2/gltf.rs`: models with skeletons and
 # animations, made in any tool that exports the format. The version and the
 # features are the ones Bevy's own glTF loader already builds, so this adds no

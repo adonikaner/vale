@@ -25,7 +25,7 @@
 use super::{AdtFile, Region};
 
 /// One `MDDF` record: a model standing on the tile.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Doodad {
     /// Index into `MMID`, not a byte offset into `MMDX`.
     pub name_id: u32,
@@ -44,7 +44,7 @@ pub struct Doodad {
 pub(crate) const DOODAD_RECORD: usize = 36;
 
 /// One `MODF` record: a building standing on the tile.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Building {
     /// Index into `MWID`.
     pub name_id: u32,

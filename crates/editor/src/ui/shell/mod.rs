@@ -11,6 +11,8 @@
 //!               decision is wanted on, and the Remove and Put back buttons
 //! manifest.rs   the open project's files and what each one changes, drawn in
 //!               the project dialog
+//! session.rs    the Session… button and its popover: hosting or joining a
+//!               shared session, and who is in it
 //! sync.rs       what this project has changed on the server: one block per
 //!               subject, the same four verbs for each. Drawn inside the top
 //!               bar's Server… popover, which holds every server operation;
@@ -42,6 +44,7 @@ pub(crate) mod popout;
 pub(crate) mod popover;
 pub(crate) mod rail;
 pub(crate) mod servicemarks;
+pub(crate) mod session;
 pub(crate) mod status;
 pub(crate) mod sync;
 pub(crate) mod tilefiles;

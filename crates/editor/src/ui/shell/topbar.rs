@@ -128,6 +128,9 @@ pub(crate) fn draw(
     subjects: &mut Subjects<'_>,
     // The kept views the Map menu lists. See [`crate::prefs::bookmarks`].
     bookmarks: &crate::prefs::bookmarks::Bookmarks,
+    // The shared session: the Session… button's label, and whether this
+    // editor is joined to another's, which disables Save and Publish.
+    collab: &crate::collab::Collab,
 ) {
     ui.horizontal(|ui| {
         ui.label(
@@ -147,7 +150,7 @@ pub(crate) fn draw(
         // is the one thing on this bar a person can lose work by being wrong
         // about.
         let in_world = playing.state.playing();
-        project(ui, session, assets, popovers, in_world, playing.queue, playing.server, playing.step);
+        project(ui, session, assets, popovers, in_world, playing.queue, playing.server, playing.step, collab.is_joined());
         // The server sits beside the project because the two are the two
         // destinations of one save: the project folder and the database. The
         // button opens a form, so it is a popover like the others; see
@@ -161,6 +164,13 @@ pub(crate) fn draw(
         popovers.server.track(&at_server);
         if at_server.clicked() {
             popovers.server.toggle(&at_server);
+        }
+        // The shared session beside the server: both are where the
+        // project's work goes besides this machine's folder.
+        let at_session = super::session::button(ui, collab);
+        popovers.session.track(&at_session);
+        if at_session.clicked() {
+            popovers.session.toggle(&at_session);
         }
         separator(ui);
         map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world);
@@ -349,6 +359,9 @@ fn project(
     server: &crate::server::settings::ServerSettings,
     // The progress line a publish's tile regeneration writes.
     step: &crate::server::datadir::Step,
+    // Whether this editor is joined to another's shared session, whose host
+    // saves and publishes.
+    joined: bool,
 ) {
     // A publish's tile regeneration reads the folder a second publish would
     // write, so Publish is disabled while one runs.
@@ -379,16 +392,17 @@ fn project(
             // character is standing on. Saving is what reaches a running
             // game; publishing is for finished work.
             if ui
-                .add_enabled(!playing && !regenerating, egui::Button::new("Publish…"))
+                .add_enabled(!playing && !regenerating && !joined, egui::Button::new("Publish…"))
                 .on_hover_text(
                     "Write a patch: one folder under the project's publish\\ containing the \
                      client archive, the server DBCs, an SQL migration of the rows and the \
                      server's maps, vmaps and mmaps, with a README listing where each goes. \
                      Nothing is applied to this machine.",
                 )
-                .on_disabled_hover_text(match playing {
-                    true => "Not while a playtest is running.",
-                    false => "A server write is still running.",
+                .on_disabled_hover_text(match (joined, playing) {
+                    (true, _) => "In a shared session the host publishes.",
+                    (false, true) => "Not while a playtest is running.",
+                    (false, false) => "A server write is still running.",
                 })
                 .clicked()
             {
@@ -429,10 +443,11 @@ fn project(
         // add up to one number. The label says only that a save is owed.
         parts.push("server rows".to_string());
     }
-    let anything = !parts.is_empty();
-    let label = match anything {
-        false => "Saved".to_string(),
-        true => format!("Save {}", parts.join(" and ")),
+    let anything = !parts.is_empty() && !joined;
+    let label = match (joined, anything) {
+        (true, _) => "Saved by the host".to_string(),
+        (false, false) => "Saved".to_string(),
+        (false, true) => format!("Save {}", parts.join(" and ")),
     };
     // Saving during a playtest is also the reload. The write puts the edit in
     // the project folder and `crate::playtest::republish` puts it where the
@@ -453,7 +468,10 @@ fn project(
                 session.project.root.display()
             ),
         })
-        .on_disabled_hover_text("Nothing has changed since the last save.")
+        .on_disabled_hover_text(match joined {
+            true => "In a shared session the host saves. Your copy of its project follows its edits as they are made.",
+            false => "Nothing has changed since the last save.",
+        })
         .clicked()
     {
         session.save_all();

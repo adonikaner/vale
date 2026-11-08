@@ -851,16 +851,24 @@ fn change_locks(session: &mut EditSession, terrain: &Terrain, ask: VertexAsk) ->
 /// `--vertices <radius>[,<rise>]`: select the vertices round the camera's
 /// target once its tile is open, and move them when a rise is given. See
 /// [`crate::args::tools::Tools::vertices`].
+///
+/// Under `--join` it waits until the editor is in the session with the
+/// host's project open, so the edit is made on the shared project and sent,
+/// rather than on this editor's own project before it is closed.
 fn vertices_on_the_command_line(
     args: Res<crate::args::Args>,
     session: Option<Res<EditSession>>,
     focus: Res<vale_client::render::focus::WorldFocus>,
     mut terrain: ResMut<Terrain>,
+    collab: Res<crate::collab::Collab>,
     mut done: Local<u8>,
 ) {
     let Some((radius, rise)) = args.tools.vertices else {
         return;
     };
+    if args.server.join.is_some() && !matches!(collab.state, crate::collab::State::Joined { .. }) {
+        return;
+    }
     if *done == 0 {
         if let Some((angle, toward)) = args.tools.tilt {
             terrain.tilt_angle = angle;

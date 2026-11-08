@@ -58,7 +58,7 @@ use crate::TileKey;
 /// claim of the empty string: undoing the first edit to a column removes the
 /// column from the store rather than writing an empty value, and claiming no
 /// path leaves the database's own path where claiming an empty one deletes it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ServerEntry {
     pub shape: Shape,
     /// The server table, as `vale-mangos` names it: `creature_template`,
@@ -75,7 +75,7 @@ pub struct ServerEntry {
 
 /// What a [`ServerEntry`] is an edit of, which decides how the caller's store
 /// applies it and what two entries fold on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shape {
     /// One column of one row, set to one value. The column is named here.
     Column(String),
@@ -168,7 +168,7 @@ impl ServerEntry {
 /// for a tile, [`Change::apply_table`] for a table, [`Change::server_steps`]
 /// for the server store), and every one of those reads the list in the order
 /// [`Change::in_order`] gives.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Entry {
     /// A tile edit and the tile it belongs to.
     Tile(TileKey, Edit),
@@ -216,7 +216,7 @@ impl Entry {
 /// wall, a spell's name or a creature's level. The order the list is applied
 /// and reverted in is one rule, [`Self::in_order`], which every apply and
 /// revert path reads.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Change {
     /// What to call it in an interface. "Raise terrain", "Move doodad".
     pub label: String,
@@ -690,6 +690,28 @@ pub struct History {
     /// When the button holding the current gesture went down, or `None` when
     /// no button holds one. See [`History::hold`].
     held_since: Option<f64>,
+    /// Every step taken, for a shared session to send. `None` unless
+    /// [`History::journal`] turned it on. See [`Journal`].
+    journal: Option<Journal>,
+}
+
+/// What a shared session reads off the history: each edit as it is made, and
+/// each undo and redo, in the order they happened.
+///
+/// An undo entry is the wrong unit to send. A stroke is one entry from press
+/// to release, and a gesture can be continued long after it was pushed. So
+/// the journal keeps its own `segment`: everything recorded since the segment
+/// was last closed, folded by the same rules an entry folds by. A segment is
+/// closed when the entry is ([`History::end`]), and whenever the caller asks
+/// ([`History::close_segment`]), which a session does a few times a second so
+/// a stroke is seen while it is drawn. Each closed segment is a whole change
+/// from the state its first edit found to the state its last one left.
+#[derive(Debug, Default)]
+struct Journal {
+    segment: Option<Change>,
+    /// Closed segments, undos and redos: the change, and whether it is applied
+    /// forward (an edit or a redo) or reverted (an undo).
+    steps: Vec<(Change, bool)>,
 }
 
 impl History {
@@ -699,6 +721,84 @@ impl History {
             gap: 0.5,
             ..History::default()
         }
+    }
+
+    /// Start or stop keeping the journal a shared session reads. See
+    /// [`Journal`]. Turning it off drops what was not taken.
+    pub fn journal(&mut self, on: bool) {
+        self.journal = on.then(Journal::default);
+    }
+
+    /// Whether the journal is kept.
+    pub fn journaling(&self) -> bool {
+        self.journal.is_some()
+    }
+
+    /// Close the journal's open segment, so what was recorded since the last
+    /// close is a step of its own. The undo entry is not affected.
+    pub fn close_segment(&mut self) {
+        if let Some(journal) = self.journal.as_mut() {
+            if let Some(segment) = journal.segment.take() {
+                if !segment.is_empty() {
+                    journal.steps.push((segment, true));
+                }
+            }
+        }
+    }
+
+    /// The journal's steps since the last call, oldest first. Empty when the
+    /// journal is off.
+    pub fn take_journal(&mut self) -> Vec<(Change, bool)> {
+        self.journal.as_mut().map(|journal| std::mem::take(&mut journal.steps)).unwrap_or_default()
+    }
+
+    /// The journal's segment, for a fold. Named after the open entry, or
+    /// `label` when there is none.
+    fn fold_segment(&mut self, label: &str) -> Option<&mut Change> {
+        let name = self.open.as_ref().map_or(label, |open| open.label.as_str()).to_string();
+        let journal = self.journal.as_mut()?;
+        Some(journal.segment.get_or_insert_with(|| Change::new(name)))
+    }
+
+    /// After a write that pushed its own entry with nothing open: that write
+    /// is a step of its own too.
+    fn close_segment_unless_open(&mut self) {
+        if self.open.is_none() {
+            self.close_segment();
+        }
+    }
+
+    /// The journal's open segment: what was recorded since it was last
+    /// closed, which a shared session has not sent yet.
+    pub fn segment(&self) -> Option<&Change> {
+        self.journal.as_ref()?.segment.as_ref()
+    }
+
+    /// Drop the journal's open segment and answer it, so the caller can take
+    /// its edits back. The undo entry it folded into is not changed; see
+    /// [`History::forget_where`] for that.
+    pub fn drop_segment(&mut self) -> Option<Change> {
+        self.journal.as_mut()?.segment.take()
+    }
+
+    /// Drop every whole entry, done, undone or open, that `doomed` says to,
+    /// and answer how many went.
+    ///
+    /// For a shared session: once another editor has changed what an entry
+    /// touches, undoing that entry would write its old state over their
+    /// change. Nothing is applied or reverted here, and nothing is journaled.
+    pub fn forget_where(&mut self, mut doomed: impl FnMut(&Change) -> bool) -> usize {
+        let mut dropped = 0;
+        for branch in [&mut self.done, &mut self.undone] {
+            let before = branch.len();
+            branch.retain(|change| !doomed(change));
+            dropped += before - branch.len();
+        }
+        if self.open.as_ref().is_some_and(&mut doomed) {
+            self.open = None;
+            dropped += 1;
+        }
+        dropped
     }
 
     /// Open a stroke. Anything recorded until [`History::end`] folds into it.
@@ -819,11 +919,18 @@ impl History {
 
     /// Record what has already been applied to a tile.
     pub fn record(&mut self, tile: &TileKey, edits: impl IntoIterator<Item = Edit>) {
+        let edits: Vec<Edit> = edits.into_iter().collect();
+        if let Some(segment) = self.fold_segment("Edit") {
+            for edit in &edits {
+                segment.absorb(tile, edit.clone());
+            }
+        }
         self.take("Edit", |change| {
             for edit in edits {
                 change.absorb(tile, edit);
             }
         });
+        self.close_segment_unless_open();
     }
 
     /// Record a field edit that has already been applied to a table.
@@ -837,7 +944,11 @@ impl History {
         if !cell.moves() {
             return;
         }
+        if let Some(segment) = self.fold_segment("Edit") {
+            segment.absorb_cell(table, cell);
+        }
         self.take("Edit", |change| change.absorb_cell(table, cell));
+        self.close_segment_unless_open();
     }
 
     /// Record an edit to the server's database, already applied to the
@@ -852,7 +963,11 @@ impl History {
         if entry.before == entry.after {
             return;
         }
+        if let Some(segment) = self.fold_segment("Edit") {
+            segment.absorb_server(entry.clone());
+        }
         self.take("Edit", |change| change.absorb_server(entry));
+        self.close_segment_unless_open();
     }
 
     /// Record a record added or removed, already applied to the table.
@@ -864,7 +979,11 @@ impl History {
             true => "Add row",
             false => "Remove row",
         };
+        if let Some(segment) = self.fold_segment(label) {
+            segment.absorb_row(table, row.clone());
+        }
         self.take(label, |change| change.absorb_row(table, row));
+        self.close_segment_unless_open();
     }
 
     /// Close the stroke and put it on the stack. A stroke that changed nothing
@@ -875,6 +994,7 @@ impl History {
                 self.push(change);
             }
         }
+        self.close_segment();
     }
 
     /// Forget every entry about a row in the server's database, on both
@@ -991,6 +1111,9 @@ impl History {
         self.end();
         let change = self.done.pop()?;
         self.undone.push(change.clone());
+        if let Some(journal) = self.journal.as_mut() {
+            journal.steps.push((change.clone(), false));
+        }
         Some(change)
     }
 
@@ -998,6 +1121,9 @@ impl History {
     pub fn redo(&mut self) -> Option<Change> {
         let change = self.undone.pop()?;
         self.done.push(change.clone());
+        if let Some(journal) = self.journal.as_mut() {
+            journal.steps.push((change.clone(), true));
+        }
         Some(change)
     }
 
@@ -1923,5 +2049,60 @@ mod tests {
         assert_eq!(h.forget_tile(&TileKey::new("AZEROTH", 1, 1)), 1);
         assert_eq!(h.depth_done(), 1);
         assert_eq!(h.next_undo().expect("the first change").tiles(), [key(2, 2)]);
+    }
+
+    /// The journal splits a stroke where the session closes its segment, each
+    /// part running from the state its first edit found, while the undo entry
+    /// stays whole; an undo and a redo are steps of their own.
+    #[test]
+    fn the_journal_sends_a_stroke_in_parts_and_each_undo_and_redo() {
+        let mut h = History::new();
+        h.record(&key(1, 1), [edit(0, 0.0, 1.0)]);
+        assert!(h.take_journal().is_empty(), "nothing is journaled while it is off");
+        h.journal(true);
+        h.begin("Raise");
+        h.record(&key(1, 1), [edit(0, 1.0, 2.0)]);
+        h.close_segment();
+        h.record(&key(1, 1), [edit(0, 2.0, 3.0)]);
+        h.end();
+        let steps = h.take_journal();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(tile_edits(&steps[0].0), [&edit(0, 1.0, 2.0)]);
+        assert_eq!(tile_edits(&steps[1].0), [&edit(0, 2.0, 3.0)]);
+        assert!(steps.iter().all(|(change, forward)| *forward && change.label == "Raise"));
+
+        let whole = h.undo().expect("the stroke");
+        assert_eq!(tile_edits(&whole), [&edit(0, 1.0, 3.0)]);
+        h.redo();
+        let steps = h.take_journal();
+        assert_eq!(steps.iter().map(|(_, forward)| *forward).collect::<Vec<_>>(), [false, true]);
+        assert_eq!(tile_edits(&steps[0].0), [&edit(0, 1.0, 3.0)]);
+
+        // A write with nothing open is a step at once.
+        h.record_server(server_cell("name", None, Some("'A'")));
+        assert_eq!(h.take_journal().len(), 1);
+    }
+
+    /// The journal's open segment can be read and dropped without touching
+    /// the undo entry, and whole entries are forgotten by a test, the open
+    /// one included, without anything being journaled.
+    #[test]
+    fn the_open_segment_is_dropped_and_entries_forgotten_by_a_test() {
+        let mut h = History::new();
+        h.journal(true);
+        h.record(&key(1, 1), [edit(0, 0.0, 1.0)]);
+        h.begin("Raise");
+        h.record(&key(2, 2), [edit(0, 0.0, 1.0)]);
+        assert_eq!(tile_edits(h.segment().expect("the stroke so far")), [&edit(0, 0.0, 1.0)]);
+        let dropped = h.drop_segment().expect("the stroke so far");
+        assert_eq!(dropped.tiles(), [key(2, 2)]);
+        assert!(h.segment().is_none());
+        h.take_journal();
+
+        assert_eq!(h.forget_where(|change| change.tiles().contains(&key(2, 2))), 1, "the open entry");
+        assert_eq!(h.depth_done(), 1);
+        assert_eq!(h.forget_where(|change| change.tiles().contains(&key(1, 1))), 1);
+        assert_eq!(h.depth_done(), 0);
+        assert!(h.take_journal().is_empty());
     }
 }

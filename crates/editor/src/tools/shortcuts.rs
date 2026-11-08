@@ -40,6 +40,8 @@ pub(crate) fn shortcuts(
     // answers. See [`crate::server::Reach`], which bundles them into one
     // parameter because this system is at Bevy's limit of sixteen.
     mut reach: crate::server::Reach,
+    // A joined editor does not save: the host does. See `crate::collab`.
+    collab: Res<crate::collab::Collab>,
 ) {
     let taken = std::mem::take(&mut *taken);
     let Some(session) = session.as_mut() else {
@@ -78,6 +80,10 @@ pub(crate) fn shortcuts(
     // folder and [`crate::playtest::republish`] puts it where the running
     // client reads it, so the next cast, the next entity and the next model
     // are the edited ones.
+    if taken.s && collab.is_joined() {
+        session.status = "in a shared session the host saves".to_string();
+        return;
+    }
     if taken.s {
         session.save_all();
         session.save_all_tables();

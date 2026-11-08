@@ -11,7 +11,7 @@ use super::DbcFile;
 /// offset here. That makes one type enough for every kind of edit this
 /// container has, and makes an undo exact: the old offset still points at the
 /// old text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Cell {
     pub record: usize,
     pub field: usize,

@@ -46,6 +46,8 @@
 //! ui/          the panels: the shell, the theme, and one file per region of it
 //! server/      what is sent to the server a playtest runs against; the one
 //!              destination of an edit that is not a file
+//! collab/      a shared session with other editors: hosting or joining one,
+//!              the host's project fetched on join, and every edit shared
 //! ```
 //!
 //! ## The editor is the client's app with editor plugins added
@@ -92,6 +94,7 @@
 
 pub(crate) mod args;
 pub(crate) mod camera;
+pub(crate) mod collab;
 pub(crate) mod context;
 pub(crate) mod import;
 pub(crate) mod instruments;
@@ -263,7 +266,7 @@ impl Plugin for EditorPlugins {
             ui::PanelPlugin,
         ));
         // Outside the tuple, which Bevy implements for at most fifteen plugins.
-        app.add_plugins((tablet::TabletPlugin, popout::PopoutPlugin, labels::LabelsPlugin));
+        app.add_plugins((tablet::TabletPlugin, popout::PopoutPlugin, labels::LabelsPlugin, collab::CollabPlugin));
         app.init_resource::<prefs::favourites::Favourites>()
             .init_resource::<prefs::bookmarks::Bookmarks>()
             .init_resource::<prefs::brushes::Brushes>();

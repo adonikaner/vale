@@ -1,0 +1,24 @@
+[package]
+name = "vale-collab"
+description = "A shared editing session: the messages between editors, the host's ordering of their edits, and the connections that carry them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "vale_collab"
+path = "src/lib.rs"
+
+[dependencies]
+# The edits a session carries are `vale_edit::undo::Change`, the undo stack's
+# own entries, so a shared edit and an undone edit are one value.
+vale-edit.workspace = true
+serde.workspace = true
+# The encoding of one message on the wire: compact, and the field order is the
+# type's declaration order, so both ends must be the same build of this crate.
+# `Hello` carries `PROTOCOL` for that reason.
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+# The password check. Already in the dependency tree.
+blake3 = "1"
+# The challenge a joining editor answers.
+rand.workspace = true

@@ -49,7 +49,7 @@
 use crate::adt::{heights, holes, AdtFile, Building, Doodad, Region};
 
 /// One reversible change to one tile.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Edit {
     /// One map chunk's 145 heights, in world terms.
     Heights {
@@ -174,7 +174,7 @@ pub enum Edit {
 /// the order of all three can change the names and renumber nothing. A
 /// map-wide swap is therefore one undo entry per tile rather than a rewrite of
 /// every record on it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TileNames {
     textures: Vec<u8>,
     models: Vec<u8>,
@@ -214,7 +214,7 @@ impl TileNames {
 /// the list as it was when the stroke began.
 ///
 /// [`Change::revert`]: crate::undo::Change::revert
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChunkPaint {
     mcly: Vec<u8>,
     mcal: Vec<u8>,
@@ -280,7 +280,7 @@ impl ChunkPaint {
 /// The whole region rather than one cell, for the reason [`ChunkPaint`] is the
 /// whole of a chunk's paint: giving a dry chunk water adds 804 bytes in the
 /// middle of a two-megabyte file, and there is no smaller unit that inverts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChunkLiquid {
     mclq: Vec<u8>,
     /// The size field as the file wrote it, which for `MCLQ` is zero and
@@ -321,7 +321,7 @@ impl ChunkLiquid {
 }
 
 /// Everything a placement change touches, captured whole.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Placements {
     doodads: Vec<u8>,
     placements: Vec<u8>,

@@ -2314,6 +2314,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cobs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
+dependencies = [
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2853,6 +2862,18 @@ checksum = "cd4ec073c9898516584d8c6cfdcee95b530b3d941cd5031ef4050aa36812308b"
 dependencies = [
  "bytemuck",
 ]
+
+[[package]]
+name = "embedded-io"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced"
+
+[[package]]
+name = "embedded-io"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 
 [[package]]
 name = "encase"
@@ -5229,6 +5250,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "postcard"
+version = "1.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
+dependencies = [
+ "cobs",
+ "embedded-io 0.4.0",
+ "embedded-io 0.6.1",
+ "serde",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6667,6 +6700,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vale-collab"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "postcard",
+ "rand 0.8.7",
+ "serde",
+ "vale-edit",
+]
+
+[[package]]
 name = "vale-config"
 version = "0.1.0"
 dependencies = [
@@ -6680,6 +6724,7 @@ dependencies = [
  "base64",
  "gltf",
  "rodio",
+ "serde",
  "thiserror 2.0.19",
  "vale-assets",
  "wow-mpq",
@@ -6691,12 +6736,15 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_egui",
+ "blake3",
  "md-5",
  "png",
  "raw-window-handle",
  "rfd",
+ "serde",
  "vale-assets",
  "vale-client",
+ "vale-collab",
  "vale-config",
  "vale-edit",
  "vale-mangos",

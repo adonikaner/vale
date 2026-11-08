@@ -9,6 +9,7 @@ members = [
     "crates/client",
     "crates/edit",
     "crates/mangos",
+    "crates/collab",
     "crates/editor",
 ]
 # `cargo run` / `cargo build` from the repo root act on the CLI, so the common
@@ -39,6 +40,9 @@ vale-api = { path = "crates/api" }
 # of them — see crates/edit/src/lib.rs.
 vale-edit = { path = "crates/edit" }
 vale-mangos = { path = "crates/mangos" }
+# A shared editing session between editors: the messages, the host's ordering
+# of edits, and the connections. No renderer; see crates/collab/src/lib.rs.
+vale-collab = { path = "crates/collab" }
 vale-client = { path = "crates/client" }
 
 # --- protocol ---
@@ -122,6 +126,9 @@ mlua = { version = "0.11", features = ["lua51", "vendored"] }
 
 # --- shared ---
 thiserror = "2"
+# Encoding an edit for another editor in a shared session (`crates/collab`).
+# Already in the dependency tree under Bevy.
+serde = { version = "1", features = ["derive"] }
 
 [profile.release]
 opt-level = 3

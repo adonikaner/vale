@@ -95,7 +95,7 @@ impl EditError {
 ///
 /// The map is named rather than numbered because that is what the file path
 /// carries; `MapTerrain` and the WDT both key on the same string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct TileKey {
     pub map: String,
     pub x: u32,

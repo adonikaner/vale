@@ -1,5 +1,6 @@
 //! The flags for the server: a playtest and what it does once it is in the
-//! world, the Server panel's Apply and Put back, and publishing.
+//! world, the Server panel's Apply and Put back, publishing, and a shared
+//! session with other editors.
 
 use super::Arity::*;
 use super::{first, named, parse_playtest, Flag};
@@ -88,6 +89,19 @@ pub(crate) struct Server {
     /// the layout of a panel a scripted run cannot put on screen goes
     /// unchecked.
     pub(crate) panel: bool,
+    /// `--host <port>`: host a shared session on this port once the map is
+    /// open, and `--join <address>`: join the session hosted there. Each with
+    /// `--session-name <name>` and `--session-password <password>`, which
+    /// fill the Session popover's fields. `--session` opens the popover.
+    ///
+    /// The session is a form and two buttons, so without these a scripted run
+    /// cannot start one, and two editors on one machine cannot be checked
+    /// against each other. See `crate::collab`.
+    pub(crate) host: Option<u16>,
+    pub(crate) join: Option<String>,
+    pub(crate) session_name: Option<String>,
+    pub(crate) session_password: Option<String>,
+    pub(crate) session_panel: bool,
     /// `--publish [name]`: the bar's Publish… button, from the command line: a
     /// patch folder under the project's `publish\`, named or stamped — see
     /// `server::publish::patch`. The tile regeneration runs on the server queue and
@@ -136,6 +150,11 @@ pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--apply-behaviour", Switch, |a, _| a.server.apply_subjects.push(Subject::Behaviour)),
     Flag::new("--revert-behaviour", Switch, |a, _| a.server.revert_subjects.push(Subject::Behaviour)),
     Flag::new("--server", Switch, |a, _| a.server.panel = true),
+    Flag::new("--host", One, |a, v| a.server.host = first(v).and_then(|port| port.parse().ok())),
+    Flag::new("--join", One, |a, v| a.server.join = named(v)),
+    Flag::new("--session-name", One, |a, v| a.server.session_name = named(v)),
+    Flag::new("--session-password", One, |a, v| a.server.session_password = named(v)),
+    Flag::new("--session", Switch, |a, _| a.server.session_panel = true),
     Flag::new("--publish", Optional, |a, v| {
         a.server.publish = true;
         if let Some(name) = first(v) {

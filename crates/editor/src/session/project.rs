@@ -32,6 +32,14 @@ impl EditSession {
         if name == self.project.name {
             return true;
         }
+        self.open_again(assets, name)
+    }
+
+    /// [`Self::switch_to`], also when `name` is the open project: everything
+    /// is saved and the folder read again. A shared session's joining editor
+    /// uses it, since it rewrites its copy of the host's project under the
+    /// same name at every join.
+    pub(crate) fn open_again(&mut self, assets: &GameAssets, name: &str) -> bool {
         let saved = self.save_all();
         let tables = self.save_all_tables();
         let project = match Project::open(&assets.root, name) {

@@ -14,7 +14,7 @@ use super::DbcFile;
 /// index after it, so a change that adds a row and then writes into it has to
 /// apply the row first and the cells second, and revert in the opposite order.
 /// `vale_edit::undo::Change` keeps that order; this type only knows one row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Row {
     pub index: usize,
     pub bytes: Vec<u8>,

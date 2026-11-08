@@ -1,6 +1,11 @@
 //! The windows the top bar's buttons and menu entries open: go-to, add
-//! bookmark, playtest login, the project dialog, the server panel and the
-//! publish popover. Each holds text fields.
+//! bookmark, playtest login, the project dialog, the server panel, the
+//! publish popover and the shared session's popover. Each holds text fields.
+//!
+//! An editor joined to another's session sees the server panel and the
+//! publish popover disabled, with a line saying the host does those: its
+//! project is a copy of the host's, and a second apply of the same rows from
+//! a second machine would run every statement twice.
 //!
 //! ## Why the popovers are windows and not menus
 //!
@@ -44,6 +49,8 @@ pub(crate) struct Popovers {
     pub(crate) server: Popover,
     /// The patch a publish is about to write: its name, and the button.
     pub(crate) publish: Popover,
+    /// Hosting or joining a shared session. See [`super::session`].
+    pub(crate) session: Popover,
     /// The name typed into the publish popover. Empty means the UTC stamp.
     pub(crate) patch_name: String,
     /// Which tab of the server popover is showing.
@@ -55,6 +62,8 @@ pub(crate) struct Popovers {
     /// drawn once, so the flag cannot be acted on at startup. `--projects`
     /// carries a flag of its own for the same reason. See [`Popover::show`].
     pub(crate) server_shown_once: bool,
+    /// The same for `--session` and the Session popover.
+    pub(crate) session_shown_once: bool,
 }
 
 /// One popover: whether it is open and where its button is.
@@ -133,6 +142,7 @@ impl Popovers {
             &mut self.server,
             &mut self.publish,
             &mut self.bookmark,
+            &mut self.session,
         ]
         .into_iter()
         .enumerate()
@@ -175,9 +185,13 @@ pub(crate) fn draw(
     // rebuild the project's archive; and the step a tile regeneration is on.
     playing: bool,
     step: &crate::server::datadir::Step,
+    // The shared session, for its popover and for whether this editor is
+    // joined to another's.
+    collab: &mut crate::collab::Collab,
 ) -> Vec<egui::Rect> {
     let mut rects = Vec::new();
-    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 6];
+    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 7];
+    let joined = collab.is_joined();
 
     if popovers.go_to.open {
         if let Some(response) = window(ctx, "go-to", popovers.go_to.under, |ui| {
@@ -254,19 +268,22 @@ pub(crate) fn draw(
     if popovers.server.open {
         let mut ask_tile_files = false;
         if let Some(response) = window(ctx, "server", popovers.server.under, |ui| {
-            the_server(
-                ui,
-                &mut popovers.server_tab,
-                session,
-                assets,
-                server,
-                queue,
-                standings,
-                now,
-                playing,
-                step,
-                &mut ask_tile_files,
-            );
+            hosts_do_this(ui, joined, "applies and restores the server rows");
+            ui.add_enabled_ui(!joined, |ui| {
+                the_server(
+                    ui,
+                    &mut popovers.server_tab,
+                    session,
+                    assets,
+                    server,
+                    queue,
+                    standings,
+                    now,
+                    playing,
+                    step,
+                    &mut ask_tile_files,
+                );
+            });
         }) {
             seen[3] = (true, response);
             rects.push(response);
@@ -283,7 +300,10 @@ pub(crate) fn draw(
     if popovers.publish.open {
         let mut close = false;
         if let Some(response) = window(ctx, "publish", popovers.publish.under, |ui| {
-            close = the_patch(ui, &mut popovers.patch_name, session, assets, server, queue, step, playing);
+            hosts_do_this(ui, joined, "publishes");
+            ui.add_enabled_ui(!joined, |ui| {
+                close = the_patch(ui, &mut popovers.patch_name, session, assets, server, queue, step, playing);
+            });
         }) {
             seen[4] = (true, response);
             rects.push(response);
@@ -292,8 +312,29 @@ pub(crate) fn draw(
             popovers.publish.open = false;
         }
     }
+    if popovers.session.open {
+        let project = session.project.name.clone();
+        if let Some(response) = window(ctx, "session", popovers.session.under, |ui| {
+            super::session::panel(ui, collab, &project);
+        }) {
+            seen[6] = (true, response);
+            rects.push(response);
+        }
+    }
     popovers.follow(ctx, &seen);
     rects
+}
+
+/// The line over a popover a joined editor may not use: who does it instead.
+fn hosts_do_this(ui: &mut egui::Ui, joined: bool, what: &str) {
+    if joined {
+        ui.label(
+            egui::RichText::new(format!("In a shared session the host {what}."))
+                .size(theme::SMALL)
+                .color(theme::WARN),
+        );
+        ui.add_space(4.0);
+    }
 }
 
 /// The publish popover: what a publish is about to write, the patch's name,

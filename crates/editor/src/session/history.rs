@@ -1,5 +1,6 @@
 //! Undo and redo: one change's tiles, tables and server rows put back or
-//! put in again.
+//! put in again. A shared session applies another editor's change through
+//! the same path, [`EditSession::apply_step`], with no entry on the stack.
 
 use vale_client::assets::GameAssets;
 use bevy::prelude::*;
@@ -71,11 +72,31 @@ impl EditSession {
         };
         let verb = if forward { "redo" } else { "undo" };
         self.status = format!("{verb} {}", change.label);
+        self.apply_step(assets, &change, forward)
+    }
+
+    /// Apply one change forward, or revert it, to the tiles, tables and server
+    /// rows it names, and mark what it leaves out of date on screen. Answers
+    /// the open tiles it changed. Nothing is put on or taken off the history.
+    ///
+    /// A table the change names that is not open is opened first, so the
+    /// change lands in what the next save writes. A tile on another map than
+    /// the open one is read through the overlay, changed, and written back to
+    /// the overlay and the project folder, since only the open map's tiles
+    /// are held parsed.
+    pub(crate) fn apply_step(&mut self, assets: &GameAssets, change: &vale_edit::undo::Change, forward: bool) -> Vec<(u32, u32)> {
         let invalidated = change.invalidates();
-        self.step_tables(&change, &invalidated.tables, forward);
-        self.rows.step(&change, forward);
+        for name in &invalidated.tables {
+            self.open_table(assets, name);
+        }
+        self.step_tables(change, &invalidated.tables, forward);
+        self.rows.step(change, forward);
         let mut touched = Vec::new();
         for redraw in &invalidated.tiles {
+            if !redraw.tile.map.eq_ignore_ascii_case(&self.map) {
+                self.step_elsewhere(assets, change, &redraw.tile, forward);
+                continue;
+            }
             let coord = (redraw.tile.x, redraw.tile.y);
             self.open(assets, coord);
             let Some(tile) = self.tiles.get_mut(&coord) else {
@@ -107,5 +128,32 @@ impl EditSession {
             touched.push(coord);
         }
         touched
+    }
+
+    /// [`Self::apply_step`] for a tile of a map that is not open.
+    fn step_elsewhere(&mut self, assets: &GameAssets, change: &vale_edit::undo::Change, tile: &vale_edit::TileKey, forward: bool) {
+        let path = tile.vpath();
+        let Ok(Some(bytes)) = assets.with_archive(|chain| Ok(chain.read(&path).ok())) else {
+            self.status = format!("{path}: not found, so a change to it was not applied");
+            return;
+        };
+        let mut parsed = match vale_edit::adt::AdtFile::parse(&bytes) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                self.status = format!("{path}: {e}");
+                return;
+            }
+        };
+        match forward {
+            true => change.apply(tile, &mut parsed),
+            false => change.revert(tile, &mut parsed),
+        }
+        let bytes = parsed.write();
+        if let Ok(mut edited) = self.edited.write() {
+            edited.insert(path.to_ascii_lowercase(), bytes.clone());
+        }
+        if let Err(e) = self.project.write(&path, &bytes) {
+            self.status = format!("{path}: {e}");
+        }
     }
 }
