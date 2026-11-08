@@ -756,7 +756,7 @@ fn draw(
     // click, and the width goes to the workspace's list and form instead.
     if !in_world && !tool.covers_viewport() {
         egui::Panel::left("editor-rail")
-            .exact_size(widgets::theme::RAIL_WIDTH)
+            .exact_size(viewing.rail.width())
             .frame(side(widgets::theme::SHELL))
             .show(&mut root, |ui| {
                 // The last argument is whether a world database is reachable.
@@ -791,7 +791,7 @@ fn draw(
         editing.areas.follow_table(session);
     }
     // The inspector is resizable and the rail is not. The rail is a fixed
-    // list of words; the inspector shows the chosen tool's controls, and two
+    // grid of icons; the inspector shows the chosen tool's controls, and two
     // tools show content no single width fits: a tileset's folder and file
     // name, and a row of five named choices in one control. The default width
     // suits most panels and the drag handle is for those two.

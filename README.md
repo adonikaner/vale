@@ -26,11 +26,14 @@ The workspace builds three programs:
   server's movement validation, and other units are dead-reckoned the way the
   server extrapolates them.
 - **World.** Terrain streamed around the character, with texture layers, baked
-  shadows and per-map, per-hour lighting, fog, sky, stars, sun and moons.
-  Water outside and inside buildings, with an underwater view. Placed models
-  and buildings with interior lighting, and collision for all of it. Ground
+  shadows and per-map, per-hour lighting, fog, sky, clouds, stars, sun and
+  moons, and the skybox models some zones draw instead of the sky. Water
+  outside and inside buildings, with an underwater view. Placed models and
+  buildings with interior lighting, and collision for all of it. Ground
   foliage, particles, ribbons, weather, and transports such as elevators,
-  boats and zeppelins.
+  boats and zeppelins. The ghost's light, environment and screen effect after
+  death. Multisample anti-aliasing is on by default.
+- **Camera.** The game's orbit camera, zooming in to a first-person view.
 - **Units.** Skinned, animated models for every creature and player the server
   describes. Player skins are composed at run time from appearance and
   equipment; weapons attach according to sheath state; mounts are drawn under
@@ -41,8 +44,10 @@ The workspace builds three programs:
   refusals and cooldowns, bags, bank, vendors, trainers, loot and group loot
   rolls, mail, trade, party and raid, duels, quests, flight paths, pets and the
   stable, death and resurrection, instance portals, the minimap and the world
-  map. Guilds with their roster, ranks and charters, the tabard designer, and
-  inspecting other players.
+  map with Alliance, Horde and contested zones. Guilds with their roster,
+  ranks and charters, the tabard designer, and inspecting other players.
+  Quest sharing, raid target icons, random rolls, tutorials, and the world
+  state lines above the minimap.
 - **Interface.** The client does not reimplement the game's interface. It loads
   the interface's own XML and Lua from the client data, solves the frame
   layout, and runs the Lua in an embedded Lua 5.1 with the client's API
@@ -76,38 +81,52 @@ the world it shows is drawn by the client's own renderer.
   to the ground around them.
 - **Placement.** Placing, moving, rotating, scaling and removing models and
   buildings, with group selection, a model picker with previews and
-  favourites, randomised placement, locked placements, and moves across tile
-  borders.
+  favourites, randomised placement, cluster placement, locked placements, and
+  moves across tile borders.
 - **Map.** A map window for selecting, creating, copying and pasting tiles,
   rebaking shadows, redrawing minimaps, and exporting and importing heights
   and blends as images. New maps, and a properties dialog for a map's client
-  row, its server row, and whether it is terrain or a single WMO. A top-down
-  map view, and a find-and-replace over every tile of a map for texture and
-  model paths.
-- **World data.** Lights, flight paths and their flight map, area triggers
-  with their server actions, and graveyards with the zones they serve, each
-  picked and dragged in the world.
+  row, its server row, and whether it is terrain or a single WMO. A world map
+  editor for the zone pictures the in-game world map shows. A top-down map
+  view, and a find-and-replace over every tile of a map for texture and model
+  paths.
+- **World data.** Lights with their sky, fog and skybox parameters, flight
+  paths and their flight map, area triggers with their server actions, and
+  graveyards with the zones they serve, each picked and dragged in the world.
 - **Client tables.** A table editor that opens every data table the client
-  ships, with named fields for spells and their visuals, the skill tables,
-  item sets and zones. A spell's skill lines and teaching spells are edited on
-  the spell's own form. Spell visuals, kits and effects are previewed where
-  they are edited and where they are chosen, and an attachment lab positions
-  effect models on a character.
+  ships, with workspaces for spells and their visuals, skills, item sets,
+  display info for items, creatures and game objects, sounds, factions and
+  zones. Spell visuals, kits and effects are previewed where they are edited
+  and where they are chosen, and an attachment lab positions effect models on
+  a character.
+- **Assets.** Imports PNG images as BLP textures, glTF models as M2 models,
+  and sounds, and lists the project's files beside the game's own, which can
+  be browsed and exported.
 - **Server content.** Editors for the server's world database: creature and
-  game object spawns and templates, items, quests with their giver and taker
-  relations, loot tables, vendor and trainer lists, creature AI events, spell
-  lists and scripts with their texts, gossip menus, conditions, and creature
-  waypoint paths. Model pickers show every display id as a picture.
-- **Right-click menus.** A right click in the world opens a menu of the
-  current tool's one-click operations for what was clicked.
+  game object spawns and templates, spawn formations, equipment and addons,
+  game events and pools, items, quests with their giver and taker relations,
+  loot tables, vendor and trainer lists, creature AI events, spell lists and
+  scripts with their texts, gossip menus, conditions, and creature waypoint
+  paths with point scripts. Model pickers show every display id as a picture.
+- **Input.** Right-click menus of the current tool's operations for what was
+  clicked, brush presets, a drawing tablet's pen with its pressure scaling
+  brush strength and radius, and a free flight mode in which the camera moves
+  along the line of sight.
 - **Server data.** The server's navmesh drawn over the ground, and
   regeneration of the server's map, vmap and mmap tiles for changed terrain.
 - **Projects.** Edits are kept per project with undo. Applying writes rows to
   the world database and reloads them where the server supports it. Publishing
   produces a patch folder: a client archive, the server's data tables, an SQL
   migration, map tiles and a manifest.
+- **Windows.** Any workspace can be moved into a window of its own.
+- **Shared sessions.** Several editors on one local network work on one
+  project at once. One editor hosts and the others join with a password. A
+  joining editor receives the project, each edit reaches the other editors as
+  it is made, the host refuses an edit made on state another editor changed
+  first, each editor undoes only its own edits, and the other editors' views
+  and pointers are drawn in the viewport. The connection is unencrypted TCP.
 - **Playtest.** Ctrl+P logs in with the client's own login from inside the
-  editor and returns to editing afterwards.
+  editor, at the server's time of day, and returns to editing afterwards.
 
 ### Command-line tool
 
@@ -121,8 +140,8 @@ subcommand to print the full list.
 ## Status
 
 Vale is under active development and does not yet cover the whole protocol.
-About 270 of the 441 inbound opcodes are handled. Missing features include
-the auction house, battlegrounds and world state, the meeting stone and
+About 280 of the 441 inbound opcodes are handled. Missing features include
+the auction house, battlegrounds, the meeting stone and
 instance saves, GM tickets, cinematics, macros, and parts of the interface
 API. `vale framexml` prints the current count of interface
 functions implemented and stubbed.
@@ -139,13 +158,15 @@ archives in `Data/`, or set `VALE_GAMEDATA` to another location.
 
 ### Editor server settings
 
-In the editor's **Server** panel, under **Setup**, set:
+In the editor's "Server…" panel, under "Setup", set:
 
-- **mangosd.conf**: your MaNGOS folder.
-- **vmangos tools**: the folder holding `mapextractor`, `vmapextractor`,
+- "mangosd.conf": the vmangos folder, or its `mangosd.conf`.
+- "vmangos tools": the folder holding `mapextractor`, `vmapextractor`,
   `VMapAssembler` and `MoveMapGenerator`, built in Release from the
   `extractors` branch of
   [adonikaner/core](https://github.com/adonikaner/core/tree/extractors).
+
+Both are kept per machine in `Edit\server.txt`.
 
 ## Running
 
@@ -168,9 +189,12 @@ screenshot.
 cargo run -p vale-ide                               # Azeroth, last project
 cargo run -p vale-ide -- Kalimdor --at 1600,-4400   # a map and a position
 cargo run -p vale-ide -- --project <name>           # open or create a project
+cargo run -p vale-ide -- --host 7878                # host a shared session
+cargo run -p vale-ide -- --join <address>           # join one
 ```
 
 Projects are saved under `Edit/<name>/`. Ctrl+P playtests with the client.
+"Session…" on the top bar hosts or joins a shared session.
 [EDITOR.md](EDITOR.md) describes the editor's tools and how to use them.
 
 ### Command-line tool and tests
@@ -211,6 +235,8 @@ crates/edit/       the editing model: lossless terrain files, edit operations,
                    undo, projects
 crates/mangos/     the server's world database tables, and the SQL an edit
                    produces
+crates/collab/     shared editing sessions between editors: the messages, the
+                   host's ordering of edits, and the TCP connection
 crates/editor/     `vale-ide`, Vale IDE
 ```
 

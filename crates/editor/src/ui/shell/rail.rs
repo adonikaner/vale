@@ -44,18 +44,22 @@
 //! the viewport, so all four answer [`crate::tools::Surface::Inspector`] and
 //! are tiles.
 //!
-//! ## Why the rail is a grid
+//! ## One column or two
 //!
-//! Two tiles to a row take half the height of one named row per subject. At
-//! 1280x720 a column of one row per subject does not fit the height the bars
-//! leave, and each new subject makes it longer.
+//! The rail is one column of tiles when the height the bars leave holds every
+//! tile and heading, and two columns otherwise. One column is 54 points wide
+//! and leaves the rest to the viewport; two columns take half the height. The
+//! height is in egui points, so the UI scale is part of it: at a scale of 1.5
+//! a 1440-pixel window is 960 points tall. [`Rail::columns`] decides it from
+//! the height measured on the frame before, so a resize changes the rail one
+//! frame later.
 //!
 //! ## Icons
 //!
 //! A tile and a corner button draw their tool's icon alone
 //! ([`super::toolicons`]), painted with egui's painter as the brush presets'
 //! icons are. The tool's name and what it does are in the tooltip. Icons
-//! rather than names let a tile be square, so the rail is 96 points wide
+//! rather than names let a tile be square, so the rail is 54 or 96 points wide
 //! rather than the width of the longest name. The workspace control on the
 //! top bar names its workspaces in text.
 
@@ -122,17 +126,57 @@ pub(crate) struct Rail {
     /// The last tool chosen on the rail or in the corner, which the *World*
     /// part of the workspace control returns to.
     pub(crate) last_world: Tool,
+    /// How many columns of tiles the rail draws, 1 or 2. Set by [`draw`]
+    /// through [`next_columns`].
+    columns: usize,
+    /// The width of the widest heading's label, in points. Measured on the
+    /// first frame drawn; 0 before it.
+    heading: f32,
 }
 
 impl Default for Rail {
     fn default() -> Rail {
         Rail {
             last_world: Tool::Select,
+            columns: 2,
+            heading: 0.0,
         }
     }
 }
 
+/// How much taller than one column's content the rail must be before it
+/// changes from two columns to one. It changes back as soon as one column
+/// does not fit. Without the margin, a height on the boundary could change
+/// the rail's width, and so the viewport's, on every frame.
+const SLACK: f32 = 8.0;
+
+/// The column count after `columns`, for a rail `room` points tall whose
+/// content takes `one` points in one column.
+fn next_columns(columns: usize, room: f32, one: f32) -> usize {
+    match columns {
+        1 if one > room => 2,
+        2 if one + SLACK <= room => 1,
+        _ => columns,
+    }
+}
+
 impl Rail {
+    /// How many columns of tiles the rail draws: one when one column fits the
+    /// rail's height, two otherwise.
+    pub(crate) fn columns(&self) -> usize {
+        self.columns
+    }
+
+    /// How wide the rail's panel is for [`Rail::columns`]. One column is a
+    /// tile wide, or as wide as the widest heading when that is wider, so
+    /// TERRAIN is not cut off.
+    pub(crate) fn width(&self) -> f32 {
+        match self.columns() {
+            1 => (TILE.max(self.heading) + MARGINS).ceil(),
+            _ => theme::RAIL_WIDTH,
+        }
+    }
+
     /// Note the tool in use, when it is one the viewport is the document for.
     pub(crate) fn follow(&mut self, tool: Tool) {
         if tool.surface() != Surface::Middle {
@@ -175,8 +219,9 @@ fn tooltip(subject: &Subject, held: Option<&str>) -> String {
     text
 }
 
-/// How tall a tile is. Two tiles and [`GAP`] fill the rail's 80 points inside
-/// its margins, so a tile is square. See `theme::RAIL_WIDTH`.
+/// How tall a tile is. Two tiles and [`GAP`] fill the two-column rail's 80
+/// points inside its margins, and one tile fills the one-column rail's 38, so
+/// a tile is square. See `theme::RAIL_WIDTH` and `theme::RAIL_NARROW`.
 const TILE: f32 = 38.0;
 
 /// The icon's size on a tile.
@@ -189,27 +234,45 @@ const CORNER_PICTURE: f32 = 20.0;
 /// Space between two tiles, across and down.
 const GAP: f32 = 4.0;
 
-/// Draw the rail.
+/// The rail panel's left and right margins together: 8 points each, as the
+/// side panels' frame sets them.
+const MARGINS: f32 = 16.0;
+
+/// How many rows of tiles the rail draws in `columns` columns.
+fn rows(columns: usize) -> usize {
+    HEADINGS.iter().map(|heading| tiles(heading).len().div_ceil(columns)).sum()
+}
+
+/// Draw the rail, in [`Rail::columns`] columns.
 ///
 /// The rail's height at 1280x720 is what the top bar, the view bar and the
 /// status line leave, about 615 points. Ten rows of tiles and three headings
-/// take about 500. The rail is still a `ScrollArea`, because more subjects
-/// will be added; the scroll area draws nothing while everything fits.
+/// take about 500, so the rail is two columns there. The rail is a
+/// `ScrollArea` for windows shorter than that; the scroll area draws nothing
+/// while everything fits.
 pub(crate) fn draw(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing: bool, server: bool) {
     rail.follow(*tool);
-    egui::ScrollArea::vertical()
+    let columns = rail.columns();
+    let room = ui.available_height();
+    let output = egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
             ui.add_space(4.0);
             for heading in HEADINGS {
                 theme::heading(ui, heading);
-                let width = ((ui.available_width() - GAP) / 2.0).floor();
-                for pair in tiles(heading).chunks(2) {
+                // A row is centred, which matters in one column when a
+                // heading is wider than a tile.
+                let across = columns as f32 * TILE + (columns - 1) as f32 * GAP;
+                let indent = ((ui.available_width() - across) / 2.0).max(0.0).floor();
+                for row in tiles(heading).chunks(columns) {
                     ui.horizontal(|ui| {
-                        for subject in pair {
+                        if indent > 0.0 {
+                            ui.add_space(indent);
+                        }
+                        for subject in row {
                             let why = held(subject.tool, playing, server);
-                            let size = egui::vec2(width, TILE);
+                            let size = egui::Vec2::splat(TILE);
                             if tile(ui, subject, *tool == subject.tool, why, size, PICTURE) {
                                 *tool = subject.tool;
                                 rail.follow(subject.tool);
@@ -220,6 +283,30 @@ pub(crate) fn draw(ui: &mut egui::Ui, tool: &mut Tool, rail: &mut Rail, playing:
                 ui.add_space(2.0);
             }
         });
+    // The headings and spacing are the same in either layout, so the height
+    // of one column is the drawn height plus one tile and one gap for each row
+    // one column adds.
+    let added = (rows(1) - rows(columns)) as f32 * (TILE + GAP);
+    let next = next_columns(columns, room, output.content_size.y + added);
+    // Written only on a change, so the resource is not marked changed every
+    // frame.
+    if next != columns {
+        rail.columns = next;
+    }
+    // The label as `theme::heading` draws it: upper case, at `theme::SMALL`.
+    // A size in points does not change with the UI scale, so it is measured
+    // once.
+    if rail.heading == 0.0 {
+        rail.heading = HEADINGS
+            .iter()
+            .map(|heading| {
+                let text = egui::WidgetText::from(egui::RichText::new(heading.to_uppercase()).size(theme::SMALL));
+                text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+                    .size()
+                    .x
+            })
+            .fold(0.0, f32::max);
+    }
 }
 
 /// One tile: the tool's icon, `picture` points square, lit when it is the
@@ -578,6 +665,25 @@ mod tests {
             assert!(!subject.name.is_empty());
             assert!(subject.about.len() > 20, "{} says too little", subject.name);
         }
+    }
+
+    /// The rail starts at two columns, changes to one when one column fits
+    /// with [`SLACK`] to spare, and back to two when one column does not fit.
+    /// A height between the two keeps the count it has. One column is at
+    /// least a tile wide and widens for a heading wider than a tile.
+    #[test]
+    fn the_rail_is_one_column_when_one_column_fits() {
+        let mut rail = Rail::default();
+        assert_eq!((rail.columns(), rail.width()), (2, theme::RAIL_WIDTH));
+        assert_eq!(next_columns(2, 900.0, 880.0), 1);
+        assert_eq!(next_columns(2, 884.0, 880.0), 2);
+        assert_eq!(next_columns(1, 884.0, 880.0), 1);
+        assert_eq!(next_columns(1, 879.0, 880.0), 2);
+        rail.columns = 1;
+        assert_eq!(rail.width(), TILE + MARGINS);
+        rail.heading = 50.0;
+        assert_eq!(rail.width(), 50.0 + MARGINS);
+        assert!(rows(1) > rows(2));
     }
 
     /// *World* returns to the last rail or corner tool, and a workspace does

@@ -69,9 +69,10 @@ pub(crate) const BAD: Color32 = Color32::from_rgb(0xE0, 0x6C, 0x6C);
 /// in the next and a stack of settings reads as a form.
 pub(crate) const LABEL_WIDTH: f32 = 74.0;
 
-/// How wide the subject rail is: two square 38-point tiles and the 4-point gap
-/// between them, inside the side panel's 8-point margins. A tile shows its
-/// tool's icon and no name; see `crate::ui::shell::rail`.
+/// How wide the subject rail is in two columns: two square 38-point tiles and
+/// the 4-point gap between them, inside the side panel's 8-point margins. A
+/// tile shows its tool's icon and no name. In one column the rail is as wide
+/// as its widest heading; see `crate::ui::shell::rail::Rail::width`.
 pub(crate) const RAIL_WIDTH: f32 = 96.0;
 
 /// The starting width of the inspector beside the viewport. The panel is
