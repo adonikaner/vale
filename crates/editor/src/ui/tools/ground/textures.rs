@@ -1,8 +1,8 @@
 //! The texture brush's controls, in two places.
 //!
 //! ```text
-//! viewport toolbar   the brush preset, Paint or Erase, Texture Count, the
-//!                    drawing tablet, and the keys
+//! viewport toolbar   the brush preset, Paint or Erase, Texture Count, and the
+//!                    keys
 //! inspector          the brush presets and the brush's settings, the brush's
 //!                    texture and its foliage, the tileset list, and the layers
 //!                    of the chunk under the pointer or pinned
@@ -186,7 +186,7 @@ fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
 /// The texture brush's toolbar over the viewport:
 ///
 /// ```text
-/// Brush | Paint  Erase | Texture Count  Tablet
+/// Brush | Paint  Erase | Texture Count
 /// the keys
 /// ```
 ///
@@ -201,8 +201,6 @@ pub(crate) fn toolbar(
     corner: Option<egui::Rect>,
     textures: &mut Textures,
     texture_count: &mut bool,
-    tablet: &mut crate::tablet::Tablet,
-    pen: &crate::tablet::Pen,
     brushes: &mut Brushes,
 ) -> Option<egui::Rect> {
     // While no preset is chosen, the one equal to the brush is. See
@@ -245,9 +243,6 @@ pub(crate) fn toolbar(
             {
                 *texture_count = !*texture_count;
             }
-            ui.menu_button("Tablet", |ui| crate::ui::tools::tablet::tablet(ui, tablet, pen))
-                .response
-                .on_hover_text("Drawing tablet settings: pen pressure and cursor motion.");
         });
         ui.add(
             egui::Label::new(
@@ -869,8 +864,8 @@ fn crawl_direction(ui: &mut egui::Ui, index: usize, turn: &mut u32) -> bool {
     *turn != was
 }
 
-/// The texture brush's inspector panel. The brush's settings and the drawing
-/// tablet's are on the toolbar over the viewport, [`toolbar`].
+/// The texture brush's inspector panel. Paint or Erase and Texture Count are
+/// on the toolbar over the viewport, [`toolbar`].
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     let crate::ui::tools::Subject { session, cursor, assets, now, .. } = subject;
     paint(

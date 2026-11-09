@@ -23,6 +23,11 @@ pub(super) enum Icon {
     Flatten,
     Smooth,
     Noise,
+    Blur,
+    Terrace,
+    Erode,
+    Mountain,
+    Crevice,
     Round,
     Square,
     Diamond,
@@ -39,6 +44,11 @@ impl Icon {
             Mode::Flatten { .. } => Icon::Flatten,
             Mode::Smooth => Icon::Smooth,
             Mode::Noise => Icon::Noise,
+            Mode::Blur => Icon::Blur,
+            Mode::Terrace { .. } => Icon::Terrace,
+            Mode::Erode => Icon::Erode,
+            Mode::Mountain => Icon::Mountain,
+            Mode::Crevice => Icon::Crevice,
         }
     }
 
@@ -94,6 +104,70 @@ impl Icon {
                         .collect();
                     painter.add(egui::Shape::line(points, egui::Stroke::new(2.0, colour)));
                 }
+            }
+            Icon::Blur => {
+                // A jagged line above and the same line smoothed below it.
+                let wave = |row: f32, sharp: bool| -> Vec<egui::Pos2> {
+                    (0..=12)
+                        .map(|i| {
+                            let s = i as f32 / 12.0;
+                            let x = c.x - r * 1.1 + s * r * 2.2;
+                            let up = match sharp {
+                                true => (s * 18.0).sin() * 0.22 + (s * 5.0).sin() * 0.12,
+                                false => (s * 5.0).sin() * 0.12,
+                            };
+                            egui::pos2(x, c.y + r * (row + up))
+                        })
+                        .collect()
+                };
+                painter.add(egui::Shape::line(wave(-0.45, true), egui::Stroke::new(1.5, colour.gamma_multiply(0.5))));
+                painter.add(egui::Shape::line(wave(0.45, false), egui::Stroke::new(2.0, colour)));
+            }
+            Icon::Terrace => {
+                // Three steps rising to the right.
+                let mut points = vec![egui::pos2(c.x - r * 1.1, c.y + r * 0.8)];
+                for k in 0..3 {
+                    let x = c.x - r * 1.1 + (k as f32 + 1.0) * r * 2.2 / 3.0;
+                    let y = c.y + r * (0.8 - k as f32 * 0.6);
+                    points.push(egui::pos2(x - r * 0.25, y));
+                    points.push(egui::pos2(x, y - r * 0.6));
+                }
+                points.push(egui::pos2(c.x + r * 1.1, c.y - r * 1.0));
+                painter.add(egui::Shape::line(points, egui::Stroke::new(2.0, colour)));
+            }
+            Icon::Erode => {
+                // A slope with gullies running down it.
+                let slope = [egui::pos2(c.x - r * 1.1, c.y - r * 0.8), egui::pos2(c.x + r * 1.1, c.y + r * 0.8)];
+                painter.line_segment(slope, egui::Stroke::new(2.0, colour));
+                for k in 0..3 {
+                    let s = 0.2 + k as f32 * 0.3;
+                    let on = slope[0] + (slope[1] - slope[0]) * s;
+                    painter.line_segment(
+                        [on, on + egui::vec2(r * 0.15, r * 0.55)],
+                        egui::Stroke::new(1.5, colour.gamma_multiply(0.7)),
+                    );
+                }
+            }
+            Icon::Mountain => {
+                let points = vec![
+                    egui::pos2(c.x - r * 1.2, c.y + r * 0.8),
+                    egui::pos2(c.x - r * 0.35, c.y - r * 0.3),
+                    egui::pos2(c.x - r * 0.05, c.y),
+                    egui::pos2(c.x + r * 0.35, c.y - r * 0.9),
+                    egui::pos2(c.x + r * 1.2, c.y + r * 0.8),
+                ];
+                painter.add(egui::Shape::line(points, egui::Stroke::new(2.0, colour)));
+            }
+            Icon::Crevice => {
+                // Level ground with a raised rim either side of a V.
+                let points = vec![
+                    egui::pos2(c.x - r * 1.2, c.y - r * 0.1),
+                    egui::pos2(c.x - r * 0.6, c.y - r * 0.4),
+                    egui::pos2(c.x, c.y + r * 0.9),
+                    egui::pos2(c.x + r * 0.6, c.y - r * 0.4),
+                    egui::pos2(c.x + r * 1.2, c.y - r * 0.1),
+                ];
+                painter.add(egui::Shape::line(points, egui::Stroke::new(2.0, colour)));
             }
             Icon::Square => {
                 painter.rect_filled(egui::Rect::from_center_size(c, egui::Vec2::splat(r * 1.7)), 1.0, colour);

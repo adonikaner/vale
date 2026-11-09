@@ -12,8 +12,6 @@
 //! measure.rs    the Measure tool's panel: a point, a distance, and the slope
 //! history.rs    what undo and redo would do, at the top of an editing tool's
 //!               panel
-//! tablet.rs     the drawing tablet's settings and the pen's state: under the
-//!               shading panel, and in the terrain and texture toolbars
 //! ```
 //!
 //! This file is the inspector: the panel beside the viewport, which shows the
@@ -56,7 +54,6 @@ pub(crate) mod measure;
 pub(crate) mod placements;
 pub(crate) mod places;
 pub(crate) mod spawns;
-pub(crate) mod tablet;
 
 use bevy_egui::egui;
 

@@ -2,11 +2,15 @@
 //! they open.
 //!
 //! ```text
-//! topbar.rs     the top bar: the Project menu and Save, the Server button,
-//!               the Map menu, the workspace control and the playtest button
-//! popover.rs    the five forms the top bar opens: where to go, which account
-//!               to log in as, which project, where the server is, and what
-//!               a publish writes
+//! topbar.rs     the top bar: the Project and Map menus and the workspace
+//!               control, then the session button, Save, the Server button
+//!               and Playtest
+//! popover.rs    the forms the top bar opens: where to go, a bookmark, the
+//!               Playtest popover, which project, what the project has done
+//!               to the server, what a publish writes, and the Settings and
+//!               session windows
+//! settings.rs   the Settings window: this machine's world database, map
+//!               tools and drawing tablet
 //! tilefiles.rs  the Server tile files dialog: the DataDir's tile files a
 //!               decision is wanted on, and the Remove and Put back buttons
 //! manifest.rs   the open project's files and what each one changes, drawn in
@@ -47,6 +51,7 @@ pub(crate) mod popover;
 pub(crate) mod rail;
 pub(crate) mod servicemarks;
 pub(crate) mod session;
+pub(crate) mod settings;
 pub(crate) mod status;
 pub(crate) mod sync;
 pub(crate) mod tilefiles;

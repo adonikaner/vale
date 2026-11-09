@@ -202,8 +202,8 @@ fn held(tool: Tool, playing: bool, server: bool) -> Option<&'static str> {
     }
     if !server && tool.server_table().is_some() {
         return Some(
-            "No world database connection. Set this machine's vmangos with \
-             Server\u{2026} on the top bar, or with VALE_MANGOSD.",
+            "No world database connection. Set this machine's vmangos in \
+             Project \u{2192} Settings\u{2026}, or with VALE_MANGOSD.",
         );
     }
     None

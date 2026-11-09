@@ -115,8 +115,8 @@ pub(in crate::ui::tools) fn shading(ui: &mut egui::Ui, shading: &mut crate::tool
     );
 }
 
-/// The shading brush's inspector panel, with the tablet's settings under it.
+/// The shading brush's inspector panel. The drawing tablet's settings are in
+/// the Settings window; see `crate::ui::shell::settings`.
 pub(crate) fn inspect(ui: &mut egui::Ui, _: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     shading(ui, &mut editing.shading);
-    crate::ui::tools::tablet::tablet(ui, &mut editing.tablet, &editing.pen);
 }

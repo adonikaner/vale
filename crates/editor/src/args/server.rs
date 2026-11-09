@@ -89,6 +89,8 @@ pub(crate) struct Server {
     /// the layout of a panel a scripted run cannot put on screen goes
     /// unchecked.
     pub(crate) panel: bool,
+    /// `--settings`: open the Settings window, for the same reason.
+    pub(crate) settings_panel: bool,
     /// `--host <port>`: host a shared session on this port once the map is
     /// open, and `--join <address>`: join the session hosted there. Each with
     /// `--session-name <name>` and `--session-password <password>`, which
@@ -150,6 +152,7 @@ pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--apply-behaviour", Switch, |a, _| a.server.apply_subjects.push(Subject::Behaviour)),
     Flag::new("--revert-behaviour", Switch, |a, _| a.server.revert_subjects.push(Subject::Behaviour)),
     Flag::new("--server", Switch, |a, _| a.server.panel = true),
+    Flag::new("--settings", Switch, |a, _| a.server.settings_panel = true),
     Flag::new("--host", One, |a, v| a.server.host = first(v).and_then(|port| port.parse().ok())),
     Flag::new("--join", One, |a, v| a.server.join = named(v)),
     Flag::new("--session-name", One, |a, v| a.server.session_name = named(v)),

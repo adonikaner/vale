@@ -1,48 +1,46 @@
-//! Where the server is, kept where the editor keeps its own settings — and
-//! the switches, kept with the project they are about.
+//! Where the server is, kept where the editor keeps its own settings, and the
+//! project's switches, kept with the project they are about.
 //!
-//! ## It is invented, and this is the second one
+//! ## This is an invented mechanism
 //!
-//! Everything else this project reads has somewhere the real client already
-//! puts it — the realm address is `realmlist.wtf`, the account is
-//! `Config.wtf`'s `accountName`, the bindings are `bindings-cache.wtf`. **A
-//! 1.12 client has no idea a database exists**, has no field for one and never
-//! will, so there is no name registered by 5875 to store this under. It is a
-//! mechanism of the editor's own, and it is named here so nobody has to
-//! rediscover that — the way `VALE_PASSWORD` is named in `vale_config`.
+//! Everything else this project reads has a place the real client already
+//! puts it: the realm address is `realmlist.wtf`, the account is
+//! `Config.wtf`'s `accountName`, the bindings are `bindings-cache.wtf`. A 1.12
+//! client has no field for a database, so there is no name registered by 5875
+//! to store this under. It is the editor's own mechanism, the second after
+//! `VALE_PASSWORD`, which is named in `vale_config` for the same reason.
 //!
-//! ## Two files, because two questions
+//! ## Two files
 //!
 //! ```text
 //! Edit\server.txt              where this machine's server and its tools are
 //! Edit\<project>\settings.txt  what this project does with them: the four switches
 //! ```
 //!
-//! **The conf path and the tools folder are facts about this machine.**
-//! [`crate::prefs::bookmarks`] and [`crate::prefs::favourites`] keep the editor's own
-//! per-machine lists beside the projects for the reason they give: a project's
-//! files are published into a patch archive, and where *this machine's* server
-//! lives is not a thing to carry into somebody else's project. One
-//! `key = value` line each, so a person can read and edit the file.
+//! The conf path and the tools folder are facts about this machine. They are
+//! kept beside the projects, as [`crate::prefs::bookmarks`] and
+//! [`crate::prefs::favourites`] are, because a project's files are published
+//! into a patch archive and this machine's server location does not belong in
+//! another person's project. Each is one `key = value` line, so a person can
+//! read and edit the file. The Settings window writes them
+//! (`crate::ui::shell::settings`).
 //!
-//! **The switches are facts about a project.** Whether a save applies to the
+//! The switches are facts about a project: whether a save applies to the
 //! database, whether a playtest keeps its caches, whether a publish
-//! regenerates tiles, and whether the client archive is copied into `Data\`
-//! are answers a person gives per piece of work: one project is being played
-//! against the live server and another is being prepared as a patch. They were
-//! fields of the session once, forgotten at every close, and then lines of the
-//! machine file, shared by every project. They are read from the open
-//! project's file when it is opened and written to it when a box is ticked;
-//! see [`ServerSettings::adopt`].
+//! regenerates tiles, and whether the client archive is copied into `Data\`.
+//! One project may be played against the live server while another is
+//! prepared as a patch. They are read from the open project's file when it
+//! is opened and written to it when a box is ticked; see
+//! [`ServerSettings::adopt`]. Each is drawn beside the action it changes: the
+//! Server panel, the Playtest popover and the publish popover.
 //!
-//! ## The environment still wins
+//! ## The environment overrides the file
 //!
-//! `VALE_WORLDDB` and `VALE_MANGOSD` are read first and are what a
-//! scripted run sets, on `VALE_PASSWORD`'s own terms: a check that has to be
-//! reproducible cannot depend on what somebody typed into a panel last week.
-//! The panel says which of the two is in force rather than pretending the field
-//! is the whole answer — a box that silently does nothing because an
-//! environment variable outranks it is worse than no box.
+//! `VALE_WORLDDB` and `VALE_MANGOSD` are read first. A scripted run sets
+//! them, on `VALE_PASSWORD`'s terms: a check that has to be reproducible
+//! cannot depend on what was typed into a field. The Settings window says
+//! which of the two is in force and disables the field, so the field never
+//! accepts typing that has no effect.
 
 use vale_edit::project::Project;
 use vale_mangos::conn::Where;
@@ -64,82 +62,76 @@ const NO_CACHE: &str = "disable_caching";
 const REGENERATE: &str = "regenerate_tiles";
 const COPY_ARCHIVE: &str = "copy_archive_to_data";
 
-/// Where this machine's server is, as the panel holds it, and what the open
-/// project does with it.
+/// Where this machine's server is, as the Settings window holds it, and what
+/// the open project does with it.
 #[derive(Resource, Debug, Clone)]
 pub(crate) struct ServerSettings {
     /// The `mangosd.conf` to read `WorldDatabase.Info` out of, or the folder
     /// holding one. Empty when nothing has been set.
     ///
-    /// **A conf path rather than a connection string**, because that is where
-    /// vmangos already keeps this: pointing at the file means there is still
-    /// only one place the answer lives, and a password changed on the server
-    /// does not have to be changed here too.
+    /// A conf path rather than a connection string, because vmangos already
+    /// keeps the connection there. The answer stays in one place, and a
+    /// password changed on the server does not have to be changed here too.
     pub(crate) conf: String,
-    /// **Whether a save also applies the project's rows to the database.**
+    /// Whether a save also applies the project's rows to the database.
     ///
-    /// On, because the point of the server half is that an edit is live without
-    /// a second gesture, and because applying is reversible: every apply writes
-    /// the statements that put every row back before it writes anything, and
-    /// **Put back** runs them. Off writes the project's SQL and touches
-    /// nothing, which is what a session preparing a migration wants.
+    /// On by default, so an edit is live without a second gesture. Applying
+    /// is reversible: every apply writes the statements that put every row
+    /// back before it writes anything, and Put back runs them. Off, a save
+    /// writes the project's SQL and touches nothing, which suits a project
+    /// being prepared as a migration.
     ///
-    /// **All three subjects**, which is what it says and was true of one of
-    /// them: for a long time this applied the spells and the creature and item
-    /// rows waited for a button on a panel somewhere else. What the three still
-    /// differ in is what it takes for an applied row to be *live* — a reload,
-    /// or a restart — and that is said on each block of the Server panel. See
-    /// [`crate::server::save`], which is the whole of what a save does to the
-    /// database, and [`crate::ui::shell::sync`], which is the panel.
+    /// It covers every row subject. The subjects differ in what an applied
+    /// row needs to be live, a reload or a restart, which each block of the
+    /// Server panel states. See [`crate::server::save`], which is everything
+    /// a save does to the database, and [`crate::ui::shell::sync`], the panel.
     pub(crate) apply_on_save: bool,
-    /// **Whether a playtest runs with the query-answer cache turned off.**
+    /// Whether a playtest runs with the query-answer cache turned off.
     ///
     /// The client writes every `SMSG_*_QUERY_RESPONSE` to `WDB\` and reads
-    /// them back at the next login, so a creature's name, an item's stats and a
-    /// quest's text are answered out of a file rather than asked for again —
-    /// see `vale_protocol::state::wdb`, which is where the reason is. That is
-    /// right for a client and wrong for an editor: a `creature_template` row
-    /// edited here is invisible in every later playtest, because the client
-    /// never asks the question whose answer changed.
+    /// them back at the next login, so a creature's name, an item's stats and
+    /// a quest's text are answered from a file instead of asked for again
+    /// (see `vale_protocol::state::wdb`). A `creature_template` row edited
+    /// here would then be invisible in every later playtest, because the
+    /// client never asks the question whose answer changed.
     ///
-    /// On by default **in the editor**: a playtest is for looking at an edit,
-    /// and a session that starts with no cached answers costs one query per
-    /// thing the player meets. The client itself is unaffected — this is the
-    /// editor asking for a session without caches, not a change to what a
-    /// client does.
+    /// On by default in the editor, because a playtest is for looking at an
+    /// edit. A session that starts with no cached answers costs one query per
+    /// thing the player meets. The client's own behaviour is unchanged: this
+    /// is the editor starting a session without caches.
     pub(crate) disable_caching: bool,
-    /// **The folder holding the four vmangos map tools** — `mapextractor`,
-    /// `vmapextractor`, `VMapAssembler`, `MoveMapGenerator` — a patched
-    /// build. Empty when nothing has been set. See
-    /// `vale_mangos::datadir`, which is what runs them.
+    /// The folder holding the four vmangos map tools (`mapextractor`,
+    /// `vmapextractor`, `VMapAssembler`, `MoveMapGenerator`) from a patched
+    /// build. Empty when nothing has been set. `vale_mangos::datadir` runs
+    /// them.
     ///
-    /// Beside the conf path for its reason: the server on *this machine* is
-    /// where its tools are, and neither is a fact about the project.
+    /// Kept beside the conf path because both are facts about this machine's
+    /// server and neither is a fact about the project.
     pub(crate) tools: String,
-    /// **Whether a publish also regenerates the server's tiles** for every
-    /// tile the project changed since the last time — `maps\`, `vmaps\` and
-    /// `mmaps\` under the server's `DataDir`. On, because a published tile
-    /// the server cannot walk on is a tile the character is corrected off
-    /// of; off for a publish that is about the client alone, since the vmap
-    /// half of a moved building is two minutes of the map.
+    /// Whether a publish also regenerates the server's tiles (`maps\`,
+    /// `vmaps\` and `mmaps\` under the server's `DataDir`) for every tile the
+    /// project changed since the last publish. On by default, because the
+    /// server corrects a character off a published tile it cannot walk on.
+    /// Off suits a publish that changes only the client, since the vmap half
+    /// of a moved building takes about two minutes per map.
     pub(crate) regenerate_tiles: bool,
-    /// **Whether the project's client archive is copied into this install's
-    /// `Data\`** — by a publish, and by the dev-time tile regeneration, which
-    /// needs an archive for the tools to read.
+    /// Whether the project's client archive is copied into this install's
+    /// `Data\`, by a publish and by a tile regeneration, which needs an
+    /// archive for the tools to read.
     ///
     /// Off by default. The tools read a copy of the install with the archive
-    /// beside the real ones (`vale_mangos::datadir::stage_client`), so
-    /// nothing needs the archive in `Data\` but a client launched against
-    /// this install. On, a publish and a regeneration both write it there,
-    /// replacing the one this project wrote before — see
-    /// `Project::publish_into`.
+    /// beside the real ones (`vale_mangos::datadir::stage_client`), so only a
+    /// client launched against this install needs the archive in `Data\`.
+    /// On, a publish and a regeneration both write it there, replacing the
+    /// one this project wrote before; see `Project::publish_into`.
     pub(crate) copy_archive: bool,
-    /// What the last **Test** said, for the panel to show. `None` until asked.
+    /// What the last Test said, for the Settings window to show. `None` until
+    /// asked.
     pub(crate) tried: Option<Result<String, String>>,
-    /// **What the tools folder last answered**, keyed by the folder asked
-    /// about: found and patched, or why not. Held because the check runs the
-    /// two extractors for their usage text, and the panel is drawn sixty
-    /// times a second. Not written to the file.
+    /// What the tools folder last answered, keyed by the folder asked about:
+    /// found and patched, or why not. Held because the check runs the two
+    /// extractors for their usage text, and the window is drawn every frame.
+    /// Not written to the file.
     pub(crate) tools_status: Option<(String, Result<String, String>)>,
     /// The project the four switches were read from, by its folder. `None`
     /// until a project has been adopted; see [`Self::adopt`].
@@ -165,9 +157,9 @@ impl Default for ServerSettings {
 impl ServerSettings {
     /// Read `Edit\server.txt`, or nothing.
     ///
-    /// A file written before the switches moved carries them too; they are
-    /// read, and they are what the first project adopted starts from when it
-    /// has no file of its own.
+    /// An older machine file may also carry the switches. They are read, and
+    /// the first project adopted starts from them when it has no file of its
+    /// own.
     pub(crate) fn load(install: impl AsRef<Path>) -> ServerSettings {
         let path = Self::path(install);
         let Ok(text) = std::fs::read_to_string(&path) else {
@@ -199,11 +191,11 @@ impl ServerSettings {
         }
     }
 
-    /// **Take a project's switches**, from its `settings.txt`.
+    /// Take a project's switches from its `settings.txt`.
     ///
-    /// A project with no file starts from the defaults — except the first
-    /// project adopted after startup, which keeps what [`Self::load`] read
-    /// off a machine file written before the switches moved, so an install
+    /// A project with no file starts from the defaults, except the first
+    /// project adopted after startup. That one keeps what [`Self::load`] read
+    /// from a machine file that still carries the switches, so an install
     /// that had turned applying off does not find it on again.
     pub(crate) fn adopt(&mut self, project: &Project) {
         let first = self.project.is_none();
@@ -233,15 +225,15 @@ impl ServerSettings {
         self.project.as_deref() == Some(project.root.as_path())
     }
 
-    /// …and write both files back: the machine's, or remove it when there is
-    /// nothing to say; and the project's, when a project has been adopted.
+    /// Write both files back: the machine's, or remove it when both of its
+    /// fields are empty; and the project's, when a project has been adopted.
     pub(crate) fn save(&self, install: impl AsRef<Path>) {
         let path = Self::path(install);
         if self.conf.trim().is_empty() && self.tools.trim().is_empty() {
             let _ = std::fs::remove_file(&path);
         } else {
             let body = format!(
-                "# vmangos location on this machine. Written by the editor's Server panel.\n\
+                "# vmangos location on this machine. Written by the editor's Settings window.\n\
                  # Environment variables override it: VALE_WORLDDB, then VALE_MANGOSD.\n\
                  {CONF} = {}\n\
                  # The folder holding vmangos' four map tools, a patched\n\
@@ -262,7 +254,7 @@ impl ServerSettings {
         };
         let at = project.join(vale_edit::project::SETTINGS_FILE);
         let body = format!(
-            "# This project's server settings. Written by the editor's Server panel.\n\
+            "# This project's server settings. Written by the editor.\n\
              # Whether a save writes the project's rows into the database.\n\
              {APPLY} = {}\n\
              # Whether a playtest runs with the query-answer cache off, so an edited\n\
@@ -292,11 +284,11 @@ impl ServerSettings {
             .join(FILE)
     }
 
-    /// **Where the database is, and which of the three answers said so.**
+    /// Where the database is, and which of the three sources said so.
     ///
     /// In order: the two environment variables, then this file. `None` when
     /// none of them answers, which is the ordinary state of a machine with no
-    /// server on it and is reported rather than guessed at.
+    /// server on it.
     pub(crate) fn resolve(&self) -> Option<(Where, Source)> {
         if let Some(found) = Where::find() {
             // `Where::find` reads `VALE_WORLDDB` then `VALE_MANGOSD`, so
@@ -319,16 +311,17 @@ impl ServerSettings {
         Where::from_conf(file).map(|found| (found, Source::Panel))
     }
 
-    /// Whether the panel's field is what is in force, for greying it.
+    /// Whether the Settings window's field is what is in force, for greying
+    /// it.
     #[cfg(test)]
     pub(crate) fn panel_is_in_force(&self) -> bool {
         !matches!(self.resolve(), Some((_, Source::Env(_))))
     }
 
-    /// **The `mangosd.conf` itself**, for what is read out of it besides the
-    /// connection — `DataDir`, `WowPatch`. `VALE_MANGOSD` first, then the
-    /// panel's field, a folder meaning the conf inside it. `None` when
-    /// neither says; `VALE_WORLDDB` alone names no conf.
+    /// The `mangosd.conf` itself, for what is read from it besides the
+    /// connection: `DataDir` and `WowPatch`. `VALE_MANGOSD` first, then the
+    /// Settings window's field, where a folder means the conf inside it.
+    /// `None` when neither names one; `VALE_WORLDDB` alone names no conf.
     pub(crate) fn conf_path(&self) -> Option<PathBuf> {
         let named = std::env::var("VALE_MANGOSD")
             .ok()
@@ -366,12 +359,12 @@ fn truthy(value: &str) -> bool {
     )
 }
 
-/// Which of the three answered.
+/// Which of the three sources answered.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Source {
-    /// An environment variable, named so the panel can say which.
+    /// An environment variable, named so the Settings window can say which.
     Env(&'static str),
-    /// `Edit\server.txt`, which is what the panel writes.
+    /// `Edit\server.txt`, which the Settings window writes.
     Panel,
 }
 
@@ -388,20 +381,19 @@ impl Source {
 fn open(mut commands: Commands, assets: Res<vale_client::assets::GameAssets>) {
     let settings = ServerSettings::load(&assets.root);
     match settings.resolve() {
-        // **Said at startup, in the log, whichever way it goes.** The panel is
-        // the place to change this and the log is the place a scripted run
-        // reads it — and a run that silently has no database is the state this
-        // whole subject is easiest to be confused by.
+        // Logged at startup either way. The Settings window is where this is
+        // changed and the log is where a scripted run reads it, so a run with
+        // no database says so instead of failing later without a reason.
         Some((at, source)) => info!("server: {} ({})", at.line(), source.line()),
-        None => info!("server: none — the Server panel, or VALE_MANGOSD"),
+        None => info!("server: none — Project → Settings…, or VALE_MANGOSD"),
     }
     commands.insert_resource(settings);
 }
 
-/// **The switches follow the open project.** Runs every frame and does
-/// nothing while the project is the one the switches came from; a switch of
-/// project, and the first frame there is a session, read the new folder's
-/// file.
+/// Keep the switches the open project's. Runs every frame and does nothing
+/// while the project is the one the switches came from; after a switch of
+/// project, and on the first frame there is a session, it reads the new
+/// folder's file.
 fn follow(
     session: Option<Res<crate::session::EditSession>>,
     mut settings: ResMut<ServerSettings>,
@@ -503,9 +495,9 @@ mod tests {
         assert_eq!(ServerSettings::load(&dir).conf, "");
     }
 
-    /// **The switches are the project's, and survive the editor being
-    /// closed**: written to the project's file, read back by a fresh resource
-    /// that adopts the same project, and not into the machine file.
+    /// The switches are the project's and survive the editor being closed:
+    /// they are written to the project's file, read back by a fresh resource
+    /// that adopts the same project, and not written to the machine file.
     #[test]
     fn the_switches_round_trip_through_the_project() {
         let dir = temp("switches");

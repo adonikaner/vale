@@ -542,7 +542,7 @@ fn nothing_to_show<S: SpawnView>(ui: &mut egui::Ui, subject: &Subject<'_, S>) {
                 ui,
                 format!(
                     "{} are rows in vmangos' database rather than files in the archives, so \
-                     this tool needs a database connection. Set it in Server… on the top bar.",
+                     this tool needs a database connection. Set it with Settings\u{2026} in the Project menu.",
                     S::TEXT.title
                 ),
             );

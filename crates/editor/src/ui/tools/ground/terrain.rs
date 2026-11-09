@@ -4,11 +4,11 @@
 //!
 //! ```text
 //! viewport toolbar   Sculpt or Select Vertices; in Sculpt the brush preset
-//!                    and the five modes; in Select Vertices the footprint;
-//!                    Only Inside Selection, Objects Follow, the drawing tablet
-//!                    and the keys
-//! inspector          in Sculpt the brush presets, the brush's settings and
-//!                    Flatten's target; the vertex selection: its height,
+//!                    and the ten modes; in Select Vertices the footprint;
+//!                    Only Inside Selection, Objects Follow, and the keys
+//! inspector          in Sculpt the brush presets, the brush's settings,
+//!                    Flatten's target, and the settings of Terrace, Erode,
+//!                    Mountain and Crevice; the vertex selection: its height,
 //!                    Level and Smooth, its tilt, and the locked vertices
 //! ```
 //!
@@ -24,13 +24,14 @@ use crate::tools::ground::terrain::{FALLOFFS, MODES, SHAPES, Terrain, VertexAsk}
 use crate::tools::ground::terrain;
 use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
 
-use vale_edit::ops::brush::{Mode, Only};
+use vale_edit::ops::brush::{Erosion, Mode, Only};
 
 /// The terrain tool's toolbar over the viewport:
 ///
 /// ```text
 /// Sculpt  Select Vertices | Brush | Raise  Lower  Flatten  Smooth  Noise
-/// Only Inside Selection  Objects Follow  Tablet
+///                                   Blur  Terrace  Erode  Mountain  Crevice
+/// Only Inside Selection  Objects Follow
 /// the keys
 /// ```
 ///
@@ -43,8 +44,6 @@ pub(crate) fn toolbar(
     viewport: egui::Rect,
     corner: Option<egui::Rect>,
     terrain: &mut Terrain,
-    tablet: &mut crate::tablet::Tablet,
-    pen: &crate::tablet::Pen,
     brushes: &mut Brushes,
 ) -> Option<egui::Rect> {
     // While no preset is chosen, the one equal to the brush is. See
@@ -81,7 +80,7 @@ pub(crate) fn toolbar(
                     // variant held here carries a stale height and is compared
                     // on its discriminant.
                     let on = std::mem::discriminant(&terrain.brush.mode) == std::mem::discriminant(&mode);
-                    if bar_toggle(ui, on, name).on_hover_text(format!("Key {}.", key + 1)).clicked() && !on {
+                    if bar_toggle(ui, on, name).on_hover_text(terrain::mode_key(key)).clicked() && !on {
                         terrain.brush.mode = mode;
                     }
                 }
@@ -118,14 +117,11 @@ pub(crate) fn toolbar(
             {
                 terrain.objects_follow = !terrain.objects_follow;
             }
-            ui.menu_button("Tablet", |ui| crate::ui::tools::tablet::tablet(ui, tablet, pen))
-                .response
-                .on_hover_text("Drawing tablet settings: pen pressure and cursor motion.");
         });
         let keys = match terrain.selecting {
             false => {
                 "Left button: apply \u{b7} Ctrl + wheel: radius \u{b7} Shift + wheel: strength \u{b7} \
-                 Alt + wheel: core \u{b7} 1-5: mode \u{b7} 6-0: falloff \u{b7} Shift + 1-3: shape"
+                 Alt + wheel: core \u{b7} 1-5, Shift + 4-8: mode \u{b7} 6-0: falloff \u{b7} Shift + 1-3: shape"
             }
             true => "Left button: select \u{b7} Shift: deselect \u{b7} Ctrl + wheel: footprint \u{b7} Shift + 1-3: shape",
         };
@@ -133,43 +129,65 @@ pub(crate) fn toolbar(
     })
 }
 
-/// The Brush Settings section's rows: radius, strength, core, the Noise
-/// scale, falloff and shape. The section is [`super::presets::settings`].
+/// The Brush Settings section's rows: radius, strength, core, the scale for
+/// the modes that read it, falloff and shape. The section is
+/// [`super::presets::settings`].
+///
+/// A row is shown only for the modes that read it. A row shown but ignored
+/// would suggest that the settings do not all apply.
 fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    let mode = terrain.brush.mode;
     property(ui, "Radius", "The outer ring. Ctrl + wheel over the ground.", |ui| {
         ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"));
     });
     // The limits are the tool's own constants, which document the reason for
     // each. A range written as a literal in the panel would have no stated
     // reason.
-    let (range, speed, suffix) = match terrain.brush.mode {
-        Mode::Raise | Mode::Lower => (terrain::STRENGTH, 0.25, " yd/s"),
-        _ => (terrain::RATE, 0.05, "/s"),
+    let (range, speed, suffix) = match mode.climbs() {
+        true => (terrain::STRENGTH, 0.25, " yd/s"),
+        false => (terrain::RATE, 0.05, "/s"),
     };
-    property(ui, "Strength", "How fast a held stroke works. Shift + wheel over the ground.", |ui| {
+    let about = match (mode, terrain.brush.erosion) {
+        (Mode::Erode, Erosion::Water) => {
+            "Drops of water a second for each vertex under the brush. Shift + wheel over the ground."
+        }
+        (Mode::Erode, Erosion::Thermal) => "Collapse passes a second. Shift + wheel over the ground.",
+        (Mode::Crevice, _) => "How fast the trench deepens at its centre. Shift + wheel over the ground.",
+        _ => "How fast a held stroke works. Shift + wheel over the ground.",
+    };
+    property(ui, "Strength", about, |ui| {
         ui.add(egui::DragValue::new(&mut terrain.brush.strength).speed(speed).range(range).suffix(suffix));
     });
+    // Crevice has a fixed profile, so the core and falloff do not apply.
+    let shaped = !matches!(mode, Mode::Crevice);
     // The fraction of the radius that applies full strength: the inner ring
     // the preview draws. See `vale_edit::ops::brush::Falloff::over`.
-    property(
-        ui,
-        "Core",
-        "The share of the radius at full strength, drawn as the inner ring. Alt + wheel over the ground.",
-        |ui| {
-            ui.add(egui::DragValue::new(&mut terrain.brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
-        },
-    );
-    // Shown for Noise only, the one mode that reads it. A field shown but
-    // ignored in four modes of five would suggest that the fields do not all
-    // apply.
-    if matches!(terrain.brush.mode, Mode::Noise) {
-        property(ui, "Scale", "The noise's feature size. Under 4 yd is finer than the vertex grid.", |ui| {
+    if shaped {
+        property(
+            ui,
+            "Core",
+            "The share of the radius at full strength, drawn as the inner ring. Alt + wheel over the ground.",
+            |ui| {
+                ui.add(egui::DragValue::new(&mut terrain.brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
+            },
+        );
+    }
+    let scale = match mode {
+        Mode::Noise => Some("The noise's feature size. Under 4 yd is finer than the vertex grid."),
+        Mode::Mountain => Some("The distance between ridges."),
+        Mode::Blur => Some("Bumps narrower than this are removed; wider ground keeps its shape."),
+        _ => None,
+    };
+    if let Some(about) = scale {
+        property(ui, "Scale", about, |ui| {
             ui.add(egui::DragValue::new(&mut terrain.brush.scale).speed(0.5).range(terrain::SCALE).suffix(" yd"));
         });
     }
-    property(ui, "Falloff", "How the strength fades from the inner ring to the outer ring. Keys 6 to 0.", |ui| {
-        bar_choice(ui, "terrain-falloff", &mut terrain.brush.falloff, &FALLOFFS, |a, b| a == b);
-    });
+    if shaped {
+        property(ui, "Falloff", "How the strength fades from the inner ring to the outer ring. Keys 6 to 0.", |ui| {
+            bar_choice(ui, "terrain-falloff", &mut terrain.brush.falloff, &FALLOFFS, |a, b| a == b);
+        });
+    }
     property(
         ui,
         "Shape",
@@ -210,6 +228,61 @@ fn flatten_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
             Only::Cut => "Only lowers high ground. The slope pivots where the stroke starts.",
         },
     );
+}
+
+/// The section for Terrace, Erode, Mountain or Crevice: the settings only
+/// that mode reads. Nothing for the other modes.
+fn mode_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
+    let brush = &mut terrain.brush;
+    match brush.mode {
+        Mode::Terrace { .. } => {
+            theme::heading(ui, "Terrace");
+            property(ui, "Step", "The height of one step.", |ui| {
+                ui.add(egui::DragValue::new(&mut brush.step).speed(0.1).range(terrain::STEP).suffix(" yd"));
+            });
+            property(ui, "Sharpness", "How much of each step is level. 1: level steps with vertical risers. 0: a smooth slope of steps.", |ui| {
+                ui.add(egui::DragValue::new(&mut brush.sharpness).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
+            });
+            theme::note(ui, "The steps are measured from the height where the stroke starts, so that point is on a step.");
+        }
+        Mode::Erode => {
+            theme::heading(ui, "Erode");
+            property(ui, "Type", "What wears the ground.", |ui| {
+                theme::segmented(
+                    ui,
+                    &mut brush.erosion,
+                    &[("Water", Erosion::Water), ("Thermal", Erosion::Thermal)],
+                    |a, b| a == b,
+                );
+            });
+            if brush.erosion == Erosion::Thermal {
+                property(ui, "Talus", "The steepest slope left. Steeper slopes collapse to it.", |ui| {
+                    ui.add(egui::DragValue::new(&mut brush.talus).speed(0.25).range(5.0..=80.0).fixed_decimals(0).suffix("\u{b0}"));
+                });
+            }
+            theme::note(
+                ui,
+                match brush.erosion {
+                    Erosion::Water => "Drops of water run downhill from inside the brush, cutting gullies and leaving the ground they carry lower down.",
+                    Erosion::Thermal => "Slopes steeper than the talus angle collapse, moving ground from the top of each slope to its foot.",
+                },
+            );
+        }
+        Mode::Mountain => {
+            theme::heading(ui, "Mountain");
+            property(ui, "Ridges", "How much of the height follows the ridges. 0 raises like Raise; 1 raises only along the ridges.", |ui| {
+                ui.add(egui::DragValue::new(&mut brush.ridges).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
+            });
+        }
+        Mode::Crevice => {
+            theme::heading(ui, "Crevice");
+            property(ui, "Lip", "The share of the dug ground piled on the rims. 1 keeps all of it; 0 piles none.", |ui| {
+                ui.add(egui::DragValue::new(&mut brush.lip).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
+            });
+            theme::note(ui, "The trench is the inner half of the brush and the rims are the outer half.");
+        }
+        _ => {}
+    }
 }
 
 /// A tilt's two numbers as property rows: how steep, and which way is up.
@@ -271,6 +344,7 @@ fn panel(ui: &mut egui::Ui, terrain: &mut Terrain, brushes: &mut Brushes) {
                 if matches!(terrain.brush.mode, Mode::Flatten { .. }) {
                     flatten_settings(ui, terrain);
                 }
+                mode_settings(ui, terrain);
             });
             theme::heading(ui, "Selection");
             property(ui, "Selected", "", |ui| {
@@ -436,8 +510,8 @@ pub(super) fn objects_follow(ui: &mut egui::Ui, on: &mut bool) {
     ui.checkbox(on, "Doodads and WMOs follow the ground").on_hover_text(OBJECTS_FOLLOW);
 }
 
-/// The height brush's inspector panel. The modes and the drawing tablet are
-/// on the toolbar, [`toolbar`].
+/// The height brush's inspector panel. The modes are on the toolbar,
+/// [`toolbar`].
 pub(crate) fn inspect(ui: &mut egui::Ui, _: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     panel(ui, &mut editing.terrain, &mut editing.brushes);
 }

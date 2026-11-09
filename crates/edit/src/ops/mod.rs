@@ -7,6 +7,8 @@
 //!              them
 //! brush.rs     the height brush, and the shape, falloff and noise every round
 //!              brush shares
+//! lattice.rs   the ground under a brush as one grid across chunks and tiles,
+//!              with the blur and the erosion that run on it
 //! shade.rs     the shading brush: vertex colours painted onto the ground
 //! paint.rs     the paint brush: texture layers and their blend maps
 //! grade.rs     a ramp between two points, the one shape a round brush cannot
@@ -717,6 +719,10 @@ pub mod water;
 /// The height brush, and the shape, falloff and noise every round brush
 /// shares.
 pub mod brush;
+
+/// The ground under a brush as one grid of heights across chunks and tiles,
+/// for the modes that read a vertex's neighbours.
+pub mod lattice;
 
 /// The shading brush.
 pub mod shade;

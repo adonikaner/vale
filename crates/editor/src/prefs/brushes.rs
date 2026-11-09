@@ -5,7 +5,8 @@
 //!
 //! A preset holds every setting of one brush except what it paints with. A
 //! terrain preset holds the mode, radius, strength, core, falloff, shape,
-//! noise scale and Flatten's target and tilt. A texture preset holds the
+//! scale, Flatten's target and tilt, and the settings of Terrace, Erode,
+//! Mountain and Crevice. A texture preset holds the
 //! radius, core, shape, strength, falloff, opacity, Paint or Erase, the
 //! four-texture-limit switches and the spray; the texture itself is chosen
 //! separately, so one preset paints any texture.
@@ -42,7 +43,7 @@
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
-use vale_edit::ops::brush::{Falloff, Mode, Only, Shape};
+use vale_edit::ops::brush::{Erosion, Falloff, Mode, Only, Shape};
 use vale_edit::ops::paint::PaintBrush;
 
 use crate::tools::ground::terrain::Terrain;
@@ -53,8 +54,8 @@ pub(crate) const FILE: &str = "brushes.txt";
 /// The terrain brush's settings, as a preset holds them.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Sculpt {
-    /// The mode. A Flatten is held with a target of 0; the target is taken
-    /// where each stroke starts.
+    /// The mode. A Flatten is held with a target of 0 and a Terrace with a
+    /// starting height of 0; both are taken where each stroke starts.
     pub(crate) mode: Mode,
     pub(crate) radius: f32,
     pub(crate) strength: f32,
@@ -67,6 +68,12 @@ pub(crate) struct Sculpt {
     pub(crate) flatten_height: f32,
     pub(crate) tilt_angle: f32,
     pub(crate) tilt_toward: f32,
+    pub(crate) step: f32,
+    pub(crate) sharpness: f32,
+    pub(crate) ridges: f32,
+    pub(crate) lip: f32,
+    pub(crate) erosion: Erosion,
+    pub(crate) talus: f32,
 }
 
 impl Sculpt {
@@ -76,6 +83,7 @@ impl Sculpt {
         Sculpt {
             mode: match brush.mode {
                 Mode::Flatten { .. } => Mode::Flatten { to: 0.0 },
+                Mode::Terrace { .. } => Mode::Terrace { from: 0.0 },
                 mode => mode,
             },
             radius: brush.radius,
@@ -89,6 +97,12 @@ impl Sculpt {
             flatten_height: terrain.flatten_height,
             tilt_angle: terrain.tilt_angle,
             tilt_toward: terrain.tilt_toward,
+            step: brush.step,
+            sharpness: brush.sharpness,
+            ridges: brush.ridges,
+            lip: brush.lip,
+            erosion: brush.erosion,
+            talus: brush.talus,
         }
     }
 
@@ -103,6 +117,12 @@ impl Sculpt {
         brush.shape = self.shape;
         brush.scale = self.scale;
         brush.only = self.only;
+        brush.step = self.step;
+        brush.sharpness = self.sharpness;
+        brush.ridges = self.ridges;
+        brush.lip = self.lip;
+        brush.erosion = self.erosion;
+        brush.talus = self.talus;
         terrain.flatten_to_cursor = self.flatten_to_cursor;
         terrain.flatten_height = self.flatten_height;
         terrain.tilt_angle = self.tilt_angle;
@@ -385,6 +405,21 @@ pub(crate) fn starters() -> (Vec<Preset<Sculpt>>, Vec<Preset<Paint>>) {
             ),
             preset("Smooth", Sculpt { mode: Mode::Smooth, strength: 3.0, ..sculpt.clone() }),
             preset("Rough", Sculpt { mode: Mode::Noise, strength: 4.0, ..sculpt.clone() }),
+            preset("Blur", Sculpt { mode: Mode::Blur, strength: 3.0, scale: 12.0, ..sculpt.clone() }),
+            preset(
+                "Terraces",
+                Sculpt { mode: Mode::Terrace { from: 0.0 }, radius: 30.0, strength: 2.0, ..sculpt.clone() },
+            ),
+            preset("Gullies", Sculpt { mode: Mode::Erode, radius: 30.0, strength: 2.0, ..sculpt.clone() }),
+            preset(
+                "Scree",
+                Sculpt { mode: Mode::Erode, erosion: Erosion::Thermal, strength: 8.0, ..sculpt.clone() },
+            ),
+            preset(
+                "Mountain",
+                Sculpt { mode: Mode::Mountain, radius: 60.0, strength: 30.0, scale: 30.0, ..sculpt.clone() },
+            ),
+            preset("Crevice", Sculpt { mode: Mode::Crevice, radius: 12.0, strength: 10.0, ..sculpt.clone() }),
         ],
         vec![
             preset("Medium Edge", paint.clone()),
@@ -400,13 +435,19 @@ pub(crate) fn starters() -> (Vec<Preset<Sculpt>>, Vec<Preset<Paint>>) {
     )
 }
 
-/// The words the file writes a mode, falloff, shape and flatten direction as.
-const MODES: [(&str, Mode); 5] = [
+/// The words the file writes a mode, falloff, shape, flatten direction and
+/// erosion as.
+const MODES: [(&str, Mode); 10] = [
     ("raise", Mode::Raise),
     ("lower", Mode::Lower),
     ("flatten", Mode::Flatten { to: 0.0 }),
     ("smooth", Mode::Smooth),
     ("noise", Mode::Noise),
+    ("blur", Mode::Blur),
+    ("terrace", Mode::Terrace { from: 0.0 }),
+    ("erode", Mode::Erode),
+    ("mountain", Mode::Mountain),
+    ("crevice", Mode::Crevice),
 ];
 const FALLOFFS: [(&str, Falloff); 5] = [
     ("smooth", Falloff::Smooth),
@@ -417,6 +458,7 @@ const FALLOFFS: [(&str, Falloff); 5] = [
 ];
 const SHAPES: [(&str, Shape); 3] = [("circle", Shape::Circle), ("square", Shape::Square), ("diamond", Shape::Diamond)];
 const ONLY: [(&str, Only); 3] = [("both", Only::Both), ("fill", Only::Fill), ("cut", Only::Cut)];
+const EROSION: [(&str, Erosion); 2] = [("water", Erosion::Water), ("thermal", Erosion::Thermal)];
 
 /// The word for a value in one of the lists above.
 fn word<T: PartialEq>(list: &[(&'static str, T)], value: &T) -> &'static str {
@@ -447,7 +489,9 @@ fn render(sculpt: &[Preset<Sculpt>], paint: &[Preset<Paint>]) -> String {
         out += &format!("falloff {}\nshape {}\n", word(&FALLOFFS, &s.falloff), word(&SHAPES, &s.shape));
         out += &format!("scale {}\nonly {}\n", s.scale, word(&ONLY, &s.only));
         out += &format!("flatten-to-pointer {}\nflatten-height {}\n", yes(s.flatten_to_cursor), s.flatten_height);
-        out += &format!("tilt {}\nuphill {}\n\n", s.tilt_angle, s.tilt_toward);
+        out += &format!("tilt {}\nuphill {}\n", s.tilt_angle, s.tilt_toward);
+        out += &format!("step {}\nsharpness {}\nridges {}\nlip {}\n", s.step, s.sharpness, s.ridges, s.lip);
+        out += &format!("erosion {}\ntalus {}\n\n", word(&EROSION, &s.erosion), s.talus);
     }
     for preset in paint {
         let p = &preset.settings;
@@ -519,6 +563,12 @@ fn parse(text: &str) -> (Vec<Preset<Sculpt>>, Vec<Preset<Paint>>) {
                     "flatten-height" => s.flatten_height = number.unwrap_or(s.flatten_height),
                     "tilt" => s.tilt_angle = number.unwrap_or(s.tilt_angle),
                     "uphill" => s.tilt_toward = number.unwrap_or(s.tilt_toward),
+                    "step" => s.step = number.unwrap_or(s.step),
+                    "sharpness" => s.sharpness = number.unwrap_or(s.sharpness),
+                    "ridges" => s.ridges = number.unwrap_or(s.ridges),
+                    "lip" => s.lip = number.unwrap_or(s.lip),
+                    "erosion" => s.erosion = named(&EROSION, value).unwrap_or(s.erosion),
+                    "talus" => s.talus = number.unwrap_or(s.talus),
                     _ => {}
                 }
             }

@@ -553,7 +553,7 @@ pub(crate) fn tools(server: &super::settings::ServerSettings) -> Result<Tools, S
     let dir = server.tools.trim();
     if dir.is_empty() {
         return Err(format!(
-            "no vmangos tools folder: set it on the Server panel, or set {}",
+            "no vmangos tools folder: set it in Project \u{2192} Settings\u{2026}, or set {}",
             datadir::TOOLS_ENV
         ));
     }
@@ -565,7 +565,7 @@ pub(crate) fn tools(server: &super::settings::ServerSettings) -> Result<Tools, S
 pub(crate) fn data_dir(server: &super::settings::ServerSettings) -> Result<PathBuf, String> {
     let conf = server
         .conf_path()
-        .ok_or_else(|| "no mangosd.conf: set it on the Server panel, or set VALE_MANGOSD".to_string())?;
+        .ok_or_else(|| "no mangosd.conf: set it in Project \u{2192} Settings\u{2026}, or set VALE_MANGOSD".to_string())?;
     if !conf.is_file() {
         return Err(format!("{} is not a file", conf.display()));
     }

@@ -399,9 +399,8 @@ pub(crate) struct Editing<'w> {
     pub(crate) menu: ResMut<'w, crate::context::ContextMenu>,
     /// What the doodad and WMO tools have copied, for the menu's Paste here.
     pub(crate) clipboard: Res<'w, crate::tools::placements::group::Clipboard>,
-    /// The drawing tablet settings and the pen's state, for the section the
-    /// shading panel shows and the terrain and texture toolbars' Tablet menus.
-    /// See [`crate::tablet`].
+    /// The drawing tablet settings and the pen's state, for the Settings
+    /// window. See [`crate::tablet`].
     pub(crate) tablet: ResMut<'w, crate::tablet::Tablet>,
     pub(crate) pen: Res<'w, crate::tablet::Pen>,
     /// What the panels asked of the shell this frame, carried out after the
@@ -590,6 +589,10 @@ fn draw(
     if editing.args.server.panel && !popovers.server_shown_once {
         popovers.server_shown_once = true;
         popovers.server.show();
+    }
+    if editing.args.server.settings_panel && !popovers.settings_shown_once {
+        popovers.settings_shown_once = true;
+        popovers.settings.show();
     }
 
     egui::Panel::top("editor-top")
@@ -974,6 +977,8 @@ fn draw(
         playing.state.playing(),
         &playing.step,
         &mut editing.collab,
+        &mut editing.tablet,
+        &editing.pen,
     );
     viewport.floating.extend(map_rect);
     // Select and Measure over the viewport's corner. Drawn only while the
@@ -995,8 +1000,6 @@ fn draw(
                 world_rect,
                 corner,
                 &mut editing.terrain,
-                &mut editing.tablet,
-                &editing.pen,
                 &mut editing.brushes,
             );
             viewport.floating.extend(bar);
@@ -1016,8 +1019,6 @@ fn draw(
                 corner,
                 &mut editing.textures,
                 &mut texture_count,
-                &mut editing.tablet,
-                &editing.pen,
                 &mut editing.brushes,
             );
             if texture_count != viewing.guides.texture_count {

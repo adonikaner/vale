@@ -29,7 +29,7 @@ cargo run -p vale-ide -- --project <name>           # open or create a project
 | `--without <layers>`, `--overlay <names>`, `--navmesh`, `--guides <names>` | Start with those view bar switches set. `--guides` takes `chunks`, `tiles`, `slope`, `contours` and `texturecount`. The status line prints the current set in this form. |
 | `--size WxH` | Window size. |
 | `--character <name>` | Character a playtest logs in as. |
-| `--tiles`, `--projects`, `--server`, `--session` | Open the map window, the Projects dialog, the Server panel or the session popover. |
+| `--tiles`, `--projects`, `--settings`, `--server`, `--session` | Open the map window, the Projects dialog, the Settings window, the Server panel or the session popover. |
 | `--new-map` | Open the New map dialog. |
 | `--spawn <guid>`, `--object <guid>` | Open Creatures or Objects on that spawn, with the camera on it. |
 | `--item <entry or name>`, `--quest <entry or title>` | Open Items or Quests on that row. |
@@ -68,8 +68,9 @@ The editor opens the project named by `--project`, otherwise the one named in
 `Edit\last-project.txt`, otherwise `default`. The `default` project can be
 cleared but not deleted.
 
-The "Project: <name>" menu on the top bar holds "Projects…" and "Publish…".
-"Projects…" opens the Projects dialog:
+The "Project: <name>" menu on the top bar holds "Projects…", "Settings…"
+(see [Settings](#settings)) and "Publish…". "Projects…" opens the Projects
+dialog:
 
 - "Open project" shows the open project's name, how many files it holds, its
   unsaved tiles and tables, and "Clear files". Under them its files are listed
@@ -103,18 +104,26 @@ The Ctrl shortcuts (S, Z, Y, P, E, D) use the left Ctrl key.
 
 ## The screen
 
-- Top bar, left to right:
-  - the "Project: <name>" menu ("Projects…", "Publish…");
-  - Save;
-  - "Server…", the [Server panel](#server-panel);
-  - the session button, "Session…" with no session (see
-    [Shared sessions](#shared-sessions));
+- Top bar, on the left:
+  - the "Project: <name>" menu ("Projects…", "Settings…", "Publish…");
   - the "Map: <name> (<id>)" menu ("New map…", "Map properties…", "Open map",
     "Edit Map…", "Go to…", "Bookmarks");
-  - the workspace control (see below);
-  - at the right, "Playtest" and the login button. During a playtest these
-    are replaced by "PLAYTEST", the playtest's state, "Hide Panels" and
-    "End Playtest".
+  - the workspace control (see below).
+- Top bar, on the right, in the order an edit reaches them:
+  - the session button, "Session…" with no session (see
+    [Shared sessions](#shared-sessions));
+  - Save (see [Saving and undo](#saving-and-undo));
+  - "Server…", the [Server panel](#server-panel);
+  - "Playtest", and to its right the button that opens the Playtest popover
+    (see [Login](#login)). During a playtest these two are replaced by
+    "PLAYTEST", the playtest's state, "Hide Panels" and "End Playtest".
+
+  When the workspace control does not fit on one row it wraps to a second
+  row under the menus; the right-hand controls stay on the first row.
+- Settings: a setting of this machine is in the Settings window. A setting
+  of the project is beside the action it changes: "Apply on save" on the
+  Server panel, "Disable caching" in the Playtest popover, and the publish
+  options in "Publish a patch".
 - Workspace control: "World", then "Spells", "Skills", "Items", "Quests",
   "Creatures", "Game Objects", "Zones", "Sound", "Factions", "Spawning",
   "Tables" and "Assets". "World" shows the viewport and returns to the last
@@ -304,7 +313,7 @@ A stroke reaches every open tile the brush touches.
 
 ### Brush presets
 
-Terrain and Textures keep named brush presets. A terrain preset holds the mode, radius, strength, core, falloff, shape, noise scale, and Flatten's target, direction and tilt. A texture preset holds the radius, strength, core, falloff, shape, opacity, Paint or Erase, spray, grain, and the two four-texture switches. It does not hold the texture or its foliage, so one preset paints any texture.
+Terrain and Textures keep named brush presets. A terrain preset holds the mode, radius, strength, core, falloff, shape, scale, Flatten's target, direction and tilt, and the settings of Terrace, Erode, Mountain and Crevice. A texture preset holds the radius, strength, core, falloff, shape, opacity, Paint or Erase, spray, grain, and the two four-texture switches. It does not hold the texture or its foliage, so one preset paints any texture.
 
 - The "Brushes" section at the top of the inspector shows the presets as a grid of icons with names. A click chooses a preset and sets the brush to it.
 - The "Brush" drop-down on the toolbar over the viewport also chooses a preset.
@@ -315,13 +324,13 @@ Terrain and Textures keep named brush presets. A terrain preset holds the mode, 
 - Choosing another preset drops unsaved changes.
 - A right click on a preset opens "Copy", a name field with "Rename", and "Delete".
 
-Terrain starts with "Hill", "Hill Strong", "Dig", "Plateau", "Smooth" and "Rough". Textures starts with "Medium Edge", "Soft Edge", "Hard Edge", "Speckle", "Square" and "Eraser". Presets are saved to `Edit\brushes.txt`, beside the project folders. They are not published.
+Terrain starts with "Hill", "Hill Strong", "Dig", "Plateau", "Smooth", "Rough", "Blur", "Terraces", "Gullies" (Erode with water), "Scree" (Erode, thermal), "Mountain" and "Crevice". A `brushes.txt` written before the last six existed keeps its own presets; "Save as New" adds one for a new mode. Textures starts with "Medium Edge", "Soft Edge", "Hard Edge", "Speckle", "Square" and "Eraser". Presets are saved to `Edit\brushes.txt`, beside the project folders. They are not published.
 
 ### Drawing tablet
 
 A pen works as a mouse: the tip is the left button, and the barrel button held turns the view as a right drag does. On Windows, with Windows Ink on in the tablet driver, the editor also reads the pen's pressure.
 
-The "Tablet" menu on the Terrain and Textures toolbars and the "Drawing tablet" section of the Shading panel hold the same settings:
+The settings are under "Drawing tablet" in the [Settings](#settings) window:
 
 - "Pen pressure scales strength": while the pen tip is on the tablet, the strength is multiplied by the pressure, 0 to 1. On by default.
 - "Pen pressure scales radius": the same for the radius. The brush ring shows the radius in use. Off by default.
@@ -337,15 +346,30 @@ Pen pressure affects Terrain, Shading and Textures. The other tools treat a pen 
 
 The toolbar over the viewport chooses what the left button does. "Sculpt" moves the ground. "Select Vertices" chooses vertices.
 
-In Sculpt, the toolbar has the "Brush" preset drop-down and five modes: "Raise", "Lower", "Flatten", "Smooth" and "Noise". Keys 1 to 5 choose them. The second row of the toolbar has "Only Inside Selection" (shown only while vertices are selected), "Objects Follow" and "Tablet".
+In Sculpt, the toolbar has the "Brush" preset drop-down and ten modes. Keys 1 to 5 choose the first five and Shift+4 to Shift+8 the other five.
+
+| Mode | Key | Effect |
+|---|---|---|
+| Raise | 1 | Raises the ground. |
+| Lower | 2 | Lowers the ground. |
+| Flatten | 3 | Moves the ground toward one height, or a tilted plane. |
+| Smooth | 4 | Moves the ground toward the mean height under the brush. |
+| Noise | 5 | Moves each vertex up or down by rolling noise. |
+| Blur | Shift+4 | Removes bumps narrower than "Scale" and keeps wider ground. |
+| Terrace | Shift+5 | Moves the ground toward steps of a set height. |
+| Erode | Shift+6 | Wears the ground with drops of water or by collapsing steep slopes. |
+| Mountain | Shift+7 | Raises the ground with ridges. |
+| Crevice | Shift+8 | Digs a trench and piles the ground on its rims. |
+
+The second row of the toolbar has "Only Inside Selection" (shown only while vertices are selected) and "Objects Follow".
 
 The inspector shows "Brushes" (see [Brush presets](#brush-presets)), then "Brush Settings":
 
 - "Radius": Ctrl+wheel.
-- "Strength": Shift+wheel. It is in yards per second for Raise and Lower.
-- "Core": Alt+wheel. This is the share of the radius at full strength, drawn as the inner ring.
-- "Scale", for Noise only: the size of the noise's features.
-- "Falloff": Smooth, Linear, Flat, Sharp, Dome. Keys 6 to 0.
+- "Strength": Shift+wheel. It is in yards per second for Raise, Lower, Noise, Mountain and Crevice. For Flatten, Smooth, Blur and Terrace it is the share of the remaining distance moved per second. For Erode it is drops of water per second for each vertex under the brush, or collapse passes per second.
+- "Core": Alt+wheel. This is the share of the radius at full strength, drawn as the inner ring. Not shown for Crevice.
+- "Scale", for Noise, Mountain and Blur: the size of the noise's features, the distance between ridges, or the width of the bumps Blur removes.
+- "Falloff": Smooth, Linear, Flat, Sharp, Dome. Keys 6 to 0. Not shown for Crevice.
 - "Shape": Circle, Square, Diamond. Shift+1 to Shift+3. The square is aligned to the chunk grid.
 
 With Flatten chosen, a "Flatten" section follows:
@@ -353,6 +377,20 @@ With Flatten chosen, a "Flatten" section follows:
 - "Target": "Height under the pointer" takes the target height from where the stroke starts. It is on by default. Off, "Height" sets the target.
 - "Direction": "Both", "Fill" or "Cut". Fill only raises low ground. Cut only lowers high ground.
 - "Tilt" (0 to 60°) and "Uphill" (a compass bearing, shown once Tilt is above 0) flatten toward a sloped plane instead of a level one. The plane pivots where the stroke starts, and its slope is drawn on the ground.
+
+Terrace, Erode, Mountain and Crevice each add a section of their own:
+
+- "Terrace":
+  - "Step" is the height of one step. The steps are measured from the height where the stroke starts.
+  - "Sharpness", 0 to 1, is how much of each step is level. At 1 the steps are level with vertical risers; at 0 the ground is a smooth staircase.
+  - No vertex moves more than half a step.
+- "Erode":
+  - "Type" is "Water" or "Thermal". Water runs drops downhill from inside the brush: they cut gullies and leave the ground they carry lower down. Thermal collapses slopes steeper than "Talus" until they are not, moving ground from the top of each slope to its foot.
+  - "Talus", for Thermal: the steepest slope left, in degrees.
+- "Mountain": "Ridges", 0 to 1, is how much of the height follows the ridges. At 0 it raises as Raise does; at 1 the ground between the ridges does not rise.
+- "Crevice": "Lip", 0 to 1, is the share of the dug ground piled on the rims. The trench is the inner half of the brush and the rims are the outer half.
+
+Blur and Erode read the ground around each vertex across chunk and tile borders, so a stroke over a border moves both sides alike.
 
 #### Selecting vertices
 
@@ -404,7 +442,7 @@ The menu has two groups.
 - "Brush":
   - "Sculpt" or "Select vertices";
   - "Flatten to this height" sets Flatten with the clicked height as its target;
-  - "Brush: Raise" through "Brush: Noise".
+  - "Brush: Raise" through "Brush: Crevice", one entry for each mode.
 
 ### Grade
 
@@ -474,7 +512,8 @@ Shading paints the ground's vertex colour.
 - "Colour": "tint" (Paint only) and "brightness". The note under them gives the target value; 1.00 leaves a vertex unchanged. "Reset to neutral" restores white at brightness 1.
 - "Size": "radius", "strength", "core".
 - "Falloff" (keys 6 to 0) and "Shape" (Shift+1 to Shift+3).
-- "Drawing tablet" (see [Drawing tablet](#drawing-tablet)).
+
+Pen pressure is set in the Settings window; see [Drawing tablet](#drawing-tablet).
 
 A chunk painted back to neutral drops its vertex colour data. The original 1.12.1 client does not draw vertex colour on terrain.
 
@@ -486,8 +525,7 @@ The toolbar over the viewport has:
 
 - the "Brush" preset drop-down;
 - "Paint" or "Erase". Holding Shift switches to the other for one stroke;
-- "Texture Count", which writes over each chunk near the camera how many textures it carries, in red where it carries four. It is the same switch as "Texture count" in the view bar's Guides menu;
-- "Tablet".
+- "Texture Count", which writes over each chunk near the camera how many textures it carries, in red where it carries four. It is the same switch as "Texture count" in the view bar's Guides menu.
 
 The inspector shows "Brushes" (see [Brush presets](#brush-presets)), then "Brush Settings":
 
@@ -1643,9 +1681,7 @@ A condition cell, found in the gossip, loot, vendor and trainer, quest, event an
 
 ## Server panel
 
-"Server…" on the top bar. The line at the top names the world database, or says "no world database: saving writes sql\ files and applies nothing". The panel has two tabs. In a shared session some of its buttons are limited; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
-
-### This project
+"Server…" on the top bar opens what the project has done to the world database. The line at the top names the world database, or says "no world database: saving writes sql\ files and applies nothing". With no database, a note says that nothing can be applied, with "Settings…", which opens the [Settings](#settings) window where the database is set. In a shared session some of the panel's buttons are limited; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
 
 - "Server operations": "Apply on save" runs the SQL against the world database every time the project is saved. It is on by default and kept per project. A save made with the panels open over a playtest also sends `.reload` for each table that has one.
 - One block per subject: "Client tables", "Creatures", "Objects", "Items", "Quests", "Loot", "Vendors and trainers", "Addons and equipment", "Formations and links", "Pools", "Game events", "Behaviour", "Conditions", "Gossip", "Maps", "Area triggers" and "Graveyards". Each says how many rows the project changes and how many are applied, and is outlined amber while changes are not applied.
@@ -1667,12 +1703,13 @@ A regeneration writes and replaces tile files in the server's `DataDir` and neve
 
 A file the editor did not write is moved to `vale-editor\originals\` when it is removed, so it can be put back.
 
-### Setup
+## Settings
 
-The two settings belong to this machine and are kept in `Edit\server.txt`, not in the project.
+"Settings…" in the Project menu opens the settings that belong to this machine. They are kept in `Edit\server.txt` and `Edit\tablet.txt`, beside the project folders, and apply to every project.
 
-- "World database": "mangosd.conf", the vmangos folder or its `mangosd.conf`. The connection is read from its `WorldDatabase.Info` line; the password is not stored by the editor. "Test" connects and counts rows without changing anything. `VALE_WORLDDB` or `VALE_MANGOSD` overrides the field.
-- "Map tools": "vmangos tools", the folder holding `mapextractor`, `vmapextractor`, `VMapAssembler` and `MoveMapGenerator`, built in Release with the extractor patch from the `extractors` branch of [adonikaner/core](https://github.com/adonikaner/core/tree/extractors). The panel says whether the tools are patched and whether `offmesh.txt` and `config.json` were found, and names the server's `DataDir`. `VALE_VMANGOS_TOOLS` overrides the field.
+- "World database": "mangosd.conf", the vmangos folder or its `mangosd.conf`. The connection is read from its `WorldDatabase.Info` line; the password is not stored by the editor. "Test" connects and counts rows without changing anything. `VALE_WORLDDB` or `VALE_MANGOSD` overrides the field, which is then disabled.
+- "Map tools": "vmangos tools", the folder holding `mapextractor`, `vmapextractor`, `VMapAssembler` and `MoveMapGenerator`, built in Release with the extractor patch from the `extractors` branch of [adonikaner/core](https://github.com/adonikaner/core/tree/extractors). The window says whether the tools are patched and whether `offmesh.txt` and `config.json` were found, and names the server's `DataDir`. `VALE_VMANGOS_TOOLS` overrides the field.
+- "Drawing tablet": pen pressure and cursor motion; see [Drawing tablet](#drawing-tablet).
 
 ## Publishing
 
@@ -1712,7 +1749,7 @@ A playtest lights the world at the server's time of day, not the editor's fixed 
 
 ### Login
 
-The login button beside "Playtest" reads "as <character>" or "login screen", followed by " · cached" while caching is on. It opens:
+The button to the right of "Playtest" reads "as <character>" or "login screen", followed by " · cached" while caching is on, and ends in "⏷". It opens the Playtest popover, which holds every setting of a playtest:
 
 - "Log in as": "account", "password" and "character" (empty plays the last character). None of them is saved. The account is read from `Config.wtf`, and the password can come from `VALE_PASSWORD`.
 - "skip the login screen": log straight in when an account and a password are set.
@@ -1841,12 +1878,12 @@ editor on another map is not drawn; the popover says where they are.
 
 ### Playtests and the server in a session
 
-A joined editor's playtest login popover has "Server", a choice between "Local
+A joined editor's Playtest popover has "Server", a choice between "Local
 server", the realm in `realmlist.wtf`, and "<host>'s server", the realm at the
 host's address. Log in to the host's server with an account that exists on
 it. A joined editor whose world database differs from the host's starts on
 "Local server"; otherwise it starts on the host's server. While the host's
-server is chosen, the login button's label ends in "· <host>'s server" and the
+server is chosen, the Playtest popover's button reads "· <host>'s server" before its "⏷", and the
 playtest applies nothing.
 
 When a login on the host's server fails at the world server, the status line

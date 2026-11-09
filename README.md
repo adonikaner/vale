@@ -158,7 +158,7 @@ archives in `Data/`, or set `VALE_GAMEDATA` to another location.
 
 ### Editor server settings
 
-In the editor's "Server…" panel, under "Setup", set:
+In the editor's Project menu, open "Settings…" and set:
 
 - "mangosd.conf": the vmangos folder, or its `mangosd.conf`.
 - "vmangos tools": the folder holding `mapextractor`, `vmapextractor`,

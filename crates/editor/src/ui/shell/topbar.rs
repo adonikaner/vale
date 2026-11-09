@@ -1,32 +1,28 @@
-//! The bar across the top of the window: the Project menu and the Save
-//! button, the Server button, the Map menu, the workspace control, and the
-//! controls that start and stop a playtest.
+//! The bar across the top of the window: the Project and Map menus and the
+//! workspace control on the left, and on the right the controls that take
+//! the work somewhere else: the shared session, Save, the Server panel and
+//! Playtest.
 //!
 //! ## What the bar holds
 //!
 //! Every control on this bar is about the session rather than about the thing
-//! being edited: which project, which map, where the camera is, whether the work
-//! is saved, which workspace is open, and whether the game is running. A control
-//! that changes the world belongs in the inspector on the right, beside the tool
-//! that owns it.
-//!
-//! ## Two menus, and what stays a button
-//!
-//! The bar is one row, and at 1280 points wide it had no room left: the
-//! project's name, Save, Publish, Server, the map drop-down with its id, the
-//! tile map button, Go to and four workspaces filled it, and a fifth workspace
-//! did not fit. The controls about one subject are now one menu each:
+//! being edited: which project, which map, whether the work is saved, which
+//! workspace is open, and whether the game is running. A control that changes
+//! the world belongs in the inspector on the right, beside the tool that owns
+//! it.
 //!
 //! ```text
-//! Project: <name>   Projects…        the project dialog
-//!                   Publish…         the publish popover
-//! Map: <name> (id)  New map…         the new map form
-//!                   Open map     >   every map, by id
-//!                   Edit Map…        the tile map window
-//!                   Go to…           the go-to popover
-//!                   Bookmarks    >   Add bookmark…, the add-bookmark popover,
-//!                                    then each kept view, which a click
-//!                                    returns to
+//! left    Project: <name>   Projects…      the project dialog
+//!                           Settings…      this machine's settings
+//!                           Publish…       the publish popover
+//!         Map: <name> (id)  New map…, Map properties…, Open map, Edit Map…,
+//!                           Go to…, Bookmarks
+//!         the workspace control
+//! right   the session button        hosting or joining a shared session
+//!         Save                      what is unsaved, and writing it
+//!         Server…                   what the project has done to the server
+//!         Playtest, and its popover who it logs in as, on which server, and
+//!                                   whether the query cache is kept
 //! ```
 //!
 //! Each menu's button states what a person reads the bar for without opening
@@ -35,16 +31,31 @@
 //! vmangos' tables, a `.tele`), and the directory name is usable in none of
 //! them.
 //!
-//! A menu entry is a command. A form is still a popover: an egui menu closes
-//! when anything inside it is clicked, which suits a list of commands and does
-//! not suit text fields, so `Publish…`, `Go to…` and `Add bookmark…` open
-//! windows placed under the menu. See [`super::popover`].
+//! A menu entry is a command. A form is a popover: an egui menu closes when
+//! anything inside it is clicked, which suits a list of commands and does not
+//! suit text fields, so `Settings…`, `Publish…`, `Go to…` and `Add bookmark…`
+//! open windows placed under the menu. See [`super::popover`].
 //!
-//! Three controls stay buttons. Save's label says what is unsaved, which is
-//! read without a click. Server… opens one panel with two tabs, so a menu of
-//! two entries would add a click and remove nothing. The playtest login
-//! button's label states who the playtest logs in as, and gains " · cached"
-//! while the query cache is kept.
+//! ## Where a setting is
+//!
+//! A setting of this machine (the world database, the map tools, the drawing
+//! tablet) is in the Settings window. A setting of the project is beside the
+//! action it changes: Apply on save on the Server panel, the publish options
+//! in the publish popover, and Disable caching in the Playtest popover. No
+//! setting is in two places.
+//!
+//! ## The right-hand controls
+//!
+//! The four controls on the right are the places an edit goes after it is
+//! made: to the other editors of a shared session, into the project folder,
+//! into the world database, and into a running game. They are drawn in that
+//! order, with Playtest at the far right because it is the only one that
+//! takes the editor out of editing. Save's label says what is unsaved. The
+//! session button's label states the session. The button beside Playtest
+//! states who the playtest logs in as, ends in "⏷" because it opens the
+//! Playtest popover, and gains " · cached" while the query cache is kept.
+//! During a playtest, Playtest and its popover are replaced by the
+//! playtest's state, Hide Panels and End Playtest; the other three stay.
 //!
 //! After the Map menu comes the workspace control ([`super::rail::workspaces`]):
 //! World, then each workspace that replaces the viewport. World returns to the
@@ -54,11 +65,11 @@
 //! ## Where the workspace control wraps
 //!
 //! The workspace control is given the width between the Map menu and the
-//! playtest controls, and wraps to a second row inside it. The playtest
+//! right-hand controls, and wraps to a second row inside it. The right-hand
 //! controls are laid out right to left after it, so their width is measured on
 //! each frame and kept in egui's temporary data for the next one; the first
 //! frame assumes `RIGHT_ROOM`. Without the limit, a workspace that did not fit
-//! was drawn under the playtest controls and could not be clicked. Text does
+//! was drawn under the right-hand controls and could not be clicked. Text does
 //! not wrap inside the control, so a workspace that does not fit moves to the
 //! next row whole rather than having its name narrowed.
 
@@ -151,28 +162,7 @@ pub(crate) fn draw(
         // is the one thing on this bar a person can lose work by being wrong
         // about.
         let in_world = playing.state.playing();
-        project(ui, session, assets, popovers, in_world, playing.queue, playing.server, playing.step, collab.is_joined());
-        // The server sits beside the project because the two are the two
-        // destinations of one save: the project folder and the database. The
-        // button opens a form, so it is a popover like the others; see
-        // [`super::popover`].
-        let at_server = ui
-            .button("Server…")
-            .on_hover_text(
-                "The rows this project has applied to the world database, Apply and Restore \
-                 for each subject, and this machine's vmangos settings.",
-            );
-        popovers.server.track(&at_server);
-        if at_server.clicked() {
-            popovers.server.toggle(&at_server);
-        }
-        // The shared session beside the server: both are where the
-        // project's work goes besides this machine's folder.
-        let at_session = super::session::button(ui, collab);
-        popovers.session.track(&at_session);
-        if at_session.clicked() {
-            popovers.session.toggle(&at_session);
-        }
+        project(ui, session, popovers, in_world, playing.queue.busy(), collab.is_joined());
         separator(ui);
         map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world, collab.is_joined());
         separator(ui);
@@ -197,20 +187,36 @@ pub(crate) fn draw(
             },
         );
 
-        // The playtest controls sit at the far right, apart from the rest,
-        // because they are the only controls here that take the editor out of
-        // editing. The layout is right to left, so the first control added is
-        // the rightmost.
+        // The right-hand controls, in the order an edit reaches them from the
+        // left: the session, Save, the Server panel, the playtest. The layout
+        // is right to left, so the first control added is the rightmost.
         //
-        // While the panels are open over a playtest, this end of the bar holds
-        // the playtest's own two controls, in the place of the button that
-        // started it. Leaving the `playtest` window up over the shell instead
-        // would state the same thing in two places on one screen.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // While the panels are open over a playtest, the far right holds the
+        // playtest's own controls, in the place of the button that started
+        // it. Leaving the `playtest` window up over the shell instead would
+        // state the same thing in two places on one screen.
+        // Aligned to the top: when the workspace control wraps to a second
+        // row, these stay on the first row with the menus.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             let start = ui.cursor().max.x;
             match in_world {
                 true => running(ui, playing, session),
                 false => not_running(ui, session, assets, popovers, playing, collab),
+            }
+            separator(ui);
+            let at_server = ui.button("Server\u{2026}").on_hover_text(
+                "What this project has done to the world database: Apply on save, Apply and \
+                 Restore for each subject, the server's tiles and the migration.",
+            );
+            popovers.server.track(&at_server);
+            if at_server.clicked() {
+                popovers.server.toggle(&at_server);
+            }
+            save(ui, session, assets, playing, in_world, collab.is_joined());
+            let at_session = super::session::button(ui, collab);
+            popovers.session.track(&at_session);
+            if at_session.clicked() {
+                popovers.session.toggle(&at_session);
             }
             let used = start - ui.min_rect().min.x;
             ui.data_mut(|data| data.insert_temp(right_id, used));
@@ -218,9 +224,10 @@ pub(crate) fn draw(
     });
 }
 
-/// The width the playtest controls are given before they have been measured,
-/// in points: Playtest and a login label.
-const RIGHT_ROOM: f32 = 240.0;
+/// The width the right-hand controls are given before they have been
+/// measured, in points: the session button, Save, Server…, Playtest and its
+/// login label.
+const RIGHT_ROOM: f32 = 520.0;
 
 /// What the workspace control changes: the tool in use, and the rail's memory
 /// of the last world tool. Passed into [`draw`] as one parameter.
@@ -266,12 +273,13 @@ fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) 
     );
 }
 
-/// The right-hand end of the bar while no playtest is running: who it would
-/// log in as, and the button that starts it.
+/// The right-hand end of the bar while no playtest is running: the button that
+/// starts it, and the button that opens the Playtest popover.
 ///
-/// The login control is a separate button beside the Playtest button. In a
-/// shared session its label also names the host's server when a joined
-/// editor playtests there. See `crate::collab::PlaytestServer`.
+/// The popover's button is to the right of Playtest and states who the
+/// playtest logs in as. In a shared session its label also names the host's
+/// server when a joined editor playtests there. See
+/// `crate::collab::PlaytestServer`.
 fn not_running(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -297,9 +305,12 @@ fn not_running(
         let host = collab.host_name().unwrap_or("host");
         label.push_str(&format!(" \u{b7} {host}'s server"));
     }
-    let who = ui
-        .button(label)
-        .on_hover_text("Playtest login: account, character, whether the login screen is skipped, and whether the client keeps its query cache.");
+    label.push_str(" \u{23F7}");
+    let who = ui.button(label).on_hover_text(
+        "Playtest settings: the account and character, whether the login screen is skipped, \
+         whether the client keeps its query cache, and in a shared session which server it \
+         logs in to.",
+    );
     popovers.login.track(&who);
     if who.clicked() {
         popovers.login.toggle(&who);
@@ -345,37 +356,25 @@ fn separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
 }
 
-/// The project section: the Project menu and the Save button.
+/// The Project menu: the project dialog, the Settings window and the publish
+/// popover.
 ///
 /// The menu's button is the open project's name, which is the one thing on
-/// this bar a person can lose work by being wrong about. Its entries open the
-/// project dialog and the publish popover.
-///
-/// The Save button's label names what it will save, for example `Save 2 tiles
-/// and server rows`, or `Saved` when there is nothing. A bare count such as
-/// `Save 1`, which counted tiles with unsaved changes, does not say what it
-/// counts.
+/// this bar a person can lose work by being wrong about.
 fn project(
     ui: &mut egui::Ui,
     session: &mut EditSession,
-    assets: &GameAssets,
     popovers: &mut Popovers,
     playing: bool,
-    // The queue a save's database writes go on. It is the only thing this
-    // section needs from the server beyond where the server is.
-    queue: &mut crate::server::queue::ServerQueue,
-    // Where the server is, for the half of a save that reaches it.
-    server: &crate::server::settings::ServerSettings,
-    // The progress line a publish's tile regeneration writes.
-    step: &crate::server::datadir::Step,
+    // Whether a server write is running. A publish's tile regeneration reads
+    // the folder a second publish would write, so Publish is disabled while
+    // one runs.
+    regenerating: bool,
     // Whether this editor is joined to another's shared session, whose host
-    // saves and publishes.
+    // publishes.
     joined: bool,
 ) {
-    // A publish's tile regeneration reads the folder a second publish would
-    // write, so Publish is disabled while one runs.
-    let regenerating = queue.busy();
-    let (mut ask_projects, mut ask_publish) = (false, false);
+    let (mut ask_projects, mut ask_settings, mut ask_publish) = (false, false, false);
     let menu = ui
         .menu_button(format!("Project: {}", session.project.name), |ui| {
             // Disabled while a playtest is running. Switching saves what is
@@ -393,6 +392,17 @@ fn project(
                 .clicked()
             {
                 ask_projects = true;
+                ui.close();
+            }
+            if ui
+                .button("Settings\u{2026}")
+                .on_hover_text(
+                    "This machine's settings: the world database, the vmangos map tools and the \
+                     drawing tablet. Kept under Edit\\, not in the project.",
+                )
+                .clicked()
+            {
+                ask_settings = true;
                 ui.close();
             }
             // Disabled while a playtest is running. Publishing writes a new
@@ -421,15 +431,53 @@ fn project(
         })
         .response
         .on_hover_text("The open project. Every edit is written into its folder.");
-    // Both windows are placed from the menu's button, tracked every frame so
-    // `--projects` can open one without a press. See `Popover::show`.
+    // The three windows are placed from the menu's button, tracked every
+    // frame so `--projects` and `--settings` can open one without a press.
+    // See `Popover::show`.
     popovers.project.track(&menu);
+    popovers.settings.track(&menu);
     popovers.publish.track(&menu);
     if ask_projects {
         popovers.project.show();
     }
+    if ask_settings {
+        popovers.settings.show();
+    }
     if ask_publish {
         popovers.publish.show();
+    }
+}
+
+/// The Save button, and the spinner beside it while a server write runs.
+///
+/// The button's label names what it will save, for example `Save 2 tiles and
+/// server rows`, or `Saved` when there is nothing. A bare count such as
+/// `Save 1`, which counted tiles with unsaved changes, does not say what it
+/// counts.
+///
+/// It is drawn in the right-to-left half of the bar, so the spinner is added
+/// first and stands to the right of the button.
+fn save(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    assets: &GameAssets,
+    playing: &mut Session,
+    in_world: bool,
+    // Whether this editor is joined to another's shared session, whose host
+    // saves.
+    joined: bool,
+) {
+    // The spinner's hover text is the step's name. The step's name is a
+    // sentence that changes every few seconds, and a bar whose width follows
+    // it would move everything beside it; the sentence and the fraction are
+    // on the status line's bar instead.
+    if playing.queue.busy() {
+        let line = playing.step.line();
+        let spinner = ui.add(egui::Spinner::new().size(14.0).color(theme::ACCENT));
+        match line.is_empty() {
+            true => spinner.on_hover_text("A server write is running."),
+            false => spinner.on_hover_text(line),
+        };
     }
 
     // Three kinds of unsaved work: tiles, tables and server rows. The same
@@ -465,7 +513,7 @@ fn project(
     // standing keeps the handles it has.
     if ui
         .add_enabled(anything, egui::Button::new(label))
-        .on_hover_text(match playing {
+        .on_hover_text(match in_world {
             true => format!(
                 "Write the tiles, tables and server rows you have changed into {}, then \
                  republish them to the running playtest. Ctrl+S.",
@@ -489,24 +537,11 @@ fn project(
         // the project, the statements run if Apply on save is on, and a
         // `.reload` for each table that can be made live. One call, because a
         // save is one gesture; see [`crate::server::save`].
-        crate::server::save(session, assets, server, queue);
-        if playing {
+        crate::server::save(session, assets, playing.server, playing.queue);
+        if in_world {
             crate::playtest::republish(session, assets);
             session.status = "saved and republished to the playtest".to_string();
         }
-    }
-
-    // A spinner beside Save while a server write runs, with the step's name on its hover
-    // text. The step's name is a sentence that changes every few seconds, and
-    // a bar whose width follows it would move everything to its right; the
-    // sentence and the fraction are on the status line's bar instead.
-    if regenerating {
-        let line = step.line();
-        let spinner = ui.add(egui::Spinner::new().size(14.0).color(theme::ACCENT));
-        match line.is_empty() {
-            true => spinner.on_hover_text("A server write is running."),
-            false => spinner.on_hover_text(line),
-        };
     }
 }
 

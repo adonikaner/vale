@@ -1,4 +1,6 @@
-//! The height brush: raise, lower, flatten, smooth.
+//! The height brush and its ten modes: Raise, Lower, Flatten, Smooth, Noise,
+//! Blur, Terrace, Erode, Mountain and Crevice. What each mode does to the
+//! ground is in `vale_edit::ops::brush`.
 //!
 //! ## The edit loop
 //!
@@ -19,7 +21,7 @@
 //!
 //! None of the five runs during a playtest. See [`crate::playtest`].
 //!
-//! ## What the tool does besides the five brush modes
+//! ## What the tool does besides the brush modes
 //!
 //! ```text
 //! flatten        to the height under the pointer or a typed one; both ways,
@@ -110,6 +112,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use vale_edit::ops::vertices::{Mask, Selected};
 use vale_edit::ops::Edit;
 use vale_edit::ops::brush::{Brush, Falloff, Mode, Shape};
+use vale_edit::ops::lattice::Lattice;
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
@@ -137,13 +140,16 @@ pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOC
 /// previous ceiling of 60 was a guess.
 pub(crate) const STRENGTH: std::ops::RangeInclusive<f32> = 0.0..=100_000.0;
 
-/// How strong the height brush may be for flatten and smooth, the two modes
-/// that converge on a height rather than climb.
+/// How strong the height brush may be for the modes that do not climb
+/// (`Mode::climbs`): Flatten, Smooth, Blur and Terrace, which move toward a
+/// height, and Erode.
 ///
-/// The unit is a fraction of the remaining distance a second, and
-/// `Brush::moved` clamps one step to 1.0 of it. At sixty frames a second any
-/// value above about 60 already covers the whole distance in one frame. The
-/// range is wide only so that no typed value is refused.
+/// For the first four the unit is a fraction of the remaining distance a
+/// second, and `Brush::moved` clamps one step to 1.0 of it, so at sixty frames
+/// a second any value above about 60 covers the whole distance in one frame.
+/// For Erode it is drops a second for each vertex under the brush, or
+/// collapse passes a second. The range is wide only so that no typed value is
+/// refused.
 pub(crate) const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 
 /// The terrain tool's settings.
@@ -280,6 +286,9 @@ struct Held {
     /// difference on a side; the release shades these again from both tiles.
     /// See [`shade_seams`].
     sides: BTreeSet<Cell>,
+    /// A number that changes every step of a stroke, from which Erode picks
+    /// where that step's drops of water start. See `Brush::goal`.
+    steps: u32,
 }
 
 pub(crate) struct TerrainToolPlugin;
@@ -332,21 +341,40 @@ impl Plugin for TerrainToolPlugin {
 
 /// The number row on the height brush.
 ///
-/// Unshifted digits cover the two long rows; shifted digits cover the short
-/// one. 1..5 are the five modes, 6..0 the five falloffs, and `Shift`+1..3 the
-/// three shapes: the panel's own rows in the panel's own order, so the panel
-/// shows which key does what. See [`crate::tools::modes`].
+/// 1..5 are the first five modes and 6..0 the five falloffs. `Shift`+1..3 are
+/// the three shapes and `Shift`+4..8 the other five modes. The first five
+/// modes, the falloffs and the shapes kept the keys they had before the other
+/// five modes were added, and the shading brush lays out its own number row
+/// the same way. [`mode_key`] names a mode's key for the panels. See
+/// [`crate::tools::modes`].
 fn modes(row: crate::tools::modes::NumberRow, mut terrain: ResMut<Terrain>) {
     let Some(press) = row.read(&[Tool::Terrain]) else { return };
     let Some(at) = press.digit else { return };
-    if press.shift {
-        if let Some(&(_, shape)) = SHAPES.get(at) {
-            terrain.brush.shape = shape;
+    match press.shift {
+        true if at < SHAPES.len() => terrain.brush.shape = SHAPES[at].1,
+        true => {
+            if let Some(&(_, mode)) = MODES.get(UNSHIFTED + at - SHAPES.len()) {
+                terrain.brush.mode = mode;
+            }
         }
-    } else if let Some(&(_, mode)) = MODES.get(at) {
-        terrain.brush.mode = mode;
-    } else if let Some(&(_, falloff)) = FALLOFFS.get(at - MODES.len()) {
-        terrain.brush.falloff = falloff;
+        false if at < UNSHIFTED => terrain.brush.mode = MODES[at].1,
+        false => {
+            if let Some(&(_, falloff)) = FALLOFFS.get(at - UNSHIFTED) {
+                terrain.brush.falloff = falloff;
+            }
+        }
+    }
+}
+
+/// How many of [`MODES`] are on the unshifted digits.
+const UNSHIFTED: usize = 5;
+
+/// The key that chooses the mode at `index` in [`MODES`], for a panel's hover
+/// text. See [`modes`].
+pub(crate) fn mode_key(index: usize) -> String {
+    match index < UNSHIFTED {
+        true => format!("Key {}.", index + 1),
+        false => format!("Shift + {}.", index - UNSHIFTED + SHAPES.len() + 1),
     }
 }
 
@@ -392,9 +420,9 @@ fn stroke(
                 // decades, so a fixed step is too small at the top or too large
                 // at the bottom. The floor lets the value rise from zero, which
                 // multiplication alone cannot do.
-                let range = match terrain.brush.mode {
-                    Mode::Raise | Mode::Lower => STRENGTH,
-                    _ => RATE,
+                let range = match terrain.brush.mode.climbs() {
+                    true => STRENGTH,
+                    false => RATE,
                 };
                 terrain.brush.strength =
                     (terrain.brush.strength.max(0.01) * step).clamp(*range.start(), *range.end());
@@ -485,12 +513,22 @@ fn stroke(
                 false => [0.0; 2],
             };
         }
+        // The terrace steps are measured from the height where the stroke
+        // begins, for the reason the flatten target is set here.
+        if let Mode::Terrace { .. } = terrain.brush.mode {
+            terrain.brush.mode = Mode::Terrace { from: at.z };
+        }
         let label = match terrain.brush.mode {
             Mode::Raise => "Raise terrain",
             Mode::Lower => "Lower terrain",
             Mode::Flatten { .. } => "Flatten terrain",
             Mode::Smooth => "Smooth terrain",
             Mode::Noise => "Roughen terrain",
+            Mode::Blur => "Blur terrain",
+            Mode::Terrace { .. } => "Terrace terrain",
+            Mode::Erode => "Erode terrain",
+            Mode::Mountain => "Raise mountain",
+            Mode::Crevice => "Dig crevice",
         };
         session.history.begin(label);
         held.on = true;
@@ -533,6 +571,22 @@ fn stroke(
         }
         _ => None,
     };
+    // Blur and Erode read each vertex's neighbours, across chunk and tile
+    // borders. The ground they read is gathered from every open tile once,
+    // before any tile moves, and each tile is then moved toward the one goal,
+    // so a vertex on a border moves alike in both files. See
+    // `vale_edit::ops::lattice`.
+    let goal = brush.mode.reads_neighbours().then(|| {
+        let reach = brush.reach();
+        let mut ground = Lattice::around([at.x, at.y], reach);
+        for coord in tiles_in_range(reach, at) {
+            if let Some(tile) = session.tiles.get(&coord) {
+                ground.gather(tile);
+            }
+        }
+        held.steps = held.steps.wrapping_add(1);
+        brush.goal(&ground, [at.x, at.y], seconds, held.steps)
+    });
     for coord in tiles_under(&brush, at) {
         let key = session.key(coord);
         let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -556,7 +610,10 @@ fn stroke(
             (true, Some(set)) => Some((set, Mask::Confine)),
             (false, _) => None,
         };
-        let mut edits = brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask);
+        let mut edits = match &goal {
+            Some(goal) => brush.stroke_over(tile, [at.x, at.y], seconds, goal, mask),
+            None => brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask),
+        };
         session.hold_locked(coord, &mut edits);
         if edits.is_empty() {
             continue;
@@ -1657,6 +1714,11 @@ fn draw_brush(
         Mode::Flatten { .. } => Color::srgb(0.4, 0.7, 1.0),
         Mode::Smooth => Color::srgb(0.9, 0.9, 0.4),
         Mode::Noise => Color::srgb(0.8, 0.5, 0.9),
+        Mode::Blur => Color::srgb(0.7, 0.9, 0.7),
+        Mode::Terrace { .. } => Color::srgb(0.95, 0.75, 0.45),
+        Mode::Erode => Color::srgb(0.45, 0.8, 0.85),
+        Mode::Mountain => Color::srgb(0.75, 0.75, 0.8),
+        Mode::Crevice => Color::srgb(0.85, 0.4, 0.45),
     };
     // Two rings: the radius, and the core inside it (see [`rings`]). Both
     // follow the ground rather than lying flat.
@@ -1810,22 +1872,32 @@ pub(crate) fn ring(
     }
 }
 
-/// How many yards across a bump may be, for [`Mode::Noise`].
+/// How many yards across a feature may be, for [`Mode::Noise`],
+/// [`Mode::Mountain`] and [`Mode::Blur`].
 ///
-/// The floor is the 4.17 yards between vertices: below that the lattice is finer
-/// than the ground can express and the result is the white noise this replaced.
-/// The ceiling is six chunks, past which one brush sits inside a
-/// single feature and the stroke is a raise or a lower depending on where it
+/// The floor is the 4.17 yards between outer vertices: below that the noise is
+/// finer than the ground can show, and Blur removes nothing the vertices can
+/// hold. The ceiling is six chunks, past which one brush sits inside a single
+/// feature and a Noise stroke is a raise or a lower depending on where it
 /// landed.
 pub(crate) const SCALE: std::ops::RangeInclusive<f32> = 4.17..=200.0;
 
-/// The five modes, as a list a panel can offer.
-pub(crate) const MODES: [(&str, Mode); 5] = [
+/// How tall a step of [`Mode::Terrace`] may be, in yards.
+pub(crate) const STEP: std::ops::RangeInclusive<f32> = 0.5..=200.0;
+
+/// The ten modes, as a list a panel can offer. The first five are on keys 1
+/// to 5 and the rest on `Shift`+4 to 8; see [`mode_key`].
+pub(crate) const MODES: [(&str, Mode); 10] = [
     ("Raise", Mode::Raise),
     ("Lower", Mode::Lower),
     ("Flatten", Mode::Flatten { to: 0.0 }),
     ("Smooth", Mode::Smooth),
     ("Noise", Mode::Noise),
+    ("Blur", Mode::Blur),
+    ("Terrace", Mode::Terrace { from: 0.0 }),
+    ("Erode", Mode::Erode),
+    ("Mountain", Mode::Mountain),
+    ("Crevice", Mode::Crevice),
 ];
 
 /// The five falloffs, as a list a panel can offer.

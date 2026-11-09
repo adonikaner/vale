@@ -1,6 +1,7 @@
 //! The windows the top bar's buttons and menu entries open: go-to, add
-//! bookmark, playtest login, the project dialog, the server panel, the
-//! publish popover and the shared session's popover. Each holds text fields.
+//! bookmark, the Playtest popover, the project dialog, the Server panel, the
+//! publish popover, the Settings window and the shared session's popover.
+//! Each holds text fields.
 //!
 //! An editor joined to another's session sees the server panel and the
 //! publish popover disabled, with a line saying the host does those: its
@@ -42,19 +43,21 @@ pub(crate) struct Popovers {
     pub(crate) go_to: Popover,
     /// Naming the current view and keeping it. See [`crate::prefs::bookmarks`].
     pub(crate) bookmark: Popover,
+    /// Who a playtest logs in as, on which server, and whether its client
+    /// keeps the query cache.
     pub(crate) login: Popover,
     /// Which project is open, and making another one.
     pub(crate) project: Popover,
-    /// Where this machine's server is, and what this project has done to it.
+    /// What this project has done to the server.
     pub(crate) server: Popover,
     /// The patch a publish is about to write: its name, and the button.
     pub(crate) publish: Popover,
     /// Hosting or joining a shared session. See [`super::session`].
     pub(crate) session: Popover,
+    /// This machine's settings. See [`super::settings`].
+    pub(crate) settings: Popover,
     /// The name typed into the publish popover. Empty means the UTC stamp.
     pub(crate) patch_name: String,
-    /// Which tab of the server popover is showing.
-    pub(crate) server_tab: ServerTab,
     /// The *Server tile files* dialog, opened from the server popover.
     pub(crate) tile_files: super::tilefiles::TileFiles,
     /// Whether `--server` has already opened the server popover. Its anchor is
@@ -64,6 +67,8 @@ pub(crate) struct Popovers {
     pub(crate) server_shown_once: bool,
     /// The same for `--session` and the Session popover.
     pub(crate) session_shown_once: bool,
+    /// The same for `--settings` and the Settings window.
+    pub(crate) settings_shown_once: bool,
 }
 
 /// One popover: whether it is open and where its button is.
@@ -143,6 +148,7 @@ impl Popovers {
             &mut self.publish,
             &mut self.bookmark,
             &mut self.session,
+            &mut self.settings,
         ]
         .into_iter()
         .enumerate()
@@ -188,9 +194,13 @@ pub(crate) fn draw(
     // The shared session, for its popover and for whether this editor is
     // joined to another's.
     collab: &mut crate::collab::Collab,
+    // The drawing tablet's settings and what the pen is doing, for the
+    // Settings window. See [`crate::tablet`].
+    tablet: &mut crate::tablet::Tablet,
+    pen: &crate::tablet::Pen,
 ) -> Vec<egui::Rect> {
     let mut rects = Vec::new();
-    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 7];
+    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 8];
     let joined = collab.is_joined();
 
     if popovers.go_to.open {
@@ -218,7 +228,7 @@ pub(crate) fn draw(
         }
     }
     if popovers.login.open {
-        if let Some(response) = window(ctx, "playtest-login", popovers.login.under, |ui| {
+        if let Some(response) = window(ctx, "playtest", popovers.login.under, |ui| {
             who(ui, login, server, assets, collab);
         }) {
             seen[1] = (true, response);
@@ -267,12 +277,12 @@ pub(crate) fn draw(
     }
     if popovers.server.open {
         let mut ask_tile_files = false;
+        let mut ask_settings = false;
         // In a shared session the Server panel's own buttons say what this
         // editor may write to its server. See `crate::collab::ServerGate`.
         if let Some(response) = window(ctx, "server", popovers.server.under, |ui| {
             the_server(
                 ui,
-                &mut popovers.server_tab,
                 session,
                 assets,
                 server,
@@ -282,6 +292,7 @@ pub(crate) fn draw(
                 playing,
                 step,
                 &mut ask_tile_files,
+                &mut ask_settings,
                 &collab.server_gate(),
             );
         }) {
@@ -292,6 +303,20 @@ pub(crate) fn draw(
         if ask_tile_files {
             popovers.server.open = false;
             popovers.tile_files.show();
+        }
+        // The Settings window opens in the panel's place, under the
+        // Project menu where it is anchored.
+        if ask_settings {
+            popovers.server.open = false;
+            popovers.settings.show();
+        }
+    }
+    if popovers.settings.open {
+        if let Some(response) = window(ctx, "settings", popovers.settings.under, |ui| {
+            super::settings::panel(ui, assets, server, queue, tablet, pen);
+        }) {
+            seen[7] = (true, response);
+            rects.push(response);
         }
     }
     if let Some(whole) = super::tilefiles::draw(ctx, &mut popovers.tile_files, session, assets, server, queue, standings) {
@@ -486,40 +511,26 @@ fn the_patch(
     close
 }
 
-/// Which half of the server popover is showing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum ServerTab {
-    /// What this project has done to the server, and the operations on it.
-    #[default]
-    Project,
-    /// Where this machine's server and its map tools are.
-    Setup,
-}
-
-/// The server popover: what this project has done to the server, and where
-/// this machine's server is.
+/// The server popover: what this project has done to the server.
 ///
-/// The panel has two tabs. *This project* is what a person opens it for
-/// during work: the Apply on save switch, one block per subject with its
+/// The panel holds the Apply on save switch, one block per subject with its
 /// Apply and Put back ([`super::sync`]), the regeneration of the server's
-/// tiles, and the migration. *Setup* is set once per machine: the
-/// `mangosd.conf` the connection is read from, and the folder of the four
-/// vmangos map tools. The line above the tabs says whether there is a
-/// database, so the answer to the most common question is on both tabs.
+/// tiles, and the migration. The line at the top says whether there is a
+/// database.
+///
+/// Where the database and the map tools are is set in the Settings window
+/// ([`super::settings`]), because those are settings of this machine and not
+/// of the project. With no database, the panel says so and has a Settings…
+/// button that opens the window.
 ///
 /// Two kinds of control are not here. The publish switches (regenerate the
 /// server's tiles, copy the client archive into `Data\`) are in the publish
 /// popover, beside the button they change. The query cache switch is in the
-/// playtest login popover, since it changes what a playtest's client does
-/// and nothing about the server.
-///
-/// The panel is on the top bar rather than in the project dialog. The
-/// connection is a setting of this machine and not of the project, so it does
-/// not belong in a per-project window.
+/// Playtest popover, since it changes what a playtest's client does and
+/// nothing about the server.
 #[allow(clippy::too_many_arguments)]
 fn the_server(
     ui: &mut egui::Ui,
-    tab: &mut ServerTab,
     session: &mut crate::session::EditSession,
     assets: &vale_client::assets::GameAssets,
     server: &mut crate::server::settings::ServerSettings,
@@ -536,6 +547,8 @@ fn the_server(
     // Set when the Server tile files button is pressed; the caller opens the
     // dialog. See [`super::tilefiles`].
     ask_tile_files: &mut bool,
+    // Set when the Settings… button is pressed; the caller opens the window.
+    ask_settings: &mut bool,
     // Whether this editor may write to its server in a shared session. See
     // `crate::collab::ServerGate`.
     gate: &crate::collab::ServerGate,
@@ -561,34 +574,24 @@ fn the_server(
             }
         }
     });
-    ui.add_space(4.0);
-    ui.allocate_ui(egui::vec2(ui.available_width(), 26.0), |ui| {
-        theme::segmented(
-            ui,
-            tab,
-            &[("This project", ServerTab::Project), ("Setup", ServerTab::Setup)],
-            |a, b| a == b,
-        );
-    });
     ui.add_space(6.0);
-    match tab {
-        ServerTab::Project => {
-            if server.resolve().is_none() {
-                ui.horizontal(|ui| {
-                    theme::note(ui, "No world database is set, so nothing can be applied.");
-                    if ui.small_button("Setup").clicked() {
-                        *tab = ServerTab::Setup;
-                    }
-                });
+    if server.resolve().is_none() {
+        ui.horizontal(|ui| {
+            theme::note(ui, "No world database is set, so nothing can be applied.");
+            if ui
+                .small_button("Settings\u{2026}")
+                .on_hover_text("Set this machine's world database and map tools.")
+                .clicked()
+            {
+                *ask_settings = true;
             }
-            this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files, gate);
-        }
-        ServerTab::Setup => setup(ui, assets, server, queue),
+        });
     }
+    this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files, gate);
 }
 
-/// The *This project* tab: every server operation of the project, then the
-/// server's tiles and the migration.
+/// Every server operation of the project, then the server's tiles and the
+/// migration.
 #[allow(clippy::too_many_arguments)]
 fn this_project(
     ui: &mut egui::Ui,
@@ -670,7 +673,8 @@ fn this_project(
     theme::note(
         ui,
         "Writes maps, vmaps and mmaps under the server's DataDir with the four map tools \
-         set under Setup. To regenerate selected tiles only, use Server files in Edit Map.",
+         set in Project \u{2192} Settings\u{2026}. To regenerate selected tiles only, use Server \
+         files in Edit Map.",
     );
     ui.horizontal(|ui| {
         if ui
@@ -725,188 +729,6 @@ fn this_project(
             standings.forget();
         }
         ui.label(egui::RichText::new(last).small().color(theme::INK_DIM));
-    });
-}
-
-/// The *Setup* tab: where this machine's world database and map tools are.
-fn setup(
-    ui: &mut egui::Ui,
-    assets: &vale_client::assets::GameAssets,
-    server: &mut crate::server::settings::ServerSettings,
-    queue: &mut crate::server::queue::ServerQueue,
-) {
-    use crate::server::settings::Source;
-
-    theme::note(
-        ui,
-        "vmangos reads world data from a database, not from the archives, so a spell edit \
-         changes a file for the client and a row for the server. These two settings belong \
-         to this machine and are stored in Edit\\server.txt, not in the project.",
-    );
-
-    // ---- the world database.
-    theme::heading(ui, "World database");
-    let found = server.resolve();
-    let from_env = matches!(found, Some((_, Source::Env(_))));
-    setting_row(ui, "mangosd.conf", |ui| {
-        let field = ui.add_enabled(
-            !from_env,
-            egui::TextEdit::singleline(&mut server.conf)
-                .desired_width(ui.available_width() - 60.0)
-                .hint_text("C:\\MaNGOS"),
-        );
-        // The setting is written when the box loses focus, not on every
-        // keystroke. A file rewritten per character is written while the
-        // person is still deciding what to type.
-        if field.lost_focus() {
-            server.conf = server.conf.trim().to_string();
-            server.save(&assets.root);
-            server.tried = None;
-        }
-        if ui
-            .add_enabled(found.is_some() && !queue.testing(), egui::Button::new("Test"))
-            .on_hover_text("Connect to the world database and count its rows. Changes nothing.")
-            .on_disabled_hover_text("No world database is set.")
-            .clicked()
-        {
-            // The test runs on a worker, so a server that is not answering
-            // holds the button and not the window. See
-            // [`crate::server::queue`].
-            if let Some((at, _)) = server.resolve() {
-                queue.test(at);
-            }
-        }
-    });
-    theme::note(
-        ui,
-        "The vmangos folder or its mangosd.conf. The connection is read from the \
-         WorldDatabase.Info line, so the password stays in mangosd.conf and is not \
-         stored by this editor.",
-    );
-    match &found {
-        Some((at, source)) => {
-            ui.label(
-                egui::RichText::new(format!("{}  ({})", at.line(), source.line()))
-                    .small()
-                    .color(theme::GOOD),
-            );
-        }
-        None => {
-            ui.label(
-                egui::RichText::new("no world database: changes are written to sql\\ and not applied")
-                    .small()
-                    .color(theme::WARN),
-            );
-        }
-    }
-    // Say when the environment overrides the box, rather than leaving a field
-    // that accepts typing and does nothing. The precedence is in `settings`.
-    if from_env {
-        theme::note(
-            ui,
-            "VALE_WORLDDB or VALE_MANGOSD is set and overrides this field, so the field \
-             is disabled. Unset both to use the field.",
-        );
-    }
-    if let Some(done) = queue.tested() {
-        server.tried = Some(done);
-    }
-    if queue.testing() {
-        theme::waiting(ui, "connecting\u{2026}");
-    }
-    match &server.tried {
-        Some(Ok(line)) => {
-            ui.label(egui::RichText::new(line).small().color(theme::GOOD));
-        }
-        Some(Err(e)) => {
-            ui.label(egui::RichText::new(e).small().color(theme::BAD));
-        }
-        None => {}
-    }
-
-    // ---- the map tools, which build the server's tiles.
-    ui.add_space(10.0);
-    theme::heading(ui, "Map tools");
-    let tools_from_env = std::env::var_os(vale_mangos::datadir::TOOLS_ENV).is_some();
-    setting_row(ui, "vmangos tools", |ui| {
-        let field = ui.add_enabled(
-            !tools_from_env,
-            egui::TextEdit::singleline(&mut server.tools)
-                .desired_width(ui.available_width())
-                .hint_text("C:\\vmangos\\core\\bin\\Release"),
-        );
-        if field.lost_focus() {
-            server.tools = server.tools.trim().to_string();
-            server.save(&assets.root);
-        }
-    });
-    theme::note(
-        ui,
-        "The folder holding mapextractor, vmapextractor, VMapAssembler and \
-         MoveMapGenerator from a patched build. Use a Release build: the navmesh \
-         generator takes minutes per tile when optimised and is too slow otherwise.",
-    );
-    if tools_from_env {
-        theme::note(
-            ui,
-            "VALE_VMANGOS_TOOLS is set and overrides this field, so the field is disabled.",
-        );
-    }
-    // The tools folder is checked once per folder, not once per frame: the
-    // check runs both extractors for their usage text. See
-    // `ServerSettings::tools_status`.
-    let asked = std::env::var(vale_mangos::datadir::TOOLS_ENV)
-        .unwrap_or_else(|_| server.tools.trim().to_string());
-    if server.tools_status.as_ref().map(|(dir, _)| dir.as_str()) != Some(asked.as_str()) {
-        let status = crate::server::datadir::tools(server).and_then(|tools| {
-            tools.check_patched()?;
-            Ok(format!(
-                "found, patched{}",
-                match (&tools.off_mesh, &tools.config) {
-                    (Some(_), Some(_)) => "; offmesh.txt and config.json found",
-                    (None, None) => {
-                        "; offmesh.txt and config.json not found; the navmesh is built \
-                         without them"
-                    }
-                    (Some(_), None) => "; config.json not found",
-                    (None, Some(_)) => "; offmesh.txt not found",
-                }
-            ))
-        });
-        server.tools_status = Some((asked, status));
-    }
-    match server.tools_status.as_ref().map(|(_, status)| status) {
-        Some(Ok(line)) => {
-            ui.label(egui::RichText::new(line).small().color(theme::GOOD));
-        }
-        Some(Err(e)) => {
-            ui.label(egui::RichText::new(e).small().color(theme::WARN));
-        }
-        None => {}
-    }
-    match crate::server::datadir::data_dir(server) {
-        Ok(dir) => {
-            ui.label(
-                egui::RichText::new(format!("DataDir {}", dir.display()))
-                    .small()
-                    .color(theme::INK_DIM),
-            );
-        }
-        Err(e) => {
-            ui.label(egui::RichText::new(e).small().color(theme::WARN));
-        }
-    }
-}
-
-/// One setting of the Setup tab: its name in a fixed column wide enough for
-/// the longest, then the control.
-fn setting_row(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [96.0, ui.spacing().interact_size.y],
-            egui::Label::new(egui::RichText::new(label).color(theme::INK_DIM)).selectable(false),
-        );
-        contents(ui);
     });
 }
 
@@ -1379,7 +1201,11 @@ fn window(
     contents: impl FnOnce(&mut egui::Ui),
 ) -> Option<egui::Rect> {
     let room = (ctx.viewport_rect().bottom() - under.y - 24.0).max(160.0);
+    // In front of the areas over the viewport (Select and Measure, a tool's
+    // toolbar), which are at the middle order. A popover under the Project
+    // menu covers the viewport's top-left corner, where those are drawn.
     egui::Window::new(id)
+        .order(egui::Order::Foreground)
         .title_bar(false)
         .resizable(false)
         .fixed_pos(under)
@@ -1636,8 +1462,9 @@ fn playtest_server(ui: &mut egui::Ui, collab: &mut crate::collab::Collab) {
     }
 }
 
-/// The playtest login popover: who a playtest logs in as, whether it shows the
-/// login screen, and whether its client caches query answers.
+/// The Playtest popover: in a shared session the server a playtest logs in
+/// to, then who it logs in as, whether it shows the login screen, and whether
+/// its client caches query answers. Every setting of a playtest is here.
 ///
 /// The login fields are not settings of the editor's own. The account is
 /// `WTF\Config.wtf`'s `accountName`, the character is `VALE_CHARACTER` or
@@ -1654,6 +1481,8 @@ fn who(
     collab: &mut crate::collab::Collab,
 ) {
     ui.set_min_width(300.0);
+    ui.label(egui::RichText::new("Playtest").strong().size(14.0));
+    ui.add_space(4.0);
     // In a shared session a joined editor chooses which server the playtest
     // logs in to. See `crate::collab::PlaytestServer`.
     if matches!(collab.state, crate::collab::State::Joined { .. }) {

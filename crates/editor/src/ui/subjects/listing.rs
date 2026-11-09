@@ -80,7 +80,7 @@ pub(crate) fn heading(
         theme::note(
             ui,
             "These are rows in the vmangos world database. Set the database connection \
-             in Server\u{2026} on the top bar, or with VALE_MANGOSD.",
+             in Project \u{2192} Settings\u{2026}, or with VALE_MANGOSD.",
         );
         return false;
     }
