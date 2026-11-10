@@ -29,7 +29,7 @@ cargo run -p vale-ide -- --project <name>           # open or create a project
 | `--without <layers>`, `--overlay <names>`, `--navmesh`, `--guides <names>` | Start with those view bar switches set. `--guides` takes `chunks`, `tiles`, `slope`, `contours` and `texturecount`. The status line prints the current set in this form. |
 | `--size WxH` | Window size. |
 | `--character <name>` | Character a playtest logs in as. |
-| `--tiles`, `--projects`, `--settings`, `--server`, `--session` | Open the map window, the Projects dialog, the Settings window, the Server panel or the session popover. |
+| `--tiles`, `--projects`, `--settings`, `--changes`, `--server`, `--session` | Open the map window, the Projects dialog, the Settings window, the Changes window, the Server panel or the session popover. |
 | `--new-map` | Open the New map dialog. |
 | `--spawn <guid>`, `--object <guid>` | Open Creatures or Objects on that spawn, with the camera on it. |
 | `--item <entry or name>`, `--quest <entry or title>` | Open Items or Quests on that row. |
@@ -43,7 +43,7 @@ cargo run -p vale-ide -- --project <name>           # open or create a project
 | `--join <address>` | Join the shared session at that address once the map is open. |
 | `--session-name <name>`, `--session-password <password>` | Fill the session popover's "Name" and "Password" fields. |
 | `--publish [name]` | Write a patch at startup, as "Publish…" does. |
-| `--regenerate`, `--migration` | Run "Regenerate changed tiles" or "Write migration" from the Server panel. |
+| `--regenerate`, `--migration` | Run "Regenerate Changed Tiles" or "Write migration" from the Server panel. |
 | `--apply <subject>`, `--revert <subject>` | Press "Apply" or "Restore" on one Server panel subject: `creatures`, `gameobjects`, `items`, `quests`, `loot`, `services`, `addons`, `formations`, `pools`, `gameevents`, `behaviour`, `conditions`, `gossip`, `maps`, `triggers` or `graveyards`. Each may be given more than once. |
 | `--revert` | Restore the client-table rows the project applied to the database. |
 
@@ -62,6 +62,9 @@ It holds every file and database row the project changes:
   server rows, and `editor\`, the editor's own files such as vertex and
   placement locks. `editor\` is never published.
 - `publish\` holds published patches and migrations.
+- `log\` holds the project's log: every edit made in the project, with who
+  made it and when, and the changelists (see
+  [Changes and history](#changes-and-history)). The log is never published.
 - `settings.txt` holds the project's switches.
 
 The editor opens the project named by `--project`, otherwise the one named in
@@ -72,28 +75,39 @@ The "Project: <name>" menu on the top bar holds "Projects…", "Settings…"
 (see [Settings](#settings)) and "Publish…". "Projects…" opens the Projects
 dialog:
 
-- "Open project" shows the open project's name, how many files it holds, its
-  unsaved tiles and tables, and "Clear files". Under them its files are listed
+- "Open Project" shows the open project's name, how many files it holds, its
+  unsaved tiles and tables, and "Clear Files". Under them its files are listed
   by group: "Tiles", "Client tables", "Server", "Files", "Server records" and
   "Published".
-- "Other projects" lists the rest, with "Open" and "Delete".
-- "New project" takes a name and has "Create and open".
+- "Other Projects" lists the rest, with "Open" and "Delete".
+- "New Project" takes a name and has "Create and Open".
 
-"Clear files" asks for confirmation with "Permanently delete", and "Delete"
-asks with "Delete project". A project that has applied rows to the database
+"Clear Files" asks for confirmation with "Permanently Delete", and "Delete"
+asks with "Delete Project". A project that has applied rows to the database
 lists them. Before it can be cleared or deleted, either restore those rows
-first ("Restore first" opens the Server panel for the open project) or type
-the project's name under "name". Switching project saves first and empties the
-undo stack. "Projects…" and "Publish…" are unavailable during a playtest.
+first ("Restore First" opens the Server panel for the open project) or type
+the project's name under "Name". "Clear Files" deletes the project's history
+(`log\`) with its files, and keeps its published patches (`publish\`) and, for
+a copy of a host's project, the link to the host. "Delete Project" deletes
+everything. Either one also forgets the rows the project held in each world
+database's record, so other projects can apply them. Switching project saves
+first and empties the undo stack. "Projects…" and "Publish…" are unavailable
+during a playtest. In a shared session "Clear Files" is unavailable, and a
+joined editor cannot open another project.
 
 ### Saving and undo
 
 Ctrl+S or the Save button writes changed tiles and tables into the project
-folder, and writes the SQL for each server subject. The button says what is
+folder, and writes the SQL for each server subject. Every save writes the
+whole project: a switch of map or project, a playtest, a publish, a server
+tile regeneration and an Apply save everything first, and each save submits
+your edits (see [Changes and history](#changes-and-history)). The button says what is
 unsaved, for example "Save 2 tiles and 1 table" or "Save 2 tiles and server
 rows", and reads "Saved" when nothing is owed. A spinner beside it shows while
 a server write runs. In a shared session a joined editor's button reads
-"Saved by the host" (see [Shared sessions](#shared-sessions)).
+"Saved by the host" (see [Shared sessions](#shared-sessions)). Unsaved edits
+are discarded from the Changes window (see
+[Changes and history](#changes-and-history)).
 
 Ctrl+Z and Ctrl+Y undo and redo. One stack covers tiles, tables and server
 rows. Under the tool's name the inspector shows "Undo" and "Redo" buttons and
@@ -102,16 +116,94 @@ redo do nothing during a playtest.
 
 The Ctrl shortcuts (S, Z, Y, P, E, D) use the left Ctrl key.
 
+### Changes and history
+
+Every edit is written to the project's log as it is made, under the name in
+the session popover's "Name" field. An install keeps one author id in
+`Edit\author.txt`, so two people with the same name are told apart. A
+changelist is a run of one person's edits with a description.
+
+The log also records, for each tile, client table and the server rows, up to
+which edit the project's files hold it. The edits after that are its unsaved
+edits.
+
+"Changes" on the top bar opens the Changes window. Its label counts your edits
+that are in no changelist, for example "Changes · 12", and reads "Changes · 2
+conflicts" in amber while conflicts are listed. The window has three tabs:
+
+- "Changes": "Unsaved (<n>)", each unsaved tile, table and "Server rows" with
+  "Discard", then a description field, "Save" and "Discard All". "Save" saves
+  as Ctrl+S does. Every save submits your edits since the last one as a
+  changelist, with the description or none, so the project's files hold
+  exactly its changelists. "Discard" takes back your unsaved edits of one
+  subject, and "Discard All" of every subject, so they are as the project's
+  files hold them; the edits taken back are new edits in the log, and in a
+  shared session they reach the other editors. Another person's edits are
+  theirs, and Discard leaves them. Edits that are all undone or discarded
+  again change nothing: the subjects are no longer unsaved, the count goes
+  back to none, and no changelist is made of them.
+  Under them, "Conflicts", each with "Reapply" and "Keep Current" (see
+  below). A joined editor's tab instead counts the edits sent since its last
+  Submit and has a description field, "Submit", which asks the host to put
+  them in a changelist, and "Discard All", which takes back every edit of
+  yours in no changelist. The host saves, and a joined editor's edits that
+  are all undone or discarded again are withdrawn by the host, so the count
+  goes back to none.
+- "History": "Not Submitted", how many edits each person has in no
+  changelist, with "Take Back" beside another person who is not in the
+  session (see [Unsubmitted edits](#unsubmitted-edits)), then "Changelists",
+  newest first. Each shows its description,
+  number, author, date and time (UTC) and how many edits it holds, with
+  "Show Details" and "Revert". "Show Details" lists each edit's name and what it
+  changed: per tile, which parts of how many chunks (shape, shading, paint,
+  water, holes, area, flags) and how many doodads and buildings; each client
+  table field and server column before and after; each table record added or
+  removed; each file written or removed.
+
+When the editor closed without saving edits the log holds, the Changes tab
+opens with "<n> edits in the project's log are not in its files", with
+"Restore", which applies them again as unsaved edits, and "Discard".
+
+The "Targets" tab shows where the project has been written, read from each
+place's own record:
+
+- "World Database": the database, and how many rows each subject has applied
+  to it, with "Open Server Panel".
+- "Server DataDir": the folder, and how many tile files and server DBC files
+  this project wrote there and how many tiles it built.
+- "Releases": the last patch and the edit of the log it was made from, how
+  many patches there are, and the last migration, with "Publish…".
+
+"Revert" makes the inverse of the changelist's edits as new edits of yours,
+newest first. A tile, table, server row or file that another edit changed
+after the changelist is left alone and listed under "Conflicts", named by its
+subject ("Azeroth 32_48", "Spell.dbc") and "Revert of changelist <n>". The
+description field is filled with "Revert changelist <n>: <description>". A
+revert is not on the undo stack; revert the changelist it was submitted in
+instead.
+
+For each conflict, "Reapply" makes the edits again over the current version,
+so the subject ends as the edits left it, and "Keep Current" drops them.
+Terrain heights and vertex colours are the exception: Reapply adds the edit's
+change to the ground as it is now and reshades it, so a change made there
+since stays under it. A stroke's heights, its vertex colours, its water and
+its paint are each always one conflict, even across tiles, because applying
+half of them would leave a gap in the ground, or a line of colour, water or
+paint, where the chunks meet. Reapply cannot be used on a client table record
+that was added or removed; the status line says so and the conflict stays
+listed.
+
 ## The screen
 
 - Top bar, on the left:
   - the "Project: <name>" menu ("Projects…", "Settings…", "Publish…");
-  - the "Map: <name> (<id>)" menu ("New map…", "Map properties…", "Open map",
-    "Edit Map…", "Go to…", "Bookmarks");
+  - the "Map: <name> (<id>)" menu ("New Map…", "Map Properties…", "Open Map",
+    "Edit Map…", "Go To…", "Bookmarks");
   - the workspace control (see below).
 - Top bar, on the right, in the order an edit reaches them:
   - the session button, "Session…" with no session (see
     [Shared sessions](#shared-sessions));
+  - "Changes" (see [Changes and history](#changes-and-history));
   - Save (see [Saving and undo](#saving-and-undo));
   - "Server…", the [Server panel](#server-panel);
   - "Playtest", and to its right the button that opens the Playtest popover
@@ -243,10 +335,10 @@ nothing while Ctrl, Alt or the Windows key is held, or while a panel control
 has keyboard focus, such as a text field or a button that was just clicked. A
 click in the world gives them back.
 
-"Bookmarks" → "Add bookmark…" in the "Map" menu names the current view and
+"Bookmarks" → "Add Bookmark…" in the "Map" menu names the current view and
 keeps it.
 
-"Go to…" in the "Map" menu moves the camera:
+"Go To…" in the "Map" menu moves the camera:
 
 - "Bookmarks": click a bookmark to return to it, on any map. A bookmark on
   another map reads "name · map"; going to it saves the open map, then opens
@@ -846,35 +938,38 @@ Click a first point and then a second to measure between them; a third click sta
 
 ### Map window
 
-"Edit Map…" in the "Map" menu opens the map window, which shows each tile's minimap picture. "fit", "far", "mid" and "near" set the zoom. A corner mark shows a tile this project carries, in the warning colour while it has unsaved changes. The camera's tile is outlined. Hovering a tile names it and its state.
+"Edit Map…" in the "Map" menu opens the map window, which shows each tile's minimap picture. The toolbar holds "Create", "Delete", "Copy", "Paste", "Check Out" and "Release". The side panel holds the selection, the claims, "New Ground", "Shadows", "Minimaps", "Images", "Server", "Map" and a key to the marks. The line under the map names the tile under the pointer and its state, or the selection.
 
-- Click selects a tile, dragging selects a box, Ctrl+click adds or removes a tile. "Clear" clears the selection.
-- Double-click flies to a tile.
-- "Create N" adds flat ground to the empty tiles of the selection, using the "height", "area" and texture under "New ground".
+- The wheel zooms around the pointer, and dragging with the right or middle mouse button moves the map. Under the map, the slider, "-" and "+" set the zoom; "Fit" frames the map's tiles and the selection, and "Whole Map" shows all 64x64 slots. The window opens fitted, and fits again when another map is opened.
+- A corner mark shows a tile this project carries, in the warning colour while it has unsaved changes. The camera's tile is outlined in green, and the selection is tinted and outlined in blue.
+- Click selects a tile, dragging selects a box, Ctrl+click adds or removes a tile. "Select All" selects every tile the map has; "Clear" clears the selection.
+- Double-click flies to a tile. Right-click opens a menu with "Fly to <x>, <y>", the toolbar's operations, "Break", "Select <name>'s Tiles", "Select All" and "Clear Selection"; a right click on a tile outside the selection selects it first.
+- "Create N" adds flat ground to the empty tiles of the selection, using "Height", "Area" and "Texture" under "New Ground".
 - "Delete N" removes the selected tiles from the map's WDT. A tile of the archives keeps its ADT file in the project. A tile the project created is deleted from the project with its ADT and minimap picture. This cannot be undone.
 - "Copy N" and "Paste" copy tiles with their ground, doodads and buildings. One copied tile pastes into every selected slot; several paste as a block and keep their layout.
-- "Map": "terrain, N tiles" or "single-WMO map: <name>", with "Map properties…".
-- "Shadows": "Rebake (N)" redraws the baked shadows of the selected open tiles, in the background; "include terrain shadow" adds the ground's own shadow.
-- "Minimaps": "Selected (N)" and "Whole map (N)" redraw the minimap pictures into the project, in the background. "Stop minimaps" stops after the tile being drawn.
-- "Images": "Export heights…" saves the selection's heights as a 16-bit grey PNG; "Export blends…" saves how its textures blend as an RGB PNG. "Import…" reads a PNG of any size onto the open tiles of the selection, as "Heights" or "Blends". For heights, "black" and "white" set the heights the two ends stand for, and "Doodads and WMOs follow the ground" carries placements with it.
-- "Server": "Server files (N)" saves, rebuilds the project's archive and regenerates the server's map, vmap and mmap files for the selected tiles. Restart the server afterwards.
+- "Map": "terrain, N tiles" or "single-WMO map: <name>", with "Map Properties…".
+- "Shadows": "Rebake N" redraws the baked shadows of the selected open tiles, in the background; "Include terrain shadow" adds the ground's own shadow.
+- "Claims (N)": see [Claims](#claims).
+- "Minimaps": "Selected N" and "Whole Map N" redraw the minimap pictures into the project, in the background. "Stop Minimaps" stops after the tile being drawn.
+- "Images": "Export Heights…" saves the selection's heights as a 16-bit grey PNG; "Export Blends…" saves how its textures blend as an RGB PNG. "Import…" reads a PNG of any size onto the open tiles of the selection, as "Heights" or "Blends". For heights, "Black" and "White" set the heights the two ends stand for, and "Doodads and WMOs follow the ground" carries placements with it.
+- "Server": "Server Files N" saves, rebuilds the project's archive and regenerates the server's map, vmap and mmap files for the selected tiles. Restart the server afterwards.
 
 In a shared session only the host creates, deletes and pastes tiles, draws minimaps and rebakes shadows.
 
 ### New map and Map properties
 
-"New map…" in the "Map" menu creates a map. "Map properties…" opens the same dialog for the open map. The dialog has:
+"New Map…" in the "Map" menu creates a map. "Map Properties…" opens the same dialog for the open map. The dialog has:
 
-- "folder": the map's folder under `World\Maps\`. It is set when the map is created and cannot be changed afterwards.
-- "name" and "type" ("World", "Dungeon", "Raid", "Battleground"). A type other than World has "players".
-- "loading screen", chosen from a grid of pictures with "Choose…".
-- "PvP", "levels" (minimum and maximum), "zone", "description 0" and "description 1".
-- "reset": days between resets, for a raid.
-- "layout": "Terrain", or "Single WMO" with the WMO's path. A single-WMO map is one building with no terrain tiles, as most dungeons are. Only a map with no tiles can be made one.
-- For a dungeon or raid, "ghost entrance" (a point on a continent, which "Use camera position" takes from the camera while a continent is open) and "parent" (a dungeon this one is entered through).
-- On a map being created only, "Create zone" (an AreaTable zone named after the map) and "Open after creating". With "Create zone" off, "zone" names an existing zone.
+- "Folder": the map's folder under `World\Maps\`. It is set when the map is created and cannot be changed afterwards.
+- "Name" and "Type" ("World", "Dungeon", "Raid", "Battleground"). A type other than World has "Players".
+- "Loading Screen", chosen from a grid of pictures with "Choose…".
+- "PvP", "Levels" (minimum and maximum), "Zone", "Description 0" and "Description 1".
+- "Reset": days between resets, for a raid.
+- "Layout": "Terrain", or "Single WMO" with the WMO's path. A single-WMO map is one building with no terrain tiles, as most dungeons are. Only a map with no tiles can be made one.
+- For a dungeon or raid, "Ghost Entrance" (a point on a continent, which "Use Camera Position" takes from the camera while a continent is open) and "Parent" (a dungeon this one is entered through).
+- On a map being created only, "Create zone" (an AreaTable zone named after the map) and "Open after creating". With "Create zone" off, "Zone" names an existing zone.
 
-"Create" writes the `Map.dbc` row, the zone, the map's WDT and the server's `map_template` row. "Save" writes the changed `Map.dbc` fields and the changed `map_template` columns as one undo entry. A layout change is written to the WDT, is not on the undo history, and shows after the map is opened again. `map_template` changes are applied from the Server panel. A created map needs its tiles extracted ("Server files") and a server restart before a character can stand on it. In a shared session only the host creates maps.
+"Create" writes the `Map.dbc` row, the zone, the map's WDT and the server's `map_template` row. "Save" writes the changed `Map.dbc` fields and the changed `map_template` columns as one undo entry. A layout change is written to the WDT, is not on the undo history, and shows after the map is opened again. `map_template` changes are applied from the Server panel. A created map needs its tiles extracted ("Server Files") and a server restart before a character can stand on it. In a shared session only the host creates maps.
 
 ### World map
 
@@ -919,7 +1014,7 @@ Under the picture, "Map" holds:
 - "Remove map" removes the row and its overlays' rows. Ctrl+Z puts them back; the pictures stay in the project.
 - On a continent, "On the whole world" has "Placement" ("x", "y", "scale" and "Centre"), "Tiles", and "Show on the whole world".
 
-"New map…" makes a "Zone map" (for a zone with no map yet, on a map that has a continent), a "Continent" (for a map with no continent; its `WorldMapContinent` row also gives the map a flight map) or a "Single map" (for a map with no continent, and one of its zones). Set "Directory", then "Create" adds the rows as one undo entry and fits the rectangle once the map's tiles are read.
+"New Map…" makes a "Zone map" (for a zone with no map yet, on a map that has a continent), a "Continent" (for a map with no continent; its `WorldMapContinent` row also gives the map a flight map) or a "Single map" (for a map with no continent, and one of its zones). Set "Directory", then "Create" adds the rows as one undo entry and fits the rectangle once the map's tiles are read.
 
 ## Client tables
 
@@ -970,11 +1065,13 @@ read as a float and a text box where the column holds strings.
 - The list on the left searches by name, id or what the row belongs to. The
   spell chain tables and the display tables are also searched by a model's
   name.
-- "Undo", "Redo", "Save" and "Discard" are above the list. "Save" writes the
-  table into the project; Ctrl+S writes every table and tile. "Discard" reloads
-  the table from the project folder's copy, or from the archives' copy when the
-  project has none, and removes its entries from the undo stack. In a shared
-  session only the host saves, and "Discard" is not available.
+- "Undo", "Redo", "Save" and "Discard" are above the list. "Save" saves the
+  project as Ctrl+S does, so the table is never written apart from the rest of
+  the changelist. "Discard" takes
+  back every unsaved edit to the table, as the Changes window's "Discard"
+  does, so its rows are as the project folder's copy holds them, or the
+  archives' copy when the project has none. A joined editor in a shared
+  session has neither, since the host saves.
 - "+ New", "Clone" and "Delete" work on rows, each as one undo entry. "+ New"
   adds a blank row under the next id. "Clone" copies the open row under the
   next id and appends " (copy)" to its name.
@@ -1011,7 +1108,7 @@ each row and "Import…", which opens Import Sound and sets the field to the row
 the import adds; see [Importing sounds](#importing-sounds).
 
 The inspector shows the table's file, its rows and fields, "saved" or
-"unsaved", and "Save table". Under that it draws a display row or an item set
+"unsaved", and "Save", which saves the project as Ctrl+S does. Under that it draws a display row or an item set
 (see [Display info](#display-info) and [Item sets](#item-sets)), then lists
 the open row's "References" and its "Used by" rows with the column that names
 it.
@@ -1195,7 +1292,7 @@ model to it. "Close" hides the reference character and keeps the numbers.
 
 ### Zones
 
-The "Zones" part of "Zones" edits `AreaTable.dbc`. "+ New zone" makes a zone
+The "Zones" part of "Zones" edits `AreaTable.dbc`. "+ New Zone" makes a zone
 on the open map, with an explore bit no other area holds. The server reads the
 id, map, parent, explore bit, flags, level, name, team and liquid type from
 `area_template` after a restart; only the client reads the sound columns and
@@ -1286,12 +1383,12 @@ files are not listed.
   chooses a range. Right-click a file for "Delete…", or "Delete N Files…"
   when several are chosen.
 
-The details show "Type", "Size", "Imported from" for an imported file, "Made
+The details show "Type", "Size", "Imported From" for an imported file, "Made
 from" and "Standing" for a generated one, and "Archives": "replaces the
 archives' file at this path" or "a new path". A texture adds "Dimensions",
-"Compression" and "Mipmaps", and a ground texture its "Gloss file". A model
+"Compression" and "Mipmaps", and a ground texture its "Gloss File". A model
 adds "Geometry", "Bones", "Textures" and its "Sequences". A sound adds
-"Format", "Length" and "Played by", the `SoundEntries` rows that hold it.
+"Format", "Length" and "Played By", the `SoundEntries` rows that hold it.
 
 The buttons under the details depend on the file:
 
@@ -1310,7 +1407,7 @@ The buttons under the details depend on the file:
 | "Replace…" | an imported texture | Imports another picture at this path and name. |
 | "Delete…" | any file | Deletes the file after a confirmation. |
 
-With no file chosen, the middle lists what is "Out of date", each with the
+With no file chosen, the middle lists what is "Out of Date", each with the
 action that brings it up to date. The list shows the same summary.
 
 - Tiles changed after their minimap was drawn: "Draw N on <map>" draws the
@@ -1683,22 +1780,24 @@ A condition cell, found in the gossip, loot, vendor and trainer, quest, event an
 
 "Server…" on the top bar opens what the project has done to the world database. The line at the top names the world database, or says "no world database: saving writes sql\ files and applies nothing". With no database, a note says that nothing can be applied, with "Settings…", which opens the [Settings](#settings) window where the database is set. In a shared session some of the panel's buttons are limited; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
 
-- "Server operations": "Apply on save" runs the SQL against the world database every time the project is saved. It is on by default and kept per project. A save made with the panels open over a playtest also sends `.reload` for each table that has one.
+- "Server Operations": "Apply on save" runs the SQL against the world database every time the project is saved. It is on by default and kept per project. A save made with the panels open over a playtest also sends `.reload` for each table that has one.
 - One block per subject: "Client tables", "Creatures", "Objects", "Items", "Quests", "Loot", "Vendors and trainers", "Addons and equipment", "Formations and links", "Pools", "Game events", "Behaviour", "Conditions", "Gossip", "Maps", "Area triggers" and "Graveyards". Each says how many rows the project changes and how many are applied, and is outlined amber while changes are not applied.
-  - "Apply" writes the rows to the database, after writing the statements that restore them. "Restore" puts back the rows it replaced. "Discard" drops the project's changes without touching the database; Restore still works afterwards.
+  - "Apply" writes the rows to the database, after writing the statements that restore them. "Restore" puts back the rows it replaced. "Drop Changes" removes the project's changes to the subject, saved or not, as one edit that Undo takes back, without touching the database; Restore still works afterwards. To take back only what is unsaved, use "Discard" in the Changes window.
+  - Apply and Restore refuse to run when the world database is not the one the rows were applied to, and name it; point Settings back at it.
+  - Apply refuses rows another project has applied to the same world database and not restored, and names the project; restore that project's rows first. Which project applied which rows is read from every project's revert files, each of which names the database its rows were applied to, so a project that is restored, cleared or deleted holds no rows.
   - Applying or restoring a block also restores and applies again the applied blocks below it.
   - The hover text on a block's name lists its tables and files, and says whether an applied change needs a `.reload` or a server restart.
-  - "Client tables" has "edited as a file" in place of Discard. Its Apply also copies the project's DBC files that the server reads into `DataDir\5875\dbc\`, keeping the server's originals, and Restore copies the originals back.
-- "Server tiles": "Regenerate changed tiles (N)" rebuilds the project's archive and regenerates the server's map files for the tiles changed since the last regeneration. Restart the server afterwards. The map window's "Server files" does the same for chosen tiles. "Server tile files…" opens the tile file dialog; the line beside it counts the files no longer produced and the files written by other projects.
-- "Migration": "Write migration" writes the changes since the last migration to `publish\migrations\` as one SQL file.
+  - "Client tables" has "edited as a file" in place of "Drop Changes". Its Apply also copies the project's DBC files that the server reads into `DataDir\5875\dbc\`, keeping the server's originals in `DataDir\vale-editor\originals\` as the server tile files are kept, and Restore copies the originals back. A project that kept the originals in its own `server\dbc-before\` has them moved there on its next Apply or Restore.
+- "Server Tiles": "Regenerate Changed Tiles (N)" rebuilds the project's archive and regenerates the server's map files for the tiles changed since the last regeneration. Restart the server afterwards. The map window's "Server Files" does the same for chosen tiles. "Server Tile Files…" opens the tile file dialog; the line beside it counts the files no longer produced and the files written by other projects.
+- "Migration": "Write migration" writes `publish\migrations\<stamp>_world.sql`: every row the project changes, and the rows an earlier migration changed that the project no longer does, put back, so it applies whether or not the server has the earlier ones. Nothing is written when nothing changed since the last migration. A copy of a host's project writes none.
 
 ### Server tile files
 
 A regeneration writes and replaces tile files in the server's `DataDir` and never removes one. Removing and putting back are done in this dialog, after a confirmation that says how many files each action touches.
 
 - "No longer produced": files a regeneration no longer produces, each with a tick box. "All", "None" and "Remove (N)". After removing a `.map`, regenerate its four neighbours.
-- "Written by projects": each project whose regenerations wrote files, marked "(open)" or "(deleted)", with "Put back originals". This restores the files kept from before the editor first wrote them and removes the files that did not exist before.
-- "Removed server files": the server's own files removed here, kept in `vale-editor\originals\`, with "Put back".
+- "Written by projects": each project whose regenerations or DBC copies wrote files, marked "(open)" or "(deleted)", with "Put Back Originals". This restores the files kept from before the editor first wrote them, server DBC files included, and removes the files that did not exist before.
+- "Removed server files": the server's own files removed here, kept in `vale-editor\originals\`, with "Put Back".
 - "Check": searches the `DataDir` for files nothing in the open project uses, listed with "Remove (N)".
 
 A file the editor did not write is moved to `vale-editor\originals\` when it is removed, so it can be put back.
@@ -1707,7 +1806,7 @@ A file the editor did not write is moved to `vale-editor\originals\` when it is 
 
 "Settings…" in the Project menu opens the settings that belong to this machine. They are kept in `Edit\server.txt` and `Edit\tablet.txt`, beside the project folders, and apply to every project.
 
-- "World database": "mangosd.conf", the vmangos folder or its `mangosd.conf`. The connection is read from its `WorldDatabase.Info` line; the password is not stored by the editor. "Test" connects and counts rows without changing anything. `VALE_WORLDDB` or `VALE_MANGOSD` overrides the field, which is then disabled.
+- "World database": "mangosd.conf", the vmangos folder or its `mangosd.conf`. The connection is read from its `WorldDatabase.Info` line; the password is not stored by the editor. "Test" connects and counts rows without changing anything. `VALE_WORLDDB` or `VALE_MANGOSD` overrides the field, which is then disabled. While joined to a session whose host shares its world database, the host's is used instead and the window says "from the host of the shared session".
 - "Map tools": "vmangos tools", the folder holding `mapextractor`, `vmapextractor`, `VMapAssembler` and `MoveMapGenerator`, built in Release with the extractor patch from the `extractors` branch of [adonikaner/core](https://github.com/adonikaner/core/tree/extractors). The window says whether the tools are patched and whether `offmesh.txt` and `config.json` were found, and names the server's `DataDir`. `VALE_VMANGOS_TOOLS` overrides the field.
 - "Drawing tablet": pen pressure and cursor motion; see [Drawing tablet](#drawing-tablet).
 
@@ -1715,11 +1814,11 @@ A file the editor did not write is moved to `vale-editor\originals\` when it is 
 
 "Publish…" in the project menu on the top bar opens "Publish a patch". Only the host publishes in a shared session, and not during a playtest or while a server write is running.
 
-- "name": the patch's folder name. Left empty, the UTC date and time are used. The dialog warns when a patch of that name exists and will be overwritten.
-- "Publish options", kept per project:
+- "Name": the patch's folder name. Left empty, the UTC date and time are used. The dialog warns when a patch of that name exists and will be overwritten.
+- "Publish Options", kept per project:
   - "Regenerate the server's tiles": rebuild the server's map files for the tiles changed since the last patch. This takes minutes. Tiles that did not change are taken from the previous patch, which the dialog names. Turn it off for a publish that changes only the client.
   - "Copy the client archive into Data": also write the client archive into this install's `Data\`, replacing the copy written before. Off, `Data\` is not changed.
-- "Open folder" and the list of published patches.
+- "Open Folder" and the list of published patches.
 
 "Publish" saves everything, then writes the patch to `Edit\<project>\publish\<name>\`:
 
@@ -1728,7 +1827,9 @@ A file the editor did not write is moved to `vale-editor\originals\` when it is 
 - `server\maps\`, `server\vmaps\`, `server\mmaps\`, the server's files for every tile the project changes and the tiles beside them.
 - `server\remove.txt`, when there are files to delete from the server.
 - `server\sql\`, the database changes: every row the project changes, so the patch applies whether or not the server has the earlier patches.
-- `README.txt`, which says where each file goes, and `manifest.txt`, which lists every file with its size and hash.
+- `README.txt`, which says where each file goes and which edit of the project's log the patch was made from, and `manifest.txt`, which lists every file with its size and hash.
+
+A patch whose previous patch folder is gone builds every server tile again, since there is no folder to copy the unchanged ones from.
 
 Nothing is applied to this machine's server or database.
 
@@ -1751,11 +1852,11 @@ A playtest lights the world at the server's time of day, not the editor's fixed 
 
 The button to the right of "Playtest" reads "as <character>" or "login screen", followed by " · cached" while caching is on, and ends in "⏷". It opens the Playtest popover, which holds every setting of a playtest:
 
-- "Log in as": "account", "password" and "character" (empty plays the last character). None of them is saved. The account is read from `Config.wtf`, and the password can come from `VALE_PASSWORD`.
-- "skip the login screen": log straight in when an account and a password are set.
-- "Query cache": "Disable caching" starts each playtest with an empty cache, so the client asks the server for every creature, item and quest it meets, and an edited row shows in the next playtest. It is on by default and kept per project.
+- "Login": "Account", "Password" and "Character" (empty plays the last character). None of them is saved. The account is read from `Config.wtf`, and the password can come from `VALE_PASSWORD`.
+- "Skip the login screen": log straight in when an account and a password are set.
+- "Query Cache": "Disable caching" starts each playtest with an empty cache, so the client asks the server for every creature, item and quest it meets, and an edited row shows in the next playtest. It is on by default and kept per project.
 
-A joined editor in a shared session also chooses the server to log in to; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
+In a shared session the popover also says which server a joined editor's playtest logs in to; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
 
 ### Live Edit
 
@@ -1768,10 +1869,16 @@ Ctrl+S saves and sends the changes to the running game; the client uses an edite
 Several editors on one network can work on one project at once. One editor
 hosts and the others join. Each edit reaches the other editors as it is made.
 The session button on the top bar opens the session popover. Its label states
-the session: "Session…" with none, "Hosting · <n>", "Joining…", or
-"Joined · <host> · <n>", where n is the number of editors. A coloured dot
-before it shows the state; after a session ends with an error the dot is in
-the error colour.
+the session: "Session…" with none, "Hosting · <n>", "Joining…",
+"Joined · <host> · <n>", where n is the number of editors, or
+"Offline · <host address>" for a copy of a host's project with no session
+(see [Working offline](#working-offline)). A coloured dot before it shows the
+state; after a session ends with an error the dot is in the error colour.
+
+The host's project is the one copy every edit is made to. The host's editor
+writes every edit of every editor to that project's log, under each editor's
+name, and the edits are numbered on from the log, so the numbers continue
+across sessions.
 
 The connections are plain TCP with no encryption. The password keeps others
 out but does not hide the edits, so a session is for a local network.
@@ -1782,8 +1889,11 @@ With no session the popover shows "Shared Session" and a "Host" / "Join"
 switch.
 
 - "Host": "Name" (shown to the other editors), "Password" and "Port",
-  default 7878. A note gives the address the others join at. "Start Hosting"
-  starts the session on the open project.
+  default 7878, and "Share the world database" (on by default; see
+  [Playtests and the server in a session](#playtests-and-the-server-in-a-session)).
+  A note gives the address the others join at. "Start Hosting" starts the
+  session on the open project. A copy of another host's project cannot be
+  hosted.
 - "Join": "Name", "Host" (the host's address, with `:port` when it is not
   7878) and "Password". "Join" connects.
 
@@ -1795,25 +1905,57 @@ On a join the host saves its tiles, tables and server rows. The joining editor
 saves and closes its own project and keeps a copy of the host's in
 `Edit\<project> (shared)\`. It fetches only the files its copy lacks or holds
 different bytes of, with a progress bar ("<n> of <m> files · <size>"). It then
-opens the copy, applies the edits made in the meantime, and goes to the host's
-map and view. "Leave" (or "Cancel" while joining) reopens the editor's own
-project. The SQL under `sql\` and the other records of what an editor applied
-to its own server stay on each machine. A join neither sends the host's nor
-removes the joining editor's.
+opens the copy, applies every person's edits that are in no changelist (the
+host's files do not hold them) and the edits made in the meantime, and goes
+to the host's map and view. "Leave" (or "Cancel" while joining) reopens the editor's own
+project, and "Work Offline" keeps the copy open (see
+[Working offline](#working-offline)). The SQL under `sql\` and the other
+records of what an editor applied to its own server stay on each machine. A
+join neither sends the host's nor removes the joining editor's.
 
 In a session the popover lists "People (<n>)", each in their colour, with
-"(you)" or "(host)" after the name and their map and tool under it. A click on
+"(this editor)" or "(host)" after the name and their map and tool under it. A click on
 a person goes to them, opening their map when it differs. The host can right
-click a person for "Remove <name>". Under the list, a line counts
-"<n> edits sent · <m> received", and how many of yours were undone. The host
-has the "Address" with "Copy", and "End Session". A host that opens another
-project ends the session.
+click a person for "Remove <name>". Under it, "Claims" (see
+[Claims](#claims)), then a line counting "<n> edits sent ·
+<m> received", and how many of yours were undone. The host has the "Address"
+with "Copy", and "End Session". A host that opens another project ends the
+session.
+
+"Submit" in the Changes window asks the host to put your edits in a
+changelist, and the host then saves them. "History" shows the host's
+changelists. "Revert" works as it does alone; the host checks which subjects
+changed since.
+
+### Unsubmitted edits
+
+An edit claims the tiles, client tables and server rows it changes until its
+author submits (see [Claims](#claims)). Another person's edit there is undone
+before it is sent, and the status line says "<edit> was undone: <name> has
+unsubmitted edits on Azeroth 32_48". The host's saves write submitted edits
+only: a guest's unsubmitted edits are on everyone's screen and not in the
+project's files, and the host's own unsaved list does not show them. A host
+save submits the host's edits. When a guest submits, the host saves their
+changelist and leaves its own unsubmitted edits out of that save.
+
+Unsubmitted edits stay in the log when their author leaves, and still claim
+what they touch. Opening the project again restores them from the log. In
+History, "Take Back" beside a person who is not connected closes their
+unsubmitted edits into a changelist named "Taken back by <name>" and undoes
+them as one edit of yours, which your next save writes and submits.
+
+Your own imports, deletes and other whole files are written when they are
+made, and your next save submits them. A guest's are shown on the host at
+once but kept out of the host's project folder until the guest submits; a
+Take Back drops them.
 
 ### What is shared
 
 - Every edit that goes on the undo stack: terrain, shading, textures, holes,
   areas, water, placements, table fields and records, and server rows. A held
-  stroke is sent in parts ten times a second. Undo and redo are sent too.
+  stroke is sent in parts ten times a second, so the others see it drawn, and
+  it is counted, logged and listed in History as one edit. Undo and redo are
+  sent too.
 - Project files written or removed whole: imports, deletes, created and pasted
   tiles, minimap pictures, world map pictures and locks.
 
@@ -1825,9 +1967,9 @@ the status line names it.
 
 - Saving. A joined editor's Save reads "Saved by the host", and Ctrl+S says
   that only the host saves.
-- "Publish…", "New map…" and the Server panel's "Write migration".
+- "Publish…", "New Map…" and the Server panel's "Write migration".
 - In the map window: "Create", "Delete", "Paste", "Rebake", and the minimaps'
-  "Selected" and "Whole map".
+  "Selected" and "Whole Map".
 - Deleting project files. A joined editor's Delete asks the host. The host
   sees "<name> asks to delete <file>", with the delete button and "Keep", and
   the editor that asked is told the answer. A delete confirmation names the
@@ -1842,16 +1984,17 @@ status line says why:
 - writing or removing project files other than textures, models, sounds and
   locks.
 
-"Discard", in the Server panel and in the table editors, is unavailable to
-every editor in a session, because a discard is not sent to the others. Undo
-your own edits instead.
+The Server panel's "Drop Changes" is an edit like any other: it is sent to
+the others and undone with Undo. A joined editor's drop that removes whole
+rows is undone at once, as above. "Discard" in the Changes window and the
+table editors takes back your own edits in no changelist, joined or not.
 
 ### When two editors change the same thing
 
 The host takes whichever edit reaches it first. The other edit is undone on the
 editor that made it, together with any later edits of that editor the host has
-not taken yet. The status line reads "<edit> was undone: <name> changed the
-same thing first". Two edits clash when they share:
+not taken yet. The status line reads "<edit> was undone: <name> made a
+conflicting edit first". Two edits clash when they share:
 
 - one part of one chunk: its heights, colours, holes, area, or flags and
   water;
@@ -1862,6 +2005,85 @@ same thing first". Two edits clash when they share:
 - one server row;
 - one project file. A tile's or table's file clashes with every edit of that
   tile or table.
+
+An edit to a tile, table or server row another person holds a claim on is
+undone before it is sent, and the status line reads "<edit> was undone:
+<name> has <subject> checked out" or "… has unsubmitted edits on <subject>".
+See [Claims](#claims).
+
+### Working offline
+
+A joined editor's copy stays linked to the host after the session ends: its
+`log\link.txt` names the host's address and the last of the host's edits the
+copy has. A copy with no session is offline. "Work Offline" in the session
+popover leaves the session and keeps the copy open; so does a connection that
+is lost. A copy can also be opened from the Projects dialog later.
+
+Offline, the copy is edited like any project and saved to its own folder, and
+each edit is also kept in `log\pending.bin` to send to the host. Edits that
+the host had not answered when the connection ended are kept the same way.
+The session popover shows "Working Offline", where the copy came from and how
+many edits it keeps, with "Name", "Password" and "Reconnect". The Changes
+window counts the kept edits, and Submit waits until they are sent. Kept
+edits that are all undone or discarded again change nothing and are no
+longer kept.
+
+"Reconnect" joins the host. The join fetches what changed on the host, which
+replaces the copy's files, and then the kept edits are sent: each edit's part
+on a subject nothing changed since is made over the host's version at once,
+and the rest is listed under "Conflicts" as "Offline edits". Submit them in
+the Changes window afterwards.
+
+"Remove Link" removes the link from a copy with no kept
+edits. The copy then keeps a log of its own.
+
+### Claims
+
+A claim keeps every other person's edits off a tile, a client table or a
+server row. An edit claims what it changes until its author submits. A check
+out claims a tile before any edit, until it is released or its holder
+submits; it is never needed to edit. Check out a tile before working on it
+offline, so nothing there changes before your edits are sent.
+
+"Claims (<n>)" in the session popover lists every claim as "<subject> ·
+<name> · checked out", "… · unsubmitted edits" or both, with "Release" on a
+check out of yours and "Break" on another person's. Release and Break end a
+check out only: a claim held by unsubmitted edits ends when they are
+submitted, all undone, or taken back. "Check Out <map> <x>_<y>" checks out the
+tile under the camera. The host keeps the check outs in its project's
+`log\checkouts.txt`, so they last from one session to the next; claims held by
+edits come back from the log.
+
+In the map window a claimed tile is tinted in its holder's colour, the colour
+the session popover gives that person, and each holder's tiles are outlined as
+one region: a solid line for a check out, a dashed line for unsubmitted edits.
+A tile another person holds carries a padlock when the map is zoomed in far
+enough. The line under the map says "checked out by <name>" or "held by
+<name>'s unsubmitted edits" for the tile under the pointer. "Claims (N)" in the
+side panel lists each person with a claim on the map and how many tiles they
+have checked out and hold with unsubmitted edits; clicking a row selects their
+tiles, and Ctrl+click adds them to the selection. "Check Out N" checks out the
+selected tiles that exist and that nobody else holds, "Release N" ends your
+check outs in the selection, and "Break N", in the side panel and the
+right-click menu, ends other people's. Alone, the claims of edits left in the
+log by others are shown the same way, and the three buttons are disabled.
+
+### Depot
+
+`vale-ide --depot` hosts a project's session with no window, for a machine
+that keeps the project while people join it:
+
+```text
+vale-ide --depot --project goldshire --host 7878 --session-password secret
+```
+
+`--host` is the port, 7878 when it is left out, and `--session-name` the name
+the depot is shown by, "Depot" when it is left out. The depot makes no edits
+of its own: it applies and logs what the joined editors send, and saves
+whenever one of them submits, so its folder holds exactly the submitted
+changelists. Its status lines go to the log. It has no camera, so joining it
+does not move yours. It declines requests to delete files, and it runs until
+it is stopped.
 
 ### Undo in a session
 
@@ -1878,13 +2100,20 @@ editor on another map is not drawn; the popover says where they are.
 
 ### Playtests and the server in a session
 
-A joined editor's Playtest popover has "Server", a choice between "Local
-server", the realm in `realmlist.wtf`, and "<host>'s server", the realm at the
-host's address. Log in to the host's server with an account that exists on
-it. A joined editor whose world database differs from the host's starts on
-"Local server"; otherwise it starts on the host's server. While the host's
-server is chosen, the Playtest popover's button reads "· <host>'s server" before its "⏷", and the
-playtest applies nothing.
+With "Share the world database" on, the host sends its world database's
+location and login to each joined editor. The session has no encryption, so
+the login crosses the network as it is. While joined, the editor reads the
+host's database for every server read, and its playtest logs in to the host's
+realm at the host's address. Log in with an account that exists on that
+server. Only the host applies changes to that database.
+
+With it off, a joined editor reads its own database. Its playtest logs in to
+the realm in its own `realmlist.wtf`, unless it has no world database of its
+own or its database is the host's; then it logs in to the host's realm. The
+Playtest popover's "Server" note says which and why. While the host's server
+is used, the Playtest popover's button reads "· <host>'s server" before its
+"⏷", and the playtest applies nothing. Offline, a copy uses this machine's
+database and server like any project.
 
 When a login on the host's server fails at the world server, the status line
 gives the world server address the host's realmd sent and what to check. If
@@ -1893,17 +2122,17 @@ host's realmd database to the host's network address. Otherwise, check that
 the host's firewall allows incoming TCP connections on the world server's
 port.
 
-A joined editor's Server panel applies to the database in its own
+Otherwise a joined editor's Server panel applies to the database in its own
 `Edit\server.txt`, not to the host's. The panel says so. "Apply on save",
-"Apply", "Restore", "Regenerate changed tiles", "Server tile files…" and the
-map window's "Server files" are unavailable, with the reason on hover:
+"Apply", "Restore", "Regenerate Changed Tiles", "Server Tile Files…" and the
+map window's "Server Files" are unavailable, with the reason on hover:
 
 - while joining;
-- with "<host>'s server" chosen, because only the host applies changes to
-  that server;
+- while it reads the host's world database or playtests on the host's server,
+  because only the host applies changes to that server;
 - when this machine's `Edit\server.txt` names the same world database as the
   host's. The editors compare a fingerprint of the database's host, port and
-  name, never the location itself.
+  name.
 
 ## Keys
 

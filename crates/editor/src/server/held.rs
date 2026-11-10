@@ -74,7 +74,7 @@ pub(crate) fn held_by(project: &Project) -> Held {
         Ok(undo) => out.rows.push((CLIENT_TABLES, Some(undo.entries.len()))),
         Err(_) => out.rows.push((CLIENT_TABLES, None)),
     }
-    out.dbcs = dbcs::saved(project);
+    out.dbcs = dbcs::kept_in_project(project);
     out
 }
 
@@ -99,7 +99,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    /// Each kind of record is found where its writer puts it, in the writer's
+    /// Each type of record is found where its writer puts it, in the writer's
     /// own format, so a change to a format that this did not follow fails here
     /// rather than letting a project be cleared with rows applied.
     #[test]

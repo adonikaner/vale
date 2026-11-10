@@ -14,8 +14,13 @@
 //!             refuse, so they are reverted before the remote edit lands
 //! ids.rs      blocks of new numbers handed out by the host, so two editors
 //!             never give two new spawns the same guid
+//! log.rs      a project's log: every accepted edit in order, with author
+//!             and time, kept on disk, and the changelists over it
 //! auth.rs     the password check: a challenge answered with a keyed hash,
 //!             so the password is not sent
+//! checkout.rs claims: a tile, a table or a server row one author holds,
+//!             checked out or by an unsubmitted edit, which the host refuses
+//!             others' edits to
 //! net.rs      the TCP connections: the host's listener and an editor's
 //!             connection, each a pair of threads and two channels
 //! session.rs  the two ways to be in a session, hosting or joined, each one
@@ -27,11 +32,24 @@
 //! The host decides the order of every edit. An editor applies its own edit at
 //! once, so a tool responds as it does alone, and sends it to the host with
 //! `base`, the number of the last edit it had received. The host accepts the
-//! edit unless another editor changed one of its [`groups::Group`]s after
-//! `base`. An accepted edit is numbered and sent to every other editor, which
-//! applies it through the same path a redo takes.
+//! edit unless another author changed one of its [`groups::Group`]s after
+//! `base`, or holds a claim on it ([`checkout`]). An accepted edit is
+//! numbered and sent to every other editor, which applies it through the same
+//! path a redo takes.
 //!
-//! An edit is any [`groups::Payload`]. The editor sends two kinds: a
+//! An author is a person, by an id their editor keeps, not a connection: the
+//! same person joining again is the same author.
+//!
+//! ## The log
+//!
+//! The host's editor writes every accepted edit to the project's log
+//! ([`log`]), and a host resumes its numbering from the log, so a number
+//! names one edit across sessions. A joined editor asks the host about the
+//! log ([`wire::Request`]): to put its edits in a changelist, for the
+//! changelists, for which groups changed after a number, and for edits to
+//! revert.
+//!
+//! An edit is any [`groups::Payload`]. The editor sends two types: a
 //! [`vale_edit::undo::Change`], the state of everything it touched before and
 //! after, and the bytes of project files written or removed whole. Applying
 //! either needs no recomputation, so every editor ends with the same bytes.
@@ -56,16 +74,20 @@
 //! edits.
 
 pub mod auth;
+pub mod checkout;
 pub mod groups;
 pub mod host;
 pub mod ids;
+pub mod log;
 pub mod net;
 pub mod peer;
 pub mod session;
 pub mod wire;
 
+pub use checkout::{Claim, Hold};
 pub use groups::{Group, Part, Payload};
 pub use host::{Host, Out};
+pub use log::{Author, AuthorId, Log};
 pub use peer::{Action, Cause, Peer};
 pub use session::{Hosting, Joined, Session};
 pub use wire::{Presence, Seq, ToHost, ToPeer, UserId, PROTOCOL};

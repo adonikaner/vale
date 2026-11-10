@@ -169,6 +169,11 @@ pub fn run() {
     let config = vale_config::Config::load();
     let gamedata_dir = config.gamedata.clone();
     let args = Args::parse(std::env::args().skip(1));
+    // A depot has no window. See `collab::depot`.
+    if args.server.depot {
+        collab::depot::run(args);
+        return;
+    }
 
     let mut app = App::new();
     app.add_plugins(vale_client::app::plugins(&vale_client::app::Host {

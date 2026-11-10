@@ -120,7 +120,7 @@ pub(crate) struct Standings {
 /// How the live `DataDir`'s tile files stand, for the Server panel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct TileCounts {
-    /// Tiles *Regenerate changed tiles* would rebuild.
+    /// Tiles the Server panel's "Regenerate changed tiles" would rebuild.
     pub(crate) changed: usize,
     /// Files a run marked stale that are still there.
     pub(crate) stale: usize,
@@ -225,7 +225,7 @@ impl Standings {
             .is_some_and(|(taken, _)| now - *taken < TILES_REFRESH);
         if !fresh {
             let answer = crate::server::datadir::data_dir(server)
-                .map(|dir| dbcs::standing(&session.project, &vale_mangos::datadir::dbc_dir(&dir)));
+                .map(|dir| dbcs::standing(&session.project, &dir));
             self.files = Some((now, answer));
         }
         &self.files.as_ref().expect("filled above").1
@@ -490,16 +490,16 @@ impl Standing {
     }
 }
 
-/// Computes one subject's [`Standing`] from the project and the revert file.
-///
-/// Reads no database. Every number comes from the project folder, so the
-/// panel can be drawn with no server to reach. See `OnTheServer`, whose
-/// record is the revert file.
 /// Whether any table the server reads has edits not yet saved.
 fn tables_unsaved(session: &EditSession) -> bool {
     rows::server_tables().any(|(table, _)| session.unsaved_tables.contains(table))
 }
 
+/// Computes one subject's [`Standing`] from the project and the revert file.
+///
+/// Reads no database. Every number comes from the project folder, so the
+/// panel can be drawn with no server to reach. See `OnTheServer`, whose
+/// record is the revert file.
 pub(crate) fn standing(half: Half, session: &EditSession, assets: &GameAssets) -> Standing {
     match half {
         Half::Tables => {
@@ -514,6 +514,7 @@ pub(crate) fn standing(half: Half, session: &EditSession, assets: &GameAssets) -
             };
             let undo = Undo::open_at(&session.project, rows::REVERT_VPATH).unwrap_or(Undo {
                 entries: Vec::new(),
+                database: None,
             });
             Standing {
                 changed: plan.rows.len(),
@@ -578,15 +579,18 @@ pub(crate) fn save(half: Half, work: &mut Work<'_>) {
         // the statements for the last save and report them as what is on
         // screen. The SQL file itself is written by `rows::save`, which the
         // apply below calls in its own order.
+        // A save writes everything; see `EditSession::save_files`.
         Half::Tables => {
-            work.session.save_all_tables();
+            let _ = work.session.save_files();
         }
         // The stores first, which every row subject shares, then this
         // subject's SQL.
         Half::Row(subject) => {
-            if subject::save_stores(work.session) {
-                subject::save(work.session, subject.row_subject());
-            }
+            work.session.save_files_with(|session| {
+                if subject::save_stores(session) {
+                    subject::save(session, subject.row_subject());
+                }
+            });
         }
     }
 }
@@ -692,12 +696,12 @@ pub(crate) fn put_back(half: Half, work: &mut Work<'_>) -> Result<String, String
 /// be reached.
 fn sync_files(work: &mut Work<'_>) -> Option<String> {
     let project = &work.session.project;
-    if dbcs::carried(project).is_empty() && dbcs::saved(project).is_empty() {
+    let dir = crate::server::datadir::data_dir(work.server);
+    if !dbcs::any(project, dir.as_deref().ok()) {
         return None;
     }
     Some(
-        match crate::server::datadir::data_dir(work.server)
-            .and_then(|dir| dbcs::apply_at(project, &vale_mangos::datadir::dbc_dir(&dir)))
+        match dir.and_then(|dir| dbcs::apply_at(project, &dir))
         {
             Ok(done) => done.line(),
             Err(e) => format!("server DBC files not copied: {e}"),
@@ -709,12 +713,12 @@ fn sync_files(work: &mut Work<'_>) -> Option<String> {
 /// `None` when this project has copied none.
 fn put_back_files(work: &mut Work<'_>) -> Option<String> {
     let project = &work.session.project;
-    if dbcs::saved(project).is_empty() {
+    let dir = crate::server::datadir::data_dir(work.server);
+    if !dbcs::any(project, dir.as_deref().ok()) {
         return None;
     }
     Some(
-        match crate::server::datadir::data_dir(work.server)
-            .and_then(|dir| dbcs::put_back_at(project, &vale_mangos::datadir::dbc_dir(&dir)))
+        match dir.and_then(|dir| dbcs::put_back_at(project, &dir))
         {
             Ok(done) => done.line(),
             Err(e) => format!("server DBC files not restored: {e}"),
@@ -722,8 +726,8 @@ fn put_back_files(work: &mut Work<'_>) -> Option<String> {
     )
 }
 
-/// Gives up this project's claim on the subject's rows. The database is not
-/// touched.
+/// Gives up this project's claim on the subject's rows, as one edit that
+/// Undo takes back. The database is not touched.
 pub(crate) fn discard(half: Half, session: &mut EditSession) -> String {
     let (rows, paths) =
         session.forget_server_edits(|table| half.owns(table), half == Half::Row(Subject::Creatures));
@@ -815,7 +819,7 @@ mod tests {
     }
 
     /// The line distinguishes rows that are all applied from rows still
-    /// outstanding. The panel this one replaced read the same in both states.
+    /// outstanding, so the two states do not read the same.
     #[test]
     fn the_line_tells_applied_from_outstanding() {
         let all_in = Standing {

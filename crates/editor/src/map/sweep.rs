@@ -363,6 +363,9 @@ fn finish(run: Run, session: &mut EditSession, sweep: &mut Sweep) {
     } = run;
     if replace && run_begun {
         session.history.end();
+        // The sweep wrote each tile as it went; a full save submits the
+        // sweep's edit, so the folder and the changelists agree.
+        session.save_asked = true;
     }
     // Close every tile this sweep opened, changed or not.
     //

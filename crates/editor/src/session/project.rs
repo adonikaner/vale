@@ -40,8 +40,12 @@ impl EditSession {
     /// uses it, since it rewrites its copy of the host's project under the
     /// same name at every join.
     pub(crate) fn open_again(&mut self, assets: &GameAssets, name: &str) -> bool {
-        let saved = self.save_all();
-        let tables = self.save_all_tables();
+        let saved = self.unsaved.len();
+        let tables = self.unsaved_tables.len();
+        // A save writes everything; see `Self::save_files`. The changelist it
+        // closes is closed in the log of the project it saved; see
+        // `crate::collab::keep_the_log`.
+        let _ = self.save_files();
         let project = match Project::open(&assets.root, name) {
             Ok(project) => project,
             Err(e) => {
@@ -71,7 +75,9 @@ impl EditSession {
     /// for the same reason a switch drops them.
     fn adopt(&mut self, assets: &GameAssets, project: Project) {
         self.edited = Arc::new(RwLock::new(HashMap::default()));
-        assets.set_overlay(Some(overlay_over(&project, &self.edited)));
+        self.staged.clear();
+        self.staged_files = super::Staged::default();
+        assets.set_overlay(Some(overlay_over(&project, &self.edited, &self.staged_files)));
         self.project = project;
         self.tiles.clear();
         // The locks are the project's, read from its folder.
@@ -80,6 +86,10 @@ impl EditSession {
         self.tables.clear();
         self.unsaved.clear();
         self.unsaved_tables.clear();
+        // What is applied is read from the new folder, so no other author's
+        // change is held here.
+        self.exclude.clear();
+        self.elsewhere.clear();
         // The sets naming work still owed on a tile are cleared too. They are
         // keyed by coordinate, so without this a tile marked stale or unsaved
         // under the old project was still named under the new one, and for a
@@ -156,7 +166,10 @@ impl EditSession {
         // Re-opened rather than kept: the folder is the same one, and what
         // has to be dropped is everything this session read out of it.
         match Project::open(&assets.root, &name) {
-            Ok(project) => self.adopt(assets, project),
+            Ok(project) => {
+                self.adopt(assets, project);
+                self.cleared = true;
+            }
             Err(e) => {
                 self.status = format!("{name} was cleared but could not be reopened: {e}");
                 return Some(went);

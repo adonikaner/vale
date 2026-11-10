@@ -6,7 +6,7 @@
 //! A patch is distributed, not applied. The person publishing hands the files
 //! to a server and to players. A publish does not write to this machine's
 //! `DataDir` or database, and writes its client archive into this install's
-//! `Data\` only when the project's *Copy the client archive into Data* switch
+//! `Data\` only when the project's "Copy the client archive into Data" switch
 //! is on. The development loop uses other routes: a
 //! save applies rows, and the "Server files" button on the map window and
 //! "Regenerate changed tiles" on the Server panel write the live server's
@@ -44,8 +44,8 @@
 //!
 //! The tile work is not repeated each time. The navmesh takes minutes per
 //! tile, so a publish starts from the previous patch's `server\` folder and
-//! regenerates only the tiles changed since (`publish\server-tiles.txt` holds
-//! a hash per tile as of the last publish). A tile that left the project is
+//! regenerates only the tiles changed since (the release record,
+//! `release::Releases`, holds a hash per tile as of the last publish). A tile that left the project is
 //! regenerated from the archives, which puts the shipped file into the patch.
 //! The server already has that file, so this does no harm.
 //!
@@ -76,10 +76,6 @@ pub(crate) const DIR: &str = "publish";
 /// begins with a dot, which a walk of the folder such as [`patches`] skips.
 pub(crate) const STAGE: &str = "publish\\.stage";
 
-/// The name of the last patch written, for the tiles the next one starts
-/// from.
-pub(crate) const LAST_VPATH: &str = "publish\\last-patch.txt";
-
 /// Whether text may name a patch: a folder name, not hidden.
 pub(crate) fn is_a_name(name: &str) -> bool {
     project::is_a_name(name) && !name.trim().starts_with('.')
@@ -108,9 +104,11 @@ pub(crate) fn patches(project: &Project) -> Vec<String> {
     out
 }
 
-/// The last patch written, if its folder is still there.
+/// The last patch written, if its folder is still there, as the release
+/// record names it (`release::Releases`). The next patch starts from its
+/// tiles.
 pub(crate) fn last(project: &Project) -> Option<String> {
-    let name = String::from_utf8_lossy(&project.read(LAST_VPATH)?).trim().to_string();
+    let name = release::read(project).patch?;
     (is_a_name(&name) && project.path_for(&format!("{DIR}\\{name}"))?.is_dir()).then_some(name)
 }
 
@@ -129,6 +127,9 @@ pub(crate) struct Head {
     /// The patch the tiles were started from, when there was one.
     pub(crate) from: Option<String>,
     pub(crate) tiles_to_do: usize,
+    /// The number of the project's last edit when the patch was made, when
+    /// the project has a log.
+    pub(crate) edit: Option<u64>,
 }
 
 /// Publishes a patch under `name`. The archive, the DBCs and the migration
@@ -158,10 +159,8 @@ pub(crate) fn publish(
 
     // Save everything the project holds, so the patch matches what is on
     // screen.
-    session.save_all();
-    session.save_all_tables();
+    session.save_files_with(crate::server::subject::save_all);
     crate::server::datadir::repair_project_wdts(session);
-    crate::server::subject::save_all(session);
 
     let mut head = Head {
         name: name.to_string(),
@@ -216,7 +215,7 @@ pub(crate) fn publish(
     let _ = std::fs::remove_dir_all(vale_mangos::datadir::dbc_dir(&server_dir));
     let _ = std::fs::remove_dir_all(server_dir.join("sql"));
     head.dbcs = release::copy_server_dbcs(&project, &server_dir)?;
-    let written = release::write_migration(session, assets, &server_dir.join("sql"))?;
+    let written = release::write_migration(session, assets, &server_dir.join("sql"), false)?;
     release::report_unknown(&written.contents);
     head.migration = written
         .file
@@ -227,7 +226,13 @@ pub(crate) fn publish(
     // The tiles: the previous patch's, plus the ones changed since.
     let previous = last(&project).filter(|p| p != name);
     head.from = previous.clone();
-    let record = Record::read(&project, tiles::PATCH_RECORD);
+    // The record says which tiles the previous patch built, and those are
+    // copied from its folder. With no previous patch folder there is nothing
+    // to copy them from, so every tile is built again.
+    let record = match &previous {
+        Some(_) => release::read(&project).tiles,
+        None => Record::default(),
+    };
     let reader = tiles::TileReader::new(&project, assets);
     let (dirty, skipped) = tiles::dirty(&reader, &record, &mut |_, _| {});
     let maps = reader.maps().to_vec();
@@ -247,9 +252,11 @@ pub(crate) fn publish(
         false => Vec::new(),
     };
     head.tiles_to_do = dirty.len();
-    project
-        .write(LAST_VPATH, format!("{name}\n").as_bytes())
-        .map_err(|e| format!("{LAST_VPATH}: {e}"))?;
+    head.edit = vale_collab::Log::open(project.root.join(vale_collab::log::LOG_DIR)).ok().map(|log| log.last());
+    let mut releases = release::read(&project);
+    releases.patch = Some(name.to_string());
+    releases.edit = head.edit;
+    release::write(&project, &releases)?;
 
     let mut said = vec![format!("patch {name}")];
     if let Some(archive) = &head.archive {
@@ -337,9 +344,9 @@ pub(crate) fn publish(
             let _ = std::fs::remove_dir_all(&scratch);
             say("copying the server files into the patch");
             collect(&staged, &folder.join("server"), &outcome)?;
-            let mut record = Record::read(&project, tiles::PATCH_RECORD);
-            record.note(&dirty, &maps);
-            record.write(&project, tiles::PATCH_RECORD)?;
+            let mut releases = release::read(&project);
+            releases.tiles.note(&dirty, &maps);
+            release::write(&project, &releases)?;
             finish(&project, &head_for_finish, Some(&outcome))?;
             Ok(outcome)
         })();
@@ -628,6 +635,9 @@ fn finish(project: &Project, head: &Head, outcome: Option<&Outcome>) -> Result<(
             "Server tiles unchanged since patch {from} are copied from that patch.\n"
         ));
     }
+    if let Some(edit) = head.edit {
+        text.push_str(&format!("Made from the project as of edit {edit} of its log.\n"));
+    }
     if let Some(outcome) = outcome {
         text.push_str(&format!(
             "This publish regenerated {} tile(s): {}.\n",
@@ -749,8 +759,10 @@ mod tests {
         }
         project.write("publish\\released.txt", b"").unwrap();
         assert_eq!(patches(&project), vec!["20260922120000".to_string(), "goldshire".to_string()]);
-        project.write(LAST_VPATH, b"goldshire\n").unwrap();
+        let releases = release::Releases { patch: Some("goldshire".into()), edit: Some(12), ..Default::default() };
+        release::write(&project, &releases).unwrap();
         assert_eq!(last(&project).as_deref(), Some("goldshire"));
+        assert_eq!(release::read(&project).edit, Some(12));
         std::fs::remove_dir_all(project.publish_dir().join("goldshire")).unwrap();
         assert_eq!(last(&project), None, "a folder that is gone is not a patch to start from");
         let _ = std::fs::remove_dir_all(&root);

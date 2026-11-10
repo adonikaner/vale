@@ -37,10 +37,17 @@ impl Report {
 }
 
 /// Read the open project's folder and compare it against the archives.
+///
+/// The archives are read past this project's own published archives, as a
+/// save reads them (`crate::session::originals::Shipped::original`), so the
+/// dialog and a save agree on which files change nothing. Read through the
+/// whole chain, a project whose patch is in `Data\` compared each file with
+/// its own published copy and called it the same as the archives.
 pub(crate) fn build(session: &EditSession, assets: &GameAssets) -> Report {
     let project = &session.project;
-    let manifest = vale_edit::manifest::manifest(project, |vpath| {
-        assets.read_past_overlay(vpath).ok()
+    let manifest = vale_edit::manifest::manifest(project, |vpath| match session.shipped.as_ref() {
+        Some(shipped) => shipped.original(project, vpath),
+        None => assets.read_past_overlay(vpath).ok(),
     });
     Report {
         manifest,

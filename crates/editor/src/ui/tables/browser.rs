@@ -284,20 +284,14 @@ pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 ///
 /// Undo and redo repeat the inspector's pair here, because egui takes
 /// `Ctrl+Z` while a text box has keyboard focus, and in a workspace made of
-/// text boxes one usually does. Discard reloads the table from the file and
-/// removes its entries from the undo stack. `EditSession::discard_table`
-/// explains why the entries are removed rather than kept.
+/// text boxes one usually does. Discard adds the table to
+/// `EditSession::discard_asked`, and `crate::collab::changes::discard` takes
+/// back its unsaved edits after the frame, as new edits in the project's log.
 fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let unsaved = work.session.unsaved_tables.contains(&table_name);
     let undo = work.session.history.next_undo().map(|c| c.label.clone());
     let redo = work.session.history.next_redo().map(|c| c.label.clone());
-    // The open row by its id rather than its index, so a discard that
-    // renumbers the table can find it again.
-    let open_id = work
-        .browser
-        .open
-        .and_then(|record| work.session.table(&table_name)?.u32_at(record, 0));
     ui.horizontal(|ui| {
         let quarter = ((ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 4.0).max(40.0);
         let size = egui::vec2(quarter, 22.0);
@@ -305,7 +299,7 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .add_enabled(undo.is_some(), egui::Button::new("Undo").min_size(size))
             .on_hover_text(match &undo {
                 Some(label) => format!("Ctrl+Z — {label}"),
-                None => "nothing to undo".to_string(),
+                None => "Nothing to undo.".to_string(),
             })
             .clicked()
         {
@@ -316,7 +310,7 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .add_enabled(redo.is_some(), egui::Button::new("Redo").min_size(size))
             .on_hover_text(match &redo {
                 Some(label) => format!("Ctrl+Y — {label}"),
-                None => "nothing to redo".to_string(),
+                None => "Nothing to redo.".to_string(),
             })
             .clicked()
         {
@@ -326,32 +320,30 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         if ui
             .add_enabled(unsaved && !work.role.joined(), egui::Button::new("Save").min_size(size))
             .on_hover_text(format!(
-                "write {table_name}.dbc into the project folder. Ctrl+S writes every table and tile."
+                "Save the project, as Ctrl+S does: every table, tile and server row, submitted as one changelist."
             ))
             .on_disabled_hover_text(match work.role.joined() {
-                true => "in a shared session only the host saves",
-                false => "nothing has changed since the last save",
+                true => "In a shared session only the host saves.",
+                false => "Nothing has changed since the last save.",
             })
             .clicked()
         {
-            work.session.save_table(&table_name);
+            work.session.save_asked = true;
         }
         if ui
-            .add_enabled(unsaved && !work.role.shared(), egui::Button::new("Discard").min_size(size))
+            .add_enabled(unsaved, egui::Button::new("Discard").min_size(size))
             .on_hover_text(format!(
-                "discard every unsaved change to {table_name}: reload the file and remove its \
-                 entries from the undo stack. The rows return to the project folder's copy, or \
-                 to the archives' copy when the project has none."
+                "Take back every edit of this editor's to {table_name} that is in no changelist, \
+                 so its rows are as the project's file holds them, or the archives' when the \
+                 project has none. The edits taken back are new edits in the project's log, and \
+                 in a shared session they reach the other editors."
             ))
-            .on_disabled_hover_text(match work.role.shared() {
-                true => "Discard is not available in a shared session, because a discard is not sent to the other editors. Undo your own edits instead",
-                false => "nothing has changed since the last save",
-            })
+            .on_disabled_hover_text("Nothing has changed since the last save.")
             .clicked()
-            && work.session.discard_table(work.assets, &table_name)
         {
+            work.session.discard_asked.push(crate::collab::changes::table_key(&table_name));
             work.browser.forget_buffers();
-            work.browser.open = open_id.and_then(|id| work.session.table(&table_name)?.row_of(id));
+            work.browser.open = None;
         }
     });
 }
@@ -372,14 +364,14 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         let zones = table_name == tables::zones::area::TABLE;
         let (word, about) = match zones {
             true => (
-                "+ New zone",
+                "+ New Zone",
                 format!(
-                    "a new zone on the open map, {} ({}), under the next id, with an explore \
+                    "A new zone on the open map, {} ({}), under the next id, with an explore \
                      bit no other area holds. A sub-area is made from its zone's row.",
                     work.session.map, work.session.map_id
                 ),
             ),
-            false => ("+ New", format!("a blank {table_name} row under the next id")),
+            false => ("+ New", format!("A blank {table_name} row under the next id.")),
         };
         if ui
             .add_sized(size, egui::Button::new(word))

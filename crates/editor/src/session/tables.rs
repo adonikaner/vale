@@ -137,7 +137,20 @@ impl EditSession {
         unsaved.iter().filter(|name| self.save_table(name)).count()
     }
 
-    /// …and write it to the project folder.
+    /// An open table as the folder is to hold it: every excluded change on it
+    /// taken back, newest first. See [`Self::exclude`].
+    pub(crate) fn submitted_table(&self, name: &str) -> Option<DbcFile> {
+        let mut copy = self.tables.get(name)?.clone();
+        for excluded in self.exclude.iter().rev().filter(|excluded| excluded.change.tables().iter().any(|had| had == name)) {
+            match excluded.forward {
+                true => excluded.change.revert_table(name, &mut copy),
+                false => excluded.change.apply_table(name, &mut copy),
+            }
+        }
+        Some(copy)
+    }
+
+    /// Write one open table to the project folder.
     ///
     /// A table whose rows are the archives' rows is not kept: the project's
     /// copy is removed and its bytes taken out of the overlay, so an edit that
@@ -150,7 +163,7 @@ impl EditSession {
     /// [`Self::save_bytes`]: a table can be added to it or taken out, and its
     /// size changes. So [`Self::files_revision`] moves, and every list of the
     /// project's files is read again. A table saved without it was missing from
-    /// the Assets workspace's Project Files until another kind of file was
+    /// the Assets workspace's Project Files until another type of file was
     /// saved.
     pub(crate) fn save_table(&mut self, name: &str) -> bool {
         // Not sent in a shared session, as a tile save is not; see
@@ -161,12 +174,35 @@ impl EditSession {
         };
         self.files_revision += 1;
         let path = vale_assets::tables::dbc::dbc_path(name);
+        // The folder holds submitted edits only; the overlay keeps the open
+        // table, excluded changes and all. See `Self::exclude`.
+        let excluded = self.exclude.iter().any(|excluded| excluded.change.tables().iter().any(|had| had == name));
+        if excluded {
+            let bytes = self.submitted_table(name).unwrap_or_else(|| table.clone()).write();
+            let written = match self.changes_nothing(&path, &bytes) {
+                true => self.project.revert(&path).map(|_| ()),
+                false => self.project.write(&path, &bytes).map(|_| ()),
+            };
+            return match written {
+                Ok(()) => {
+                    self.unsaved_tables.remove(name);
+                    self.saved_tables.push(name.to_string());
+                    self.status = format!("saved {name}.dbc, without other editors' unsubmitted edits");
+                    true
+                }
+                Err(e) => {
+                    self.status = format!("{path}: {e}");
+                    false
+                }
+            };
+        }
         let bytes = table.write();
         if self.changes_nothing(&path, &bytes) {
             return match self.project.revert(&path) {
                 Ok(_) => {
                     self.unpublish_table(name);
                     self.unsaved_tables.remove(name);
+                    self.saved_tables.push(name.to_string());
                     self.status = format!("{name} matches the archives, so it is not kept in the project");
                     true
                 }
@@ -180,6 +216,7 @@ impl EditSession {
             Ok(at) => {
                 self.publish_table(name);
                 self.unsaved_tables.remove(name);
+                self.saved_tables.push(name.to_string());
                 self.status = format!("saved {}", at.display());
                 true
             }

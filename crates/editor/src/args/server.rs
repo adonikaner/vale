@@ -6,7 +6,7 @@ use super::Arity::*;
 use super::{first, named, parse_playtest, Flag};
 use crate::server::stack::Subject;
 
-/// Playtests, Apply and Put back, and publishing.
+/// Playtests, Apply and Put back, publishing, and a shared session.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Server {
     /// `--character <name>`: who a playtest logs in as.
@@ -76,8 +76,8 @@ pub(crate) struct Server {
     /// for the other six subjects that had flags of their own, are the same
     /// flags.
     ///
-    /// Applying is the one action on a subject that writes to a database, it
-    /// is only a press on a panel, and without a flag no script can run it, so
+    /// Applying is the one action on a subject that writes to a database, and
+    /// it is only a press on a panel: without a flag no script can run it, and
     /// nothing checks it. Under `--playtest` with `--shell`, an Apply also asks
     /// the server for the subject's reloads. The flags run once, after every
     /// scripted edit has landed; see `crate::server::subject::flags`.
@@ -91,6 +91,8 @@ pub(crate) struct Server {
     pub(crate) panel: bool,
     /// `--settings`: open the Settings window, for the same reason.
     pub(crate) settings_panel: bool,
+    /// `--changes`: open the Changes window, for the same reason.
+    pub(crate) changes_panel: bool,
     /// `--host <port>`: host a shared session on this port once the map is
     /// open, and `--join <address>`: join the session hosted there. Each with
     /// `--session-name <name>` and `--session-password <password>`, which
@@ -101,6 +103,10 @@ pub(crate) struct Server {
     /// against each other. See `crate::collab`.
     pub(crate) host: Option<u16>,
     pub(crate) join: Option<String>,
+    /// `--depot`: host the project's shared session with no window, until
+    /// the process is stopped, on `--host`'s port or the default. See
+    /// `crate::collab::depot`.
+    pub(crate) depot: bool,
     pub(crate) session_name: Option<String>,
     pub(crate) session_password: Option<String>,
     pub(crate) session_panel: bool,
@@ -153,7 +159,9 @@ pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--revert-behaviour", Switch, |a, _| a.server.revert_subjects.push(Subject::Behaviour)),
     Flag::new("--server", Switch, |a, _| a.server.panel = true),
     Flag::new("--settings", Switch, |a, _| a.server.settings_panel = true),
+    Flag::new("--changes", Switch, |a, _| a.server.changes_panel = true),
     Flag::new("--host", One, |a, v| a.server.host = first(v).and_then(|port| port.parse().ok())),
+    Flag::new("--depot", Switch, |a, _| a.server.depot = true),
     Flag::new("--join", One, |a, v| a.server.join = named(v)),
     Flag::new("--session-name", One, |a, v| a.server.session_name = named(v)),
     Flag::new("--session-password", One, |a, v| a.server.session_password = named(v)),

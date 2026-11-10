@@ -3,15 +3,17 @@
 //!
 //! ```text
 //! topbar.rs     the top bar: the Project and Map menus and the workspace
-//!               control, then the session button, Save, the Server button
-//!               and Playtest
+//!               control, then the session button, Changes, Save, the Server
+//!               button and Playtest
+//! changes.rs    the Changes button and window: edits not in a changelist,
+//!               Submit, the conflicts and the history
 //! popover.rs    the forms the top bar opens: where to go, a bookmark, the
 //!               Playtest popover, which project, what the project has done
 //!               to the server, what a publish writes, and the Settings and
 //!               session windows
 //! settings.rs   the Settings window: this machine's world database, map
 //!               tools and drawing tablet
-//! tilefiles.rs  the Server tile files dialog: the DataDir's tile files a
+//! tilefiles.rs  the Server Tile Files dialog: the DataDir's tile files a
 //!               decision is wanted on, and the Remove and Put back buttons
 //! manifest.rs   the open project's files and what each one changes, drawn in
 //!               the project dialog
@@ -42,6 +44,7 @@
 //! ```
 
 pub(crate) mod asks;
+pub(crate) mod changes;
 pub(crate) mod context;
 pub(crate) mod hovercard;
 pub(crate) mod icons;

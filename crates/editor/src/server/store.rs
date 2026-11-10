@@ -43,7 +43,7 @@ pub(crate) struct ServerRows {
     /// every terrain project. See [`vale_mangos::row::Edits`], and
     /// [`crate::server::rows`], which writes them.
     pub(crate) edits: vale_mangos::row::Edits,
-    /// …and the waypoint paths it changes, which are the one server subject
+    /// The waypoint paths it changes, which are the one server subject
     /// whose edit is a set of rows rather than a column.
     ///
     /// A second store rather than more entries in the first, because the two
@@ -62,14 +62,18 @@ pub(crate) struct ServerRows {
     /// `crate::tools::spawns::creatures` is the one reader: it holds a map's worth of
     /// spawns read over a connection, and an edit to a position has to move the
     /// marker without a second round trip. A counter rather than a flag,
-    /// because what it answers is "is what I read still true".
+    /// because what it answers is whether a reading is still true.
     pub(crate) revision: u64,
     /// Whether [`Self::edits`] is ahead of the project folder.
     pub(crate) edits_unsaved: bool,
-    /// …and whether [`Self::paths`] is.
+    /// Whether [`Self::paths`] is ahead of the project folder.
     pub(crate) paths_unsaved: bool,
-    /// …and whether [`Self::scripts`] is.
+    /// Whether [`Self::scripts`] is ahead of the project folder.
     pub(crate) scripts_unsaved: bool,
+    /// Whether the three stores were written since the frame's work last
+    /// read this, which then submits (`crate::collab`'s *What a save
+    /// writes*).
+    pub(crate) saved: bool,
     /// The undo entry every server-row write goes on while a group is being
     /// changed, as `(label, subject)`. See [`EditSession::as_one`].
     ///
@@ -119,6 +123,11 @@ impl ServerRows {
         self.edits_unsaved || self.paths_unsaved || self.scripts_unsaved
     }
 
+    /// Whether the three stores are what `project`'s files hold.
+    pub(crate) fn matches_folder(&self, project: &Project) -> bool {
+        self.edits == read_server_edits(project) && self.paths == read_server_paths(project) && self.scripts == read_server_scripts(project)
+    }
+
     /// Put a change's server-row edits in, or take them out.
     ///
     /// The server-row counterpart of the session's table step, and simpler:
@@ -144,6 +153,26 @@ impl ServerRows {
         if stepped {
             self.revision += 1;
         }
+    }
+
+    /// What the store holds now for the subject of `entry`, in the form an
+    /// entry's `before` and `after` take: `Some(None)` when the project says
+    /// nothing about it. `None` when the entry's table or key does not read,
+    /// which nothing this editor wrote produces.
+    pub(crate) fn current(&self, entry: &vale_edit::undo::ServerEntry) -> Option<Option<String>> {
+        use vale_edit::undo::Shape;
+        let key = vale_mangos::row::Key::parse(&entry.key)?;
+        Some(match &entry.shape {
+            Shape::Column(column) => self.edits.get(&entry.table, &key, column).map(str::to_string),
+            Shape::Row => self.edits.row_line(&entry.table, &key),
+            Shape::Path => match vale_mangos::scripts::table_named(&entry.table) {
+                Some(table) => self.scripts.get(table, key.first()? as u32).map(|script| script.to_line()),
+                None => {
+                    let which = vale_mangos::path::Which::named(&entry.table)?;
+                    self.paths.get(which, key.first()?).map(|path| path.to_line())
+                }
+            },
+        })
     }
 
     /// Put one server entry into its store, already turned the way
@@ -176,8 +205,9 @@ impl ServerRows {
         }
     }
 
-    /// …and one path or script, which are two stores under one shape of
-    /// entry: a script's entry carries a script table's name. See
+    /// Put one path or script entry into its store. Paths and scripts are two
+    /// stores under one shape of entry: a script's entry carries a script
+    /// table's name. See
     /// [`EditSession::set_server_script`].
     fn step_path(&mut self, entry: &vale_edit::undo::ServerEntry) {
         self.paths_unsaved = true;
@@ -214,53 +244,15 @@ impl ServerRows {
         }
     }
 
-    /// Throw away one subject's rows, and with `paths` every waypoint path.
-    /// Answers `(rows, paths and scripts)`. The undo entries addressed against
-    /// them are the session's to forget; see
-    /// [`EditSession::forget_server_edits`].
-    fn forget_where(&mut self, wanted: &mut impl FnMut(&str) -> bool, paths: bool) -> (usize, usize) {
-        let rows = self.edits.forget_where(&mut *wanted);
-        // The paths go with them for the subject that has any, because
-        // Discard is one gesture about one subject, and leaving the paths
-        // behind would report "edits discarded" while the next save went on
-        // writing a `DELETE` and a dozen `INSERT`s. The scripts go by table,
-        // as the rows do.
-        let mut dropped = match paths {
-            true => {
-                let had = self.paths.len();
-                self.paths = vale_mangos::path::Paths::default();
-                had
-            }
-            false => 0,
-        };
-        let scripts: Vec<(&'static str, u32)> = self
-            .scripts
-            .iter()
-            .filter(|script| wanted(script.table))
-            .map(|script| (script.table, script.id))
-            .collect();
-        for (table, id) in &scripts {
-            self.scripts.forget(table, *id);
-        }
-        dropped += scripts.len();
-        self.edits_unsaved = true;
-        if paths {
-            self.paths_unsaved = true;
-        }
-        if !scripts.is_empty() {
-            self.scripts_unsaved = true;
-        }
-        self.revision += 1;
-        (rows, dropped)
-    }
-
     /// Write the three stores to their files: the rows, the paths, then the
     /// scripts. Stops at the first that cannot be written and answers what
     /// went wrong, as `<path>: <error>`.
     pub(crate) fn save(&mut self, project: &Project) -> Result<(), String> {
         self.save_edits(project)?;
         self.save_paths(project)?;
-        self.save_scripts(project)
+        self.save_scripts(project)?;
+        self.saved = true;
+        Ok(())
     }
 
     /// Write the project's scripts to their own file, or remove the file when
@@ -399,7 +391,7 @@ impl EditSession {
         key: &vale_mangos::row::Key,
         column: &str,
         value: Option<String>,
-        // …and the entry it goes on the undo stack as. `None` is an edit made
+        // The entry it goes on the undo stack as. `None` is an edit made
         // by an undo, which must not push one of its own.
         under: Option<Gesture<'_>>,
     ) {
@@ -458,7 +450,7 @@ impl EditSession {
         table: &str,
         key: &vale_mangos::row::Key,
         row: Option<&vale_mangos::row::RowEdit>,
-        // …and the entry it goes on the undo stack as. `None` is an edit made
+        // The entry it goes on the undo stack as. `None` is an edit made
         // by an undo, which must not push one of its own.
         under: Option<Gesture<'_>>,
     ) {
@@ -502,7 +494,7 @@ impl EditSession {
         which: vale_mangos::path::Which,
         owner: u64,
         path: Option<&vale_mangos::path::Path>,
-        // …and the entry it goes on the undo stack as. `None` is an edit made
+        // The entry it goes on the undo stack as. `None` is an edit made
         // by an undo, which must not push one of its own.
         under: Option<Gesture<'_>>,
     ) {
@@ -575,32 +567,59 @@ impl EditSession {
         self.rows.revision += 1;
     }
 
-    /// Throw away one subject's server-row edits, and the undo entries
-    /// addressed against them. Answers `(rows, paths)`.
+    /// Drop one subject's server-row edits as one edit: every row of the
+    /// tables `wanted` names, every script under them, and with `paths` every
+    /// waypoint path, each taken from what the project holds to nothing.
+    /// Answers `(rows, paths and scripts)`.
     ///
     /// `wanted` is asked each table's name, because the store holds every
-    /// subject's rows together: a creature discard that emptied it would take
-    /// the item workspace's rows with it and count them as creatures. See
-    /// `vale_mangos::row::Edits::forget_where`.
+    /// subject's rows together: a creature drop that emptied it would take the
+    /// item workspace's rows with it and count them as creatures.
     ///
-    /// The entries go for the reason `History::forget_table`'s do: an entry's
-    /// `before` and `after` are addressed against the store as it was when the
-    /// entry was made, and after it is emptied there is nothing for them to put
-    /// back — undoing would write a value into a row the project has stopped
-    /// claiming.
+    /// It is an edit on the undo stack like any other, so Undo puts the rows
+    /// back, and the project's log and a shared session receive it
+    /// (`crate::collab`). The paths go with the creature subject's rows,
+    /// because the drop is one gesture about one subject, and leaving them
+    /// would leave the next save writing their statements.
     pub(crate) fn forget_server_edits(
         &mut self,
         mut wanted: impl FnMut(&str) -> bool,
         paths: bool,
     ) -> (usize, usize) {
-        let dropped = self.rows.forget_where(&mut wanted, paths);
-        // The waypoint entries go with the creature discard by their table,
-        // so the script entries, which share the undo's list, stay.
-        self.history.forget_server_rows_where(
-            |table| wanted(table) || (paths && vale_mangos::path::table_named(table).is_some()),
-            false,
+        use vale_edit::undo::ServerEntry;
+        let mut entries: Vec<ServerEntry> = self
+            .rows
+            .edits
+            .rows()
+            .filter(|(table, _, _)| wanted(table))
+            .map(|(table, key, row)| ServerEntry::row(table, key.text(), Some(row.to_line()), None))
+            .collect();
+        let rows = entries.len();
+        if paths {
+            entries.extend(self.rows.paths.iter().map(|path| {
+                let key = vale_mangos::row::Key::one(path.which.key_column(), path.owner).text();
+                ServerEntry::path(path.which.table(), key, Some(path.to_line()), None)
+            }));
+        }
+        entries.extend(self.rows.scripts.iter().filter(|script| wanted(script.table)).map(|script| {
+            let key = vale_mangos::row::Key::one("id", u64::from(script.id)).text();
+            ServerEntry::path(script.table, key, Some(script.to_line()), None)
+        }));
+        let others = entries.len() - rows;
+        if entries.is_empty() {
+            return (0, 0);
+        }
+        let change = vale_edit::undo::Change::from_entries(
+            "Drop Changes",
+            entries.iter().cloned().map(vale_edit::undo::Entry::Server).collect(),
         );
-        dropped
+        self.rows.step(&change, true);
+        self.history.begin("Drop Changes");
+        for entry in entries {
+            self.history.record_server(entry);
+        }
+        self.history.end();
+        (rows, others)
     }
 }
 

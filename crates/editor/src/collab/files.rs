@@ -24,7 +24,11 @@
 //! The import record (`crate::import::sources`) says which files were
 //! imported. Every import rewrites it, so sent whole it would make two imports
 //! made at once clash. Each step carries the record's lines for its own files
-//! instead, and each editor merges them into its own record.
+//! instead, and each editor merges them into its own record. A step also
+//! carries the lines of the files it removed, as the record held them before
+//! ([`Files::forgotten`]), so the step taken back records them again: a
+//! deleted import put back by a revert is an import again, with the source
+//! and choices Re-import needs.
 //!
 //! A step carries at most [`STEP_BYTES`]; a larger batch is split into
 //! several. A single file larger than that is not sent, and the status line
@@ -52,9 +56,18 @@
 //! record's lines, and has the session read the files again
 //! ([`EditSession::reread_files`]). A joined editor's step that the host
 //! refuses is reverted by applying [`Files::backward`]: each file as it was
-//! before.
-//! Those bytes ([`File::before`]) stay with the editor that made the step and
-//! are not sent.
+//! before. Those bytes ([`File::before`]) stay with the editor that made the
+//! step and are not sent.
+//!
+//! ## Another author's step on the host
+//!
+//! The host's folder holds submitted files only. A joined editor's step is
+//! therefore not written there when it arrives: [`stage`] holds it in
+//! `EditSession::staged`, which the archives' overlay reads before the
+//! folder, so the files are seen at once. [`unstage`] writes the author's
+//! staged steps to the folder when they submit, or drops them when another
+//! editor takes their edits back. A joined editor writes every step to its
+//! own copy at once, since its copy is not the project's record.
 
 use crate::import::sources::{Sources, RECORD};
 use crate::session::EditSession;
@@ -74,6 +87,10 @@ pub(crate) struct Files {
     /// The import record's lines for the files written, as
     /// [`Sources::text`] writes them.
     pub(crate) imported: String,
+    /// …and its lines for the files removed, as the record held them before
+    /// the step. See the module comment.
+    #[serde(default)]
+    pub(crate) forgotten: String,
 }
 
 /// One file of a [`Files`] step.
@@ -132,7 +149,7 @@ impl Files {
             .iter()
             .map(|file| File { path: file.path.clone(), bytes: file.before.clone(), before: file.bytes.clone() })
             .collect();
-        Files { files, imported: String::new() }
+        Files { files, imported: self.forgotten.clone(), forgotten: self.imported.clone() }
     }
 
     /// What the step changed, for a status line: the path of a single file,
@@ -213,7 +230,13 @@ pub(crate) fn joinable(vpath: &str) -> Result<(), &'static str> {
 /// out.
 pub(super) fn take(session: &EditSession) -> (Vec<Files>, Vec<String>) {
     let mut files = Vec::new();
+    // The record as it was before this frame's writes, for the lines of the
+    // files removed. See the module comment.
+    let mut record_before = None;
     for written in session.project.take_journal() {
+        if written.vpath.replace('/', "\\").eq_ignore_ascii_case(RECORD) {
+            record_before = Some(Sources::parse(&String::from_utf8_lossy(written.before.as_deref().unwrap_or_default())));
+        }
         if !shared(&written.vpath) {
             continue;
         }
@@ -234,23 +257,28 @@ pub(super) fn take(session: &EditSession) -> (Vec<Files>, Vec<String>) {
             continue;
         }
         if size + length > STEP_BYTES && !batch.is_empty() {
-            steps.push(step_of(session, std::mem::take(&mut batch)));
+            steps.push(step_of(session, std::mem::take(&mut batch), record_before.as_ref()));
             size = 0;
         }
         size += length;
         batch.push(file);
     }
     if !batch.is_empty() {
-        steps.push(step_of(session, batch));
+        steps.push(step_of(session, batch, record_before.as_ref()));
     }
     (steps, too_large)
 }
 
-/// A step of `files`, with the import record's lines for those written.
-fn step_of(session: &EditSession, files: Vec<File>) -> Files {
+/// A step of `files`, with the import record's lines for those written, and
+/// for those removed the lines `record_before` held.
+fn step_of(session: &EditSession, files: Vec<File>, record_before: Option<&Sources>) -> Files {
     let written: Vec<&str> = files.iter().filter(|file| file.bytes.is_some()).map(|file| file.path.as_str()).collect();
     let imported = Sources::lines_for(&session.project, &written);
-    Files { files, imported }
+    let removed = |vpath: &str| files.iter().any(|file| file.bytes.is_none() && file.path.eq_ignore_ascii_case(vpath));
+    let forgotten = record_before
+        .map(|before| Sources { entries: before.entries.iter().filter(|entry| removed(&entry.vpath)).cloned().collect() }.text())
+        .unwrap_or_default();
+    Files { files, imported, forgotten }
 }
 
 /// Write or remove every file of a step, merge its import record lines, and
@@ -278,6 +306,55 @@ pub(super) fn apply(session: &mut EditSession, game: &GameAssets, step: &Files) 
     failed.map_or(Ok(()), Err)
 }
 
+/// Hold another author's step in the session's overlay, out of the folder,
+/// and have the session read its files again. See *Another author's step on
+/// the host*.
+pub(super) fn stage(session: &mut EditSession, game: &GameAssets, author: [u8; 16], step: &Files) {
+    if let Ok(mut staged) = session.staged_files.write() {
+        for file in &step.files {
+            staged.insert(file.path.to_ascii_lowercase(), file.bytes.clone());
+        }
+    }
+    session.staged.push((author, step.clone()));
+    let paths: Vec<String> = step.files.iter().map(|file| file.path.clone()).collect();
+    session.reread_files(game, &paths);
+}
+
+/// Take an author's staged steps out of the overlay, oldest first: written
+/// to the folder with `write`, for their Submit, or dropped, for a Take
+/// Back. Answers the first file that could not be written.
+pub(super) fn unstage(session: &mut EditSession, game: &GameAssets, author: &[u8; 16], write: bool) -> Result<(), String> {
+    let (theirs, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut session.staged).into_iter().partition(|(by, _)| by == author);
+    if theirs.is_empty() {
+        session.staged = rest;
+        return Ok(());
+    }
+    if let Ok(mut staged) = session.staged_files.write() {
+        staged.clear();
+        for (_, step) in &rest {
+            for file in &step.files {
+                staged.insert(file.path.to_ascii_lowercase(), file.bytes.clone());
+            }
+        }
+    }
+    session.staged = rest;
+    let mut failed = Ok(());
+    for (_, step) in &theirs {
+        match write {
+            true => {
+                if let Err(e) = apply(session, game, step) {
+                    failed = failed.and(Err(e));
+                }
+            }
+            false => {
+                let paths: Vec<String> = step.files.iter().map(|file| file.path.clone()).collect();
+                session.reread_files(game, &paths);
+            }
+        }
+    }
+    failed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +380,7 @@ mod tests {
     #[test]
     fn a_file_step_touches_what_its_files_replace_and_sends_no_before() {
         let step = Files {
+            forgotten: String::new(),
             files: vec![
                 File { path: r"World\Maps\Azeroth\Azeroth_32_48.adt".into(), bytes: None, before: Some(b"tile".to_vec()) },
                 File { path: r"DBFilesClient\Spell.dbc".into(), bytes: Some(b"rows".to_vec()), before: None },
@@ -375,6 +453,32 @@ mod tests {
         assert!(!other.project.has(r"Textures\New.blp"));
         assert_eq!(other.project.read(r"Textures\Old.blp").as_deref(), Some(&b"old"[..]));
         assert!(Sources::read(&other.project).of(r"textures\new.blp").is_none(), "a reverted import loses its line");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A delete of an imported file carries the file's import line, and the
+    /// delete taken back records the line again.
+    #[test]
+    fn a_deleted_import_taken_back_is_an_import_again() {
+        let install = std::env::temp_dir().join(format!("vale-collab-forgotten-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Imports").unwrap());
+        let game = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
+        session.project.write(r"Textures\Rock.blp", b"rock").unwrap();
+        let line = crate::import::sources::Imported { vpath: r"Textures\Rock.blp".into(), source: "C:\\art\\rock.png".into(), settings: Vec::new() };
+        Sources::record(&session.project, line).unwrap();
+        session.project.journal(true);
+
+        session.project.revert(r"Textures\Rock.blp").unwrap();
+        Sources::forget(&session.project, r"Textures\Rock.blp");
+        let (steps, _) = take(&session);
+        let [step] = steps.as_slice() else { panic!("{steps:?}") };
+        assert!(step.forgotten.starts_with("Textures\\Rock.blp\t"), "{:?}", step.forgotten);
+
+        apply(&mut session, &game, &step.backward()).unwrap();
+        assert_eq!(session.project.read(r"Textures\Rock.blp").as_deref(), Some(&b"rock"[..]));
+        let source = Sources::read(&session.project).of(r"textures\rock.blp").map(|entry| entry.source.clone());
+        assert_eq!(source, Some(std::path::PathBuf::from("C:\\art\\rock.png")));
         let _ = std::fs::remove_dir_all(&install);
     }
 

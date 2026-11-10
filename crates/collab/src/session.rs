@@ -8,10 +8,14 @@
 //! the [`Action`]s to carry out.
 
 use crate::groups::Payload;
+use crate::checkout::{Claim, Hold};
+use crate::groups::Group;
 use crate::host::{Host, Out};
+use crate::log::{Author, AuthorId};
 use crate::net::{Connection, Event, Listener};
 use crate::peer::{Action, Peer};
-use crate::wire::{FileEntry, Presence, ToHost, ToPeer, UserId, FILE_PIECE};
+use crate::wire::{Answer, Database, FileEntry, Presence, Request, Seq, ToHost, ToPeer, UserId, FILE_PIECE};
+use std::collections::HashMap;
 
 /// Hosting a session. Dropping it closes every connection.
 pub struct Hosting<P: Payload> {
@@ -21,14 +25,67 @@ pub struct Hosting<P: Payload> {
 }
 
 impl<P: Payload> Hosting<P> {
-    /// Host a session on `addr` (`0.0.0.0:7878`) as `name`, behind
+    /// Host a session on `addr` (`0.0.0.0:7878`) as `author`, behind
     /// `password`. Joining editors must be `build` and hold `archives`.
-    pub fn start(addr: &str, name: &str, password: &str, build: &str, archives: [u8; 32]) -> std::io::Result<Hosting<P>> {
+    pub fn start(addr: &str, author: &Author, password: &str, build: &str, archives: [u8; 32]) -> std::io::Result<Hosting<P>> {
         Ok(Hosting {
-            host: Host::new(name, password, build, archives),
-            me: Peer::local(name, 0),
+            host: Host::new(author, password, build, archives),
+            me: Peer::local(&author.name, 0),
             net: Listener::bind(addr)?,
         })
+    }
+
+    /// Continue from the host's log. See [`Host::resume`]. Called before
+    /// anyone joins; this editor's own peer starts at `seq` as well.
+    pub fn resume(
+        &mut self,
+        log: [u8; 16],
+        seq: Seq,
+        touched: HashMap<Group, (Seq, AuthorId)>,
+        pending: HashMap<Group, AuthorId>,
+        names: &HashMap<AuthorId, String>,
+    ) {
+        self.host.resume(log, seq, touched, pending, names);
+        self.me.resume(seq);
+    }
+
+    /// The author of an editor that is in.
+    pub fn author_of(&self, user: UserId) -> Option<Author> {
+        self.host.author_of(user)
+    }
+
+    /// Hold the check outs kept from an earlier session. See
+    /// [`Host::resume_checkouts`].
+    pub fn resume_checkouts(&mut self, list: Vec<Hold>) {
+        self.host.resume_checkouts(list);
+    }
+
+    /// Every claim held. See [`crate::checkout`].
+    pub fn holds(&self) -> Vec<Hold> {
+        self.host.holds()
+    }
+
+    /// Release every claim an author holds, as a Submit of theirs does, and
+    /// answer what this editor is to do.
+    pub fn release_author(&mut self, author: &AuthorId) -> Vec<Action<P>> {
+        let outs = self.host.release_author(author);
+        let mut actions = Vec::new();
+        self.carry(outs, None, &mut actions);
+        actions
+    }
+
+    /// Release what an author's withdrawn or taken back edits held, and
+    /// answer what this editor is to do. See [`Host::release_pending`].
+    pub fn release_pending(&mut self, author: &AuthorId) -> Vec<Action<P>> {
+        let outs = self.host.release_pending(author);
+        let mut actions = Vec::new();
+        self.carry(outs, None, &mut actions);
+        actions
+    }
+
+    /// Answer an editor's [`Action::Request`].
+    pub fn answer(&self, user: UserId, answer: Answer<P>) {
+        self.net.send(user, ToPeer::Answer(answer));
     }
 
     /// The address and port joining editors connect to.
@@ -44,9 +101,9 @@ impl<P: Payload> Hosting<P> {
     /// Let in an editor that waits after [`Action::Admit`]: it is welcomed at
     /// the current sequence and sent the manifest, `project` and `files`,
     /// which must describe the project as it stands now, saved. `database` is
-    /// the host's database fingerprint; see [`ToPeer::Welcome`]. Answers what
-    /// this editor is to do, which is the [`Action::Joined`].
-    pub fn admit(&mut self, user: UserId, project: String, files: Vec<FileEntry>, database: Option<[u8; 32]>) -> Vec<Action<P>> {
+    /// the host's world database; see [`ToPeer::Welcome`]. Answers what this
+    /// editor is to do, which is the [`Action::Joined`].
+    pub fn admit(&mut self, user: UserId, project: String, files: Vec<FileEntry>, database: Option<Database>) -> Vec<Action<P>> {
         let outs = self.host.admit(user, database);
         let mut actions = Vec::new();
         self.carry(outs, None, &mut actions);
@@ -140,6 +197,8 @@ impl<P: Payload> Hosting<P> {
                     Out::Admit { user, name } => actions.push(Action::Admit { user, name }),
                     Out::Fetch { user, paths } => actions.push(Action::Fetch { user, paths }),
                     Out::Ask { user, payload } => actions.push(Action::Ask { user, payload }),
+                    Out::Log { seq, user, author, payload } => actions.push(Action::Log { seq, user, author, payload }),
+                    Out::Request { user, author, request } => actions.push(Action::Request { user, author, request }),
                 }
             }
         }
@@ -154,10 +213,10 @@ pub struct Joined<P: Payload> {
 }
 
 impl<P: Payload> Joined<P> {
-    /// Connect to the host at `addr` as `name`. The handshake runs on the
+    /// Connect to the host at `addr` as `author`. The handshake runs on the
     /// following polls; [`Action::Welcome`] or [`Action::Refused`] ends it.
-    pub fn connect(addr: &str, name: &str, password: &str, build: &str, archives: [u8; 32]) -> std::io::Result<Joined<P>> {
-        let mut joined = Joined { me: Peer::joining(name, password, build, archives), net: Connection::open(addr)?, closed: false };
+    pub fn connect(addr: &str, author: &Author, password: &str, build: &str, archives: [u8; 32]) -> std::io::Result<Joined<P>> {
+        let mut joined = Joined { me: Peer::joining(author, password, build, archives), net: Connection::open(addr)?, closed: false };
         joined.flush();
         Ok(joined)
     }
@@ -245,6 +304,30 @@ impl<P: Payload> Session<P> {
         self.peer().ask_for_ids(kind, floor, size);
     }
 
+    /// This editor's edits the host has not answered, oldest first, taken
+    /// out of the peer. For a connection that is gone: whether the host
+    /// accepted them is not known.
+    pub fn take_waiting(&mut self) -> Vec<P> {
+        self.peer().take_waiting()
+    }
+
+    /// Check these out, on the next poll. See [`crate::checkout`].
+    pub fn check_out(&mut self, claims: Vec<Claim>) {
+        self.peer().check_out(claims);
+    }
+
+    /// Release these check outs, on the next poll; with `others`, also
+    /// another author's.
+    pub fn release(&mut self, claims: Vec<Claim>, others: bool) {
+        self.peer().release(claims, others);
+    }
+
+    /// Ask the host about its log, on the next poll. Only a joined editor
+    /// asks; the host's editor reads its own log.
+    pub fn request(&mut self, request: Request) {
+        self.peer().request(request);
+    }
+
     /// See [`Hosting::poll`].
     pub fn poll(&mut self, open: Option<&P>) -> Vec<Action<P>> {
         match self {
@@ -290,14 +373,15 @@ mod tests {
     /// reverted by the editor that made it.
     #[test]
     fn two_editors_join_and_share_edits_over_tcp() {
-        let mut host = Session::Hosting(Hosting::<Toy>::start("127.0.0.1:0", "Host", "pw", "b1", [1; 32]).unwrap());
+        let me = |id: u8, name: &str| Author { id: [id; 16], name: name.to_string() };
+        let mut host = Session::Hosting(Hosting::<Toy>::start("127.0.0.1:0", &me(0, "Host"), "pw", "b1", [1; 32]).unwrap());
         let addr = match &host {
             Session::Hosting(hosting) => hosting.addr().to_string(),
             Session::Joined(_) => unreachable!(),
         };
-        let mut alex = Session::Joined(Joined::connect(&addr, "Alex", "pw", "b1", [1; 32]).unwrap());
-        let mut sam = Session::Joined(Joined::connect(&addr, "Sam", "pw", "b1", [1; 32]).unwrap());
-        let mut eve = Session::Joined(Joined::connect(&addr, "Eve", "guess", "b1", [1; 32]).unwrap());
+        let mut alex = Session::Joined(Joined::connect(&addr, &me(1, "Alex"), "pw", "b1", [1; 32]).unwrap());
+        let mut sam = Session::Joined(Joined::connect(&addr, &me(2, "Sam"), "pw", "b1", [1; 32]).unwrap());
+        let mut eve = Session::Joined(Joined::connect(&addr, &me(3, "Eve"), "guess", "b1", [1; 32]).unwrap());
         let welcomed = |actions: &[Action<Toy>]| actions.iter().any(|action| matches!(action, Action::Welcome { .. }));
         let seen = until(&mut [&mut host, &mut alex, &mut sam, &mut eve], |all| {
             welcomed(&all[1]) && welcomed(&all[2]) && all[3].iter().any(|action| matches!(action, Action::Refused(_)))

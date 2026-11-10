@@ -41,7 +41,7 @@
 //! ├──────┴───────────────────────────────┴──────────────┤
 //! │ view    what the viewport shows: layers, overlays    │
 //! ├─────────────────────────────────────────────────────┤
-//! │ status  where you are, what is open, what happened  │
+//! │ status  the position, what is open, what happened   │
 //! └─────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -130,8 +130,8 @@ use workspace::{workspace, Bench};
 /// panels shrink the root `Ui`, so what they leave is one rectangle. A popover,
 /// a window or a modal floats over that rectangle and shrinks nothing, so its
 /// rectangle is listed separately; without that, a press on a popover's
-/// password box is a press on the ground behind it, the same fault the docked
-/// panels had. [`shell::popover`] and the windows return their rectangles for this
+/// password box is a press on the ground behind it. [`shell::popover`] and the
+/// windows return their rectangles for this
 /// purpose, and [`areas_over_the_world`] adds every other egui area at the end
 /// of the pass.
 ///
@@ -594,6 +594,10 @@ fn draw(
         popovers.settings_shown_once = true;
         popovers.settings.show();
     }
+    if editing.args.server.changes_panel && !popovers.changes_shown_once {
+        popovers.changes_shown_once = true;
+        popovers.changes.show();
+    }
 
     egui::Panel::top("editor-top")
         .frame(bar(widgets::theme::PANEL))
@@ -637,7 +641,7 @@ fn draw(
             playing
                 .step
                 .summary()
-                .map(|(label, fraction)| ("Server files", label, fraction)),
+                .map(|(label, fraction)| ("Server Files", label, fraction)),
         );
     }
 
@@ -954,9 +958,13 @@ fn draw(
         [focus.position.x, focus.position.y],
         &assets.loading_screens(),
         &editing.collab.server_gate(),
+        editing.collab.map_claims(&session.map),
     );
     if asked.is_some() {
         editing.tiles.asked = asked;
+    }
+    if let Some(ask) = editing.mapview.claim_ask.take() {
+        editing.collab.ask = Some(ask);
     }
 
     viewport.floating = shell::popover::draw(
@@ -1092,7 +1100,7 @@ fn draw(
         import::assets::import_dialog(&ctx, &mut editing.assets, &mut editing.browser, session, &assets);
     }
     // A joined editor's request to delete files, which the host answers under
-    // any tool. See `crate::collab`'s *Deleting files*.
+    // any tool. See the "Deleting files" section of `crate::collab`.
     if import::assets::requested_delete(&ctx, &mut editing.assets, &mut editing.collab, session, &assets) {
         viewport.floating.push(ctx.content_rect());
     }
@@ -1352,7 +1360,7 @@ mod tests {
     ///
     /// A popover hangs from the top bar over the viewport and shrinks nothing,
     /// so without this check a click into its password box is a click on the
-    /// terrain behind it: the same fault the docked panels had.
+    /// terrain behind it.
     #[test]
     fn a_press_on_a_popover_is_not_the_worlds_either() {
         let viewport = Viewport {
@@ -1482,12 +1490,11 @@ fn playtest_bar(
     // needed. egui grants focus while the widgets are built, so surrendering
     // only beforehand leaves the ring from this frame's `show` until the next
     // frame's: one frame in which `EguiWantsInput::wants_any_keyboard_input`
-    // is true. One frame is enough to cause a fault: `ui::debug::claim_input`
-    // turns that into `ExternalKeyboard`, `keyboard::poll` ORs it into
-    // `KeyboardFocus`, and `bindings::dispatch` skips the frame. That was one
-    // of two causes of a bug where pressing Tab while running left the
-    // character walking indefinitely; the other cause, which produced the
-    // stuck movement, is fixed in `dispatch` itself.
+    // is true. In that frame `ui::debug::claim_input` turns it into
+    // `ExternalKeyboard`, `keyboard::poll` ORs it into `KeyboardFocus`, and
+    // `bindings::dispatch` skips the frame. Together with a fault in
+    // `dispatch` itself, since fixed there, that skipped frame left the
+    // character walking indefinitely after Tab was pressed while running.
     surrender(ctx);
     egui::Window::new("playtest")
         .title_bar(false)

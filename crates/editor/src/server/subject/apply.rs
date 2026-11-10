@@ -313,7 +313,7 @@ impl OnTheServer {
     /// is `false`, which is the safe reading: it only ever adds a caveat.
     pub(crate) fn read(session: &EditSession, subject: &'static dyn RowSubject) -> OnTheServer {
         OnTheServer {
-            undo: Undo::open_at(&session.project, subject.revert_vpath()).unwrap_or(Undo { entries: Vec::new() }),
+            undo: Undo::open_at(&session.project, subject.revert_vpath()).unwrap_or(Undo { entries: Vec::new(), database: None }),
             current: false,
         }
     }

@@ -7,18 +7,17 @@
 //! Several subjects store their edits as rows in vmangos' database rather than
 //! as bytes in a file: the client tables (spells, flight nodes and skill line
 //! abilities), creatures, objects, items, quests, loot, vendors and trainers,
-//! and behaviour. Each subject used to keep these operations in its own panel.
-//! The result was three names for one operation
-//! (*Apply to the server*, *Apply*, and a checkbox in a third window for
-//! spells), three names for its inverse (*Put the rows back*, *Revert*, *Put
-//! the server back*), and one panel that applied on every save while the other
-//! two waited for a button that was not visible where the edit was made.
+//! and behaviour. Panels of their own per subject gave three names for one
+//! operation ("Apply to the server", "Apply", and a checkbox in a third window
+//! for spells), three names for its inverse ("Put the rows back", "Revert",
+//! "Put the server back"), and one panel that applied on every save while the
+//! other two waited for a button that was not visible where the edit was made.
 //!
-//! The operations now live here, opened from the bar's *Server…* button. Every
+//! The operations are here, opened from the bar's Server… button. Every
 //! subject gets the same block, in the same order, with the same words:
 //!
 //! ```text
-//! ┌ <subject>  N row(s) changed · M applied      [Discard] [Put back] [Apply] ┐
+//! ┌ <subject>  N row(s) changed · M applied  [Drop Changes] [Restore] [Apply] ┐
 //! │ <a refusal, a trouble, or an unsaved table, when there is one>            │
 //! └───────────────────────────────────────────────────────────────────────────┘
 //! ```
@@ -40,13 +39,13 @@ use crate::server::dbcs;
 use crate::server::sync::{apply, discard, put_back, Half, Standing, Work};
 use crate::ui::widgets::theme;
 
-/// Draws the whole section: the *Apply on save* switch, then one block per
+/// Draws the whole section: the Apply on save switch, then one block per
 /// subject. In a shared session the switch, Apply and Restore are disabled
-/// when `gate` says this editor may not write to its server, and Discard is
-/// disabled for every editor, because a discard is not sent to the other
-/// editors. See `crate::collab::ServerGate`.
+/// when `gate` says this editor may not write to its server. Drop Changes is
+/// an edit like any other and is sent to the other editors. See
+/// `crate::collab::ServerGate`.
 pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>, gate: &crate::collab::ServerGate) {
-    theme::heading(ui, "Server operations");
+    theme::heading(ui, "Server Operations");
     let have_a_database = work.server.resolve().is_some();
     match (&gate.refused, &gate.host) {
         (Some(refused), _) => theme::note(ui, refused.clone()),
@@ -137,7 +136,7 @@ fn block_body(
         half.going_live()
     );
     // The client-table block also stands for the DBC files the server reads
-    // from DataDir\5875\dbc, which Apply copies and Put back restores.
+    // from DataDir\5875\dbc, which Apply copies and Restore puts back.
     let files = match half {
         Half::Tables => Some(work.standings.files(work.session, work.server, work.now).clone()),
         _ => None,
@@ -146,7 +145,7 @@ fn block_body(
         Some(Ok(files)) => (files.outstanding(), files.saved),
         _ => (false, 0),
     };
-    // Apply and Put back are disabled while a write is running, rather than
+    // Apply and Restore are disabled while a write is running, rather than
     // queueing behind it. A second press while the first is still running is
     // almost always a repeat of the same press.
     let busy = work.queue.busy();
@@ -180,7 +179,7 @@ fn block_body(
         ui.label(egui::RichText::new(refused).small().color(theme::BAD));
     }
     // The client-table block also stands for the DBC files the server reads
-    // from DataDir\5875\dbc, which Apply copies and Put back restores.
+    // from DataDir\5875\dbc, which Apply copies and Restore puts back.
     match &files {
         Some(Ok(files)) => {
             let colour = match files.outstanding() {
@@ -190,13 +189,13 @@ fn block_body(
             ui.label(egui::RichText::new(files.line()).small().color(colour))
                 .on_hover_text(format!(
                     "The client tables vmangos reads as DBC files: {}. Apply copies the \
-                     project's versions into DataDir\\5875\\dbc, first saving the server's \
-                     originals under the project's {}; Restore copies the originals back.",
+                     project's versions into DataDir\\5875\\dbc, first keeping the server's \
+                     originals in DataDir\\vale-editor\\originals; Restore copies the \
+                     originals back.",
                     match files.carried.is_empty() {
                         true => "none in this project".to_string(),
                         false => files.carried.join(", "),
-                    },
-                    dbcs::BEFORE_DIR
+                    }
                 ));
         }
         Some(Err(e)) if !dbcs::carried(&work.session.project).is_empty() => {
@@ -237,8 +236,8 @@ fn block_body(
     }
 }
 
-/// A block's three buttons, laid out from the right: Apply, Put back, then
-/// Discard or the note that the subject is edited as a file. A press stores
+/// A block's three buttons, laid out from the right: Apply, Restore, then
+/// Drop Changes or the note that the subject is edited as a file. A press stores
 /// its result in `said`.
 #[allow(clippy::too_many_arguments)]
 fn buttons(
@@ -293,16 +292,15 @@ fn buttons(
         }
         if half.discardable() {
             if ui
-                .add_enabled(changed && !gate.role.shared(), egui::Button::new("Discard"))
+                .add_enabled(changed, egui::Button::new("Drop Changes"))
                 .on_hover_text(
-                    "Discard every edit this project holds for these tables. The database \
-                     is not changed and the revert record is kept: Restore still works, \
-                     and the next Apply restores the applied rows first.",
+                    "Remove every change this project holds for these tables, saved or not, as \
+                     one edit that Undo takes back. The database is not changed and the revert \
+                     record is kept: Restore still works, and the next Apply restores the applied \
+                     rows first. To take back only what is unsaved, use Discard in the Changes \
+                     window.",
                 )
-                .on_disabled_hover_text(match gate.role.shared() {
-                    true => "Discard is not available in a shared session, because a discard is not sent to the other editors. Undo your own edits instead.",
-                    false => "This project changes no row of these tables.",
-                })
+                .on_disabled_hover_text("This project changes no row of these tables.")
                 .clicked()
             {
                 *said = Some(Ok(discard(half, work.session)));

@@ -40,6 +40,20 @@ pub enum Group {
 }
 
 impl Group {
+    /// The group as a person reads it: `chunk 37 of Azeroth 32_48`,
+    /// `Spell.dbc`, `creature guid=7`.
+    pub fn name(&self) -> String {
+        let tile = |tile: &TileKey| format!("{} {}_{}", tile.map, tile.x, tile.y);
+        match self {
+            Group::Chunk { tile: at, chunk, .. } => format!("chunk {chunk} of {}", tile(at)),
+            Group::Textures { tile: at } => format!("the textures of {}", tile(at)),
+            Group::Placements { tile: at } => format!("the placements on {}", tile(at)),
+            Group::Table { name } => format!("{name}.dbc"),
+            Group::Row { table, key } => format!("{table} {key}"),
+            Group::File { path } => path.clone(),
+        }
+    }
+
     /// The group of a project file at `vpath`, however it is spelled.
     pub fn file(vpath: &str) -> Group {
         Group::File { path: vpath.replace('/', "\\").to_ascii_lowercase() }
@@ -96,17 +110,22 @@ impl Payload for Change {
     fn groups(&self) -> Vec<Group> {
         let mut out = Vec::new();
         for entry in self.in_order(true) {
-            match entry {
-                Entry::Tile(tile, edit) => tile_groups(tile, edit, &mut out),
-                Entry::Cell(table, _) | Entry::Row(table, _) => out.push(Group::Table { name: table.clone() }),
-                Entry::Server(server) => {
-                    out.push(Group::Row { table: server.table.clone(), key: server.key.clone() });
-                }
-            }
+            entry_groups(entry, &mut out);
         }
         out.sort();
         out.dedup();
         out
+    }
+}
+
+/// The groups one entry of a change touches, added to `out` unsorted.
+pub fn entry_groups(entry: &Entry, out: &mut Vec<Group>) {
+    match entry {
+        Entry::Tile(tile, edit) => tile_groups(tile, edit, out),
+        Entry::Cell(table, _) | Entry::Row(table, _) => out.push(Group::Table { name: table.clone() }),
+        Entry::Server(server) => {
+            out.push(Group::Row { table: server.table.clone(), key: server.key.clone() });
+        }
     }
 }
 

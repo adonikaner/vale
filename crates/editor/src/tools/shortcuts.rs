@@ -83,22 +83,19 @@ pub(crate) fn shortcuts(
     // folder and [`crate::playtest::republish`] puts it where the running
     // client reads it, so the next cast, the next entity and the next model
     // are the edited ones.
+    // A full save a panel or the frame's work asked for: a table's Save
+    // button, the end of a sweep, another author's Submit. See
+    // `EditSession::save_asked`.
+    let asked = std::mem::take(&mut session.save_asked);
+    if asked && !collab.is_joined() {
+        crate::server::save_everything(session, &assets, &reach.settings, &mut reach.queue, state.playing());
+    }
     if taken.s && collab.is_joined() {
         session.status = "in a shared session only the host saves".to_string();
         return;
     }
     if taken.s {
-        session.save_all();
-        session.save_all_tables();
-        // The server half of the same key press: every subject's SQL, and,
-        // when Apply on save is on, the statements run and the tables
-        // reloaded. See [`crate::server::save`], which holds the only list of
-        // subjects.
-        crate::server::save(session, &assets, &reach.settings, &mut reach.queue);
-        if state.playing() {
-            crate::playtest::republish(session, &assets);
-            session.status = "saved and republished to the playtest".to_string();
-        }
+        crate::server::save_everything(session, &assets, &reach.settings, &mut reach.queue, state.playing());
         return;
     }
     if !state.editing() {

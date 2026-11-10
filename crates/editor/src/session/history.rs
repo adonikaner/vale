@@ -49,7 +49,8 @@ impl EditSession {
         self.step(assets, false)
     }
 
-    /// …and put it back, opening what it names on [`Self::undo`]'s own terms.
+    /// Redo the last change undone, opening what it names on [`Self::undo`]'s
+    /// terms.
     pub(crate) fn redo(&mut self, assets: &GameAssets) -> Vec<(u32, u32)> {
         self.step(assets, true)
     }
@@ -72,7 +73,11 @@ impl EditSession {
         };
         let verb = if forward { "redo" } else { "undo" };
         self.status = format!("{verb} {}", change.label);
-        self.apply_step(assets, &change, forward)
+        let touched = self.apply_step(assets, &change, forward);
+        // An undo can bring a subject back to what the folder holds, and it
+        // is then not unsaved.
+        self.unmark_matching(&touched, &change.tables(), change.server_steps(true).next().is_some());
+        touched
     }
 
     /// Apply one change forward, or revert it, to the tiles, tables and server
@@ -152,11 +157,20 @@ impl EditSession {
             false => change.revert(tile, &mut parsed),
         }
         let bytes = parsed.write();
+        // A change that puts the tile back to the archives' bytes leaves no
+        // file, as a save of such a tile does. See `Self::save_one`.
+        let unchanged = self.changes_nothing(&path, &bytes);
         if let Ok(mut edited) = self.edited.write() {
-            edited.insert(path.to_ascii_lowercase(), bytes.clone());
+            match unchanged {
+                true => edited.remove(&path.to_ascii_lowercase()),
+                false => edited.insert(path.to_ascii_lowercase(), bytes.clone()),
+            };
         }
-        if let Err(e) = self.project.write(&path, &bytes) {
+        // The overlay holds every change; the folder leaves out the excluded
+        // ones, as a save does. See `Self::exclude`.
+        if let Err(e) = self.write_submitted_tile(tile, &parsed) {
             self.status = format!("{path}: {e}");
         }
+        self.files_revision += 1;
     }
 }

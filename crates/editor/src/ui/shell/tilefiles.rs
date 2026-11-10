@@ -111,7 +111,7 @@ pub(crate) fn draw(
     let busy = queue.busy();
     let response = egui::Modal::new(egui::Id::new("server-tile-files")).show(ctx, |ui| {
         ui.set_width(620.0);
-        ui.label(egui::RichText::new("Server tile files").strong().size(14.0).color(theme::INK));
+        ui.label(egui::RichText::new("Server Tile Files").strong().size(14.0).color(theme::INK));
         let (dir, ledger) = match &state.ledger {
             Some(Ok((dir, ledger))) => (dir.clone(), ledger.clone()),
             Some(Err(why)) => {
@@ -231,7 +231,7 @@ fn written_by_projects(ui: &mut egui::Ui, state: &mut TileFiles, ledger: &Ledger
     theme::note(
         ui,
         "Each project's regenerations, with the files whose last write was that project's. \
-         Put back originals replaces each such file with the copy kept before the editor \
+         Put Back Originals replaces each such file with the copy kept before the editor \
          first wrote it, and removes the files that did not exist before.",
     );
     egui::Grid::new("tile-files-projects").num_columns(3).spacing([12.0, 4.0]).show(ui, |ui| {
@@ -244,7 +244,7 @@ fn written_by_projects(ui: &mut egui::Ui, state: &mut TileFiles, ledger: &Ledger
             ui.label(format!("{name}{mark}"));
             ui.label(egui::RichText::new(format!("{files} file(s)")).color(theme::INK_DIM));
             if ui
-                .add_enabled(!busy, egui::Button::new("Put back originals"))
+                .add_enabled(!busy, egui::Button::new("Put Back Originals"))
                 .on_hover_text("Restore the DataDir as it was before this project's regenerations, after a confirmation.")
                 .clicked()
             {
@@ -265,7 +265,7 @@ fn removed_server_files(ui: &mut egui::Ui, state: &mut TileFiles, ledger: &Ledge
     ui.horizontal(|ui| {
         ui.label(format!("{} file(s) the server had before the editor, removed here", removed.len()));
         if ui
-            .add_enabled(!busy, egui::Button::new("Put back"))
+            .add_enabled(!busy, egui::Button::new("Put Back"))
             .on_hover_text("Move them back from vale-editor\\originals\\, after a confirmation.")
             .clicked()
         {
@@ -346,7 +346,7 @@ fn confirm(ui: &mut egui::Ui, state: &mut TileFiles, standings: &mut crate::serv
                 name => format!("{name}'s files"),
             };
             format!(
-                "Put back {who}? {kept} file(s) are replaced by their kept originals and {} \
+                "Put Back {who}? {kept} file(s) are replaced by their kept originals and {} \
                  that did not exist before are removed.",
                 files.len() - kept
             )
@@ -357,7 +357,7 @@ fn confirm(ui: &mut egui::Ui, state: &mut TileFiles, standings: &mut crate::serv
     ui.horizontal(|ui| {
         let verb = match &asked {
             Asked::Remove(_) => "Remove",
-            Asked::PutBack(_) => "Put back",
+            Asked::PutBack(_) => "Put Back",
         };
         go = ui.button(egui::RichText::new(verb).color(theme::BAD)).clicked();
         cancel = ui.button("Cancel").clicked();

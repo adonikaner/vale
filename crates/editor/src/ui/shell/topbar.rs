@@ -15,10 +15,12 @@
 //! left    Project: <name>   Projects…      the project dialog
 //!                           Settings…      this machine's settings
 //!                           Publish…       the publish popover
-//!         Map: <name> (id)  New map…, Map properties…, Open map, Edit Map…,
-//!                           Go to…, Bookmarks
+//!         Map: <name> (id)  New Map…, Map Properties…, Open Map, Edit Map…,
+//!                           Go To…, Bookmarks
 //!         the workspace control
 //! right   the session button        hosting or joining a shared session
+//!         Changes                   edits not in a changelist, Submit, the
+//!                                   conflicts and the history
 //!         Save                      what is unsaved, and writing it
 //!         Server…                   what the project has done to the server
 //!         Playtest, and its popover who it logs in as, on which server, and
@@ -33,7 +35,7 @@
 //!
 //! A menu entry is a command. A form is a popover: an egui menu closes when
 //! anything inside it is clicked, which suits a list of commands and does not
-//! suit text fields, so `Settings…`, `Publish…`, `Go to…` and `Add bookmark…`
+//! suit text fields, so `Settings…`, `Publish…`, `Go To…` and `Add Bookmark…`
 //! open windows placed under the menu. See [`super::popover`].
 //!
 //! ## Where a setting is
@@ -46,16 +48,17 @@
 //!
 //! ## The right-hand controls
 //!
-//! The four controls on the right are the places an edit goes after it is
-//! made: to the other editors of a shared session, into the project folder,
-//! into the world database, and into a running game. They are drawn in that
-//! order, with Playtest at the far right because it is the only one that
-//! takes the editor out of editing. Save's label says what is unsaved. The
-//! session button's label states the session. The button beside Playtest
+//! The controls on the right are the places an edit goes after it is made: to
+//! the other editors of a shared session, into a changelist, into the project
+//! folder, into the world database, and into a running game. They are drawn
+//! in that order, with Playtest at the far right because it is the only one
+//! that takes the editor out of editing. Save's label says what is unsaved.
+//! The session button's label states the session; the Changes button's
+//! counts the edits not in a changelist. The button beside Playtest
 //! states who the playtest logs in as, ends in "⏷" because it opens the
 //! Playtest popover, and gains " · cached" while the query cache is kept.
 //! During a playtest, Playtest and its popover are replaced by the
-//! playtest's state, Hide Panels and End Playtest; the other three stay.
+//! playtest's state, Hide Panels and End Playtest; the others stay.
 //!
 //! After the Map menu comes the workspace control ([`super::rail::workspaces`]):
 //! World, then each workspace that replaces the viewport. World returns to the
@@ -134,7 +137,7 @@ pub(crate) fn draw(
     assets: &GameAssets,
     playing: &mut Session,
     map_open: &mut bool,
-    // The New map form, which New map… opens. See [`crate::map::maps`].
+    // The New map form, which New Map… opens. See [`crate::map::maps`].
     new_map: &mut Option<crate::map::maps::Form>,
     subjects: &mut Subjects<'_>,
     // The kept views the Map menu lists. See [`crate::prefs::bookmarks`].
@@ -162,7 +165,7 @@ pub(crate) fn draw(
         // is the one thing on this bar a person can lose work by being wrong
         // about.
         let in_world = playing.state.playing();
-        project(ui, session, popovers, in_world, playing.queue.busy(), collab.is_joined());
+        project(ui, session, popovers, in_world, playing.queue.busy(), collab.server_gate().release_refused());
         separator(ui);
         map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world, collab.is_joined());
         separator(ui);
@@ -213,6 +216,11 @@ pub(crate) fn draw(
                 popovers.server.toggle(&at_server);
             }
             save(ui, session, assets, playing, in_world, collab.is_joined());
+            let at_changes = super::changes::button(ui, collab);
+            popovers.changes.track(&at_changes);
+            if at_changes.clicked() {
+                popovers.changes.toggle(&at_changes);
+            }
             let at_session = super::session::button(ui, collab);
             popovers.session.track(&at_session);
             if at_session.clicked() {
@@ -225,9 +233,9 @@ pub(crate) fn draw(
 }
 
 /// The width the right-hand controls are given before they have been
-/// measured, in points: the session button, Save, Server…, Playtest and its
-/// login label.
-const RIGHT_ROOM: f32 = 520.0;
+/// measured, in points: the session button, Changes, Save, Server…, Playtest
+/// and its login label.
+const RIGHT_ROOM: f32 = 600.0;
 
 /// What the workspace control changes: the tool in use, and the rail's memory
 /// of the last world tool. Passed into [`draw`] as one parameter.
@@ -370,9 +378,9 @@ fn project(
     // the folder a second publish would write, so Publish is disabled while
     // one runs.
     regenerating: bool,
-    // Whether this editor is joined to another's shared session, whose host
-    // publishes.
-    joined: bool,
+    // Why this editor may not publish: a joined editor and an offline copy
+    // leave it to the host. See `crate::collab::ServerGate::release_refused`.
+    release_refused: Option<&'static str>,
 ) {
     let (mut ask_projects, mut ask_settings, mut ask_publish) = (false, false, false);
     let menu = ui
@@ -411,17 +419,17 @@ fn project(
             // character is standing on. Saving is what reaches a running
             // game; publishing is for finished work.
             if ui
-                .add_enabled(!playing && !regenerating && !joined, egui::Button::new("Publish…"))
+                .add_enabled(!playing && !regenerating && release_refused.is_none(), egui::Button::new("Publish…"))
                 .on_hover_text(
                     "Write a patch: one folder under the project's publish\\ containing the \
                      client archive, the server DBCs, an SQL migration of the rows and the \
                      server's maps, vmaps and mmaps, with a README listing where each goes. \
                      Nothing is applied to this machine.",
                 )
-                .on_disabled_hover_text(match (joined, playing) {
-                    (true, _) => "In a shared session only the host publishes.",
-                    (false, true) => "Not while a playtest is running.",
-                    (false, false) => "A server write is still running.",
+                .on_disabled_hover_text(match (release_refused, playing) {
+                    (Some(refused), _) => refused,
+                    (None, true) => "Not while a playtest is running.",
+                    (None, false) => "A server write is still running.",
                 })
                 .clicked()
             {
@@ -515,33 +523,23 @@ fn save(
         .add_enabled(anything, egui::Button::new(label))
         .on_hover_text(match in_world {
             true => format!(
-                "Write the tiles, tables and server rows you have changed into {}, then \
+                "Write the changed tiles, tables and server rows into {}, then \
                  republish them to the running playtest. Ctrl+S.",
                 session.project.root.display()
             ),
             false => format!(
-                "Write the tiles, tables and server rows you have changed into {}. \
+                "Write the changed tiles, tables and server rows into {}. \
                  Ctrl+S.",
                 session.project.root.display()
             ),
         })
         .on_disabled_hover_text(match joined {
-            true => "In a shared session only the host saves. Your copy of the host's project receives each edit as it is made.",
+            true => "In a shared session only the host saves. This editor's copy of the host's project receives each edit as it is made.",
             false => "Nothing has changed since the last save.",
         })
         .clicked()
     {
-        session.save_all();
-        session.save_all_tables();
-        // The server half of the same press: every subject's SQL written into
-        // the project, the statements run if Apply on save is on, and a
-        // `.reload` for each table that can be made live. One call, because a
-        // save is one gesture; see [`crate::server::save`].
-        crate::server::save(session, assets, playing.server, playing.queue);
-        if in_world {
-            crate::playtest::republish(session, assets);
-            session.status = "saved and republished to the playtest".to_string();
-        }
+        crate::server::save_everything(session, assets, playing.server, playing.queue, in_world);
     }
 }
 
@@ -644,7 +642,7 @@ impl Projects {
 ///
 /// The button shows the map's name with its `Map.dbc` id. The entries are the
 /// new map form, the map list, the tile map window, the go-to popover, and the
-/// bookmarks: Add bookmark… first, then each kept view, which a click returns
+/// bookmarks: Add Bookmark… first, then each kept view, which a click returns
 /// the camera to.
 ///
 /// Every entry is disabled while a playtest is running. Making or opening a
@@ -677,7 +675,7 @@ fn map(
             // The form is a modal of its own, drawn whether or not the map
             // window is open. See [`crate::ui::map::mapview`].
             if ui
-                .add_enabled(!playing && !joined, egui::Button::new("New map\u{2026}"))
+                .add_enabled(!playing && !joined, egui::Button::new("New Map\u{2026}"))
                 .on_hover_text(
                     "Create a new map: a Map.dbc row, a WDT with no tiles and the server's \
                      map_template row. The map opens with no tiles; add them with Create \
@@ -693,7 +691,7 @@ fn map(
                 ui.close();
             }
             if ui
-                .add_enabled(!playing, egui::Button::new("Map properties\u{2026}"))
+                .add_enabled(!playing, egui::Button::new("Map Properties\u{2026}"))
                 .on_hover_text(
                     "Edit the open map: its Map.dbc row (name, instance type, PvP, levels, \
                      players, zone, descriptions, loading screen), the server's map_template \
@@ -706,7 +704,7 @@ fn map(
                 ui.close();
             }
             ui.add_enabled_ui(!playing, |ui| {
-                ui.menu_button("Open map", |ui| {
+                ui.menu_button("Open Map", |ui| {
                     egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                         for (id, name) in &session.maps {
                             let row = format!("{id:>4}  {name}");
@@ -736,7 +734,7 @@ fn map(
                 ui.close();
             }
             if ui
-                .add_enabled(!playing, egui::Button::new("Go to…"))
+                .add_enabled(!playing, egui::Button::new("Go To…"))
                 .on_hover_text("Move the camera: a bookmark, a position, a tile, or a zone.")
                 .on_disabled_hover_text(HELD)
                 .clicked()
@@ -747,9 +745,9 @@ fn map(
             ui.add_enabled_ui(!playing, |ui| {
                 ui.menu_button("Bookmarks", |ui| {
                     // Naming a view is a text field, so it is a popover like
-                    // Go to…; see the module comment.
+                    // Go To…; see the module comment.
                     if ui
-                        .button("Add bookmark\u{2026}")
+                        .button("Add Bookmark\u{2026}")
                         .on_hover_text("Save the current camera view as a named bookmark.")
                         .clicked()
                     {

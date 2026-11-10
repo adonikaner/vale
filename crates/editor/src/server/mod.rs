@@ -79,7 +79,7 @@
 //! dbcs.rs        the DBC files the server reads from DataDir\5875\dbc, copied
 //!                from the project into the live folder by the client-table
 //!                block's Apply and by Apply on save, with the server's own
-//!                copies kept in the project for Put back
+//!                copies kept in the DataDir's ledger for Put back
 //! held.rs        what a project folder has in the database and the live
 //!                server, read from its revert files: the gate on Clear and
 //!                Delete, which remove that record
@@ -91,7 +91,10 @@
 //!                the rows and DBCs it gives the server
 //! sync.rs        the Server panel's subjects and its four operations: where
 //!                each subject stands (changed, applied, refused), held for
-//!                half a second, and Save, Apply, Put back and Discard
+//!                half a second, and Save, Apply, Restore and Drop Changes
+//! targets.rs     which project's rows each world database holds, read from
+//!                every project's revert files, so one project cannot apply
+//!                over rows another has applied; and the Targets tab
 //! ```
 //!
 //! ## How the subjects are written and applied
@@ -152,17 +155,16 @@
 //! writer, its own reload and its own failure modes, and this directory is the
 //! editor's end of it.
 //!
-//! It is built in order: the wire ([`reload`]) first, then
-//! the row writers and the tile driver. What a row means is decided in
-//! `crates/mangos`, on the rule `crates/assets` keeps for files.
+//! The wire ([`reload`]) is the base; the row writers and the tile driver are
+//! built on it. What a row means is decided in `crates/mangos`, on the rule
+//! `crates/assets` keeps for files.
 //!
 //! ## Commands go over chat
 //!
 //! There is no editor opcode. Every command goes out as a line of chat,
 //! authenticated by the account's GM level, and is answered by a line of chat,
 //! so this client stays a 1.12 client and the server needs no version
-//! handshake to talk to it. The plan's section *What is deliberately not in
-//! this plan* gives the argument.
+//! handshake to talk to it.
 
 pub(crate) mod addons;
 pub(crate) mod behaviour;
@@ -191,9 +193,32 @@ pub(crate) mod stack;
 pub(crate) mod store;
 pub(crate) mod subject;
 pub(crate) mod sync;
+pub(crate) mod targets;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+
+/// Save everything, as the top bar Save, Ctrl+S and the Changes window do:
+/// the tiles, the tables, then [`save`]; and during a playtest, put the
+/// saved files where the running client reads them.
+///
+/// The folder holds submitted edits only, so other authors' unsubmitted
+/// changes are left out of every write; see
+/// `crate::session::EditSession::save_files_with`. A save closes this
+/// editor's changelist; see `crate::collab::changes::close_on_save`.
+pub(crate) fn save_everything(
+    session: &mut crate::session::EditSession,
+    assets: &vale_client::assets::GameAssets,
+    server: &settings::ServerSettings,
+    queue: &mut queue::ServerQueue,
+    playing: bool,
+) {
+    session.save_files_with(|session| save(session, assets, server, queue));
+    if playing {
+        crate::playtest::republish(session, assets);
+        session.status = "saved and republished to the playtest".to_string();
+    }
+}
 
 /// The server half of a save, for every subject.
 ///
@@ -255,7 +280,7 @@ pub(crate) fn save(
     // the project has stopped claiming them, and an apply takes them back. See
     // `reconcile`.
     //
-    // All five row subjects are one write, in the stack's order; see
+    // All the row subjects are one write, in the stack's order; see
     // [`stack`]. Applying each subject on its own lost a loot row's original
     // value under an item renumber.
     match stack::work(stack::Wanted::Save, session, server) {
@@ -274,13 +299,11 @@ pub(crate) fn save(
 /// copy.
 fn save_files(session: &mut crate::session::EditSession, server: &settings::ServerSettings) {
     let project = &session.project;
-    if dbcs::carried(project).is_empty() && dbcs::saved(project).is_empty() {
+    let dir = datadir::data_dir(server);
+    if !dbcs::any(project, dir.as_deref().ok()) {
         return;
     }
-    let apply = |dir: std::path::PathBuf| {
-        dbcs::apply_at(project, &vale_mangos::datadir::dbc_dir(&dir))
-    };
-    match datadir::data_dir(server).and_then(apply) {
+    match dir.and_then(|dir| dbcs::apply_at(project, &dir)) {
         Ok(done) if done.written.is_empty() && done.restored.is_empty() => {}
         Ok(done) => {
             info!("server: {}", done.line());

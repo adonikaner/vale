@@ -7,17 +7,17 @@
 //! ```
 //!
 //! The project's store is the record of the second term and the revert file is
-//! the record of the first. An Apply that only *adds* to the database keeps that
+//! the record of the first. An Apply that only adds to the database keeps that
 //! equation while the project only grows, and breaks it the first time the
 //! project stops saying something it had applied:
 //!
-//! * **A created row given another id.** The store re-keys its claim, the next
+//! * A created row given another id. The store re-keys its claim, the next
 //!   Apply inserts the row at the new id, and the row at the old id stays in the
 //!   database with nothing claiming it. Reported as an item created, applied,
 //!   renumbered and applied again, and present twice.
-//! * **A created row discarded, a column edit taken back, a removal undone.**
+//! * A created row discarded, a column edit taken back, a removal undone.
 //!   Each leaves the database holding what the project no longer says.
-//! * **A column first edited after an Apply.** The revert file named the columns
+//! * A column first edited after an Apply. The revert file named the columns
 //!   the first Apply wrote and was never added to for a row it already covered,
 //!   so Put back left that column where the project had set it.
 //!
@@ -33,13 +33,13 @@
 //!                revert file, then run the row's own statements
 //! ```
 //!
-//! So every Apply is the first Apply, and the revert file describes exactly
-//! what step 3 wrote.
+//! Every Apply therefore starts from the database as it was before this
+//! project, and the revert file describes exactly what step 3 wrote.
 //!
 //! ## Why step 3 is a row at a time
 //!
-//! A row's undo is the inverse of its statements *given the database they ran
-//! against*, and a plan's rows are not independent: a quest moved to another
+//! A row's undo is the inverse of its statements given the database they ran
+//! against, and a plan's rows are not independent: a quest moved to another
 //! entry takes its relation rows with it, so a relation this project removes is
 //! at the new entry by the time its `DELETE` runs and at the old one before.
 //! Snapshots taken all together before anything ran read the second state for a
@@ -53,8 +53,8 @@
 //! `vale_mangos::conn` — so a list of statements can stop half way and stay
 //! half written. The order above is safe against that without a rollback,
 //! because an entry is on disk before its row's first statement runs and
-//! **every statement of an undo can be run against a row it has already
-//! restored**: an `UPDATE` back to read values, a `DELETE`, or a `DELETE`
+//! every statement of an undo can be run against a row it has already
+//! restored: an `UPDATE` back to read values, a `DELETE`, or a `DELETE`
 //! followed by the `INSERT`s that restore what it took. Never a bare `INSERT`,
 //! which fails the second time. Whatever a failed Apply or a failed Put back
 //! leaves, Put back finishes.
@@ -62,7 +62,7 @@
 //! A failure after step 1 leaves the project partly applied or not at all,
 //! rather than as it was applied before, and the message says so.
 //!
-//! ## One subject at a time is not enough
+//! ## Subjects that move each other's rows
 //!
 //! The equation holds per subject only while no other subject's statements
 //! move its rows, and an item or quest renumber does move them. So this order
@@ -93,7 +93,7 @@ pub(crate) struct Reconciled {
     pub(crate) affected: u64,
     /// How many rows the new revert file covers.
     pub(crate) undoable: usize,
-    /// **How many rows the project had applied and no longer claims**, which
+    /// How many rows the project had applied and no longer claims, which
     /// were put back and not written again: a discarded creation, a re-keyed
     /// one's old id, a removal that was undone.
     pub(crate) taken_back: usize,
@@ -102,7 +102,7 @@ pub(crate) struct Reconciled {
 impl Reconciled {
 }
 
-/// **Run one subject's Apply**, in the module's order.
+/// Run one subject's Apply, in the module's order.
 ///
 /// `undo_for` is the subject's own half of step 3, asked for one step at a time
 /// with the database as that step will meet it: it answers the statements that
@@ -117,6 +117,11 @@ pub(crate) fn apply(
     mut undo_for: impl FnMut(&mut Db, usize) -> Result<Option<Vec<String>>, String>,
 ) -> Result<Reconciled, String> {
     let had = Undo::open_at(project, vpath)?;
+    had.refuse_another_database(db, vpath)?;
+    // A row another project holds is refused before anything runs. See
+    // `super::targets`.
+    let held = super::targets::Rows::open(project, db.at());
+    held.refuse_others(project, steps.iter().map(|step| (step.table.clone(), step.key.text())))?;
     if !had.entries.is_empty() {
         db.run(&had.put_back()).map_err(|e| {
             format!("could not restore the rows this project applied earlier: {e}")
@@ -125,13 +130,14 @@ pub(crate) fn apply(
     }
     let mut undo = Undo {
         entries: Vec::new(),
+        database: Some(database_of(db.at())),
     };
     let mut out = Reconciled::default();
     for (index, step) in steps.iter().enumerate() {
         let done = (|| {
             if let Some(statements) = undo_for(db, index)? {
                 undo.add_many(&step.table, &step.key, &statements);
-                // **On disk before the row's first statement runs.**
+                // The entry is on disk before the row's first statement runs.
                 undo.append_newest_at(project, vpath, subject)?;
             }
             db.run(&step.statements)
@@ -153,7 +159,7 @@ pub(crate) fn apply(
             }
         }
     }
-    // The file again, in the order a person running it by hand wants.
+    // Rewrite the file newest entry first, the order for running it by hand.
     undo.write_finished_at(project, vpath, subject)?;
     out.undoable = undo.entries.len();
     out.taken_back = had
@@ -164,16 +170,23 @@ pub(crate) fn apply(
     Ok(out)
 }
 
-/// **Put back**, which is steps 1 and 2 and nothing after them. Answers how
+/// Put back, which is steps 1 and 2 and nothing after them. Answers how
 /// many rows the file covered.
 pub(crate) fn put_back(project: &Project, db: &mut Db, vpath: &str) -> Result<usize, String> {
     let had = Undo::open_at(project, vpath)?;
     if had.entries.is_empty() {
         return Ok(0);
     }
+    had.refuse_another_database(db, vpath)?;
     db.run(&had.put_back())?;
     remove(project, vpath)?;
     Ok(had.entries.len())
+}
+
+/// A world database's location as a revert file names it: host, port and
+/// database, without the login.
+pub(crate) fn database_of(at: &vale_mangos::conn::Where) -> String {
+    format!("{}:{}/{}", at.host.trim(), at.port(), at.database.trim())
 }
 
 /// Whether this project has anything in the database for that subject.
@@ -181,23 +194,23 @@ pub(crate) fn has_applied(session: &EditSession, vpath: &str) -> bool {
     Undo::open_at(&session.project, vpath).is_ok_and(|undo| !undo.entries.is_empty())
 }
 
-/// **Refuse a row arriving at an id that is taken or that something names.**
+/// Refuse a row arriving at an id that is taken or that something names.
 ///
 /// Asked of every row a plan creates or moves, immediately before it runs.
 ///
-/// *Taken*: a new row is numbered from a reserved range and from the highest id
+/// Taken: a new row is numbered from a reserved range and from the highest id
 /// this editor could see, but the database moves under it — another project, a
 /// GM command, an upstream update. The statements are a `DELETE` of the key and
 /// an `INSERT`, which would destroy a row somebody else owns. The database
 /// holds none of this project's rows at this key here, so a row at it is not
 /// this project's.
 ///
-/// *Named*: the undo of a followed reference is the same `UPDATE` with the ids
+/// Named: the undo of a followed reference is the same `UPDATE` with the ids
 /// exchanged, which is exact only while nothing named the target before the
 /// move. A vendor line left pointing at an id with no row behind it would be
 /// taken along with the real ones when the move is put back.
 ///
-/// **Rows this project itself sets to name the id are not counted.** `own` is
+/// Rows this project itself sets to name the id are not counted. `own` is
 /// the project's store. An item whose `start_quest` the project sets to a
 /// quest's new entry is written by the item Apply, which runs before the quest
 /// Apply — see [`super::stack`] — so by the time the quest is moved the item
@@ -248,11 +261,11 @@ pub(crate) fn refuse_a_taken_id(
     Ok(())
 }
 
-/// **The undo of an edit to a row that is already in the database**, and the
+/// The undo of an edit to a row that is already in the database, and the
 /// refusal of a move that could not have one.
 ///
 /// `None` for an edit to a row that is not there: its `UPDATE` matches nothing
-/// and there is nothing to put back. **A move is different.** Its statements
+/// and there is nothing to put back. A move is refused instead. Its statements
 /// are the row's `UPDATE`, one more for the row's other content patches, and
 /// one per column elsewhere that names the id — and only the first depends on
 /// the row being there. With the row gone upstream, the others would still
@@ -279,7 +292,7 @@ pub(crate) fn undo_of_an_update(
     Ok(undo)
 }
 
-/// **Refuse a spawn created past the guid space** — `creature::MAX_GUID` or
+/// Refuse a spawn created past the guid space: `creature::MAX_GUID` or
 /// `gameobject::MAX_GUID`. A guid above it stops the server: the guid
 /// generator refuses to hand out a counter past its range.
 pub(crate) fn refuse_a_guid_past_the_limit(table: &str, key: &Key, limit: u64) -> Result<(), String> {
@@ -296,11 +309,10 @@ pub(crate) fn refuse_a_guid_past_the_limit(table: &str, key: &Key, limit: u64) -
 /// `sql\revert.sql`; all of them are read and written here.
 ///
 /// Plain SQL with a marker line before each statement naming the table and the
-/// row. The marker is read, not decorative: it is how an apply knows which rows
-/// it has already snapshotted. The alternative, a side file in some
-/// serialisation, would be a second format and would stop the undo being a
-/// file a person can read and run by hand, which is the property that makes an
-/// automatic write to a database checkable.
+/// row. An apply reads the marker to know which rows it has already
+/// snapshotted. A side file in another serialisation would be a second format
+/// and would stop the undo being a file a person can read and run by hand,
+/// which is what makes an automatic write to a database checkable.
 ///
 /// ```text
 /// -- row creature_template entry=68;patch=0
@@ -323,6 +335,10 @@ pub(crate) struct Undo {
     /// `DELETE` and an `INSERT` a node rather than one `UPDATE`. A row's entry
     /// holds exactly one and reads back as one.
     pub(crate) entries: Vec<(String, Key, Vec<String>)>,
+    /// The world database the entries were read from, as [`database_of`]
+    /// writes it: `host:port/database`. `None` for a file written before the
+    /// line was. See [`Self::refuse_another_database`].
+    pub(crate) database: Option<String>,
 }
 
 impl Undo {
@@ -336,6 +352,38 @@ impl Undo {
     /// A file without it is oldest first, which is every file written before
     /// the order mattered and any file an apply was stopped in the middle of.
     const NEWEST_FIRST: &'static str = "-- order: newest first";
+
+    /// The line naming the world database the entries were read from.
+    const DATABASE: &'static str = "-- database: ";
+
+    /// Refuse to run this file's entries against another database than the
+    /// one they were read from. A revert file run against another database
+    /// writes one server's rows into another; it happened when
+    /// `Edit\server.txt` or `VALE_WORLDDB` was pointed elsewhere between an
+    /// Apply and the next.
+    pub(crate) fn refuse_another_database(&self, db: &Db, vpath: &str) -> Result<(), String> {
+        self.refuse_unless_at(&database_of(db.at()), vpath)
+    }
+
+    /// [`Self::refuse_another_database`] given the database as
+    /// [`database_of`] names it.
+    fn refuse_unless_at(&self, now: &str, vpath: &str) -> Result<(), String> {
+        match &self.database {
+            Some(had) if !self.entries.is_empty() && !had.eq_ignore_ascii_case(&now) => Err(format!(
+                "{vpath} holds rows this project applied to the world database at {had}, and the editor is \
+                 connected to {now}. Point Settings at {had} to apply or restore this subject."
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// The database line, for the header of a file.
+    fn database_line(&self) -> String {
+        match &self.database {
+            Some(database) => format!("{}{database}\n", Self::DATABASE),
+            None => String::new(),
+        }
+    }
     /// The line that closes an entry. See [`Self::from_text`].
     const END: &'static str = "-- end";
 
@@ -350,6 +398,7 @@ impl Undo {
         let Some(text) = project.read(vpath) else {
             return Ok(Undo {
                 entries: Vec::new(),
+                database: None,
             });
         };
         let text = String::from_utf8(text).map_err(|e| format!("{vpath}: {e}"))?;
@@ -367,6 +416,7 @@ impl Undo {
     /// line at all predates them and is read as it always was.
     pub(crate) fn from_text(text: &str) -> Undo {
         let mut entries: Vec<(String, Key, Vec<String>)> = Vec::new();
+        let mut database = None;
         let mut ended: Vec<bool> = Vec::new();
         let mut any_end = false;
         let mut at: Option<(String, Key)> = None;
@@ -375,6 +425,10 @@ impl Undo {
             let line = line.trim();
             if line == Self::NEWEST_FIRST {
                 newest_first = true;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix(Self::DATABASE) {
+                database = Some(rest.trim().to_string());
                 continue;
             }
             if line == Self::END {
@@ -429,7 +483,7 @@ impl Undo {
         if newest_first {
             entries.reverse();
         }
-        Undo { entries }
+        Undo { entries, database }
     }
 
     /// Whether this row has already been snapshotted.
@@ -518,8 +572,9 @@ impl Undo {
             "-- {} — how to put {subject} back.\n\
              -- An apply is writing this file: one entry per row, each added\n\
              -- immediately before that row's own statements run. Run the entries\n\
-             -- from the LAST to the first. Every statement can be run twice.\n\n",
-            project.name
+             -- from the last to the first. Every statement can be run twice.\n{}\n",
+            project.name,
+            self.database_line()
         );
         for entry in &self.entries {
             body.push_str(&Self::entry_text(entry));
@@ -549,8 +604,9 @@ impl Undo {
              -- immediately before that row was written. Run top to bottom, it\n\
              -- returns the database to what it was before this project. Every\n\
              -- statement can be run twice. Plain SQL: it can be run by hand.\n\
-             {}\n\n",
+             {}{}\n\n",
             project.name,
+            self.database_line(),
             Self::NEWEST_FIRST
         );
         for entry in self.entries.iter().rev() {
@@ -574,7 +630,7 @@ impl Undo {
     }
 }
 
-/// Remove a revert file whose statements have run. **A failure is an error**:
+/// Remove a revert file whose statements have run. A failure is an error:
 /// a file left behind would be put back again on every later Apply.
 fn remove(project: &Project, vpath: &str) -> Result<(), String> {
     let Some(disk) = project.path_for(vpath) else {
@@ -595,7 +651,7 @@ mod tests {
     use super::*;
     use vale_mangos::row::Assignment;
 
-    /// **A renumber whose row has gone is refused**, rather than run as its
+    /// A renumber whose row has gone is refused, rather than run as its
     /// other statements with nothing to put them back. An edit to a row that
     /// has gone is not: its `UPDATE` matches nothing.
     #[test]
@@ -649,6 +705,7 @@ mod tests {
     fn an_entry_without_its_end_is_not_read() {
         let mut undo = Undo {
             entries: Vec::new(),
+            database: None,
         };
         undo.add_many(
             vale_mangos::creature::SPAWN,
@@ -674,12 +731,34 @@ mod tests {
         assert!(!read.covers(vale_mangos::creature::SPAWN, &Key::one("guid", 2)));
     }
 
+    /// A revert file names the database its entries were read from, reads it
+    /// back, and refuses another; a file without the line refuses nothing.
+    #[test]
+    fn a_revert_file_refuses_another_database() {
+        let dir = std::env::temp_dir().join(format!("vale-revert-database-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let project = Project::open(&dir, "p").unwrap();
+        let mut undo = Undo { entries: Vec::new(), database: Some("127.0.0.1:3306/mangos".into()) };
+        undo.add(vale_mangos::creature::SPAWN, &Key::one("guid", 1), "UPDATE `creature` …;");
+        undo.write_finished_at(&project, "sql\\creatures-revert.sql", "creatures").unwrap();
+        let read = Undo::open_at(&project, "sql\\creatures-revert.sql").unwrap();
+        assert_eq!(read.database.as_deref(), Some("127.0.0.1:3306/mangos"));
+        assert_eq!(read.entries, undo.entries);
+        assert!(read.refuse_unless_at("127.0.0.1:3306/MaNGOS", "x").is_ok());
+        let refused = read.refuse_unless_at("192.168.1.9:3306/mangos", "x").unwrap_err();
+        assert!(refused.contains("Point Settings at 127.0.0.1:3306/mangos"), "{refused}");
+        let older = Undo { database: None, ..read };
+        assert!(older.refuse_unless_at("192.168.1.9:3306/mangos", "x").is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The same id in two tables is two rows, and so is the same entry at
     /// two patches.
     #[test]
     fn the_table_and_the_whole_key_are_what_an_undo_covers() {
         let mut undo = Undo {
             entries: Vec::new(),
+            database: None,
         };
         let key = Key::two(("entry", 68), ("patch", 0));
         undo.add(vale_mangos::creature::TEMPLATE, &key, "UPDATE `creature_template` …;");

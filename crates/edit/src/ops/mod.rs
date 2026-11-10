@@ -26,9 +26,9 @@
 //! ```
 //!
 //! Every change to a tile is recorded as an `Edit` before it is made, with
-//! both sides of it in hand. That is what [`crate::undo`] replays in either
-//! direction, and it is why the editor never has to re-derive what a stroke did:
-//! an [`Edit`] carries the bytes, not the intent.
+//! both sides of it in hand. [`crate::undo`] replays it in either direction,
+//! and the editor never re-derives what a stroke did: an [`Edit`] carries the
+//! bytes before and after, not the operation that produced them.
 //!
 //! ## Why a height stroke records whole chunks
 //!
@@ -42,11 +42,11 @@
 //! ## Why a paint stroke records a chunk's whole paint
 //!
 //! A layer edit changes the length of a region. The blend maps are packed one
-//! after another in `MCAL`, so painting with a texture the chunk does not yet carry adds a layer, moves
-//! every map after it and renumbers every offset in `MCLY` — and it appends to
-//! the tile's `MTEX` as well. There is no smaller unit than "the chunk's paint,
-//! and the tile's texture list" that inverts correctly, which is what
-//! [`ChunkPaint`] is.
+//! after another in `MCAL`, so painting with a texture the chunk does not yet
+//! carry adds a layer, moves every map after it and renumbers every offset in
+//! `MCLY`, and it appends to the tile's `MTEX` as well. There is no smaller
+//! unit than "the chunk's paint, and the tile's texture list" that inverts
+//! correctly, which is what [`ChunkPaint`] is.
 
 use crate::adt::{heights, holes, AdtFile, Building, Doodad, Region};
 
@@ -149,7 +149,7 @@ pub enum Edit {
     /// computed would overwrite the rest. The whole word is recorded before and
     /// after, so undo is exact however many bits an operation changed.
     ///
-    /// Today only `crate::adt::impass` writes it.
+    /// Only `crate::adt::impass` writes it.
     Flags {
         chunk: usize,
         before: u32,
@@ -167,6 +167,16 @@ pub enum Edit {
         before: Box<TileNames>,
         after: Box<TileNames>,
     },
+}
+
+/// The kinds of edit that meet across a chunk border. See [`Edit::seam`].
+/// Heights and their shading are one, since the shading follows the heights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Seam {
+    Shape,
+    Colours,
+    Liquid,
+    Paint,
 }
 
 /// A tile's `MTEX`, `MMDX`/`MMID` and `MWMO`/`MWID`, as they stand.
@@ -209,11 +219,11 @@ impl TileNames {
 ///
 /// `MCLY`, `MCAL`, and the header's layer count and detail-layer map are the
 /// chunk's; `MTEX` is the tile's and is in here anyway, because painting with a
-/// texture the tile does not name appends to it. A
-/// stroke that crosses several chunks therefore carries several copies of a list
-/// a few hundred bytes long, and reverting them in the order [`Change::revert`]
-/// already uses — last first — leaves the earliest `before` standing, which is
-/// the list as it was when the stroke began.
+/// texture the tile does not name appends to it. A stroke that crosses several
+/// chunks therefore carries several copies of a list a few hundred bytes long,
+/// and reverting them in the order [`Change::revert`] already uses, last first,
+/// leaves the earliest `before` standing, which is the list as it was when the
+/// stroke began.
 ///
 /// [`Change::revert`]: crate::undo::Change::revert
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -388,7 +398,7 @@ impl Placements {
 }
 
 impl Edit {
-    /// Put the change in.
+    /// Write the `after` side into the tile.
     pub fn apply(&self, tile: &mut AdtFile) {
         match self {
             Edit::Heights { chunk, after, .. } => write_heights(tile, *chunk, after),
@@ -408,7 +418,7 @@ impl Edit {
         }
     }
 
-    /// Take it back out.
+    /// Write the `before` side into the tile.
     pub fn revert(&self, tile: &mut AdtFile) {
         match self {
             Edit::Heights { chunk, before, .. } => write_heights(tile, *chunk, before),
@@ -473,10 +483,10 @@ impl Edit {
     /// Whether this edit changes which textures a chunk carries, rather than
     /// only how much of each is showing.
     ///
-    /// The two cases reach the screen by different routes. A chunk's blend maps are texels in an atlas
-    /// and can be written into the one already drawn; the set of textures a
-    /// chunk names is part of the material its draw group was built with, so
-    /// changing it means the tile has to be read again.
+    /// The two cases reach the screen by different routes. A chunk's blend maps
+    /// are texels in an atlas and can be written into the one already drawn;
+    /// the set of textures a chunk names is part of the material its draw group
+    /// was built with, so changing it means the tile has to be read again.
     pub fn changes_the_texture_set(&self) -> bool {
         match self {
             Edit::Paint { before, after, .. } => before.mcly != after.mcly,
@@ -544,7 +554,7 @@ impl Edit {
         })
     }
 
-    /// One building moved, on exactly the terms [`Edit::move_doodad`] sets out —
+    /// One building moved, on the terms [`Edit::move_doodad`] sets out:
     /// `before` read from the tile, so the stack chains by construction.
     pub fn move_building(tile: &AdtFile, index: usize, after: Building) -> Option<Edit> {
         let before = tile.building_at(index)?;
@@ -553,6 +563,115 @@ impl Edit {
             before,
             after,
         })
+    }
+
+    /// The same edit with its starting state read from `tile`: the `before`
+    /// when it is applied forward, the `after` when it is reverted.
+    ///
+    /// For an edit made on a state that has changed since. Every side of an
+    /// edit is a whole state of its subject, so the rebased edit takes the
+    /// subject to the state the edit meant, and its starting side is the state
+    /// it is applied over, so it can be undone. `None` when the subject is not
+    /// in the tile: a chunk it does not have, or a placement index past the
+    /// end of its list.
+    ///
+    /// Heights and vertex colours are the exception: the other side becomes
+    /// the values there now plus the change the edit made at each vertex. A
+    /// vertex on a chunk border is stored in both chunks and a stroke changes
+    /// both copies by the same amount, so adding the change keeps the copies
+    /// equal over ground someone else has changed since, where writing the
+    /// edit's own values would leave a step against the chunk next to it. A
+    /// colour is clamped to 0..=255. Colours that a side of the edit does not
+    /// have, or have a length that differs, are rebased as a whole state. A
+    /// [`Edit::Normals`] is rebased with [`Edit::reshaded`] instead, since
+    /// shading follows the heights.
+    pub fn rebased(&self, forward: bool, tile: &AdtFile) -> Option<Edit> {
+        fn from<'a, T>(forward: bool, before: &'a mut T, after: &'a mut T) -> &'a mut T {
+            match forward {
+                true => before,
+                false => after,
+            }
+        }
+        let mut out = self.clone();
+        match &mut out {
+            Edit::Heights { chunk, before, after } => {
+                let now = heights::heights(tile.chunk(*chunk)?);
+                let (start, end) = match forward {
+                    true => (before, after),
+                    false => (after, before),
+                };
+                if start.len() == now.len() && end.len() == now.len() {
+                    *end = now.iter().zip(start.iter()).zip(end.iter()).map(|((now, start), end)| now + (end - start)).collect();
+                }
+                *start = now;
+            }
+            Edit::Normals { chunk, before, after } => *from(forward, before, after) = normals_of(tile, *chunk)?,
+            Edit::Doodad { index, before, after } => *from(forward, before, after) = tile.doodad_at(*index)?,
+            Edit::Building { index, before, after } => *from(forward, before, after) = tile.building_at(*index)?,
+            Edit::Placements { before, after } => *from(forward, before, after) = Box::new(Placements::capture(tile)),
+            Edit::Paint { chunk, before, after } => {
+                tile.chunk(*chunk)?;
+                *from(forward, before, after) = Box::new(ChunkPaint::capture(tile, *chunk));
+            }
+            Edit::Liquid { chunk, before, after } => {
+                tile.chunk(*chunk)?;
+                *from(forward, before, after) = Box::new(ChunkLiquid::capture(tile, *chunk));
+            }
+            Edit::Area { chunk, before, after } => *from(forward, before, after) = crate::adt::area::area(tile, *chunk)?,
+            Edit::Colours { chunk, before, after } => {
+                tile.chunk(*chunk)?;
+                let now = crate::adt::colours::capture(tile, *chunk);
+                let (start, end) = match forward {
+                    true => (before, after),
+                    false => (after, before),
+                };
+                if let (Some(now), Some(had), Some(made)) = (&now, start.as_ref(), end.as_mut()) {
+                    if had.len() == now.len() && made.len() == now.len() {
+                        for ((made, had), now) in made.iter_mut().zip(had).zip(now) {
+                            *made = (i16::from(*now) + i16::from(*made) - i16::from(*had)).clamp(0, 255) as u8;
+                        }
+                    }
+                }
+                *start = now;
+            }
+            Edit::Holes { chunk, before, after } => *from(forward, before, after) = holes::holes(tile, *chunk)?,
+            Edit::Flags { chunk, before, after } => *from(forward, before, after) = tile.chunk(*chunk)?.head().flags(),
+            Edit::Names { before, after } => *from(forward, before, after) = Box::new(TileNames::capture(tile)),
+        }
+        Some(out)
+    }
+
+    /// A [`Edit::Normals`] rebased over `tile`, whose heights are already the
+    /// ones it is to shade: the starting side is the shading there now, and
+    /// the other side is that chunk's shading recomputed, which is also
+    /// written to `tile`. `None` for any other edit, or a chunk the tile does
+    /// not have. See [`Edit::rebased`].
+    pub fn reshaded(&self, forward: bool, tile: &mut AdtFile) -> Option<Edit> {
+        let Edit::Normals { chunk, .. } = self else { return None };
+        let now = normals_of(tile, *chunk)?;
+        heights::recompute_normals(tile, *chunk);
+        let shaded = normals_of(tile, *chunk)?;
+        let (before, after) = match forward {
+            true => (now, shaded),
+            false => (shaded, now),
+        };
+        Some(Edit::Normals { chunk: *chunk, before, after })
+    }
+
+    /// What this edit changes that meets the chunk next to it, or `None`.
+    /// Neighbouring chunks each store the vertices, liquid corners and blend
+    /// map edge on their shared border, and a stroke changes both copies, so a
+    /// step's edits of one [`Seam`] are applied all together or not at all:
+    /// half of them leave a step, a line of colour or a seam in the paint at
+    /// the border between the half made and the half not made.
+    pub fn seam(&self) -> Option<Seam> {
+        match self {
+            Edit::Heights { .. } | Edit::Normals { .. } => Some(Seam::Shape),
+            Edit::Colours { .. } => Some(Seam::Colours),
+            Edit::Liquid { .. } => Some(Seam::Liquid),
+            Edit::Paint { .. } => Some(Seam::Paint),
+            _ => None,
+        }
     }
 
     /// Whether this edit renumbers the placement lists, so a caller holding an
@@ -652,7 +771,7 @@ fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
 /// `edits` is read for which chunks moved and appended to with one
 /// [`Edit::Normals`] per chunk whose `MCNR` actually changed.
 ///
-/// Two properties, each of which fixed a bug:
+/// Two properties, each needed to avoid a visible fault:
 ///
 /// * The four neighbours are reshaded as well as the chunk itself.
 ///   `heights::recompute_normals` takes a central difference, so a vertex on a
@@ -668,8 +787,9 @@ fn normals_of(tile: &AdtFile, chunk: usize) -> Option<Vec<u8>> {
 /// and each of them needs both properties.
 fn reshade(tile: &mut AdtFile, edits: &mut Vec<Edit>) {
     // `Edit::Heights` and not `Edit::chunk`, which also answers for
-    // `Edit::Normals` and `Edit::Colours`. Only a height moves a normal, and a caller handing over a mixed
-    // list should not have the rest of it reshaded.
+    // `Edit::Normals` and `Edit::Colours`. Only a height moves a normal, and a
+    // caller handing over a mixed list should not have the rest of it
+    // reshaded.
     let changed: Vec<usize> = edits
         .iter()
         .filter_map(|edit| match edit {
@@ -764,5 +884,48 @@ mod unit {
         assert_eq!(with_neighbours(15).len(), 3);
         assert_eq!(with_neighbours(255).len(), 3);
         assert_eq!(with_neighbours(17 * 4).len(), 5);
+    }
+
+    /// A rebased edit starts from what the tile holds. A height edit adds the
+    /// change it made to the heights there now; going back, the side it
+    /// starts from is the `after`. A chunk the tile does not have cannot be
+    /// rebased.
+    #[test]
+    fn a_rebased_edit_starts_from_the_tile() {
+        let mut tile = crate::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12);
+        let made = Edit::Heights { chunk: 5, before: vec![0.0; 145], after: vec![3.0; 145] };
+        let now = heights::heights(tile.chunk(5).unwrap());
+        let raised: Vec<f32> = now.iter().map(|height| height + 3.0).collect();
+        let rebased = made.rebased(true, &tile).unwrap();
+        assert_eq!(rebased, Edit::Heights { chunk: 5, before: now.clone(), after: raised.clone() });
+        rebased.apply(&mut tile);
+        assert_eq!(heights::heights(tile.chunk(5).unwrap()), raised);
+        rebased.revert(&mut tile);
+        assert_eq!(heights::heights(tile.chunk(5).unwrap()), now);
+
+        let lowered: Vec<f32> = now.iter().map(|height| height - 3.0).collect();
+        let back = made.rebased(false, &tile).unwrap();
+        assert_eq!(back, Edit::Heights { chunk: 5, before: lowered, after: now });
+        let missing = Edit::Holes { chunk: 300, before: 0, after: 1 };
+        assert_eq!(missing.rebased(true, &tile), None);
+    }
+
+    /// Shading rebased over moved heights is the shading of those heights,
+    /// written to the tile, and starts from the shading there before.
+    #[test]
+    fn rebased_shading_follows_the_heights() {
+        let mut tile = crate::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12);
+        let flat = normals_of(&tile, 5).unwrap();
+        let mut slope = heights::heights(tile.chunk(5).unwrap());
+        for (index, height) in slope.iter_mut().enumerate() {
+            *height += index as f32;
+        }
+        Edit::Heights { chunk: 5, before: heights::heights(tile.chunk(5).unwrap()), after: slope }.apply(&mut tile);
+        let made = Edit::Normals { chunk: 5, before: flat.clone(), after: flat.clone() };
+        let Some(Edit::Normals { before, after, .. }) = made.reshaded(true, &mut tile) else { panic!("not shading") };
+        assert_eq!(before, flat);
+        assert_ne!(after, flat, "the slope is shaded");
+        assert_eq!(normals_of(&tile, 5).unwrap(), after);
+        assert!(Edit::Holes { chunk: 5, before: 0, after: 1 }.reshaded(true, &mut tile).is_none());
     }
 }

@@ -473,7 +473,7 @@ impl Outcome {
         };
         if !self.stale.is_empty() {
             line.push_str(&format!(
-                "; {} file(s) no longer produced were left in place — review them under Server tile files",
+                "; {} file(s) no longer produced were left in place — review them under Server Tile Files",
                 self.stale.len()
             ));
         }

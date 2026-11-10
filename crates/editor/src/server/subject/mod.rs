@@ -682,7 +682,7 @@ mod tests {
     /// nothing held. It is read back through the file's own text, as the
     /// Server panel reads it.
     fn applied_to_an_empty_database(plan: &Plan) -> Undo {
-        let mut undo = Undo { entries: Vec::new() };
+        let mut undo = Undo { entries: Vec::new(), database: None };
         for row in &plan.rows {
             let statements = match row.life {
                 Life::Insert => plan.subject.undo_of_a_creation(row),

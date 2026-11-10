@@ -16,8 +16,8 @@
 //! A run writes and replaces tile files. It never removes one. A file a run no
 //! longer produces is marked stale, with the reason, and stays where it is
 //! until someone removes it ([`Ledger::remove`]) or puts the originals back
-//! ([`Ledger::put_back`]). Both are decisions made in the editor's *Server tile
-//! files* window, not side effects of a regeneration.
+//! ([`Ledger::put_back`]). Both are decisions made in the editor's Server tile
+//! files dialog, not side effects of a regeneration.
 //!
 //! ## The lines of `tiles.txt`
 //!
@@ -324,6 +324,64 @@ impl Ledger {
         out.into_iter().collect()
     }
 
+    /// Take `<sub>\<name>` into the ledger as written by `project`, with
+    /// `original` the file as it was before the editor first wrote it, or
+    /// `None` when there was none. For a file whose original was kept
+    /// somewhere other than `originals\` before the ledger held it. A file
+    /// the ledger already holds is left as it is.
+    pub fn adopt(&mut self, sub: &str, name: &str, project: &str, original: Option<&[u8]>) -> Result<(), String> {
+        let key = key(sub, name);
+        if self.files.contains_key(&key) {
+            return Ok(());
+        }
+        let kept = match original {
+            Some(bytes) => {
+                let to = self.original_path(&key).expect("a key with a folder");
+                if let Some(parent) = to.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+                }
+                vale_edit::project::write_replacing(&to, bytes).map_err(|e| format!("{}: {e}", to.display()))?;
+                "original"
+            }
+            None => "new",
+        };
+        self.log(format!("file\t{key}\t{project}\t{kept}"))
+    }
+
+    /// Put one file the editor wrote back as it was: replaced by its kept
+    /// original, or removed when it had none. `Ok(Err(why))` when the file is
+    /// left, with the reason; `Err` when a write fails.
+    pub fn put_back_file(&mut self, key: &str) -> Result<Result<(), String>, String> {
+        let Some(written) = self.files.get(key).cloned() else {
+            return Ok(Err("the ledger has no record of this file".to_string()));
+        };
+        let here = self.file_path(key).expect("a key with a folder");
+        match written.original {
+            true => {
+                let kept = self.original_path(key).expect("a key with a folder");
+                if !kept.is_file() {
+                    return Ok(Err("its original is missing from originals\\".to_string()));
+                }
+                let bytes = std::fs::read(&kept).map_err(|e| format!("{}: {e}", kept.display()))?;
+                if let Some(parent) = here.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+                }
+                vale_edit::project::write_replacing(&here, &bytes).map_err(|e| format!("{}: {e}", here.display()))?;
+                let _ = std::fs::remove_file(&kept);
+            }
+            false => {
+                if here.is_file() {
+                    std::fs::remove_file(&here).map_err(|e| format!("{}: {e}", here.display()))?;
+                }
+            }
+        }
+        self.log(format!("unfile\t{key}"))?;
+        if self.stale.contains_key(key) {
+            self.log(format!("unstale\t{key}"))?;
+        }
+        Ok(Ok(()))
+    }
+
     /// Put the `DataDir` back as it was before `project`'s runs, as asked in
     /// the editor: each file that project wrote is replaced by its kept
     /// original, or removed when it had none, and the tiles it built are
@@ -357,33 +415,10 @@ impl Ledger {
                 ));
                 continue;
             }
-            let here = self.file_path(&key).expect("a key with a folder");
-            match original {
-                true => {
-                    let kept = self.original_path(&key).expect("a key with a folder");
-                    if !kept.is_file() {
-                        out.left.push((key, "its original is missing from originals\\".to_string()));
-                        continue;
-                    }
-                    let bytes = std::fs::read(&kept).map_err(|e| format!("{}: {e}", kept.display()))?;
-                    if let Some(parent) = here.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-                    }
-                    vale_edit::project::write_replacing(&here, &bytes)
-                        .map_err(|e| format!("{}: {e}", here.display()))?;
-                    let _ = std::fs::remove_file(&kept);
-                    out.restored.push(key.clone());
-                }
-                false => {
-                    if here.is_file() {
-                        std::fs::remove_file(&here).map_err(|e| format!("{}: {e}", here.display()))?;
-                    }
-                    out.removed.push(key.clone());
-                }
-            }
-            self.log(format!("unfile\t{key}"))?;
-            if self.stale.contains_key(&key) {
-                self.log(format!("unstale\t{key}"))?;
+            match self.put_back_file(&key)? {
+                Err(why) => out.left.push((key, why)),
+                Ok(()) if original => out.restored.push(key),
+                Ok(()) => out.removed.push(key),
             }
         }
         let built: Vec<Tile> = self

@@ -22,10 +22,10 @@
 //! A stroke has a press and a release to be opened and closed by. Three of the
 //! things this editor does have neither: turning the wheel, holding an arrow
 //! key, and dragging a number field in a panel. Each produces a run of separate
-//! changes with nothing to say the run is over, so each one used to be its own
-//! entry — twenty notches of the wheel was twenty presses of undo.
+//! changes with nothing to say the run is over. Pushed one by one, twenty
+//! notches of the wheel would be twenty presses of undo.
 //!
-//! [`History::begin_gesture`] is the answer for those. A change carries what it
+//! [`History::begin_gesture`] folds those runs. A change carries what it
 //! was about (`doodad 7 scale`, not just the label) and when it was last added
 //! to; a change with the same subject arriving within [`History::gap`] of the
 //! last one takes the entry back off the stack and continues it. So a run of
@@ -244,6 +244,21 @@ impl Change {
             gesture: None,
             at: 0.0,
         }
+    }
+
+    /// A change of these entries, in the order given, which is the order
+    /// they were made. See [`Self::in_order`] for the order they are applied
+    /// in.
+    pub fn from_entries(label: impl Into<String>, entries: Vec<Entry>) -> Change {
+        Change {
+            entries,
+            ..Change::new(label)
+        }
+    }
+
+    /// The entries in the order they were made.
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
     }
 
     /// The entries in the order they are applied (`forward`) or reverted.
@@ -706,12 +721,31 @@ pub struct History {
 /// ([`History::close_segment`]), which a session does a few times a second so
 /// a stroke is seen while it is drawn. Each closed segment is a whole change
 /// from the state its first edit found to the state its last one left.
+///
+/// A step says whether it continues the step before it: the second and later
+/// segments of one undo entry do, so a stroke sent in fifty parts, or a run
+/// of wheel notches folded into one entry, can still be counted and listed
+/// as one edit. See [`Journaled::continues`].
 #[derive(Debug, Default)]
 struct Journal {
     segment: Option<Change>,
-    /// Closed segments, undos and redos: the change, and whether it is applied
-    /// forward (an edit or a redo) or reverted (an undo).
-    steps: Vec<(Change, bool)>,
+    /// Closed segments, undos and redos, oldest first.
+    steps: Vec<Journaled>,
+    /// Whether the next closed segment belongs to the same undo entry as the
+    /// last step. Set when a segment closes, and cleared when a new entry
+    /// starts and by an undo or a redo.
+    continued: bool,
+}
+
+/// One step of the journal. See [`Journal`].
+#[derive(Debug, Clone)]
+pub struct Journaled {
+    pub change: Change,
+    /// Applied forward (an edit or a redo), or reverted (an undo).
+    pub forward: bool,
+    /// Whether this step is a later part of the undo entry the step before it
+    /// was part of. Never true of an undo or a redo, which are whole entries.
+    pub continues: bool,
 }
 
 impl History {
@@ -740,7 +774,8 @@ impl History {
         if let Some(journal) = self.journal.as_mut() {
             if let Some(segment) = journal.segment.take() {
                 if !segment.is_empty() {
-                    journal.steps.push((segment, true));
+                    journal.steps.push(Journaled { change: segment, forward: true, continues: journal.continued });
+                    journal.continued = true;
                 }
             }
         }
@@ -748,8 +783,16 @@ impl History {
 
     /// The journal's steps since the last call, oldest first. Empty when the
     /// journal is off.
-    pub fn take_journal(&mut self) -> Vec<(Change, bool)> {
+    pub fn take_journal(&mut self) -> Vec<Journaled> {
         self.journal.as_mut().map(|journal| std::mem::take(&mut journal.steps)).unwrap_or_default()
+    }
+
+    /// A new undo entry starts: the journal's next step does not continue the
+    /// last one.
+    fn new_entry(&mut self) {
+        if let Some(journal) = self.journal.as_mut() {
+            journal.continued = false;
+        }
     }
 
     /// The journal's segment, for a fold. Named after the open entry, or
@@ -804,6 +847,7 @@ impl History {
     /// Open a stroke. Anything recorded until [`History::end`] folds into it.
     pub fn begin(&mut self, label: impl Into<String>) {
         self.end();
+        self.new_entry();
         self.open = Some(Change::new(label));
     }
 
@@ -840,7 +884,10 @@ impl History {
             });
         let mut change = match continues {
             true => self.done.pop().expect("just tested"),
-            false => Change::new(label),
+            false => {
+                self.new_entry();
+                Change::new(label)
+            }
         };
         change.gesture = Some(subject);
         change.at = now;
@@ -908,6 +955,7 @@ impl History {
         match self.open.as_mut() {
             Some(change) => fold(change),
             None => {
+                self.new_entry();
                 let mut change = Change::new(label);
                 fold(&mut change);
                 if !change.is_empty() {
@@ -1112,7 +1160,8 @@ impl History {
         let change = self.done.pop()?;
         self.undone.push(change.clone());
         if let Some(journal) = self.journal.as_mut() {
-            journal.steps.push((change.clone(), false));
+            journal.steps.push(Journaled { change: change.clone(), forward: false, continues: false });
+            journal.continued = false;
         }
         Some(change)
     }
@@ -1122,7 +1171,8 @@ impl History {
         let change = self.undone.pop()?;
         self.done.push(change.clone());
         if let Some(journal) = self.journal.as_mut() {
-            journal.steps.push((change.clone(), true));
+            journal.steps.push(Journaled { change: change.clone(), forward: true, continues: false });
+            journal.continued = false;
         }
         Some(change)
     }
@@ -1130,14 +1180,12 @@ impl History {
     /// Whether any entry on the stack — done, undone, or the one being held —
     /// names this tile.
     ///
-    /// It used to be the gate on closing a tile, because undo wrote into the
-    /// open tile and skipped one that was not there. `EditSession::undo` opens
-    /// what it names now, which gives the same guarantee from the other end
-    /// and is the only one a map-wide edit can live with: an entry naming 687
-    /// tiles would have pinned every one of them for the rest of the session.
+    /// It does not decide whether a tile may be closed. `EditSession::undo`
+    /// opens every tile an entry names, so an entry's tiles need not stay
+    /// open; keeping them open would pin every tile a map-wide edit names,
+    /// 687 for one entry, for the rest of the session.
     ///
-    /// Kept because it answers "is this tile spoken for", which is a question
-    /// a report can ask.
+    /// It answers whether a tile is named by any entry, for a report.
     pub fn touches(&self, tile: &TileKey) -> bool {
         self.done
             .iter()
@@ -1283,9 +1331,9 @@ mod tests {
         assert!(history.next_undo().is_none());
     }
 
-    /// Reversing swaps the two readings, which is the whole of an undo for this
-    /// kind — including the two `None` cases, which are "the project claimed no
-    /// path" and are not the same as an empty path.
+    /// Reversing swaps the two readings, which is all an undo of a
+    /// [`Shape::Path`] entry does, including the two `None` cases, which are
+    /// "the project claimed no path" and are not the same as an empty path.
     #[test]
     fn reversing_a_path_swaps_what_the_project_claims() {
         let made = server_path(None, Some("1,2,3,100,0,0,0,0"));
@@ -1325,10 +1373,10 @@ mod tests {
         )
     }
 
-    /// A change carrying only a created row is not empty, which is the same
-    /// trap the paths have: creating a spawn makes a `Change` with no
-    /// column entries at all, and anything that asks one list whether it is
-    /// empty reads the whole entry as nothing and drops it. The entry would be
+    /// A change carrying only a created row is not empty, for the reason a
+    /// change carrying only a path is not: creating a spawn makes a `Change`
+    /// with no column entries at all, and anything that asks one list whether
+    /// it is empty reads the whole entry as nothing and drops it. The entry would be
     /// on no stack and the Undo button would be grey.
     #[test]
     fn a_change_carrying_only_a_created_row_is_not_empty() {
@@ -2067,20 +2115,39 @@ mod tests {
         h.end();
         let steps = h.take_journal();
         assert_eq!(steps.len(), 2);
-        assert_eq!(tile_edits(&steps[0].0), [&edit(0, 1.0, 2.0)]);
-        assert_eq!(tile_edits(&steps[1].0), [&edit(0, 2.0, 3.0)]);
-        assert!(steps.iter().all(|(change, forward)| *forward && change.label == "Raise"));
+        assert_eq!(tile_edits(&steps[0].change), [&edit(0, 1.0, 2.0)]);
+        assert_eq!(tile_edits(&steps[1].change), [&edit(0, 2.0, 3.0)]);
+        assert!(steps.iter().all(|step| step.forward && step.change.label == "Raise"));
+        assert_eq!(steps.iter().map(|step| step.continues).collect::<Vec<_>>(), [false, true], "the second part continues the first");
 
         let whole = h.undo().expect("the stroke");
         assert_eq!(tile_edits(&whole), [&edit(0, 1.0, 3.0)]);
         h.redo();
         let steps = h.take_journal();
-        assert_eq!(steps.iter().map(|(_, forward)| *forward).collect::<Vec<_>>(), [false, true]);
-        assert_eq!(tile_edits(&steps[0].0), [&edit(0, 1.0, 3.0)]);
+        assert_eq!(steps.iter().map(|step| step.forward).collect::<Vec<_>>(), [false, true]);
+        assert!(steps.iter().all(|step| !step.continues), "an undo and a redo are whole entries");
+        assert_eq!(tile_edits(&steps[0].change), [&edit(0, 1.0, 3.0)]);
 
-        // A write with nothing open is a step at once.
+        // A write with nothing open is a step at once, and a new entry each
+        // time.
         h.record_server(server_cell("name", None, Some("'A'")));
-        assert_eq!(h.take_journal().len(), 1);
+        h.record_server(server_cell("name", Some("'A'"), Some("'B'")));
+        let steps = h.take_journal();
+        assert_eq!(steps.iter().map(|step| step.continues).collect::<Vec<_>>(), [false, false]);
+
+        // A gesture continued inside the window continues its last step; a
+        // new stroke does not.
+        h.begin_gesture("Scale", "doodad 7 scale", 10.0);
+        h.record(&key(1, 1), [edit(1, 0.0, 1.0)]);
+        h.end();
+        h.begin_gesture("Scale", "doodad 7 scale", 10.1);
+        h.record(&key(1, 1), [edit(1, 1.0, 2.0)]);
+        h.end();
+        h.begin("Raise");
+        h.record(&key(1, 1), [edit(2, 0.0, 1.0)]);
+        h.end();
+        let steps = h.take_journal();
+        assert_eq!(steps.iter().map(|step| step.continues).collect::<Vec<_>>(), [false, true, false]);
     }
 
     /// The journal's open segment can be read and dropped without touching

@@ -1,7 +1,7 @@
 //! The Assets workspace: the files the project adds to the archives, what
 //! made each one, and the Import Texture dialog.
 //!
-//! ## The workspace's three parts, as in the other workspaces
+//! ## The workspace's three parts
 //!
 //! ```text
 //! left       which file    every file of the project the publish packs, as a
@@ -335,7 +335,9 @@ fn shown_files(files: &[Own]) -> Vec<Own> {
 /// The survey of what has fallen behind, taken again when the project's files
 /// or tables change. See [`crate::import::generated`].
 fn survey(work: &mut Work<'_>, all: &[Own], sources: &Sources) -> Survey {
-    work.assets.surveys.current(work.session, work.game, all, sources).clone()
+    let log = work.collab.log.as_ref();
+    let touched = || log.map(crate::collab::log::touched);
+    work.assets.surveys.current(work.session, work.game, all, sources, touched).clone()
 }
 
 /// What a row and the details say about a generated file: what it was made
@@ -765,7 +767,7 @@ fn delete_details(
     if !tiles.is_empty() {
         theme::note(
             ui,
-            "Unsaved edits to the map tiles and their undo entries are dropped. Server tile files \
+            "Unsaved edits to the map tiles and their undo entries are dropped. The server's tile files \
              regenerated from them stay in the server's DataDir.",
         );
     }
@@ -943,7 +945,7 @@ fn behind_summary(ui: &mut egui::Ui, work: &mut Work<'_>, survey: &Survey) {
         .inner_margin(6.0)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new("Out of date").strong().color(theme::WARN));
+            ui.label(egui::RichText::new("Out of Date").strong().color(theme::WARN));
             catch_up(ui, work, survey);
         });
     ui.add_space(6.0);
@@ -1330,7 +1332,7 @@ pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Con
         ui.end_row();
     }
     if let Some(rows) = &content.played_by {
-        ui.label(egui::RichText::new("Played by").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Played By").color(theme::INK_DIM));
         let named: Vec<String> = rows
             .iter()
             .take(6)
@@ -1408,7 +1410,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
     let sources = work.assets.sources(work.session).clone();
     let survey = survey(work, &all, &sources);
     let Some(vpath) = work.assets.selected.clone() else {
-        theme::heading(ui, "No file chosen");
+        theme::heading(ui, "No File Chosen");
         theme::note(
             ui,
             "Choose a file on the left, or import one. A file here is read in place of the \
@@ -1418,7 +1420,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         if survey.undrawn.is_empty() && survey.rebake.is_empty() && survey.unused.is_empty() {
             theme::note(ui, "Every generated file is up to date with what it was made from.");
         } else {
-            theme::heading(ui, "Out of date");
+            theme::heading(ui, "Out of Date");
             catch_up(ui, work, &survey);
         }
         return;
@@ -1428,7 +1430,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         return;
     }
     let Some(own) = all.iter().find(|own| own.vpath == vpath).cloned() else {
-        theme::heading(ui, "No file chosen");
+        theme::heading(ui, "No File Chosen");
         theme::note(ui, "The chosen file is no longer in the project.");
         return;
     };
@@ -1468,7 +1470,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             });
             ui.end_row();
             if let Some(entry) = &imported {
-                ui.label(egui::RichText::new("Imported from").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Imported From").color(theme::INK_DIM));
                 let there = entry.source.is_file();
                 ui.label(match there {
                     true => egui::RichText::new(entry.source.display().to_string()).color(theme::INK),
@@ -1477,7 +1479,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 ui.end_row();
             }
             if sort.generated() && !from.is_empty() {
-                ui.label(egui::RichText::new("Made from").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Made From").color(theme::INK_DIM));
                 ui.label(&from);
                 ui.end_row();
             }
@@ -1491,7 +1493,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             }
             content_rows(ui, work, &content);
             if let Some(gloss) = &gloss {
-                ui.label(egui::RichText::new("Gloss file").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Gloss File").color(theme::INK_DIM));
                 match (&gloss_own, gloss_shipped) {
                     (Some(_), _) => ui.label(basename(gloss)),
                     (None, true) => ui.label(format!("{} (the archives')", basename(gloss))),
@@ -1601,7 +1603,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         }
         if ui
             .button("Copy Path")
-            .on_hover_text("The path as a table field or a model names it.")
+            .on_hover_text("Copy the path as a table field or a model names it.")
             .clicked()
         {
             ui.ctx().copy_text(own.vpath.clone());

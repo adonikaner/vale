@@ -1,8 +1,8 @@
 //! The server's tiles regenerated for the tiles a project changed: `maps\`,
 //! `vmaps\` and `mmaps\`, through the four vmangos tools. There are two
 //! callers. The dev-time buttons write the live `DataDir`, so a playtest walks
-//! on the edit after a server restart: *Regenerate changed tiles* on the
-//! Server panel, *Server files* on the map window, and `--regenerate`. A
+//! on the edit after a server restart: "Regenerate changed tiles" on the
+//! Server panel, "Server files" on the map window, and `--regenerate`. A
 //! publish writes a patch folder; see [`super::publish::patch`].
 //!
 //! ## Which tiles
@@ -11,8 +11,9 @@
 //! built from. For the live `DataDir` the record is the `DataDir`'s own
 //! [`Ledger`], which every project's runs write, so it holds the tiles other
 //! projects built as well as this one's ([`ledger_record`]). For a patch it is
-//! the project's [`PATCH_RECORD`]. A run compares the project against its
-//! record:
+//! the tiles part of the project's release record
+//! (`super::publish::release::Releases`). A run compares the project against
+//! its record:
 //!
 //! ```text
 //! a tile not in the record, or whose bytes changed     regenerated
@@ -31,9 +32,9 @@
 //! a tile in the record with the same bytes             left alone
 //! ```
 //!
-//! A run removes no server file; see `vale_mangos::datadir`'s *Nothing is
-//! removed by a run*. Stale files are reviewed and removed in the *Server tile
-//! files* window ([`crate::ui::shell::tilefiles`]).
+//! A run removes no server file; see `vale_mangos::datadir`'s section "Nothing
+//! is removed by a run". Stale files are reviewed and removed in the Server
+//! tile files window ([`crate::ui::shell::tilefiles`]).
 //!
 //! How far a change reaches is read off the tile itself. A tile whose
 //! placements are the archives' own (`AdtFile::same_placements` against the
@@ -69,8 +70,8 @@
 //! note the tiles      the ledger's tile lines, on success
 //! ```
 //!
-//! The comparison and the archive build ran on the main thread, and the window
-//! stopped drawing for a time that grew with the number of tiles.
+//! On the main thread, the comparison and the archive build stopped the window
+//! drawing for a time that grew with the number of tiles.
 //!
 //! The comparison runs before the archive is built. A tile saved between the
 //! two is in the archive with a hash the record does not hold, so the next run
@@ -91,12 +92,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Where the project records what its patches' server tiles were built from.
-/// The live `DataDir`'s tiles are recorded in the `DataDir`'s [`Ledger`]
-/// instead. Two records are kept because two things build tiles: one record
-/// for both would let a dev regenerate hide a tile from the next patch, or the
-/// reverse.
-pub(crate) const PATCH_RECORD: &str = "publish\\server-tiles.txt";
 /// Where a project recorded the live `DataDir`'s tiles before the `DataDir`
 /// had a ledger. Read once, into the ledger, by [`import_live_record`], and
 /// not written.
@@ -151,6 +146,48 @@ impl Record {
         out
     }
 
+    /// The tiles part of the project's release record: its `tile` and `map`
+    /// lines, tab-separated, and nothing else of the file. The patches'
+    /// tiles are kept there and the live `DataDir`'s in its [`Ledger`],
+    /// because two things build tiles: one record for both would let a dev
+    /// regenerate hide a tile from the next patch, or the reverse. See
+    /// `super::publish::release::Releases`.
+    pub(crate) fn from_release_text(text: &str) -> Record {
+        let mut out = Record::default();
+        for line in text.lines() {
+            let fields: Vec<&str> = line.trim_end().split('\t').map(str::trim).collect();
+            match fields.as_slice() {
+                ["map", directory, id] => {
+                    if let Ok(id) = id.parse() {
+                        out.maps.insert(directory.to_ascii_lowercase(), id);
+                    }
+                }
+                ["tile", vpath, hash] => {
+                    if let Ok(hash) = u64::from_str_radix(hash, 16) {
+                        out.tiles.insert(vpath.to_string(), hash);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// …and its lines, as [`Self::from_release_text`] reads them.
+    pub(crate) fn release_lines(&self) -> String {
+        let mut out = String::new();
+        for (directory, id) in &self.maps {
+            out.push_str(&format!("map\t{directory}\t{id}\n"));
+        }
+        for (vpath, hash) in &self.tiles {
+            out.push_str(&format!("tile\t{vpath}\t{hash:016x}\n"));
+        }
+        out
+    }
+
+    /// The record in the form the old files hold it, which the editor reads
+    /// and no longer writes: for the tests that make one.
+    #[cfg(test)]
     pub(crate) fn to_text(&self, project: &str) -> String {
         let mut out = format!(
             "# {project} — the tiles the server's maps, vmaps and mmaps were last built\n\
@@ -167,6 +204,7 @@ impl Record {
         out
     }
 
+    #[cfg(test)]
     pub(crate) fn write(&self, project: &Project, vpath: &str) -> Result<(), String> {
         project
             .write(vpath, self.to_text(&project.name).as_bytes())
@@ -475,8 +513,13 @@ pub(crate) fn dirty(
         };
         let left_the_project = done >= carried.len();
         match reader.classify(&mut chain, &own, &map, x, y) {
+            // The record's path is compared without case, as every other
+            // path is: a tile recorded under another spelling is the same
+            // tile, not a changed one.
             Ok(Some(one))
-                if !left_the_project && record.tiles.get(vpath) == one.hash.as_ref() => {}
+                if !left_the_project
+                    && record.tiles.iter().find(|(had, _)| had.eq_ignore_ascii_case(vpath)).map(|(_, hash)| hash)
+                        == one.hash.as_ref() => {}
             Ok(Some(one)) => out.push(one),
             Ok(None) if !left_the_project => {}
             Err(why) if !left_the_project => skipped.push(why),
@@ -734,10 +777,16 @@ pub(crate) fn ledger_record(ledger: &Ledger, project: &Project, maps: &[(u32, St
 }
 
 /// Copy the project's [`LIVE_RECORD`] into the ledger as tiles the project
-/// built, while the ledger holds none of the project's. A tile whose map id
-/// is not known is left out.
+/// built, while the ledger holds none of the project's, and remove the file.
+/// A tile whose map id is not known is left out.
+///
+/// The file is removed once it is copied, so it is read once. Kept, it was
+/// read again after Put back originals left the ledger with none of the
+/// project's tiles, and its old hashes named tiles the server no longer had
+/// as built.
 fn import_live_record(ledger: &mut Ledger, project: &Project, maps: &[(u32, String)]) -> Result<(), String> {
     if ledger.tiles.values().any(|built| built.project == project.name) {
+        let _ = project.revert(LIVE_RECORD);
         return Ok(());
     }
     let old = Record::read(project, LIVE_RECORD);
@@ -764,6 +813,7 @@ fn import_live_record(ledger: &mut Ledger, project: &Project, maps: &[(u32, Stri
         };
         ledger.note_tile(tile, Some(built))?;
     }
+    project.revert(LIVE_RECORD).map_err(|e| format!("{LIVE_RECORD}: {e}"))?;
     Ok(())
 }
 
@@ -779,7 +829,7 @@ enum Which {
 /// Where a dev-time run builds the project's archive.
 enum Archive {
     /// Into the real `Data\`, replacing this project's own archive there
-    /// (*Copy the client archive into Data* on). The tools read the install
+    /// ("Copy the client archive into Data" on). The tools read the install
     /// at `client_root`.
     IntoData { client_root: PathBuf },
     /// Under the project's `publish\.stage\`, and the tools read a staged
@@ -837,9 +887,9 @@ impl Run {
         };
         // The archive is built from the project folder, so the edits on
         // screen are written there first: the tiles, and the tables, since
-        // the extractors find a new map only in the archive's `Map.dbc`.
-        session.save_all();
-        session.save_all_tables();
+        // the extractors find a new map only in the archive's `Map.dbc`. A
+        // save writes everything; see `EditSession::save_files`.
+        let _ = session.save_files();
         repair_project_wdts(session);
         let which = match chosen {
             Some(tiles) => Which::Named {
@@ -1028,8 +1078,8 @@ fn finish(session: &mut EditSession, ran: Result<Ran, String>) {
 /// run finishes.
 ///
 /// The project's archive is rebuilt as part of the run, because the extractors
-/// read `Data\` and a tile reaches them only through that archive. With *Copy
-/// the client archive into Data* on it is written into the real `Data\`,
+/// read `Data\` and a tile reaches them only through that archive. With "Copy
+/// the client archive into Data" on it is written into the real `Data\`,
 /// replacing only this project's own. Otherwise it is built under the
 /// project's `publish\.stage\` and the tools are given a staged copy of the
 /// install with it beside the real archives; see [`Staging`]. The Server
@@ -1038,7 +1088,8 @@ fn finish(session: &mut EditSession, ran: Result<Ran, String>) {
 /// button is not.
 ///
 /// Everything whose cost grows with the number of tiles runs on the server
-/// queue's worker. See the module comment's *What runs on the main thread*.
+/// queue's worker. See the module comment's section "What runs on the main
+/// thread".
 pub(crate) fn regenerate(
     session: &mut EditSession,
     assets: &GameAssets,
@@ -1098,7 +1149,7 @@ pub(super) fn repair_project_wdts(session: &mut EditSession) {
     }
 }
 
-/// `--regenerate`: the Server panel's *Regenerate changed tiles*, from a
+/// `--regenerate`: the Server panel's "Regenerate changed tiles", from a
 /// command line. Fires once, on the first frame there is a session.
 pub(crate) fn on_the_command_line(
     args: Res<crate::args::Args>,
@@ -1210,6 +1261,7 @@ mod tests {
 
         import_live_record(&mut ledger, &project, &maps).unwrap();
         assert_eq!(ledger.tiles[&Tile::new(0, 32, 48)].project, "p");
+        assert!(!project.has(LIVE_RECORD), "the old record is read once");
         let reopened = Ledger::open(&data_dir).unwrap();
         assert_eq!(reopened.tiles.len(), 2, "written to the DataDir's ledger");
         let _ = std::fs::remove_dir_all(&root);

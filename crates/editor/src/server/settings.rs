@@ -1,7 +1,7 @@
 //! Where the server is, kept where the editor keeps its own settings, and the
 //! project's switches, kept with the project they are about.
 //!
-//! ## This is an invented mechanism
+//! ## Why the editor keeps its own server setting
 //!
 //! Everything else this project reads has a place the real client already
 //! puts it: the realm address is `realmlist.wtf`, the account is
@@ -53,7 +53,7 @@ pub(crate) const FILE: &str = "server.txt";
 /// The key the conf path is written under.
 const CONF: &str = "mangosd";
 
-/// …and where the four vmangos map tools are.
+/// The key the folder of the four vmangos map tools is written under.
 const TOOLS: &str = "tools";
 
 /// The four switches, in the project's file.
@@ -136,6 +136,11 @@ pub(crate) struct ServerSettings {
     /// The project the four switches were read from, by its folder. `None`
     /// until a project has been adopted; see [`Self::adopt`].
     project: Option<PathBuf>,
+    /// The host's world database while this editor is joined to a session
+    /// whose host shares it. It answers [`Self::resolve`] before anything on
+    /// this machine. Not written to the file. See the section "Server writes"
+    /// of `crate::collab`.
+    pub(crate) shared: Option<Where>,
 }
 
 impl Default for ServerSettings {
@@ -150,6 +155,7 @@ impl Default for ServerSettings {
             tried: None,
             tools_status: None,
             project: None,
+            shared: None,
         }
     }
 }
@@ -284,12 +290,22 @@ impl ServerSettings {
             .join(FILE)
     }
 
-    /// Where the database is, and which of the three sources said so.
+    /// Where the database is, and which source said so.
     ///
-    /// In order: the two environment variables, then this file. `None` when
+    /// In order: the host of a shared session this editor is joined to, the
+    /// two environment variables, then this file. `None` when
     /// none of them answers, which is the ordinary state of a machine with no
     /// server on it.
     pub(crate) fn resolve(&self) -> Option<(Where, Source)> {
+        if let Some(shared) = &self.shared {
+            return Some((shared.clone(), Source::Session));
+        }
+        self.resolve_own()
+    }
+
+    /// [`Self::resolve`] without the session's: this machine's own world
+    /// database.
+    pub(crate) fn resolve_own(&self) -> Option<(Where, Source)> {
         if let Some(found) = Where::find() {
             // `Where::find` reads `VALE_WORLDDB` then `VALE_MANGOSD`, so
             // which of the two it was is that one question further down.
@@ -359,13 +375,15 @@ fn truthy(value: &str) -> bool {
     )
 }
 
-/// Which of the three sources answered.
+/// Which source answered [`ServerSettings::resolve`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Source {
     /// An environment variable, named so the Settings window can say which.
     Env(&'static str),
     /// `Edit\server.txt`, which the Settings window writes.
     Panel,
+    /// The host of the shared session this editor is joined to.
+    Session,
 }
 
 impl Source {
@@ -373,6 +391,7 @@ impl Source {
         match self {
             Source::Env(name) => format!("from {name}"),
             Source::Panel => format!("from Edit\\{FILE}"),
+            Source::Session => "from the host of the shared session".to_string(),
         }
     }
 }

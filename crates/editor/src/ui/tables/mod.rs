@@ -572,8 +572,8 @@ pub(in crate::ui) fn table(ui: &mut egui::Ui, mut work: Workspace<'_>) {
             ui.label(egui::RichText::new("saved").color(theme::INK_DIM));
         }
     });
-    if unsaved && theme::primary(ui, "Save table").clicked() {
-        session.save_table(&name);
+    if unsaved && theme::primary(ui, "Save").on_hover_text("Save the project, as Ctrl+S does.").clicked() {
+        session.save_asked = true;
     }
     ui.add_space(4.0);
 

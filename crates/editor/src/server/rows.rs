@@ -36,10 +36,10 @@
 //! one is a value a person typed, kept in the project's own store, and applied
 //! when a person presses a button rather than as part of a save.
 //!
-//! The two were once a single [`Plan`], and that did not fit: they have
-//! different sources, different undo rules, different files and, since the
-//! creature half no longer applies on save, different moments. See
-//! [`super::creatures`], which holds the second.
+//! The two are not one [`Plan`] because they have different sources,
+//! different undo rules, different files and, since the creature half does
+//! not apply on save, different moments. See [`super::creatures`], which
+//! holds the second.
 //!
 //! ## Reading the file the game shipped
 //!
@@ -722,7 +722,7 @@ fn address(
 
 /// Applies the plan to the server's database and keeps the undo.
 ///
-/// The order of the steps is what makes this safe. For every row not already
+/// The order of the steps makes this safe. For every row not already
 /// covered by the revert file, the dev row is read in its current state and the
 /// statement that puts it back is appended to `sql\revert.sql`, and the file is
 /// written before any statement runs. A crash between the two leaves an undo
@@ -744,6 +744,10 @@ pub(crate) fn apply_at(
 ) -> Result<Applied, String> {
     let mut db = Db::open(at)?;
     let had = Undo::open_at(project, REVERT_VPATH)?;
+    had.refuse_another_database(&db, REVERT_VPATH)?;
+    // See `super::targets`.
+    let held = super::targets::Rows::open(project, at);
+    held.refuse_others(project, plan.rows.iter().map(|row| (row.table.to_string(), row.key.text())))?;
     if !had.entries.is_empty() {
         db.run(&had.put_back()).map_err(|e| {
             format!("could not restore the rows this project applied earlier: {e}")
@@ -752,6 +756,7 @@ pub(crate) fn apply_at(
     }
     let mut undo = Undo {
         entries: Vec::new(),
+        database: Some(super::reconcile::database_of(db.at())),
     };
     let mut out = Applied {
         rows: plan.rows.len(),
@@ -828,6 +833,7 @@ pub(crate) fn revert_at(
         return Ok(Reverted::default());
     }
     let mut db = Db::open(at)?;
+    undo.refuse_another_database(&db, REVERT_VPATH)?;
     let statements: Vec<String> = undo.entries.iter().flat_map(|(_, _, sql)| sql.iter().cloned()).collect();
     // Removals are counted from the statements before they run, not from what
     // the database reports: a `DELETE` and an `UPDATE` each affect one row, so

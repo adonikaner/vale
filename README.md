@@ -114,17 +114,23 @@ the world it shows is drawn by the client's own renderer.
   along the line of sight.
 - **Server data.** The server's navmesh drawn over the ground, and
   regeneration of the server's map, vmap and mmap tiles for changed terrain.
-- **Projects.** Edits are kept per project with undo. Applying writes rows to
-  the world database and reloads them where the server supports it. Publishing
-  produces a patch folder: a client archive, the server's data tables, an SQL
-  migration, map tiles and a manifest.
+- **Projects.** Edits are kept per project with undo. Every edit is written to
+  the project's log with its author and time; changelists group a person's
+  edits with a description, and any changelist can be reverted. Applying
+  writes rows to the world database and reloads them where the server
+  supports it. Publishing produces a patch folder: a client archive, the
+  server's data tables, an SQL migration, map tiles and a manifest.
 - **Windows.** Any workspace can be moved into a window of its own.
 - **Shared sessions.** Several editors on one local network work on one
   project at once. One editor hosts and the others join with a password. A
   joining editor receives the project, each edit reaches the other editors as
   it is made, the host refuses an edit made on state another editor changed
   first, each editor undoes only its own edits, and the other editors' views
-  and pointers are drawn in the viewport. The connection is unencrypted TCP.
+  and pointers are drawn in the viewport. The host logs every editor's edits,
+  can share its world database, and refuses edits to what another person has
+  checked out. A joined editor's copy can be edited offline; reconnecting
+  sends its edits and lists what changed meanwhile for the person to resolve.
+  The connection is unencrypted TCP.
 - **Playtest.** Ctrl+P logs in with the client's own login from inside the
   editor, at the server's time of day, and returns to editing afterwards.
 
@@ -194,7 +200,8 @@ cargo run -p vale-ide -- --join <address>           # join one
 ```
 
 Projects are saved under `Edit/<name>/`. Ctrl+P playtests with the client.
-"Session…" on the top bar hosts or joins a shared session.
+"Session…" on the top bar hosts or joins a shared session, and "Changes"
+submits changelists and shows the project's history.
 [EDITOR.md](EDITOR.md) describes the editor's tools and how to use them.
 
 ### Command-line tool and tests
@@ -236,7 +243,8 @@ crates/edit/       the editing model: lossless terrain files, edit operations,
 crates/mangos/     the server's world database tables, and the SQL an edit
                    produces
 crates/collab/     shared editing sessions between editors: the messages, the
-                   host's ordering of edits, and the TCP connection
+                   host's ordering of edits, check outs, a project's log of
+                   edits and changelists, and the TCP connection
 crates/editor/     `vale-ide`, Vale IDE
 ```
 

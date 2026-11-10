@@ -56,7 +56,7 @@ use vale_edit::manifest::Kind;
 /// The flight map pictures' folder and the start of their names.
 const TAXI_PREFIX: &str = "interface\\taxiframe\\taximap";
 
-/// The editor's generators, each of which writes one sort of file.
+/// The editor's generators, each of which writes one type of file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Generator {
     Minimap,
@@ -138,10 +138,40 @@ pub(crate) struct Surveys {
     original_extra: Option<Option<DbcFile>>,
 }
 
+/// When each tile was last edited and each project file last written, by
+/// their number in the project's log (`crate::collab::log`), keyed in lower
+/// case: tiles by virtual path. A minimap picture is behind its tile when the
+/// tile was edited after the picture was written. Without a log, or for a
+/// picture written before the log had it, the files' modification times are
+/// compared instead, which a save that changes nothing and a shared session's
+/// fetch both move.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Touched {
+    pub(crate) tiles: HashMap<String, u64>,
+    pub(crate) files: HashMap<String, u64>,
+}
+
+impl Touched {
+    /// Whether the tile at `tile` was edited after the file at `drawn` was
+    /// written, when the log knows both.
+    fn behind(&self, tile: &str, drawn: &str) -> Option<bool> {
+        let tile = self.tiles.get(&tile.replace('/', "\\").to_ascii_lowercase())?;
+        let drawn = self.files.get(&drawn.replace('/', "\\").to_ascii_lowercase())?;
+        Some(tile > drawn)
+    }
+}
+
 impl Surveys {
     /// The survey of the project as it is now, taken again when its files or
-    /// tables changed.
-    pub(crate) fn current(&mut self, session: &mut EditSession, game: &GameAssets, files: &[Own], sources: &Sources) -> &Survey {
+    /// tables changed. `touched` is asked only when the survey is taken.
+    pub(crate) fn current(
+        &mut self,
+        session: &mut EditSession,
+        game: &GameAssets,
+        files: &[Own],
+        sources: &Sources,
+        touched: impl FnOnce() -> Option<Touched>,
+    ) -> &Survey {
         let at = (session.files_revision, session.table_revision);
         if self.survey.as_ref().is_none_or(|s| s.at != at) {
             let original = self.original_extra.get_or_insert_with(|| {
@@ -152,7 +182,8 @@ impl Surveys {
                     .and_then(|shipped| shipped.original(&session.project, &path))
                     .and_then(|bytes| DbcFile::parse(&bytes).ok())
             });
-            let mut survey = take(session, game, files, sources, original.as_ref());
+            let touched = touched();
+            let mut survey = take(session, game, files, sources, original.as_ref(), touched.as_ref());
             survey.at = at;
             self.survey = Some(survey);
         }
@@ -170,7 +201,14 @@ fn modified(session: &EditSession, vpath: &str) -> Option<SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
 }
 
-fn take(session: &mut EditSession, game: &GameAssets, files: &[Own], sources: &Sources, original: Option<&DbcFile>) -> Survey {
+fn take(
+    session: &mut EditSession,
+    game: &GameAssets,
+    files: &[Own],
+    sources: &Sources,
+    original: Option<&DbcFile>,
+    touched: Option<&Touched>,
+) -> Survey {
     let mut survey = Survey::default();
     let generated: Vec<(&Own, Generator)> = files
         .iter()
@@ -200,9 +238,15 @@ fn take(session: &mut EditSession, game: &GameAssets, files: &[Own], sources: &S
             None => Standing::Unused,
             Some((map, x, y)) => {
                 let tile_path = vale_assets::adt_path(map, *x, *y);
-                match (modified(session, &tile_path), modified(session, &own.vpath)) {
-                    (Some(saved), Some(drawn)) if saved > drawn => Standing::OutOfDate("its tile was saved after it was drawn".to_string()),
-                    _ => Standing::Current,
+                match touched.and_then(|touched| touched.behind(&tile_path, &own.vpath)) {
+                    Some(true) => Standing::OutOfDate("its tile was edited after it was drawn".to_string()),
+                    Some(false) => Standing::Current,
+                    None => match (modified(session, &tile_path), modified(session, &own.vpath)) {
+                        (Some(saved), Some(drawn)) if saved > drawn => {
+                            Standing::OutOfDate("its tile was saved after it was drawn".to_string())
+                        }
+                        _ => Standing::Current,
+                    },
                 }
             }
         };
@@ -217,7 +261,10 @@ fn take(session: &mut EditSession, game: &GameAssets, files: &[Own], sources: &S
         let drawn = picture.as_ref().filter(|p| session.project.has(p));
         let behind = match drawn {
             None => true,
-            Some(picture) => matches!((modified(session, &vpath), modified(session, picture)), (Some(saved), Some(drawn)) if saved > drawn),
+            Some(picture) => match touched.and_then(|touched| touched.behind(&vpath, picture)) {
+                Some(behind) => behind,
+                None => matches!((modified(session, &vpath), modified(session, picture)), (Some(saved), Some(drawn)) if saved > drawn),
+            },
         };
         if behind {
             survey.undrawn.push((key.map.clone(), key.x, key.y));

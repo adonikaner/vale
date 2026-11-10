@@ -8,27 +8,39 @@
 //! copies the project's copies of those into a patch folder; this module does
 //! the same into this machine's live server, for a playtest after a restart.
 //!
-//! ## Taking it back
+//! ## The server's own copies, kept by the DataDir
 //!
-//! Before a file is first overwritten, the server's own copy is saved into the
-//! project at `server\dbc-before\<Name>.dbc`, or its absence is listed in
-//! `server\dbc-before\absent.txt`. `server\` is not packed into a patch
-//! archive (`Project::NOT_GAME_DATA`). Put back copies every saved file back
-//! and deletes the saved copies, the same arrangement `sql\revert.sql` gives
-//! the rows. An apply first puts back any file the project no longer carries,
-//! so the live folder is always the server's own files plus what the project
-//! says now.
+//! The `DataDir`'s ledger (`vale_mangos::datadir::ledger`) records each file
+//! the editor writes, which project wrote it last, and the server's own copy
+//! from before the first write, in `DataDir\vale-editor\originals\`, as it
+//! does for the server's tile files. The record is the server's and not the
+//! project's: it outlasts a deleted project, shows the files another project
+//! wrote, and cannot be put back into another server's `DataDir`, since each
+//! `DataDir` has its own. Put back restores the files this project wrote
+//! last. An apply first puts back any file the project no longer carries, so
+//! the live folder is always the server's own files plus what the project
+//! says now. The tile files dialog's Put back originals restores these with
+//! the project's tile files.
+//!
+//! A project that applied before the ledger held DBC files keeps the
+//! server's copies in its own `server\dbc-before\` ([`BEFORE_DIR`]). The next
+//! apply or put back moves them into the ledger and removes them from the
+//! project ([`adopt_the_projects_copies`]).
 //!
 //! vmangos reads these files at startup only, so a copied file takes effect
 //! when the server is restarted.
 
-use vale_edit::project::Project;
 use std::path::Path;
+use vale_edit::project::Project;
+use vale_mangos::datadir::Ledger;
 
-/// Where the server's own copies are kept, under the project.
+/// Where a project kept the server's own copies before the `DataDir`'s
+/// ledger did. See the module comment's section "The server's own copies,
+/// kept by the DataDir".
 pub(crate) const BEFORE_DIR: &str = "server\\dbc-before";
 
-/// The names of files the server did not have before this project wrote them.
+/// The file in [`BEFORE_DIR`] that lists the names of the files the server
+/// did not have.
 const ABSENT: &str = "server\\dbc-before\\absent.txt";
 
 /// The DBCs the project carries that the server reads as files, as
@@ -54,9 +66,9 @@ pub(crate) fn carried(project: &Project) -> Vec<(String, String)> {
     out
 }
 
-/// The files whose server copies are saved in the project: those saved as a
-/// file and those listed as absent.
-pub(crate) fn saved(project: &Project) -> Vec<String> {
+/// The server copies a project still keeps in [`BEFORE_DIR`], by file name:
+/// those saved as a file and those listed as absent.
+pub(crate) fn kept_in_project(project: &Project) -> Vec<String> {
     let mut out: Vec<String> = project
         .path_for(BEFORE_DIR)
         .and_then(|dir| std::fs::read_dir(dir).ok())
@@ -88,25 +100,59 @@ fn absent(project: &Project) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn write_absent(project: &Project, names: &[String]) -> Result<(), String> {
-    if names.is_empty() {
-        if let Some(path) = project.path_for(ABSENT) {
-            let _ = std::fs::remove_file(path);
-        }
-        return Ok(());
+/// The ledger's folder and name for a DBC file: `5875` and `dbc\TaxiPath.dbc`.
+fn ledger_key(name: &str) -> (String, String) {
+    let (first, rest) = dbc_folder();
+    (first, format!("{rest}\\{name}"))
+}
+
+/// The DBC folder under a `DataDir` as the ledger names files: its first
+/// part, `5875`, and the rest, `dbc`.
+fn dbc_folder() -> (String, String) {
+    let relative = vale_mangos::datadir::dbc_dir(Path::new(""));
+    let mut parts = relative.iter().map(|part| part.to_string_lossy().into_owned());
+    let first = parts.next().unwrap_or_default();
+    let rest: Vec<String> = parts.collect();
+    (first, rest.join("\\"))
+}
+
+/// The DBC files the ledger says `project` wrote last, by file name.
+fn written(ledger: &Ledger, project: &Project) -> Vec<String> {
+    let (first, rest) = dbc_folder();
+    let prefix = format!("{first}\\{rest}\\");
+    ledger
+        .written_by(&project.name)
+        .into_iter()
+        .filter_map(|(key, _)| key.strip_prefix(&prefix).map(str::to_string))
+        .collect()
+}
+
+/// Whether there is anything to copy or put back for `project`: a file it
+/// carries, a copy it still keeps, or a file the `DataDir`'s ledger says it
+/// wrote.
+pub(crate) fn any(project: &Project, data_dir: Option<&Path>) -> bool {
+    !carried(project).is_empty()
+        || !kept_in_project(project).is_empty()
+        || data_dir.and_then(|dir| Ledger::open(dir).ok()).is_some_and(|ledger| !written(&ledger, project).is_empty())
+}
+
+/// Move the server copies a project keeps in [`BEFORE_DIR`] into the
+/// ledger, then remove them from the project. A file the ledger already
+/// holds keeps the ledger's copy.
+fn adopt_the_projects_copies(ledger: &mut Ledger, project: &Project) -> Result<(), String> {
+    let missing = absent(project);
+    for name in kept_in_project(project) {
+        let (sub, file) = ledger_key(&name);
+        let original = match missing.iter().any(|had| had.eq_ignore_ascii_case(&name)) {
+            true => None,
+            false => project.read(&format!("{BEFORE_DIR}\\{name}")),
+        };
+        ledger.adopt(&sub, &file, &project.name, original.as_deref())?;
+        let _ = project.revert(&format!("{BEFORE_DIR}\\{name}"));
     }
-    let mut text = String::from(
-        "# The server's DataDir\\5875\\dbc had no file by these names before this project\n\
-         # copied one there. Restore deletes them.\n",
-    );
-    for name in names {
-        text.push_str(name);
-        text.push('\n');
-    }
-    project
-        .write(ABSENT, text.as_bytes())
-        .map(|_| ())
-        .map_err(|e| format!("{ABSENT}: {e}"))
+    let _ = project.revert(ABSENT);
+    let _ = project.revert(&format!("{BEFORE_DIR}\\folder.txt"));
+    Ok(())
 }
 
 /// Where each carried file stands against the live folder.
@@ -116,11 +162,11 @@ pub(crate) struct Standing {
     pub(crate) carried: Vec<String>,
     /// The carried files whose bytes differ from the live folder's.
     pub(crate) differ: Vec<String>,
-    /// How many files have a saved server copy, which is what Put back
+    /// How many files this project wrote last, which is what Put back
     /// restores.
     pub(crate) saved: usize,
-    /// Saved files the project no longer carries, which the next apply puts
-    /// back.
+    /// Files this project wrote and no longer carries, which the next apply
+    /// puts back.
     pub(crate) stale: Vec<String>,
 }
 
@@ -150,11 +196,15 @@ impl Standing {
     }
 }
 
-/// Compare the project's files with the live folder. Reads no more than the
-/// files the project carries.
-pub(crate) fn standing(project: &Project, dbc_dir: &Path) -> Standing {
+/// Compare the project's files with the live folder of `data_dir`. Reads no
+/// more than the files the project carries.
+pub(crate) fn standing(project: &Project, data_dir: &Path) -> Standing {
+    let dbc_dir = vale_mangos::datadir::dbc_dir(data_dir);
     let carried = carried(project);
-    let saved = saved(project);
+    let mut saved = Ledger::open(data_dir).map(|ledger| written(&ledger, project)).unwrap_or_default();
+    saved.extend(kept_in_project(project));
+    saved.sort();
+    saved.dedup();
     let names: Vec<&str> = carried.iter().map(|(name, _)| name.as_str()).collect();
     let differ = carried
         .iter()
@@ -201,42 +251,25 @@ impl Synced {
     }
 }
 
-/// Copy the project's server DBCs into `dbc_dir`, saving each server copy the
-/// first time, and put back any saved file the project no longer carries.
-///
-/// Every server copy is saved before any file is written, so a failure half
-/// way leaves a put back that restores what was there.
-pub(crate) fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
+/// Copy the project's server DBCs into `data_dir`'s DBC folder, the ledger
+/// keeping the server's copy of each the first time, and put back any file
+/// this project wrote and no longer carries.
+pub(crate) fn apply_at(project: &Project, data_dir: &Path) -> Result<Synced, String> {
+    let dbc_dir = vale_mangos::datadir::dbc_dir(data_dir);
+    let mut ledger = Ledger::open(data_dir)?;
+    adopt_the_projects_copies(&mut ledger, project)?;
     let carried = carried(project);
     let mut out = Synced::default();
 
     let wanted = |name: &str| carried.iter().any(|(had, _)| had.eq_ignore_ascii_case(name));
-    for name in saved(project) {
+    for name in written(&ledger, project) {
         if !wanted(&name) {
-            restore(project, dbc_dir, &name)?;
+            restore(&mut ledger, &name)?;
             out.restored.push(name);
         }
     }
 
-    let already = saved(project);
-    let mut missing = absent(project);
-    for (name, _) in &carried {
-        if already.iter().any(|had| had.eq_ignore_ascii_case(name)) {
-            continue;
-        }
-        match std::fs::read(dbc_dir.join(name)) {
-            Ok(bytes) => {
-                project
-                    .write(&format!("{BEFORE_DIR}\\{name}"), &bytes)
-                    .map_err(|e| format!("saving the server's original {name}: {e}"))?;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => missing.push(name.clone()),
-            Err(e) => return Err(format!("{}: {e}", dbc_dir.join(name).display())),
-        }
-    }
-    write_absent(project, &missing)?;
-
-    std::fs::create_dir_all(dbc_dir).map_err(|e| format!("{}: {e}", dbc_dir.display()))?;
+    std::fs::create_dir_all(&dbc_dir).map_err(|e| format!("{}: {e}", dbc_dir.display()))?;
     for (name, vpath) in &carried {
         let Some(bytes) = project.read(vpath) else {
             continue;
@@ -245,6 +278,8 @@ pub(crate) fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, Stri
         if std::fs::read(&target).ok().as_deref() == Some(bytes.as_slice()) {
             continue;
         }
+        let (sub, file) = ledger_key(name);
+        ledger.before_write(&sub, &file, &project.name)?;
         vale_edit::project::write_replacing(&target, &bytes)
             .map_err(|e| format!("{}: {e}", target.display()))?;
         out.written.push(name.clone());
@@ -252,40 +287,23 @@ pub(crate) fn apply_at(project: &Project, dbc_dir: &Path) -> Result<Synced, Stri
     Ok(out)
 }
 
-/// Return every saved file to the live folder and forget the saved copies.
-pub(crate) fn put_back_at(project: &Project, dbc_dir: &Path) -> Result<Synced, String> {
+/// Return every file this project wrote last to the server's copy.
+pub(crate) fn put_back_at(project: &Project, data_dir: &Path) -> Result<Synced, String> {
+    let mut ledger = Ledger::open(data_dir)?;
+    adopt_the_projects_copies(&mut ledger, project)?;
     let mut out = Synced::default();
-    for name in saved(project) {
-        restore(project, dbc_dir, &name)?;
+    for name in written(&ledger, project) {
+        restore(&mut ledger, &name)?;
         out.restored.push(name);
     }
     Ok(out)
 }
 
-/// Return one file to the server's copy: write the saved bytes back, or
-/// delete the file if the server had none, then forget the saved copy.
-fn restore(project: &Project, dbc_dir: &Path, name: &str) -> Result<(), String> {
-    let target = dbc_dir.join(name);
-    let vpath = format!("{BEFORE_DIR}\\{name}");
-    let mut missing = absent(project);
-    if let Some(at) = missing.iter().position(|had| had.eq_ignore_ascii_case(name)) {
-        match std::fs::remove_file(&target) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", target.display())),
-        }
-        missing.remove(at);
-        return write_absent(project, &missing);
-    }
-    let bytes = project
-        .read(&vpath)
-        .ok_or_else(|| format!("{vpath} is missing"))?;
-    vale_edit::project::write_replacing(&target, &bytes)
-        .map_err(|e| format!("{}: {e}", target.display()))?;
-    project
-        .revert(&vpath)
-        .map_err(|e| format!("{vpath}: {e}"))?;
-    Ok(())
+/// Return one file to the server's copy, or remove it when the server had
+/// none.
+fn restore(ledger: &mut Ledger, name: &str) -> Result<(), String> {
+    let (sub, file) = ledger_key(name);
+    ledger.put_back_file(&vale_mangos::datadir::ledger::key(&sub, &file))?.map_err(|why| format!("{name}: {why}"))
 }
 
 #[cfg(test)]
@@ -295,6 +313,7 @@ mod tests {
     struct Place {
         root: std::path::PathBuf,
         project: Project,
+        data: std::path::PathBuf,
         dbc: std::path::PathBuf,
     }
 
@@ -302,9 +321,10 @@ mod tests {
         let root = std::env::temp_dir().join(format!("vale-dbcs-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let project = Project::at(root.join("Edit").join("p")).unwrap();
-        let dbc = root.join("server").join("dbc");
+        let data = root.join("data");
+        let dbc = vale_mangos::datadir::dbc_dir(&data);
         std::fs::create_dir_all(&dbc).unwrap();
-        Place { root, project, dbc }
+        Place { root, project, data, dbc }
     }
 
     impl Drop for Place {
@@ -323,34 +343,51 @@ mod tests {
         assert_eq!(names, ["TaxiPath.dbc"]);
     }
 
+    /// An apply keeps the server's copy in the DataDir's ledger, not in the
+    /// project, and a put back restores it.
     #[test]
-    fn an_apply_saves_the_servers_copy_and_a_put_back_restores_it() {
+    fn an_apply_keeps_the_servers_copy_and_a_put_back_restores_it() {
         let p = place("roundtrip");
         std::fs::write(p.dbc.join("TaxiPath.dbc"), b"server's own").unwrap();
         p.project.write(r"DBFilesClient\TaxiPath.dbc", b"edited").unwrap();
         p.project.write(r"DBFilesClient\TaxiPathNode.dbc", b"new file").unwrap();
-        assert!(standing(&p.project, &p.dbc).outstanding());
+        assert!(standing(&p.project, &p.data).outstanding());
 
-        let done = apply_at(&p.project, &p.dbc).unwrap();
+        let done = apply_at(&p.project, &p.data).unwrap();
         assert_eq!(done.written, ["TaxiPath.dbc", "TaxiPathNode.dbc"]);
         assert_eq!(std::fs::read(p.dbc.join("TaxiPath.dbc")).unwrap(), b"edited");
-        let now = standing(&p.project, &p.dbc);
+        let now = standing(&p.project, &p.data);
         assert!(!now.outstanding(), "{now:?}");
         assert_eq!(now.saved, 2);
+        assert!(kept_in_project(&p.project).is_empty(), "nothing is kept in the project");
 
-        // A second apply writes nothing and keeps the first saved copy.
+        // A second apply keeps the first copy.
         p.project.write(r"DBFilesClient\TaxiPath.dbc", b"edited again").unwrap();
-        apply_at(&p.project, &p.dbc).unwrap();
-        assert_eq!(
-            p.project.read(&format!("{BEFORE_DIR}\\TaxiPath.dbc")).unwrap(),
-            b"server's own"
-        );
+        apply_at(&p.project, &p.data).unwrap();
 
-        let back = put_back_at(&p.project, &p.dbc).unwrap();
+        let back = put_back_at(&p.project, &p.data).unwrap();
         assert_eq!(back.restored.len(), 2);
         assert_eq!(std::fs::read(p.dbc.join("TaxiPath.dbc")).unwrap(), b"server's own");
         assert!(!p.dbc.join("TaxiPathNode.dbc").exists(), "the server had none");
-        assert_eq!(saved(&p.project), Vec::<String>::new());
+        assert_eq!(standing(&p.project, &p.data).saved, 0);
+    }
+
+    /// Copies a project kept in `server\dbc-before\` move into the ledger on
+    /// the next apply, and a put back restores them.
+    #[test]
+    fn copies_kept_in_the_project_move_into_the_ledger() {
+        let p = place("adopt");
+        std::fs::write(p.dbc.join("TaxiPath.dbc"), b"edited").unwrap();
+        p.project.write(r"DBFilesClient\TaxiPath.dbc", b"edited").unwrap();
+        p.project.write(&format!("{BEFORE_DIR}\\TaxiPath.dbc"), b"server's own").unwrap();
+        std::fs::write(p.dbc.join("TaxiPathNode.dbc"), b"made").unwrap();
+        p.project.write(ABSENT, b"TaxiPathNode.dbc\n").unwrap();
+        assert!(any(&p.project, Some(&p.data)));
+
+        put_back_at(&p.project, &p.data).unwrap();
+        assert_eq!(std::fs::read(p.dbc.join("TaxiPath.dbc")).unwrap(), b"server's own");
+        assert!(!p.dbc.join("TaxiPathNode.dbc").exists());
+        assert!(kept_in_project(&p.project).is_empty());
     }
 
     #[test]
@@ -358,10 +395,10 @@ mod tests {
         let p = place("dropped");
         std::fs::write(p.dbc.join("TaxiPath.dbc"), b"server's own").unwrap();
         p.project.write(r"DBFilesClient\TaxiPath.dbc", b"edited").unwrap();
-        apply_at(&p.project, &p.dbc).unwrap();
+        apply_at(&p.project, &p.data).unwrap();
         p.project.revert(r"DBFilesClient\TaxiPath.dbc").unwrap();
-        assert_eq!(standing(&p.project, &p.dbc).stale, ["TaxiPath.dbc"]);
-        let done = apply_at(&p.project, &p.dbc).unwrap();
+        assert_eq!(standing(&p.project, &p.data).stale, ["TaxiPath.dbc"]);
+        let done = apply_at(&p.project, &p.data).unwrap();
         assert_eq!(done.restored, ["TaxiPath.dbc"]);
         assert_eq!(std::fs::read(p.dbc.join("TaxiPath.dbc")).unwrap(), b"server's own");
     }

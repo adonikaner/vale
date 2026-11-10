@@ -34,9 +34,11 @@
 //! writes, so applying it twice leaves what applying it once does.
 
 use crate::auth;
+use crate::checkout::{Claim, Hold};
 use crate::groups::{Group, Payload};
 use crate::ids::Blocks;
-use crate::wire::{FileEntry, Presence, Seq, ToHost, ToPeer, UserId, PROTOCOL};
+use crate::log::Author;
+use crate::wire::{Answer, Database, FileEntry, Presence, Request, Seq, ToHost, ToPeer, UserId, PROTOCOL};
 use std::collections::VecDeque;
 
 /// Why one of this editor's edits is reverted.
@@ -53,8 +55,8 @@ pub enum Cause {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action<P> {
     /// This editor is in, as `user`, with these other editors. `database` is
-    /// the host's database fingerprint; see [`ToPeer::Welcome`].
-    Welcome { user: UserId, users: Vec<(UserId, String)>, database: Option<[u8; 32]> },
+    /// the host's world database; see [`ToPeer::Welcome`].
+    Welcome { user: UserId, log: [u8; 16], users: Vec<(UserId, String)>, database: Option<Database> },
     /// This editor is not let in, or is put out.
     Refused(String),
     /// Revert the edit being made now and end the gesture. See
@@ -89,6 +91,16 @@ pub enum Action<P> {
     /// The host's editor only: an editor asks it to make an edit. See
     /// [`ToHost::Ask`].
     Ask { user: UserId, payload: P },
+    /// The host's editor only: an edit was accepted as `seq`, to log. See
+    /// [`crate::host::Out::Log`].
+    Log { seq: Seq, user: UserId, author: Author, payload: P },
+    /// The host's editor only: an editor asks about the log, to answer with
+    /// [`crate::session::Hosting::answer`].
+    Request { user: UserId, author: Author, request: Request },
+    /// The host's answer to this editor's [`Peer::request`].
+    Answer(Answer<P>),
+    /// Every claim held. See [`crate::checkout`].
+    Holds(Vec<Hold>),
 }
 
 #[derive(Debug)]
@@ -116,11 +128,12 @@ pub struct Peer<P> {
 }
 
 impl<P: Payload> Peer<P> {
-    /// An editor joining under `name`, with the password, its build and its
+    /// An editor joining as `author`, with the password, its build and its
     /// archives' fingerprint. Its first message, the hello, is in the outbox.
-    pub fn joining(name: &str, password: &str, build: &str, archives: [u8; 32]) -> Peer<P> {
-        let mut peer = Peer::new(name, password, None);
-        peer.outbox.push(ToHost::Hello { protocol: PROTOCOL, name: name.to_string(), build: build.to_string(), archives });
+    pub fn joining(author: &Author, password: &str, build: &str, archives: [u8; 32]) -> Peer<P> {
+        let mut peer = Peer::new(&author.name, password, None);
+        let hello = ToHost::Hello { protocol: PROTOCOL, name: author.name.clone(), author: author.id, build: build.to_string(), archives };
+        peer.outbox.push(hello);
         peer
     }
 
@@ -153,9 +166,20 @@ impl<P: Payload> Peer<P> {
         self.seq
     }
 
+    /// Start the host's own editor at the host's resumed number. See
+    /// [`crate::host::Host::resume`].
+    pub fn resume(&mut self, seq: Seq) {
+        self.seq = seq;
+    }
+
     /// How many of this editor's edits the host has not answered.
     pub fn waiting(&self) -> usize {
         self.waiting.len()
+    }
+
+    /// Take the edits the host has not answered, oldest first.
+    pub fn take_waiting(&mut self) -> Vec<P> {
+        self.waiting.drain(..).map(|waiting| waiting.payload).collect()
     }
 
     /// Send an edit this editor has made and applied.
@@ -193,6 +217,21 @@ impl<P: Payload> Peer<P> {
         self.outbox.push(ToHost::Fetch(paths));
     }
 
+    /// Ask the host about its log.
+    pub fn request(&mut self, request: Request) {
+        self.outbox.push(ToHost::Request(request));
+    }
+
+    /// Check these out. See [`crate::checkout`].
+    pub fn check_out(&mut self, claims: Vec<Claim>) {
+        self.outbox.push(ToHost::CheckOut(claims));
+    }
+
+    /// Release these check outs; with `others`, also another author's.
+    pub fn release(&mut self, claims: Vec<Claim>, others: bool) {
+        self.outbox.push(ToHost::Release { claims, others });
+    }
+
     /// Leave the session.
     pub fn leave(&mut self) {
         self.outbox.push(ToHost::Bye);
@@ -213,10 +252,10 @@ impl<P: Payload> Peer<P> {
                 self.outbox.push(ToHost::Proof(auth::proof(&self.key, &nonce, &self.name)));
                 Vec::new()
             }
-            ToPeer::Welcome { user, seq, users, database } => {
+            ToPeer::Welcome { user, seq, log, users, database } => {
                 self.user = Some(user);
                 self.seq = seq;
-                vec![Action::Welcome { user, users, database }]
+                vec![Action::Welcome { user, log, users, database }]
             }
             ToPeer::Refused(reason) => vec![Action::Refused(reason)],
             ToPeer::Accepted { id, seq } => {
@@ -263,6 +302,8 @@ impl<P: Payload> Peer<P> {
             }
             ToPeer::Presence { user, presence } => vec![Action::Presence { user, presence }],
             ToPeer::Note(line) => vec![Action::Note(line)],
+            ToPeer::Answer(answer) => vec![Action::Answer(answer)],
+            ToPeer::Holds(list) => vec![Action::Holds(list)],
             ToPeer::Manifest { project, files } => vec![Action::Manifest { project, files }],
             ToPeer::File { path, offset, total, bytes } => vec![Action::File { path, offset, total, bytes }],
             ToPeer::FilesDone { missing } => vec![Action::FilesDone { missing }],
@@ -309,7 +350,7 @@ fn overlaps(a: &[Group], b: &[Group]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::tests::{chunk, toy, Toy};
+    use crate::host::tests::{chunk, host_author, toy, Toy};
     use crate::host::{Host, Out};
 
     /// Carry every message between a host and its local peer 0 and a peer 1
@@ -346,12 +387,19 @@ mod tests {
         }
     }
 
+    /// The actions about edits, without the claims list every accepted edit
+    /// sends.
+    fn edits(actions: &[Action<Toy>]) -> Vec<Action<Toy>> {
+        actions.iter().filter(|action| !matches!(action, Action::Holds(_))).cloned().collect()
+    }
+
     fn two() -> (Host, [Peer<Toy>; 2]) {
-        let mut host = Host::new("Host", "pw", "b1", [1; 32]);
+        let mut host = Host::new(&host_author(), "pw", "b1", [1; 32]);
         host.connect(1);
-        let mut peers = [Peer::local("Host", 0), Peer::joining("Alex", "pw", "b1", [1; 32])];
+        let alex = Author { id: [1; 16], name: "Alex".to_string() };
+        let mut peers = [Peer::local("Host", 0), Peer::joining(&alex, "pw", "b1", [1; 32])];
         let actions = settle(&mut host, &mut peers, [None, None]);
-        assert!(matches!(actions[1][..], [Action::Welcome { user: 1, .. }]), "{actions:?}");
+        assert!(matches!(actions[1][..], [Action::Welcome { user: 1, .. }, Action::Holds(_)]), "{actions:?}");
         (host, peers)
     }
 
@@ -380,7 +428,7 @@ mod tests {
             }
         }
         assert_eq!(
-            alex,
+            edits(&alex),
             vec![
                 Action::Revert { payload: toy("b", &[chunk(9)]), cause: Cause::Changed { user: 0 } },
                 Action::Revert { payload: toy("a", &[chunk(3)]), cause: Cause::Changed { user: 0 } },
@@ -392,9 +440,11 @@ mod tests {
         let actions = settle(&mut host, &mut peers, [None, None]);
         assert!(actions[1].is_empty(), "{actions:?}");
 
+        // Once the host submits, chunk 3 is not held.
+        host.release_author::<Toy>(&[0xA0; 16]);
         peers[1].propose(toy("c", &[chunk(3)]));
         let actions = settle(&mut host, &mut peers, [None, None]);
-        assert_eq!(actions[0], vec![Action::Apply { user: 1, payload: toy("c", &[chunk(3)]) }]);
+        assert_eq!(edits(&actions[0]), vec![Action::Apply { user: 1, payload: toy("c", &[chunk(3)]) }]);
         assert_eq!((peers[0].seq(), peers[1].seq(), host.seq()), (2, 2, 2));
     }
 
@@ -408,12 +458,12 @@ mod tests {
         peers[0].propose(toy("host", &[chunk(5)]));
         let actions = settle(&mut host, &mut peers, [None, Some(&open)]);
         assert_eq!(
-            actions[1],
+            edits(&actions[1]),
             vec![Action::CancelOpen { cause: Cause::Changed { user: 0 } }, Action::Apply { user: 0, payload: toy("host", &[chunk(5)]) }]
         );
         peers[0].propose(toy("other", &[chunk(6)]));
         let actions = settle(&mut host, &mut peers, [None, Some(&open)]);
-        assert_eq!(actions[1], vec![Action::Apply { user: 0, payload: toy("other", &[chunk(6)]) }]);
+        assert_eq!(edits(&actions[1]), vec![Action::Apply { user: 0, payload: toy("other", &[chunk(6)]) }]);
     }
 
     /// The host's forced edit waits while Alex's edit over the same chunk is
@@ -441,7 +491,7 @@ mod tests {
             }
         }
         assert_eq!(
-            local,
+            edits(&local),
             vec![
                 Action::Apply { user: 1, payload: toy("a", &[chunk(3)]) },
                 Action::Reapply { payload: forced("delete", &[chunk(3)]) },
@@ -449,8 +499,8 @@ mod tests {
         );
         assert_eq!(peers[0].waiting(), 1, "the forced edit still waits for its answer");
         let actions = settle(&mut host, &mut peers, [None, None]);
-        assert!(actions[0].is_empty(), "{actions:?}");
-        assert_eq!(actions[1], vec![Action::Apply { user: 0, payload: forced("delete", &[chunk(3)]) }]);
+        assert!(edits(&actions[0]).is_empty(), "{actions:?}");
+        assert_eq!(edits(&actions[1]), vec![Action::Apply { user: 0, payload: forced("delete", &[chunk(3)]) }]);
         assert_eq!((peers[0].waiting(), host.seq()), (0, 2));
     }
 

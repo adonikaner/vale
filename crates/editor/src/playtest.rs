@@ -759,17 +759,15 @@ pub(crate) fn start(
     let mut held = server.clone();
     held.apply_on_save &= gate.writes();
     let server = &held;
-    session.save_all();
-    session.save_all_tables();
-    // Save the server half as well, for the same reason. See
-    // [`crate::server::save`].
+    // A full save, the server half with it, for the same reason. See
+    // [`crate::server::save`] and `EditSession::save_files`.
     //
     // This save asks the server for no `.reload`. A reload is sent only for a
     // write asked for with the panels open over a playtest, and this write is
     // queued while the state is still `Editing`. A row applied here is live
     // after the server's next restart. See
     // [`crate::server::reload::Reloads::when_there_is_a_session`].
-    crate::server::save(session, assets, server, queue);
+    session.save_files_with(|session| crate::server::save(session, assets, server, queue));
     republish(session, assets);
     // Whether the session about to start keeps the answers the server gives
     // it. The client writes every query answer to `WDB\` and reads them back

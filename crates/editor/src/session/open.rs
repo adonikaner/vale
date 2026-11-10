@@ -45,7 +45,8 @@ pub(super) fn open(
     vale_edit::project::remember_opened(&assets.root, &name);
 
     let edited: Edited = Arc::new(RwLock::new(HashMap::default()));
-    assets.set_overlay(Some(overlay_over(&project, &edited)));
+    let staged = super::Staged::default();
+    assets.set_overlay(Some(overlay_over(&project, &edited, &staged)));
 
     let maps = map_directories(&assets);
     let map_id = maps
@@ -83,8 +84,7 @@ pub(super) fn open(
     // project's own because no client file carries a `creature_template` row.
     let rows = crate::server::store::ServerRows::read(&project);
     // Which of the project's tiles are the archives' own, which it should not
-    // keep.
-    // See [`Shipped::look_for_unchanged`].
+    // keep. See [`Shipped::look_for_unchanged`].
     let shipped = Shipped::new(&assets);
     let unchanged = Some(shipped.look_for_unchanged(&project));
 
@@ -132,6 +132,17 @@ pub(super) fn open(
         tables_republished: false,
         republished_revision: 0,
         files_revision: 0,
+        saved_tiles: Vec::new(),
+        saved_tables: Vec::new(),
+        discard_asked: Vec::new(),
+        cleared: false,
+        exclude: Vec::new(),
+        elsewhere: HashSet::default(),
+        save_asked: false,
+        exclude_once: Vec::new(),
+        saved_everything: None,
+        staged: Vec::new(),
+        staged_files: staged,
         spelled: Default::default(),
         claimed,
         reread_everything: false,

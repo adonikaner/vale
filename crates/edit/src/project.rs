@@ -7,13 +7,15 @@
 //! packed, and a saved tile is a file on disk that can be deleted, copied,
 //! diffed or reverted with the tools already on the machine.
 //!
-//! ## The folder is two folders and one file
+//! ## The folder is three folders and one file
 //!
 //! ```text
 //! Edit\<name>\
 //!   project\      every virtual path: the game data the client reads, and the
 //!                 sql\ and server\ bookkeeping the server half keeps
 //!   publish\      what a publish wrote: the patch folders and their records
+//!   log\          the project's history: every edit, the changelists, and a
+//!                 shared session's records (`vale_collab::log`)
 //!   settings.txt  the editor's own switches for this project
 //! ```
 //!
@@ -99,6 +101,13 @@ pub(crate) const FILES_DIR: &str = "project";
 
 /// The folder under a project that holds what a publish wrote.
 pub(crate) const PUBLISH_DIR: &str = "publish";
+
+/// The folder under a project that holds its history. Not a virtual path, so
+/// never packed into an archive. Its contents are `vale_collab::log`'s.
+pub const LOG_DIR: &str = "log";
+
+/// The file in [`LOG_DIR`] that links a copy of a host's project to the host.
+pub const LINK_FILE: &str = "link.txt";
 
 /// The file beside those two folders that holds the editor's own switches for
 /// the project. Not a virtual path, so never packed into an archive.
@@ -276,7 +285,7 @@ pub const DEFAULT: &str = "default";
 pub fn delete(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> {
     if name.trim() == DEFAULT {
         return Err(EditError::Refused(format!(
-            "{DEFAULT} is the default project and cannot be deleted; clear its files instead"
+            "{DEFAULT} is the default project and cannot be deleted; its files can be cleared instead"
         )));
     }
     let root = folder(install, name)?;
@@ -289,11 +298,16 @@ pub fn delete(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError>
     Ok(went)
 }
 
-/// Empty a project, keeping the folder.
+/// Empty a project of its files and its history ([`LOG_DIR`]), keeping the
+/// folder, its settings, what it published ([`PUBLISH_DIR`]) and, for a copy
+/// of a host's project, its link to the host ([`LINK_FILE`]).
 ///
-/// Used for [`DEFAULT`] in place of [`delete`], and it works for any project:
-/// a project is the files under it, so one with no files is a new one. The
-/// folder stays, so anything that holds its path still names a folder.
+/// Used for [`DEFAULT`] in place of [`delete`], and it works for any project.
+/// The history goes with the files because it is the history of those
+/// files. The published patches stay because a patch the project published
+/// may still be in `Data\`, and `publish\archives.txt` is what says the
+/// archive is the project's own rather than the game's. The link stays so a
+/// cleared copy can still connect to its host.
 ///
 /// Returns how many files were deleted.
 pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> {
@@ -311,9 +325,24 @@ pub fn clear(install: impl AsRef<Path>, name: &str) -> Result<usize, EditError> 
     let mut trouble: Option<std::io::Error> = None;
     for entry in std::fs::read_dir(&root)?.flatten() {
         let path = entry.path();
-        // The editor's switches are not the project's files: what is being
-        // thrown away is the edits, and a cleared project keeps its settings.
-        if entry.file_name().to_string_lossy().eq_ignore_ascii_case(SETTINGS_FILE) {
+        // See the doc comment for what stays and why.
+        let name = entry.file_name().to_string_lossy().to_string();
+        if [SETTINGS_FILE, PUBLISH_DIR].iter().any(|kept| name.eq_ignore_ascii_case(kept)) {
+            continue;
+        }
+        if name.eq_ignore_ascii_case(LOG_DIR) && path.is_dir() {
+            for inside in std::fs::read_dir(&path)?.flatten() {
+                if inside.file_name().to_string_lossy().eq_ignore_ascii_case(LINK_FILE) {
+                    continue;
+                }
+                let went = match inside.path().is_dir() {
+                    true => std::fs::remove_dir_all(inside.path()),
+                    false => std::fs::remove_file(inside.path()),
+                };
+                if let Err(e) = went {
+                    trouble.get_or_insert(e);
+                }
+            }
             continue;
         }
         let went = match path.is_dir() {
@@ -393,6 +422,11 @@ impl Project {
         let mut journal = self.journal.lock().unwrap_or_else(|e| e.into_inner());
         journal.on = on;
         journal.written.clear();
+    }
+
+    /// Whether [`Self::journal`] is on.
+    pub fn journaling(&self) -> bool {
+        self.journal.lock().unwrap_or_else(|e| e.into_inner()).on
     }
 
     /// The paths written or removed since the last call, oldest first, each
@@ -1067,7 +1101,8 @@ mod tests {
         }
     }
 
-    /// Clearing a project takes the subfolders with it.
+    /// Clearing a project takes the subfolders and the history with it, and
+    /// keeps what it published and a copy's link to its host.
     ///
     /// A project is `World\Maps\<map>\*.adt`, `textures\Minimap\*.blp`,
     /// `DBFilesClient\*.dbc` and `sql\*.sql`: up to four levels of nesting and
@@ -1089,10 +1124,20 @@ mod tests {
             std::fs::create_dir_all(at.parent().expect("a parent")).expect("a temp folder");
             std::fs::write(&at, b"x").expect("a temp file");
         }
+        for kept in [LOG_DIR, PUBLISH_DIR] {
+            std::fs::create_dir_all(root.join(kept)).expect("a temp folder");
+            std::fs::write(root.join(kept).join("record.txt"), b"x").expect("a temp file");
+        }
+        std::fs::write(root.join(LOG_DIR).join(LINK_FILE), b"address").expect("a temp file");
         let went = clear(&dir, "p").expect("a project to clear");
         assert_eq!(went, 4, "every file is counted");
-        let left: Vec<_> = std::fs::read_dir(&root).expect("the folder stays").flatten().collect();
-        assert!(left.is_empty(), "nothing is left: {:?}", left.iter().map(|e| e.path()).collect::<Vec<_>>());
+        let mut left: Vec<String> =
+            std::fs::read_dir(&root).expect("the folder stays").flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, [LOG_DIR, PUBLISH_DIR]);
+        let log: Vec<String> =
+            std::fs::read_dir(root.join(LOG_DIR)).expect("the log folder").flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(log, [LINK_FILE], "the history goes, the link stays");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

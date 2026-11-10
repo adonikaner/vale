@@ -45,7 +45,7 @@
 //! ## What a project's migration holds: the whole of the project
 //!
 //! A patch is distributed, and the server it lands on may or may not hold
-//! the project's earlier patches. So every migration is **self-contained**:
+//! the project's earlier patches. So every migration is self-contained:
 //! every row the project changes now, and, for every row an earlier migration
 //! of the project changed and the project has since stopped changing, the
 //! statements that put it back. Each statement is idempotent — an `UPDATE` to
@@ -58,7 +58,7 @@
 //! holds against it. Patches are applied in order; each is guarded by its own
 //! stamp and applied once.
 //!
-//! **The put-back is known only if the project was applied to a database.**
+//! The put-back is known only if the project was applied to a database.
 //! A subject's revert file holds what each row held before the project first
 //! wrote it, read from the database immediately before the write; a row the
 //! project never applied has no such record. The record keeps the put-back
@@ -104,7 +104,7 @@ impl Entry {
     }
 }
 
-/// **What the last migration a project wrote said**: its id, and every row
+/// What the last migration a project wrote said: its id, and every row
 /// it changed. Empty for a project that has written none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Released {
@@ -113,9 +113,12 @@ pub struct Released {
     /// Every row the project's migrations so far leave changed, in the order
     /// the last migration wrote them.
     pub entries: Vec<Entry>,
+    /// A fingerprint of the last migration's body, without its id. See
+    /// [`says_more_than`]. `None` in a record written before it was kept.
+    pub body: Option<String>,
 }
 
-/// **What a migration holds**: the whole of the project, and the put-backs.
+/// What a migration holds: the whole of the project, and the put-backs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Contents {
     /// Every row the project changes now, in the order they were given.
@@ -143,7 +146,8 @@ impl Contents {
             .sum()
     }
 
-    /// One line for a status bar: `3 rows, 1 put back, 1 unknown`.
+    /// One line for a status bar:
+    /// `3 row(s), 1 restored, 1 dropped without a known restore`.
     pub fn line(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !self.changed.is_empty() {
@@ -165,7 +169,7 @@ impl Contents {
     }
 }
 
-/// **What the next migration holds**, given the record.
+/// What the next migration holds, given the record.
 ///
 /// `now` is every row the project changes, in the order its migration should
 /// run them — the subjects in the order they stand in the database, each
@@ -199,7 +203,31 @@ pub fn contents(released: &Released, now: &[Entry]) -> Contents {
     out
 }
 
-/// **The record after a migration of `contents` is written**: every row the
+/// Whether a migration of `contents` would say anything the last one did not.
+/// A migration is self-contained, so a second one with nothing new would
+/// repeat the first under a new id. Compared by the fingerprint of the body
+/// ([`body_of`]), which a record keeps from the migration it was written
+/// with; a record without one says nothing is known, so a migration is
+/// written.
+pub fn says_more_than(released: &Released, contents: &Contents) -> bool {
+    match &released.body {
+        Some(body) => *body != body_of(contents),
+        None => !contents.is_empty(),
+    }
+}
+
+/// A fingerprint of a migration's body: FNV-1a over the text [`text`] writes
+/// for `contents` with an empty id and project name, in hex.
+pub fn body_of(contents: &Contents) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text("", "", contents).bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// The record after a migration of `contents` is written: every row the
 /// project changes now, and every row it dropped, kept so that the next
 /// migration puts it back as well.
 pub fn released_after(id: &str, contents: &Contents) -> Released {
@@ -209,10 +237,11 @@ pub fn released_after(id: &str, contents: &Contents) -> Released {
     Released {
         id: Some(id.to_string()),
         entries,
+        body: Some(body_of(contents)),
     }
 }
 
-/// **A migration id**: the UTC time now as `YYYYmmddHHMMSS`, and later than
+/// A migration id: the UTC time now as `YYYYmmddHHMMSS`, and later than
 /// `after` when that is given — two publishes inside one second would
 /// otherwise write one id twice, and the second file would never run.
 pub fn stamp(after: Option<&str>) -> String {
@@ -250,7 +279,7 @@ pub fn file_name(id: &str) -> String {
 /// The delimiters tried, in order, for the procedure. `??` is vmangos' own.
 pub(crate) const DELIMITERS: [&str; 4] = ["??", "$$", "//", "|||"];
 
-/// **The file**, in the form at the head of this module.
+/// The migration file, in the form the module comment shows.
 ///
 /// `project` names the project in the header. Sections are written in the
 /// order [`Contents`] holds them: rows put back first, then the rows changed,
@@ -328,10 +357,14 @@ impl Released {
              # publish; the next migration is the change since. One row per block:\n\
              #   row <subject> <table> <key>\n\
              #   do <statement>            …one per statement the migration ran\n\
-             #   undo <statement>          …one per statement that puts it back, if known\n"
+             #   undo <statement>          …one per statement that puts it back, if known\n\
+             # body: a fingerprint of the last migration's body, see says_more_than.\n"
         );
         if let Some(id) = &self.id {
             out.push_str(&format!("migration {id}\n"));
+        }
+        if let Some(body) = &self.body {
+            out.push_str(&format!("body {body}\n"));
         }
         for entry in &self.entries {
             out.push_str(&format!(
@@ -369,6 +402,10 @@ impl Released {
                 if is_id(id) {
                     out.id = Some(id.to_string());
                 }
+                continue;
+            }
+            if let Some(body) = line.strip_prefix("body ") {
+                out.body = Some(body.trim().to_string());
                 continue;
             }
             if let Some(rest) = line.strip_prefix("row ") {
@@ -515,7 +552,7 @@ mod tests {
         assert_eq!(file_name("20260922120000"), "20260922120000_world.sql");
     }
 
-    /// **The first migration is the whole plan**, and the record after it
+    /// The first migration is the whole plan, and the record after it
     /// holds every row.
     #[test]
     fn the_first_migration_is_everything() {
@@ -531,8 +568,8 @@ mod tests {
         assert_eq!(after.entries, now);
     }
 
-    /// **The second is the whole plan again, and puts back what was
-    /// dropped**: every row the project changes now, a dropped row put back,
+    /// The second is the whole plan again, and puts back what was
+    /// dropped: every row the project changes now, a dropped row put back,
     /// and a dropped row whose put-back was never known named rather than
     /// invented. The record keeps the dropped rows, so the third puts them
     /// back too.
@@ -564,6 +601,28 @@ mod tests {
         assert_eq!(after.entries[0].undo, Some(vec!["UPDATE a0;".to_string()]));
         let third = contents(&after, &now);
         assert_eq!(third.dropped.len(), 1, "and are put back by the next patch as well");
+    }
+
+    /// A migration made right after another, with nothing changed, says
+    /// nothing new; a changed statement, a new row or a dropped row does.
+    #[test]
+    fn a_second_migration_with_nothing_changed_says_nothing_new() {
+        let now = vec![
+            entry("creatures", "creature", 1, "UPDATE a;", Some("UPDATE a0;")),
+            entry("items", "item_template", 2, "UPDATE b;", None),
+        ];
+        assert!(says_more_than(&Released::default(), &contents(&Released::default(), &now)));
+        let released = released_after("20260922120000", &contents(&Released::default(), &now));
+        assert!(!says_more_than(&released, &contents(&released, &now)));
+        let changed = vec![now[0].clone(), entry("items", "item_template", 2, "UPDATE b2;", None)];
+        assert!(says_more_than(&released, &contents(&released, &changed)));
+        let added = vec![now[0].clone(), now[1].clone(), entry("items", "item_template", 3, "UPDATE c;", None)];
+        assert!(says_more_than(&released, &contents(&released, &added)));
+        let dropped = vec![now[1].clone()];
+        let after_drop = contents(&released, &dropped);
+        assert!(says_more_than(&released, &after_drop));
+        let released = released_after("20260922120001", &after_drop);
+        assert!(!says_more_than(&released, &contents(&released, &dropped)), "a drop already written is not new");
     }
 
     /// A project with no rows and nothing ever released holds nothing.
@@ -608,6 +667,7 @@ mod tests {
     fn the_record_round_trips() {
         let released = Released {
             id: Some("20260922120000".into()),
+            body: Some("00ff00ff00ff00ff".into()),
             entries: vec![
                 entry("creatures", "creature", 1, "UPDATE `creature` SET `name` = 'a\nb' WHERE `guid` = 1;", Some("UPDATE a0;")),
                 Entry {

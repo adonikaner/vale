@@ -106,6 +106,12 @@ use republish::{forget_changed_previews, forget_what_changed, publish_for_the_pr
 /// arrives.
 type Edited = Arc<RwLock<HashMap<String, Vec<u8>>>>;
 
+/// Other authors' unsubmitted project files, keyed by virtual path in lower
+/// case: the bytes each holds, or `None` for a file removed. Read before the
+/// project folder, so the folder can hold only submitted files. See
+/// [`EditSession::staged`].
+pub(crate) type Staged = Arc<RwLock<HashMap<String, Option<Vec<u8>>>>>;
+
 /// What is open.
 #[derive(Resource)]
 pub(crate) struct EditSession {
@@ -200,8 +206,9 @@ pub(crate) struct EditSession {
     ///
     /// The storyboard is the one reader: it walks four tables and asks the
     /// archives about every model, which is not a per-frame cost. A counter
-    /// rather than a per-table flag because what it answers is "is what I built
-    /// still true", and an edit to any table in a chain can make it false.
+    /// rather than a per-table flag because what it answers is whether what
+    /// was built is still true, and an edit to any table in a chain can make
+    /// it false.
     pub(crate) table_revision: u64,
     /// Which tiles this map claims — the WDT's `MAIN` grid.
     ///
@@ -264,6 +271,46 @@ pub(crate) struct EditSession {
     /// [`Self::listed`] is built again when it moves. See
     /// `crate::import::assets`.
     pub(crate) files_revision: u64,
+    /// The tiles and tables saved since the frame's work last read these,
+    /// which then submits (`crate::collab`'s *What a save writes*). The server
+    /// rows' save is `ServerRows::saved`.
+    pub(crate) saved_tiles: Vec<vale_edit::TileKey>,
+    pub(crate) saved_tables: Vec<String>,
+    /// Subjects a panel asked to discard, by subject key
+    /// (`crate::collab::changes::tile_key` and its neighbours), for the
+    /// frame's work to carry out (`crate::collab::changes::discard`).
+    pub(crate) discard_asked: Vec<String>,
+    /// The open project's files were cleared, so nothing is unsaved and the
+    /// log is read again. Read by the frame's work.
+    pub(crate) cleared: bool,
+    /// Other authors' unsubmitted changes applied here, oldest first. A save
+    /// leaves them out, so the folder holds only submitted edits. Kept by
+    /// `crate::collab`; see its *What a save writes*.
+    pub(crate) exclude: Vec<Excluded>,
+    /// Tiles of maps that are not open whose folder bytes leave out an
+    /// excluded change, so their overlay bytes and their file differ. A save
+    /// writes them again. See [`Self::save_all`].
+    pub(crate) elsewhere: HashSet<vale_edit::TileKey>,
+    /// A panel or the frame's work asked for a full save, which the shortcut
+    /// system carries out (`crate::server::save_everything`).
+    pub(crate) save_asked: bool,
+    /// More changes the next full save leaves out, then forgets: this
+    /// editor's own unsubmitted changes, for the save a guest's Submit asks
+    /// of the host, which writes the guest's edits and not the host's.
+    pub(crate) exclude_once: Vec<Excluded>,
+    /// A full save ran since the frame's work last read this: `Some(true)`
+    /// for one that wrote this editor's own edits, which it then submits
+    /// (`crate::collab::changes::close_on_save`), `Some(false)` for one that
+    /// left them out.
+    pub(crate) saved_everything: Option<bool>,
+    /// Other authors' unsubmitted file steps, oldest first, with their
+    /// authors: held in [`Self::staged_files`] and kept out of the folder
+    /// until their author submits. Kept by `crate::collab::files::stage`;
+    /// see `crate::collab`'s *What a save writes*.
+    pub(crate) staged: Vec<([u8; 16], crate::collab::files::Files)>,
+    /// What [`Self::staged`] holds, by path, as the archives' overlay reads
+    /// it.
+    pub(crate) staged_files: Staged,
     /// The spellings [`Self::spellings`] answers with, and the
     /// [`Self::files_revision`] the project's half was read at.
     pub(crate) spelled: std::sync::Mutex<Option<(u64, std::sync::Arc<files::Spellings>)>>,
@@ -389,11 +436,38 @@ pub(crate) struct EditSession {
     placement_locks: Option<PlacementLocks>,
 }
 
+/// Another author's unsubmitted change applied in this editor: the log edit
+/// it is, its author, and the change and its direction. See
+/// [`EditSession::exclude`].
+#[derive(Debug, Clone)]
+pub(crate) struct Excluded {
+    pub(crate) seq: u64,
+    pub(crate) author: [u8; 16],
+    pub(crate) change: vale_edit::undo::Change,
+    pub(crate) forward: bool,
+}
+
 impl EditSession {
     /// A session over `project` on Azeroth with nothing open, for a test that
     /// puts its own tiles in [`Self::tiles`]. Nothing here reads the archives.
     #[cfg(test)]
     pub(crate) fn for_tests(project: Project) -> EditSession {
+        EditSession::bare(project)
+    }
+
+    /// Hand the archives this session's overlay, as the startup system does
+    /// for a session it opens: the edits not saved yet and other authors'
+    /// staged files, then the project folder. For a session built with
+    /// [`Self::bare`].
+    pub(crate) fn attach_overlay(&self, assets: &vale_client::assets::GameAssets) {
+        assets.set_overlay(Some(overlay_over(&self.project, &self.edited, &self.staged_files)));
+    }
+
+    /// A session over `project` on Azeroth with nothing open and no
+    /// renderer behind it: for a test, and for a depot
+    /// (`crate::collab::depot`), which opens tiles and tables only to apply
+    /// and save edits.
+    pub(crate) fn bare(project: Project) -> EditSession {
         EditSession {
             status: String::new(),
             project,
@@ -423,6 +497,17 @@ impl EditSession {
             tables_republished: false,
             republished_revision: 0,
             files_revision: 0,
+            saved_tiles: Vec::new(),
+            saved_tables: Vec::new(),
+            discard_asked: Vec::new(),
+            cleared: false,
+            exclude: Vec::new(),
+            elsewhere: HashSet::default(),
+            save_asked: false,
+            exclude_once: Vec::new(),
+            saved_everything: None,
+            staged: Vec::new(),
+            staged_files: Staged::default(),
             spelled: Default::default(),
             claimed: HashSet::default(),
             reread_everything: false,
@@ -524,14 +609,22 @@ impl Plugin for SessionPlugin {
 /// A function rather than a closure written once at startup because the
 /// project can be changed while the editor is running, and to everything
 /// downstream the overlay is the project.
-fn overlay_over(project: &Project, edited: &Edited) -> vale_assets::archive::Overlay {
+fn overlay_over(project: &Project, edited: &Edited, staged: &Staged) -> vale_assets::archive::Overlay {
     let edited = Arc::clone(edited);
+    let staged = Arc::clone(staged);
     let project = project.clone();
     Arc::new(move |path: &str| -> Option<Vec<u8>> {
         let key = path.to_ascii_lowercase();
         if let Ok(map) = edited.read() {
             if let Some(bytes) = map.get(&key) {
                 return Some(bytes.clone());
+            }
+        }
+        // A staged removal leaves the archives' file, as a removal from the
+        // folder does.
+        if let Ok(map) = staged.read() {
+            if let Some(bytes) = map.get(&key) {
+                return bytes.clone();
             }
         }
         project.read(path)

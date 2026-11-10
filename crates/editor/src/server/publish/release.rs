@@ -21,14 +21,14 @@
 //!
 //! The statements that put a row back are read from the subject's revert
 //! file, which an Apply wrote from the database immediately before it first
-//! wrote the row. They are kept in `publish\released.txt` from the moment
-//! they are known, so a row dropped after a later Put back, which removes
+//! wrote the row. They are kept in the release record ([`Releases`]) from the
+//! moment they are known, so a row dropped after a later Put back, which removes
 //! the revert file, is still put back. A row that was never applied to a
 //! database has no put-back anywhere; when it is dropped, the migration
 //! names it in a comment and the publish reports it.
 //!
-//! Apply the project to the dev database before publishing for this reason.
-//! With Apply on save on, every save has already done so. The migration then
+//! For this reason a project is applied to the dev database before it is
+//! published. With Apply on save on, every save has already done so. The migration then
 //! agrees with what that database holds, and the release database (the same
 //! baseline plus this project's patches) ends up the same.
 //!
@@ -120,10 +120,89 @@ pub(crate) fn entries(session: &EditSession, assets: &GameAssets) -> Result<Vec<
 
 /// The record of the last migration — see `vale_mangos::migration`.
 pub(crate) fn released(project: &Project) -> Released {
-    match project.read(migration::RELEASED_VPATH) {
-        Some(bytes) => Released::from_text(&String::from_utf8_lossy(&bytes)),
-        None => Released::default(),
+    read(project).migration
+}
+
+/// What the project has released, in one file, `publish\released.txt`
+/// (`vale_mangos::migration::RELEASED_VPATH`): the last migration's rows and
+/// put-backs, the last patch with the project's last log edit when it was
+/// made (`crate::collab::log`), and the tiles that patch's server files were
+/// built from (`crate::server::datadir::Record`). Each part is read from its
+/// own lines, so a write of one part keeps the others.
+///
+/// Earlier builds kept the last patch in `publish\last-patch.txt` and the
+/// tiles in `publish\server-tiles.txt`. A record without those parts reads
+/// them from the old files, and the next [`write`] removes the old files.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Releases {
+    pub(crate) migration: Released,
+    /// The last patch's folder name.
+    pub(crate) patch: Option<String>,
+    /// The number of the project's last log edit when the last patch was
+    /// made.
+    pub(crate) edit: Option<u64>,
+    pub(crate) tiles: crate::server::datadir::Record,
+}
+
+/// Where earlier builds kept the last patch, and the tiles its server files
+/// were built from. See [`Releases`].
+const OLD_LAST_PATCH: &str = "publish\\last-patch.txt";
+const OLD_PATCH_TILES: &str = "publish\\server-tiles.txt";
+
+/// The project's release record. See [`Releases`].
+pub(crate) fn read(project: &Project) -> Releases {
+    let text = project.read(migration::RELEASED_VPATH).map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
+    let mut out = Releases {
+        migration: Released::from_text(&text),
+        patch: None,
+        edit: None,
+        tiles: crate::server::datadir::Record::from_release_text(&text),
+    };
+    for line in text.lines() {
+        let mut fields = line.trim_end().split('\t');
+        match (fields.next(), fields.next()) {
+            (Some("patch"), Some(name)) => out.patch = Some(name.trim().to_string()),
+            (Some("edit"), Some(edit)) => out.edit = edit.trim().parse().ok(),
+            _ => {}
+        }
     }
+    if out.patch.is_none() {
+        if let Some(bytes) = project.read(OLD_LAST_PATCH) {
+            let old = String::from_utf8_lossy(&bytes).into_owned();
+            let mut lines = old.lines();
+            out.patch = lines.next().map(|name| name.trim().to_string()).filter(|name| !name.is_empty());
+            out.edit = lines.next().and_then(|line| line.trim().strip_prefix("edit ")?.parse().ok());
+        }
+    }
+    if out.tiles == crate::server::datadir::Record::default() && project.has(OLD_PATCH_TILES) {
+        out.tiles = crate::server::datadir::Record::read(project, OLD_PATCH_TILES);
+    }
+    out
+}
+
+/// Write the project's release record whole, and remove the old files it
+/// replaces. See [`Releases`].
+pub(crate) fn write(project: &Project, releases: &Releases) -> Result<(), String> {
+    let mut text = releases.migration.to_text(&project.name);
+    text.push_str(
+        "# The last patch, the project's log edit it was made from, and the tiles its\n\
+         # server files were built from, as the FNV-1a 64 of each ADT's bytes, with the\n\
+         # Map.dbc id of each map they are on.\n",
+    );
+    if let Some(patch) = &releases.patch {
+        text.push_str(&format!("patch\t{patch}\n"));
+    }
+    if let Some(edit) = releases.edit {
+        text.push_str(&format!("edit\t{edit}\n"));
+    }
+    text.push_str(&releases.tiles.release_lines());
+    project.write(migration::RELEASED_VPATH, text.as_bytes()).map_err(|e| format!("{}: {e}", migration::RELEASED_VPATH))?;
+    for old in [OLD_LAST_PATCH, OLD_PATCH_TILES] {
+        if project.has(old) {
+            let _ = project.revert(old);
+        }
+    }
+    Ok(())
 }
 
 /// What writing a migration did.
@@ -142,14 +221,19 @@ impl Written {
                 file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
                 self.contents.line()
             ),
-            None => "no migration: this project changes no row".to_string(),
+            None if self.contents.is_empty() => "no migration: this project changes no row".to_string(),
+            None => "no migration: nothing changed since the last one".to_string(),
         }
     }
 }
 
 /// Writes the migration into `into`, then the record of it. Nothing is written
-/// when the project changes no row and no earlier patch did.
-pub(crate) fn write_migration(session: &EditSession, assets: &GameAssets, into: &Path) -> Result<Written, String> {
+/// when the project changes no row and no earlier migration did. With
+/// `only_if_new`, nothing is written either when the migration would say
+/// nothing the last one did not ([`migration::says_more_than`]): Write
+/// migration asks for that, and a publish does not, since every patch holds
+/// its whole migration.
+pub(crate) fn write_migration(session: &EditSession, assets: &GameAssets, into: &Path, only_if_new: bool) -> Result<Written, String> {
     let project = &session.project;
     let now = entries(session, assets)?;
     let before = released(project);
@@ -157,15 +241,17 @@ pub(crate) fn write_migration(session: &EditSession, assets: &GameAssets, into: 
     if contents.is_empty() {
         return Ok(Written::default());
     }
+    if only_if_new && !migration::says_more_than(&before, &contents) {
+        return Ok(Written { file: None, contents });
+    }
     let id = migration::stamp(before.id.as_deref());
     std::fs::create_dir_all(into).map_err(|e| format!("{}: {e}", into.display()))?;
     let file = into.join(migration::file_name(&id));
     vale_edit::project::write_replacing(&file, migration::text(&id, &project.name, &contents).as_bytes())
         .map_err(|e| format!("{}: {e}", file.display()))?;
-    let after = migration::released_after(&id, &contents);
-    project
-        .write(migration::RELEASED_VPATH, after.to_text(&project.name).as_bytes())
-        .map_err(|e| format!("{}: {e}", migration::RELEASED_VPATH))?;
+    let mut record = read(project);
+    record.migration = migration::released_after(&id, &contents);
+    write(project, &record)?;
     Ok(Written {
         file: Some(file),
         contents,
@@ -198,12 +284,11 @@ pub(crate) fn copy_server_dbcs(project: &Project, data_dir: &Path) -> Result<Vec
 /// into a patch folder. The store and every subject's SQL are saved first, so
 /// the migration reads what the panel shows. Returns the status line.
 pub(crate) fn migrate(session: &mut EditSession, assets: &GameAssets) -> String {
-    session.save_all_tables();
-    crate::server::subject::save_all(session);
+    session.save_files_with(crate::server::subject::save_all);
     let Some(into) = session.project.path_for(migration::MIGRATIONS_DIR) else {
         return format!("{}: path is outside the project folder", migration::MIGRATIONS_DIR);
     };
-    match write_migration(session, assets, &into) {
+    match write_migration(session, assets, &into, true) {
         Ok(written) => {
             report_unknown(&written.contents);
             written.line()

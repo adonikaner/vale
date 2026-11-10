@@ -206,7 +206,8 @@ impl EditSession {
         if self.map == name {
             return;
         }
-        self.save_all();
+        // A save writes everything; see `Self::save_files`.
+        let _ = self.save_files();
         self.tiles.clear();
         // Keyed by tile coordinate, which names a different tile on the next
         // map.

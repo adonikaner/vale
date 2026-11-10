@@ -20,5 +20,8 @@ serde.workspace = true
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 # The password check. Already in the dependency tree.
 blake3 = "1"
-# The challenge a joining editor answers.
+# The challenge a joining editor answers, and a new log's id.
 rand.workspace = true
+# The log's payloads are deflated: a terrain edit is whole chunk states, and
+# a day of edits is otherwise hundreds of megabytes.
+flate2.workspace = true

@@ -3,16 +3,20 @@
 //! publish popover, the Settings window and the shared session's popover.
 //! Each holds text fields.
 //!
-//! An editor joined to another's session sees the server panel and the
-//! publish popover disabled, with a line saying the host does those: its
-//! project is a copy of the host's, and a second apply of the same rows from
-//! a second machine would run every statement twice.
+//! In a shared session `crate::collab::ServerGate` decides what this editor
+//! may do in the Server panel and the publish popover. A joined editor, and
+//! one whose project is an offline copy of a host's, sees the publish popover
+//! disabled with a line saying the host publishes. A joined editor that reads
+//! the host's world database or playtests on the host's server sees the
+//! Server panel's writes disabled: its project is a copy of the host's, and a
+//! second apply of the same rows from a second machine would run every
+//! statement twice.
 //!
 //! ## Why the popovers are windows and not menus
 //!
 //! An egui menu (`ui.menu_button`) closes when anything inside it is clicked.
 //! That suits a menu, whose items are commands, and does not suit a panel of
-//! text fields: clicking into the password box closed the box. So each popover
+//! text fields: a click into the password box would close the box. So each popover
 //! is an `egui::Window` with an open flag, opened from its button, or from an
 //! entry of one of the bar's two menus, and positioned under that button or
 //! menu. A window keeps focus and a `TextEdit` inside one works. Clicking
@@ -25,7 +29,7 @@
 //! on the world. A docked panel is outside the viewport's rectangle because the
 //! root `Ui` shrinks around it. A window floats over the viewport and shrinks
 //! nothing, so without its rectangle a press on the password box would read as
-//! a press on the ground behind it, the same fault the docked panels had. Each
+//! a press on the ground behind it. Each
 //! popover returns its rectangle and the shell adds it to the viewport's
 //! floating list for the frame.
 
@@ -56,9 +60,11 @@ pub(crate) struct Popovers {
     pub(crate) session: Popover,
     /// This machine's settings. See [`super::settings`].
     pub(crate) settings: Popover,
+    /// Submit, the conflicts and the history. See [`super::changes`].
+    pub(crate) changes: Popover,
     /// The name typed into the publish popover. Empty means the UTC stamp.
     pub(crate) patch_name: String,
-    /// The *Server tile files* dialog, opened from the server popover.
+    /// The Server Tile Files dialog, opened from the server popover.
     pub(crate) tile_files: super::tilefiles::TileFiles,
     /// Whether `--server` has already opened the server popover. Its anchor is
     /// the button's rectangle, which does not exist until the bar has been
@@ -69,6 +75,8 @@ pub(crate) struct Popovers {
     pub(crate) session_shown_once: bool,
     /// The same for `--settings` and the Settings window.
     pub(crate) settings_shown_once: bool,
+    /// The same for `--changes` and the Changes window.
+    pub(crate) changes_shown_once: bool,
 }
 
 /// One popover: whether it is open and where its button is.
@@ -149,6 +157,7 @@ impl Popovers {
             &mut self.bookmark,
             &mut self.session,
             &mut self.settings,
+            &mut self.changes,
         ]
         .into_iter()
         .enumerate()
@@ -200,8 +209,7 @@ pub(crate) fn draw(
     pen: &crate::tablet::Pen,
 ) -> Vec<egui::Rect> {
     let mut rects = Vec::new();
-    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 8];
-    let joined = collab.is_joined();
+    let mut seen: Vec<(bool, egui::Rect)> = vec![(false, egui::Rect::NOTHING); 9];
 
     if popovers.go_to.open {
         if let Some(response) = window(ctx, "go-to", popovers.go_to.under, |ui| {
@@ -252,14 +260,15 @@ pub(crate) fn draw(
                 &mut popovers.project.open,
                 &mut ask_server,
                 server,
+                collab.role(),
             );
         });
         if response.should_close() {
             popovers.project.open = false;
         }
-        // The confirmation's Put back first button set `ask_server`: the
+        // The confirmation's Restore First button set `ask_server`: the
         // dialog closes and the Server popover opens in its place. That
-        // popover holds every block's Put back.
+        // popover holds every subject's Restore.
         if ask_server {
             popovers.project.open = false;
             popovers.server.show();
@@ -325,8 +334,9 @@ pub(crate) fn draw(
     if popovers.publish.open {
         let mut close = false;
         if let Some(response) = window(ctx, "publish", popovers.publish.under, |ui| {
-            hosts_do_this(ui, joined, "publishes");
-            ui.add_enabled_ui(!joined, |ui| {
+            let refused = collab.server_gate().release_refused();
+            hosts_do_this(ui, refused);
+            ui.add_enabled_ui(refused.is_none(), |ui| {
                 close = the_patch(ui, &mut popovers.patch_name, session, assets, server, queue, step, playing);
             });
         }) {
@@ -339,25 +349,57 @@ pub(crate) fn draw(
     }
     if popovers.session.open {
         let project = session.project.name.clone();
+        // The tile under the camera, which the popover checks out.
+        let (x, y) = vale_assets::tile_for_position(camera.target.x, camera.target.y);
+        let here = vale_edit::TileKey::new(&session.map, x, y);
         if let Some(response) = window(ctx, "session", popovers.session.under, |ui| {
-            super::session::panel(ui, collab, &project);
+            super::session::panel(ui, collab, &project, &here);
         }) {
             seen[6] = (true, response);
             rects.push(response);
         }
     }
+    match popovers.changes.open {
+        true => {
+            // The Targets tab reads several records on disk, so it is read
+            // again every two seconds while the tab is showing.
+            if collab.changes.tab == crate::collab::changes::Tab::Targets
+                && collab.changes.targets.as_ref().is_none_or(|(at, _)| now - at > 2.0)
+            {
+                collab.changes.targets = Some((now, crate::server::targets::Overview::read(session, server)));
+            }
+            let mut asked = super::changes::Asked::Nothing;
+            if let Some(response) = window(ctx, "changes", popovers.changes.under, |ui| {
+                asked = super::changes::panel(ui, collab, session);
+            }) {
+                seen[8] = (true, response);
+                rects.push(response);
+            }
+            match asked {
+                super::changes::Asked::Nothing => {}
+                super::changes::Asked::Save => crate::server::save_everything(session, assets, server, queue, playing),
+                super::changes::Asked::Server => {
+                    popovers.changes.open = false;
+                    popovers.server.show();
+                }
+                super::changes::Asked::Publish => {
+                    popovers.changes.open = false;
+                    popovers.publish.show();
+                }
+            }
+        }
+        // A joined editor asks the host for its history once each time the
+        // window opens.
+        false => collab.changes.asked = false,
+    }
     popovers.follow(ctx, &seen);
     rects
 }
 
-/// The line over a popover a joined editor may not use: who does it instead.
-fn hosts_do_this(ui: &mut egui::Ui, joined: bool, what: &str) {
-    if joined {
-        ui.label(
-            egui::RichText::new(format!("In a shared session only the host {what}."))
-                .size(theme::SMALL)
-                .color(theme::WARN),
-        );
+/// The line over a popover this editor may not use: who does it instead.
+fn hosts_do_this(ui: &mut egui::Ui, refused: Option<&str>) {
+    if let Some(refused) = refused {
+        ui.label(egui::RichText::new(refused).size(theme::SMALL).color(theme::WARN));
         ui.add_space(4.0);
     }
 }
@@ -382,7 +424,7 @@ fn the_patch(
     use crate::server::publish::patch;
 
     ui.set_width(440.0);
-    ui.label(egui::RichText::new("Publish a patch").strong().size(14.0));
+    ui.label(egui::RichText::new("Publish").strong().size(14.0));
     theme::note(
         ui,
         match server.copy_archive {
@@ -402,7 +444,7 @@ fn the_patch(
     ui.add_space(8.0);
     let last = patch::last(&session.project);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("name").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
         ui.add(
             egui::TextEdit::singleline(name)
                 .desired_width(240.0)
@@ -416,7 +458,7 @@ fn the_patch(
     };
     let valid = chosen.as_deref().is_none_or(patch::is_a_name);
     if !valid {
-        ui.label(egui::RichText::new("invalid folder name").small().color(theme::BAD));
+        ui.label(egui::RichText::new("Invalid folder name").small().color(theme::BAD));
     }
     let exists = chosen
         .as_deref()
@@ -434,7 +476,7 @@ fn the_patch(
     }
     // The two switches that change what a publish does, kept per project.
     ui.add_space(6.0);
-    theme::heading(ui, "Publish options");
+    theme::heading(ui, "Publish Options");
     if ui
         .checkbox(&mut server.regenerate_tiles, "Regenerate the server's tiles")
         .on_hover_text(
@@ -495,7 +537,7 @@ fn the_patch(
         if let Some(folder) = session.project.path_for(patch::DIR) {
             if !patch::patches(&session.project).is_empty()
                 && ui
-                    .button("Open folder")
+                    .button("Open Folder")
                     .on_hover_text(folder.display().to_string())
                     .clicked()
             {
@@ -506,7 +548,7 @@ fn the_patch(
     let had = patch::patches(&session.project);
     if !had.is_empty() {
         ui.add_space(4.0);
-        theme::note(ui, format!("published patches: {}", had.join(", ")));
+        theme::note(ui, format!("Published patches: {}", had.join(", ")));
     }
     close
 }
@@ -514,7 +556,7 @@ fn the_patch(
 /// The server popover: what this project has done to the server.
 ///
 /// The panel holds the Apply on save switch, one block per subject with its
-/// Apply and Put back ([`super::sync`]), the regeneration of the server's
+/// Apply and Restore ([`super::sync`]), the regeneration of the server's
 /// tiles, and the migration. The line at the top says whether there is a
 /// database.
 ///
@@ -534,7 +576,7 @@ fn the_server(
     session: &mut crate::session::EditSession,
     assets: &vale_client::assets::GameAssets,
     server: &mut crate::server::settings::ServerSettings,
-    // The queue an Apply, a Put back and the Test button go on. See
+    // The queue an Apply, a Restore and the Test button go on. See
     // [`crate::server::queue`].
     queue: &mut crate::server::queue::ServerQueue,
     // Where each subject last stood, cached between frames: the panel is drawn
@@ -544,7 +586,7 @@ fn the_server(
     now: f64,
     playing: bool,
     step: &crate::server::datadir::Step,
-    // Set when the Server tile files button is pressed; the caller opens the
+    // Set when the Server Tile Files button is pressed; the caller opens the
     // dialog. See [`super::tilefiles`].
     ask_tile_files: &mut bool,
     // Set when the Settings… button is pressed; the caller opens the window.
@@ -625,7 +667,7 @@ fn this_project(
     // own, so it can be checked apart from the rest of a publish; the map
     // window has the per-tile form of this button.
     ui.add_space(10.0);
-    theme::heading(ui, "Server tiles");
+    theme::heading(ui, "Server Tiles");
     // `None` until the first count, which runs on a worker, has finished. The
     // button is enabled while the count is unknown; a press with nothing
     // changed says so on the status line.
@@ -640,7 +682,7 @@ fn this_project(
         if ui
             .add_enabled(
                 !playing && !busy && changed != Some(0) && gate.writes(),
-                egui::Button::new(format!("Regenerate changed tiles ({count})")),
+                egui::Button::new(format!("Regenerate Changed Tiles ({count})")),
             )
             .on_hover_text(
                 "Rebuild this project's archive, then regenerate the server's map files for \
@@ -678,7 +720,7 @@ fn this_project(
     );
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(gate.writes(), egui::Button::new("Server tile files\u{2026}"))
+            .add_enabled(gate.writes(), egui::Button::new("Server Tile Files\u{2026}"))
             .on_hover_text(
                 "The tile files a regeneration no longer produces, the files each project \
                  wrote, and a check for files nothing uses. Remove and put back from there; \
@@ -715,14 +757,17 @@ fn this_project(
     };
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(!gate.role.joined(), egui::Button::new("Write migration"))
+            .add_enabled(gate.release_refused().is_none(), egui::Button::new("Write migration"))
             .on_hover_text(
                 "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
-                 vmangos' add_migration format, containing the changes since this project's \
-                 last migration. This runs only the row step of Publish. Nothing is written \
-                 when no row changed. Apply the file with the mysql client.",
+                 vmangos' add_migration format. A migration holds every row the project \
+                 changes, and puts back the rows an earlier migration changed that the \
+                 project no longer does, so it applies whether or not the server has the \
+                 earlier ones. This runs only the row step of Publish. Nothing is written \
+                 when nothing changed since the last migration. Apply the file with the mysql \
+                 client.",
             )
-            .on_disabled_hover_text("In a shared session only the host writes migrations.")
+            .on_disabled_hover_text(gate.release_refused().unwrap_or_default())
             .clicked()
         {
             session.status = crate::server::publish::release::migrate(session, assets);
@@ -743,6 +788,15 @@ fn file_count(summary: &vale_edit::project::Summary) -> String {
     }
 }
 
+/// Why the project dialog cannot clear the open project in a shared session.
+/// See [`which_project`].
+const NO_CLEAR_IN_A_SESSION: &str = "Not in a shared session: the other editors hold copies of \
+                                     this project's files and its history. End the session first.";
+
+/// Why a joined editor cannot open another project. See [`which_project`].
+const NO_OPEN_WHILE_JOINED: &str = "Not while joined to a session: the open project is the copy \
+                                    of the host's. Leave the session first.";
+
 /// The project dialog: which project the edits go into, the other projects
 /// there are, and making another.
 ///
@@ -756,21 +810,29 @@ fn file_count(summary: &vale_edit::project::Summary) -> String {
 /// button. Under its name is its manifest (`super::manifest`): every file the folder
 /// holds and what each one changes against the archives, read once when the
 /// dialog opens. The other projects follow under their own heading, each with
-/// a count by kind, then the new-project box, so the three things the dialog
+/// a count by type, then the new-project box, so the three things the dialog
 /// does are three blocks in that order.
 ///
 /// Switching saves first. The row states this rather than asking: nobody
 /// switching projects wants the unsaved work dropped, and a confirmation that
 /// is clicked through unread can drop it.
 ///
-/// Clear files and Delete are gated. `crate::server::held::held_by` reads what
+/// Clear Files and Delete are gated. `crate::server::held::held_by` reads what
 /// the project has applied to the server from its revert files; the
 /// confirmation lists it, and the destructive button is enabled only when
 /// [`super::topbar::Doomed::may_proceed`] says so, which for a project that
 /// holds anything means the project's name has been typed. For the open
-/// project a Put back first button sets `ask_server`, and [`draw`] turns that
+/// project a Restore First button sets `ask_server`, and [`draw`] turns that
 /// into closing this dialog and opening the Server popover. Discard, in
 /// [`super::sync`], is not gated because it leaves the revert files in place.
+///
+/// In a shared session the open project cannot be cleared. The session
+/// numbers its edits from the project's log and the other editors hold copies
+/// of its files: a clear would start the log again at edit 0 under a session
+/// past it, and leave the other editors' copies as they were. A joined editor
+/// cannot open another project, since the host's edits are applied to the
+/// open one; a host can, and opening another project ends its session.
+#[allow(clippy::too_many_arguments)]
 fn which_project(
     ui: &mut egui::Ui,
     projects: &mut super::topbar::Projects,
@@ -779,7 +841,11 @@ fn which_project(
     open: &mut bool,
     ask_server: &mut bool,
     server: &crate::server::settings::ServerSettings,
+    role: crate::collab::Role,
 ) {
+    use crate::collab::Role;
+    let shared = role != Role::Alone;
+    let joined = role == Role::Joined;
     ui.set_width(680.0);
     if !projects.listed {
         projects.refresh(std::path::Path::new(&assets.root));
@@ -797,8 +863,8 @@ fn which_project(
     );
     ui.add_space(8.0);
 
-    // ---- the one that is open.
-    theme::heading(ui, "Open project");
+    // ---- the open project.
+    theme::heading(ui, "Open Project");
     let summary = projects
         .known
         .iter()
@@ -831,11 +897,12 @@ fn which_project(
         // confirmation below; `held_by` is read once here, at the press.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .button("Clear files")
+                .add_enabled(!shared, egui::Button::new("Clear Files"))
                 .on_hover_text(
                     "Delete every file in this project and keep the empty folder. Unsaved \
                      changes are discarded, not saved first. This cannot be undone.",
                 )
+                .on_disabled_hover_text(NO_CLEAR_IN_A_SESSION)
                 .clicked()
             {
                 projects.confirming = Some(super::topbar::Doomed::new(
@@ -860,7 +927,7 @@ fn which_project(
         .filter(|(name, _)| *name != here)
         .cloned()
         .collect();
-    theme::heading(ui, "Other projects");
+    theme::heading(ui, "Other Projects");
     let mut switch: Option<String> = None;
     if others.is_empty() {
         theme::note(ui, "No other projects. Enter a name below to create one.");
@@ -888,10 +955,14 @@ fn which_project(
                             );
                             ui.horizontal(|ui| {
                                 if ui
-                                    .button("Open")
-                                    .on_hover_text(format!(
-                                        "Save unsaved changes, then switch to {name}."
-                                    ))
+                                    .add_enabled(!joined, egui::Button::new("Open"))
+                                    .on_hover_text(match role {
+                                        Role::Hosting => format!(
+                                            "Save unsaved changes, then switch to {name}. This ends the shared session."
+                                        ),
+                                        _ => format!("Save unsaved changes, then switch to {name}."),
+                                    })
+                                    .on_disabled_hover_text(NO_OPEN_WHILE_JOINED)
                                     .clicked()
                                 {
                                     switch = Some(name.clone());
@@ -917,7 +988,7 @@ fn which_project(
                                     .on_disabled_hover_text(
                                         "The default project receives edits when no other project \
                                          is chosen, so it cannot be deleted. Open it and use \
-                                         Clear files instead.",
+                                         Clear Files instead.",
                                     );
                                 if doom.clicked() {
                                     let held = vale_edit::project::Project::open(&assets.root, name)
@@ -968,6 +1039,9 @@ fn which_project(
                 .color(theme::INK),
             );
             theme::note(ui, format!("{what}. This cannot be undone."));
+            if doomed.clear {
+                theme::note(ui, "The project's history (log\\) is deleted with its files. Its published patches (publish\\) are kept.");
+            }
             // The tile files stay: the DataDir's ledger, not the project,
             // records them, so they can be put back after the project is gone.
             let written = *doomed.tile_files.get_or_insert_with(|| {
@@ -982,8 +1056,8 @@ fn which_project(
                     format!(
                         "The project's regenerations wrote {written} tile file(s) in the server's \
                          DataDir. They stay there after the project is gone. To restore the \
-                         server's own files, use Put back originals in Server\u{2026} > Server \
-                         tile files."
+                         server's own files, use Put Back Originals in Server\u{2026} > Server \
+                         Tile Files."
                     ),
                 );
             }
@@ -1027,7 +1101,7 @@ fn which_project(
                 );
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("name").color(theme::INK_DIM));
+                    ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
                     ui.add(
                         egui::TextEdit::singleline(&mut doomed.typed)
                             .hint_text(&doomed.name)
@@ -1039,7 +1113,7 @@ fn which_project(
             ui.horizontal(|ui| {
                 if !doomed.held.is_empty() && doomed.name == here {
                     if ui
-                        .button("Restore first")
+                        .button("Restore First")
                         .on_hover_text(
                             "Close this dialog and open the Server panel. Press Restore on \
                              every subject with applied rows, then return here.",
@@ -1055,8 +1129,8 @@ fn which_project(
                         doomed.may_proceed(),
                         egui::Button::new(
                             egui::RichText::new(match doomed.clear {
-                                true => "Permanently delete",
-                                false => "Delete project",
+                                true => "Permanently Delete",
+                                false => "Delete Project",
                             })
                             .color(egui::Color32::from_rgb(0x0C, 0x16, 0x1E)),
                         )
@@ -1070,8 +1144,14 @@ fn which_project(
                     match doomed.clear {
                         // The open project: the session has to forget what it
                         // read out of the files as well.
+                        // A project's revert files go with its files, and
+                        // with them the rows it held. See
+                        // `crate::server::targets`.
+                        true if doomed.name == here && shared => {
+                            session.status = NO_CLEAR_IN_A_SESSION.to_string();
+                        }
                         true if doomed.name == here => {
-                            session.clear_open_project(assets);
+                            let _ = session.clear_open_project(assets);
                         }
                         true => match vale_edit::project::clear(&assets.root, &doomed.name) {
                             Ok(went) => {
@@ -1111,7 +1191,7 @@ fn which_project(
 
     // ---- making a new project.
     ui.add_space(10.0);
-    theme::heading(ui, "New project");
+    theme::heading(ui, "New Project");
     let mut make = false;
     ui.horizontal(|ui| {
         let field = ui.add(
@@ -1122,13 +1202,14 @@ fn which_project(
         let named = vale_edit::project::is_a_name(&projects.new_name);
         make = (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
             || ui
-                .add_enabled(named, egui::Button::new("Create and open"))
-                .on_disabled_hover_text(
-                    "A project's name is a folder's name: no separators, no drive \
-                     letters, and not empty.",
-                )
+                .add_enabled(named && !joined, egui::Button::new("Create and Open"))
+                .on_disabled_hover_text(match joined {
+                    true => NO_OPEN_WHILE_JOINED,
+                    false => "A project's name is a folder's name: no separators, no drive \
+                              letters, and not empty.",
+                })
                 .clicked();
-        if make && !named {
+        if make && (!named || joined) {
             make = false;
         }
     });
@@ -1154,7 +1235,7 @@ fn which_project(
         *open = false;
     }
 
-    if let Some(name) = switch {
+    if let Some(name) = switch.filter(|_| !joined) {
         if session.switch_to(assets, &name) {
             projects.new_name.clear();
             projects.listed = false;
@@ -1269,7 +1350,7 @@ fn keep_this_view(
     open: &mut bool,
 ) {
     ui.set_min_width(250.0);
-    theme::heading(ui, "Add bookmark");
+    theme::heading(ui, "Add Bookmark");
     ui.horizontal(|ui| {
         let field = ui.add(
             egui::TextEdit::singleline(&mut go_to.bookmark)
@@ -1318,10 +1399,10 @@ fn go_somewhere(
 
     // Bookmarks come first because a place somebody named is the place they
     // most often want. They are kept from the Map menu's Bookmarks, Add
-    // bookmark…; see [`keep_this_view`].
+    // Bookmark…; see [`keep_this_view`].
     theme::heading(ui, "Bookmarks");
     if bookmarks.list.is_empty() {
-        theme::note(ui, "no bookmarks: add one with Map \u{2192} Bookmarks \u{2192} Add bookmark\u{2026}");
+        theme::note(ui, "No bookmarks. Map \u{2192} Bookmarks \u{2192} Add Bookmark\u{2026} adds one.");
     }
     let mut jump: Option<crate::prefs::bookmarks::Bookmark> = None;
     let mut forget: Option<String> = None;
@@ -1404,7 +1485,7 @@ fn go_somewhere(
         // Every instance, and any map with no `WorldMapArea` rows. A note is
         // shown rather than an empty list, which reads as a list that has not
         // loaded yet.
-        theme::note(ui, "this map has no WorldMapArea zones");
+        theme::note(ui, "This map has no WorldMapArea zones.");
         return;
     }
     egui::ScrollArea::vertical()
@@ -1435,27 +1516,28 @@ fn typed(ui: &mut egui::Ui, text: &mut String, hint: &str) -> bool {
     field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
-/// A joined editor's choice of the server a playtest logs in to: the local
-/// server in `realmlist.wtf`, or the host's server at the address this editor
-/// joined. On the host's server the Server panel is disabled, since only the
-/// host applies changes to that server.
+/// The server a joined editor's playtest logs in to, and why: the host's
+/// when the host shares its world database or this machine has none of its
+/// own, the local server otherwise. See the "Server writes" section of
+/// `crate::collab`.
 fn playtest_server(ui: &mut egui::Ui, collab: &mut crate::collab::Collab) {
     use crate::collab::PlaytestServer;
     let host = collab.host_name().unwrap_or("Host").to_string();
     let address = collab.host_address().unwrap_or("").to_string();
     theme::heading(ui, "Server");
-    let hosts = format!("{host}'s server");
-    theme::segmented(
-        ui,
-        &mut collab.playtest_server,
-        &[("Local server", PlaytestServer::Local), (hosts.as_str(), PlaytestServer::Host)],
-        |a, b| a == b,
-    );
-    match collab.playtest_server {
-        PlaytestServer::Local => theme::note(ui, "Logs in to the realm in realmlist.wtf."),
-        PlaytestServer::Host => {
-            theme::note(ui, format!("Logs in to the realm at {address}. Use an account that exists on that server."))
-        }
+    match (collab.playtest_server, collab.shared_database.is_some()) {
+        (PlaytestServer::Local, _) => theme::note(
+            ui,
+            format!("Logs in to the realm in realmlist.wtf. {host} does not share a world database, so this machine's own is used."),
+        ),
+        (PlaytestServer::Host, true) => theme::note(
+            ui,
+            format!("Logs in to {host}'s realm at {address}, whose world database this editor reads while joined. Use an account that exists on that server."),
+        ),
+        (PlaytestServer::Host, false) => theme::note(
+            ui,
+            format!("Logs in to {host}'s realm at {address}. Use an account that exists on that server."),
+        ),
     }
     if let Some(refused) = collab.server_gate().refused {
         ui.label(egui::RichText::new(format!("Server panel disabled. {refused}")).small().color(theme::INK_DIM));
@@ -1489,43 +1571,43 @@ fn who(
         playtest_server(ui, collab);
         ui.add_space(6.0);
     }
-    theme::heading(ui, "Log in as");
+    theme::heading(ui, "Login");
     egui::Grid::new("playtest-login-grid")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("account").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Account").color(theme::INK_DIM));
             ui.text_edit_singleline(&mut login.account);
             ui.end_row();
-            ui.label(egui::RichText::new("password").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Password").color(theme::INK_DIM));
             ui.add(egui::TextEdit::singleline(&mut login.password).password(true));
             ui.end_row();
-            ui.label(egui::RichText::new("character").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Character").color(theme::INK_DIM));
             ui.add(egui::TextEdit::singleline(&mut login.character).hint_text("last played"));
             ui.end_row();
         });
     let possible = login.can_go_straight_in();
     ui.add_enabled(
         possible,
-        egui::Checkbox::new(&mut login.straight_in, "skip the login screen"),
+        egui::Checkbox::new(&mut login.straight_in, "Skip the login screen"),
     );
     if !possible {
         theme::note(
             ui,
-            "skipping the login screen needs an account and a password; \
-             VALE_PASSWORD sets the password at startup",
+            "Skipping the login screen needs an account and a password. \
+             VALE_PASSWORD sets the password at startup.",
         );
     }
     theme::note(
         ui,
-        "these fields are not saved: the account is read from Config.wtf and \
-         the password is not stored",
+        "These fields are not saved. The account is read from Config.wtf and \
+         the password is not stored.",
     );
 
     // The query cache is a switch of the playtest's client, not of the
     // server, so it is here beside the login. It is kept per project with the
     // other switches. See `ServerSettings::disable_caching`.
     ui.add_space(6.0);
-    theme::heading(ui, "Query cache");
+    theme::heading(ui, "Query Cache");
     if ui
         .checkbox(&mut server.disable_caching, "Disable caching")
         .on_hover_text(

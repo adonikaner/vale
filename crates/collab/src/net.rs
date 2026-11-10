@@ -121,8 +121,20 @@ where
 impl<I, O> Drop for Listener<I, O> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // The accept thread is blocked in `accept`; one connection wakes it.
-        let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(200));
+        // The accept thread is blocked in `accept`; one connection wakes it,
+        // and the thread's end closes the listening socket so the port can be
+        // bound again. A listener on every interface (`0.0.0.0`) is woken on
+        // loopback, since Windows refuses a connection to the unspecified
+        // address and the thread would keep the port for the life of the
+        // process.
+        let mut wake = self.addr;
+        if wake.ip().is_unspecified() {
+            wake.set_ip(match wake {
+                SocketAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
+                SocketAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+            });
+        }
+        let _ = TcpStream::connect_timeout(&wake, Duration::from_millis(200));
         for (_, link) in self.links.lock().expect("links").drain() {
             let _ = link.stream.shutdown(Shutdown::Both);
         }
@@ -243,5 +255,30 @@ impl<I, O> Drop for Connection<I, O> {
         // Dropping the sender ends the writer thread once the queue is
         // written, and its shutdown of the socket ends the reader thread.
         self.send = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A port a session on every interface listened on can be listened on
+    /// again once the session ends.
+    #[test]
+    fn an_ended_listener_frees_its_port() {
+        let first = Listener::<u32, u32>::bind("0.0.0.0:0").expect("a free port");
+        let port = first.addr().port();
+        let joined = Connection::<u32, u32>::open(&format!("127.0.0.1:{port}")).expect("a connection");
+        drop(first);
+        drop(joined);
+        // The accept thread closes the socket as it ends, just after the drop.
+        let again = (0..50).find_map(|_| {
+            let bound = Listener::<u32, u32>::bind(("0.0.0.0", port)).ok();
+            if bound.is_none() {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            bound
+        });
+        assert!(again.is_some(), "port {port} is still held");
     }
 }
