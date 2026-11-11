@@ -13,16 +13,16 @@
 //! Each map chunk carries a list of the `MDDF` and `MODF` entries standing over
 //! it — first the doodads, then the buildings, with the split given by the
 //! header's two counts and by nothing in `MCRF` itself. The entries are
-//! **indices into the tile-wide lists**, so removing one placement renumbers
-//! every reference above it in all 256 chunks. Getting that wrong does not
-//! produce a broken file: it produces a tile where some chunks draw the wrong
-//! doodad, which looks like a placement bug rather than a bookkeeping one.
+//! indices into the tile-wide lists, so removing one placement renumbers
+//! every reference above it in all 256 chunks. A wrong renumbering does not
+//! break the file: some chunks of the tile then draw the wrong doodad.
 //!
 //! This client never reads `MCRF` — `vale_assets::Adt::placed_doodads` walks
 //! `MDDF` whole — so a mistake in it is invisible here and visible in the
 //! reference client. That is the reason it is maintained rather than skipped.
 
 use super::{AdtFile, Region};
+use std::collections::{HashMap, HashSet};
 
 /// One `MDDF` record: a model standing on the tile.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -66,15 +66,15 @@ pub(crate) const BUILDING_RECORD: usize = 64;
 ///
 /// ## Why a reserved range and not "the largest one plus one"
 ///
-/// An id has to be unique across the **map**, and a tool can only see the tiles
-/// it has open — so counting up from the largest id in those would hand out a
-/// number a tile over the horizon is already using. That used to be a small
-/// problem and is now a destructive one: the rule that keeps a placement from
-/// being drawn twice is that one id names one object, so two objects sharing an
-/// id are one object as far as anything downstream is concerned.
+/// An id has to be unique across the map, and a tool can only see the tiles it
+/// has open, so counting up from the largest id in those would hand out a
+/// number a tile out of view is already using. The rule that keeps a placement
+/// from being drawn twice is that one id names one object, so two objects
+/// sharing an id are one object to everything that reads them, and one of them
+/// is lost.
 ///
 /// Measured over 236 tiles of Azeroth and Kalimdor, the largest id the shipped
-/// data uses is **812,687** (`0xC668F`) for `MDDF` and 631,328 for `MODF`. This
+/// data uses is 812,687 (`0xC668F`) for `MDDF` and 631,328 for `MODF`. This
 /// base is `0x1000_0000` — three hundred times that, with 3.7 billion ids above
 /// it — so a minted id cannot collide with the game's own however far the
 /// sampling missed, and an id in this range is recognisably a tool's.
@@ -244,7 +244,7 @@ impl AdtFile {
         names.len() as u32 - 1
     }
 
-    /// **Swap one path for another wherever this tile names it**, in `MTEX`.
+    /// Swap one path for another wherever this tile names it, in `MTEX`.
     ///
     /// The find-and-replace half of retiring a tileset. `Paint::set_layer_texture`
     /// is the other half and they are different operations: that one changes
@@ -257,7 +257,7 @@ impl AdtFile {
     /// and how one texture comes to be spelled two ways across a map. Returns
     /// how many entries changed.
     ///
-    /// **A name the tile already has is not folded into it.** Renaming
+    /// A name the tile already has is not folded into it. Renaming
     /// `Elwynn\Grass` to `Elwynn\Dirt` on a tile that names both leaves two
     /// entries reading `Elwynn\Dirt`, which is a tile that draws correctly and
     /// wastes a slot of the four. Deduplicating would renumber `MTEX` and every
@@ -311,7 +311,7 @@ impl AdtFile {
 
     /// One placement, without parsing the rest.
     ///
-    /// **`doodad_list` allocates**, and the two things that ask about a single
+    /// [`Self::doodad_list`] allocates, and the two things that ask about a single
     /// placement ask every frame: the editor checks that the row a panel is
     /// showing is still the row the file holds, and every edit reads the value it
     /// is replacing. A tile carries up to ~1,400 records, so the list form of
@@ -331,7 +331,7 @@ impl AdtFile {
             .map(Building::read)
     }
 
-    /// Every position in `MDDF` carrying this id, **without parsing the rest**.
+    /// Every position in `MDDF` carrying this id, without parsing the rest.
     ///
     /// A tile holds up to ~1,400 placements and this reads four bytes of each, so
     /// it is a question that can be asked every frame — which is what the caller
@@ -382,8 +382,8 @@ impl AdtFile {
     /// The real numbering is unique across a whole map and is handed out by
     /// Blizzard's own tools, so this is a stand-in: it takes the largest id the
     /// tile carries and counts up from there. Two tiles edited separately can
-    /// therefore mint the same id, which is why it is **not** what a tool
-    /// creating a placement should use — see [`MINTED_BASE`].
+    /// therefore mint the same id, so a tool creating a placement does not use
+    /// it; see [`MINTED_BASE`].
     #[cfg(test)]
     pub(crate) fn next_unique_id(&self) -> u32 {
         let doodads = self.doodad_list().into_iter().map(|d| d.unique_id);
@@ -489,6 +489,121 @@ impl AdtFile {
             self.set_refs(chunk, &doodads, &buildings);
         }
         Some(removed)
+    }
+
+    /// Make over this tile's placements what a placement edit made from
+    /// `start`'s to `end`'s: two copies of a tile holding the edit's lists
+    /// before and after. Placements are matched by `uniqueId`. One the edit
+    /// added is added when this tile lacks it, one it removed is removed, one
+    /// it changed is changed where this tile has it, and every other
+    /// placement is left as it is, so placements another editor made since
+    /// stay. A model is found by its path, and named in this tile when it is
+    /// not; the chunk references of a placement added or changed are the
+    /// ones `end` gave it.
+    pub fn merge_placements(&mut self, start: &AdtFile, end: &AdtFile) {
+        // Doodads.
+        let (start_names, end_names) = (start.model_names(), end.model_names());
+        let named = |names: &[String], doodad: &Doodad| names.get(doodad.name_id as usize).cloned();
+        let had: HashMap<u32, (Doodad, Option<String>)> =
+            start.doodad_list().into_iter().map(|doodad| (doodad.unique_id, (doodad, named(&start_names, &doodad)))).collect();
+        let made = end.doodad_list();
+        let kept: HashSet<u32> = made.iter().map(|doodad| doodad.unique_id).collect();
+        for gone in had.keys().filter(|id| !kept.contains(id)) {
+            for at in self.doodads_with_id(*gone).into_iter().rev() {
+                self.remove_doodad(at);
+            }
+        }
+        for (from, doodad) in made.iter().enumerate() {
+            let Some(path) = named(&end_names, doodad) else { continue };
+            let changed = match had.get(&doodad.unique_id) {
+                None => true,
+                Some((was, was_path)) => {
+                    was_path.as_deref() != Some(path.as_str()) || Doodad { name_id: doodad.name_id, ..*was } != *doodad
+                }
+            };
+            if !changed {
+                continue;
+            }
+            let here = self.doodads_with_id(doodad.unique_id).first().copied();
+            if here.is_none() && had.contains_key(&doodad.unique_id) {
+                // Changed by the edit and removed here since: left removed.
+                continue;
+            }
+            let record = Doodad { name_id: self.name_model(&path), ..*doodad };
+            let mut list = self.doodad_list();
+            let at = match here {
+                Some(at) => {
+                    list[at] = record;
+                    at
+                }
+                None => {
+                    list.push(record);
+                    list.len() - 1
+                }
+            };
+            self.set_doodad_list(&list);
+            for chunk in 0..self.chunks.len() {
+                let (mut doodads, buildings) = self.refs(chunk);
+                doodads.retain(|&index| index != at as u32);
+                if end.refs(chunk).0.contains(&(from as u32)) {
+                    doodads.push(at as u32);
+                }
+                self.set_refs(chunk, &doodads, &buildings);
+            }
+        }
+
+        // Buildings, on the same terms.
+        let (start_names, end_names) = (start.building_names(), end.building_names());
+        let named = |names: &[String], building: &Building| names.get(building.name_id as usize).cloned();
+        let had: HashMap<u32, (Building, Option<String>)> = start
+            .building_list()
+            .into_iter()
+            .map(|building| (building.unique_id, (building, named(&start_names, &building))))
+            .collect();
+        let made = end.building_list();
+        let kept: HashSet<u32> = made.iter().map(|building| building.unique_id).collect();
+        for gone in had.keys().filter(|id| !kept.contains(id)) {
+            for at in self.buildings_with_id(*gone).into_iter().rev() {
+                self.remove_building(at);
+            }
+        }
+        for (from, building) in made.iter().enumerate() {
+            let Some(path) = named(&end_names, building) else { continue };
+            let changed = match had.get(&building.unique_id) {
+                None => true,
+                Some((was, was_path)) => {
+                    was_path.as_deref() != Some(path.as_str()) || Building { name_id: building.name_id, ..*was } != *building
+                }
+            };
+            if !changed {
+                continue;
+            }
+            let here = self.buildings_with_id(building.unique_id).first().copied();
+            if here.is_none() && had.contains_key(&building.unique_id) {
+                continue;
+            }
+            let record = Building { name_id: self.name_building(&path), ..*building };
+            let mut list = self.building_list();
+            let at = match here {
+                Some(at) => {
+                    list[at] = record;
+                    at
+                }
+                None => {
+                    list.push(record);
+                    list.len() - 1
+                }
+            };
+            self.set_building_list(&list);
+            for chunk in 0..self.chunks.len() {
+                let (doodads, mut buildings) = self.refs(chunk);
+                buildings.retain(|&index| index != at as u32);
+                if end.refs(chunk).1.contains(&(from as u32)) {
+                    buildings.push(at as u32);
+                }
+                self.set_refs(chunk, &doodads, &buildings);
+            }
+        }
     }
 
     /// One chunk's reference lists: the doodads it stands over, then the

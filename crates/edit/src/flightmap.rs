@@ -39,6 +39,7 @@
 //! west on the left, each pixel the mean of 4x4 samples.
 
 use crate::dbc::{Cell, DbcFile, Row};
+use crate::numbers::{dbc, take_u32, Numbers};
 use std::collections::HashMap;
 use vale_assets::tables::taxi::continent_fields as cf;
 use vale_assets::world::adt::TILE_SIZE;
@@ -157,12 +158,16 @@ pub enum Written {
 pub enum Refused {
     /// The table is not the width 1.12 ships.
     WrongWidth,
+    /// No number could be given to the new row, with the reason. See
+    /// [`crate::numbers`].
+    NoNumber(String),
 }
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Refused::WrongWidth => write!(f, "{TABLE}.dbc does not have the 1.12 record size"),
+            Refused::NoNumber(why) => write!(f, "{why}"),
         }
     }
 }
@@ -186,7 +191,7 @@ fn words(flight: &FlightMap) -> [(usize, u32); 11] {
 
 /// Write the map's row: add one, or rewrite the one it has. The table is
 /// written as it goes; the answer is what the undo stack needs.
-pub fn write(table: &mut DbcFile, flight: &FlightMap) -> Result<Written, Refused> {
+pub fn write(table: &mut DbcFile, numbers: &mut dyn Numbers, flight: &FlightMap) -> Result<Written, Refused> {
     if let Some(record) = row_of(table, flight.map) {
         let cells: Vec<Cell> = words(flight)
             .iter()
@@ -198,7 +203,7 @@ pub fn write(table: &mut DbcFile, flight: &FlightMap) -> Result<Written, Refused
         }
         return Ok(Written::Changed(cells));
     }
-    let id = table.max_id() + 1;
+    let id = take_u32(numbers, &dbc(TABLE), table.max_id() + 1).map_err(Refused::NoNumber)?;
     let bytes = table.blank_record(id);
     let record = table.push_record(&bytes).ok_or(Refused::WrongWidth)?;
     for (field, value) in [(cf::MAP, flight.map)].into_iter().chain(words(flight)) {
@@ -265,6 +270,7 @@ pub fn picture(taxi_box: [f32; 4], mut tile: impl FnMut(u32, u32) -> Option<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::numbers::Alone;
     use vale_assets::world::adt::MAP_ORIGIN;
     use vale_assets::tables::taxi::continent_fields::COUNT;
 
@@ -314,13 +320,13 @@ mod tests {
         let mut file = table();
         let flight = plan(534, &[(29, 29), (30, 31)], &[]).unwrap();
         assert_eq!(flight.tiles, [29, 30, 29, 31]);
-        let Ok(Written::Added(_)) = write(&mut file, &flight) else { panic!("not added") };
+        let Ok(Written::Added(_)) = write(&mut file, &mut Alone, &flight) else { panic!("not added") };
         let record = row_of(&file, 534).unwrap();
         assert_eq!(file.u32_at(record, cf::ID), Some(3));
         assert_eq!(read(&file, record), Some(flight));
         assert_eq!(file.f32_at(record, cf::SCALE), Some(0.0));
         let moved = FlightMap { taxi_box: [0.0, 0.0, 10.0, 10.0], ..flight };
-        let Ok(Written::Changed(cells)) = write(&mut file, &moved) else { panic!("not changed") };
+        let Ok(Written::Changed(cells)) = write(&mut file, &mut Alone, &moved) else { panic!("not changed") };
         assert_eq!(cells.len(), 4, "the four box fields");
         assert_eq!(file.record_count(), 3);
         assert!(moved.holds(5.0, 5.0) && !moved.holds(11.0, 5.0));

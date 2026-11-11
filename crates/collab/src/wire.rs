@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 /// The version of these messages. A joining editor sends it in
 /// [`ToHost::Hello`] and the host refuses any other, since postcard encodes
 /// fields by position and two builds that differ read each other wrongly.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// The largest frame either end reads, in bytes: 64 MiB.
 pub const MAX_FRAME: usize = 64 << 20;
@@ -179,6 +179,9 @@ pub enum Request {
     /// [`Answer::Withdrawn`] when they were withdrawn, and not at all when
     /// they change something.
     Withdraw,
+    /// What the log appended past these lengths of its two files, for a
+    /// joined editor's copy of the log. See [`crate::log::Log::tail`].
+    Tail { edits_from: u64, changelists_from: u64 },
 }
 
 /// The host's answer to a [`Request`].
@@ -202,6 +205,8 @@ pub enum Answer<P> {
     /// editor withdrew them from the log (`crate::log::Log::withdraw`). The
     /// editor has none open now.
     Withdrawn,
+    /// See [`Request::Tail`].
+    Tail(crate::log::Tail),
 }
 
 /// A value in the encoding a frame carries, without the frame's length.

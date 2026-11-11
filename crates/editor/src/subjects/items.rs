@@ -635,6 +635,13 @@ impl Items {
         item::NUMBERING.next_entry(self.max_entry, edits)
     }
 
+    /// The entry an item made now takes: [`Self::next_entry`], or a number
+    /// from the session's blocks (`crate::session::numbers`).
+    fn new_entry(&self, session: &mut EditSession) -> u32 {
+        let floor = self.next_entry(&session.rows.edits);
+        session.numbers.soft_u32(&vale_edit::numbers::row(item::NUMBERING.table, "entry"), floor)
+    }
+
     /// Make a new item, and open it.
     ///
     /// Every column is written at once, as one claim and one undo entry. See
@@ -644,7 +651,7 @@ impl Items {
     /// same entry. A new entry has no such row today, but would as soon as
     /// somebody imports one.
     pub(crate) fn create(&mut self, session: &mut EditSession, name: &str, patch: u32, now: f64) -> u32 {
-        let entry = self.next_entry(&session.rows.edits);
+        let entry = self.new_entry(session);
         let key = item::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,
@@ -686,7 +693,7 @@ impl Items {
             .as_ref()
             .filter(|held| Some(held.entry) == self.open)?;
         let source = item::template_key(from.entry, from.patch);
-        let entry = self.next_entry(&session.rows.edits);
+        let entry = self.new_entry(session);
         let key = item::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,

@@ -6,10 +6,10 @@
 //! In a shared session `crate::collab::ServerGate` decides what this editor
 //! may do in the Server panel and the publish popover. A joined editor, and
 //! one whose project is an offline copy of a host's, sees the publish popover
-//! disabled with a line saying the host publishes. A joined editor that reads
-//! the host's world database or playtests on the host's server sees the
+//! disabled with a line saying the host publishes. A joined editor that uses
+//! the host's server, or whose own world database is the host's, sees the
 //! Server panel's writes disabled: its project is a copy of the host's, and a
-//! second apply of the same rows from a second machine would run every
+//! second apply of the same rows to the same database would run every
 //! statement twice.
 //!
 //! ## Why the popovers are windows and not menus
@@ -1516,37 +1516,22 @@ fn typed(ui: &mut egui::Ui, text: &mut String, hint: &str) -> bool {
     field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
-/// The server a joined editor's playtest logs in to, and why: the host's
-/// when the host shares its world database or this machine has none of its
-/// own, the local server otherwise. See the "Server writes" section of
-/// `crate::collab`.
-fn playtest_server(ui: &mut egui::Ui, collab: &mut crate::collab::Collab) {
-    use crate::collab::PlaytestServer;
-    let host = collab.host_name().unwrap_or("Host").to_string();
-    let address = collab.host_address().unwrap_or("").to_string();
-    theme::heading(ui, "Server");
-    match (collab.playtest_server, collab.shared_database.is_some()) {
-        (PlaytestServer::Local, _) => theme::note(
-            ui,
-            format!("Logs in to the realm in realmlist.wtf. {host} does not share a world database, so this machine's own is used."),
-        ),
-        (PlaytestServer::Host, true) => theme::note(
-            ui,
-            format!("Logs in to {host}'s realm at {address}, whose world database this editor reads while joined. Use an account that exists on that server."),
-        ),
-        (PlaytestServer::Host, false) => theme::note(
-            ui,
-            format!("Logs in to {host}'s realm at {address}. Use an account that exists on that server."),
-        ),
-    }
-    if let Some(refused) = collab.server_gate().refused {
-        ui.label(egui::RichText::new(format!("Server panel disabled. {refused}")).small().color(theme::INK_DIM));
-    }
+/// Which realm a joined editor's playtest logs in to, as one note. The
+/// switch is "Server" in the Session popover. See
+/// `crate::collab::PlaytestServer`.
+fn playtest_server(ui: &mut egui::Ui, collab: &crate::collab::Collab) {
+    let host = collab.host_name().unwrap_or("the host");
+    let realm = match collab.playtest_server {
+        crate::collab::PlaytestServer::Local => "the realm in realmlist.wtf".to_string(),
+        crate::collab::PlaytestServer::Host => format!("{host}'s realm at {}", collab.host_address().unwrap_or("")),
+    };
+    theme::note(ui, format!("A playtest logs in to {realm}. \"Server\" in the Session popover sets which server."));
 }
 
-/// The Playtest popover: in a shared session the server a playtest logs in
-/// to, then who it logs in as, whether it shows the login screen, and whether
-/// its client caches query answers. Every setting of a playtest is here.
+/// The Playtest popover: in a shared session a note naming the realm a
+/// playtest logs in to, then who it logs in as, whether it shows the login
+/// screen, and whether its client caches query answers. Every setting of a
+/// playtest is here; the server in a session is a setting of the session.
 ///
 /// The login fields are not settings of the editor's own. The account is
 /// `WTF\Config.wtf`'s `accountName`, the character is `VALE_CHARACTER` or
@@ -1565,8 +1550,8 @@ fn who(
     ui.set_min_width(300.0);
     ui.label(egui::RichText::new("Playtest").strong().size(14.0));
     ui.add_space(4.0);
-    // In a shared session a joined editor chooses which server the playtest
-    // logs in to. See `crate::collab::PlaytestServer`.
+    // In a shared session the note names the realm a playtest logs in to,
+    // which the Session popover sets. See `crate::collab::PlaytestServer`.
     if matches!(collab.state, crate::collab::State::Joined { .. }) {
         playtest_server(ui, collab);
         ui.add_space(6.0);

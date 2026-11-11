@@ -418,10 +418,8 @@ fn boundary(at: (u32, u32), same: impl Fn(i64, i64) -> bool) -> [bool; 4] {
 /// Draw the window. Returns its rectangle, so the shell can keep clicks in it
 /// out of the world, and whatever was asked for.
 ///
-/// `gate` says what this editor may do in a shared session. When it is joined
-/// to another editor's session, the buttons that make, delete or paste tiles,
-/// draw minimaps and rebake shadows are disabled, because only the host does
-/// those. Server Files is disabled when `gate` says this editor may not write
+/// `gate` says what this editor may do in a shared session: Server Files is
+/// disabled when it says this editor may not write
 /// to its server. See `crate::collab::ServerGate`. A check out, release or
 /// break is left in [`MapView::claim_ask`].
 #[allow(clippy::too_many_arguments)]
@@ -483,15 +481,6 @@ pub(crate) fn draw(
     (response.map(|r| r.response.rect), asked.or(made))
 }
 
-/// The hover text of a button that is disabled for a joined editor, or
-/// `otherwise` when it is disabled for another reason.
-fn host_only(joined: bool, otherwise: &'static str) -> &'static str {
-    match joined {
-        true => "In a shared session only the host changes tiles and their files.",
-        false => otherwise,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn contents(
     ui: &mut egui::Ui,
@@ -509,7 +498,7 @@ fn contents(
     // the map, which then takes the room they leave. The map is sized to the
     // room there is, so it cannot grow the window.
     ui.horizontal(|ui| {
-        asked = tile_buttons(ui, view, session, gate.role.joined());
+        asked = tile_buttons(ui, view, session);
         ui.separator();
         claim_buttons(ui, view, session, false);
         match view.clipboard.len() {
@@ -552,7 +541,7 @@ fn contents(
         .frame(egui::Frame::NONE.inner_margin(egui::Margin { top: 4, ..egui::Margin::ZERO }))
         .show(ui, |ui| status_line(ui, view, session));
 
-    if let Some(more) = map_area(ui, view, session, thumbnails, minimaps, camera_tile, gate) {
+    if let Some(more) = map_area(ui, view, session, thumbnails, minimaps, camera_tile) {
         asked = Some(more);
     }
     asked
@@ -560,28 +549,28 @@ fn contents(
 
 /// Create, Delete, Copy and Paste, each counting what it acts on: in the
 /// toolbar, and in the map's right-click menu.
-fn tile_buttons(ui: &mut egui::Ui, view: &MapView, session: &EditSession, joined: bool) -> Option<Asked> {
+fn tile_buttons(ui: &mut egui::Ui, view: &MapView, session: &EditSession) -> Option<Asked> {
     let mut asked = None;
     // Create is enabled by empty slots in the selection and Delete by
     // existing tiles, so each button is enabled only when it has something to
     // act on, and neither silently does nothing.
     let (exist, absent) = view.split(session);
     if ui
-        .add_enabled(absent > 0 && !joined, egui::Button::new(format!("Create {absent}")))
+        .add_enabled(absent > 0, egui::Button::new(format!("Create {absent}")))
         .on_hover_text("Claims each selected empty tile in the WDT and writes flat ground, as New Ground in the side panel sets it.")
-        .on_disabled_hover_text(host_only(joined, "Select empty tiles."))
+        .on_disabled_hover_text("Select empty tiles.")
         .clicked()
     {
         asked = Some(Asked::Create);
     }
     if ui
-        .add_enabled(exist > 0 && !joined, egui::Button::new(format!("Delete {exist}")))
+        .add_enabled(exist > 0, egui::Button::new(format!("Delete {exist}")))
         .on_hover_text(
             "Clears each selected tile's WDT bit. A tile of the archives keeps its ADT in the \
              project. A tile the project created, which the archives do not have, is deleted \
              from the project with its ADT and minimap picture; this cannot be undone.",
         )
-        .on_disabled_hover_text(host_only(joined, "Select tiles that exist."))
+        .on_disabled_hover_text("Select tiles that exist.")
         .clicked()
     {
         asked = Some(Asked::Delete);
@@ -599,14 +588,14 @@ fn tile_buttons(ui: &mut egui::Ui, view: &MapView, session: &EditSession, joined
     }
     if ui
         .add_enabled(
-            !view.clipboard.is_empty() && !view.selection.is_empty() && !joined,
+            !view.clipboard.is_empty() && !view.selection.is_empty(),
             egui::Button::new("Paste"),
         )
         .on_hover_text(
             "Writes each copied tile into the selected slot, rewriting its positions \
              for the new place. Its terrain, doodads and buildings move with it.",
         )
-        .on_disabled_hover_text(host_only(joined, "Copy tiles, then select where they go."))
+        .on_disabled_hover_text("Copy tiles, then select where they go.")
         .clicked()
     {
         asked = Some(Asked::Paste);
@@ -738,7 +727,6 @@ fn map_area(
     thumbnails: &mut Thumbnails,
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     camera_tile: (u32, u32),
-    gate: &crate::collab::ServerGate,
 ) -> Option<Asked> {
     let mut asked = None;
     let size = ui.available_size().max(egui::vec2(160.0, 160.0));
@@ -921,7 +909,7 @@ fn map_area(
         }
     }
     response.context_menu(|ui| {
-        if let Some(more) = tile_menu(ui, view, session, gate) {
+        if let Some(more) = tile_menu(ui, view, session) {
             asked = Some(more);
         }
     });
@@ -930,7 +918,7 @@ fn map_area(
 
 /// The map's right-click menu: flying to the tile, the toolbar's operations,
 /// the claims, and selecting.
-fn tile_menu(ui: &mut egui::Ui, view: &mut MapView, session: &EditSession, gate: &crate::collab::ServerGate) -> Option<Asked> {
+fn tile_menu(ui: &mut egui::Ui, view: &mut MapView, session: &EditSession) -> Option<Asked> {
     let mut asked = None;
     let mut done = false;
     if let Some(at) = view.menu_at {
@@ -939,7 +927,7 @@ fn tile_menu(ui: &mut egui::Ui, view: &mut MapView, session: &EditSession, gate:
         }
         ui.separator();
     }
-    if let Some(more) = tile_buttons(ui, view, session, gate.role.joined()) {
+    if let Some(more) = tile_buttons(ui, view, session) {
         asked = Some(more);
     }
     ui.separator();
@@ -1119,7 +1107,6 @@ fn side_panel(
     gate: &crate::collab::ServerGate,
 ) -> Option<Asked> {
     use crate::map::tiles as tool;
-    let joined = gate.role.joined();
     let mut asked = None;
     let (exist, absent) = view.split(session);
     // Both picture operations and an import need the tile open, and the
@@ -1189,13 +1176,13 @@ fn side_panel(
 
     theme::heading(ui, "Shadows");
     if ui
-        .add_enabled(open > 0 && !joined, egui::Button::new(format!("Rebake {open}")))
+        .add_enabled(open > 0, egui::Button::new(format!("Rebake {open}")))
         .on_hover_text(format!(
             "Recomputes the baked shadow of each open selected tile from the objects on it, in \
              the background. About {} s per tile.",
             tool::REBAKE_SECONDS
         ))
-        .on_disabled_hover_text(host_only(joined, "None of the selection is open: fly to it first."))
+        .on_disabled_hover_text("None of the selection is open: fly to it first.")
         .clicked()
     {
         asked = Some(Asked::Rebake);
@@ -1229,24 +1216,24 @@ fn side_panel(
         // Minimaps are drawn in the background for any tile that exists, open
         // or not, so these count the tiles there are.
         if ui
-            .add_enabled(exist > 0 && !joined, egui::Button::new(format!("Selected {exist}")))
+            .add_enabled(exist > 0, egui::Button::new(format!("Selected {exist}")))
             .on_hover_text(format!(
                 "Draws the selected tiles' minimap pictures into the project, in the background: {}.",
                 minutes(exist)
             ))
-            .on_disabled_hover_text(host_only(joined, "Select tiles that exist."))
+            .on_disabled_hover_text("Select tiles that exist.")
             .clicked()
         {
             asked = Some(Asked::Minimap);
         }
         if ui
-            .add_enabled(whole > 0 && !joined, egui::Button::new(format!("Whole Map {whole}")))
+            .add_enabled(whole > 0, egui::Button::new(format!("Whole Map {whole}")))
             .on_hover_text(format!(
                 "Draws every tile's minimap picture into the project, in the background: {}. New \
                  tiles are added to the minimap index.",
                 minutes(whole)
             ))
-            .on_disabled_hover_text(host_only(joined, "The map has no tiles."))
+            .on_disabled_hover_text("The map has no tiles.")
             .clicked()
         {
             asked = Some(Asked::MinimapsAll);

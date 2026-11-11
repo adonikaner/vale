@@ -39,7 +39,7 @@
 //! the caller has the map and applies [`Change::revert`] to each one it holds.
 
 use crate::adt::AdtFile;
-use crate::dbc::{Cell, DbcFile, Row};
+use crate::dbc::{Cell, DbcFile, Field, Record, Row, Text};
 use crate::ops::Edit;
 use crate::TileKey;
 
@@ -178,6 +178,17 @@ pub enum Entry {
     Row(String, Row),
     /// An edit to the server's database.
     Server(ServerEntry),
+    /// A field edit addressed by its record's id, and its table: what a
+    /// [`Cell`] of a table with unique ids is kept as. After every other
+    /// variant, so a change stored before it existed still reads.
+    Field(String, Field),
+    /// A whole record added or removed, addressed by its id, and its table:
+    /// what a [`Row`] of a table with unique ids is kept as.
+    Record(String, Record),
+    /// A string field set to a text, and its table: what a string [`Cell`]
+    /// or [`Field`] is sent and logged as ([`Change::with_texts`]). Never on
+    /// the undo stack, whose string edits are offsets.
+    Text(String, Text),
 }
 
 /// Where an entry falls in the order a change is applied in. See
@@ -193,7 +204,7 @@ enum Stage {
 impl Entry {
     fn stage(&self) -> Stage {
         match self {
-            Entry::Row(..) => Stage::Records,
+            Entry::Row(..) | Entry::Record(..) => Stage::Records,
             Entry::Server(entry) if entry.shape == Shape::Row => Stage::Records,
             _ => Stage::Contents,
         }
@@ -202,7 +213,11 @@ impl Entry {
     /// The client table this entry edits, if it edits one.
     fn table(&self) -> Option<&str> {
         match self {
-            Entry::Cell(table, _) | Entry::Row(table, _) => Some(table),
+            Entry::Cell(table, _)
+            | Entry::Row(table, _)
+            | Entry::Field(table, _)
+            | Entry::Record(table, _)
+            | Entry::Text(table, _) => Some(table),
             _ => None,
         }
     }
@@ -302,22 +317,47 @@ impl Change {
     /// The folding is what makes typing into a name box one undo step rather
     /// than one per keystroke: the first `before` stands and the last `after`
     /// wins, which is the same rule [`Self::absorb`] applies to a held brush.
+    ///
+    /// A cell that carries its record's id is kept as an [`Entry::Field`],
+    /// and one that does not as an [`Entry::Cell`].
     pub(crate) fn absorb_cell(&mut self, table: &str, cell: Cell) {
+        let Some(id) = cell.id else {
+            for entry in self.entries.iter_mut() {
+                if let Entry::Cell(had, existing) = entry {
+                    if had == table && existing.record == cell.record && existing.field == cell.field {
+                        existing.after = cell.after;
+                        existing.text |= cell.text;
+                        return;
+                    }
+                }
+            }
+            self.entries.push(Entry::Cell(table.to_string(), cell));
+            return;
+        };
         for entry in self.entries.iter_mut() {
-            if let Entry::Cell(had, existing) = entry {
-                if had == table && existing.record == cell.record && existing.field == cell.field {
+            if let Entry::Field(had, existing) = entry {
+                // An edit of the id is followed by its next edit under the
+                // id it wrote.
+                let same = existing.id == id || (existing.field == 0 && existing.after == id);
+                if had == table && same && existing.field == cell.field {
                     existing.after = cell.after;
+                    existing.text |= cell.text;
                     return;
                 }
             }
         }
-        self.entries.push(Entry::Cell(table.to_string(), cell));
+        let field = Field { id, field: cell.field, before: cell.before, after: cell.after, record: cell.record, text: cell.text };
+        self.entries.push(Entry::Field(table.to_string(), field));
     }
 
     /// Add a whole record, added or removed. Never folded: two rows are two
-    /// rows.
+    /// rows. A row that carries its id is kept as an [`Entry::Record`].
     pub(crate) fn absorb_row(&mut self, table: &str, row: Row) {
-        self.entries.push(Entry::Row(table.to_string(), row));
+        let entry = match row.id {
+            Some(id) => Entry::Record(table.to_string(), Record { id, index: row.index, bytes: row.bytes, added: row.added }),
+            None => Entry::Row(table.to_string(), row),
+        };
+        self.entries.push(entry);
     }
 
     /// Add a server entry, folding it into one already here about the same
@@ -358,6 +398,9 @@ impl Change {
             match entry {
                 Entry::Row(_, row) => row.apply(into),
                 Entry::Cell(_, cell) => cell.apply(into),
+                Entry::Record(_, record) => record.apply(into),
+                Entry::Field(_, field) => field.apply(into),
+                Entry::Text(_, text) => text.apply(into),
                 _ => {}
             }
         }
@@ -370,6 +413,9 @@ impl Change {
             match entry {
                 Entry::Row(_, row) => row.revert(into),
                 Entry::Cell(_, cell) => cell.revert(into),
+                Entry::Record(_, record) => record.revert(into),
+                Entry::Field(_, field) => field.revert(into),
+                Entry::Text(_, text) => text.revert(into),
                 _ => {}
             }
         }
@@ -380,10 +426,14 @@ impl Change {
     pub fn records(&self, table: &str) -> Vec<usize> {
         let mut found: Vec<usize> = Vec::new();
         for entry in &self.entries {
-            if let Entry::Cell(had, cell) = entry {
-                if had == table && !found.contains(&cell.record) {
-                    found.push(cell.record);
-                }
+            let record = match entry {
+                Entry::Cell(had, cell) if had == table => cell.record,
+                Entry::Field(had, field) if had == table => field.record,
+                Entry::Text(had, text) if had == table => text.record,
+                _ => continue,
+            };
+            if !found.contains(&record) {
+                found.push(record);
             }
         }
         found
@@ -433,6 +483,114 @@ impl Change {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Fold a change made after this one into it, entry by entry, on the
+    /// rules a held stroke folds by: for each subject the first `before`
+    /// stands and the last `after` wins. Applied, the result does what the
+    /// two do one after the other; reverted, it undoes both. A stroke sent in
+    /// parts is folded back into one this way when the log is compacted.
+    pub fn fold(&mut self, later: &Change) {
+        for entry in &later.entries {
+            match entry {
+                Entry::Tile(tile, edit) => self.absorb(tile, edit.clone()),
+                Entry::Cell(table, cell) => self.absorb_cell(table, *cell),
+                Entry::Row(table, row) => self.absorb_row(table, row.clone()),
+                Entry::Server(server) => self.absorb_server(server.clone()),
+                Entry::Field(table, field) => {
+                    let same = self.entries.iter_mut().find_map(|had| match had {
+                        Entry::Field(had_table, had) if had_table == table && had.id == field.id && had.field == field.field => Some(had),
+                        _ => None,
+                    });
+                    match same {
+                        Some(had) => {
+                            had.after = field.after;
+                            had.text |= field.text;
+                        }
+                        None => self.entries.push(entry.clone()),
+                    }
+                }
+                Entry::Record(..) => self.entries.push(entry.clone()),
+                Entry::Text(table, text) => {
+                    let same = self.entries.iter_mut().find_map(|had| match had {
+                        Entry::Text(had_table, had)
+                            if had_table == table && had.id == text.id && had.record == text.record && had.field == text.field =>
+                        {
+                            Some(had)
+                        }
+                        _ => None,
+                    });
+                    match same {
+                        Some(had) => had.after.clone_from(&text.after),
+                        None => self.entries.push(entry.clone()),
+                    }
+                }
+            }
+        }
+    }
+
+    /// This change as it leaves the editor that made it: each string field
+    /// edit as the texts it wrote rather than offsets into this editor's
+    /// string block, which another editor's block does not match. A record
+    /// added with a string field pointing at a text this editor appended
+    /// ([`DbcFile::appended`]) is followed by that text, set on the record
+    /// once it is in. `table` gives this editor's tables by name; an entry
+    /// whose table it does not give is left as it is. A change with no
+    /// string edit and no added record is handed back as it is.
+    pub fn with_texts<'a>(mut self, table: impl Fn(&str) -> Option<&'a DbcFile>) -> Change {
+        let touched = |entry: &Entry| match entry {
+            Entry::Cell(_, cell) => cell.text,
+            Entry::Field(_, field) => field.text,
+            Entry::Row(_, row) => row.added,
+            Entry::Record(_, record) => record.added,
+            _ => false,
+        };
+        if !self.entries.iter().any(touched) {
+            return self;
+        }
+        let entries = std::mem::take(&mut self.entries);
+        let mut out = self;
+        out.entries = Vec::with_capacity(entries.len());
+        for entry in &entries {
+            let text = |name: &str, id: Option<u32>, record: usize, field: usize, before: u32, after: u32| {
+                let file = table(name)?;
+                Some(Entry::Text(
+                    name.to_string(),
+                    Text {
+                        id,
+                        record,
+                        field,
+                        before: file.text_at(before as usize)?,
+                        after: file.text_at(after as usize)?,
+                    },
+                ))
+            };
+            let made = match entry {
+                Entry::Cell(name, cell) if cell.text => text(name, None, cell.record, cell.field, cell.before, cell.after),
+                Entry::Field(name, field) if field.text => {
+                    text(name, Some(field.id), field.record, field.field, field.before, field.after)
+                }
+                _ => None,
+            };
+            out.entries.push(made.unwrap_or_else(|| entry.clone()));
+            let added = match entry {
+                Entry::Row(name, row) if row.added => Some((name, None, row.index, &row.bytes)),
+                Entry::Record(name, record) if record.added => Some((name, Some(record.id), record.index, &record.bytes)),
+                _ => None,
+            };
+            let Some((name, id, record, bytes)) = added else { continue };
+            let Some(file) = table(name) else { continue };
+            for (field, word) in bytes.chunks_exact(4).enumerate().skip(1) {
+                let offset = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+                if file.appended(offset) {
+                    if let Some(said) = file.text_at(offset as usize) {
+                        let text = Text { id, record, field, before: said.clone(), after: said };
+                        out.entries.push(Entry::Text(name.clone(), text));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Drop everything this change says about one table, leaving what it says
@@ -1930,7 +2088,7 @@ mod tests {
             &key(32, 48),
             Edit::Paint { chunk: 4, before: Box::new(paint.clone()), after: Box::new(paint) },
         );
-        change.absorb_cell("Spell", crate::dbc::Cell { record: 1, field: 2, before: 0, after: 1 });
+        change.absorb_cell("Spell", crate::dbc::Cell { record: 1, field: 2, before: 0, after: 1, id: None, text: false });
 
         let invalidated = change.invalidates();
         assert_eq!(invalidated.tables, vec!["Spell".to_string()]);
@@ -1984,6 +2142,85 @@ mod tests {
     }
 
     /// A table of one field, one record per value, for the test below.
+    /// Two editors add a record to one table at once. Each change is kept by
+    /// id, so each applies over the other's table, and taking one back leaves
+    /// the other's record. A table whose ids repeat is kept by index.
+    #[test]
+    fn records_of_a_table_with_unique_ids_are_kept_by_id() {
+        let added = |table: &mut DbcFile, id: u32| {
+            let at = table.push_record(&id.to_le_bytes()).unwrap();
+            let mut change = Change::new("Add row");
+            change.absorb_row("T", Row::added(table, at).unwrap());
+            change
+        };
+        let mut mine = one_field_table(&[5]);
+        let mut theirs = mine.clone();
+        let made = added(&mut mine, 6);
+        let other = added(&mut theirs, 7);
+        assert!(matches!(made.entries()[0], Entry::Record(..)));
+        made.apply_table("T", &mut theirs);
+        other.apply_table("T", &mut mine);
+        for table in [&mine, &theirs] {
+            assert!(table.row_of(6).is_some() && table.row_of(7).is_some());
+        }
+        made.revert_table("T", &mut theirs);
+        assert_eq!((theirs.row_of(6), theirs.row_of(7)), (None, Some(1)));
+
+        let mut repeated = one_field_table(&[5, 5]);
+        let cell = Cell::new(&repeated, 1, 0, 8).unwrap();
+        cell.apply(&mut repeated);
+        let mut change = Change::new("Edit");
+        change.absorb_cell("T", cell);
+        assert!(matches!(change.entries()[0], Entry::Cell(..)));
+    }
+
+    /// A name typed on one editor reads the same on another whose string
+    /// block holds other texts, and so does a record copied with that name,
+    /// because what is sent is the text and not the offset.
+    #[test]
+    fn a_text_sent_to_another_editor_is_the_text_and_not_its_offset() {
+        let mut mine = named_table(&[5, 6]);
+        let mut theirs = mine.clone();
+        crate::dbc::cell::set_text(&mut theirs, 0, 1, "Something else").unwrap();
+        let typed = crate::dbc::cell::set_text(&mut mine, 1, 1, "Fireball").unwrap();
+        let mut change = Change::new("Edit");
+        change.absorb_cell("T", typed);
+        let sent = change.with_texts(|_| Some(&mine));
+        assert!(matches!(sent.entries()[0], Entry::Text(..)));
+        sent.apply_table("T", &mut theirs);
+        let six = theirs.row_of(6).unwrap();
+        assert_eq!(theirs.string_at(six, 1).as_deref(), Some("Fireball"));
+        sent.revert_table("T", &mut theirs);
+        assert_eq!(theirs.string_at(six, 1).as_deref(), Some(""));
+        sent.apply_table("T", &mut theirs);
+
+        let mut bytes = mine.record_bytes(1).unwrap().to_vec();
+        bytes[..4].copy_from_slice(&7u32.to_le_bytes());
+        let at = mine.push_record(&bytes).unwrap();
+        let mut copied = Change::new("Add row");
+        copied.absorb_row("T", Row::added(&mine, at).unwrap());
+        let sent = copied.with_texts(|_| Some(&mine));
+        sent.apply_table("T", &mut theirs);
+        let seven = theirs.row_of(7).unwrap();
+        assert_eq!(theirs.string_at(seven, 1).as_deref(), Some("Fireball"));
+    }
+
+    /// A table of an id and a name per record, with every name empty.
+    fn named_table(ids: &[u32]) -> DbcFile {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"WDBC");
+        out.extend_from_slice(&(ids.len() as u32).to_le_bytes()); // records
+        out.extend_from_slice(&2u32.to_le_bytes()); // fields
+        out.extend_from_slice(&8u32.to_le_bytes()); // record size
+        out.extend_from_slice(&1u32.to_le_bytes()); // string block
+        for id in ids {
+            out.extend_from_slice(&id.to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+        }
+        out.push(0);
+        DbcFile::parse(&out).unwrap()
+    }
+
     fn one_field_table(values: &[u32]) -> DbcFile {
         let mut out = Vec::new();
         out.extend_from_slice(b"WDBC");
@@ -2010,8 +2247,8 @@ mod tests {
         fn name(entry: &Entry) -> &'static str {
             match entry {
                 Entry::Tile(..) => "tile",
-                Entry::Cell(..) => "cell",
-                Entry::Row(..) => "row",
+                Entry::Cell(..) | Entry::Field(..) | Entry::Text(..) => "cell",
+                Entry::Row(..) | Entry::Record(..) => "row",
                 Entry::Server(server) => match server.shape {
                     Shape::Column(_) => "server column",
                     Shape::Row => "server row",

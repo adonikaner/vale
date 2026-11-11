@@ -32,6 +32,7 @@
 
 use super::taxi::Edits;
 use super::{DbcFile, Row};
+use crate::numbers::{dbc, take_u32, Numbers};
 use std::collections::HashMap;
 use vale_assets::tables::areatrigger::fields as tf;
 use vale_assets::tables::map::fields as mf;
@@ -127,6 +128,9 @@ pub enum Refused {
     BadDirectory(String),
     /// The record could not be written; the table is not the width 1.12 ships.
     WrongWidth(&'static str),
+    /// No number could be given to the new record, with the reason. See
+    /// [`crate::numbers`].
+    NoNumber(String),
 }
 
 impl std::fmt::Display for Refused {
@@ -146,6 +150,7 @@ impl std::fmt::Display for Refused {
             ),
             Refused::BadDirectory(why) => write!(f, "{why}"),
             Refused::WrongWidth(table) => write!(f, "{table}.dbc does not have the 1.12 record size"),
+            Refused::NoNumber(why) => write!(f, "{why}"),
         }
     }
 }
@@ -221,12 +226,13 @@ pub fn trigger_blocks(table: &DbcFile) -> Vec<u32> {
 /// [`Edits::made`].
 pub fn new_trigger(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     map: u32,
     at: [f32; 3],
     radius: f32,
 ) -> Result<Edits, Refused> {
     let table = open(tables, TRIGGERS)?;
-    let id = table.max_id() + 1;
+    let id = take_u32(numbers, &dbc(TRIGGERS), table.max_id() + 1).map_err(Refused::NoNumber)?;
     if id > MAX_TRIGGER_ID {
         return Err(Refused::TriggerIdsExhausted);
     }
@@ -286,12 +292,13 @@ pub(crate) fn safe_loc_at(table: &DbcFile, record: usize) -> Option<SafeLoc> {
 /// Make a safe place. Returns its id in [`Edits::made`].
 pub fn new_safe_loc(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     map: u32,
     at: [f32; 3],
     name: &str,
 ) -> Result<Edits, Refused> {
     let table = open(tables, SAFE_LOCS)?;
-    let id = table.max_id() + 1;
+    let id = take_u32(numbers, &dbc(SAFE_LOCS), table.max_id() + 1).map_err(Refused::NoNumber)?;
     let bytes = table.blank_record(id);
     let record = table.push_record(&bytes).ok_or(Refused::WrongWidth(SAFE_LOCS))?;
     write_words(
@@ -341,7 +348,7 @@ pub fn map_directories(table: &DbcFile) -> Vec<(u32, String)> {
 /// shipped rows hold: the shipped name flags, the flags of an empty
 /// description, -1 in field 16, 1 in field 40 and 1.0 in field 41.
 /// Returns the new map's id in [`Edits::made`].
-pub fn new_map(tables: &mut HashMap<String, DbcFile>, spec: &MapSpec) -> Result<Edits, Refused> {
+pub fn new_map(tables: &mut HashMap<String, DbcFile>, numbers: &mut dyn Numbers, spec: &MapSpec) -> Result<Edits, Refused> {
     let table = open(tables, MAPS)?;
     let taken = map_directories(table);
     if let Some(why) =
@@ -349,7 +356,11 @@ pub fn new_map(tables: &mut HashMap<String, DbcFile>, spec: &MapSpec) -> Result<
     {
         return Err(Refused::BadDirectory(why));
     }
-    let id = vale_assets::tables::map::next_id(taken.iter().map(|(id, _)| *id)).ok_or(Refused::MapIdsExhausted)?;
+    let floor = vale_assets::tables::map::next_id(taken.iter().map(|(id, _)| *id)).ok_or(Refused::MapIdsExhausted)?;
+    let id = take_u32(numbers, &dbc(MAPS), floor).map_err(Refused::NoNumber)?;
+    if id > vale_assets::tables::map::MAX_NEW_ID {
+        return Err(Refused::MapIdsExhausted);
+    }
     let bytes = table.blank_record(id);
     let record = table.push_record(&bytes).ok_or(Refused::WrongWidth(MAPS))?;
     write_words(
@@ -388,6 +399,7 @@ pub fn new_map(tables: &mut HashMap<String, DbcFile>, spec: &MapSpec) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::numbers::Alone;
 
     /// A table of `fields` fields with one record per id, each record's field 1
     /// set to its map.
@@ -429,7 +441,7 @@ mod tests {
     #[test]
     fn a_new_trigger_goes_at_the_end_of_its_maps_block() {
         let mut tables = open_with(TRIGGERS, table(tf::COUNT, &[(1, 0), (2, 0), (3, 1), (4, 36)]));
-        let done = new_trigger(&mut tables, 0, [10.0, 20.0, 30.0], 5.0).unwrap();
+        let done = new_trigger(&mut tables, &mut Alone, 0, [10.0, 20.0, 30.0], 5.0).unwrap();
         assert_eq!(done.made, Some(5));
         let file = &tables[TRIGGERS];
         let order: Vec<(u32, u32)> = triggers(file).iter().map(|t| (t.id, t.map)).collect();
@@ -439,7 +451,7 @@ mod tests {
         assert!(made.is_sphere());
         assert!(trigger_blocks(file).is_empty());
 
-        new_trigger(&mut tables, 30, [0.0; 3], 3.0).unwrap();
+        new_trigger(&mut tables, &mut Alone, 30, [0.0; 3], 3.0).unwrap();
         let order: Vec<u32> = triggers(&tables[TRIGGERS]).iter().map(|t| t.map).collect();
         assert_eq!(order, [0, 0, 0, 1, 30, 36]);
 
@@ -458,7 +470,7 @@ mod tests {
     #[test]
     fn a_safe_place_is_made_with_its_name_and_removed() {
         let mut tables = open_with(SAFE_LOCS, table(sf::COUNT, &[(2, 0), (4, 1)]));
-        let done = new_safe_loc(&mut tables, 0, [1.0, 2.0, 3.0], "Hilltop").unwrap();
+        let done = new_safe_loc(&mut tables, &mut Alone, 0, [1.0, 2.0, 3.0], "Hilltop").unwrap();
         assert_eq!(done.made, Some(5));
         let made = safe_locs(&tables[SAFE_LOCS]).into_iter().find(|loc| loc.id == 5).unwrap();
         assert_eq!((made.map, made.at, made.name.as_str()), (0, [1.0, 2.0, 3.0], "Hilltop"));
@@ -484,7 +496,7 @@ mod tests {
             max_level: 30,
             descriptions: ["Held by no one.".into(), String::new()],
         };
-        let done = new_map(&mut tables, &spec).unwrap();
+        let done = new_map(&mut tables, &mut Alone, &spec).unwrap();
         assert_eq!(done.made, Some(37));
         let maps = &tables[MAPS];
         let record = maps.row_of(37).unwrap();
@@ -497,6 +509,6 @@ mod tests {
         assert_eq!(maps.string_at(record, mf::DESCRIPTION_0).as_deref(), Some("Held by no one."));
 
         let again = MapSpec { directory: "AZEROTH".into(), ..spec };
-        assert!(matches!(new_map(&mut tables, &again), Err(Refused::BadDirectory(_))));
+        assert!(matches!(new_map(&mut tables, &mut Alone, &again), Err(Refused::BadDirectory(_))));
     }
 }

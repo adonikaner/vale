@@ -38,6 +38,7 @@
 //! against the wrong record.
 
 use super::{Cell, DbcFile, Row};
+use crate::numbers::{dbc, take_u32, Numbers};
 use vale_assets::tables::taxi::{node_fields as nf, path_fields as pf, path_node_fields as wf};
 use std::collections::HashMap;
 
@@ -245,6 +246,9 @@ pub enum Refused {
     /// The record could not be written; the table is not the width this file
     /// expects.
     WrongWidth(&'static str),
+    /// No number could be given to a new record, with the reason. See
+    /// [`crate::numbers`].
+    NoNumber(String),
 }
 
 impl std::fmt::Display for Refused {
@@ -264,6 +268,7 @@ impl std::fmt::Display for Refused {
                 "node ids stop at {MAX_NODE_ID}: the taxi mask has no bit for a higher one"
             ),
             Refused::WrongWidth(table) => write!(f, "{table}.dbc does not have the 1.12 record size"),
+            Refused::NoNumber(why) => write!(f, "{why}"),
         }
     }
 }
@@ -318,6 +323,7 @@ fn take(table: &mut DbcFile, name: &'static str, record: usize) -> Result<Row, R
 /// the new point's id in [`Edits::made`].
 pub fn insert_point(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     path: u32,
     index: u32,
     spec: PointSpec,
@@ -328,7 +334,7 @@ pub fn insert_point(
     let table = open(tables, POINTS)?;
     let before = points_of(table, path);
     let index = index.min(before.len() as u32);
-    let id = table.max_id() + 1;
+    let id = take_u32(numbers, &dbc(POINTS), table.max_id() + 1).map_err(Refused::NoNumber)?;
     let mut out = Edits::default();
     let row = append(table, POINTS, id, &point_fields(path, index, &spec))?;
     out.row(POINTS, row);
@@ -372,6 +378,7 @@ pub fn remove_point(tables: &mut HashMap<String, DbcFile>, point: u32) -> Result
 /// order and numbered from 0. Returns the new path's id in [`Edits::made`].
 pub fn new_path(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     from: u32,
     to: u32,
     cost: u32,
@@ -399,7 +406,7 @@ pub fn new_path(
             path: had.id,
         });
     }
-    let id = path_table.max_id() + 1;
+    let id = take_u32(numbers, &dbc(PATHS), path_table.max_id() + 1).map_err(Refused::NoNumber)?;
     let mut out = Edits::default();
     let row = append(
         path_table,
@@ -409,8 +416,8 @@ pub fn new_path(
     )?;
     out.row(PATHS, row);
     let point_table = open(tables, POINTS)?;
-    let mut next = point_table.max_id() + 1;
     for (index, spec) in points.iter().enumerate() {
+        let next = take_u32(numbers, &dbc(POINTS), point_table.max_id() + 1).map_err(Refused::NoNumber)?;
         let row = append(
             point_table,
             POINTS,
@@ -418,7 +425,6 @@ pub fn new_path(
             &point_fields(id, index as u32, spec),
         )?;
         out.row(POINTS, row);
-        next += 1;
     }
     out.made = Some(id);
     Ok(out)
@@ -428,7 +434,7 @@ pub fn new_path(
 /// two nodes the other way round, at the same cost. 270 of the 275 shipped
 /// flights have one, as a row of its own; `vale taxi` lists the five that
 /// do not.
-pub fn reverse_path(tables: &mut HashMap<String, DbcFile>, path: u32) -> Result<Edits, Refused> {
+pub fn reverse_path(tables: &mut HashMap<String, DbcFile>, numbers: &mut dyn Numbers, path: u32) -> Result<Edits, Refused> {
     let paths_table = open(tables, PATHS)?;
     let record = paths_table.row_of(path).ok_or(Refused::NoSuchPath(path))?;
     let there = path_at(paths_table, record).ok_or(Refused::NoSuchPath(path))?;
@@ -442,7 +448,7 @@ pub fn reverse_path(tables: &mut HashMap<String, DbcFile>, path: u32) -> Result<
             delay: point.delay,
         })
         .collect();
-    new_path(tables, there.to, there.from, there.cost, &points)
+    new_path(tables, numbers, there.to, there.from, there.cost, &points)
 }
 
 /// Remove a path and every point of it.
@@ -472,13 +478,14 @@ pub fn remove_path(tables: &mut HashMap<String, DbcFile>, path: u32) -> Result<E
 /// [`Edits::made`].
 pub fn new_node(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     map: u32,
     at: [f32; 3],
     name: &str,
     mounts: [u32; 2],
 ) -> Result<Edits, Refused> {
     let table = open(tables, NODES)?;
-    let id = table.max_id() + 1;
+    let id = take_u32(numbers, &dbc(NODES), table.max_id() + 1).map_err(Refused::NoNumber)?;
     if id > MAX_NODE_ID {
         return Err(Refused::NodeIdsExhausted);
     }
@@ -709,6 +716,7 @@ pub fn unused_points(paths_table: &DbcFile, points_table: &DbcFile) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::numbers::Alone;
 
     /// A table of `fields` words per record and the given rows, with a string
     /// block holding "" and whatever `text` adds.
@@ -799,7 +807,7 @@ mod tests {
     #[test]
     fn an_inserted_point_moves_the_later_ones_up() {
         let mut t = tables();
-        let done = insert_point(&mut t, 10, 1, PointSpec::flying(0, [25.0, 0.0, 60.0])).unwrap();
+        let done = insert_point(&mut t, &mut Alone, 10, 1, PointSpec::flying(0, [25.0, 0.0, 60.0])).unwrap();
         let new = done.made.unwrap();
         assert_eq!(new, 103);
         assert_eq!(indices(&t, 10), [(100, 0), (new, 1), (101, 2), (102, 3)]);
@@ -809,7 +817,7 @@ mod tests {
     #[test]
     fn a_point_past_the_end_is_appended() {
         let mut t = tables();
-        let done = insert_point(&mut t, 10, 99, PointSpec::flying(0, [150.0, 0.0, 60.0])).unwrap();
+        let done = insert_point(&mut t, &mut Alone, 10, 99, PointSpec::flying(0, [150.0, 0.0, 60.0])).unwrap();
         assert!(done.cells.is_empty(), "nothing after it to move");
         assert_eq!(indices(&t, 10).last(), Some(&(103, 3)));
     }
@@ -830,20 +838,21 @@ mod tests {
     fn every_operation_undoes_and_redoes_exactly() {
         type Op = fn(&mut HashMap<String, DbcFile>) -> Result<Edits, Refused>;
         let ops: [(&str, Op); 7] = [
-            ("insert", |t| insert_point(t, 10, 1, PointSpec::flying(0, [1.0, 2.0, 3.0]))),
+            ("insert", |t| insert_point(t, &mut Alone, 10, 1, PointSpec::flying(0, [1.0, 2.0, 3.0]))),
             ("remove point", |t| remove_point(t, 100)),
             ("new path", |t| {
                 new_path(
                     t,
+                    &mut Alone,
                     2,
                     1,
                     7,
                     &[PointSpec::flying(0, [100.0, 0.0, 0.0]), PointSpec::flying(0, [0.0, 0.0, 0.0])],
                 )
             }),
-            ("reverse", |t| reverse_path(t, 10)),
+            ("reverse", |t| reverse_path(t, &mut Alone, 10)),
             ("remove path", |t| remove_path(t, 10)),
-            ("new node", |t| new_node(t, 0, [5.0, 6.0, 7.0], "Test Node", [2224, 541])),
+            ("new node", |t| new_node(t, &mut Alone, 0, [5.0, 6.0, 7.0], "Test Node", [2224, 541])),
             ("remove node", |t| remove_node(t, 1)),
         ];
         for (name, op) in ops {
@@ -868,7 +877,7 @@ mod tests {
     #[test]
     fn a_reversed_path_flies_the_same_points_backwards() {
         let mut t = tables();
-        let done = reverse_path(&mut t, 10).unwrap();
+        let done = reverse_path(&mut t, &mut Alone, 10).unwrap();
         let back = done.made.unwrap();
         let path = path_between(&t[PATHS], 2, 1).unwrap();
         assert_eq!((path.id, path.cost), (back, 500));
@@ -877,7 +886,7 @@ mod tests {
         // …and a second one is refused, because the client keys paths on
         // (from, to).
         assert_eq!(
-            reverse_path(&mut t, 10),
+            reverse_path(&mut t, &mut Alone, 10),
             Err(Refused::AlreadyConnected {
                 from: 2,
                 to: 1,
@@ -889,7 +898,7 @@ mod tests {
     #[test]
     fn removing_a_node_removes_its_paths_and_their_points() {
         let mut t = tables();
-        reverse_path(&mut t, 10).unwrap();
+        reverse_path(&mut t, &mut Alone, 10).unwrap();
         remove_node(&mut t, 2).unwrap();
         assert_eq!(t[NODES].record_count(), 1);
         assert_eq!(t[PATHS].record_count(), 0);
@@ -900,7 +909,7 @@ mod tests {
     #[test]
     fn a_new_node_carries_its_name_and_mounts() {
         let mut t = tables();
-        let done = new_node(&mut t, 1, [1.0, 2.0, 3.0], "Test Node", [2224, 541]).unwrap();
+        let done = new_node(&mut t, &mut Alone, 1, [1.0, 2.0, 3.0], "Test Node", [2224, 541]).unwrap();
         let node = nodes(&t[NODES]).into_iter().find(|n| Some(n.id) == done.made).unwrap();
         assert_eq!(node.name, "Test Node");
         assert_eq!(node.mounts, [2224, 541]);
@@ -912,7 +921,7 @@ mod tests {
         let mut t = tables();
         t.get_mut(NODES).unwrap().set_u32(1, nf::ID, MAX_NODE_ID);
         assert_eq!(
-            new_node(&mut t, 0, [0.0; 3], "x", [0, 0]),
+            new_node(&mut t, &mut Alone, 0, [0.0; 3], "x", [0, 0]),
             Err(Refused::NodeIdsExhausted)
         );
     }
@@ -969,9 +978,9 @@ mod tests {
     fn a_path_needs_two_nodes_and_two_points() {
         let mut t = tables();
         let two = [PointSpec::flying(0, [0.0; 3]), PointSpec::flying(0, [1.0; 3])];
-        assert_eq!(new_path(&mut t, 1, 1, 0, &two), Err(Refused::SameNode));
-        assert_eq!(new_path(&mut t, 1, 3, 0, &two), Err(Refused::NoSuchNode(3)));
-        assert_eq!(new_path(&mut t, 2, 1, 0, &two[..1]), Err(Refused::TooFewPoints));
+        assert_eq!(new_path(&mut t, &mut Alone, 1, 1, 0, &two), Err(Refused::SameNode));
+        assert_eq!(new_path(&mut t, &mut Alone, 1, 3, 0, &two), Err(Refused::NoSuchNode(3)));
+        assert_eq!(new_path(&mut t, &mut Alone, 2, 1, 0, &two[..1]), Err(Refused::TooFewPoints));
     }
 
     #[test]

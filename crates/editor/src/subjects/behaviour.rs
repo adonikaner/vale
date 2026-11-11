@@ -665,7 +665,8 @@ impl Behaviour {
     /// Create a text at the next free entry, saying `said`. Answers the entry,
     /// or `None` while the table's highest entry is read.
     pub(crate) fn create_text(&mut self, session: &mut EditSession, said: &str, chat_type: u32, now: f64) -> Option<u32> {
-        let entry = self.next_text_entry(session)?;
+        let floor = self.next_text_entry(session)?;
+        let entry = session.numbers.soft_u32(&vale_edit::numbers::row(broadcast::TABLE, "entry"), floor);
         let text = Text { chat_type, ..Text::new(entry, said) };
         let key = text.key();
         let subject = format!("{} {}", broadcast::TABLE, key.text());

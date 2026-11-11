@@ -49,6 +49,11 @@ impl<P: Payload> Hosting<P> {
         self.me.resume(seq);
     }
 
+    /// Grant blocks of numbers from `ids`. See [`Host::share_ids`].
+    pub fn share_ids(&mut self, ids: crate::ids::Shared) {
+        self.host.share_ids(ids);
+    }
+
     /// The author of an editor that is in.
     pub fn author_of(&self, user: UserId) -> Option<Author> {
         self.host.author_of(user)
@@ -169,7 +174,7 @@ impl<P: Payload> Hosting<P> {
         let mut outs = Vec::new();
         for event in self.net.poll() {
             match event {
-                Event::Connected(user, _) => self.host.connect(user),
+                Event::Connected(user, _, binding) => self.host.connect(user, binding),
                 Event::Message(user, message) => outs.extend(self.host.receive(user, message)),
                 Event::Closed(user, _) => outs.extend(self.host.disconnect(user)),
             }
@@ -216,7 +221,9 @@ impl<P: Payload> Joined<P> {
     /// Connect to the host at `addr` as `author`. The handshake runs on the
     /// following polls; [`Action::Welcome`] or [`Action::Refused`] ends it.
     pub fn connect(addr: &str, author: &Author, password: &str, build: &str, archives: [u8; 32]) -> std::io::Result<Joined<P>> {
-        let mut joined = Joined { me: Peer::joining(author, password, build, archives), net: Connection::open(addr)?, closed: false };
+        let net = Connection::open(addr)?;
+        let me = Peer::joining(author, password, build, archives, net.binding());
+        let mut joined = Joined { me, net, closed: false };
         joined.flush();
         Ok(joined)
     }
@@ -269,7 +276,7 @@ impl<P: Payload> Session<P> {
         }
     }
 
-    /// This editor's peer, for its number, its sequence and its blocks.
+    /// This editor's peer, for its number and its sequence.
     pub fn me(&self) -> &Peer<P> {
         match self {
             Session::Hosting(hosting) => &hosting.me,

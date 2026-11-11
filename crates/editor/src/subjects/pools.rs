@@ -281,7 +281,8 @@ impl Pools {
     /// Make a pool that spawns one member at a time, read at every patch,
     /// and answer its entry.
     pub(crate) fn new_pool(&self, session: &mut EditSession, description: &str, now: f64) -> Result<u32, String> {
-        let entry = self.next_entry(&session.rows.edits).ok_or("the pool tables have not been read yet")?;
+        let floor = self.next_entry(&session.rows.edits).ok_or("the pool tables have not been read yet")?;
+        let entry = session.numbers.soft_u32(&vale_edit::numbers::row(pool::TEMPLATE, "entry"), floor);
         if entry > u32::from(u16::MAX) {
             return Err(format!("pool {entry} is past the largest pool entry, {}", u16::MAX));
         }

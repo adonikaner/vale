@@ -115,9 +115,12 @@
 //! however many tiles they cover ([`split`]), so Reapply and Keep Current
 //! take all of a stroke's ground, colour, liquid or paint or none of it.
 //!
-//! A step that adds or removes a client table record cannot be rebased,
-//! because the indexes of the records after it may have moved. Reapply
-//! says so and leaves the conflict listed.
+//! A client table edit addressed by its record's id (a table whose ids are
+//! unique) is rebased like a server row: a field from its value now, a
+//! record added when no record has its id, a record removed when one still
+//! does. One addressed by its record's index cannot be rebased when it adds
+//! or removes a record, because the indexes of the records after it may have
+//! moved. Reapply says so and leaves the conflict listed.
 //!
 //! A revert is not put on the undo stack. To take a revert back, revert the
 //! changelist its edits are submitted in.
@@ -154,7 +157,7 @@ pub(crate) fn table_key(name: &str) -> String {
 pub(crate) fn subject_of(group: &Group) -> Option<String> {
     match group {
         Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => Some(tile_key(tile)),
-        Group::Table { name } => Some(table_key(name)),
+        Group::Table { name } | Group::Record { table: name, .. } => Some(table_key(name)),
         Group::Row { .. } => Some(ROWS.to_string()),
         Group::File { .. } => None,
     }
@@ -248,6 +251,7 @@ fn subject(group: &Group) -> (String, String) {
         }
         Group::Table { name } => (format!("table {}", name.to_ascii_lowercase()), format!("{name}.dbc")),
         Group::Row { table, key } => (format!("row {table} {key}"), format!("{table} {key}")),
+        Group::Record { table, id } => (format!("record {} {id}", table.to_ascii_lowercase()), format!("{table}.dbc record {id}")),
         Group::File { path } => match vale_edit::TileKey::from_vpath(path) {
             Some(tile) => subject(&Group::Placements { tile }),
             None => (format!("file {path}"), path.clone()),
@@ -415,6 +419,47 @@ fn rebase(session: &mut EditSession, assets: &GameAssets, change: &Change, forwa
                 return Err(format!(
                     "a record added to or removed from {table}.dbc cannot be reapplied over a change made since, because the records after it may have moved"
                 ))
+            }
+            Entry::Field(table, field) => {
+                session.open_table(assets, table);
+                let now = session
+                    .tables
+                    .get(table)
+                    .and_then(|file| field.now(file, forward))
+                    .ok_or_else(|| format!("{table}.dbc has no record {}", field.id))?;
+                let mut field = *field;
+                match forward {
+                    true => field.before = now,
+                    false => field.after = now,
+                }
+                Entry::Field(table.clone(), field)
+            }
+            Entry::Text(table, text) => {
+                session.open_table(assets, table);
+                let now = session
+                    .tables
+                    .get(table)
+                    .and_then(|file| text.now(file))
+                    .ok_or_else(|| format!("{table}.dbc no longer has record {}", text.id.map_or(text.record, |id| id as usize)))?;
+                let mut text = text.clone();
+                match forward {
+                    true => text.before = now,
+                    false => text.after = now,
+                }
+                Entry::Text(table.clone(), text)
+            }
+            Entry::Record(table, record) => {
+                session.open_table(assets, table);
+                let there = session.tables.get(table).is_some_and(|file| file.row_of(record.id).is_some());
+                // Going forward an added record must not be there yet, and a
+                // removed one must; going back, the other way round.
+                if there == (record.added == forward) {
+                    return Err(match there {
+                        true => format!("{table}.dbc already has a record {}", record.id),
+                        false => format!("{table}.dbc no longer has record {}", record.id),
+                    });
+                }
+                Entry::Record(table.clone(), record.clone())
             }
             Entry::Server(server) => {
                 let now = session.rows.current(server).ok_or_else(|| format!("{} {} is not a row this editor reads", server.table, server.key))?;
@@ -700,6 +745,12 @@ pub(crate) fn answered(collab: &mut Collab, session: &mut EditSession, assets: &
             // before the edits held since the welcome. See `super`'s
             // *Joining*.
             Answer::Open { everyone: true, edits } => {
+                // The copy's files do not hold these. See `super::offline`'s
+                // *The copy of the host's log*.
+                if let Some(link) = collab.link.as_mut() {
+                    link.open = edits.iter().map(|(seq, _, _)| *seq).collect();
+                    let _ = link.write(&session.project);
+                }
                 for (_, _, step) in edits {
                     super::apply_open(session, assets, &step);
                 }
@@ -718,6 +769,7 @@ pub(crate) fn answered(collab: &mut Collab, session: &mut EditSession, assets: &
                     .collect();
                 discard_steps(collab, session, assets, steps, wanted);
             }
+            Answer::Tail(tail) => super::offline::kept_tail(collab, session, tail),
             Answer::Withdrawn => {
                 collab.changes.unsubmitted = 0;
                 session.status = "this editor's unsubmitted edits change nothing, and the host withdrew them".to_string();
@@ -888,13 +940,42 @@ fn mark_rows_saved(session: &mut EditSession) {
 
 /// The log's edits the files do not hold: every edit in no changelist but
 /// this editor's own file steps. `me` is this editor's author. See
-/// *Recovered edits*.
-pub(crate) fn recovered(log: &vale_collab::Log, me: &AuthorId) -> Vec<Seq> {
+/// *Recovered edits*. A project that took over from its host
+/// (`fetched`) may also not hold the submitted edits after its files were
+/// fetched; those are recovered too, and every withdrawn edit is left out.
+/// See `super::offline`'s *Taking over*.
+pub(crate) fn recovered(log: &vale_collab::Log, me: &AuthorId, fetched: Option<&super::offline::Fetched>) -> Vec<Seq> {
     log.headers()
         .iter()
-        .filter(|header| header.changelist.is_none() && (header.author != *me || !is_files(&header.groups)))
+        .filter(|header| match fetched {
+            Some(fetched) => header.changelist != Some(0) && fetched.wants(header.seq),
+            None => header.changelist.is_none() && (header.author != *me || !is_files(&header.groups)),
+        })
         .map(|header| header.seq)
         .collect()
+}
+
+/// A copy took over from its host and its log is open: apply what the files
+/// may not hold, then the edits it kept offline, logged as this editor's. See
+/// `super::offline`'s *Taking over*.
+pub(crate) fn took_over(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, pending: Vec<Step>) {
+    let recovered = collab.changes.recovered.len();
+    restore_recovered(collab, session, assets);
+    let author = collab.author(&assets.root);
+    let count = super::whole_edits(&pending);
+    for step in pending {
+        super::apply_open(session, assets, &step);
+        if let Some(log) = collab.log.as_mut() {
+            let seq = log.last() + 1;
+            log::append(log, seq, &author, &step, &mut session.status);
+        }
+    }
+    session.status = format!(
+        "{} hosts the project now: {} from the host's log and {} made offline applied. Save, then host it from the Session popover for the others to join",
+        session.project.name,
+        super::counted(recovered, "edit", "edits"),
+        super::counted(count, "edit", "edits"),
+    );
 }
 
 /// Apply the recovered edits again, in order, unlogged: the log has them. The
@@ -908,11 +989,12 @@ pub(crate) fn restore_recovered(collab: &mut Collab, session: &mut EditSession, 
     for seq in &collab.changes.recovered {
         let Some(header) = log.header(*seq) else { continue };
         let Some(step) = log.read(*seq).ok().and_then(|bytes| log::decode(&bytes)) else { continue };
-        edits.push((*seq, header.author, step));
+        edits.push((*seq, header.author, header.changelist.is_some(), step));
     }
-    let count = super::whole_edits(edits.iter().map(|(_, _, step)| step));
-    for (seq, author, step) in edits {
-        let theirs = author != me;
+    let count = super::whole_edits(edits.iter().map(|(_, _, _, step)| step));
+    for (seq, author, submitted, step) in edits {
+        // A submitted edit is the files' to hold, whoever made it.
+        let theirs = author != me && !submitted;
         match step {
             Step::Edit { change, forward, .. } => {
                 session.apply_step(assets, &change, forward);
@@ -961,7 +1043,7 @@ pub(crate) fn mark_unsaved(session: &mut EditSession, groups: &[Group]) {
                     session.unsaved.insert((tile.x, tile.y));
                 }
             }
-            Group::Table { name } => {
+            Group::Table { name } | Group::Record { table: name, .. } => {
                 session.unsaved_tables.insert(name.clone());
             }
             Group::Row { .. } => session.rows.edits_unsaved = true,
@@ -983,7 +1065,7 @@ pub(crate) fn unmark_theirs(collab: &Collab, session: &mut EditSession, groups: 
                     session.unsaved.remove(&(tile.x, tile.y));
                 }
             }
-            Group::Table { name } => {
+            Group::Table { name } | Group::Record { table: name, .. } => {
                 session.unsaved_tables.remove(name);
             }
             Group::Row { .. } => {
@@ -1150,7 +1232,7 @@ pub(crate) fn withdraw_undone(collab: &mut Collab, session: &mut EditSession, as
     let map = session.map.clone();
     let checked = |group: &Group| match group {
         Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => tile.map.eq_ignore_ascii_case(&map),
-        Group::Table { .. } | Group::Row { .. } => true,
+        Group::Table { .. } | Group::Row { .. } | Group::Record { .. } => true,
         Group::File { .. } => false,
     };
     if !open.iter().filter_map(|seq| log.header(*seq)).all(|header| header.groups.iter().all(checked)) {
@@ -1368,6 +1450,7 @@ fn describe_change(change: &Change, forward: bool, out: &mut Vec<String>) {
                     Edit::Building { index, .. } => ("building", *index),
                     Edit::Placements { .. } => ("placement lists", 0),
                     Edit::Names { .. } => ("path lists", 0),
+                    Edit::Shadow { chunk, .. } => ("shadow", *chunk),
                 };
                 tiles[at].1.entry(what).or_default().insert(index);
             }
@@ -1381,6 +1464,26 @@ fn describe_change(change: &Change, forward: bool, out: &mut Vec<String>) {
                 "    {table}.dbc record {} {}",
                 row.index,
                 match row.added == forward {
+                    true => "added",
+                    false => "removed",
+                }
+            )),
+            Entry::Field(table, field) => others.push(format!(
+                "    {table}.dbc id {} field {}: {}",
+                field.id,
+                field.field,
+                turn(field.before.to_string(), field.after.to_string())
+            )),
+            Entry::Text(table, text) => others.push(format!(
+                "    {table}.dbc {} field {}: {}",
+                text.id.map_or_else(|| format!("record {}", text.record), |id| format!("id {id}")),
+                text.field,
+                turn(format!("{:?}", text.before), format!("{:?}", text.after))
+            )),
+            Entry::Record(table, record) => others.push(format!(
+                "    {table}.dbc id {} {}",
+                record.id,
+                match record.added == forward {
                     true => "added",
                     false => "removed",
                 }
@@ -1558,7 +1661,7 @@ mod tests {
             Entry::Tile(tile.clone(), vale_edit::ops::Edit::Heights { chunk: 3, before: vec![0.0], after: vec![1.0] }),
             Entry::Tile(tile.clone(), vale_edit::ops::Edit::Normals { chunk: 3, before: vec![0], after: vec![1] }),
             Entry::Tile(tile, vale_edit::ops::Edit::Heights { chunk: 4, before: vec![0.0], after: vec![1.0] }),
-            Entry::Cell("Spell".into(), vale_edit::dbc::Cell { record: 12, field: 5, before: 10, after: 20 }),
+            Entry::Cell("Spell".into(), vale_edit::dbc::Cell { record: 12, field: 5, before: 10, after: 20, id: None, text: false }),
             Entry::Server(vale_edit::undo::ServerEntry::column("creature", "guid=7", "position_x", None, Some("1".into()))),
         ];
         let step = Step::Edit { change: Change::from_entries("Raise terrain", entries), forward: true, continues: false };

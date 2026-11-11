@@ -64,7 +64,7 @@
 use crate::auth;
 use crate::checkout::{Claim, Hold};
 use crate::groups::{Group, Payload};
-use crate::ids::Allocator;
+use crate::ids::{Allocator, Shared};
 use crate::log::{Author, AuthorId};
 use crate::wire::{Database, Request, Seq, ToHost, ToPeer, UserId, PROTOCOL};
 use std::collections::{BTreeMap, HashMap};
@@ -96,9 +96,10 @@ const NAME_LENGTH: usize = 32;
 
 #[derive(Debug)]
 enum State {
-    /// Connected, with no [`ToHost::Hello`] yet.
-    Connected,
-    /// Sent a challenge for this name.
+    /// Connected, with no [`ToHost::Hello`] yet, over a connection with this
+    /// binding (`crate::auth::bound`).
+    Connected { binding: [u8; 32] },
+    /// Sent a challenge for this name. `nonce` is bound to the connection.
     Challenged { name: String, author: AuthorId, nonce: [u8; 32] },
     /// Answered it, and waits for [`Host::admit`].
     Admitting { name: String, author: AuthorId },
@@ -122,7 +123,9 @@ pub struct Host {
     log: [u8; 16],
     /// Who holds each claim, and how. See *Claims*.
     holds: BTreeMap<Claim, Held>,
-    ids: Allocator,
+    /// The blocks of new numbers, shared with the host's editor, which
+    /// numbers from it directly. See [`crate::ids`].
+    ids: Shared,
 }
 
 impl Host {
@@ -142,8 +145,14 @@ impl Host {
             names: HashMap::from([(author.id, name)]),
             log: [0; 16],
             holds: BTreeMap::new(),
-            ids: Allocator::default(),
+            ids: Shared::new(std::sync::Mutex::new(Allocator::default())),
         }
+    }
+
+    /// Grant blocks from `ids`, the allocator the host's editor keeps and
+    /// numbers from. Called before anyone joins.
+    pub fn share_ids(&mut self, ids: Shared) {
+        self.ids = ids;
     }
 
     /// Hold the check outs the host's editor kept from an earlier session,
@@ -243,8 +252,9 @@ impl Host {
     }
 
     /// A new connection, which has to say hello and answer a challenge.
-    pub fn connect(&mut self, user: UserId) {
-        self.users.insert(user, State::Connected);
+    /// `binding` is the connection's; see [`crate::auth`].
+    pub fn connect(&mut self, user: UserId, binding: [u8; 32]) {
+        self.users.insert(user, State::Connected { binding });
     }
 
     /// Let in an editor that answered the challenge: it is welcomed at the
@@ -279,7 +289,7 @@ impl Host {
             return Vec::new();
         };
         match (state, message) {
-            (State::Connected, ToHost::Hello { protocol, name, author, build, archives }) => {
+            (State::Connected { binding }, ToHost::Hello { protocol, name, author, build, archives }) => {
                 let refusal = if protocol != PROTOCOL {
                     Some(format!("the host speaks protocol {PROTOCOL}, this editor {protocol}"))
                 } else if build != self.build {
@@ -293,7 +303,8 @@ impl Host {
                     return self.refuse(from, refusal);
                 }
                 let nonce = auth::nonce();
-                self.users.insert(from, State::Challenged { name: shown_name(&name, from), author, nonce });
+                let bound = auth::bound(&nonce, binding);
+                self.users.insert(from, State::Challenged { name: shown_name(&name, from), author, nonce: bound });
                 vec![Out::To(from, ToPeer::Challenge { nonce })]
             }
             (State::Challenged { name, author, nonce }, ToHost::Proof(answer)) => {
@@ -324,7 +335,11 @@ impl Host {
                 let held = claims
                     .iter()
                     .filter(|_| !forced)
-                    .find_map(|claim| self.holds.get(claim).filter(|held| held.author.id != author.id).map(|held| held.hold(claim)));
+                    .find_map(|claim| {
+                        claim.covering().into_iter().find_map(|claim| {
+                            self.holds.get(&claim).filter(|held| held.author.id != author.id).map(|held| held.hold(&claim))
+                        })
+                    });
                 if let Some(hold) = held {
                     *required = epoch + 1;
                     let reason = format!("{} {}", hold.author.name, hold.words());
@@ -362,7 +377,7 @@ impl Host {
                 out
             }
             (State::In { .. }, ToHost::Ids { kind, floor, size }) => {
-                let (start, end) = self.ids.grant(&kind, floor, size);
+                let (start, end) = self.ids.lock().expect("ids").grant(&kind, floor, size);
                 vec![Out::To(from, ToPeer::Ids { kind, start, end })]
             }
             (State::In { .. }, ToHost::Presence(presence)) => self.to_all(Some(from), ToPeer::Presence { user: from, presence }),
@@ -376,6 +391,12 @@ impl Host {
                 let author = Author { id: *author, name: name.clone() };
                 self.changed_holds(|holds| {
                     for claim in claims {
+                        // A table is not checked out while another author
+                        // holds one of its records. See `crate::checkout`.
+                        let theirs = holds.iter().any(|(had, held)| held.author.id != author.id && *had != claim && claim.covers(had));
+                        if theirs {
+                            continue;
+                        }
                         let held = holds.entry(claim).or_insert_with(|| Held::by(&author));
                         if held.author.id == author.id {
                             held.checked_out = true;
@@ -511,10 +532,10 @@ pub(crate) mod tests {
     /// A host with user 1 joined under the password `pw`.
     fn with_one_joined() -> Host {
         let mut host = Host::new(&host_author(), "pw", "b1", [1; 32]);
-        host.connect(1);
+        host.connect(1, [0; 32]);
         let out = host.receive::<Toy>(1, ToHost::Hello { protocol: PROTOCOL, name: "Alex".into(), author: [1; 16], build: "b1".into(), archives: [1; 32] });
         let Out::To(1, ToPeer::Challenge { nonce }) = out[0] else { panic!("{out:?}") };
-        let out = host.receive::<Toy>(1, ToHost::Proof(auth::proof(&auth::key("pw"), &nonce, "Alex")));
+        let out = host.receive::<Toy>(1, ToHost::Proof(auth::proof(&auth::key("pw"), &auth::bound(&nonce, &[0; 32]), "Alex")));
         assert_eq!(out, vec![Out::Admit { user: 1, name: "Alex".into() }]);
         let out = host.admit::<Toy>(1, None);
         assert!(matches!(&out[0], Out::To(1, ToPeer::Welcome { user: 1, seq: 0, database: None, .. })), "{out:?}");
@@ -528,15 +549,15 @@ pub(crate) mod tests {
     #[test]
     fn a_mismatch_or_a_wrong_password_is_refused() {
         let mut host = Host::new(&host_author(), "pw", "b1", [1; 32]);
-        host.connect(1);
+        host.connect(1, [0; 32]);
         let out = host.receive::<Toy>(1, ToHost::Hello { protocol: PROTOCOL, name: "A".into(), author: [2; 16], build: "b2".into(), archives: [1; 32] });
         assert!(matches!(&out[..], [Out::To(1, ToPeer::Refused(_)), Out::Close(1)]), "{out:?}");
 
-        host.connect(2);
+        host.connect(2, [0; 32]);
         let out = host.receive::<Toy>(2, ToHost::Hello { protocol: PROTOCOL, name: "B".into(), author: [3; 16], build: "b1".into(), archives: [2; 32] });
         assert!(matches!(&out[..], [Out::To(2, ToPeer::Refused(_)), Out::Close(2)]), "{out:?}");
 
-        host.connect(3);
+        host.connect(3, [0; 32]);
         host.receive::<Toy>(3, ToHost::Hello { protocol: PROTOCOL, name: "C".into(), author: [4; 16], build: "b1".into(), archives: [1; 32] });
         let out = host.receive::<Toy>(3, ToHost::Proof(auth::proof(&auth::key("other"), &[0; 32], "C")));
         assert!(matches!(&out[..], [Out::To(3, ToPeer::Refused(_)), Out::Close(3)]), "{out:?}");
@@ -621,10 +642,10 @@ pub(crate) mod tests {
     #[test]
     fn an_editor_is_sent_nothing_until_it_is_admitted() {
         let mut host = Host::new(&host_author(), "pw", "b1", [1; 32]);
-        host.connect(1);
+        host.connect(1, [0; 32]);
         let out = host.receive::<Toy>(1, ToHost::Hello { protocol: PROTOCOL, name: "Alex".into(), author: [1; 16], build: "b1".into(), archives: [1; 32] });
         let Out::To(1, ToPeer::Challenge { nonce }) = out[0] else { panic!("{out:?}") };
-        host.receive::<Toy>(1, ToHost::Proof(auth::proof(&auth::key("pw"), &nonce, "Alex")));
+        host.receive::<Toy>(1, ToHost::Proof(auth::proof(&auth::key("pw"), &auth::bound(&nonce, &[0; 32]), "Alex")));
         // A presence sent while the welcome is on its way is dropped, not a
         // reason to refuse the editor.
         let presence = crate::wire::Presence { map: "Azeroth".into(), camera: [0.0; 3], cursor: None, tool: "Select".into() };
@@ -643,7 +664,7 @@ pub(crate) mod tests {
         let mut host = with_one_joined();
         let out = host.receive::<Toy>(1, ToHost::Bye);
         assert_eq!(out, vec![Out::To(0, ToPeer::Left { user: 1 }), Out::Close(1)]);
-        host.connect(2);
+        host.connect(2, [0; 32]);
         let out = sent(&mut host, 2, ToHost::Propose { id: 1, epoch: 0, base: 0, payload: toy("x", &[chunk(1)]) });
         assert!(matches!(&out[..], [Out::To(2, ToPeer::Refused(_)), Out::Close(2)]), "{out:?}");
     }

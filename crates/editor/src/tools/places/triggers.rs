@@ -745,7 +745,7 @@ pub(crate) fn set_sphere(session: &mut EditSession, trigger: &Trigger, sphere: b
 pub(crate) fn new_trigger(session: &mut EditSession, triggers: &mut Triggers, ground: Vec3) -> String {
     let radius = triggers.radius.max(0.5);
     let at = [ground.x, ground.y, ground.z + radius * 0.5];
-    match places::new_trigger(&mut session.tables, triggers.points.map, at, radius) {
+    match places::new_trigger(&mut session.tables, &mut session.numbers, triggers.points.map, at, radius) {
         Ok(done) => {
             let made = done.made;
             super::flightpaths::record(session, "Add area trigger", done);

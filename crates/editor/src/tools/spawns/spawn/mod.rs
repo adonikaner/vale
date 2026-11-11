@@ -1423,6 +1423,20 @@ impl<S: SpawnSubject> SpawnTool<S> {
         S::RESERVED_GUID_BASE.max(in_database).max(claimed)
     }
 
+    /// The guid a spawn made now takes: [`Self::next_guid`], or a number
+    /// from the session's blocks (`crate::session::numbers`).
+    fn new_guid(&self, session: &mut EditSession) -> u64 {
+        let floor = self.next_guid(&session.rows.edits);
+        session.numbers.soft(&vale_edit::numbers::row(S::SPAWN, "guid"), floor)
+    }
+
+    /// The entry a template made now takes: [`Self::next_entry`], or a
+    /// number from the session's blocks.
+    fn new_entry(&self, session: &mut EditSession) -> u32 {
+        let floor = self.next_entry(&session.rows.edits);
+        session.numbers.soft_u32(&vale_edit::numbers::row(S::NUMBERING.table, "entry"), floor)
+    }
+
     /// Create a new spawn of `known` on the ground at `at`.
     ///
     /// Every column of the row is written at once, as one claim and one undo
@@ -1430,7 +1444,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// [`Self::next_guid`]'s and is returned, because the caller selects what
     /// it just placed.
     pub(crate) fn create(&mut self, session: &mut EditSession, known: &S::Known, at: Vec3, orientation: f32, now: f64) -> u64 {
-        let guid = self.next_guid(&session.rows.edits);
+        let guid = self.new_guid(session);
         let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
         for change in S::new_spawn(known.entry(), session.map_id, (at.x, at.y, at.z), orientation) {
             row.columns.insert(change.column.to_string(), change.value);
@@ -1519,7 +1533,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     pub(crate) fn duplicate(&mut self, session: &mut EditSession, now: f64) -> Option<u64> {
         let spawn = self.chosen_edited(Some(&session.rows.edits))?;
         let from = self.spawn_row.as_ref().filter(|held| held.guid == spawn.guid())?;
-        let guid = self.next_guid(&session.rows.edits);
+        let guid = self.new_guid(session);
         let mut row = RowEdit { life: Life::Insert, columns: whole_columns::<S>(session, &spawn, &from.row), ..RowEdit::default() };
         // Then the position: beside the original, and on this map whatever
         // map the copied row names.
@@ -1664,7 +1678,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
         let guids = session.as_one(label, &subject, |session| {
             let mut guids = Vec::new();
             for item in clip {
-                let guid = self.next_guid(&session.rows.edits);
+                let guid = self.new_guid(session);
                 let at = anchor + item.offset;
                 let mut row = RowEdit { life: Life::Insert, columns: item.columns.clone(), ..RowEdit::default() };
                 row.columns.insert("map".to_string(), session.map_id.to_string());
@@ -1765,7 +1779,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
         patch: u32,
         now: f64,
     ) -> (u32, Option<S::Known>) {
-        let entry = self.next_entry(&session.rows.edits);
+        let entry = self.new_entry(session);
         let key = S::template_key(entry, patch);
         let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
         for change in S::new_template(name) {
@@ -1831,7 +1845,7 @@ impl<S: SpawnSubject> SpawnTool<S> {
     ) -> Option<(u32, Option<S::Known>)> {
         let from = self.template.as_ref().filter(|held| held.entry == subject.entry)?;
         let source = subject.key();
-        let entry = self.next_entry(&session.rows.edits);
+        let entry = self.new_entry(session);
         let key = S::template_key(entry, patch);
         let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
         for column in S::TEMPLATE_TABLE.columns.iter().filter(|column| column.editable()) {

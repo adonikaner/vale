@@ -893,7 +893,7 @@ fn path_card(
                     .on_hover_text("Create the path in the opposite direction through the same points, at the same cost.")
                     .clicked()
                 {
-                    match taxi::reverse_path(&mut session.tables, id) {
+                    match taxi::reverse_path(&mut session.tables, &mut session.numbers, id) {
                         Ok(done) => {
                             let made = done.made;
                             flightpaths::record(session, "Create return path", done);

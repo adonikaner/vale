@@ -167,7 +167,7 @@ pub(crate) fn draw(
         let in_world = playing.state.playing();
         project(ui, session, popovers, in_world, playing.queue.busy(), collab.server_gate().release_refused());
         separator(ui);
-        map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world, collab.is_joined());
+        map(ui, session, camera, popovers, bookmarks, map_open, new_map, in_world);
         separator(ui);
         // The workspace control: World, then each workspace that replaces the
         // viewport. See [`super::rail`], which holds the world tools' rail too.
@@ -215,7 +215,7 @@ pub(crate) fn draw(
             if at_server.clicked() {
                 popovers.server.toggle(&at_server);
             }
-            save(ui, session, assets, playing, in_world, collab.is_joined());
+            save(ui, session, assets, playing, in_world, collab.is_joined().then(|| collab.to_submit()));
             let at_changes = super::changes::button(ui, collab);
             popovers.changes.track(&at_changes);
             if at_changes.clicked() {
@@ -286,8 +286,8 @@ fn running(ui: &mut egui::Ui, playing: &mut Session, session: &mut EditSession) 
 ///
 /// The popover's button is to the right of Playtest and states who the
 /// playtest logs in as. In a shared session its label also names the host's
-/// server when a joined editor playtests there. See
-/// `crate::collab::PlaytestServer`.
+/// server when a joined editor playtests there, which the Session popover
+/// sets. See `crate::collab::PlaytestServer`.
 fn not_running(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -461,7 +461,9 @@ fn project(
 /// The button's label names what it will save, for example `Save 2 tiles and
 /// server rows`, or `Saved` when there is nothing. A bare count such as
 /// `Save 1`, which counted tiles with unsaved changes, does not say what it
-/// counts.
+/// counts. Joined, it names what Submit closes instead, for example `Submit 2
+/// tiles`, or `Saved by the host` when the Changes window lists no edit
+/// (`crate::collab::ToSubmit`).
 ///
 /// It is drawn in the right-to-left half of the bar, so the spinner is added
 /// first and stands to the right of the button.
@@ -471,10 +473,11 @@ fn save(
     assets: &GameAssets,
     playing: &mut Session,
     in_world: bool,
-    // Whether this editor is joined to another's shared session, whose host
-    // saves.
-    joined: bool,
+    // While this editor is joined to another's shared session, whose host
+    // saves: what its Submit closes.
+    submit: Option<crate::collab::ToSubmit>,
 ) {
+    let joined = submit.is_some();
     // The spinner's hover text is the step's name. The step's name is a
     // sentence that changes every few seconds, and a bar whose width follows
     // it would move everything beside it; the sentence and the fraction are
@@ -494,8 +497,15 @@ fn save(
     // waypoint edit was outstanding, which left Ctrl+S as the only way to
     // write it and nothing on screen saying a save was owed. See
     // `ServerRows::unsaved`.
-    let tiles = session.unsaved.len();
-    let tables = session.unsaved_tables.len();
+    // Joined, the host saves: Save submits this editor's edits to it, as
+    // Submit in the Changes window does, and the label names what the
+    // Submit closes. A joined copy is never saved, so its unsaved tiles only
+    // grow, and they include every tile another editor's edit changed.
+    let (tiles, tables, rows) = match submit {
+        Some(submit) if submit.edits == 0 => (0, 0, false),
+        Some(submit) => (submit.tiles, submit.tables, submit.rows),
+        None => (session.unsaved.len(), session.unsaved_tables.len(), session.rows.unsaved()),
+    };
     let mut parts: Vec<String> = Vec::new();
     if tiles > 0 {
         parts.push(plural(tiles, "tile", "tiles"));
@@ -503,14 +513,20 @@ fn save(
     if tables > 0 {
         parts.push(plural(tables, "table", "tables"));
     }
-    if session.rows.unsaved() {
+    if rows {
         // Not a count: the two stores hold rows and whole paths, which do not
         // add up to one number. The label says only that a save is owed.
         parts.push("server rows".to_string());
     }
-    let anything = !parts.is_empty() && !joined;
+    // Edits that claim nothing yet, such as an import, or before the host's
+    // claims arrive, are counted as edits.
+    if let Some(submit) = submit.filter(|submit| submit.edits > 0 && parts.is_empty()) {
+        parts.push(plural(submit.edits, "edit", "edits"));
+    }
+    let anything = !parts.is_empty();
     let label = match (joined, anything) {
-        (true, _) => "Saved by the host".to_string(),
+        (true, false) => "Saved by the host".to_string(),
+        (true, true) => format!("Submit {}", parts.join(" and ")),
         (false, false) => "Saved".to_string(),
         (false, true) => format!("Save {}", parts.join(" and ")),
     };
@@ -521,25 +537,31 @@ fn save(
     // standing keeps the handles it has.
     if ui
         .add_enabled(anything, egui::Button::new(label))
-        .on_hover_text(match in_world {
-            true => format!(
+        .on_hover_text(match (joined, in_world) {
+            (true, _) => "Submit this editor's edits to the host as one changelist, as Submit in the Changes \
+                 window does. The host saves them. Ctrl+S."
+                .to_string(),
+            (false, true) => format!(
                 "Write the changed tiles, tables and server rows into {}, then \
                  republish them to the running playtest. Ctrl+S.",
                 session.project.root.display()
             ),
-            false => format!(
+            (false, false) => format!(
                 "Write the changed tiles, tables and server rows into {}. \
                  Ctrl+S.",
                 session.project.root.display()
             ),
         })
         .on_disabled_hover_text(match joined {
-            true => "In a shared session only the host saves. This editor's copy of the host's project receives each edit as it is made.",
+            true => "Nothing to submit. In a shared session the host saves; this editor's copy of the host's project receives each edit as it is made.",
             false => "Nothing has changed since the last save.",
         })
         .clicked()
     {
-        crate::server::save_everything(session, assets, playing.server, playing.queue, in_world);
+        match joined {
+            true => session.save_asked = true,
+            false => crate::server::save_everything(session, assets, playing.server, playing.queue, in_world),
+        }
     }
 }
 
@@ -660,9 +682,6 @@ fn map(
     map_open: &mut bool,
     new_map: &mut Option<crate::map::maps::Form>,
     playing: bool,
-    // A joined editor makes no new map: a new map adds a Map.dbc record,
-    // which in a shared session is the host's.
-    joined: bool,
 ) {
     const HELD: &str = "Not while a playtest is running: the playtest controls the camera and the \
                         character is on this map. Press Ctrl+P to end the playtest.";
@@ -675,16 +694,13 @@ fn map(
             // The form is a modal of its own, drawn whether or not the map
             // window is open. See [`crate::ui::map::mapview`].
             if ui
-                .add_enabled(!playing && !joined, egui::Button::new("New Map\u{2026}"))
+                .add_enabled(!playing, egui::Button::new("New Map\u{2026}"))
                 .on_hover_text(
                     "Create a new map: a Map.dbc row, a WDT with no tiles and the server's \
                      map_template row. The map opens with no tiles; add them with Create \
                      in Edit Map.",
                 )
-                .on_disabled_hover_text(match joined {
-                    true => "In a shared session only the host makes new maps.",
-                    false => HELD,
-                })
+                .on_disabled_hover_text(HELD)
                 .clicked()
             {
                 *new_map = Some(crate::map::maps::Form::default());

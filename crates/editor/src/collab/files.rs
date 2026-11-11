@@ -43,12 +43,16 @@
 //!
 //! ## What a joined editor may write
 //!
-//! Textures, models, sounds and lock files ([`joinable`]). Only the host
-//! writes any other file, such as a tile, a table, a tile index, the minimap
-//! index or a zone grid. A joined editor's step that writes one is reverted
-//! before it is sent. The host checks the same rule ([`Files::check`]) and
-//! refuses a step that breaks it or names a path outside the project. A joined
-//! editor deletes no file itself; it asks the host ([`super::Step::Delete`]).
+//! Textures, models, sounds and lock files, and the files the map window's
+//! operations write: tiles, tile indexes (`.wdt`), minimap pictures and the
+//! minimap index ([`joinable`]). A tile's file touches every group of the
+//! tile, so a step that makes, pastes or deletes a tile another author holds
+//! is refused like any edit there. Only the host writes any other file, such
+//! as a client table or a zone grid. A joined editor's step that writes one
+//! is reverted before it is sent. The host checks the same rule
+//! ([`Files::check`]) and refuses a step that breaks it or names a path
+//! outside the project. A joined editor deletes no other file itself; it
+//! asks the host ([`super::Step::Delete`]).
 //!
 //! ## Applying a step
 //!
@@ -210,18 +214,22 @@ fn inside(vpath: &str) -> bool {
 
 /// Whether a joined editor may write or remove the file at `vpath`, or why
 /// not. The import dialogs, the lab and the bakes that a joined editor can run
-/// write textures, models and sounds; every lock writes a lock file. Only the
-/// host writes tiles, tables, tile indexes, the minimap index and the world
-/// map's zone grids.
+/// write textures, models, WMOs and sounds; every lock writes a lock file; the
+/// map window writes tiles, tile indexes, minimap pictures and the minimap
+/// index. Only the host writes the rest, such as whole client table files and
+/// the world map's zone grids. A joined editor edits a client table's fields
+/// and records through the undo stack, which is not a file step.
 pub(crate) fn joinable(vpath: &str) -> Result<(), &'static str> {
     if !inside(vpath) {
         return Err("not a path inside the project");
     }
     let lower = vpath.replace('/', "\\").to_ascii_lowercase();
     match Kind::of(vpath) {
-        Kind::Texture | Kind::Model | Kind::Sound => Ok(()),
+        Kind::Texture | Kind::Model | Kind::Sound | Kind::Tile | Kind::Wdt | Kind::Minimap => Ok(()),
+        _ if lower.ends_with(".wmo") => Ok(()),
         _ if lower.starts_with("editor\\locks\\") && lower.ends_with(".txt") => Ok(()),
-        _ => Err("only the host changes tiles, tables and map files"),
+        _ if lower == vale_assets::tables::minimap::MD5_TRANSLATE.to_ascii_lowercase() => Ok(()),
+        _ => Err("a joined editor writes textures, models, WMOs, sounds, tiles, WDTs, minimap pictures and locks only; the host writes every other file, such as a whole client table or a zone grid"),
     }
 }
 
@@ -359,15 +367,27 @@ pub(super) fn unstage(session: &mut EditSession, game: &GameAssets, author: &[u8
 mod tests {
     use super::*;
 
-    /// A joined editor may write textures, models, sounds and locks, and may
-    /// not write tiles, tables, tile indexes, minimaps or paths outside the
-    /// project.
+    /// A joined editor may write textures, models, sounds, locks, tiles,
+    /// tile indexes and minimaps, and may not write client tables, zone grids
+    /// or paths outside the project.
     #[test]
-    fn a_joined_editor_writes_assets_and_locks_only() {
-        for good in [r"Textures\Ground\Grass.blp", r"Creature\Wolf\Wolf.m2", r"Sound\Wolf.wav", r"editor\locks\Azeroth_32_48.txt"] {
+    fn a_joined_editor_writes_assets_tiles_and_locks() {
+        let good = [
+            r"Textures\Ground\Grass.blp",
+            r"Creature\Wolf\Wolf.m2",
+            r"World\wmo\Inn\Inn.wmo",
+            r"World\wmo\Inn\Inn_000.wmo",
+            r"Sound\Wolf.wav",
+            r"editor\locks\Azeroth_32_48.txt",
+            r"World\Maps\Azeroth\Azeroth_32_48.adt",
+            r"World\Maps\Azeroth\Azeroth.wdt",
+            r"textures\Minimap\ab.blp",
+            r"textures\Minimap\md5translate.trs",
+        ];
+        for good in good {
             assert_eq!(joinable(good), Ok(()), "{good}");
         }
-        for host in [r"World\Maps\Azeroth\Azeroth_32_48.adt", r"DBFilesClient\Spell.dbc", r"World\Maps\Azeroth\Azeroth.wdt", r"textures\Minimap\ab.blp", r"Interface\WorldMap\Elwynn.zmp"] {
+        for host in [r"DBFilesClient\Spell.dbc", r"Interface\WorldMap\Elwynn.zmp"] {
             assert!(joinable(host).is_err(), "{host}");
         }
         for outside in [r"..\x.blp", r"C:\x.blp", r"\x.blp", r"a\\b.blp", r"publish\x.blp", "a\u{0}.blp", ""] {

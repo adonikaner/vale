@@ -11,6 +11,8 @@
 //! history.rs    undo and redo
 //! originals.rs  the archives' own copies, and project files that match them
 //! open.rs       startup: the session built and the overlay installed
+//! numbers.rs    the numbers new records take: an allocator alone or
+//!               hosting, the host's blocks joined
 //! republish.rs  the client's caches told what changed, and the preview's
 //!               tables republished
 //! ```
@@ -88,6 +90,7 @@ pub(crate) mod save;
 pub(crate) mod history;
 pub(crate) mod originals;
 pub(crate) mod open;
+pub(crate) mod numbers;
 pub(crate) mod republish;
 
 use locks::PlacementLocks;
@@ -434,6 +437,8 @@ pub(crate) struct EditSession {
     /// until the first tile of the map is opened, which reads them; see
     /// [`PlacementLocks`].
     placement_locks: Option<PlacementLocks>,
+    /// Where the numbers of new records come from. See [`numbers`].
+    pub(crate) numbers: numbers::Numbers,
 }
 
 /// Another author's unsubmitted change applied in this editor: the log edit
@@ -453,6 +458,24 @@ impl EditSession {
     #[cfg(test)]
     pub(crate) fn for_tests(project: Project) -> EditSession {
         EditSession::bare(project)
+    }
+
+    /// The undo stack's journal, each change as it leaves this editor for a
+    /// session, the log or a copy's kept edits: string fields as the texts
+    /// written rather than offsets into this editor's string blocks, which
+    /// another editor's blocks do not match
+    /// (`vale_edit::undo::Change::with_texts`).
+    pub(crate) fn take_journal(&mut self) -> Vec<vale_edit::undo::Journaled> {
+        let steps = self.history.take_journal();
+        let tables = &self.tables;
+        steps
+            .into_iter()
+            .map(|step| vale_edit::undo::Journaled {
+                change: step.change.with_texts(|name| tables.get(name)),
+                forward: step.forward,
+                continues: step.continues,
+            })
+            .collect()
     }
 
     /// Hand the archives this session's overlay, as the startup system does
@@ -521,6 +544,7 @@ impl EditSession {
             unchanged: None,
             locks: HashMap::default(),
             placement_locks: None,
+            numbers: numbers::Numbers::default(),
         }
     }
 

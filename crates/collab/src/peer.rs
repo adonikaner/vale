@@ -36,7 +36,6 @@
 use crate::auth;
 use crate::checkout::{Claim, Hold};
 use crate::groups::{Group, Payload};
-use crate::ids::Blocks;
 use crate::log::Author;
 use crate::wire::{Answer, Database, FileEntry, Presence, Request, Seq, ToHost, ToPeer, UserId, PROTOCOL};
 use std::collections::VecDeque;
@@ -56,7 +55,7 @@ pub enum Cause {
 pub enum Action<P> {
     /// This editor is in, as `user`, with these other editors. `database` is
     /// the host's world database; see [`ToPeer::Welcome`].
-    Welcome { user: UserId, log: [u8; 16], users: Vec<(UserId, String)>, database: Option<Database> },
+    Welcome { user: UserId, seq: Seq, log: [u8; 16], users: Vec<(UserId, String)>, database: Option<Database> },
     /// This editor is not let in, or is put out.
     Refused(String),
     /// Revert the edit being made now and end the gesture. See
@@ -101,6 +100,9 @@ pub enum Action<P> {
     Answer(Answer<P>),
     /// Every claim held. See [`crate::checkout`].
     Holds(Vec<Hold>),
+    /// The numbers `start..end` of `kind` are this editor's to give out. See
+    /// [`crate::ids`].
+    Ids { kind: String, start: u64, end: u64 },
 }
 
 #[derive(Debug)]
@@ -123,15 +125,17 @@ pub struct Peer<P> {
     next_id: u64,
     waiting: VecDeque<Waiting<P>>,
     outbox: Vec<ToHost<P>>,
-    /// The numbers this editor may give out. See [`crate::ids`].
-    pub blocks: Blocks,
+    /// The connection's binding, which a challenge is answered over.
+    binding: [u8; 32],
 }
 
 impl<P: Payload> Peer<P> {
     /// An editor joining as `author`, with the password, its build and its
-    /// archives' fingerprint. Its first message, the hello, is in the outbox.
-    pub fn joining(author: &Author, password: &str, build: &str, archives: [u8; 32]) -> Peer<P> {
+    /// archives' fingerprint, over a connection with `binding` (see
+    /// [`crate::auth`]). Its first message, the hello, is in the outbox.
+    pub fn joining(author: &Author, password: &str, build: &str, archives: [u8; 32], binding: [u8; 32]) -> Peer<P> {
         let mut peer = Peer::new(&author.name, password, None);
+        peer.binding = binding;
         let hello = ToHost::Hello { protocol: PROTOCOL, name: author.name.clone(), author: author.id, build: build.to_string(), archives };
         peer.outbox.push(hello);
         peer
@@ -152,7 +156,7 @@ impl<P: Payload> Peer<P> {
             next_id: 1,
             waiting: VecDeque::new(),
             outbox: Vec::new(),
-            blocks: Blocks::default(),
+            binding: [0; 32],
         }
     }
 
@@ -249,13 +253,13 @@ impl<P: Payload> Peer<P> {
     pub fn receive(&mut self, message: ToPeer<P>, open: Option<&P>) -> Vec<Action<P>> {
         match message {
             ToPeer::Challenge { nonce } => {
-                self.outbox.push(ToHost::Proof(auth::proof(&self.key, &nonce, &self.name)));
+                self.outbox.push(ToHost::Proof(auth::proof(&self.key, &auth::bound(&nonce, &self.binding), &self.name)));
                 Vec::new()
             }
             ToPeer::Welcome { user, seq, log, users, database } => {
                 self.user = Some(user);
                 self.seq = seq;
-                vec![Action::Welcome { user, log, users, database }]
+                vec![Action::Welcome { user, seq, log, users, database }]
             }
             ToPeer::Refused(reason) => vec![Action::Refused(reason)],
             ToPeer::Accepted { id, seq } => {
@@ -296,10 +300,7 @@ impl<P: Payload> Peer<P> {
                 out.extend(again);
                 out
             }
-            ToPeer::Ids { kind, start, end } => {
-                self.blocks.hold(&kind, start, end);
-                Vec::new()
-            }
+            ToPeer::Ids { kind, start, end } => vec![Action::Ids { kind, start, end }],
             ToPeer::Presence { user, presence } => vec![Action::Presence { user, presence }],
             ToPeer::Note(line) => vec![Action::Note(line)],
             ToPeer::Answer(answer) => vec![Action::Answer(answer)],
@@ -395,9 +396,9 @@ mod tests {
 
     fn two() -> (Host, [Peer<Toy>; 2]) {
         let mut host = Host::new(&host_author(), "pw", "b1", [1; 32]);
-        host.connect(1);
+        host.connect(1, [0; 32]);
         let alex = Author { id: [1; 16], name: "Alex".to_string() };
-        let mut peers = [Peer::local("Host", 0), Peer::joining(&alex, "pw", "b1", [1; 32])];
+        let mut peers = [Peer::local("Host", 0), Peer::joining(&alex, "pw", "b1", [1; 32], [0; 32])];
         let actions = settle(&mut host, &mut peers, [None, None]);
         assert!(matches!(actions[1][..], [Action::Welcome { user: 1, .. }, Action::Holds(_)]), "{actions:?}");
         (host, peers)

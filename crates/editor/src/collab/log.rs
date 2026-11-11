@@ -67,6 +67,47 @@ pub(crate) fn open(project: &Project) -> std::io::Result<Log> {
     Log::open(project.root.join(LOG_DIR))
 }
 
+/// One stroke's stored parts folded into its first part, the later parts
+/// left as edits with nothing in them, for `vale_collab::Log::compact`.
+/// `None` when a part is not a forward edit. See `vale_collab::log`'s
+/// *Compaction*.
+pub(crate) fn fold(parts: &[Vec<u8>]) -> Option<Vec<Vec<u8>>> {
+    let steps: Vec<Step> = parts.iter().map(|part| decode(part)).collect::<Option<_>>()?;
+    let (first, later) = steps.split_first()?;
+    let Step::Edit { change: first, forward: true, continues } = first else { return None };
+    let mut merged = first.clone();
+    let mut out = vec![Vec::new()];
+    for step in later {
+        let Step::Edit { change, forward: true, continues } = step else { return None };
+        merged.fold(change);
+        let empty = vale_edit::undo::Change::from_entries(change.label.clone(), Vec::new());
+        out.push(encode(&Step::Edit { change: empty, forward: true, continues: *continues }));
+    }
+    out[0] = encode(&Step::Edit { change: merged, forward: true, continues: *continues });
+    Some(out)
+}
+
+/// The file in the log folder that keeps where the next block of each type
+/// of number starts. See `crate::session::numbers`.
+pub(crate) const NUMBERS_FILE: &str = "numbers.txt";
+
+/// The most bytes of each of the log's files one answer to a joined editor's
+/// copy of the log carries. A longer tail is asked for again.
+const TAIL_BYTES: usize = 8 << 20;
+
+/// The project's allocator of new numbers, empty when it has none.
+pub(crate) fn read_numbers(project: &Project) -> vale_collab::ids::Allocator {
+    let text = std::fs::read_to_string(project.root.join(LOG_DIR).join(NUMBERS_FILE)).unwrap_or_default();
+    vale_collab::ids::Allocator::parse(&text)
+}
+
+/// Write the project's allocator of new numbers.
+pub(crate) fn write_numbers(project: &Project, text: &str) -> std::io::Result<()> {
+    let dir = project.root.join(LOG_DIR);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(NUMBERS_FILE), text)
+}
+
 /// A step as the log stores it. See *What a stored step holds*.
 #[derive(Serialize, Deserialize)]
 struct Stored {
@@ -174,6 +215,16 @@ pub(crate) fn answer(log: &mut Log, author: &Author, request: Request, status: &
         Request::Edits(seqs) => {
             Answer::Edits(seqs.into_iter().filter_map(|seq| Some((seq, decode(&log.read(seq).ok()?)?))).collect())
         }
+        Request::Tail { edits_from, changelists_from } => match log.tail(edits_from, changelists_from, TAIL_BYTES) {
+            Ok(mut tail) => {
+                tail.numbers = std::fs::read_to_string(log.dir().join(NUMBERS_FILE)).unwrap_or_default();
+                Answer::Tail(tail)
+            }
+            Err(e) => {
+                *status = format!("the log could not be read for {}'s copy of it: {e}", author.name);
+                return None;
+            }
+        },
         Request::Open { everyone } => {
             let edits = log
                 .headers()
@@ -190,6 +241,24 @@ pub(crate) fn answer(log: &mut Log, author: &Author, request: Request, status: &
 mod tests {
     use super::*;
     use crate::collab::files::{File, Files};
+
+    /// A stroke in two parts folds into its first: the first part's before
+    /// and the second's after, and the second part empty.
+    #[test]
+    fn a_stroke_folds_into_its_first_part() {
+        let tile = vale_edit::TileKey::new("Azeroth", 32, 48);
+        let part = |before: f32, after: f32, continues: bool| {
+            let edit = vale_edit::ops::Edit::Heights { chunk: 3, before: vec![before], after: vec![after] };
+            let change = vale_edit::undo::Change::from_entries("Raise terrain", vec![vale_edit::undo::Entry::Tile(tile.clone(), edit)]);
+            encode(&Step::Edit { change, forward: true, continues })
+        };
+        let folded = fold(&[part(0.0, 1.0, false), part(1.0, 2.0, true)]).unwrap();
+        let Some(Step::Edit { change, continues: false, .. }) = decode(&folded[0]) else { panic!("not an edit") };
+        let vale_edit::undo::Entry::Tile(_, vale_edit::ops::Edit::Heights { before, after, .. }) = &change.entries()[0] else { panic!("not heights") };
+        assert_eq!((before.as_slice(), after.as_slice()), (&[0.0][..], &[2.0][..]));
+        let Some(Step::Edit { change, continues: true, .. }) = decode(&folded[1]) else { panic!("not an edit") };
+        assert!(change.is_empty());
+    }
 
     /// A file step stored in the log keeps what its files held before, which
     /// the wire's encoding drops.

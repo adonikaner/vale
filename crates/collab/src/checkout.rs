@@ -25,6 +25,11 @@
 //! tile, since a person works on a place, not on one part of one chunk. A
 //! file is in no claim. A step that writes or removes a tile's file touches
 //! every group of the tile as well, so the tile's claim covers it.
+//!
+//! A client table's record is a claim of its own, so two people can edit and
+//! add records of one table at once. A table checked out covers each of its
+//! records ([`Claim::covering`]), and a table is not checked out while
+//! another author holds one of its records.
 
 use crate::groups::Group;
 use crate::log::Author;
@@ -39,6 +44,9 @@ pub enum Claim {
     Table(String),
     /// A server row, by its table and key as [`Group::Row`] names them.
     Row { table: String, key: String },
+    /// One record of a client table, by its id, as [`Group::Record`] names
+    /// it.
+    Record { table: String, id: u32 },
 }
 
 impl Claim {
@@ -48,7 +56,25 @@ impl Claim {
             Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => Some(Claim::Tile(tile.clone())),
             Group::Table { name } => Some(Claim::Table(name.clone())),
             Group::Row { table, key } => Some(Claim::Row { table: table.clone(), key: key.clone() }),
+            Group::Record { table, id } => Some(Claim::Record { table: table.clone(), id: *id }),
             Group::File { .. } => None,
+        }
+    }
+
+    /// This claim and the claims that hold it as well: a record's table.
+    pub fn covering(&self) -> Vec<Claim> {
+        match self {
+            Claim::Record { table, .. } => vec![self.clone(), Claim::Table(table.clone())],
+            _ => vec![self.clone()],
+        }
+    }
+
+    /// Whether holding this claim holds `other`: the same claim, or a table
+    /// and one of its records.
+    pub fn covers(&self, other: &Claim) -> bool {
+        match (self, other) {
+            (Claim::Table(name), Claim::Record { table, .. }) => name == table,
+            _ => self == other,
         }
     }
 
@@ -59,6 +85,7 @@ impl Claim {
             Claim::Tile(tile) => format!("{} {}_{}", tile.map, tile.x, tile.y),
             Claim::Table(name) => format!("{name}.dbc"),
             Claim::Row { table, key } => format!("{table} {key}"),
+            Claim::Record { table, id } => format!("{table}.dbc record {id}"),
         }
     }
 
@@ -68,6 +95,7 @@ impl Claim {
             Claim::Tile(tile) => format!("tile\t{}\t{}\t{}", tile.map, tile.x, tile.y),
             Claim::Table(name) => format!("table\t{name}"),
             Claim::Row { table, key } => format!("row\t{table}\t{key}"),
+            Claim::Record { table, id } => format!("record\t{table}\t{id}"),
         };
         format!("{}\t{}\t{claim}", crate::log::hex(&author.id), author.name.replace(['\t', '\n', '\r'], " "))
     }
@@ -82,6 +110,7 @@ impl Claim {
             "tile" => Claim::Tile(TileKey::new(fields.next()?, fields.next()?.parse().ok()?, fields.next()?.parse().ok()?)),
             "table" => Claim::Table(fields.next()?.to_string()),
             "row" => Claim::Row { table: fields.next()?.to_string(), key: fields.next()?.to_string() },
+            "record" => Claim::Record { table: fields.next()?.to_string(), id: fields.next()?.parse().ok()? },
             _ => return None,
         };
         Some((claim, Author { id, name }))

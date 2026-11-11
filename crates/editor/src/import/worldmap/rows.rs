@@ -320,7 +320,7 @@ fn add_continent_row(session: &mut EditSession, map: u32, tiles: &[(u32, u32)]) 
     if continent_record(session, map).is_none() {
         let plan = flightmap::plan(map, tiles, &[]).ok_or("the map has no tiles")?;
         let table = session.tables.get_mut(CONTINENTS).ok_or("WorldMapContinent is not open")?;
-        match flightmap::write(table, &plan).map_err(|why| why.to_string())? {
+        match flightmap::write(table, &mut session.numbers, &plan).map_err(|why| why.to_string())? {
             flightmap::Written::Added(row) => session.history.record_row(CONTINENTS, row),
             flightmap::Written::Changed(cells) => {
                 for cell in cells {

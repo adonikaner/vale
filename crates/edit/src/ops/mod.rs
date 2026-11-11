@@ -167,6 +167,16 @@ pub enum Edit {
         before: Box<TileNames>,
         after: Box<TileNames>,
     },
+    /// One map chunk's `MCSH`, whole, and `None` when the chunk declares no
+    /// shadow; the flags word's shadow bit follows it. What a shadow rebake
+    /// writes, so a rebake is an edit like any other: undone, logged and
+    /// shared. After every other variant, so an edit stored before it existed
+    /// still reads.
+    Shadow {
+        chunk: usize,
+        before: Option<Vec<u8>>,
+        after: Option<Vec<u8>>,
+    },
 }
 
 /// The kinds of edit that meet across a chunk border. See [`Edit::seam`].
@@ -415,6 +425,9 @@ impl Edit {
                 crate::adt::colours::restore(tile, *chunk, after.as_ref())
             }
             Edit::Names { after, .. } => after.restore(tile),
+            Edit::Shadow { chunk, after, .. } => {
+                crate::shadow::set_shadow(tile, *chunk, after.as_deref());
+            }
         }
     }
 
@@ -435,6 +448,9 @@ impl Edit {
                 crate::adt::colours::restore(tile, *chunk, before.as_ref())
             }
             Edit::Names { before, .. } => before.restore(tile),
+            Edit::Shadow { chunk, before, .. } => {
+                crate::shadow::set_shadow(tile, *chunk, before.as_deref());
+            }
         }
     }
 
@@ -467,7 +483,10 @@ impl Edit {
             | Edit::Liquid { .. }
             // A path list is about the whole tile, so it remeshes rather than
             // patches. See [`Edit::remeshes`].
-            | Edit::Names { .. } => None,
+            | Edit::Names { .. }
+            // A shadow is folded into the ground's shading when a draw group
+            // is built, so the tile is read again. See [`Edit::remeshes`].
+            | Edit::Shadow { .. } => None,
         }
     }
 
@@ -606,9 +625,54 @@ impl Edit {
                 *start = now;
             }
             Edit::Normals { chunk, before, after } => *from(forward, before, after) = normals_of(tile, *chunk)?,
-            Edit::Doodad { index, before, after } => *from(forward, before, after) = tile.doodad_at(*index)?,
-            Edit::Building { index, before, after } => *from(forward, before, after) = tile.building_at(*index)?,
-            Edit::Placements { before, after } => *from(forward, before, after) = Box::new(Placements::capture(tile)),
+            // A placement is found by its `uniqueId`, since placements another
+            // editor added or removed since move its index. Its model stays
+            // the one it has now unless the edit changes the model.
+            Edit::Doodad { index, before, after } => {
+                let at = *tile.doodads_with_id(before.unique_id).first()?;
+                let now = tile.doodad_at(at)?;
+                let (start, end) = match forward {
+                    true => (before, after),
+                    false => (after, before),
+                };
+                if start.name_id == end.name_id {
+                    end.name_id = now.name_id;
+                }
+                *start = now;
+                *index = at;
+            }
+            Edit::Building { index, before, after } => {
+                let at = *tile.buildings_with_id(before.unique_id).first()?;
+                let now = tile.building_at(at)?;
+                let (start, end) = match forward {
+                    true => (before, after),
+                    false => (after, before),
+                };
+                if start.name_id == end.name_id {
+                    end.name_id = now.name_id;
+                }
+                *start = now;
+                *index = at;
+            }
+            // The lists are merged by `uniqueId` (`AdtFile::merge_placements`),
+            // so what another editor placed or removed since stays.
+            Edit::Placements { before, after } => {
+                let (start, end) = match forward {
+                    true => (before.clone(), after.clone()),
+                    false => (after.clone(), before.clone()),
+                };
+                let mut start_tile = tile.clone();
+                start.restore(&mut start_tile);
+                let mut end_tile = tile.clone();
+                end.restore(&mut end_tile);
+                let mut merged = tile.clone();
+                merged.merge_placements(&start_tile, &end_tile);
+                let (now, made) = (Box::new(Placements::capture(tile)), Box::new(Placements::capture(&merged)));
+                match forward {
+                    true => (*before, *after) = (now, made),
+                    false => (*after, *before) = (now, made),
+                }
+            }
             Edit::Paint { chunk, before, after } => {
                 tile.chunk(*chunk)?;
                 *from(forward, before, after) = Box::new(ChunkPaint::capture(tile, *chunk));
@@ -618,6 +682,10 @@ impl Edit {
                 *from(forward, before, after) = Box::new(ChunkLiquid::capture(tile, *chunk));
             }
             Edit::Area { chunk, before, after } => *from(forward, before, after) = crate::adt::area::area(tile, *chunk)?,
+            Edit::Shadow { chunk, before, after } => {
+                let now = tile.chunk(*chunk)?.region(Region::Shadow).map(|sub| sub.data.clone());
+                *from(forward, before, after) = now;
+            }
             Edit::Colours { chunk, before, after } => {
                 tile.chunk(*chunk)?;
                 let now = crate::adt::colours::capture(tile, *chunk);
@@ -701,9 +769,11 @@ impl Edit {
         // the textures a draw group's material was built with and the model
         // each placement resolved to, and the drawn tile holds a reference to
         // neither.
+        // A shadow too: `MCSH` is folded into the vertex shading when a
+        // draw group is built.
         matches!(
             self,
-            Edit::Holes { .. } | Edit::Liquid { .. } | Edit::Names { .. }
+            Edit::Holes { .. } | Edit::Liquid { .. } | Edit::Names { .. } | Edit::Shadow { .. }
         )
     }
 
@@ -927,5 +997,51 @@ mod unit {
         assert_ne!(after, flat, "the slope is shaded");
         assert_eq!(normals_of(&tile, 5).unwrap(), after);
         assert!(Edit::Holes { chunk: 5, before: 0, after: 1 }.reshaded(true, &mut tile).is_none());
+    }
+
+    /// A placement edit rebased over a tile where another editor placed a
+    /// doodad since keeps that doodad, and adds and moves its own by
+    /// `uniqueId`, whatever index each has now.
+    #[test]
+    fn a_rebased_placement_edit_keeps_what_was_placed_since() {
+        use crate::adt::place::Doodad;
+        let doodad = |unique_id: u32, x: f32| Doodad {
+            name_id: 0,
+            unique_id,
+            position: [x, 0.0, 0.0],
+            rotation: [0.0; 3],
+            scale: 1024,
+            flags: 0,
+        };
+        let mut start = crate::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12);
+        start.name_model(r"World\Tree.m2");
+        start.add_doodad(doodad(1, 10.0), 2.0);
+        let mut end = start.clone();
+        end.name_model(r"World\Rock.m2");
+        end.add_doodad(Doodad { name_id: 1, ..doodad(2, 20.0) }, 2.0);
+        let made = Edit::Placements { before: Box::new(Placements::capture(&start)), after: Box::new(Placements::capture(&end)) };
+
+        // Another editor's doodad, placed first, with a model of its own.
+        let mut now = start.clone();
+        now.name_model(r"World\Bush.m2");
+        now.add_doodad(Doodad { name_id: 1, ..doodad(3, 30.0) }, 2.0);
+        let rebased = made.rebased(true, &now).unwrap();
+        rebased.apply(&mut now);
+        let ids: Vec<u32> = now.doodad_list().iter().map(|placed| placed.unique_id).collect();
+        assert_eq!(ids, vec![1, 3, 2]);
+        let names = now.model_names();
+        let rock = now.doodad_list()[2].name_id as usize;
+        assert_eq!(names[rock], r"World\Rock.m2");
+        rebased.revert(&mut now);
+        assert_eq!(now.doodad_list().len(), 2);
+
+        // A move of doodad 1 recorded at index 0 finds it at index 1.
+        let mut moved = start.clone();
+        moved.remove_doodad(0);
+        moved.add_doodad(doodad(9, 0.0), 2.0);
+        moved.add_doodad(doodad(1, 10.0), 2.0);
+        let nudge = Edit::Doodad { index: 0, before: doodad(1, 10.0), after: doodad(1, 15.0) };
+        let Some(Edit::Doodad { index, .. }) = nudge.rebased(true, &moved) else { panic!("not rebased") };
+        assert_eq!(index, 1);
     }
 }

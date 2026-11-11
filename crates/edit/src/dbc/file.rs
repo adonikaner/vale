@@ -28,7 +28,60 @@ pub struct DbcFile {
     /// Anything after it. No shipped table has any; a patched one might, and a
     /// writer that dropped it would be lossy in the one way that is invisible.
     tail: Vec<u8>,
+    /// Whether field 0 is a distinct id in every record. See
+    /// [`DbcFile::ids_are_unique`].
+    ids: UniqueIds,
+    /// How long the string block was when the file was read. See
+    /// [`DbcFile::appended`].
+    read: Read,
 }
+
+/// The string block's length as read. Two tables that differ only in this
+/// are equal.
+#[derive(Debug, Clone, Copy, Default)]
+struct Read(usize);
+
+impl PartialEq for Read {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Read {}
+
+/// Whether a table's ids are unique: worked out when first asked, and
+/// forgotten when a record is added or removed or field 0 is written. Two
+/// tables that differ only in what this has worked out are equal.
+#[derive(Debug, Default)]
+struct UniqueIds(std::sync::atomic::AtomicU8);
+
+const UNKNOWN: u8 = 0;
+const UNIQUE: u8 = 1;
+const NOT_UNIQUE: u8 = 2;
+
+impl UniqueIds {
+    fn get(&self) -> u8 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn set(&self, value: u8) {
+        self.0.store(value, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Clone for UniqueIds {
+    fn clone(&self) -> Self {
+        UniqueIds(std::sync::atomic::AtomicU8::new(self.get()))
+    }
+}
+
+impl PartialEq for UniqueIds {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for UniqueIds {}
 
 impl DbcFile {
     /// Take a table apart.
@@ -72,6 +125,8 @@ impl DbcFile {
             records: buf[HEADER_LEN..records_end].to_vec(),
             strings: buf[records_end..strings_end].to_vec(),
             tail: buf[strings_end..].to_vec(),
+            ids: UniqueIds::default(),
+            read: Read(strings_end - records_end),
         })
     }
 
@@ -113,7 +168,7 @@ impl DbcFile {
     }
 
     /// Where `(record, field)` starts in the record block, or `None` when either
-    /// is out of range **or the field does not fit in the record**.
+    /// is out of range or the field does not fit in the record.
     ///
     /// The second is not hypothetical: `CharBaseInfo.dbc` states records of two
     /// bytes, so its one field is half a field wide and no four-byte read of it
@@ -153,6 +208,9 @@ impl DbcFile {
             return false;
         };
         self.records[at..at + FIELD_LEN].copy_from_slice(&value.to_le_bytes());
+        if field == 0 {
+            self.ids.set(UNKNOWN);
+        }
         true
     }
 
@@ -178,6 +236,7 @@ impl DbcFile {
         let size = self.record_size();
         let at = record * size;
         self.records[at..at + size].copy_from_slice(bytes);
+        self.ids.set(UNKNOWN);
         true
     }
 
@@ -192,6 +251,7 @@ impl DbcFile {
         }
         self.records.extend_from_slice(bytes);
         self.record_count += 1;
+        self.ids.set(UNKNOWN);
         Some(self.record_count() - 1)
     }
 
@@ -208,14 +268,15 @@ impl DbcFile {
         let at = index * self.record_size();
         self.records.splice(at..at, bytes.iter().copied());
         self.record_count += 1;
+        self.ids.set(UNKNOWN);
         true
     }
 
     /// Take a record out, returning its bytes, and move the ones after it down
     /// by one. `None` when there is no such record.
     ///
-    /// **Every record index past `index` changes**, which is why a caller holding
-    /// one — an open row, a reverse index — has to be told; see
+    /// Every record index past `index` changes, so a caller holding one (an
+    /// open row, a reverse index) has to be told; see
     /// `vale_edit::undo::Change::in_order`. The string block keeps whatever the
     /// record pointed at, on the append-only rule.
     pub fn remove_record(&mut self, index: usize) -> Option<Vec<u8>> {
@@ -226,6 +287,7 @@ impl DbcFile {
         let at = index * size;
         let bytes: Vec<u8> = self.records.drain(at..at + size).collect();
         self.record_count -= 1;
+        self.ids.set(UNKNOWN);
         Some(bytes)
     }
 
@@ -244,6 +306,15 @@ impl DbcFile {
         bytes
     }
 
+    /// Whether `offset` is the start of a text this editor appended since the
+    /// file was read: past the block as read, and just after a NUL. Another
+    /// editor's block holds something else there. A record copied with such
+    /// an offset in it is sent with the text (`crate::undo::Change::with_texts`).
+    pub fn appended(&self, offset: u32) -> bool {
+        let at = offset as usize;
+        at >= self.read.0.max(1) && at < self.strings.len() && self.strings[at - 1] == 0
+    }
+
     /// The text at a byte offset into the string block.
     pub fn text_at(&self, offset: usize) -> Option<String> {
         let rest = self.strings.get(offset..)?;
@@ -259,7 +330,7 @@ impl DbcFile {
     /// Point a string field at `text`, appending it to the block if it is not
     /// already there.
     ///
-    /// **No offset the file already holds changes.** See the module comment: the
+    /// No offset the file already holds changes. See the module comment: the
     /// block is append-only, because a string column is a `u32` like any other
     /// and this crate cannot know which of a table's columns are strings.
     pub fn set_string(&mut self, record: usize, field: usize, text: &str) -> bool {
@@ -327,6 +398,33 @@ impl DbcFile {
             .filter_map(|record| self.u32_at(record, 0))
             .max()
             .unwrap_or(0)
+    }
+
+    /// Whether field 0 of every record is a number no other record holds, so
+    /// a record can be found by it. `false` for a table whose records are too
+    /// narrow for a field 0 (`CharBaseInfo`).
+    pub fn ids_are_unique(&self) -> bool {
+        match self.ids.get() {
+            UNIQUE => return true,
+            NOT_UNIQUE => return false,
+            _ => {}
+        }
+        let mut seen = std::collections::HashSet::with_capacity(self.record_count());
+        let unique = (0..self.record_count()).all(|record| self.u32_at(record, 0).is_some_and(|id| seen.insert(id)));
+        self.ids.set(if unique { UNIQUE } else { NOT_UNIQUE });
+        unique
+    }
+
+    /// A record's id, when the table's ids are unique
+    /// ([`Self::ids_are_unique`]): what an edit addresses the record by, so
+    /// it lands on the same record after records before it are added or
+    /// removed. `None` otherwise, and the edit addresses the record by its
+    /// index.
+    pub fn id_of(&self, record: usize) -> Option<u32> {
+        if record >= self.record_count() || !self.ids_are_unique() {
+            return None;
+        }
+        self.u32_at(record, 0)
     }
 }
 

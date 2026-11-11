@@ -104,8 +104,11 @@ tile regeneration and an Apply save everything first, and each save submits
 your edits (see [Changes and history](#changes-and-history)). The button says what is
 unsaved, for example "Save 2 tiles and 1 table" or "Save 2 tiles and server
 rows", and reads "Saved" when nothing is owed. A spinner beside it shows while
-a server write runs. In a shared session a joined editor's button reads
-"Saved by the host" (see [Shared sessions](#shared-sessions)). Unsaved edits
+a server write runs. In a shared session a joined editor's Save submits its
+edits to the host, and the button names the tiles, tables and server rows
+that this editor's unsubmitted edits claim ("Submit 2 tiles"), or "Saved by
+the host" when the Changes window lists no edit (see
+[Shared sessions](#shared-sessions)). Unsaved edits
 are discarded from the Changes window (see
 [Changes and history](#changes-and-history)).
 
@@ -954,7 +957,7 @@ Click a first point and then a second to measure between them; a third click sta
 - "Images": "Export Heights…" saves the selection's heights as a 16-bit grey PNG; "Export Blends…" saves how its textures blend as an RGB PNG. "Import…" reads a PNG of any size onto the open tiles of the selection, as "Heights" or "Blends". For heights, "Black" and "White" set the heights the two ends stand for, and "Doodads and WMOs follow the ground" carries placements with it.
 - "Server": "Server Files N" saves, rebuilds the project's archive and regenerates the server's map, vmap and mmap files for the selected tiles. Restart the server afterwards.
 
-In a shared session only the host creates, deletes and pastes tiles, draws minimaps and rebakes shadows.
+In a shared session every editor creates, deletes and pastes tiles, draws minimaps and rebakes shadows. A tile another person holds a claim on is refused (see [Claims](#claims)).
 
 ### New map and Map properties
 
@@ -969,7 +972,7 @@ In a shared session only the host creates, deletes and pastes tiles, draws minim
 - For a dungeon or raid, "Ghost Entrance" (a point on a continent, which "Use Camera Position" takes from the camera while a continent is open) and "Parent" (a dungeon this one is entered through).
 - On a map being created only, "Create zone" (an AreaTable zone named after the map) and "Open after creating". With "Create zone" off, "Zone" names an existing zone.
 
-"Create" writes the `Map.dbc` row, the zone, the map's WDT and the server's `map_template` row. "Save" writes the changed `Map.dbc` fields and the changed `map_template` columns as one undo entry. A layout change is written to the WDT, is not on the undo history, and shows after the map is opened again. `map_template` changes are applied from the Server panel. A created map needs its tiles extracted ("Server Files") and a server restart before a character can stand on it. In a shared session only the host creates maps.
+"Create" writes the `Map.dbc` row, the zone, the map's WDT and the server's `map_template` row. "Save" writes the changed `Map.dbc` fields and the changed `map_template` columns as one undo entry. A layout change is written to the WDT, is not on the undo history, and shows after the map is opened again. `map_template` changes are applied from the Server panel. A created map needs its tiles extracted ("Server Files") and a server restart before a character can stand on it.
 
 ### World map
 
@@ -1788,7 +1791,7 @@ A condition cell, found in the gossip, loot, vendor and trainer, quest, event an
   - Applying or restoring a block also restores and applies again the applied blocks below it.
   - The hover text on a block's name lists its tables and files, and says whether an applied change needs a `.reload` or a server restart.
   - "Client tables" has "edited as a file" in place of "Drop Changes". Its Apply also copies the project's DBC files that the server reads into `DataDir\5875\dbc\`, keeping the server's originals in `DataDir\vale-editor\originals\` as the server tile files are kept, and Restore copies the originals back. A project that kept the originals in its own `server\dbc-before\` has them moved there on its next Apply or Restore.
-- "Server Tiles": "Regenerate Changed Tiles (N)" rebuilds the project's archive and regenerates the server's map files for the tiles changed since the last regeneration. Restart the server afterwards. The map window's "Server Files" does the same for chosen tiles. "Server Tile Files…" opens the tile file dialog; the line beside it counts the files no longer produced and the files written by other projects.
+- "Server Tiles": "Regenerate Changed Tiles (N)" rebuilds the project's archive and regenerates the server's map files for the tiles changed since the last regeneration. A tile counts as changed when its file changed, or when a model or building it places that the project carries changed, since the server's collision files are built from those too. A changed model on a tile the project does not carry is not seen: select such tiles and use the map window's "Server Files". Restart the server afterwards. The map window's "Server Files" does the same for chosen tiles. "Server Tile Files…" opens the tile file dialog; the line beside it counts the files no longer produced and the files written by other projects.
 - "Migration": "Write migration" writes `publish\migrations\<stamp>_world.sql`: every row the project changes, and the rows an earlier migration changed that the project no longer does, put back, so it applies whether or not the server has the earlier ones. Nothing is written when nothing changed since the last migration. A copy of a host's project writes none.
 
 ### Server tile files
@@ -1806,7 +1809,7 @@ A file the editor did not write is moved to `vale-editor\originals\` when it is 
 
 "Settings…" in the Project menu opens the settings that belong to this machine. They are kept in `Edit\server.txt` and `Edit\tablet.txt`, beside the project folders, and apply to every project.
 
-- "World database": "mangosd.conf", the vmangos folder or its `mangosd.conf`. The connection is read from its `WorldDatabase.Info` line; the password is not stored by the editor. "Test" connects and counts rows without changing anything. `VALE_WORLDDB` or `VALE_MANGOSD` overrides the field, which is then disabled. While joined to a session whose host shares its world database, the host's is used instead and the window says "from the host of the shared session".
+- "World database": "mangosd.conf", the vmangos folder or its `mangosd.conf`. The connection is read from its `WorldDatabase.Info` line; the password is not stored by the editor. "Test" connects and counts rows without changing anything. `VALE_WORLDDB` or `VALE_MANGOSD` overrides the field, which is then disabled. While joined on the host's server to a session whose host shares its world database (see [Playtests and the server in a session](#playtests-and-the-server-in-a-session)), the host's is used instead and the window says "from the host of the shared session".
 - "Map tools": "vmangos tools", the folder holding `mapextractor`, `vmapextractor`, `VMapAssembler` and `MoveMapGenerator`, built in Release with the extractor patch from the `extractors` branch of [adonikaner/core](https://github.com/adonikaner/core/tree/extractors). The window says whether the tools are patched and whether `offmesh.txt` and `config.json` were found, and names the server's `DataDir`. `VALE_VMANGOS_TOOLS` overrides the field.
 - "Drawing tablet": pen pressure and cursor motion; see [Drawing tablet](#drawing-tablet).
 
@@ -1856,7 +1859,7 @@ The button to the right of "Playtest" reads "as <character>" or "login screen", 
 - "Skip the login screen": log straight in when an account and a password are set.
 - "Query Cache": "Disable caching" starts each playtest with an empty cache, so the client asks the server for every creature, item and quest it meets, and an edited row shows in the next playtest. It is on by default and kept per project.
 
-In a shared session the popover also says which server a joined editor's playtest logs in to; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
+In a shared session a joined editor also sets there which server it reads and playtests on, this machine's or the host's; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
 
 ### Live Edit
 
@@ -1880,8 +1883,17 @@ writes every edit of every editor to that project's log, under each editor's
 name, and the edits are numbered on from the log, so the numbers continue
 across sessions.
 
-The connections are plain TCP with no encryption. The password keeps others
-out but does not hide the edits, so a session is for a local network.
+The connections are encrypted. Each pair of editors exchanges keys when it
+connects, and every message after that is encrypted and compressed. The
+password keeps others out, and its check is tied to that key exchange, so a
+machine between two editors cannot pass the answer on. Without a password a
+machine between them can still relay the session. A host behind a router
+needs its port forwarded, or a network both editors are on, such as a VPN:
+there is no relay server.
+
+The host's editor folds each long stroke of a submitted changelist into one
+edit when it opens the project, so the log does not keep a stroke's ten parts
+a second. Numbers and History stay the same.
 
 ### Hosting and joining
 
@@ -1929,8 +1941,8 @@ changed since.
 
 ### Unsubmitted edits
 
-An edit claims the tiles, client tables and server rows it changes until its
-author submits (see [Claims](#claims)). Another person's edit there is undone
+An edit claims the tiles, client table records and server rows it changes
+until its author submits (see [Claims](#claims)). Another person's edit there is undone
 before it is sent, and the status line says "<edit> was undone: <name> has
 unsubmitted edits on Azeroth 32_48". The host's saves write submitted edits
 only: a guest's unsubmitted edits are on everyone's screen and not in the
@@ -1952,41 +1964,65 @@ Take Back drops them.
 ### What is shared
 
 - Every edit that goes on the undo stack: terrain, shading, textures, holes,
-  areas, water, placements, table fields and records, and server rows. A held
-  stroke is sent in parts ten times a second, so the others see it drawn, and
-  it is counted, logged and listed in History as one edit. Undo and redo are
-  sent too.
+  areas, water, placements, shadow rebakes, table fields and records, and
+  server rows. A held stroke is sent in parts ten times a second, so the others
+  see it drawn, and it is counted, logged and listed in History as one edit.
+  Undo and redo are sent too.
 - Project files written or removed whole: imports, deletes, created and pasted
   tiles, minimap pictures, world map pictures and locks.
 
 A save is not sent, because every editor already holds the edits it writes. A
-shadow rebake is not sent. A single file larger than 48 MB is not sent, and
-the status line names it.
+single file larger than 48 MB is not sent, and the status line names it.
+
+A shadow rebake writes each chunk's new shadow as an edit over the tile as it
+is when the bake finishes, so edits made while it ran are kept, and Undo takes
+it back.
+
+### New numbers
+
+A new placement, table row, spawn, template, pool, game event, condition or
+text needs a number nobody else uses. In a session the host gives each joined
+editor blocks of numbers for each table and type, and the editor numbers from
+its own blocks. The blocks are kept in the copy, so an offline copy goes on
+numbering from them. When a joined editor has no block of a type yet, it asks
+the host, and the first such placement or row says "asked the host for new
+<type> numbers; try again in a moment". The host keeps where each type's next
+block starts in its project's `log\numbers.txt`, so a number given in a later
+session, or alone, is never one a copy still holds. Alone, a type that no block
+was ever given out of is numbered one past the largest, as before.
+
+A paste, duplicate or cluster that needs more placement numbers than the
+editor holds places nothing, asks the host for enough, and says "asked the
+host for <count> new uniqueId numbers; try again in a moment". Offline it says
+how many are left and how many it needs.
 
 ### What only the host does
 
-- Saving. A joined editor's Save reads "Saved by the host", and Ctrl+S says
-  that only the host saves.
-- "Publish…", "New Map…" and the Server panel's "Write migration".
-- In the map window: "Create", "Delete", "Paste", "Rebake", and the minimaps'
-  "Selected" and "Whole Map".
-- Deleting project files. A joined editor's Delete asks the host. The host
-  sees "<name> asks to delete <file>", with the delete button and "Keep", and
-  the editor that asked is told the answer. A delete confirmation names the
-  other editors whose unsaved edits to the files are lost with them.
+- Saving. A joined editor's Save, Ctrl+S and a table's Save submit its edits
+  to the host, as Submit in the Changes window does. The top bar's button
+  names the tiles, tables and server rows that this editor's unsubmitted
+  edits claim, for example "Submit 2 tiles and 1 table". Another editor's
+  edits are not counted. An edit that claims nothing, such as an import, is
+  counted as "Submit 1 edit". The button reads "Saved by the host" when the
+  Changes window lists no edit.
+- "Publish…" and the Server panel's "Write migration".
+- Deleting project files in the Assets workspace. A joined editor's Delete
+  asks the host. The host sees "<name> asks to delete <file>", with the delete
+  button and "Keep", and the editor that asked is told the answer. A delete
+  confirmation names the other editors whose unsaved edits to the files are
+  lost with them.
 
-A joined editor's edit of the following types is undone at once, and the
-status line says why:
-
-- adding, removing or renaming doodads and buildings;
-- adding or removing table records;
-- creating, removing or replacing whole server rows;
-- writing or removing project files other than textures, models, sounds and
-  locks.
+A joined editor makes, deletes and pastes tiles, draws minimaps, rebakes
+shadows and makes new maps as the host does. A tile another person holds a
+claim on is refused, as any edit there is. A joined editor's step that writes
+or removes a project file other than a texture, model, WMO, sound, lock,
+tile, WDT, minimap picture or the minimap index (`md5translate.trs`), such as
+a whole client table file or a zone grid, is undone at once, and the status
+line says why. Fields and records of client tables are edits on the undo
+stack, which a joined editor makes as the host does.
 
 The Server panel's "Drop Changes" is an edit like any other: it is sent to
-the others and undone with Undo. A joined editor's drop that removes whole
-rows is undone at once, as above. "Discard" in the Changes window and the
+the others and undone with Undo. "Discard" in the Changes window and the
 table editors takes back your own edits in no changelist, joined or not.
 
 ### When two editors change the same thing
@@ -2001,13 +2037,14 @@ conflicting edit first". Two edits clash when they share:
 - the textures of one tile, since a chunk's paint records the tile's whole
   texture list;
 - the doodads and buildings of one tile;
-- one client table;
+- one record of a client table, by its id. A table whose ids repeat is one
+  subject, since its edits name records by position;
 - one server row;
 - one project file. A tile's or table's file clashes with every edit of that
   tile or table.
 
-An edit to a tile, table or server row another person holds a claim on is
-undone before it is sent, and the status line reads "<edit> was undone:
+An edit to a tile, table record or server row another person holds a claim on
+is undone before it is sent, and the status line reads "<edit> was undone:
 <name> has <subject> checked out" or "… has unsubmitted edits on <subject>".
 See [Claims](#claims).
 
@@ -2037,11 +2074,27 @@ the Changes window afterwards.
 "Remove Link" removes the link from a copy with no kept
 edits. The copy then keeps a log of its own.
 
+While joined, the copy also keeps a copy of the host's log, brought up to date
+once a second, with the host's `log\numbers.txt` beside it. When the host is
+gone for good, "Take Over as Host" in the "Working Offline" popover makes the
+copy the project: it keeps the host's log as its own, applies from it every
+edit the copy's files may not hold, applies the copy's kept edits as yours,
+and opens the project again. Save, then host it; the others join this editor's
+address with "Join", and their copies' kept edits are checked against the
+same log. A copy last joined before copies kept the host's log cannot take
+over.
+
+When the Reapply of an offline edit meets placements changed since, it finds
+each doodad and building by its `uniqueId`: placements another person added
+or removed since stay, and a moved placement is found wherever it is now. A
+table record found by its id is reapplied the same way.
+
 ### Claims
 
-A claim keeps every other person's edits off a tile, a client table or a
-server row. An edit claims what it changes until its author submits. A check
-out claims a tile before any edit, until it is released or its holder
+A claim keeps every other person's edits off a tile, one record of a client
+table or a server row. A client table whose ids repeat is claimed whole,
+since its edits name records by position. An edit claims what it changes
+until its author submits. A check out claims a tile before any edit, until it is released or its holder
 submits; it is never needed to edit. Check out a tile before working on it
 offline, so nothing there changes before your edits are sent.
 
@@ -2100,20 +2153,31 @@ editor on another map is not drawn; the popover says where they are.
 
 ### Playtests and the server in a session
 
-With "Share the world database" on, the host sends its world database's
-location and login to each joined editor. The session has no encryption, so
-the login crosses the network as it is. While joined, the editor reads the
-host's database for every server read, and its playtest logs in to the host's
-realm at the host's address. Log in with an account that exists on that
-server. Only the host applies changes to that database.
+Only the project's edits are shared. Each joined editor sets which server it
+reads and playtests on in the session popover's "Server": "This machine's
+server" or "<host>'s server". The Playtest popover names the realm a playtest
+logs in to.
 
-With it off, a joined editor reads its own database. Its playtest logs in to
-the realm in its own `realmlist.wtf`, unless it has no world database of its
-own or its database is the host's; then it logs in to the host's realm. The
-Playtest popover's "Server" note says which and why. While the host's server
-is used, the Playtest popover's button reads "· <host>'s server" before its
-"⏷", and the playtest applies nothing. Offline, a copy uses this machine's
-database and server like any project.
+- This machine's server: the editor reads the world database in its own
+  `Edit\server.txt`, its playtest logs in to the realm in its own
+  `realmlist.wtf`, and its Server panel applies to its own database, as it
+  does alone. When that database is also the host's, as it is for two
+  editors on one machine whose `Edit\server.txt` files name the same
+  `mangosd.conf`, the Server panel's writes are disabled: two projects
+  applying to one database would each restore the other's rows. The Session
+  popover and the Server panel's hover text name the database.
+- The host's server: the playtest logs in to the host's realm at the host's
+  address, so log in with an account that exists on that server. With "Share
+  the world database" on in the host's form, the editor also reads the host's
+  database, whose location and login the host sends over the encrypted
+  connection. Only the host applies changes to that server.
+
+When an editor joins, the host's server is chosen if the host shares its
+database or this machine has no world database of its own, and this
+machine's otherwise. A choice made in the popover is kept when the editor
+reconnects. While the host's server is used, the Playtest popover's button
+reads "· <host>'s server" before its "⏷", and the playtest applies nothing.
+Offline, a copy uses this machine's database and server like any project.
 
 When a login on the host's server fails at the world server, the status line
 gives the world server address the host's realmd sent and what to check. If
@@ -2122,17 +2186,17 @@ host's realmd database to the host's network address. Otherwise, check that
 the host's firewall allows incoming TCP connections on the world server's
 port.
 
-Otherwise a joined editor's Server panel applies to the database in its own
-`Edit\server.txt`, not to the host's. The panel says so. "Apply on save",
-"Apply", "Restore", "Regenerate Changed Tiles", "Server Tile Files…" and the
-map window's "Server Files" are unavailable, with the reason on hover:
+A joined editor's "Apply on save", "Apply", "Restore", "Regenerate Changed
+Tiles", "Server Tile Files…" and the map window's "Server Files" are
+unavailable, with the reason on hover:
 
 - while joining;
-- while it reads the host's world database or playtests on the host's server,
-  because only the host applies changes to that server;
+- while it uses the host's server, because only the host applies changes to
+  that server;
 - when this machine's `Edit\server.txt` names the same world database as the
-  host's. The editors compare a fingerprint of the database's host, port and
-  name.
+  host's, as it does for two editors on one machine. The editors compare a
+  fingerprint of the database's host, port and name. To apply from both, give
+  the second editor a database of its own in Settings.
 
 ## Keys
 

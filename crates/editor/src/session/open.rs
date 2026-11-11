@@ -156,5 +156,6 @@ pub(super) fn open(
         unchanged,
         locks: HashMap::default(),
         placement_locks: None,
+        numbers: Default::default(),
     });
 }

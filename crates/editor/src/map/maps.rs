@@ -334,7 +334,7 @@ pub(crate) fn make(
         max_level: form.max_level,
         descriptions: form.descriptions.clone(),
     };
-    let done = places::new_map(&mut session.tables, &spec).map_err(|e| e.to_string())?;
+    let done = places::new_map(&mut session.tables, &mut session.numbers, &spec).map_err(|e| e.to_string())?;
     crate::tools::places::flightpaths::record(session, "Add map", done);
 
     let mut wdt = vale_edit::wdt::WdtFile::blank();
@@ -582,7 +582,7 @@ fn set_from_literal(template: &mut Template, column: &str, literal: &str) {
     }
 }
 
-/// **Write the edited map's fields**: its `Map.dbc` row and its server row
+/// Write the edited map's fields: its `Map.dbc` row and its server row
 /// as one undo entry, and its WDT's layout when that changed. Answers the
 /// status line.
 pub(crate) fn save(

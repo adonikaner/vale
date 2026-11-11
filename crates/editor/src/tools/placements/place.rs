@@ -979,13 +979,16 @@ fn commit(
     // See `vale_edit::adt::place::MINTED_BASE`. A tool only sees the tiles it
     // has open, and one id naming two objects now loses data instead of only
     // being untidy.
-    let unique_id = session
+    // In a session the number comes from this editor's blocks; see
+    // `crate::session::numbers`.
+    let floor = session
         .tiles
         .values()
         .filter_map(|tile| tile.highest_minted_id())
         .max()
         .map(|had| had.saturating_add(1))
         .unwrap_or(MINTED_BASE);
+    let Some(unique_id) = super::group::new_unique_id(session, floor) else { return };
 
     let position = vale_assets::world::adt::placement_from_world(at.to_array());
     let rotation = vale_assets::world::adt::placement_euler_from_world(world_angles(

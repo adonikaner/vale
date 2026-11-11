@@ -848,6 +848,13 @@ impl Quests {
         quest::NUMBERING.next_entry(self.max_entry, edits)
     }
 
+    /// The entry a quest made now takes: [`Self::next_entry`], or a number
+    /// from the session's blocks (`crate::session::numbers`).
+    fn new_entry(&self, session: &mut EditSession) -> u32 {
+        let floor = self.next_entry(&session.rows.edits);
+        session.numbers.soft_u32(&vale_edit::numbers::row(quest::NUMBERING.table, "entry"), floor)
+    }
+
     /// Whether an entry is already a quest, by the entry the project gives
     /// each row and by the one the database has it at — see
     /// `crate::subjects::items::Items::entry_taken`, where the reason for both is.
@@ -911,7 +918,7 @@ impl Quests {
     /// Make a new quest, and open it. Every column is written at once, at
     /// the server's own patch — see `vale_mangos::quest::new_quest`.
     pub(crate) fn create(&mut self, session: &mut EditSession, title: &str, patch: u32, now: f64) -> u32 {
-        let entry = self.next_entry(&session.rows.edits);
+        let entry = self.new_entry(session);
         let key = quest::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,
@@ -949,7 +956,7 @@ impl Quests {
             .as_ref()
             .filter(|held| Some(held.entry) == self.open)?;
         let source = quest::template_key(from.entry, from.patch);
-        let entry = self.next_entry(&session.rows.edits);
+        let entry = self.new_entry(session);
         let key = quest::template_key(entry, patch);
         let mut row = RowEdit {
             life: Life::Insert,

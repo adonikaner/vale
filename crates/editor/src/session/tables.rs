@@ -41,10 +41,6 @@ impl EditSession {
         self.tables.get(name)
     }
 
-    pub(crate) fn table_mut(&mut self, name: &str) -> Option<&mut DbcFile> {
-        self.tables.get_mut(name)
-    }
-
     /// Note that a table's bytes are ahead of what is written down.
     ///
     /// The table counterpart of the `unsaved` mark, and not of

@@ -47,6 +47,28 @@
 //! are written to `changelists.txt` as a line numbered 0, which
 //! [`Log::changelists`] leaves out.
 //!
+//! ## A copy of the log
+//!
+//! Both of the log's growing files are only appended to, so a joined
+//! editor's copy of the project keeps a copy of the host's log by asking for
+//! what was appended since the lengths it holds ([`Log::tail`]) and appending
+//! it ([`replicate`]). A copy whose host is gone can then host the project
+//! with its history. A tail cut part way through a frame is completed by the
+//! next one; a log opened from a copy that is cut there drops the partial
+//! frame, as it drops a damaged tail.
+//!
+//! ## Compaction
+//!
+//! A stroke is stored in parts, each with whole chunk states before and
+//! after, so a long stroke stores its chunks many times over. [`Log::compact`]
+//! folds each stroke of a closed changelist into its first part and leaves
+//! the later parts empty: the numbers, the groups and the counts stay as
+//! they were, and applying or reverting the parts in order does what it did.
+//! `compacted.txt` records the generation, which each compaction raises, and
+//! the last edit compacted. A copy of the log ([`Tail::generation`]) of
+//! another generation is started again, since its bytes are no longer the
+//! log's.
+//!
 //! ## Changelists
 //!
 //! An author's edits that are in no changelist are that author's open edits.
@@ -78,6 +100,8 @@ pub const LOG_DIR: &str = vale_edit::project::LOG_DIR;
 const ID_FILE: &str = "id.txt";
 const EDITS_FILE: &str = "edits.bin";
 const CHANGELISTS_FILE: &str = "changelists.txt";
+/// The generation and the last edit compacted. See *Compaction*.
+const COMPACTED_FILE: &str = "compacted.txt";
 
 /// The changelist number that marks withdrawn edits. See *Withdrawn edits*.
 const WITHDRAWN: u32 = 0;
@@ -164,6 +188,10 @@ pub struct Log {
     names: HashMap<AuthorId, String>,
     /// How many whole edits of each author are in no changelist.
     open: HashMap<AuthorId, usize>,
+    /// Raised by each compaction. See *Compaction*.
+    generation: u32,
+    /// The last edit a compaction looked at.
+    compacted: Seq,
 }
 
 impl Log {
@@ -180,7 +208,17 @@ impl Log {
                 id
             }
         };
-        let mut log = Log { dir, id, headers: Vec::new(), changelists: Vec::new(), names: HashMap::new(), open: HashMap::new() };
+        let (generation, compacted) = read_compacted(&dir);
+        let mut log = Log {
+            dir,
+            id,
+            headers: Vec::new(),
+            changelists: Vec::new(),
+            names: HashMap::new(),
+            open: HashMap::new(),
+            generation,
+            compacted,
+        };
         log.read_edits()?;
         log.read_changelists();
         Ok(log)
@@ -234,6 +272,11 @@ impl Log {
                 self.changelists.push(changelist);
             }
         }
+    }
+
+    /// The folder the log is kept in.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// The log's id. Two logs with the same id are the same history.
@@ -431,6 +474,191 @@ impl Log {
         self.changelists.push(changelist.clone());
         Ok(Some(changelist))
     }
+
+    /// What the log's two files hold past `edits_from` and
+    /// `changelists_from` bytes, at most `max` bytes of each, and their
+    /// lengths now. See *A copy of the log*.
+    pub fn tail(&self, edits_from: u64, changelists_from: u64, max: usize) -> std::io::Result<Tail> {
+        let part = |file: &str, from: u64| -> std::io::Result<(Vec<u8>, u64)> {
+            let bytes = match std::fs::read(self.dir.join(file)) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(e) => return Err(e),
+            };
+            let start = (from as usize).min(bytes.len());
+            let end = start.saturating_add(max).min(bytes.len());
+            Ok((bytes[start..end].to_vec(), bytes.len() as u64))
+        };
+        let (edits, edits_len) = part(EDITS_FILE, edits_from)?;
+        let (changelists, changelists_len) = part(CHANGELISTS_FILE, changelists_from)?;
+        Ok(Tail {
+            log: self.id,
+            generation: self.generation,
+            compacted: self.compacted,
+            edits_from,
+            edits,
+            edits_len,
+            changelists_from,
+            changelists,
+            changelists_len,
+            numbers: String::new(),
+        })
+    }
+
+    /// Fold each stroke of a closed changelist into its first part. `fold`
+    /// is given the payloads of one stroke's parts, oldest first, and answers
+    /// one payload for each, or `None` to leave the stroke as it is. Only
+    /// strokes with an edit after the last compaction's mark are given; the
+    /// mark stops before the first edit in no changelist. Answers how many
+    /// strokes were folded. See *Compaction*.
+    pub fn compact(&mut self, mut fold: impl FnMut(&[Vec<u8>]) -> Option<Vec<Vec<u8>>>) -> std::io::Result<usize> {
+        // Each stroke: an author's edit that does not continue, and that
+        // author's edits after it that do.
+        let mut strokes: Vec<Vec<usize>> = Vec::new();
+        let mut last_of: HashMap<AuthorId, usize> = HashMap::new();
+        for (at, header) in self.headers.iter().enumerate() {
+            match (header.continues, last_of.get(&header.author)) {
+                (true, Some(&stroke)) => strokes[stroke].push(at),
+                _ => {
+                    last_of.insert(header.author, strokes.len());
+                    strokes.push(vec![at]);
+                }
+            }
+        }
+        let closed = |at: &usize| matches!(self.headers[*at].changelist, Some(number) if number != WITHDRAWN);
+        let mut replaced: HashMap<usize, Vec<u8>> = HashMap::new();
+        let mut folded = 0;
+        for stroke in strokes.iter().filter(|stroke| stroke.len() > 1 && stroke.iter().all(closed)) {
+            if stroke.iter().all(|at| self.headers[*at].seq <= self.compacted) {
+                continue;
+            }
+            let payloads = stroke.iter().map(|at| self.read(self.headers[*at].seq)).collect::<std::io::Result<Vec<_>>>()?;
+            let Some(made) = fold(&payloads).filter(|made| made.len() == stroke.len()) else { continue };
+            for (at, payload) in stroke.iter().zip(made) {
+                replaced.insert(*at, payload);
+            }
+            folded += 1;
+        }
+        // Up to the first edit in no changelist: a stroke open now is looked
+        // at again by the next compaction, once it is closed.
+        let through = self.headers.iter().find(|header| header.changelist.is_none()).map_or(self.last(), |header| header.seq - 1);
+        if replaced.is_empty() {
+            self.compacted = through;
+            write_compacted(&self.dir, self.generation, through)?;
+            return Ok(0);
+        }
+        // Every frame written again into a new file, which then replaces the
+        // old one, so a crash leaves one or the other whole.
+        let old = std::fs::read(self.dir.join(EDITS_FILE))?;
+        let mut rest = old.as_slice();
+        let mut out = Vec::with_capacity(old.len());
+        for at in 0..self.headers.len() {
+            let mut stored = read_stored(&mut rest)?;
+            if let Some(payload) = replaced.remove(&at) {
+                let mut deflated = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+                deflated.write_all(&payload)?;
+                stored.payload = deflated.finish()?;
+            }
+            write_frame(&mut out, &stored)?;
+        }
+        let fresh = self.dir.join("edits.new");
+        std::fs::write(&fresh, &out)?;
+        std::fs::rename(&fresh, self.dir.join(EDITS_FILE))?;
+        self.generation += 1;
+        self.compacted = through;
+        write_compacted(&self.dir, self.generation, through)?;
+        // The frames moved: read their offsets again.
+        let changelists = std::mem::take(&mut self.changelists);
+        let marks: Vec<Option<u32>> = self.headers.iter().map(|header| header.changelist).collect();
+        let open = std::mem::take(&mut self.open);
+        self.headers.clear();
+        self.read_edits()?;
+        for (header, mark) in self.headers.iter_mut().zip(marks) {
+            header.changelist = mark;
+        }
+        self.changelists = changelists;
+        self.open = open;
+        Ok(folded)
+    }
+}
+
+/// What a log appended past two lengths. See [`Log::tail`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Tail {
+    /// The id of the log it is from.
+    pub log: [u8; 16],
+    /// The log's generation and last edit compacted. See *Compaction*.
+    pub generation: u32,
+    pub compacted: Seq,
+    /// Where `edits` starts in `edits.bin`.
+    pub edits_from: u64,
+    pub edits: Vec<u8>,
+    /// How long `edits.bin` is.
+    pub edits_len: u64,
+    pub changelists_from: u64,
+    pub changelists: Vec<u8>,
+    pub changelists_len: u64,
+    /// The host's allocator of new numbers as its file holds it
+    /// (`crate::ids::Allocator::text`), so a copy that hosts goes on
+    /// numbering where the host stopped. Filled by the host's editor.
+    pub numbers: String,
+}
+
+/// The id and the lengths of the two growing files of the copy of a log in
+/// `dir`, or zeros and `None` where it has none. See *A copy of the log*.
+pub fn copy_lengths(dir: &Path) -> (Option<[u8; 16]>, u64, u64) {
+    let id = std::fs::read_to_string(dir.join(ID_FILE)).ok().and_then(|text| parse_hex(text.trim()));
+    let len = |file: &str| std::fs::metadata(dir.join(file)).map_or(0, |meta| meta.len());
+    (id, len(EDITS_FILE), len(CHANGELISTS_FILE))
+}
+
+/// Append a tail to the copy of a log in `dir`. A copy of another log, or
+/// one longer than the log it copies (a log that cut a damaged tail), is
+/// started again from nothing; the next tail asked for fills it. A tail that
+/// does not start at the copy's length is not appended. Answers whether the
+/// copy holds all of the log now.
+pub fn replicate(dir: &Path, tail: &Tail) -> std::io::Result<bool> {
+    std::fs::create_dir_all(dir)?;
+    let (id, edits_len, changelists_len) = copy_lengths(dir);
+    let (generation, _) = read_compacted(dir);
+    let other = id != Some(tail.log) || generation != tail.generation;
+    if other || edits_len > tail.edits_len || changelists_len > tail.changelists_len {
+        std::fs::write(dir.join(ID_FILE), format!("{}\n", hex(&tail.log)))?;
+        std::fs::write(dir.join(EDITS_FILE), b"")?;
+        std::fs::write(dir.join(CHANGELISTS_FILE), b"")?;
+        write_compacted(dir, tail.generation, tail.compacted)?;
+        return Ok(false);
+    }
+    let append = |file: &str, at: u64, from: u64, bytes: &[u8]| -> std::io::Result<u64> {
+        if at != from || bytes.is_empty() {
+            return Ok(at);
+        }
+        let mut out = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(file))?;
+        out.write_all(bytes)?;
+        Ok(at + bytes.len() as u64)
+    };
+    let edits = append(EDITS_FILE, edits_len, tail.edits_from, &tail.edits)?;
+    let changelists = append(CHANGELISTS_FILE, changelists_len, tail.changelists_from, &tail.changelists)?;
+    Ok(edits == tail.edits_len && changelists == tail.changelists_len)
+}
+
+/// The generation and last edit compacted of the log in `dir`; zeros when it
+/// has never been compacted.
+fn read_compacted(dir: &Path) -> (u32, Seq) {
+    let text = std::fs::read_to_string(dir.join(COMPACTED_FILE)).unwrap_or_default();
+    let mut out = (0, 0);
+    for line in text.lines() {
+        match line.split_once(' ') {
+            Some(("generation", value)) => out.0 = value.trim().parse().unwrap_or(0),
+            Some(("through", value)) => out.1 = value.trim().parse().unwrap_or(0),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn write_compacted(dir: &Path, generation: u32, through: Seq) -> std::io::Result<()> {
+    std::fs::write(dir.join(COMPACTED_FILE), format!("generation {generation}\nthrough {through}\n"))
 }
 
 /// A new random author id.
@@ -601,6 +829,63 @@ mod tests {
         assert_eq!(touches[&chunk(3)], (2, [2; 16]));
         assert_eq!(touches[&chunk(4)], (2, [2; 16]));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A closed stroke is folded into its first part and its later parts
+    /// emptied; an open one is left; the numbers, groups and changelists stay
+    /// as they were, and the log opens again the same.
+    #[test]
+    fn compaction_folds_closed_strokes_only() {
+        let dir = folder("compact");
+        let (sam, alex) = (author(1, "Sam"), author(2, "Alex"));
+        let mut log = Log::open(&dir).unwrap();
+        log.append(1, &sam, 100, vec![chunk(3)], false, b"a").unwrap();
+        log.append(2, &alex, 100, vec![chunk(9)], false, b"x").unwrap();
+        log.append(3, &sam, 101, vec![chunk(3)], true, b"b").unwrap();
+        log.append(4, &alex, 101, vec![chunk(9)], true, b"y").unwrap();
+        log.close(&sam, 102, "Hill").unwrap();
+        let folded = log
+            .compact(|parts| {
+                let joined: Vec<u8> = parts.concat();
+                Some(std::iter::once(joined).chain(parts[1..].iter().map(|_| Vec::new())).collect())
+            })
+            .unwrap();
+        assert_eq!(folded, 1);
+        assert_eq!((log.read(1).unwrap(), log.read(3).unwrap()), (b"ab".to_vec(), Vec::new()));
+        assert_eq!((log.read(2).unwrap(), log.read(4).unwrap()), (b"x".to_vec(), b"y".to_vec()));
+        let again = Log::open(&dir).unwrap();
+        assert_eq!((again.last(), again.changelists().len(), again.open_count(&alex.id)), (4, 1, 1));
+        assert_eq!(again.header(3).unwrap().groups, vec![chunk(3)]);
+        assert_eq!(again.read(1).unwrap(), b"ab");
+        assert_eq!(read_compacted(&dir), (1, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A copy kept from tails, a few bytes at a time, opens as the same log.
+    /// A copy of another log is started again.
+    #[test]
+    fn a_copy_kept_from_tails_is_the_same_log() {
+        let (dir, copy) = (folder("original"), folder("copy"));
+        let sam = author(1, "Sam");
+        let mut log = Log::open(&dir).unwrap();
+        log.append(1, &sam, 100, vec![chunk(3)], false, b"raise").unwrap();
+        log.append(2, &sam, 101, vec![chunk(4)], false, &vec![7u8; 1000]).unwrap();
+        log.close(&sam, 102, "Hills").unwrap();
+        loop {
+            let (_, edits, changelists) = copy_lengths(&copy);
+            if replicate(&copy, &log.tail(edits, changelists, 300).unwrap()).unwrap() {
+                break;
+            }
+        }
+        let read = Log::open(&copy).unwrap();
+        assert_eq!((read.id(), read.last(), read.changelists().len()), (log.id(), 2, 1));
+        assert_eq!(read.read(2).unwrap(), vec![7u8; 1000]);
+
+        let other = Log::open(folder("other")).unwrap();
+        assert!(!replicate(&copy, &other.tail(0, 0, 300).unwrap()).unwrap());
+        assert_eq!(copy_lengths(&copy), (Some(other.id()), 0, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&copy);
     }
 
     /// A partial last frame is cut off when the log is opened, and the next

@@ -16,7 +16,9 @@
 //! the people in it as list rows, each in their colour, where they are and
 //! what tool they hold; a press on a row goes to them, and the host's right
 //! click on a row removes that editor. Under the list, the address to give
-//! the other editors, and End Session, or Work Offline and Leave.
+//! the other editors, and End Session, or Work Offline and Leave. A joined
+//! editor also sets there which server it reads and playtests on (see the
+//! "Server writes" section of `crate::collab`).
 //!
 //! An offline copy shows where it came from, how many edits it keeps to
 //! send, Reconnect, and Remove Link. See `crate::collab::offline`.
@@ -143,10 +145,10 @@ pub(crate) fn panel(ui: &mut egui::Ui, collab: &mut Collab, project: &str, here:
             );
             theme::note(
                 ui,
-                "Only the host saves, publishes, makes and deletes tiles, adds, removes and renames doodads \
-                 and buildings, and adds or removes table records and server rows. Delete asks the host to \
-                 delete the files. The Playtest popover names the server a playtest logs in to.",
+                "The host saves: this editor's Save submits its edits to the host. Only the host publishes \
+                 and writes migrations. Delete in the Assets workspace asks the host to delete the files.",
             );
+            server(ui, collab);
             people(ui, collab, false);
             claims(ui, collab, here);
             counts(ui, collab);
@@ -216,6 +218,56 @@ fn offline(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
     if unlink.clicked() {
         collab.ask = Some(Ask::Unlink);
     }
+    let take_over = ui.button("Take Over as Host").on_hover_text(
+        "Turn this copy into the project, with the copy of the host's log as its history, so this editor can host \
+         the project when the host is gone. The edits made offline are applied and logged as this editor's. The \
+         other editors then join this editor's address.",
+    );
+    if take_over.clicked() {
+        collab.ask = Some(Ask::TakeOver);
+    }
+}
+
+/// Which server a joined editor reads and playtests on, and the switch
+/// between this machine's and the host's. Only the project's edits are
+/// shared; each machine's server and world database stay its own unless the
+/// host's is chosen. When the Server panel's writes are disabled, the reason
+/// is under the switch. See the "Server writes" section of `crate::collab`.
+fn server(ui: &mut egui::Ui, collab: &mut Collab) {
+    use crate::collab::PlaytestServer;
+    let host = collab.host_name().unwrap_or("Host").to_string();
+    let address = collab.host_address().unwrap_or("").to_string();
+    let shared = collab.shared_database.is_some();
+    theme::heading(ui, "Server");
+    let before = collab.playtest_server;
+    ui.horizontal(|ui| {
+        ui.radio_value(&mut collab.playtest_server, PlaytestServer::Local, "This machine's server");
+        ui.radio_value(&mut collab.playtest_server, PlaytestServer::Host, format!("{host}'s server"));
+    });
+    if collab.playtest_server != before {
+        collab.server_chosen = true;
+    }
+    match (collab.playtest_server, shared) {
+        (PlaytestServer::Local, true) => theme::note(
+            ui,
+            format!("A playtest logs in to the realm in realmlist.wtf, and this editor reads this machine's world database and applies changes to it from the Server panel. {host} shares their world database; to read it instead, choose \"{host}'s server\"."),
+        ),
+        (PlaytestServer::Local, false) => theme::note(
+            ui,
+            format!("A playtest logs in to the realm in realmlist.wtf, and this editor reads this machine's world database and applies changes to it from the Server panel. {host} does not share their world database."),
+        ),
+        (PlaytestServer::Host, true) => theme::note(
+            ui,
+            format!("A playtest logs in to {host}'s realm at {address}, and this editor reads {host}'s world database. Log in with an account that exists on that server."),
+        ),
+        (PlaytestServer::Host, false) => theme::note(
+            ui,
+            format!("A playtest logs in to {host}'s realm at {address}. {host} does not share their world database, so this editor reads this machine's. Log in with an account that exists on that server."),
+        ),
+    }
+    if let Some(refused) = collab.server_gate().refused {
+        ui.label(egui::RichText::new(format!("Server panel disabled. {refused}")).size(theme::SMALL).color(theme::WARN));
+    }
 }
 
 /// The heading of a running session: what it is, and of what.
@@ -251,9 +303,9 @@ fn forms(ui: &mut egui::Ui, collab: &mut Collab, project: &str) {
             ui.checkbox(&mut collab.form.share_database, "Share the world database");
             theme::note(
                 ui,
-                "With this on, joined editors read this machine's world database and playtest on its realm while \
-                 joined; only this editor applies changes to it. The database's location and login are sent to them, \
-                 and the session is not encrypted.",
+                "Sends each joined editor this machine's world database location and login, over the encrypted \
+                 connection. A joined editor that sets \"Server\" in its Session popover to this machine's server \
+                 reads this database and playtests on this realm. Only this editor applies changes to this database.",
             );
             let at = crate::collab::lan_address().map_or_else(|| "this machine's address".to_string(), |ip| ip.to_string());
             theme::note(ui, format!("Other editors join at {at}:{} with the password. They work on {project}.", collab.form.port.trim()));
@@ -328,9 +380,10 @@ fn claims(ui: &mut egui::Ui, collab: &mut Collab, here: &vale_edit::TileKey) {
     theme::heading(ui, &format!("Claims ({})", collab.holds.len()));
     theme::note(
         ui,
-        "A claim keeps every other editor's edits off a tile, a table or a row. An edit claims what it changes \
-         until its author submits. A check out claims a tile before any edit, until it is released or its holder \
-         submits; a tile checked out before working on it offline does not change before those edits are sent.",
+        "The host refuses every other editor's edits to a claimed tile, client table record or server row. An edit \
+         claims what it changes until its author submits. A check out claims a tile before any edit, until it is \
+         released or its holder submits. Check out a tile before working on it offline, so that no other editor \
+         changes it before the offline edits are sent.",
     );
     let mut ask = None;
     for held in &collab.holds {

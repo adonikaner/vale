@@ -14,6 +14,8 @@
 //!            minimap under a zone's rectangle
 //! ops/       the edit operations: how each is applied, inverted and named
 //! undo.rs    the undo stack, from which edits are undone and redone
+//! numbers.rs the number a new record takes, alone or from a session's
+//!            blocks
 //! m2/        writing models: a rigid transform baked into a copy of a model,
 //!            which is how 1.12 positions a spell effect, and a whole model
 //!            written from a glTF file with its skeleton and animations
@@ -52,6 +54,7 @@ pub mod m2;
 pub mod manifest;
 pub mod ops;
 pub mod minimap;
+pub mod numbers;
 pub mod project;
 pub mod shadow;
 pub mod sound;

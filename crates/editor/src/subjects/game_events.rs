@@ -374,7 +374,8 @@ impl GameEvents {
 
     /// Make an event a script starts, with no dates, and answer its entry.
     pub(crate) fn new_event(&self, session: &mut EditSession, description: &str, now: f64) -> Result<u32, String> {
-        let entry = self.next_entry(&session.rows.edits).ok_or("the game event tables have not been read yet")?;
+        let floor = self.next_entry(&session.rows.edits).ok_or("the game event tables have not been read yet")?;
+        let entry = session.numbers.soft_u32(&vale_edit::numbers::row(game_event::EVENT, "entry"), floor);
         if entry > u32::from(u16::MAX) {
             return Err(format!("game event {entry} is past the largest event entry, {}", u16::MAX));
         }

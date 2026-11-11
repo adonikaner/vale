@@ -32,6 +32,7 @@
 //! in, so one deep copy is one entry on the stack.
 
 use super::{cell, Cell, DbcFile, Row};
+use crate::numbers::{dbc, take_u32, Numbers};
 use vale_assets::tables::schema::{self, Kind};
 use std::collections::HashMap;
 
@@ -75,12 +76,13 @@ impl Cloned {
 /// `None` when the table is not open or has no row with that id.
 pub fn clone_row(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     table: &str,
     id: u32,
     suffix: Option<&str>,
 ) -> Option<Cloned> {
     let mut out = Cloned::default();
-    copy_row(tables, table, id, suffix, &mut out)?;
+    copy_row(tables, numbers, table, id, suffix, &mut out)?;
     Some(out)
 }
 
@@ -97,6 +99,7 @@ pub fn clone_row(
 /// [`clone_row`]'s job.
 pub fn clone_chain(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     table: &str,
     id: u32,
     deep: &[&str],
@@ -104,7 +107,7 @@ pub fn clone_chain(
 ) -> Option<Cloned> {
     schema::for_table(table)?;
     let mut out = Cloned::default();
-    copy_deep(tables, table, id, deep, suffix, &mut out)?;
+    copy_deep(tables, numbers, table, id, deep, suffix, &mut out)?;
     Some(out)
 }
 
@@ -112,6 +115,7 @@ pub fn clone_chain(
 /// record index.
 fn copy_row(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     table: &str,
     id: u32,
     suffix: Option<&str>,
@@ -120,7 +124,7 @@ fn copy_row(
     let file = tables.get_mut(table)?;
     let from = file.row_of(id)?;
     let mut bytes = file.record_bytes(from)?.to_vec();
-    let new_id = file.max_id().checked_add(1)?;
+    let new_id = take_u32(numbers, &dbc(table), file.max_id().checked_add(1)?).ok()?;
     bytes[..super::file::FIELD_LEN].copy_from_slice(&new_id.to_le_bytes());
     let at = file.push_record(&bytes)?;
     out.rows.push((table.to_string(), Row::added(file, at)?));
@@ -146,6 +150,7 @@ fn copy_row(
 /// rewired. Memoised on `out.ids`, so a row referenced twice is copied once.
 fn copy_deep(
     tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
     table: &str,
     id: u32,
     deep: &[&str],
@@ -155,7 +160,7 @@ fn copy_deep(
     if let Some(done) = out.new_id(table, id) {
         return Some(done);
     }
-    let (new_id, at) = copy_row(tables, table, id, suffix, out)?;
+    let (new_id, at) = copy_row(tables, numbers, table, id, suffix, out)?;
     let Some(schema) = schema::for_table(table) else {
         return Some(new_id);
     };
@@ -177,7 +182,7 @@ fn copy_deep(
         if tables.get(target).and_then(|file| file.row_of(old)).is_none() {
             continue;
         }
-        let Some(copied) = copy_deep(tables, target, old, deep, suffix, out) else {
+        let Some(copied) = copy_deep(tables, numbers, target, old, deep, suffix, out) else {
             continue;
         };
         let file = tables.get_mut(table)?;
@@ -192,6 +197,7 @@ fn copy_deep(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::numbers::Alone;
 
     /// A table of `fields` words per record, records given as rows of words.
     fn table(fields: u32, rows: &[&[u32]], strings: &[u8]) -> DbcFile {
@@ -252,7 +258,7 @@ mod tests {
     #[test]
     fn a_row_copy_is_the_same_bytes_under_a_new_id() {
         let mut tables = chain();
-        let done = clone_row(&mut tables, "SpellVisualKit", 10, None).unwrap();
+        let done = clone_row(&mut tables, &mut Alone, "SpellVisualKit", 10, None).unwrap();
         assert_eq!(done.ids, vec![("SpellVisualKit".to_string(), 10, 12)]);
         let kits = &tables["SpellVisualKit"];
         assert_eq!(kits.record_count(), 3);
@@ -267,6 +273,7 @@ mod tests {
         let mut tables = chain();
         let done = clone_chain(
             &mut tables,
+            &mut Alone,
             "SpellVisual",
             5,
             &["SpellVisualKit", "SpellVisualEffectName"],
@@ -311,6 +318,7 @@ mod tests {
         let before = tables.clone();
         let done = clone_chain(
             &mut tables,
+            &mut Alone,
             "SpellVisual",
             5,
             &["SpellVisualKit", "SpellVisualEffectName"],
@@ -340,8 +348,8 @@ mod tests {
     #[test]
     fn a_missing_row_or_an_unschemad_table_copies_nothing() {
         let mut tables = chain();
-        assert!(clone_row(&mut tables, "SpellVisual", 99, None).is_none());
-        assert!(clone_chain(&mut tables, "NoSuchTable", 1, &[], None).is_none());
+        assert!(clone_row(&mut tables, &mut Alone, "SpellVisual", 99, None).is_none());
+        assert!(clone_chain(&mut tables, &mut Alone, "NoSuchTable", 1, &[], None).is_none());
         assert_eq!(tables, chain());
     }
 }

@@ -292,17 +292,78 @@ pub(crate) struct TileReader {
     /// tile loaders would open their chains again.
     gamedata_dir: String,
     maps: Vec<(u32, String)>,
+    /// The models and buildings the project carries, by lower-case path with
+    /// `\` between its parts. See [`TileReader::inputs_hash`].
+    models: Vec<String>,
+    /// Each model's hash, read once per reader rather than once per tile
+    /// placing it. `None` for a model the project no longer holds.
+    model_hashes: std::cell::RefCell<std::collections::HashMap<String, Option<u64>>>,
 }
 
 impl TileReader {
     /// Reads `Map.dbc` through `assets`, which is one small file.
     pub(crate) fn new(project: &Project, assets: &GameAssets) -> TileReader {
+        let models = project
+            .files()
+            .into_iter()
+            .map(|vpath| vpath.replace('/', "\\").to_ascii_lowercase())
+            .filter(|vpath| vpath.ends_with(".m2") || vpath.ends_with(".wmo"))
+            .collect();
         TileReader {
             project: project.clone(),
             chains: assets.chains(),
             gamedata_dir: assets.gamedata_dir.clone(),
             maps: crate::places::map_directories(assets),
+            models,
+            model_hashes: Default::default(),
         }
+    }
+
+    /// The hash a tile's server files are recorded against: the ADT's bytes,
+    /// and the bytes of each model and building it places that the project
+    /// carries, since the server's collision files are built from those too.
+    /// A building's group files (`Name_000.wmo`) count with its root. A tile
+    /// that places none of the project's models hashes as its bytes alone, as
+    /// a record written before models were counted holds it. Answers the hash
+    /// and whether any of the project's models counted.
+    fn inputs_hash(&self, bytes: &[u8], tile: Option<&AdtFile>) -> (u64, bool) {
+        let plain = vale_edit::project::fnv1a(bytes);
+        let Some(tile) = tile.filter(|_| !self.models.is_empty()) else { return (plain, false) };
+        let mut placed: Vec<String> = Vec::new();
+        for path in tile.model_names() {
+            let path = path.replace('/', "\\").to_ascii_lowercase();
+            // A placement names an `.mdx` or `.mdl` that the archives hold as
+            // an `.m2`.
+            let m2 = match path.rsplit_once('.') {
+                Some((stem, _)) => format!("{stem}.m2"),
+                None => path,
+            };
+            placed.extend(self.models.iter().filter(|model| **model == m2).cloned());
+        }
+        for path in tile.building_names() {
+            let path = path.replace('/', "\\").to_ascii_lowercase();
+            let stem = path.strip_suffix(".wmo").unwrap_or(&path).to_string();
+            let group = format!("{stem}_");
+            placed.extend(self.models.iter().filter(|model| **model == path || (model.starts_with(&group) && model.ends_with(".wmo"))).cloned());
+        }
+        if placed.is_empty() {
+            return (plain, false);
+        }
+        placed.sort();
+        placed.dedup();
+        let mut mixed = bytes.to_vec();
+        for model in placed {
+            mixed.extend_from_slice(model.as_bytes());
+            let hash = *self
+                .model_hashes
+                .borrow_mut()
+                .entry(model.clone())
+                .or_insert_with(|| self.project.read(&model).map(|bytes| vale_edit::project::fnv1a(&bytes)));
+            if let Some(hash) = hash {
+                mixed.extend_from_slice(&hash.to_le_bytes());
+            }
+        }
+        (vale_edit::project::fnv1a(&mixed), true)
     }
 
     /// A chain for the comparison, borrowed once for all its tiles. `None`
@@ -454,19 +515,24 @@ impl TileReader {
                 map_removed: false,
             }));
         };
-        let reach = match shipped {
-            Some(shipped) => match (AdtFile::parse(&shipped), AdtFile::parse(&bytes)) {
-                (Ok(shipped), Ok(edited)) if shipped.same_placements(&edited) => Reach::Terrain,
+        let edited = AdtFile::parse(&bytes).ok();
+        let (hash, models) = self.inputs_hash(&bytes, edited.as_ref());
+        // A tile that places a model the project carries reaches the
+        // collision files whatever its placements are.
+        let reach = match (shipped, &edited) {
+            _ if models => Reach::Placements,
+            (Some(shipped), Some(edited)) => match AdtFile::parse(&shipped) {
+                Ok(shipped) if shipped.same_placements(edited) => Reach::Terrain,
                 _ => Reach::Placements,
             },
             // Not in the archives: a tile the project made.
-            None => Reach::Placements,
+            _ => Reach::Placements,
         };
         Ok(Some(Dirty {
             vpath,
             tile: Tile::new(id, x, y),
             reach,
-            hash: Some(vale_edit::project::fnv1a(&bytes)),
+            hash: Some(hash),
             map_removed: false,
         }))
     }

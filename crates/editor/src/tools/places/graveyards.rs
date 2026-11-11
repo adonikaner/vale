@@ -267,7 +267,7 @@ pub(crate) fn move_place(session: &mut EditSession, place: &SafeLoc, to: Vec3, n
 
 /// Make a safe place on the ground at `at`. Answers the status line.
 pub(crate) fn new_place(session: &mut EditSession, graveyards: &mut Graveyards, at: Vec3) -> String {
-    match places::new_safe_loc(&mut session.tables, graveyards.points.map, at.to_array(), NEW_NAME) {
+    match places::new_safe_loc(&mut session.tables, &mut session.numbers, graveyards.points.map, at.to_array(), NEW_NAME) {
         Ok(done) => {
             let made = done.made;
             super::flightpaths::record(session, "Add graveyard", done);

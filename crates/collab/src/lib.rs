@@ -5,24 +5,26 @@
 //! wire.rs     the messages: what an editor sends the host and what the host
 //!             sends an editor, and their framing on a stream
 //! groups.rs   what two edits conflict over: a chunk's shape, a tile's
-//!             textures, a tile's placements, a DBC table, a server row, a
-//!             project file
+//!             textures, a tile's placements, a DBC record or table, a
+//!             server row, a project file
 //! host.rs     the host's half: who is in, the order of every accepted edit,
 //!             and the check that refuses an edit made on out-of-date state
 //! peer.rs     every editor's half, the host's own included: its edits not
 //!             yet accepted, and which of them a remote edit makes the host
 //!             refuse, so they are reverted before the remote edit lands
 //! ids.rs      blocks of new numbers handed out by the host, so two editors
-//!             never give two new spawns the same guid
+//!             never give two new records the same number
 //! log.rs      a project's log: every accepted edit in order, with author
-//!             and time, kept on disk, and the changelists over it
-//! auth.rs     the password check: a challenge answered with a keyed hash,
-//!             so the password is not sent
-//! checkout.rs claims: a tile, a table or a server row one author holds,
-//!             checked out or by an unsubmitted edit, which the host refuses
-//!             others' edits to
+//!             and time, kept on disk, and the changelists over it; its
+//!             compaction, and a joined editor's copy of it
+//! auth.rs     the password check: a challenge bound to the connection and
+//!             answered with a keyed hash, so the password is not sent
+//! checkout.rs claims: a tile, a table, a record or a server row one author
+//!             holds, checked out or by an unsubmitted edit, which the host
+//!             refuses others' edits to
 //! net.rs      the TCP connections: the host's listener and an editor's
-//!             connection, each a pair of threads and two channels
+//!             connection, each a pair of threads and two channels, with a
+//!             key exchange and every frame encrypted and deflated
 //! session.rs  the two ways to be in a session, hosting or joined, each one
 //!             host or connection driven together with this editor's peer
 //! ```
@@ -69,9 +71,11 @@
 //! back, because it cannot be: a delete drops unsaved edits. See
 //! [`peer`]'s *Forced edits*.
 //!
-//! The connections are plain TCP and carry no encryption: a session is for a
-//! local network. The password keeps strangers out; it does not hide the
-//! edits.
+//! The connections are TCP, encrypted after a key exchange ([`net`]). The
+//! password keeps strangers out, and its check is bound to the key exchange
+//! ([`auth`]), so a machine between two editors cannot pass it on. A host
+//! behind a router needs its port forwarded, or a network both editors are
+//! on: there is no relay.
 
 pub mod auth;
 pub mod checkout;

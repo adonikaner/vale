@@ -450,6 +450,9 @@ pub(crate) fn commit(
         session.status = "the cluster has no members; widen it or lower the spacing".to_string();
         return;
     }
+    if !super::group::reserve_unique_ids(session, landings.len()) {
+        return;
+    }
 
     // Each model's reach, read once per click rather than once per member.
     let mut reaches: Vec<(String, Option<f32>)> = Vec::new();
@@ -463,8 +466,10 @@ pub(crate) fn commit(
     let mut pasted = super::group::Pasted::default();
     let mut drawn: Vec<((u32, u32), PlacedModel)> = Vec::new();
     let mut before: std::collections::HashMap<(u32, u32), Placements> = Default::default();
-    let mut unique_id = super::group::next_minted(session);
+    let mut floor = super::group::next_minted(session);
     for landing in &landings {
+        let Some(unique_id) = super::group::new_unique_id(session, floor) else { break };
+        floor = unique_id.saturating_add(1);
         let coord = vale_assets::tile_for_position(landing.at.x, landing.at.y);
         let Some(tile) = session.tiles.get_mut(&coord) else {
             pasted.skipped += 1;
@@ -498,7 +503,6 @@ pub(crate) fn commit(
                 name_set: 0,
             },
         ));
-        unique_id = unique_id.saturating_add(1);
     }
     if before.is_empty() {
         session.status = "no member of the cluster is over an open tile".to_string();

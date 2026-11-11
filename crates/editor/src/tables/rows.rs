@@ -40,8 +40,8 @@ pub(crate) fn push_row(
     numbers: &[(usize, u32)],
     texts: &[(usize, String)],
 ) -> Option<usize> {
+    let id = new_id(session, table_name)?;
     let table = session.tables.get_mut(table_name)?;
-    let id = table.max_id().checked_add(1)?;
     let bytes = table.blank_record(id);
     let at = table.push_record(&bytes)?;
     let row = Row::added(table, at)?;
@@ -130,12 +130,16 @@ pub(crate) fn copy_light_params(
             (0..FLOAT_BANDS_PER_PARAMS).filter_map(move |b| Some((FLOAT, float_band_row(params, b)?)));
         ints.chain(floats)
     };
-    let mut id = session.table(PARAMS)?.max_id().checked_add(1)?;
     session.table(INT)?;
     session.table(FLOAT)?;
-    while bands(id).any(|(table, row)| session.table(table).is_some_and(|t| t.row_of(row).is_some())) {
-        id = id.checked_add(1)?;
-    }
+    let mut floor = session.table(PARAMS)?.max_id().checked_add(1)?;
+    let id = loop {
+        let id = vale_edit::numbers::take_u32(&mut session.numbers, &vale_edit::numbers::dbc(PARAMS), floor).ok()?;
+        if !bands(id).any(|(table, row)| session.table(table).is_some_and(|t| t.row_of(row).is_some())) {
+            break id;
+        }
+        floor = id.checked_add(1)?;
+    };
 
     session.history.begin("New LightParams");
     // The params row: the source's bytes, or a blank row with 0.5 glow and
@@ -273,11 +277,20 @@ pub(crate) const CHAIN_DEEP: [&str; 2] = ["SpellVisualKit", "SpellVisualEffectNa
 pub(crate) const COPY_SUFFIX: &str = " (copy)";
 
 
+/// The id a new row of an open table takes: one past the largest, as the
+/// session's numbers give it (`crate::session::numbers`). `None` when the
+/// table is not open or no number can be given; the reason reaches the
+/// status line.
+pub(crate) fn new_id(session: &mut EditSession, table_name: &str) -> Option<u32> {
+    let floor = session.tables.get(table_name)?.max_id().checked_add(1)?;
+    vale_edit::numbers::take_u32(&mut session.numbers, &vale_edit::numbers::dbc(table_name), floor).ok()
+}
+
 /// Add a blank row to an open table under the next id, as one undo entry.
 /// Returns its record index.
 pub(crate) fn add_row(session: &mut EditSession, table_name: &str) -> Option<usize> {
+    let id = new_id(session, table_name)?;
     let table = session.tables.get_mut(table_name)?;
-    let id = table.max_id().checked_add(1)?;
     let bytes = table.blank_record(id);
     let at = table.push_record(&bytes)?;
     let row = Row::added(table, at)?;
@@ -299,7 +312,7 @@ pub(crate) fn add_row(session: &mut EditSession, table_name: &str) -> Option<usi
 /// Returns the copy's record index.
 pub(crate) fn clone_row(session: &mut EditSession, table_name: &str, record: usize) -> Option<usize> {
     let id = session.table(table_name)?.u32_at(record, 0)?;
-    let done = chain::clone_row(&mut session.tables, table_name, id, Some(COPY_SUFFIX))?;
+    let done = chain::clone_row(&mut session.tables, &mut session.numbers, table_name, id, Some(COPY_SUFFIX))?;
     let new_id = done.new_id(table_name, id)?;
     session.history.begin("Clone row");
     record_cloned(session, done);
@@ -341,6 +354,7 @@ pub(crate) fn clone_chain(
 ) -> Option<chain::Cloned> {
     let done = chain::clone_chain(
         &mut session.tables,
+        &mut session.numbers,
         "SpellVisual",
         visual,
         &CHAIN_DEEP,
@@ -375,8 +389,8 @@ pub(crate) fn link_new(
     field: usize,
     target: &str,
 ) -> Option<u32> {
+    let id = new_id(session, target)?;
     let target_table = session.tables.get_mut(target)?;
-    let id = target_table.max_id().checked_add(1)?;
     let bytes = target_table.blank_record(id);
     let at = target_table.push_record(&bytes)?;
     let row = Row::added(target_table, at)?;
@@ -413,7 +427,7 @@ pub(crate) fn unshare(
     target: &str,
 ) -> Option<u32> {
     let old = session.table(table_name)?.u32_at(record, field)?;
-    let done = chain::clone_row(&mut session.tables, target, old, Some(COPY_SUFFIX))?;
+    let done = chain::clone_row(&mut session.tables, &mut session.numbers, target, old, Some(COPY_SUFFIX))?;
     let new_id = done.new_id(target, old)?;
     session.history.begin("Copy linked row");
     record_cloned(session, done);

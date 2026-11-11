@@ -126,11 +126,14 @@ the world it shows is drawn by the client's own renderer.
   joining editor receives the project, each edit reaches the other editors as
   it is made, the host refuses an edit made on state another editor changed
   first, each editor undoes only its own edits, and the other editors' views
-  and pointers are drawn in the viewport. The host logs every editor's edits,
-  can share its world database, and refuses edits to what another person has
-  checked out. A joined editor's copy can be edited offline; reconnecting
-  sends its edits and lists what changed meanwhile for the person to resolve.
-  The connection is unencrypted TCP.
+  and pointers are drawn in the viewport. The host logs every editor's edits
+  and refuses edits to what another person has checked out or holds with
+  unsubmitted edits. Each joined editor uses its own server and world
+  database, or the host's when the host shares it. A joined editor's copy can
+  be edited offline; reconnecting sends its edits and lists what changed
+  meanwhile for the person to resolve, and a copy can host the project with
+  the host's log if the host is gone. `vale-ide --depot` hosts a session with
+  no window. The connection is encrypted after a key exchange.
 - **Playtest.** Ctrl+P logs in with the client's own login from inside the
   editor, at the server's time of day, and returns to editing afterwards.
 

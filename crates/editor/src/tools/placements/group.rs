@@ -231,7 +231,7 @@ fn clipboard(
                     Vec3::from(vale_assets::world::adt::placement_to_world(at.record.position))
                         + Vec3::X * APART
                 });
-                if let Some(anchor) = anchor {
+                if let Some(anchor) = anchor.filter(|_| reserve_unique_ids(session, clip.len())) {
                     let pasted = paste_doodads(session, &clip, anchor, "Duplicate doodads");
                     select_pasted_doodads(session, &mut doodads, clip.len(), pasted);
                 }
@@ -246,6 +246,9 @@ fn clipboard(
                     return;
                 }
                 let clip = board.doodads.clone();
+                if !reserve_unique_ids(session, clip.len()) {
+                    return;
+                }
                 let pasted = paste_doodads(session, &clip, anchor, "Paste doodads");
                 select_pasted_doodads(session, &mut doodads, clip.len(), pasted);
             }
@@ -261,7 +264,7 @@ fn clipboard(
                     Vec3::from(vale_assets::world::adt::placement_to_world(at.record.position))
                         + Vec3::X * APART
                 });
-                if let Some(anchor) = anchor {
+                if let Some(anchor) = anchor.filter(|_| reserve_unique_ids(session, clip.len())) {
                     let pasted = paste_buildings(session, &clip, anchor, "Duplicate WMOs");
                     select_pasted_buildings(session, &mut buildings, &clip, pasted);
                 }
@@ -276,6 +279,9 @@ fn clipboard(
                     return;
                 }
                 let clip = board.buildings.clone();
+                if !reserve_unique_ids(session, clip.len()) {
+                    return;
+                }
                 let pasted = paste_buildings(session, &clip, anchor, "Paste WMOs");
                 select_pasted_buildings(session, &mut buildings, &clip, pasted);
             }
@@ -646,8 +652,8 @@ pub(crate) struct ClipBuilding {
     pub(crate) record: Building,
 }
 
-/// The id a new placement gets: the next one in the minted range, above every
-/// id the open tiles hold. The placer's own rule — see `place::commit`.
+/// The floor of a new placement's id: the next one in the minted range, above
+/// every id the open tiles hold. The placer's own rule — see `place::commit`.
 pub(crate) fn next_minted(session: &EditSession) -> u32 {
     session
         .tiles
@@ -656,6 +662,23 @@ pub(crate) fn next_minted(session: &EditSession) -> u32 {
         .max()
         .map(|had| had.saturating_add(1))
         .unwrap_or(MINTED_BASE)
+}
+
+/// The `uniqueId` a placement made now takes: a number from the session's
+/// numbers at or above `floor` (`crate::session::numbers`). `None` when no
+/// number can be given; the reason reaches the status line. A `uniqueId` is
+/// never taken as the floor alone in a session: two placements on different
+/// tiles with one id are not a conflict the host sees.
+pub(crate) fn new_unique_id(session: &mut EditSession, floor: u32) -> Option<u32> {
+    vale_edit::numbers::take_u32(&mut session.numbers, vale_edit::numbers::UNIQUE_ID, floor).ok()
+}
+
+/// Whether `count` placements can be made now, each with a `uniqueId` of its
+/// own. A paste or cluster asks first, so a joined editor with too few numbers
+/// left is refused before anything is placed rather than partway through.
+pub(crate) fn reserve_unique_ids(session: &mut EditSession, count: usize) -> bool {
+    let floor = u64::from(next_minted(session));
+    session.numbers.reserve(vale_edit::numbers::UNIQUE_ID, count as u64, floor)
 }
 
 /// What a paste wrote: where each new row went, and how many were left out
@@ -683,9 +706,11 @@ pub(crate) fn paste_doodads(
     label: &str,
 ) -> Pasted {
     let mut pasted = Pasted::default();
-    let mut unique_id = next_minted(session);
+    let mut floor = next_minted(session);
     let mut before: std::collections::HashMap<(u32, u32), Placements> = Default::default();
     for item in clip {
+        let Some(unique_id) = new_unique_id(session, floor) else { break };
+        floor = unique_id.saturating_add(1);
         let at = anchor + item.offset;
         let coord = vale_assets::tile_for_position(at.x, at.y);
         let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -703,7 +728,6 @@ pub(crate) fn paste_doodads(
         };
         let index = tile.add_doodad(record, item.radius);
         pasted.rows.push((coord, index, unique_id));
-        unique_id = unique_id.saturating_add(1);
     }
     record_placements(session, before, label);
     pasted
@@ -718,9 +742,11 @@ pub(crate) fn paste_buildings(
     label: &str,
 ) -> Pasted {
     let mut pasted = Pasted::default();
-    let mut unique_id = next_minted(session);
+    let mut floor = next_minted(session);
     let mut before: std::collections::HashMap<(u32, u32), Placements> = Default::default();
     for item in clip {
+        let Some(unique_id) = new_unique_id(session, floor) else { break };
+        floor = unique_id.saturating_add(1);
         let at = anchor + item.offset;
         let coord = vale_assets::tile_for_position(at.x, at.y);
         let Some(tile) = session.tiles.get_mut(&coord) else {
@@ -738,7 +764,6 @@ pub(crate) fn paste_buildings(
         super::wmos::set_world_position(&mut record, &item.record, at.to_array());
         let index = tile.add_building(record);
         pasted.rows.push((coord, index, unique_id));
-        unique_id = unique_id.saturating_add(1);
     }
     record_placements(session, before, label);
     pasted

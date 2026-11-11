@@ -334,12 +334,14 @@ impl Conditions {
     /// Answers the entry, and whether it is new; `None` while the table is
     /// not read.
     pub(crate) fn create(&mut self, session: &mut EditSession, kind: i32, values: [i32; 4], flags: u8, now: f64) -> Option<(u32, bool)> {
-        let entry = self.next_entry(&session.rows.edits)?;
-        let made = Condition { entry, kind, values, flags };
+        let floor = self.next_entry(&session.rows.edits)?;
         let all = self.all(&session.rows.edits);
-        if let Some(same) = condition::same_test(&made, &all) {
+        if let Some(same) = condition::same_test(&Condition { entry: floor, kind, values, flags }, &all) {
             return Some((same.entry, false));
         }
+        // The number is taken once the condition is known to be new.
+        let entry = session.numbers.soft_u32(&vale_edit::numbers::row(condition::TABLE, "condition_entry"), floor);
+        let made = Condition { entry, kind, values, flags };
         let key = made.key();
         let label = format!("{} {}", condition::TABLE, key.text());
         let row = super::services::creation(&made.assignments());

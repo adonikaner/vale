@@ -37,16 +37,17 @@
 //! bakes, world map art and locks. See [`files`]. A save is not sent, because
 //! every editor already holds the edits it writes.
 //!
-//! The shadow rebake is not shared: it replaces a tile in memory and makes no
-//! entry on the undo stack.
+//! A shadow rebake is an edit like the others: each chunk's new `MCSH` is
+//! an entry on the undo stack (`vale_edit::ops::Edit::Shadow`).
 //!
-//! A joined editor's edits go to the host like the host's own edits, except
-//! the edits that need a number or a list that only the host hands out
-//! ([`joinable`]): adding, removing or renaming doodads and buildings, adding
-//! or removing DBC table records, and creating, removing or replacing whole
-//! server rows. A joined editor's file steps may write textures, models,
-//! sounds and locks only ([`files::joinable`]). Any other edit is reverted
-//! on the joined editor with a status line, and the host refuses it as well.
+//! A joined editor's edits go to the host like the host's own edits. The
+//! number a new record takes (a placement's `uniqueId`, a table row's id, a
+//! spawn's guid) comes from blocks the host hands each editor
+//! (`crate::session::numbers`), so two editors never give two new records one
+//! number. A joined editor's file steps may write textures, models, WMOs,
+//! sounds, locks, tiles, WDTs, minimap pictures and the minimap index only
+//! ([`files::joinable`]). Any other file step is reverted on the joined
+//! editor with a status line, and the host refuses it as well.
 //!
 //! ## Deleting files
 //!
@@ -61,20 +62,38 @@
 //!
 //! ## Server writes
 //!
-//! The host shares its world database with joined editors unless the Host
-//! form's Share the world database is off. The welcome then carries the
-//! database's location and login (`vale_collab::wire::Database`), and while
-//! joined the editor reads that database for every server read
-//! (`crate::server::settings::ServerSettings::shared`) and its playtest logs
-//! in to the host's realm ([`PlaytestServer::Host`]). Its Server panel is
-//! disabled, because only the host applies changes to that database.
+//! A joined editor reads and playtests on one of two servers
+//! ([`PlaytestServer`]), set by "Server" in the Session popover: this
+//! machine's own, or the host's. Only the project's edits are shared; each
+//! machine's server and world database stay its own.
 //!
-//! When the host does not share it, a joined editor reads its own database
-//! and playtests on its own server. Its Server panel applies to its own
-//! database, unless `Edit\server.txt` names the host's: the welcome carries a
-//! fingerprint of the host's database location ([`database_fingerprint`]),
-//! and the two fingerprints are compared. See [`ServerGate`]. Offline, a copy
-//! uses this machine's database like any project.
+//! ```text
+//! this machine's   reads the database Edit\server.txt names, playtests on
+//!                  the realm in realmlist.wtf, and its Server panel applies
+//!                  to that database
+//! the host's       playtests on the host's realm, and reads the host's world
+//!                  database when the host shares it; its Server panel is
+//!                  disabled, because only the host applies to that server
+//! ```
+//!
+//! The host shares its world database unless the Host form's Share the world
+//! database is off: the welcome then carries the database's location and
+//! login (`vale_collab::wire::Database`), and the editor reads it
+//! (`crate::server::settings::ServerSettings::shared`) only while it uses
+//! the host's server. The welcome picks the host's server when the host
+//! shares its database or this machine has none, and this machine's
+//! otherwise; a choice made in the popover is kept over later welcomes.
+//!
+//!
+//! On this machine's server, the Server panel is disabled when this
+//! machine's world database is the host's, as it is for two editors on one
+//! machine whose `Edit\server.txt` files name the same `mangosd.conf`: the
+//! welcome carries a fingerprint of the host's database location
+//! ([`database_fingerprint`]), and the two fingerprints are compared. Two
+//! editors applying to one database would each keep revert files for the
+//! same rows, and a Restore from one would undo the other's applies. See
+//! [`ServerGate`]. Offline, a copy uses this machine's database
+//! like any project.
 //!
 //! The files that record what an editor applied to its own server are kept on
 //! that editor's machine: a join neither sends the host's nor removes the
@@ -95,8 +114,9 @@
 //!
 //! ## Claims
 //!
-//! An edit claims the tiles, tables and rows it touches for its author until
-//! they submit, and a check out claims a tile before any edit
+//! An edit claims the tiles, client table records (or whole tables, when
+//! their ids repeat) and server rows it touches for its author until they
+//! submit, and a check out claims a tile, table or row before any edit
 //! (`vale_collab::checkout`). The host refuses another author's edit to a
 //! claim and sends every editor the list ([`Collab::holds`]): the Session
 //! popover lists it and the map window marks the tiles. Each editor undoes
@@ -256,7 +276,7 @@ impl Payload for Step {
 
     fn check(&self) -> Result<(), String> {
         match self {
-            Step::Edit { change, .. } => joinable(change).map_err(str::to_string),
+            Step::Edit { .. } => Ok(()),
             Step::Files(files) => files.check(),
             Step::Delete(_) => Err("a delete is asked for, not sent".to_string()),
         }
@@ -332,6 +352,9 @@ pub(crate) enum Ask {
     Reconnect,
     /// An offline copy with no pending edits: remove its link.
     Unlink,
+    /// Make the open offline copy the project, with the copy of the host's
+    /// log, so it can host. See [`offline`]'s *Taking over*.
+    TakeOver,
     /// In a session: check these out for this editor's author.
     CheckOut(Vec<Claim>),
     /// In a session: release these check outs of this author's.
@@ -414,21 +437,24 @@ impl Role {
     }
 }
 
-/// Which server a joined editor's playtest logs in to, decided at the welcome.
-/// See *Server writes*.
+/// Which server a joined editor reads and playtests on: the realm its
+/// playtest logs in to, and the world database it reads. Picked at the
+/// welcome and changed in the Session popover. See *Server writes*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum PlaytestServer {
-    /// The realm in this machine's `realmlist.wtf`.
+    /// This machine's: the realm in `realmlist.wtf` and the world database
+    /// `Edit\server.txt` names.
     #[default]
     Local,
-    /// The realm on the host's machine, at the address this editor joined.
+    /// The host's: the realm at the address this editor joined, and the
+    /// host's world database when the host shares it.
     Host,
 }
 
 /// Whether this editor may write to the server its Server panel names: apply,
 /// restore, regenerate server tiles. Every editor may, except a joined editor
-/// that reads the host's world database, playtests on the host's server, or
-/// whose `Edit\server.txt` names the host's database. See *Server writes*.
+/// that uses the host's server, or whose own world database is the host's.
+/// See *Server writes*.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct ServerGate {
     pub(crate) role: Role,
@@ -540,17 +566,22 @@ pub(crate) struct Collab {
     /// Project files another editor's step wrote or removed this frame, for
     /// the Assets workspace to forget what it read of them.
     changed: Vec<String>,
-    /// Which server this editor's playtest logs in to while it is joined.
+    /// Which server this editor reads and playtests on while it is joined.
     pub(crate) playtest_server: PlaytestServer,
+    /// [`Self::playtest_server`] was chosen in the Session popover, so a
+    /// welcome after a reconnect keeps it. Cleared when the session ends.
+    pub(crate) server_chosen: bool,
     /// The host's address as this editor joined it, without the session's
     /// port: the realm address of a playtest on the host's server.
     host_address: Option<String>,
     /// The fingerprint of the host's world database location, from the
     /// welcome. See [`database_fingerprint`].
     host_database: Option<[u8; 32]>,
-    /// The fingerprint of the world database this machine's
-    /// `Edit\server.txt` names, read again once a second.
+    /// The fingerprint of this machine's world database, read again once a
+    /// second, and its location for the Server panel's hover text, without
+    /// the password.
     own_database: Option<[u8; 32]>,
+    own_line: Option<String>,
     database_at: f64,
     /// The frame's clock, for the actions that note a time.
     now: f64,
@@ -572,7 +603,8 @@ pub(crate) struct Collab {
     /// again once a second while hosting with Share the world database on.
     shared_info: Option<String>,
     /// A joined editor: the host's world database, when the host shares it.
-    /// Put in `ServerSettings::shared` every frame it differs.
+    /// Put in `ServerSettings::shared` while this editor uses the host's
+    /// server ([`PlaytestServer::Host`]).
     pub(crate) shared_database: Option<vale_mangos::conn::Where>,
     /// The open project's link to a host, when it is a joined editor's copy.
     /// See [`offline`].
@@ -600,6 +632,17 @@ pub(crate) struct Collab {
     /// which it applies before the edits held since the welcome. See
     /// *Joining*.
     open_wanted: bool,
+    /// The host's last edit at the welcome, which the fetched files are as
+    /// of. See [`offline`]'s *The copy of the host's log*.
+    welcome_seq: vale_collab::Seq,
+    /// When the copy of the host's log was last asked for, and whether an
+    /// answer is awaited.
+    pub(crate) tail_at: f64,
+    pub(crate) tail_asked: bool,
+    /// A copy that took over from its host: the edits it kept offline, to
+    /// apply and log once the project's log is open. See [`offline`]'s
+    /// *Taking over*.
+    pub(crate) taken_over: Option<Vec<Step>>,
 }
 
 impl Collab {
@@ -653,11 +696,17 @@ impl Collab {
             (State::Connecting { .. } | State::Fetching { .. }, _) => {
                 Some("Not available while joining a shared session.".to_string())
             }
-            (State::Joined { .. }, PlaytestServer::Host) => Some(format!(
-                "This editor reads {host}'s world database and playtests on {host}'s server while joined. Only {host} applies changes to it."
-            )),
+            (State::Joined { .. }, PlaytestServer::Host) => Some(match self.shared_database.is_some() {
+                true => format!(
+                    "This editor reads {host}'s world database and playtests on {host}'s server, and only {host} applies changes to that server. To apply changes to this machine's server, set \"Server\" in the Session popover to \"This machine's server\"."
+                ),
+                false => format!(
+                    "This editor playtests on {host}'s server, and only {host} applies changes to that server. To apply changes to this machine's server, set \"Server\" in the Session popover to \"This machine's server\"."
+                ),
+            }),
             (State::Joined { .. }, PlaytestServer::Local) if self.shares_the_hosts_database() => Some(format!(
-                "Edit\\server.txt names the same world database as {host}'s. Only {host} applies changes to that database."
+                "This machine's world database, {}, is the same world database as {host}'s, and only {host} applies changes to that database. Two editors on one machine use one world database when their Edit\\server.txt files name the same mangosd.conf. To apply changes from this editor, set another world database in Settings.",
+                self.own_line.as_deref().unwrap_or("the one in Edit\\server.txt")
             )),
             _ => None,
         };
@@ -731,7 +780,7 @@ impl Collab {
     /// The first claim on `groups` that an author other than this editor's
     /// holds. See *Claims*.
     pub(crate) fn held_by_another(&self, groups: &[Group]) -> Option<&Hold> {
-        let claims: Vec<Claim> = groups.iter().filter_map(Claim::of).collect();
+        let claims: Vec<Claim> = groups.iter().filter_map(Claim::of).flat_map(|claim| claim.covering()).collect();
         self.holds.iter().find(|held| Some(held.author.id) != self.author_id && claims.contains(&held.claim))
     }
 
@@ -756,6 +805,26 @@ impl Collab {
         }
     }
 
+    /// What a joined editor's Submit closes, for the Save button's label.
+    /// See [`ToSubmit`].
+    pub(crate) fn to_submit(&self) -> ToSubmit {
+        let mut tiles = BTreeSet::new();
+        let mut tables = BTreeSet::new();
+        let mut rows = false;
+        for hold in self.holds.iter().filter(|hold| hold.edited && self.is_me(&hold.author.id)) {
+            match &hold.claim {
+                Claim::Tile(tile) => {
+                    tiles.insert((tile.map.to_ascii_lowercase(), tile.x, tile.y));
+                }
+                Claim::Table(name) | Claim::Record { table: name, .. } => {
+                    tables.insert(name.clone());
+                }
+                Claim::Row { .. } => rows = true,
+            }
+        }
+        ToSubmit { edits: self.changes.unsubmitted as usize, tiles: tiles.len(), tables: tables.len(), rows }
+    }
+
     /// This editor's author: the install's id and the form's name. See
     /// [`log`]'s *The author*.
     pub(crate) fn author(&mut self, install: &str) -> Author {
@@ -764,18 +833,36 @@ impl Collab {
     }
 }
 
+/// What a joined editor's Submit closes. `edits` is the count the Changes
+/// window shows: the edits sent since the last Submit. The tiles, client
+/// tables and server rows are the claims of this editor's unsubmitted edits,
+/// as the host last sent them, so they can trail an edit by a moment. The
+/// session's own unsaved tiles are not used: a joined copy is never saved,
+/// and they also hold every tile another editor's edit changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct ToSubmit {
+    pub(crate) edits: usize,
+    pub(crate) tiles: usize,
+    pub(crate) tables: usize,
+    pub(crate) rows: bool,
+}
+
 /// A fingerprint of a world database's location: its host, port and database
 /// name, hashed, so it can be compared between editors without sending the
 /// location. A loopback host (`127.0.0.1`, `localhost`, `::1`) is replaced by
 /// this machine's network address first. The host's own `127.0.0.1` and a
 /// joined editor's `192.168.1.20` for the same machine then give the same
-/// fingerprint. A machine name and an address for one machine give different
-/// fingerprints.
+/// fingerprint. A machine with no network address uses its computer name
+/// instead, so the loopback databases of two such machines differ. A machine
+/// name and an address for one machine give different fingerprints.
 pub(crate) fn database_fingerprint(at: &vale_mangos::conn::Where) -> [u8; 32] {
     let host = at.host.trim().to_ascii_lowercase();
     let loopback = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1" | ".");
     let host = match loopback {
-        true => lan_address().map_or(host, |ip| ip.to_string()),
+        true => match lan_address() {
+            Some(ip) => ip.to_string(),
+            None => std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).map_or(host, |name| name.to_ascii_lowercase()),
+        },
         false => host,
     };
     let text = format!("{host}\n{}\n{}", at.port(), at.database.trim().to_ascii_lowercase());
@@ -910,6 +997,7 @@ fn run(
         collab.author_id = Some(log::author_id(&assets.root));
     }
     keep_the_log(collab, session, &assets);
+    keep_the_numbers(collab, session);
     // Alone, the claims are the log's, read once a second.
     if collab.session.is_none() && collab.connecting.is_none() && now - collab.holds_at >= 1.0 {
         collab.holds_at = now;
@@ -921,13 +1009,19 @@ fn run(
         collab.database_at = now;
         let own = server.resolve_own().map(|(at, _)| at);
         collab.own_database = own.as_ref().map(database_fingerprint);
+        collab.own_line = own.as_ref().map(|at| at.line());
         collab.shared_info = match (&collab.state, collab.form.share_database) {
             (State::Hosting { .. }, true) => own.map(|at| format!("{};{};{};{};{}", at.host, at.port(), at.user, at.password, at.database)),
             _ => None,
         };
     }
-    if server.shared != collab.shared_database {
-        server.shared = collab.shared_database.clone();
+    // The host's database is read only while the host's server is used.
+    let reads = match collab.playtest_server {
+        PlaytestServer::Host => collab.shared_database.clone(),
+        PlaytestServer::Local => None,
+    };
+    if server.shared != reads {
+        server.shared = reads;
     }
     let realm = match (&collab.state, collab.playtest_server) {
         (State::Joined { .. }, PlaytestServer::Host) => collab.host_address.clone(),
@@ -957,6 +1051,7 @@ fn run(
         return;
     }
     keep_the_link(collab, session, now);
+    offline::keep_the_log_copy(collab, session, now);
     if let State::Hosting { project, .. } = &collab.state {
         if *project != session.project.name {
             let reason = format!("the session ended: {project} is no longer the open project");
@@ -1033,6 +1128,12 @@ fn keep_the_log(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
         collab.log_for = Some(session.project.root.clone());
         collab.link = offline::Link::read(&session.project);
         collab.pending = whole_edits(&offline::read(&session.project));
+        // A copy numbers from the blocks it kept, any other project from its
+        // allocator. See `crate::session::numbers`.
+        match collab.link.is_some() {
+            true => session.numbers.use_blocks(offline::read_blocks(&session.project), false),
+            false => session.numbers.use_allocator(log::read_numbers(&session.project)),
+        }
         collab.log = None;
         collab.log_failed = false;
         collab.changes.recovered.clear();
@@ -1048,8 +1149,16 @@ fn keep_the_log(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
         return;
     }
     match log::open(&session.project) {
-        Ok(log) => {
-            collab.changes.recovered = changes::recovered(&log, &collab.author_id.unwrap_or_default());
+        Ok(mut log) => {
+            // Strokes of closed changelists stored in parts are folded once
+            // a session. See `vale_collab::log`'s *Compaction*.
+            match log.compact(log::fold) {
+                Ok(0) => {}
+                Ok(n) => info!("collab: folded {n} strokes of {}'s log", session.project.name),
+                Err(e) => warn!("collab: the log of {} could not be compacted: {e}", session.project.name),
+            }
+            let fetched = offline::Fetched::read(&session.project);
+            collab.changes.recovered = changes::recovered(&log, &collab.author_id.unwrap_or_default(), fetched.as_ref());
             if !collab.changes.recovered.is_empty() {
                 let n = collab.changes.recovered.len();
                 session.status = format!(
@@ -1060,12 +1169,60 @@ fn keep_the_log(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
                 );
             }
             collab.log = Some(log);
+            if let Some(pending) = collab.taken_over.take() {
+                changes::took_over(collab, session, assets, pending);
+            }
         }
         Err(e) => {
             collab.log_failed = true;
             session.status = format!("the project's log could not be opened, so edits are not logged: {e}");
             warn!("collab: log for {}: {e}", session.project.name);
         }
+    }
+}
+
+/// The numbers of new records: whether the copy is connected, the blocks to
+/// ask for, the files they are kept in, and a refusal on the status line.
+/// See `crate::session::numbers`.
+fn keep_the_numbers(collab: &mut Collab, session: &mut EditSession) {
+    use vale_edit::numbers::{dbc, UNIQUE_ID};
+    let joined = matches!(collab.state, State::Joined { .. }) && collab.link.is_some();
+    session.numbers.set_connected(joined);
+    if joined {
+        // The types used most are asked for once the copy is open, so the
+        // first placement or row does not wait for a block.
+        if !session.numbers.has(UNIQUE_ID) {
+            let floor = crate::tools::placements::group::next_minted(session);
+            session.numbers.want(UNIQUE_ID, u64::from(floor));
+        }
+        let names: Vec<String> = session.tables.keys().filter(|name| !session.numbers.has(&dbc(name))).cloned().collect();
+        for name in names {
+            if let Some(floor) = session.tables.get(&name).and_then(|table| table.max_id().checked_add(1)) {
+                session.numbers.want(&dbc(&name), u64::from(floor));
+            }
+        }
+        if let Some(running) = collab.session.as_mut() {
+            for (kind, floor, size) in session.numbers.take_wanted() {
+                running.ask_for_ids(&kind, floor, size);
+            }
+        }
+    }
+    if std::mem::take(&mut session.numbers.blocks_changed) && collab.link.is_some() {
+        if let Err(e) = offline::write_blocks(&session.project, &session.numbers.blocks) {
+            warn!("collab: the blocks of new numbers could not be kept: {e}");
+        }
+    }
+    let text = session.numbers.allocator().and_then(|shared| {
+        let mut allocator = shared.lock().expect("numbers");
+        allocator.take_changed().then(|| allocator.text())
+    });
+    if let Some(text) = text {
+        if let Err(e) = log::write_numbers(&session.project, &text) {
+            warn!("collab: the allocator of new numbers could not be kept: {e}");
+        }
+    }
+    if let Some(why) = session.numbers.refused.take() {
+        session.status = why;
     }
 }
 
@@ -1100,6 +1257,11 @@ fn after_a_save(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
     let everything = session.unsaved.is_empty() && session.unsaved_tables.is_empty() && !session.rows.unsaved();
     if everything && collab.link.is_none() && !collab.is_joined() {
         changes::close_on_save(collab, session, assets);
+        // The files hold every submitted changelist now. See `offline`'s
+        // *Taking over*.
+        if collab.changes.recovered.is_empty() {
+            offline::Fetched::remove(&session.project);
+        }
     }
 }
 
@@ -1173,6 +1335,11 @@ fn carry_out(
                         hosting.resume(log.id(), log.last(), log.touches(), log.pending(), log.names());
                     }
                     hosting.resume_checkouts(read_checkouts(&session.project));
+                    // Joined editors' blocks come from the allocator this
+                    // editor numbers from.
+                    if let Some(ids) = session.numbers.allocator() {
+                        hosting.share_ids(ids.clone());
+                    }
                     collab.holds = hosting.holds();
                     // So the shared database is read before anyone joins.
                     collab.database_at = f64::NEG_INFINITY;
@@ -1247,8 +1414,9 @@ fn carry_out(
                 running.release(claims, true);
             }
         }
+        Ask::TakeOver if collab.offline() => offline::take_over(collab, session, assets),
         Ask::Unlink if collab.offline() && collab.pending == 0 => {
-            match offline::Link::remove(&session.project) {
+            match offline::Link::remove(&session.project).and_then(|()| offline::remove_log_copy(&session.project)) {
                 Ok(()) => {
                     collab.link = None;
                     collab.log_for = None;
@@ -1341,8 +1509,8 @@ fn take_the_connection(collab: &mut Collab, session: &mut EditSession) {
 
 /// Send the steps this editor made: the files it wrote or removed first, so a
 /// paint that uses an imported texture arrives after the texture, then the
-/// undo stack's steps. A joined editor's step that only the host may make
-/// ([`joinable`], [`files::joinable`]) is reverted instead.
+/// undo stack's steps. A joined editor's file step that only the host may
+/// make ([`files::joinable`]) is reverted instead.
 fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, now: f64) {
     let joined = match collab.state {
         State::Joined { .. } => true,
@@ -1376,16 +1544,7 @@ fn share_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &Game
         }
     }
     let mut undone = false;
-    for step in session.history.take_journal() {
-        if joined {
-            if let Err(what) = joinable(&step.change) {
-                session.apply_step(assets, &step.change, !step.forward);
-                forget_overlapping(session, &step.change.groups());
-                collab.reverted += 1;
-                session.status = format!("{} was undone: {what}", step.change.label);
-                continue;
-            }
-        }
+    for step in session.take_journal() {
         // A claim another author holds is refused by the host; undone here
         // first, so nothing waits on the refusal. See *Claims*.
         let groups = step.change.groups();
@@ -1425,7 +1584,7 @@ fn keep_pending(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
     let steps: Vec<Step> = files
         .into_iter()
         .map(Step::Files)
-        .chain(session.history.take_journal().into_iter().map(Step::journaled))
+        .chain(session.take_journal().into_iter().map(Step::journaled))
         .collect();
     if steps.is_empty() {
         return;
@@ -1451,7 +1610,7 @@ fn log_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAs
     let steps: Vec<Step> = files
         .into_iter()
         .map(Step::Files)
-        .chain(session.history.take_journal().into_iter().map(Step::journaled))
+        .chain(session.take_journal().into_iter().map(Step::journaled))
         .collect();
     if steps.is_empty() {
         return;
@@ -1463,7 +1622,7 @@ fn log_own_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAs
     let held: Vec<Hold> = log_holds(log).into_iter().filter(|held| held.author.id != author.id).collect();
     for step in steps {
         if let (false, Step::Edit { change, forward, .. }) = (held.is_empty(), &step) {
-            let claims: Vec<Claim> = step.groups().iter().filter_map(Claim::of).collect();
+            let claims: Vec<Claim> = step.groups().iter().filter_map(Claim::of).flat_map(|claim| claim.covering()).collect();
             if let Some(holder) = held.iter().find(|held| claims.contains(&held.claim)) {
                 session.apply_step(assets, change, !forward);
                 forget_overlapping(session, &step.groups());
@@ -1492,29 +1651,6 @@ pub(crate) fn log_holds(log: &Log) -> Vec<Hold> {
             .or_insert_with(|| Hold { claim, author: Author { id: author, name }, checked_out: false, edited: true });
     }
     out.into_values().collect()
-}
-
-/// Whether a joined editor may make this change, or what in it is the
-/// host's alone. Each needs a number or a list the host hands out: a new
-/// `uniqueId` or a renumbered placement list, a new record's index, a new
-/// row's key. Number blocks handed out by the host (`vale_collab::ids`)
-/// would let a joined editor make these.
-pub(crate) fn joinable(change: &Change) -> Result<(), &'static str> {
-    use vale_edit::ops::Edit;
-    use vale_edit::undo::{Entry, Shape};
-    for entry in change.in_order(true) {
-        match entry {
-            Entry::Tile(_, Edit::Placements { .. } | Edit::Names { .. }) => {
-                return Err("only the host adds, removes and renames doodads and buildings")
-            }
-            Entry::Row(..) => return Err("only the host adds and removes table records"),
-            Entry::Server(server) if server.shape == Shape::Row => {
-                return Err("only the host creates, removes and replaces whole server rows")
-            }
-            _ => {}
-        }
-    }
-    Ok(())
 }
 
 /// Drop every entry of this editor's undo stack that touches one of
@@ -1546,23 +1682,25 @@ fn act(
     action: Action<Step>,
 ) {
     match action {
-        Action::Welcome { user, log, users, database } => {
+        Action::Welcome { user, seq, log, users, database } => {
             collab.host_log = Some(log);
+            collab.welcome_seq = seq;
+            collab.tail_asked = false;
             collab.me = Some(user);
             collab.changes.history = None;
             collab.changes.asked = false;
             collab.people = users.into_iter().map(|(user, name)| (user, Person { name, presence: None })).collect();
             collab.host_database = database.as_ref().map(|database| database.fingerprint);
             collab.shared_database = database.and_then(|database| database.shared).and_then(|info| shared_location(&info, collab.host_address.as_deref()));
-            // With the host's database shared, the playtest is on the host's
-            // server. Otherwise an editor with a world database of its own
-            // playtests on its local server, and one with no database, or with
-            // the same database as the host, on the host's.
-            collab.playtest_server = match (&collab.shared_database, collab.own_database) {
-                (Some(_), _) => PlaytestServer::Host,
-                (None, Some(own)) if Some(own) != collab.host_database => PlaytestServer::Local,
-                _ => PlaytestServer::Host,
-            };
+            // With the host's database shared, the host's server. Otherwise
+            // this machine's, unless it has no world database of its own. A
+            // choice made in the Session popover is kept.
+            if !collab.server_chosen {
+                collab.playtest_server = match (&collab.shared_database, collab.own_database) {
+                    (Some(_), _) | (None, None) => PlaytestServer::Host,
+                    (None, Some(_)) => PlaytestServer::Local,
+                };
+            }
         }
         Action::Refused(reason) | Action::Closed(reason) => match collab.state {
             State::Joined { .. } => {
@@ -1739,6 +1877,7 @@ fn act(
         }
         Action::Holds(list) => holds_changed(collab, session, list),
         Action::Answer(answer) => collab.answers.push(answer),
+        Action::Ids { kind, start, end } => session.numbers.hold(&kind, start, end),
     }
 }
 
@@ -1881,6 +2020,8 @@ fn link_the_copy(collab: &mut Collab, session: &mut EditSession) {
         project: collab.host_project.clone().unwrap_or_default(),
         log: collab.host_log.unwrap_or_default(),
         synced: seq,
+        fetched: collab.welcome_seq,
+        open: Vec::new(),
     };
     if let Err(e) = link.write(&session.project) {
         session.status = format!("the copy's link to the host could not be written: {e}");
@@ -1989,6 +2130,7 @@ fn close(collab: &mut Collab) {
 /// again if it had joined, and say why.
 fn end(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets, reason: String) {
     let was_joined = collab.is_joined();
+    collab.server_chosen = false;
     keep_unanswered(collab, session);
     collab.session = None;
     collab.connecting = None;
@@ -2085,31 +2227,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
     }
 
-    /// A joined editor may send terrain and column edits, and not the edits
-    /// that need a number or list the host hands out.
-    #[test]
-    fn a_joined_editor_sends_terrain_but_not_new_placements_or_rows() {
-        use vale_edit::undo::{History, ServerEntry};
-        let tile = vale_edit::TileKey::new("Azeroth", 32, 48);
-        let one = |record: &dyn Fn(&mut History)| {
-            let mut history = History::new();
-            history.begin("Edit");
-            record(&mut history);
-            history.end();
-            history.undo().expect("the change")
-        };
-        let raise = one(&|h| h.record(&tile, [vale_edit::ops::Edit::Heights { chunk: 3, before: vec![0.0], after: vec![1.0] }]));
-        assert!(joinable(&raise).is_ok());
-        let column = one(&|h| h.record_server(ServerEntry::column("creature", "guid=7", "position_x", None, Some("1".into()))));
-        assert!(joinable(&column).is_ok());
-        let row = one(&|h| h.record_server(ServerEntry::row("creature", "guid=7", None, Some("…".into()))));
-        assert!(joinable(&row).is_err());
-        let blank = vale_edit::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 0.0, 12);
-        let lists = vale_edit::ops::Placements::capture(&blank);
-        let placed = one(&|h| h.record(&tile, [vale_edit::ops::Edit::Placements { before: Box::new(lists.clone()), after: Box::new(lists.clone()) }]));
-        assert!(joinable(&placed).is_err());
-    }
-
     /// A loopback host and this machine's network address give one
     /// fingerprint; another port or database gives another. The host part of
     /// a typed address drops the session's port.
@@ -2132,9 +2249,9 @@ mod tests {
         assert_eq!(elsewhere.host, "db.lan");
     }
 
-    /// A joined editor may write to its server only when it playtests on the
-    /// local server and that server's database is not the host's. The host
-    /// and an editor in no session always may.
+    /// A joined editor may write to its server only when it uses this
+    /// machine's server and that server's database is not the host's. The
+    /// host and an editor in no session always may.
     #[test]
     fn a_joined_editor_writes_only_to_a_server_that_is_not_the_hosts() {
         let mut collab = Collab::default();
@@ -2147,10 +2264,11 @@ mod tests {
         assert!(collab.server_gate().writes());
         collab.playtest_server = PlaytestServer::Host;
         let refused = collab.server_gate().refused.unwrap();
-        assert!(refused.contains("Only Sam applies changes"), "{refused}");
+        assert!(refused.contains("only Sam applies changes"), "{refused}");
         collab.playtest_server = PlaytestServer::Local;
         collab.host_database = Some([1; 32]);
-        assert!(!collab.server_gate().writes(), "the same database as the host's");
+        let refused = collab.server_gate().refused.unwrap();
+        assert!(refused.contains("same world database"), "{refused}");
         collab.state = State::Hosting { project: "Goldshire".into(), addr: "127.0.0.1:7878".parse().unwrap() };
         assert!(collab.server_gate().writes());
     }

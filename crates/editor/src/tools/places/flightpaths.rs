@@ -1018,7 +1018,7 @@ fn add_point(session: &mut EditSession, flights: &mut Flightpaths, at: Vec3) -> 
     let (index, height) = insertion(&route.points, at);
     let z = (at.z + flights.clearance).max(height);
     let spec = PointSpec::flying(flights.map, [at.x, at.y, z]);
-    match taxi::insert_point(&mut session.tables, route.path.id, index, spec) {
+    match taxi::insert_point(&mut session.tables, &mut session.numbers, route.path.id, index, spec) {
         Ok(done) => {
             let made = done.made;
             record(session, "Add flight point", done);
@@ -1057,7 +1057,7 @@ pub(crate) fn insertion(points: &[Point], at: Vec3) -> (u32, f32) {
 
 /// Make a node on the ground at `at`.
 fn new_node(session: &mut EditSession, flights: &mut Flightpaths, map: u32, at: Vec3) -> String {
-    match taxi::new_node(&mut session.tables, map, at.to_array(), "New node", NEW_NODE_MOUNTS) {
+    match taxi::new_node(&mut session.tables, &mut session.numbers, map, at.to_array(), "New node", NEW_NODE_MOUNTS) {
         Ok(done) => {
             let made = done.made;
             record(session, "Add flight node", done);
@@ -1153,14 +1153,14 @@ fn make_path(
         .map(|pair| taxi::distance(pair[0], pair[1]))
         .sum::<f32>();
     let cost = suggested_cost(&flights.routes, length);
-    let mut done = match taxi::new_path(&mut session.tables, from, to, cost, &specs) {
+    let mut done = match taxi::new_path(&mut session.tables, &mut session.numbers, from, to, cost, &specs) {
         Ok(done) => done,
         Err(e) => return e.to_string(),
     };
     let there = done.made;
     let mut back = None;
     if let Some(path) = there.filter(|_| with_return) {
-        match taxi::reverse_path(&mut session.tables, path) {
+        match taxi::reverse_path(&mut session.tables, &mut session.numbers, path) {
             Ok(more) => {
                 back = more.made;
                 done.rows.extend(more.rows);
@@ -1674,10 +1674,10 @@ pub(crate) fn make_flight_map(session: &mut EditSession, assets: &vale_client::a
     let Some(flight) = flightmap::plan(flights.map, &tiles, &nodes) else {
         return "this map has no tiles and no nodes to make a flight map of".to_string();
     };
-    let Some(table) = session.table_mut(flightmap::TABLE) else {
+    let Some(table) = session.tables.get_mut(flightmap::TABLE) else {
         return format!("{} is not open", flightmap::TABLE);
     };
-    let written = match flightmap::write(table, &flight) {
+    let written = match flightmap::write(table, &mut session.numbers, &flight) {
         Ok(written) => written,
         Err(why) => return why.to_string(),
     };

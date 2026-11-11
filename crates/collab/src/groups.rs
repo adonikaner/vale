@@ -7,15 +7,20 @@
 //! second changed inside it.
 //!
 //! * A chunk's heights and normals are one group, its colours, holes and area
-//!   one each. Its flags and its liquid are one group, since the flags word
-//!   carries the liquid bits and a liquid edit records the word.
+//!   one each. Its flags, its liquid and its shadow are one group, since the
+//!   flags word carries the liquid bits and the shadow bit, and a liquid edit
+//!   records the word.
 //! * A chunk's paint records the tile's whole texture list (`MTEX`), which
 //!   every chunk's layers index into, so paint is a group per tile.
 //! * A doodad or building edit names an index into lists a placement edit
 //!   renumbers, so every placement edit is a group per tile. A name edit
 //!   changes both the texture list and the model lists.
-//! * A client table edit is a group per table: a record added or removed
-//!   moves the index every cell edit after it is addressed by.
+//! * A client table edit is a group per record, by the record's id, when the
+//!   table's ids are unique: the edit is addressed by the id, so a record
+//!   added or removed elsewhere in the table does not move it. An edit of an
+//!   id touches the old id's group and the new one's. In a table whose ids
+//!   are not unique an edit is addressed by the record's index, which a
+//!   record added or removed moves, so it is a group per table.
 //! * A server row edit is a group per row, whichever column it sets.
 //! * A project file written or removed whole is a group per path. A tile's
 //!   file also touches every group of the tile ([`whole_tile`]), and a
@@ -37,6 +42,9 @@ pub enum Group {
     /// A project file, by its virtual path in lower case with `\` between
     /// its parts.
     File { path: String },
+    /// One record of a client table whose ids are unique, by its id. After
+    /// every other variant, so a group stored before it existed still reads.
+    Record { table: String, id: u32 },
 }
 
 impl Group {
@@ -51,6 +59,7 @@ impl Group {
             Group::Table { name } => format!("{name}.dbc"),
             Group::Row { table, key } => format!("{table} {key}"),
             Group::File { path } => path.clone(),
+            Group::Record { table, id } => format!("{table}.dbc record {id}"),
         }
     }
 
@@ -123,6 +132,14 @@ pub fn entry_groups(entry: &Entry, out: &mut Vec<Group>) {
     match entry {
         Entry::Tile(tile, edit) => tile_groups(tile, edit, out),
         Entry::Cell(table, _) | Entry::Row(table, _) => out.push(Group::Table { name: table.clone() }),
+        Entry::Field(table, field) => {
+            out.extend(field.ids().into_iter().map(|id| Group::Record { table: table.clone(), id }));
+        }
+        Entry::Record(table, record) => out.push(Group::Record { table: table.clone(), id: record.id }),
+        Entry::Text(table, text) => out.push(match text.id {
+            Some(id) => Group::Record { table: table.clone(), id },
+            None => Group::Table { name: table.clone() },
+        }),
         Entry::Server(server) => {
             out.push(Group::Row { table: server.table.clone(), key: server.key.clone() });
         }
@@ -136,7 +153,10 @@ fn tile_groups(tile: &TileKey, edit: &Edit, out: &mut Vec<Group>) {
         Edit::Colours { chunk: at, .. } => out.push(chunk(at, Part::Colours)),
         Edit::Holes { chunk: at, .. } => out.push(chunk(at, Part::Holes)),
         Edit::Area { chunk: at, .. } => out.push(chunk(at, Part::Area)),
-        Edit::Flags { chunk: at, .. } | Edit::Liquid { chunk: at, .. } => out.push(chunk(at, Part::Flags)),
+        // A shadow sets the flags word's shadow bit beside its `MCSH`.
+        Edit::Flags { chunk: at, .. } | Edit::Liquid { chunk: at, .. } | Edit::Shadow { chunk: at, .. } => {
+            out.push(chunk(at, Part::Flags))
+        }
         Edit::Paint { .. } => out.push(Group::Textures { tile: tile.clone() }),
         Edit::Doodad { .. } | Edit::Building { .. } | Edit::Placements { .. } => {
             out.push(Group::Placements { tile: tile.clone() })

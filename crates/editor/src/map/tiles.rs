@@ -377,7 +377,11 @@ pub(crate) struct Baked {
     pub(crate) changed: usize,
 }
 
-/// Put finished bakes back into the session.
+/// Put finished bakes back into the session, as one undo entry per tile of
+/// [`vale_edit::ops::Edit::Shadow`] edits for the chunks whose `MCSH` moved.
+/// They are written over the tile as it is now, not the copy the bake read, so
+/// an edit made while the bake ran is kept; and as edits they are logged and
+/// reach the other editors of a shared session like any other.
 ///
 /// A bake that finishes for a tile the session no longer holds, because the
 /// camera moved and the streamer dropped it, is discarded. The file on disk is
@@ -400,7 +404,25 @@ pub(crate) fn collect_bakes(
             );
             continue;
         }
-        session.tiles.insert(baked.at, baked.tile);
+        let key = session.key(baked.at);
+        let Some(tile) = session.tiles.get_mut(&baked.at) else { continue };
+        let mut edits = Vec::new();
+        for chunk in 0..baked.tile.chunks.len() {
+            let shadow = |tile: &AdtFile| {
+                tile.chunk(chunk).and_then(|chunk| chunk.region(vale_edit::adt::Region::Shadow)).map(|sub| sub.data.clone())
+            };
+            let (before, after) = (shadow(tile), shadow(&baked.tile));
+            if before != after {
+                let edit = vale_edit::ops::Edit::Shadow { chunk, before, after };
+                edit.apply(tile);
+                edits.push(edit);
+            }
+        }
+        if !edits.is_empty() {
+            session.history.begin("Rebake shadows");
+            session.history.record(&key, edits);
+            session.history.end();
+        }
         if baked.changed > 0 {
             // Both calls are needed. A bake written only into `session.tiles`
             // was not seen downstream: the overlay went on answering with the

@@ -318,14 +318,12 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             work.browser.forget_buffers();
         }
         if ui
-            .add_enabled(unsaved && !work.role.joined(), egui::Button::new("Save").min_size(size))
-            .on_hover_text(format!(
-                "Save the project, as Ctrl+S does: every table, tile and server row, submitted as one changelist."
-            ))
-            .on_disabled_hover_text(match work.role.joined() {
-                true => "In a shared session only the host saves.",
-                false => "Nothing has changed since the last save.",
+            .add_enabled(unsaved, egui::Button::new("Save").min_size(size))
+            .on_hover_text(match work.role.joined() {
+                true => "Submit this editor's edits to the host as one changelist, as Ctrl+S does. The host saves them.".to_string(),
+                false => "Save the project, as Ctrl+S does: every table, tile and server row, submitted as one changelist.".to_string(),
             })
+            .on_disabled_hover_text("Nothing has changed since the last save.")
             .clicked()
         {
             work.session.save_asked = true;

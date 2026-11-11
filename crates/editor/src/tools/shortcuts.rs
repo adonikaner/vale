@@ -40,10 +40,10 @@ pub(crate) fn shortcuts(
     // answers. See [`crate::server::Reach`], which bundles them into one
     // parameter because this system is at Bevy's limit of sixteen.
     mut reach: crate::server::Reach,
-    // In a shared session only the host saves, and a joined editor's playtest
-    // applies to its server only when the session allows it. See
-    // `crate::collab`.
-    collab: Res<crate::collab::Collab>,
+    // In a shared session only the host saves: a joined editor's save
+    // submits to the host. A joined editor's playtest applies to its server
+    // only when the session allows it. See `crate::collab`.
+    mut collab: ResMut<crate::collab::Collab>,
 ) {
     let taken = std::mem::take(&mut *taken);
     let Some(session) = session.as_mut() else {
@@ -87,12 +87,12 @@ pub(crate) fn shortcuts(
     // button, the end of a sweep, another author's Submit. See
     // `EditSession::save_asked`.
     let asked = std::mem::take(&mut session.save_asked);
-    if asked && !collab.is_joined() {
-        crate::server::save_everything(session, &assets, &reach.settings, &mut reach.queue, state.playing());
-    }
-    if taken.s && collab.is_joined() {
-        session.status = "in a shared session only the host saves".to_string();
+    if collab.is_joined() && (asked || taken.s) {
+        collab.ask = Some(crate::collab::Ask::Submit);
         return;
+    }
+    if asked {
+        crate::server::save_everything(session, &assets, &reach.settings, &mut reach.queue, state.playing());
     }
     if taken.s {
         crate::server::save_everything(session, &assets, &reach.settings, &mut reach.queue, state.playing());

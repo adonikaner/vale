@@ -23,5 +23,10 @@ blake3 = "1"
 # The challenge a joining editor answers, and a new log's id.
 rand.workspace = true
 # The log's payloads are deflated: a terrain edit is whole chunk states, and
-# a day of edits is otherwise hundreds of megabytes.
+# a day of edits is otherwise hundreds of megabytes. A frame on the
+# connection is deflated too.
 flate2.workspace = true
+# The connection's key exchange: one ephemeral X25519 key per side.
+x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+# The connection's encryption of each frame.
+chacha20poly1305 = "0.10.1"

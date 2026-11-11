@@ -4,7 +4,8 @@
 //! file.rs     the container: the header, the records, the string block, the
 //!             writer, and the append-only rule that keeps every offset in the
 //!             file valid across a string edit
-//! cell.rs     what an edit to one of its fields is, for the undo stack
+//! cell.rs     what an edit to one of its fields is, for the undo stack, by
+//!             index or by the record's id
 //! row.rs      what adding or removing a whole record is, on the same terms
 //! chain.rs    copying a row, and copying a row with everything it points at:
 //!             the deep clone a spell's visual chain needs before it can be
@@ -82,9 +83,9 @@ pub mod places;
 pub mod row;
 pub mod taxi;
 
-pub use cell::Cell;
+pub use cell::{Cell, Field, Text};
 pub use file::DbcFile;
-pub use row::Row;
+pub use row::{Record, Row};
 
 #[cfg(test)]
 mod tests;
