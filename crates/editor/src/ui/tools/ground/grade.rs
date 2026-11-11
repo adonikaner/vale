@@ -1,19 +1,46 @@
-//! The grade tool's panel. The state is [`crate::tools::ground::grade`].
+//! The grade tool's toolbar and panel. The state is
+//! [`crate::tools::ground::grade`].
 
 use bevy_egui::egui;
 
 use crate::session::EditSession;
 use crate::ui::tools::ground::terrain::objects_follow;
-use crate::ui::widgets::theme::{self, field, property};
+use crate::ui::widgets::theme::{self, bar_keys, field, property};
+
+/// The grade tool's toolbar over the viewport:
+///
+/// ```text
+/// Objects Follow  Keys
+/// ```
+///
+/// The tool has one mode, so the bar has no mode group. See
+/// [`theme::toolbar`].
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    grading: &mut crate::tools::ground::grade::Grading,
+) -> Option<egui::Rect> {
+    theme::toolbar(ctx, "grade-toolbar", viewport, corner, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            objects_follow(ui, &mut grading.objects_follow);
+            bar_keys(ui, &KEYS);
+        });
+    })
+}
+
+/// The grade tool's mouse controls, for the toolbar's Keys button.
+const KEYS: [(&str, &str); 2] = [
+    ("Left button", "Pick the start, then the end"),
+    ("A third click", "Start over from a new start"),
+];
 
 /// The grading tool: two points, a width, and the ramp between them.
 ///
 /// The panel is mostly a report: which ends are picked, how long the grade is
 /// and how steep. The slope decides whether the ramp is walkable, and two
 /// clicks in the viewport do not show it.
-///
-/// How the ends are picked is on the Ends heading's info mark. The tool has
-/// no toolbar over the viewport to hold it.
 pub(in crate::ui::tools) fn grading(
     ui: &mut egui::Ui,
     grading: &mut crate::tools::ground::grade::Grading,
@@ -24,9 +51,9 @@ pub(in crate::ui::tools) fn grading(
     theme::heading_about(
         ui,
         "Ends",
-        "Click a start, then an end; a third click starts over. Each end takes \
-         the ground height at the click, and either height can be edited.\n\n\
-         The length and the slope are shown once both ends are picked.",
+        "Each end takes the ground height at the click, and either height can \
+         be edited. The length and the slope are shown once both ends are \
+         picked.",
     );
     for (name, end) in [
         ("Start", grading.from.as_mut()),
@@ -62,7 +89,7 @@ pub(in crate::ui::tools) fn grading(
     // show.
     if let Some((grade, slope)) = grading.grade().and_then(|g| g.slope().map(|s| (g, s))) {
         property(ui, "Length", "", |ui| {
-            theme::value(ui, format!("{:.1} y", grade.length()));
+            theme::value(ui, format!("{:.1} yd", grade.length()));
         });
         property(ui, "Slope", "", |ui| {
             let degrees = slope.atan().to_degrees();
@@ -123,8 +150,6 @@ pub(in crate::ui::tools) fn grading(
              accumulated over a stroke.",
         );
     });
-
-    objects_follow(ui, &mut grading.objects_follow);
 
     ui.add_space(6.0);
     let ready = grading.grade().and_then(|g| g.slope()).is_some();

@@ -14,17 +14,26 @@
 //! other two waited for a button that was not visible where the edit was made.
 //!
 //! The operations are here, opened from the bar's Server… button. Every
-//! subject gets the same block, in the same order, with the same words:
+//! subject with something to act on gets the same block, in the same order,
+//! with the same words:
 //!
 //! ```text
-//! ┌ <subject>  N row(s) changed · M applied  [Drop Changes] [Restore] [Apply] ┐
-//! │ <a refusal, a trouble, or an unsaved table, when there is one>            │
-//! └───────────────────────────────────────────────────────────────────────────┘
+//! ┌ <subject>                              [Drop Changes] [Restore] [Apply] ┐
+//! │ N rows changed, M applied                                               │
+//! │ <a refusal, a trouble, or an unsaved table, when there is one>          │
+//! └─────────────────────────────────────────────────────────────────────────┘
+//! No changes: <every other subject, by name, on one line>
 //! ```
 //!
 //! The subject's name carries the rest in its hover text: the tables it
 //! writes, the file the statements are in, and what it takes for an applied
 //! change to be live. A block with changes not yet applied is outlined amber.
+//!
+//! A subject with no change, no applied row, no refusal and no error has no
+//! block. All three of its buttons would be disabled, and a project that
+//! edits creatures drew sixteen such blocks around the one that mattered.
+//! Those subjects are named on one line under the blocks, each with the same
+//! hover text as a block's name.
 //!
 //! The subject panels show which rows this project changes and what state
 //! they are in, and direct a person to this panel for the operations. See
@@ -40,7 +49,8 @@ use crate::server::sync::{apply, discard, put_back, Half, Standing, Work};
 use crate::ui::widgets::theme;
 
 /// Draws the whole section: the Apply on save switch, then one block per
-/// subject. In a shared session the switch, Apply and Restore are disabled
+/// subject that has anything to act on, then the line naming the rest. In a
+/// shared session the switch, Apply and Restore are disabled
 /// when `gate` says this editor may not write to its server. Drop Changes is
 /// an edit like any other and is sent to the other editors. See
 /// `crate::collab::ServerGate`.
@@ -64,26 +74,81 @@ pub(crate) fn project(ui: &mut egui::Ui, work: &mut Work<'_>, gate: &crate::coll
             egui::Checkbox::new(&mut work.server.apply_on_save, "Apply on save"),
         )
         .on_hover_text(
-            "Every save also runs the SQL it writes against the world database, for every \
-             subject. A save made with the panels open over a playtest also sends .reload \
-             for each table that has one. When off, a save only writes the SQL files.",
+            "A save always writes the SQL statements into the project folder. On: every save \
+             also runs them against the world database, for every subject, and a save made \
+             with the panels open over a playtest also sends .reload for each table that has \
+             one. Off: a save only writes the SQL files.",
         )
         .on_disabled_hover_text(gate.refused.clone().unwrap_or_else(|| "No world database is set.".to_string()))
         .changed()
     {
         work.server.save(&work.assets.root);
     }
-    theme::note(
-        ui,
-        "A save always writes the SQL statements into the project folder. This setting \
-         decides whether the save also runs them against the database.",
-    );
 
     ui.add_space(4.0);
+    let mut quiet: Vec<Half> = Vec::new();
     for half in Half::ALL {
+        if is_quiet(work, half) {
+            quiet.push(half);
+            continue;
+        }
         block(ui, work, half, have_a_database, gate);
         ui.add_space(4.0);
     }
+    if !quiet.is_empty() {
+        unchanged(ui, &quiet, quiet.len() == Half::ALL.len());
+    }
+}
+
+/// Whether a subject has nothing to act on, so it is named on the last line
+/// and has no block: [`Standing::quiet`], and for the client tables also no
+/// server DBC file to copy or put back and no error reading them.
+fn is_quiet(work: &mut Work<'_>, half: Half) -> bool {
+    if !work.standings.of(half, work.session, work.assets, work.now).quiet() {
+        return false;
+    }
+    match half {
+        Half::Tables => match work.standings.files(work.session, work.server, work.now) {
+            Ok(files) => !files.outstanding() && files.saved == 0 && files.carried.is_empty(),
+            Err(_) => dbcs::carried(&work.session.project).is_empty(),
+        },
+        _ => true,
+    }
+}
+
+/// The line under the blocks that names the subjects with nothing to act on.
+/// `all` is whether that is every subject.
+fn unchanged(ui: &mut egui::Ui, quiet: &[Half], all: bool) {
+    ui.add_space(2.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let lead = match all {
+            true => "This project changes no server row:",
+            false => "No changes:",
+        };
+        ui.label(egui::RichText::new(lead).small().color(theme::INK_FAINT));
+        for (at, half) in quiet.iter().enumerate() {
+            let name = match at + 1 == quiet.len() {
+                true => half.name().to_string(),
+                false => format!("{},", half.name()),
+            };
+            ui.label(egui::RichText::new(name).small().color(theme::INK_DIM))
+                .on_hover_text(about(*half));
+        }
+    });
+}
+
+/// A subject's hover text: the tables it writes, the files its statements
+/// are in, and what it takes for an applied change to be live.
+fn about(half: Half) -> String {
+    format!(
+        "{}\n\nA save writes the statements to {}; {} holds the statements that revert \
+         every applied row.\n\n{}",
+        half.tables(),
+        half.file(),
+        half.revert_file(),
+        half.going_live()
+    )
 }
 
 /// Draws one subject's block. The module comment shows its layout.
@@ -115,8 +180,8 @@ fn block(ui: &mut egui::Ui, work: &mut Work<'_>, half: Half, have_a_database: bo
         });
 }
 
-/// The inside of one subject's block: the name, the state and the buttons on
-/// one line, and under them, when there is one, the plan's error, each
+/// The inside of one subject's block: the name and the buttons on one line,
+/// the state under them, and then, when there is one, the plan's error, each
 /// refusal, the server DBC files' line and the unsaved-table note.
 fn block_body(
     ui: &mut egui::Ui,
@@ -127,14 +192,7 @@ fn block_body(
     standing: &Standing,
     colour: egui::Color32,
 ) {
-    let about = format!(
-        "{}\n\nA save writes the statements to {}; {} holds the statements that revert \
-         every applied row.\n\n{}",
-        half.tables(),
-        half.file(),
-        half.revert_file(),
-        half.going_live()
-    );
+    let about = about(half);
     // The client-table block also stands for the DBC files the server reads
     // from DataDir\5875\dbc, which Apply copies and Restore puts back.
     let files = match half {
@@ -153,9 +211,8 @@ fn block_body(
     egui::Sides::new().shrink_left().wrap().show(
         ui,
         |ui| {
-            ui.label(egui::RichText::new(half.name()).strong().size(13.0).color(theme::INK))
+            ui.label(egui::RichText::new(half.name()).size(theme::BODY).color(theme::INK))
                 .on_hover_text(&about);
-            ui.label(egui::RichText::new(standing.line()).small().color(colour));
         },
         |ui| {
             buttons(
@@ -172,6 +229,10 @@ fn block_body(
             );
         },
     );
+    // The state has a line of its own under the name and the buttons. Beside
+    // them it had about 220 points, and its longest wording wrapped to four
+    // lines.
+    ui.label(egui::RichText::new(standing.line()).small().color(colour));
     if let Some(trouble) = &standing.trouble {
         ui.label(egui::RichText::new(trouble).small().color(theme::BAD));
     }
@@ -200,7 +261,7 @@ fn block_body(
         }
         Some(Err(e)) if !dbcs::carried(&work.session.project).is_empty() => {
             ui.label(
-                egui::RichText::new(format!("server DBC files: {e}"))
+                egui::RichText::new(format!("Server DBC files: {e}"))
                     .small()
                     .color(theme::BAD),
             );
@@ -307,7 +368,7 @@ fn buttons(
             }
         } else {
             ui.label(
-                egui::RichText::new("edited as a file")
+                egui::RichText::new("Edited as a file")
                     .small()
                     .color(theme::INK_FAINT),
             )

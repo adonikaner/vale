@@ -1,17 +1,78 @@
-//! The water tool's panel. The state is [`crate::tools::ground::water`].
+//! The water tool's toolbar and panel. The state is
+//! [`crate::tools::ground::water`].
 
 use bevy_egui::egui;
 
-use crate::ui::widgets::theme::{self, field, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_setting, field, property};
 
-/// The tool's mouse and keyboard controls, for the Brush heading's info
-/// mark. The tool has no toolbar over the viewport to hold them.
-const KEYS: &str = "Left button: flood\n\
-                    Shift + left button: drain\n\
-                    Alt + left button: write the two flags to wet cells, level unchanged\n\
-                    Ctrl + left button: update depth from the ground below\n\
-                    Ctrl + wheel: radius\n\n\
-                    Playtest movement reads the same MCLQ data.";
+/// The water tool's toolbar over the viewport:
+///
+/// ```text
+/// Surface [Flat | Sloped]  Keys
+/// ```
+///
+/// Flat or Sloped decides what a stroke writes and what Space takes, so it
+/// is the bar's [`theme::bar_group`]. The heights are in the inspector. See
+/// [`theme::toolbar`].
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    water: &mut crate::tools::ground::water::Water,
+) -> Option<egui::Rect> {
+    theme::toolbar(ctx, "water-toolbar", viewport, corner, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_setting(ui, "Surface", |ui| {
+                bar_group(ui, |ui| {
+                    if bar_segment(ui, !water.sloped, "Flat")
+                        .on_hover_text("A stroke writes one height everywhere.")
+                        .clicked()
+                    {
+                        water.sloped = false;
+                    }
+                    if bar_segment(ui, water.sloped, "Sloped")
+                        .on_hover_text(
+                            "A stroke writes a surface that falls from a start to an end, and is \
+                             flat beyond either.",
+                        )
+                        .clicked()
+                    {
+                        water.sloped = true;
+                    }
+                });
+            });
+            bar_keys(ui, match water.sloped {
+                false => &FLAT_KEYS,
+                true => &SLOPED_KEYS,
+            });
+        });
+    })
+}
+
+/// The tool's mouse and keyboard controls while the surface is flat, for the
+/// toolbar's Keys button.
+const FLAT_KEYS: [(&str, &str); 7] = [
+    ("Left button", "Flood"),
+    ("Shift + left button", "Drain"),
+    ("Alt + left button", "Write the two flags to wet cells, level unchanged"),
+    ("Ctrl + left button", "Update depth from the ground below"),
+    ("Ctrl + wheel", "Radius"),
+    ("Space", "Take the height from the water under the pointer"),
+    ("Ctrl + Space", "Take the height from the ground"),
+];
+
+/// The same while the surface is sloped, where Space sets an end.
+const SLOPED_KEYS: [(&str, &str); 8] = [
+    ("Left button", "Flood"),
+    ("Shift + left button", "Drain"),
+    ("Alt + left button", "Write the two flags to wet cells, level unchanged"),
+    ("Ctrl + left button", "Update depth from the ground below"),
+    ("Ctrl + wheel", "Radius"),
+    ("Space", "Set the start at the water under the pointer"),
+    ("Shift + Space", "Set the end"),
+    ("Ctrl with either", "Take the height from the ground"),
+];
 
 /// `n` cells, in words.
 fn cells(n: i32) -> String {
@@ -55,23 +116,9 @@ pub(in crate::ui::tools) fn water(ui: &mut egui::Ui, water: &mut crate::tools::g
         None => theme::note(ui, "Pointer is not over an open tile"),
     }
 
-    theme::heading_about(
-        ui,
-        "Surface",
-        match water.sloped {
-            false => {
-                "Space takes the level from the water under the pointer. Ctrl + Space takes it \
-                 from the ground."
-            }
-            true => {
-                "Space sets the start, Shift + Space the end. The height is taken from the water \
-                 at the pointer, or with Ctrl the ground. The surface is flat beyond either end."
-            }
-        },
-    );
-    property(ui, "Type", "", |ui| {
-        theme::property_segmented(ui, &mut water.sloped, &[("Flat", false), ("Sloped", true)], |a, b| a == b);
-    });
+    // Flat or Sloped is chosen on the toolbar; these are that choice's
+    // heights.
+    theme::heading(ui, "Surface");
     match water.sloped {
         false => {
             property(ui, "Height", "", |ui| {
@@ -139,7 +186,7 @@ pub(in crate::ui::tools) fn water(ui: &mut egui::Ui, water: &mut crate::tools::g
         }
     }
 
-    theme::heading_about(ui, "Brush", KEYS);
+    theme::heading_about(ui, "Brush", "Playtest movement reads the same MCLQ data.");
     property(ui, "Radius", "A cell is 4.17 yd, the same grid as the ground.", |ui| {
         field(
             ui,

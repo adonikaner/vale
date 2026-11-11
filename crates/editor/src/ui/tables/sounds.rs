@@ -55,8 +55,8 @@ fn sounds_of(work: &Workspace<'_>, table: &str, id: u32) -> [u32; 2] {
 /// or for an item's sounds, picked up and put down.
 fn pair_words(table: &str) -> [&'static str; 2] {
     match table {
-        "ItemGroupSounds" => ["pick up", "put down"],
-        _ => ["day", "night"],
+        "ItemGroupSounds" => ["Pick Up", "Put Down"],
+        _ => ["Day", "Night"],
     }
 }
 
@@ -110,11 +110,13 @@ pub(super) fn sound_buttons(
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| format!("SoundEntries {entry}")),
         };
-        // One button for a row with two different sounds plays the day one.
+        // One button for a row with two different sounds plays the day one,
+        // and its hover text says which. The word is a button's label in
+        // `pair_words` and is put in lower case inside the sentence.
         let hover = match (on, two || night == 0 || night == day) {
             (true, _) => format!("Stop {name}"),
             (false, true) => format!("Play {name}"),
-            (false, false) => format!("Play {name} ({first})"),
+            (false, false) => format!("Play {name} ({})", first.to_lowercase()),
         };
         if ui
             .add_enabled(entry != 0, egui::Button::new(text).small())

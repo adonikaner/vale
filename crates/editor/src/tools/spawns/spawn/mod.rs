@@ -489,7 +489,9 @@ pub(crate) struct NewSpawn<K> {
     task: Option<Task<Result<Vec<K>, String>>>,
     /// The template a click will place. The ghost on the cursor and the
     /// preview pane both show it. `None` means nothing is chosen, which is the
-    /// state `Escape` leaves.
+    /// state `Escape` leaves. A switch to Select keeps it, so a return to
+    /// Place has it on the pointer again; in Select it places nothing, by
+    /// [`SpawnTool::placing`].
     pub(crate) chosen: Option<K>,
     /// Why the search found nothing, when it is not that nothing matched.
     pub(crate) trouble: Option<String>,
@@ -2122,7 +2124,8 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// Place half and a template has been chosen.
     ///
     /// The counterpart of `Placing::armed()`, with the same two conditions:
-    /// switching to Select or pressing `Escape` makes it false.
+    /// switching to Select or pressing `Escape` makes it false. Select keeps
+    /// the template and `Escape` clears it.
     pub(crate) fn placing(&self) -> bool {
         self.mode == crate::tools::placements::place::Mode::Place && self.new_spawn.chosen.is_some()
     }

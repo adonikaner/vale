@@ -1,4 +1,4 @@
-//! `Look like a spell…`: a spell's visual chosen by another spell, played on
+//! `Choose from Spell…`: a spell's visual chosen by another spell, played on
 //! the stage, and either shared or cloned.
 
 use bevy_egui::egui;
@@ -58,7 +58,7 @@ pub(super) fn looks_like(
                     ui.set_width(PICKER_WIDTH);
                     let box_ = ui.add(
                         egui::TextEdit::singleline(&mut work.browser.pick_query)
-                            .hint_text("spell name or id")
+                            .hint_text("Spell name or ID")
                             .desired_width(PICKER_WIDTH),
                     );
                     if work.browser.pick_focus {
@@ -110,13 +110,13 @@ pub(super) fn looks_like(
                         &mut pane,
                         stage,
                         Some(Show::Spell(id)),
-                        &format!("Preview — spell {id}"),
+                        &format!("Preview \u{2014} spell {id}"),
                         &[],
                         None,
                     ),
                     None => {
                         stage.close();
-                        empty_pane(&mut pane, "click a spell to preview it");
+                        empty_pane(&mut pane, "Click a spell to preview it.");
                     }
                 }
             });
@@ -129,7 +129,7 @@ pub(super) fn looks_like(
                         .filter(|visual| *visual != 0 && *visual != u32::MAX)
                 });
                 if ui
-                    .add_enabled(visual.is_some(), egui::Button::new("Share visual"))
+                    .add_enabled(visual.is_some(), egui::Button::new("Share Visual"))
                     .on_hover_text(
                         "Set this spell's SpellVisual to the selected spell's visual. The two \
                          spells then share the row, and an edit to its kits changes both.",
@@ -140,7 +140,7 @@ pub(super) fn looks_like(
                     taken = visual.map(|visual| (visual, false));
                 }
                 if ui
-                    .add_enabled(visual.is_some(), egui::Button::new("Clone visual"))
+                    .add_enabled(visual.is_some(), egui::Button::new("Clone Visual"))
                     .on_hover_text(
                         "Copy the selected spell's visual with every kit and effect it \
                          references, and set this spell's SpellVisual to the copy. Edits to \
@@ -155,7 +155,7 @@ pub(super) fn looks_like(
                     close = true;
                 }
                 ui.label(
-                    egui::RichText::new("click previews the spell · Esc closes")
+                    egui::RichText::new("Click previews the spell \u{b7} Esc closes")
                         .small()
                         .color(theme::INK_FAINT),
                 );
@@ -172,7 +172,7 @@ pub(super) fn looks_like(
                 "Edit SpellVisual",
                 work.now,
             );
-            work.session.status = format!("spell {own} now uses SpellVisual {visual}");
+            work.session.status = format!("Spell {own} now uses SpellVisual {visual}");
             close = true;
         }
         Some((visual, true)) => {

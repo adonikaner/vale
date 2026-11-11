@@ -6,7 +6,7 @@ use bevy_egui::egui;
 
 use crate::tables;
 use crate::ui::tables::field::number;
-use crate::ui::tables::{TEXT, VALUE, Workspace};
+use crate::ui::tables::{note_about, TEXT, VALUE, Workspace};
 use crate::ui::widgets::theme;
 
 /// A table with no schema: every field, numbered, with what it might be.
@@ -17,17 +17,22 @@ use crate::ui::widgets::theme;
 /// second box edits the float. Both are readings of the same four bytes, and the number
 /// box always writes them as they are, so a field that is neither can still
 /// be set.
+///
+/// The first line says the table has no schema, and its info mark says what
+/// the text box and the float box are. A row's name cell is the field's
+/// number, 70 points wide, and not the form's name cell: there is no column
+/// name to give the width to.
 pub(super) fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let table_name = work.browser.table.clone();
     let Some(table) = work.session.table(&table_name) else {
         return;
     };
     let fields = table.field_count();
-    theme::note(
+    note_about(
         ui,
-        "No schema for this table: the columns are numbered. A text box is drawn where \
-         the column holds the offsets of strings, and a float box where the four bytes \
-         read as a float. Both are guesses about the column. See \
+        "No schema for this table: the columns are numbered.",
+        "A text box is drawn where the column holds the offsets of strings, and a float \
+         box where the four bytes read as a float. Both are guesses about the column. See \
          vale_assets::tables::schema.",
     );
     for field in 0..fields {
@@ -47,14 +52,16 @@ pub(super) fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usi
             .copied()
             .unwrap_or(false);
         ui.horizontal(|ui| {
-            ui.add_sized(
+            theme::name_cell(
+                ui,
                 egui::vec2(70.0, 22.0),
-                egui::Label::new(theme::number(format!("[{field}]"))),
+                theme::number(format!("[{field}]")),
+                egui::Sense::hover(),
             );
             // Field 0 is the row's id, which only a new row mints.
             if field == 0 {
                 ui.label(theme::number(format!("{raw}")));
-                ui.label(egui::RichText::new("id").small().color(theme::INK_FAINT));
+                ui.label(egui::RichText::new("ID").small().color(theme::INK_FAINT));
                 return;
             }
             let mut value = raw;
@@ -75,12 +82,13 @@ pub(super) fn unschemad(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usi
             }
             let mut float = f32::from_bits(raw);
             if raw != 0 && float.is_finite() && float.abs() > 1.0e-4 && float.abs() < 1.0e6 {
-                let response = ui
-                    .add_sized(
+                let response = theme::sunk(ui, |ui| {
+                    ui.add_sized(
                         egui::vec2(VALUE, 22.0),
                         egui::DragValue::new(&mut float).speed(0.01),
                     )
-                    .on_hover_text("The same four bytes read as a float.");
+                })
+                .on_hover_text("The same four bytes read as a float.");
                 if response.changed() {
                     tables::fields::set_field(
                         work.session,

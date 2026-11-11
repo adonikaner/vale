@@ -41,7 +41,7 @@ use crate::server::settings::server_patch;
 use crate::subjects::listing::Listed;
 use crate::tools::spawns::spawn::{Template, TemplateSubject};
 use crate::ui::tools::spawns::spawn::{SpawnView, Subject};
-use crate::ui::widgets::rowform::page_spacing;
+use crate::ui::widgets::rowform::{page_row, page_spacing};
 use crate::ui::widgets::theme;
 
 /// Draw the workspace into the region the panels left.
@@ -110,8 +110,8 @@ fn row<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, known: &S:
     shape.response
 }
 
-/// New, Copy and Discard: the tool's three template buttons, acting on the
-/// open row and opening what they make here.
+/// New, Copy and Discard, as three equal buttons: the tool's three template
+/// buttons, acting on the open row and opening what they make here.
 fn actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
     let now = subject.now;
     let patch = server_patch(subject.server);
@@ -121,15 +121,15 @@ fn actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
         .is_some_and(|shown| subject.tool.template.as_ref().is_some_and(|held| held.entry == shown.entry));
     let created = shown.as_ref().is_some_and(TemplateSubject::is_new);
     let noun = S::WORDS.noun;
-    ui.horizontal(|ui| {
-        let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-        let size = egui::vec2(third, 22.0);
-        if ui.add(egui::Button::new("+ New").min_size(size)).on_hover_text(S::TEXT.new_listed).clicked() {
+    ui.columns(3, |columns| {
+        let new = theme::full_button(&columns[0], "New");
+        if columns[0].add(new).on_hover_text(S::TEXT.new_listed).clicked() {
             let entry = subject.tool.create_listed_template(subject.session, S::WORDS.new_name, patch, now);
             subject.session.status = format!("{} {entry} created", S::TEMPLATE);
         }
-        if ui
-            .add_enabled(row_read, egui::Button::new("Copy").min_size(size))
+        let copy = theme::full_button(&columns[1], "Copy");
+        if columns[1]
+            .add_enabled(row_read, copy)
             .on_hover_text(format!(
                 "Copies the open {noun} to a new entry, every column as shown: the \
                  project's value where it has one, otherwise the database value."
@@ -139,13 +139,14 @@ fn actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
         {
             if let Some(shown) = shown.as_ref() {
                 subject.session.status = match subject.tool.copy_listed_template(subject.session, shown, patch, now) {
-                    Some(entry) => format!("copied as {} {entry}", S::TEMPLATE),
-                    None => "the row is still being read".to_string(),
+                    Some(entry) => format!("Copied as {} {entry}", S::TEMPLATE),
+                    None => format!("Still reading this {noun}'s row"),
                 };
             }
         }
-        if ui
-            .add_enabled(created, egui::Button::new("Discard").min_size(size))
+        let discard = theme::full_button(&columns[2], "Discard");
+        if columns[2]
+            .add_enabled(created, discard)
             .on_hover_text(format!(
                 "Removes the {noun} this project creates. The database is not changed. A \
                  row already in the database cannot be removed: .reload {} never drops an \
@@ -179,15 +180,22 @@ fn form<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
             return;
         };
         listing::form_head(ui, &shown, S::TEMPLATE);
-        ui.horizontal(|ui| {
-            crate::ui::tools::spawns::spawn::entry_label::<S>(ui, &shown);
-            let id = ui.make_persistent_id((S::TEMPLATE, "data-entry", shown.patch));
-            crate::ui::tools::spawns::spawn::entry_field(ui, subject, &shown, id);
-        });
+        // The entry box is a page row, so its name and its box line up with
+        // the columns of the form under it.
+        page_row(
+            ui,
+            "entry",
+            &format!("The {} entry. Changing it renumbers the row.", S::TEMPLATE),
+            shown.entry != shown.read_entry,
+            |ui| {
+                let id = ui.make_persistent_id((S::TEMPLATE, "data-entry", shown.patch));
+                crate::ui::tools::spawns::spawn::entry_field(ui, subject, &shown, id);
+            },
+        );
         ui.add_space(6.0);
         let row = subject.tool.template.as_ref().filter(|held| held.entry == shown.entry).map(|held| held.row.clone());
         let Some(row) = row else {
-            theme::waiting(ui, "reading the row\u{2026}");
+            theme::waiting(ui, "Reading the row\u{2026}");
             return;
         };
         S::template_form(ui, subject, &shown.key(), &row);
@@ -203,7 +211,12 @@ pub(crate) fn inspector<S: SpawnView>(ui: &mut egui::Ui, mut subject: Subject<'_
         theme::note(ui, format!("Open a {} on the left to see its model and its other tables.", S::WORDS.noun));
         return;
     };
-    ui.label(egui::RichText::new(known.label()).strong().size(14.0));
+    // The template's name, as the spawn tool's panel draws a selection's
+    // title: one line, cut with an ellipsis.
+    ui.add(
+        egui::Label::new(egui::RichText::new(known.label()).strong().size(theme::TITLE).color(theme::INK))
+            .truncate(),
+    );
     // As wide as the inspector, as the item workspace's preview is.
     let side = ui.available_width();
     if !S::preview(ui, subject, known.display_id(), Some(side)) {
@@ -217,8 +230,7 @@ pub(crate) fn inspector<S: SpawnView>(ui: &mut egui::Ui, mut subject: Subject<'_
         subject.tool.new_spawn.chosen = Some(known.clone());
         subject.asks.push(crate::ui::shell::asks::ShellAsk::Link(S::TOOL));
     }
-    ui.add_space(6.0);
-    theme::heading(ui, "Other tables");
+    theme::heading(ui, "Other Tables");
     S::list_windows(ui, subject, &known);
 }
 

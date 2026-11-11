@@ -5,7 +5,7 @@
 //! pick.rs       the reference picker: a target table's rows, or its icons as
 //!               a grid, and the picker that plays the visuals, kits or
 //!               effects it lists
-//! looks_like.rs `Look like a spell…`: a spell's visual chosen by another
+//! looks_like.rs `Choose from Spell…`: a spell's visual chosen by another
 //!               spell, played
 //! rows.rs       a table's rows as a list, opened to find one row
 //! bits.rs       a mask as one checkbox per bit

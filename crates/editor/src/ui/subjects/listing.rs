@@ -7,7 +7,8 @@
 //! [`crate::subjects::listing::Listing`]; the generic functions here take it.
 //! [`super::items`] and [`super::quests`] keep their own lists and use the
 //! parts that do not: [`frame`], [`heading`], [`search_box`], [`shown_count`],
-//! [`reveal_in`] and [`edits_block`]. Nothing here names a subject.
+//! [`reveal_in`] and [`edits_block`]. The three picker dialogs of this folder
+//! draw their titles with [`dialog_title`]. Nothing here names a subject.
 
 use bevy_egui::egui;
 
@@ -80,12 +81,12 @@ pub(crate) fn heading(
         theme::note(
             ui,
             "These are rows in the vmangos world database. Set the database connection \
-             in Project \u{2192} Settings\u{2026}, or with VALE_MANGOSD.",
+             with Settings\u{2026} in the Project menu, or with VALE_MANGOSD.",
         );
         return false;
     }
     if !read {
-        theme::waiting(ui, format!("reading {table}\u{2026}"));
+        theme::waiting(ui, format!("Reading {table}\u{2026}"));
         return false;
     }
     true
@@ -215,7 +216,7 @@ pub(crate) fn edits_block(
     if standing.quiet() {
         return;
     }
-    theme::heading(ui, "This project");
+    theme::heading(ui, "This Project");
     let colour = match standing.outstanding {
         0 => theme::INK_DIM,
         _ => theme::WARN,
@@ -268,20 +269,42 @@ pub(crate) fn form_head(ui: &mut egui::Ui, shown: &TemplateSubject, table: &str)
 }
 
 /// The waiting line or the empty form, for a form with no open row. `noun` is
-/// what a row is called.
+/// what a row is called. The empty form says how to open a row; what the
+/// form edits and when an edit reaches the database are on the heading's
+/// info mark.
 pub(crate) fn nothing_open<K: Listed>(ui: &mut egui::Ui, list: &Listing<K>, noun: &str) {
     if list.open.is_some() && !list.is_read() {
-        theme::waiting(ui, format!("reading {}\u{2026}", K::TABLE));
+        theme::waiting(ui, format!("Reading {}\u{2026}", K::TABLE));
         return;
     }
-    theme::heading(ui, &format!("No {noun} open"));
-    theme::note(
+    theme::heading_about(
         ui,
-        format!(
-            "Choose a {noun} on the left, or create one with + New. Every column of {} is \
-             edited here; nothing is written to the database until Apply, in Server\u{2026} \
-             on the top bar.",
+        &format!("No {noun} open"),
+        &format!(
+            "Every column of {} is edited here. Nothing is written to the database until \
+             Apply, in Server\u{2026} on the top bar.",
             K::TABLE
         ),
     );
+    theme::note(ui, format!("Choose a {noun} on the left, or create one with New."));
+}
+
+/// `n` with `noun`, pluralised by adding an s: `1 model`, `3 models`.
+pub(crate) fn counted(n: usize, noun: &str) -> String {
+    match n {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
+}
+
+/// A picker dialog's title, with an info mark after it that shows `about`
+/// when hovered: what the dialog's search covers. It is
+/// [`theme::heading_about`] for a dialog, whose title is not a section
+/// heading.
+pub(crate) fn dialog_title(ui: &mut egui::Ui, title: &str, about: &str) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(title).strong().size(14.0));
+        let (mark, _) = ui.allocate_exact_size(egui::Vec2::splat(14.0), egui::Sense::hover());
+        theme::info(ui, ui.id().with(("about", title)), mark, about);
+    });
 }

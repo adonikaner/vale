@@ -36,15 +36,19 @@ const PAGES: [&[(&str, crate::tools::ground::chunks::Page)]; 2] = [
     ],
 ];
 
-/// How the selection is made and the tool's keys, for the Selection
-/// heading's info mark.
-const SELECTION_ABOUT: &str = "Click a chunk to select it, or drag a block on the ground.\n\n\
-                               Shift: add to the selection\n\
-                               Shift + click on a selected chunk: remove it\n\
-                               Ctrl + A: select the tile under the pointer\n\
-                               Escape: deselect\n\
-                               Ctrl + C: copy\n\
-                               Ctrl + V: paste at the pointer";
+/// How the selection is made and the tool's keys, for the toolbar's Keys
+/// button. The tool has no mode and no switch, so its toolbar over the
+/// viewport is that button alone ([`theme::toolbar_keys`]).
+pub(crate) const KEYS: [(&str, &str); 8] = [
+    ("Left button", "Select a chunk"),
+    ("Drag", "Select a block"),
+    ("Shift", "Add to the selection"),
+    ("Shift + click a selected chunk", "Remove it"),
+    ("Ctrl + A", "Select the tile under the pointer"),
+    ("Escape", "Deselect"),
+    ("Ctrl + C", "Copy"),
+    ("Ctrl + V", "Paste at the pointer"),
+];
 
 /// What Stitch does, for its button's hover.
 const STITCH_ABOUT: &str = "Joins the selection's border to the ground around it. Every vertex on the \
@@ -74,8 +78,8 @@ fn counted(n: usize, noun: &str) -> String {
 /// draw. A second chosen area or texture kept by this tool would be a second
 /// answer to which one is chosen.
 ///
-/// How to select and the tool's keys are on the Selection heading's info
-/// mark. A page has no heading of its own name: the lit segment names it.
+/// How to select and the tool's keys are on the toolbar's Keys button. A
+/// page has no heading of its own name: the lit segment names it.
 ///
 /// The line about the chunk under the pointer is last, as in the measuring
 /// panel: it changes as the pointer moves on and off the world, and above the
@@ -101,7 +105,7 @@ pub(in crate::ui::tools) fn chunks(
         .or_else(|| tables.and_then(|tables| tables.areas()));
     let any = census.open > 0;
 
-    theme::heading_about(ui, "Selection", SELECTION_ABOUT);
+    theme::heading(ui, "Selection");
     property(ui, "Selected", "", |ui| {
         theme::value(
             ui,

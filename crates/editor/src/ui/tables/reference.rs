@@ -39,7 +39,7 @@ pub(super) fn reference(
     // and `-1`. Drawn as the `u32` it is read as, `-1` appears as
     // `4294967295` in the id box. The kits hold many of these, because
     // `blank_defaults` and the shipped rows both write `-1`. The label beside
-    // the box says "none" for it, and the signed box shows `-1` to match.
+    // the box says "None" for it, and the signed box shows `-1` to match.
     let mut value = raw as i32;
     if number(ui, &mut value).changed() {
         write(work, table_name, record, column, value as u32);
@@ -48,7 +48,7 @@ pub(super) fn reference(
     // to. It is a dialog rather than a popup; see the module comment.
     if ui
         .add(
-            egui::Button::new(egui::RichText::new("…").size(13.0)).min_size(egui::vec2(24.0, 22.0)),
+            egui::Button::new(egui::RichText::new("\u{2026}").size(13.0)).min_size(egui::vec2(24.0, 22.0)),
         )
         .on_hover_text(match previews(points_at) {
             true => format!("choose a {points_at} row; clicking a row previews it"),
@@ -68,7 +68,7 @@ pub(super) fn reference(
     if table_name == "Spell"
         && points_at == "SpellVisual"
         && ui
-            .small_button("from spell\u{2026}")
+            .small_button("Choose from Spell\u{2026}")
             .on_hover_text(tables::commands::command_about(Command::LookLike))
             .clicked()
     {
@@ -81,7 +81,7 @@ pub(super) fn reference(
         && raw != 0
         && raw != u32::MAX
         && ui
-            .small_button("copy")
+            .small_button("Copy")
             .on_hover_text(
                 "copy this LightParams row with its 18 colour bands and 6 float bands, and \
                  set this field to the copy's id; other lights that use the original keep it",
@@ -109,7 +109,7 @@ pub(super) fn reference(
         .table(points_at)
         .is_some_and(|table| table.row_of(0).is_some());
     if (raw == 0 && !zero_is_a_row) || raw == u32::MAX {
-        ui.label(egui::RichText::new("none").color(theme::INK_FAINT));
+        ui.label(egui::RichText::new("None").color(theme::INK_FAINT));
         ui.label(
             egui::RichText::new(points_at)
                 .small()
@@ -117,7 +117,7 @@ pub(super) fn reference(
         );
         if points_at == "LightParams"
             && ui
-                .small_button("+ new")
+                .small_button("New")
                 .on_hover_text(
                     "create a LightParams row with its 18 colour bands and 6 float bands, \
                      copied from this light's clear LightParams (or from the Eastern Kingdoms \
@@ -133,7 +133,7 @@ pub(super) fn reference(
         }
         if chain_table
             && ui
-                .small_button("+ new")
+                .small_button("New")
                 .on_hover_text(format!(
                     "create a blank {points_at} row and set this field to its id"
                 ))
@@ -210,7 +210,7 @@ pub(super) fn reference(
         }
         None => {
             ui.label(
-                egui::RichText::new(format!("no {points_at} row has this id"))
+                egui::RichText::new(format!("No {points_at} row has this id"))
                     .small()
                     .color(theme::BAD),
             );
@@ -221,7 +221,7 @@ pub(super) fn reference(
     // its whole chain.
     if matches!(points_at, "SpellVisualKit" | "SpellVisualEffectName")
         && ui
-            .small_button("copy")
+            .small_button("Copy")
             .on_hover_text(
                 "copy the referenced row and set this field to the copy's id; other rows \
                  that reference the original keep it",
@@ -237,7 +237,7 @@ pub(super) fn reference(
     }
     if points_at == "SpellVisual"
         && ui
-            .small_button("clone chain")
+            .small_button("Clone Chain")
             .on_hover_text(
                 "copy this visual with every kit and effect it references, and set this \
                  field to the copy's id; every other spell keeps the original",
@@ -281,8 +281,11 @@ pub(crate) fn follow_reference(work: &mut Workspace<'_>, table: &str, id: u32) {
 /// See [`crate::ui`].
 pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
+    // With no row open the heading is drawn alone, and what to do is on its
+    // info mark.
     let Some(record) = work.browser.open else {
-        theme::note(ui, "Select a row to see its references.");
+        theme::heading_about(ui, "References", "Open a row to see its references.");
+        theme::note(ui, "No row is open.");
         return;
     };
     let Some(schema) = schema::for_table(&table_name) else {
@@ -312,13 +315,7 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             Some(label) if !label.title.is_empty() => format!("{} [{value}]", label.title),
             _ => format!("{points_at} {value}"),
         };
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [theme::LABEL_WIDTH + 30.0, ui.spacing().interact_size.y],
-                egui::Label::new(egui::RichText::new(column.name).color(theme::INK_DIM))
-                    .truncate()
-                    .selectable(false),
-            );
+        theme::property(ui, column.name, "", |ui| {
             let hover = format!("Open {points_at} {value}.");
             if crate::ui::widgets::reference::link_text(ui, egui::RichText::new(text).size(theme::SMALL), theme::ACCENT, &hover) {
                 follow = Some((points_at, value));
@@ -334,7 +331,7 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 
     // The rows that point at this one, looked up in the reference index, and
     // the server templates that name it.
-    theme::heading(ui, "Used by");
+    theme::heading(ui, "Used By");
     let id = work
         .session
         .table(&table_name)
@@ -379,7 +376,7 @@ pub(crate) fn references(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             });
         }
         if here.len() > 12 {
-            theme::note(ui, format!("…and {} more", here.len() - 12));
+            theme::note(ui, format!("{} more", here.len() - 12));
         }
     }
     if let Some((table, record)) = follow {
@@ -409,7 +406,7 @@ fn server_users_list(ui: &mut egui::Ui, asks: &mut ShellAsks, server: &[Named]) 
             });
         }
         if here.len() > 12 {
-            theme::note(ui, format!("…and {} more", here.len() - 12));
+            theme::note(ui, format!("{} more", here.len() - 12));
         }
     }
 }

@@ -71,7 +71,7 @@ pub(crate) struct Resolver<'a> {
 /// looking at them or searching them. `about` says what the dialog lists.
 /// `true` when it was pressed.
 pub(crate) fn choose_button(ui: &mut egui::Ui, about: &str) -> bool {
-    ui.small_button("choose\u{2026}").on_hover_text(about).clicked()
+    ui.small_button("Choose\u{2026}").on_hover_text(about).clicked()
 }
 
 /// The `…` button after a reference's number, which opens the reference
@@ -107,7 +107,7 @@ pub(crate) fn cell(
     }
     let id: u32 = showing.trim().parse().unwrap_or(0);
     if id == 0 {
-        ui.label(egui::RichText::new("none").small().color(theme::INK_FAINT));
+        ui.label(egui::RichText::new("None").small().color(theme::INK_FAINT));
         return None;
     }
     if ui.available_width() < NAME_ROOM {
@@ -139,7 +139,7 @@ pub(crate) fn list_cell(
         if items.is_empty() {
             ui.add_sized(
                 egui::vec2(FORM_VALUE, FORM_ROW),
-                egui::Label::new(egui::RichText::new("none").small().color(theme::INK_FAINT)),
+                egui::Label::new(egui::RichText::new("None").small().color(theme::INK_FAINT)),
             );
         }
         for (at, item) in items.iter().enumerate() {
@@ -153,14 +153,14 @@ pub(crate) fn list_cell(
                 match item.parse::<u32>() {
                     Ok(id) => name(ui, resolver, table, id),
                     Err(_) => {
-                        ui.label(egui::RichText::new("not an id").small().color(theme::BAD));
+                        ui.label(egui::RichText::new("Not an ID").small().color(theme::BAD));
                     }
                 }
             });
         }
         if let (Some(kind), Some(target)) = (target_of(table), target) {
             let about = format!("Add a {table} row to {}, chosen by name or id.", target.column);
-            if ui.small_button("add\u{2026}").on_hover_text(about).clicked() {
+            if ui.small_button("Add\u{2026}").on_hover_text(about).clicked() {
                 resolver.quests.picker = Some(Picker::new(kind, PickFor::ListAdd(target)));
             }
         }
@@ -216,7 +216,7 @@ fn item_name(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
         match resolver.quests.item_known(entry, &resolver.session.rows.edits) {
             true => {
                 ui.label(
-                    egui::RichText::new("no such item")
+                    egui::RichText::new("No such item")
                         .small()
                         .color(theme::BAD),
                 );
@@ -264,7 +264,7 @@ fn quest_link(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, entry: u32) {
         None if resolver.quests.all.is_empty() => meaning(ui, "\u{2026}"),
         None => {
             ui.label(
-                egui::RichText::new("no such quest")
+                egui::RichText::new("No such quest")
                     .small()
                     .color(theme::BAD),
             );

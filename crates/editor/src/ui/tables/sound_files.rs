@@ -1,5 +1,5 @@
 //! The Files section of a `SoundEntries` row's form, drawn in place of the
-//! twenty File and Weight columns, the Play and Import sound… buttons at the
+//! twenty File and Weight columns, the Play and Import Sound… buttons at the
 //! head of the form, and the dialog that chooses the file for one slot.
 
 use std::sync::Arc;
@@ -44,7 +44,7 @@ fn facts(ui: &egui::Ui, work: &Workspace<'_>, path: &str) -> Option<Arc<FileFact
 /// The format and length as one line: `WAV, 16-bit PCM, mono, 22,050 Hz ·
 /// 0.84 s`.
 fn facts_words(facts: &FileFacts) -> String {
-    let format = facts.format.map_or("not a WAV or MP3".to_string(), |format| format.words());
+    let format = facts.format.map_or("Not a WAV or MP3".to_string(), |format| format.words());
     match facts.seconds {
         Some(seconds) => format!("{format} \u{b7} {}", crate::ui::import::sounds::seconds_words(seconds)),
         None => format,
@@ -69,7 +69,7 @@ fn play_file(ui: &mut egui::Ui, work: &mut Workspace<'_>, path: &str, channel: v
 
 /// The buttons at the head of a `SoundEntries` row's form. Play plays one
 /// file of the row, picked by weight, at the row's Volume, on the channel
-/// [`sound_files::channel_of_type`] gives. Import sound… opens the Import
+/// [`sound_files::channel_of_type`] gives. Import Sound… opens the Import
 /// Sound dialog with no field to set.
 pub(super) fn head_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let Some(table) = work.session.table(TABLE) else { return };
@@ -94,7 +94,7 @@ pub(super) fn head_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: 
         });
     }
     if ui
-        .button("Import sound\u{2026}")
+        .button("Import Sound\u{2026}")
         .on_hover_text("Opens the Import Sound dialog. The WAV or MP3 files are written into the project, a new SoundEntries row holds them, and the row opens here.")
         .clicked()
     {
@@ -113,8 +113,12 @@ fn choose(work: &mut Workspace<'_>, record: usize, slot: usize) {
 /// The Files section of the row at `record`, drawn in place of the schema's
 /// Files section. Each slot that holds a file is a line with a play button,
 /// the file name, its Weight, its probability of being picked, Change… and
-/// Remove, and a second line with its format and length. + Add file… opens
+/// Remove, and a second line with its format and length. Add File… opens
 /// the file dialog on the first empty slot.
+///
+/// The first line is where the row's files are. That each play picks one
+/// file by weight is on the hover text of a slot's Weight, of its percentage
+/// and of the Play button at the head of the form.
 pub(super) fn files_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let Some(table) = work.session.table(TABLE) else { return };
     let slots = sound_files::slots(table, record);
@@ -125,89 +129,85 @@ pub(super) fn files_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: u
         0 => "Files".to_string(),
         n => format!("Files ({n})"),
     };
-    egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
-        .id_salt("sound-files")
-        .default_open(true)
-        .show(ui, |ui| {
-            match (slots.len(), directory.is_empty()) {
-                (0, _) => theme::note(ui, "Every File column is empty, so the row plays nothing."),
-                (_, true) => theme::note(ui, "Each play picks one file by weight. Directory is empty, so each File column holds a whole archive path."),
-                (_, false) => theme::note(ui, format!("Each play picks one file by weight. Every file is in the row's Directory, {directory}.")),
-            }
-            let mut remove: Option<usize> = None;
-            let mut change: Option<usize> = None;
-            for slot in &slots {
-                let path = sound_files::joined(&directory, &slot.file);
-                let known = facts(ui, work, &path);
-                ui.horizontal(|ui| {
-                    play_file(ui, work, &path, channel);
-                    // The name in a fixed-width, left-aligned column, so the
-                    // Weight fields of the lines are under each other.
-                    let width = 220.0_f32.min(ui.available_width() * 0.4);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(width, 22.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.set_width(width);
-                            ui.add(egui::Label::new(egui::RichText::new(&slot.file).color(theme::INK)).truncate())
-                                .on_hover_text(&path);
-                        },
-                    );
-                    weight(ui, work, record, slot);
-                    ui.label(
-                        theme::number(format!("{:.0}%", sound_files::chance(&slots, slot.weight) * 100.0))
-                            .color(theme::INK_DIM),
-                    )
-                    .on_hover_text("This file's Weight over the sum of the row's weights: the share of plays that pick it.");
-                    if ui
-                        .small_button("Change\u{2026}")
-                        .on_hover_text("Opens the file dialog to replace this slot's file. The Weight is kept.")
-                        .clicked()
-                    {
-                        change = Some(slot.at);
-                    }
-                    if ui
-                        .small_button("Remove")
-                        .on_hover_text("Clears this slot's File and Weight. The files and weights of the later slots move up one slot.")
-                        .clicked()
-                    {
-                        remove = Some(slot.at);
-                    }
-                });
-                let (words, colour) = match known.as_deref() {
-                    Some(facts) => (facts_words(facts), theme::INK_FAINT),
-                    None => (format!("{path} is in neither the archives nor the project"), theme::WARN),
-                };
-                ui.indent(("sound-file-facts", slot.at), |ui| {
-                    ui.label(egui::RichText::new(words).small().color(colour));
-                });
-            }
+    theme::section(ui, "sound-files", &title, true, false, |ui| {
+        match (slots.len(), directory.is_empty()) {
+            (0, _) => theme::note(ui, "Every File column is empty, so the row plays nothing."),
+            (_, true) => theme::note(ui, "Directory is empty, so each File column holds a whole archive path."),
+            (_, false) => theme::note(ui, format!("Every file is in the row's Directory, {directory}.")),
+        }
+        let mut remove: Option<usize> = None;
+        let mut change: Option<usize> = None;
+        for slot in &slots {
+            let path = sound_files::joined(&directory, &slot.file);
+            let known = facts(ui, work, &path);
             ui.horizontal(|ui| {
-                let add = ui
-                    .add_enabled(free.is_some(), egui::Button::new("+ Add file\u{2026}"))
-                    .on_hover_text("Opens the file dialog on the first empty slot: the WAV and MP3 files of the row's Directory, in the archives and the project.")
-                    .on_disabled_hover_text("All ten File columns hold a file.");
-                if let (true, Some(slot)) = (add.clicked(), free) {
-                    choose(work, record, slot);
+                play_file(ui, work, &path, channel);
+                // The name in a fixed-width, left-aligned cell, so the
+                // Weight fields of the lines are under each other.
+                let width = 220.0_f32.min(ui.available_width() * 0.4);
+                theme::name_cell(
+                    ui,
+                    egui::vec2(width, 22.0),
+                    egui::RichText::new(&slot.file).color(theme::INK),
+                    egui::Sense::hover(),
+                )
+                .on_hover_text(&path);
+                weight(ui, work, record, slot);
+                ui.label(
+                    theme::number(format!("{:.0}%", sound_files::chance(&slots, slot.weight) * 100.0))
+                        .color(theme::INK_DIM),
+                )
+                .on_hover_text("This file's Weight over the sum of the row's weights: the share of plays that pick it.");
+                if ui
+                    .small_button("Change\u{2026}")
+                    .on_hover_text("Opens the file dialog to replace this slot's file. The Weight is kept.")
+                    .clicked()
+                {
+                    change = Some(slot.at);
+                }
+                if ui
+                    .small_button("Remove")
+                    .on_hover_text("Clears this slot's File and Weight. The files and weights of the later slots move up one slot.")
+                    .clicked()
+                {
+                    remove = Some(slot.at);
                 }
             });
-            if let Some(slot) = change {
+            let (words, colour) = match known.as_deref() {
+                Some(facts) => (facts_words(facts), theme::INK_FAINT),
+                None => (format!("{path} is in neither the archives nor the project"), theme::WARN),
+            };
+            ui.indent(("sound-file-facts", slot.at), |ui| {
+                ui.label(egui::RichText::new(words).small().color(colour));
+            });
+        }
+        ui.horizontal(|ui| {
+            let add = ui
+                .add_enabled(free.is_some(), egui::Button::new("Add File\u{2026}"))
+                .on_hover_text("Opens the file dialog on the first empty slot: the WAV and MP3 files of the row's Directory, in the archives and the project.")
+                .on_disabled_hover_text("All ten File columns hold a file.");
+            if let (true, Some(slot)) = (add.clicked(), free) {
                 choose(work, record, slot);
             }
-            if let Some(slot) = remove {
-                sound_files::remove_file(work.session, record, slot);
-            }
         });
+        if let Some(slot) = change {
+            choose(work, record, slot);
+        }
+        if let Some(slot) = remove {
+            sound_files::remove_file(work.session, record, slot);
+        }
+    });
 }
 
-/// A slot's Weight column as a number field, written through
+/// A slot's Weight column as a number field, drawn sunk and written through
 /// `tables::fields::set_field`.
 fn weight(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize, slot: &Slot) {
     let mut value = slot.weight;
-    if ui
-        .add_sized(egui::vec2(52.0, 22.0), egui::DragValue::new(&mut value).range(0..=1000))
-        .on_hover_text("The Weight column: this file's share of the picks, against the sum of the row's weights.")
-        .changed()
+    if theme::sunk(ui, |ui| {
+        ui.add_sized(egui::vec2(52.0, 22.0), egui::DragValue::new(&mut value).range(0..=1000))
+    })
+    .on_hover_text("The Weight column: this file's share of the picks, against the sum of the row's weights.")
+    .changed()
     {
         crate::tables::fields::set_field(
             work.session,
@@ -268,7 +268,7 @@ pub(super) fn pick_file(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usi
         );
         let search = ui.add(
             egui::TextEdit::singleline(&mut work.browser.pick_query)
-                .hint_text("file or folder")
+                .hint_text("File or folder")
                 .desired_width(PICKER_WIDTH + 160.0),
         );
         if work.browser.pick_focus {

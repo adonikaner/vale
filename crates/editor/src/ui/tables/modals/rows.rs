@@ -27,7 +27,7 @@ pub(super) fn rows(
         ui.label(egui::RichText::new(table).strong().size(14.0));
         let box_ = ui.add(
             egui::TextEdit::singleline(&mut work.browser.pick_query)
-                .hint_text("map, position, or id")
+                .hint_text("Map, position, or ID")
                 .desired_width(PICKER_WIDTH),
         );
         if work.browser.pick_focus {
@@ -65,7 +65,7 @@ pub(super) fn rows(
                 close = true;
             }
             ui.label(
-                egui::RichText::new("Esc closes · PageUp and PageDown turn the pages")
+                egui::RichText::new("Esc closes \u{b7} PageUp and PageDown turn the pages")
                     .small()
                     .color(theme::INK_FAINT),
             );

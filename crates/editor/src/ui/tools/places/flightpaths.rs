@@ -380,8 +380,7 @@ fn leading_number(text: &str) -> Option<f64> {
 
 /// A button in the danger colour, as wide as the room it is given.
 fn remove_button(ui: &egui::Ui, text: &str) -> egui::Button<'static> {
-    egui::Button::new(egui::RichText::new(text.to_string()).color(theme::BAD))
-        .min_size(egui::vec2(ui.available_width(), 24.0))
+    theme::full_button_text(ui, egui::RichText::new(text.to_string()).color(theme::BAD))
 }
 
 /// The panel with nothing selected: that nothing is, and the key to the node

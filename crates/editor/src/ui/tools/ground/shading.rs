@@ -1,19 +1,51 @@
-//! The shading brush's panel. The state is [`crate::tools::ground::shading`].
+//! The shading brush's toolbar and panel. The state is
+//! [`crate::tools::ground::shading`].
 
 use bevy_egui::egui;
 
 use crate::tools::ground::terrain::{FALLOFFS, SHAPES};
-use crate::ui::widgets::theme::{self, field, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, field, property};
 
-/// The brush's mouse and keyboard controls, for the Brush Settings heading's
-/// info mark. The tool has no toolbar over the viewport to hold them.
-const KEYS: &str = "Left button: paint\n\
-                    Ctrl + wheel: radius\n\
-                    Shift + wheel: strength\n\
-                    Alt + wheel: core\n\
-                    1 to 5: mode\n\
-                    6 to 0: falloff\n\
-                    Shift + 1 to 3: shape";
+/// The shading brush's toolbar over the viewport:
+///
+/// ```text
+/// [Paint | Lighten | Darken | Smooth | Clear]  Keys
+/// ```
+///
+/// The mode is what a stroke does, so it is the bar's [`theme::bar_group`],
+/// as the height brush's is. See [`theme::toolbar`].
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    shading: &mut crate::tools::ground::shading::Shading,
+) -> Option<egui::Rect> {
+    theme::toolbar(ctx, "shading-toolbar", viewport, corner, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_group(ui, |ui| {
+                for (key, (name, mode)) in crate::tools::ground::shading::MODES.into_iter().enumerate() {
+                    let on = shading.brush.mode == mode;
+                    if bar_segment(ui, on, name).on_hover_text(format!("Key {}.", key + 1)).clicked() && !on {
+                        shading.brush.mode = mode;
+                    }
+                }
+            });
+            bar_keys(ui, &KEYS);
+        });
+    })
+}
+
+/// The brush's mouse and keyboard controls, for the toolbar's Keys button.
+const KEYS: [(&str, &str); 7] = [
+    ("Left button", "Paint"),
+    ("Ctrl + wheel", "Radius"),
+    ("Shift + wheel", "Strength"),
+    ("Alt + wheel", "Core"),
+    ("1 to 5", "Mode"),
+    ("6 to 0", "Falloff"),
+    ("Shift + 1 to 3", "Shape"),
+];
 
 /// The shading brush: `MCCV`, the light painted onto the ground's vertices.
 ///
@@ -23,18 +55,15 @@ const KEYS: &str = "Left button: paint\n\
 /// swatch could not express "keep the hue and halve the light", which is the
 /// most common shading edit.
 ///
-/// The sections are the height brush's: Brush Settings with the mode, radius,
+/// The sections are the height brush's: Brush Settings with the radius,
 /// strength, core, falloff and shape as rows, then the section only this
-/// brush has, Colour.
+/// brush has, Colour. The mode is on the toolbar, [`toolbar`].
 ///
 /// See `crate::tools::ground::shading` for the deviation this brush is part of.
 pub(in crate::ui::tools) fn shading(ui: &mut egui::Ui, shading: &mut crate::tools::ground::shading::Shading) {
     use crate::tools::ground::shading;
 
-    theme::heading_about(ui, "Brush Settings", KEYS);
-    property(ui, "Mode", "", |ui| {
-        theme::choice(ui, "shading-mode", &mut shading.brush.mode, &shading::MODES, |a, b| a == b);
-    });
+    theme::heading(ui, "Brush Settings");
     property(ui, "Radius", "", |ui| {
         field(
             ui,

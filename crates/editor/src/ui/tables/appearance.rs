@@ -457,7 +457,7 @@ pub(super) fn texture_field(
         let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
         square(ui, work.thumbnails, &path, rect, false);
     }
-    if ui.small_button("browse\u{2026}").on_hover_text(browse_hint(of)).clicked() {
+    if ui.small_button("Browse\u{2026}").on_hover_text(browse_hint(of)).clicked() {
         work.browser.modal = Some(Modal::Textures { record, field });
         work.browser.texture_preview = None;
         work.browser.texture_query.clear();
@@ -585,13 +585,16 @@ pub(super) fn textures(ui: &mut egui::Ui, work: &mut Workspace<'_>, table: &str,
             ui.horizontal(|ui| {
                 let spell = work.session.spellings(work.assets);
                 let chosen = work.browser.texture_preview.as_deref().map(|path| texture_name(spell.of(path), of));
+                // The button names the texture it writes. With none chosen
+                // it is disabled and says why on hover.
+                let label = match chosen.as_deref() {
+                    Some(name) => format!("Use {name}"),
+                    None => "Use".to_string(),
+                };
                 if ui
-                    .add_enabled(
-                        chosen.is_some(),
-                        egui::Button::new(format!("Use {}", chosen.as_deref().unwrap_or("nothing chosen")))
-                            .fill(theme::ACCENT),
-                    )
+                    .add_enabled(chosen.is_some(), egui::Button::new(label).fill(theme::ACCENT))
                     .on_hover_text("Set the field to this texture's name.")
+                    .on_disabled_hover_text("No texture is chosen.")
                     .clicked()
                 {
                     picked = chosen;
@@ -625,7 +628,7 @@ pub(super) fn textures(ui: &mut egui::Ui, work: &mut Workspace<'_>, table: &str,
                     close = true;
                 }
                 ui.label(
-                    egui::RichText::new("click previews \u{b7} double-click or Use chooses it")
+                    egui::RichText::new("Click previews \u{b7} double-click or Use chooses it")
                         .small()
                         .color(theme::INK_FAINT),
                 );
@@ -651,7 +654,7 @@ pub(super) fn textures(ui: &mut egui::Ui, work: &mut Workspace<'_>, table: &str,
 fn grid(ui: &mut egui::Ui, work: &mut Workspace<'_>, picked: &mut Option<String>) {
     let search = ui.add(
         egui::TextEdit::singleline(&mut work.browser.texture_query)
-            .hint_text("words in the name")
+            .hint_text("Words in the name")
             .desired_width(GRID_WIDTH),
     );
     if search.changed() {

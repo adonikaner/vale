@@ -12,9 +12,10 @@
 //! pointer does in the world is described in `crate::tools::places::triggers`.
 //!
 //! ```text
-//! above the scroll   the count of triggers, New Trigger, which arms the
-//!                    pointer, and the radius of a new trigger
-//! Trigger <id>       the shape and its size
+//! toolbar            Select or New Trigger, which arms the pointer, the
+//!                    radius of a new trigger, and the Keys button
+//! above the scroll   the count of triggers
+//! Trigger <id>      the shape and its size
 //! Location           X, Y and Z, then Fly To, Snap to Ground and Remove
 //! Server Rows        the template row's columns, then Teleport, Inn, the
 //!                    quest and Battleground entrance, each with its rows
@@ -31,7 +32,7 @@ use bevy_egui::egui;
 use crate::ui::shell::asks::ShellAsks;
 use crate::ui::widgets::reference::Resolver;
 use crate::ui::widgets::rowform::{number_cell, page_spacing, server_field, FieldCtx, Hook};
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, bar_field, bar_group, bar_keys, bar_segment, bar_setting, property};
 use crate::session::EditSession;
 use crate::subjects::quests::Quests;
 use crate::tools::places::triggers::{self, Armed, PickFor, Triggers};
@@ -59,20 +60,71 @@ pub(crate) struct Subject<'a> {
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
-/// A button that arms a mode of the pointer and shows whether it is armed:
-/// lit while `on`, and framed while off. The graveyard and light panels use
-/// it too.
+/// The area trigger tool's toolbar over the viewport:
 ///
-/// `egui::Button::selectable` draws an unselected button with no frame until
-/// it is hovered, so an unarmed mode was drawn as bare text.
-pub(super) fn arm_button(on: bool, text: &str) -> egui::Button<'static> {
-    match on {
-        true => egui::Button::new(egui::RichText::new(text.to_string()).color(theme::INK))
-            .fill(theme::ACCENT_SUNK)
-            .stroke(egui::Stroke::new(1.0, theme::ACCENT)),
-        false => egui::Button::new(text.to_string()),
-    }
+/// ```text
+/// [Select | New Trigger]  Keys
+/// Radius
+/// ```
+///
+/// New Trigger arms the pointer: while it is chosen a click on the ground
+/// makes a sphere trigger, and Escape returns to Select. The second row is
+/// drawn only while New Trigger is chosen, and holds the radius of the
+/// trigger the next click makes. See [`theme::toolbar`].
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    triggers: &mut Triggers,
+) -> Option<egui::Rect> {
+    theme::toolbar(ctx, "triggers-toolbar", viewport, corner, |ui| {
+        let armed = triggers.armed == Armed::NewTrigger;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_group(ui, |ui| {
+                if bar_segment(ui, !armed, "Select")
+                    .on_hover_text("Click a trigger to select it, and drag to move it.")
+                    .clicked()
+                {
+                    triggers.armed = Armed::Nothing;
+                }
+                if bar_segment(ui, armed, "New Trigger")
+                    .on_hover_text(
+                        "A click on the ground makes a sphere trigger there, resting on the \
+                         ground. It is added after this map's last row, because the client \
+                         reads only the first block of each map's rows.",
+                    )
+                    .clicked()
+                {
+                    triggers.armed = Armed::NewTrigger;
+                }
+            });
+            bar_keys(ui, &KEYS);
+        });
+        if triggers.armed == Armed::NewTrigger {
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                bar_setting(ui, "Radius", |ui| {
+                    bar_field(
+                        ui,
+                        egui::DragValue::new(&mut triggers.radius).range(0.5..=200.0).speed(0.25).suffix(" yd"),
+                    )
+                    .on_hover_text("The radius of the trigger the next click makes.");
+                });
+            });
+        }
+    })
 }
+
+/// The tool's mouse and keyboard controls, for the toolbar's Keys button.
+const KEYS: [(&str, &str); 5] = [
+    ("Left button", "Select a trigger: its centre, or anywhere inside it"),
+    ("Drag", "Move across the horizontal plane"),
+    ("Ctrl + drag", "Move up and down"),
+    ("Delete", "Remove the selected trigger"),
+    ("Escape", "Return to Select, cancel a pick, then drop the selection"),
+];
 
 pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
     let Subject {
@@ -96,7 +148,6 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
 
     summary(ui, triggers);
     ui.add_space(4.0);
-    controls(ui, triggers);
 
     egui::ScrollArea::vertical()
         .id_salt("triggers")
@@ -168,30 +219,6 @@ fn summary(ui: &mut egui::Ui, triggers: &Triggers) {
             .color(theme::WARN),
         );
     }
-}
-
-/// What a click on empty ground does, and the size of a new trigger.
-fn controls(ui: &mut egui::Ui, triggers: &mut Triggers) {
-    let armed = triggers.armed == Armed::NewTrigger;
-    let button = arm_button(armed, "New Trigger").min_size(egui::vec2(ui.available_width(), 24.0));
-    if ui
-        .add(button)
-        .on_hover_text(
-            "Armed, a click on the ground makes a sphere trigger there, resting on \
-             the ground. It is added after this map's last row, because the client \
-             reads only the first block of each map's rows. Escape disarms.",
-        )
-        .clicked()
-    {
-        triggers.armed = match armed {
-            true => Armed::Nothing,
-            false => Armed::NewTrigger,
-        };
-    }
-    property(ui, "New Radius", "", |ui| {
-        theme::field(ui, egui::DragValue::new(&mut triggers.radius).range(0.5..=200.0).speed(0.25).suffix(" yd"))
-            .on_hover_text("Radius of a new trigger.");
-    });
 }
 
 /// The selected trigger's shape, size and place.

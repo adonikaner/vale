@@ -10,13 +10,21 @@
 //! Under the Pointer   the same rows, with no Copy buttons
 //! ```
 //!
-//! How the tool is used is on the info mark of the first heading.
+//! The tool has no mode and no switch, so its toolbar over the viewport is
+//! the Keys button alone ([`theme::toolbar_keys`] with [`KEYS`]).
 
 use bevy_egui::egui;
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
 use crate::ui::widgets::theme::{self, property};
+
+/// The tool's mouse and keyboard controls, for the toolbar's Keys button.
+pub(crate) const KEYS: [(&str, &str); 3] = [
+    ("Left button", "Keep the first point, then the second"),
+    ("A third click", "Start over from a new first point"),
+    ("Escape", "Clear both points"),
+];
 
 /// The measuring tool: the span between the two kept points, the points,
 /// and what is under the pointer. See [`crate::tools::measure`].
@@ -33,12 +41,7 @@ pub(super) fn measure(
 ) {
     use crate::tools::measure;
 
-    theme::heading_about(
-        ui,
-        "Between Points",
-        "Click a first point, then a second to measure between them. A third \
-         click starts over; Escape clears. Changes nothing.",
-    );
+    theme::heading_about(ui, "Between Points", "Measuring changes nothing in the project.");
     let span = measuring.span();
     match span {
         Some(span) => {

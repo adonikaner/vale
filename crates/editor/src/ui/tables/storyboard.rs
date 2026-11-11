@@ -148,19 +148,19 @@ const LANES: [(&str, usize, &str); 5] = [
     (
         "Precast",
         fields::PRECAST_KIT,
-        "plays while the cast bar fills",
+        "Plays while the cast bar fills",
     ),
-    ("Cast", fields::CAST_KIT, "plays when the cast completes"),
-    ("Impact", fields::IMPACT_KIT, "plays on the target when the spell hits"),
+    ("Cast", fields::CAST_KIT, "Plays when the cast completes"),
+    ("Impact", fields::IMPACT_KIT, "Plays on the target when the spell hits"),
     (
         "Channel",
         fields::CHANNEL_KIT,
-        "plays for the duration of a channel",
+        "Plays for the duration of a channel",
     ),
     (
         "State",
         fields::STATE_KIT,
-        "plays while the aura is on the unit",
+        "Plays while the aura is on the unit",
     ),
 ];
 
@@ -241,7 +241,7 @@ impl Storyboard {
             session.table("SpellVisualEffectName"),
         ) else {
             self.notes
-                .push("the visual tables are still loading".into());
+                .push("The visual tables are still loading".into());
             // Built for nothing: ask again next frame.
             self.built = None;
             return;
@@ -252,7 +252,7 @@ impl Storyboard {
         self.visual = visual_id;
         if visual_id == 0 {
             self.notes
-                .push("this spell has no SpellVisual: nothing is drawn for it".into());
+                .push("This spell has no SpellVisual: nothing is drawn for it".into());
             return;
         }
         let Some(row) = visuals.row_of(visual_id) else {
@@ -378,11 +378,11 @@ impl Storyboard {
                 continue;
             }
             let what = match proc {
-                p if p == fields::CHAR_PROC_AREA_RAIN => "falling impacts",
-                p if fields::CHAR_PROC_CHAIN.contains(&p) => "chain effect",
-                p if p == fields::CHAR_PROC_MODEL_COLOUR => "model colour",
-                p if p == fields::CHAR_PROC_MODEL_GLOW => "model glow",
-                _ => "unknown procedural",
+                p if p == fields::CHAR_PROC_AREA_RAIN => "Falling impacts",
+                p if fields::CHAR_PROC_CHAIN.contains(&p) => "Chain effect",
+                p if p == fields::CHAR_PROC_MODEL_COLOUR => "Model colour",
+                p if p == fields::CHAR_PROC_MODEL_GLOW => "Model glow",
+                _ => "Unknown procedural",
             };
             procedurals.push(format!("{what} ({proc}) {zero}, {one}"));
         }
@@ -514,11 +514,11 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
                 }
                 if shared > 1 {
                     ui.label(
-                        egui::RichText::new(format!("shared by {shared} spells"))
+                        egui::RichText::new(format!("Shared by {shared} spells"))
                             .small()
                             .color(theme::INK_DIM),
                     )
-                    .on_hover_text("editing a kit here changes every spell that names this visual");
+                    .on_hover_text("Editing a kit here changes every spell that names this visual.");
                 }
             });
             // The chain is built from here: the visual is chosen from the
@@ -539,7 +539,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
                     work.browser.pick_focus = true;
                 }
                 if ui
-                    .small_button("from spell\u{2026}")
+                    .small_button("Choose from Spell\u{2026}")
                     .on_hover_text(tables::commands::command_about(Command::LookLike))
                     .clicked()
                 {
@@ -548,7 +548,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
                 }
                 if board.visual_row.is_none() {
                     make_new = ui
-                        .small_button("+ new")
+                        .small_button("New")
                         .on_hover_text(
                             "Create a blank SpellVisual row and assign it to this spell. Its five \
                              kit lanes start empty.",
@@ -557,7 +557,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
                 }
                 if shared > 1 {
                     make_own = ui
-                        .small_button("copy visual")
+                        .small_button("Copy Visual")
                         .on_hover_text(
                             "Copy this visual with every kit and effect it references and assign \
                              the copy to this spell, so edits here change only this spell.",
@@ -630,14 +630,17 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
             work,
             |ui, work| {
                 effect(ui, work, model);
-                theme::row(ui, "path", |ui| {
-                    ui.label(theme::number(match path_type {
-                        0 => "straight".to_string(),
-                        other => format!("type {other}, previewed as straight"),
-                    }));
+                theme::property(ui, "Path", "", |ui| {
+                    theme::value(
+                        ui,
+                        match path_type {
+                            0 => "Straight".to_string(),
+                            other => format!("Type {other}, previewed as straight"),
+                        },
+                    );
                 });
-                theme::row(ui, "destination", |ui| {
-                    ui.label(theme::number(attachment_name(destination)));
+                theme::property(ui, "Destination", "", |ui| {
+                    theme::value(ui, attachment_name(destination));
                 });
                 sound_row(ui, work, sound, &sound_name);
             },
@@ -655,16 +658,16 @@ pub(crate) fn draw(ui: &mut egui::Ui, work: &mut Workspace<'_>, board: &mut Stor
             work,
             |ui, work| {
                 ui.label(
-                    egui::RichText::new("placed on the ground at the target's feet on impact")
+                    egui::RichText::new("Placed on the ground at the target's feet on impact")
                         .small()
                         .color(theme::INK_FAINT),
                 );
                 effect(ui, work, area);
                 if kit != 0 {
                     let mut asked = false;
-                    theme::row(ui, "kit", |ui| {
+                    theme::property(ui, "Kit", "", |ui| {
                         ui.label(theme::number(format!("{kit}")));
-                        asked = ui.small_button("open").clicked();
+                        asked = ui.small_button("Open").clicked();
                     });
                     if asked {
                         super::reference::follow_reference(work, "SpellVisualKit", kit);
@@ -688,7 +691,7 @@ pub(crate) fn attachment_name(id: u32) -> String {
         });
     match named {
         Some(name) => format!("{name} ({id})"),
-        None => format!("attachment {id}"),
+        None => format!("Attachment {id}"),
     }
 }
 
@@ -700,11 +703,11 @@ fn sound_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, sound: u32, name: &str
     let mut play = false;
     let mut open = false;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("sound").small().color(theme::INK_FAINT));
+        ui.label(egui::RichText::new("Sound").small().color(theme::INK_FAINT));
         if crate::ui::widgets::reference::link_text(ui, egui::RichText::new(name).size(12.0), theme::ACCENT, &format!("Open SoundEntries {sound}.")) {
             open = true;
         }
-        play = ui.small_button("▶").on_hover_text("play sound").clicked();
+        play = ui.small_button("\u{25b6}").on_hover_text("play sound").clicked();
     });
     if play {
         work.browser.audition.push(sound);
@@ -784,7 +787,7 @@ fn lane_buttons(
         match kit {
             None => {
                 if ui
-                    .small_button("+ new")
+                    .small_button("New")
                     .on_hover_text("Create a blank SpellVisualKit and assign it to this lane.")
                     .clicked()
                 {
@@ -793,7 +796,7 @@ fn lane_buttons(
             }
             Some(_) => {
                 if ui
-                    .small_button("copy")
+                    .small_button("Copy")
                     .on_hover_text(
                         "Copy this kit and assign the copy to this lane. The original stays \
                          assigned wherever else it is used.",
@@ -803,7 +806,7 @@ fn lane_buttons(
                     tables::rows::unshare(work.session, "SpellVisual", visual_row, field, "SpellVisualKit");
                 }
                 if ui
-                    .small_button("clear")
+                    .small_button("Clear")
                     .on_hover_text("Remove the kit from this lane. The SpellVisualKit row is not deleted.")
                     .clicked()
                 {
@@ -827,7 +830,7 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
     let empty = phase.kit.is_none();
     let id = match phase.kit {
         Some(kit) => format!("KIT #{kit}"),
-        None => "none".to_string(),
+        None => "None".to_string(),
     };
     let about = phase.about;
     let name = phase.name;
@@ -854,7 +857,7 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
         // text that runs off the edge of a card is clipped, not wrapped.
         let mut open_kit = false;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("kit").small().color(theme::INK_FAINT));
+            ui.label(egui::RichText::new("Kit").small().color(theme::INK_FAINT));
             open_kit = crate::ui::widgets::reference::link_text(
                 ui,
                 egui::RichText::new(format!("#{kit}")).size(12.0),
@@ -868,9 +871,9 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
         match &animation {
             Some((id, name)) => {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("anim").small().color(theme::INK_FAINT));
+                    ui.label(egui::RichText::new("Animation").small().color(theme::INK_FAINT));
                     let shown = match name.is_empty() {
-                        true => format!("animation {id}"),
+                        true => format!("Animation {id}"),
                         false => name.clone(),
                     };
                     ui.label(egui::RichText::new(shown).color(theme::INK));
@@ -879,7 +882,7 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
             }
             None => {
                 ui.label(
-                    egui::RichText::new("no animation")
+                    egui::RichText::new("No animation")
                         .small()
                         .color(theme::INK_FAINT),
                 );
@@ -889,10 +892,10 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
         if shake != 0 {
             let mut open = false;
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("shake").small().color(theme::INK_FAINT));
+                ui.label(egui::RichText::new("Shake").small().color(theme::INK_FAINT));
                 open = crate::ui::widgets::reference::link_text(
                     ui,
-                    egui::RichText::new(format!("camera shake #{shake}")).size(12.0),
+                    egui::RichText::new(format!("Camera shake #{shake}")).size(12.0),
                     theme::ACCENT,
                     &format!("Open SpellEffectCameraShakes {shake}."),
                 );
@@ -906,7 +909,7 @@ fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, phase: &Phase, visual_row: 
         }
         if effects.is_empty() {
             ui.label(
-                egui::RichText::new("no models")
+                egui::RichText::new("No models")
                     .small()
                     .color(theme::INK_FAINT),
             );
@@ -928,7 +931,7 @@ fn effect(ui: &mut egui::Ui, work: &mut Workspace<'_>, row: &EffectRow) {
                 .color(theme::INK_FAINT),
         );
         let shown = match row.name.is_empty() {
-            true => format!("effect {}", row.id),
+            true => format!("Effect {}", row.id),
             false => row.name.clone(),
         };
         asked = crate::ui::widgets::reference::link(ui, &shown, theme::ACCENT, &format!("Open SpellVisualEffectName {}.", row.id));
@@ -946,14 +949,14 @@ fn effect(ui: &mut egui::Ui, work: &mut Workspace<'_>, row: &EffectRow) {
     ui.label(egui::RichText::new(&row.path).small().color(colour));
     if !row.present {
         ui.label(
-            egui::RichText::new("not in the archives")
+            egui::RichText::new("Not in the archives")
                 .small()
                 .color(theme::BAD),
         );
     }
     if !row.drawn {
         ui.label(
-            egui::RichText::new("read by the client and not drawn")
+            egui::RichText::new("Read by the client and not drawn")
                 .small()
                 .color(theme::WARN),
         );
@@ -1097,7 +1100,7 @@ pub(crate) fn stage_pane(
             .iter()
             .position(|segment| stage.at < segment.to)
             .unwrap_or(segments.len().saturating_sub(1));
-        if ui.button("◀").on_hover_text("Previous phase").clicked() {
+        if ui.button("\u{25c0}").on_hover_text("Previous phase").clicked() {
             let back = match segments.get(here) {
                 // Inside a phase by more than a beat: its own start.
                 Some(segment) if stage.at - segment.from > 0.15 => segment.from,
@@ -1105,13 +1108,13 @@ pub(crate) fn stage_pane(
             };
             stage.seek(back);
         }
-        if ui.button("▶").on_hover_text("Next phase").clicked() {
+        if ui.button("\u{25b6}").on_hover_text("Next phase").clicked() {
             if let Some(next) = segments.get(here + 1) {
                 stage.seek(next.from);
             }
         }
-        ui.checkbox(&mut stage.looping, "loop");
-        ui.checkbox(&mut stage.spinning, "spin");
+        ui.checkbox(&mut stage.looping, "Loop");
+        ui.checkbox(&mut stage.spinning, "Spin");
     });
     pane.label(
         egui::RichText::new(stage.transport_line())

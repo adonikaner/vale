@@ -39,6 +39,10 @@ pub(crate) fn display_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 /// A set names `item_template` entries, and only the world database says
 /// which display each one wears and in which slot, so the picture needs it.
 /// A piece whose row has not arrived yet is left off and counted.
+///
+/// What the picture shows and why it needs the database are on the heading's
+/// info mark, [`SET_ABOUT`]. The lines under the heading are the picture's
+/// state.
 pub(crate) fn set_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     if work.browser.table != "ItemSet" {
         return;
@@ -49,13 +53,9 @@ pub(crate) fn set_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         .filter_map(|field| sets.u32_at(record, field))
         .filter(|&entry| entry != 0)
         .collect();
-    theme::heading(ui, "Appearance");
+    theme::heading_about(ui, "Appearance", SET_ABOUT);
     let Some(quests) = work.quests.as_deref_mut() else {
-        theme::note(
-            ui,
-            "No world database is connected. The set names item_template entries, and \
-             without the database their appearances cannot be read.",
-        );
+        theme::note(ui, "No world database is connected.");
         return;
     };
     if entries.is_empty() {
@@ -72,7 +72,7 @@ pub(crate) fn set_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         }
     }
     if waiting > 0 {
-        theme::waiting(ui, format!("reading {waiting} of the set's {} items\u{2026}", entries.len()));
+        theme::waiting(ui, format!("Reading {waiting} of the set's {} items\u{2026}", entries.len()));
     }
     let outfit = crate::subjects::items::Outfit::of_set(&pieces);
     match work.items.outfit_body(work.assets, &outfit) {
@@ -80,11 +80,6 @@ pub(crate) fn set_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             let key = work.portraits.want_large_worn(&worn);
             let side = ui.available_width();
             crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &key, side);
-            theme::note(
-                ui,
-                "Every item of the set on one body in its bind pose. A slot the set does \
-                 not fill is left empty.",
-            );
         }
         None => theme::note(ui, "The tables resolve no body model for the race chosen below."),
     }
@@ -93,6 +88,12 @@ pub(crate) fn set_preview(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     }
     crate::ui::subjects::items::body_choice(ui, work.items);
 }
+
+/// What [`set_preview`]'s picture shows and what it is read from, for its
+/// heading's info mark.
+const SET_ABOUT: &str = "Every item of the set on one body in its bind pose. A slot the set does \
+                         not fill is left empty. The set names item_template entries, and without \
+                         the world database their appearances cannot be read.";
 
 /// The size of the preview inside a picker's dialog, in points.
 pub(super) const DIALOG_PREVIEW: egui::Vec2 = egui::vec2(420.0, 440.0);
@@ -159,10 +160,10 @@ pub(super) fn dialog_pane(ui: &mut egui::Ui) -> egui::Ui {
 /// row.
 pub(super) fn chain_show(work: &mut Workspace<'_>, table: &str, id: u32) -> Option<(Show, String)> {
     match table {
-        "Spell" => Some((Show::Spell(id), format!("Preview — spell {id}"))),
+        "Spell" => Some((Show::Spell(id), format!("Preview \u{2014} spell {id}"))),
         "SpellVisualKit" => Some((
             Show::Pushes(crate::preview::stage::Pushes::kit(id)),
-            format!("Preview — kit {id}"),
+            format!("Preview \u{2014} kit {id}"),
         )),
         "SpellVisual" => {
             let user = work
@@ -174,10 +175,10 @@ pub(super) fn chain_show(work: &mut Workspace<'_>, table: &str, id: u32) -> Opti
             match user {
                 Some(spell) => Some((
                     Show::Spell(spell),
-                    format!("Preview — visual {id}, as spell {spell}"),
+                    format!("Preview \u{2014} visual {id}, as spell {spell}"),
                 )),
                 None => crate::preview::stage::Pushes::visual(work.session, id)
-                    .map(|pushes| (Show::Pushes(pushes), format!("Preview — visual {id}"))),
+                    .map(|pushes| (Show::Pushes(pushes), format!("Preview \u{2014} visual {id}"))),
             }
         }
         _ => None,
@@ -195,7 +196,7 @@ pub(super) fn preview_of(
 ) {
     let Some(id) = selected else {
         stage.close();
-        empty_pane(ui, "click a row to preview it");
+        empty_pane(ui, "Click a row to preview it.");
         return;
     };
     // A display row is drawn as a portrait, as the display pickers elsewhere
@@ -219,7 +220,7 @@ pub(super) fn preview_of(
             }
             None => {
                 stage.close();
-                empty_pane(ui, "no SpellVisualEffectName row has this id");
+                empty_pane(ui, "No SpellVisualEffectName row has this id.");
             }
         }
         return;
@@ -230,7 +231,7 @@ pub(super) fn preview_of(
         }
         None => {
             stage.close();
-            empty_pane(ui, "no preview for this row");
+            empty_pane(ui, "No preview for this row.");
         }
     }
 }

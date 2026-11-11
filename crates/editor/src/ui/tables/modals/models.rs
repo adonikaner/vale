@@ -59,11 +59,10 @@ pub(super) fn models(
         );
     }
     // The dialog opens with the field's current model previewed.
-    // Otherwise it opened with no preview pane and Use disabled,
-    // reading "nothing chosen", even though the row already named a
-    // model. The preview is set here rather than where the dialog is
-    // opened, because there are two such places: the form's `browse…`
-    // and `--browse`.
+    // Otherwise it opened with no preview pane and Use disabled, even
+    // though the row already named a model. The preview is set here
+    // rather than where the dialog is opened, because there are two such
+    // places: the form's `Browse…` and `--browse`.
     if work.browser.model_preview.is_none() {
         let current = work
             .session
@@ -107,7 +106,7 @@ pub(super) fn models(
             }
             let box_ = ui.add(
                 egui::TextEdit::singleline(&mut work.browser.model_query)
-                    .hint_text("words in the model path")
+                    .hint_text("Words in the model path")
                     .desired_width(ui.available_width()),
             );
             if box_.changed() {
@@ -153,9 +152,9 @@ pub(super) fn models(
                 theme::note(
                     ui,
                     match work.browser.model_folder {
-                        STARRED_FOLDER => "no starred models: click the star on a row to add one",
-                        RECENT_FOLDER => "no recent models: models chosen with Use are listed here",
-                        _ => "no models under this folder",
+                        STARRED_FOLDER => "No starred models. Click the star on a row to add one.",
+                        RECENT_FOLDER => "No recent models. Models chosen with Use are listed here.",
+                        _ => "No models under this folder.",
                     },
                 );
             }
@@ -208,20 +207,26 @@ pub(super) fn models(
             ui.horizontal(|ui| {
                 let chosen = work.browser.model_preview.clone();
                 let written = chosen.as_deref().map(crate::ui::tables::appearance::item_model_name);
+                // The button names the model it writes. With none chosen it
+                // is disabled and says why on hover.
                 let name = match item {
                     true => written.as_deref(),
                     false => chosen.as_deref().map(tables::labels::basename),
-                }
-                .unwrap_or("nothing chosen");
+                };
+                let label = match name {
+                    Some(name) => format!("Use {name}"),
+                    None => "Use".to_string(),
+                };
                 if ui
                     .add_enabled(
                         chosen.is_some(),
-                        egui::Button::new(egui::RichText::new(format!("Use {name}")).color(
+                        egui::Button::new(egui::RichText::new(label).color(
                             egui::Color32::from_rgb(0x0C, 0x16, 0x1E),
                         ))
                         .fill(theme::ACCENT),
                     )
                     .on_hover_text("Set the field to the previewed model's path.")
+                    .on_disabled_hover_text("No model is chosen.")
                     .clicked()
                 {
                     picked = chosen;
@@ -231,7 +236,7 @@ pub(super) fn models(
                 }
                 ui.label(
                     egui::RichText::new(
-                        "click previews the model on the stage · double-click or Use chooses it",
+                        "Click previews the model on the stage \u{b7} double-click or Use chooses it",
                     )
                     .small()
                     .color(theme::INK_FAINT),

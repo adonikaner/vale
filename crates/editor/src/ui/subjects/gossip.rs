@@ -833,7 +833,7 @@ fn option_card(ui: &mut egui::Ui, subject: &mut Subject<'_>, menu: u32, option: 
             set(subject, "box_coded", u8::from(coded).to_string());
         }
         let mut money = o.box_money;
-        ui.label(egui::RichText::new("cost").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("cost").color(theme::INK_NAME));
         if ui
             .add(egui::DragValue::new(&mut money).speed(10.0).suffix(" c"))
             .on_hover_text("box_money: the cost shown in the confirmation box, in copper.")

@@ -1,5 +1,5 @@
-//! The light tool's panel: the selected light's form, its sphere and place,
-//! and the buttons that make a light or its parameters. A light is a row of
+//! The light tool's toolbar and panel: the selected light's form, its sphere
+//! and place, and the button that makes the map's default light. A light is a row of
 //! `Light.dbc` picked in the viewport, so its form is drawn with the table
 //! workspace's fields. The state is [`crate::tools::places::lights`]; a light's
 //! bands are [`super::bands`].
@@ -11,15 +11,80 @@
 
 use bevy_egui::egui;
 
-use super::triggers::arm_button;
 use crate::tables::Modal;
 use crate::tables;
 use crate::ui::tables::form::{fields, section_block};
 use crate::ui::tables::modals::modals;
 use crate::ui::tables::{LABEL, VALUE, Workspace};
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_switch, property};
 
 use vale_assets::tables::schema;
+
+/// The light tool's toolbar over the viewport:
+///
+/// ```text
+/// [Select | New Light]  Show Falloff  Keys
+/// ```
+///
+/// New Light arms the pointer: while it is chosen a click on the ground makes
+/// a light, and Escape returns to Select. Show Falloff is whether the selected
+/// light's two spheres are drawn. See [`theme::toolbar`].
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    lights: &mut crate::tools::places::lights::Lights,
+) -> Option<egui::Rect> {
+    theme::toolbar(ctx, "lights-toolbar", viewport, corner, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_group(ui, |ui| {
+                if bar_segment(ui, !lights.armed, "Select")
+                    .on_hover_text("Click a light to select it. Drag its centre to move it, or a ring to resize it.")
+                    .clicked()
+                {
+                    lights.armed = false;
+                }
+                if bar_segment(ui, lights.armed, "New Light")
+                    .on_hover_text(
+                        "A click on the ground places a light there: full strength to 50 yards, \
+                         faded out at 120 yards, with the LightParams of the selected light or \
+                         the map's default light.",
+                    )
+                    .clicked()
+                {
+                    lights.armed = true;
+                }
+            });
+            if bar_switch(ui, lights.show_falloff, "Show Falloff")
+                .on_hover_text(
+                    "On: draw the selected light's FalloffStart and FalloffEnd spheres. Off: \
+                     draw only its marker. Every light near the camera is marked either way.",
+                )
+                .clicked()
+            {
+                lights.show_falloff = !lights.show_falloff;
+            }
+            bar_keys(ui, match lights.armed {
+                false => &SELECT_KEYS,
+                true => &NEW_KEYS,
+            });
+        });
+    })
+}
+
+/// Select's mouse controls, for the toolbar's Keys button.
+const SELECT_KEYS: [(&str, &str); 3] = [
+    ("Left button", "Select a light"),
+    ("Drag the centre", "Move the light; its height is kept"),
+    ("Drag a ring", "Change that falloff radius"),
+];
+
+/// New Light's controls.
+const NEW_KEYS: [(&str, &str); 2] = [
+    ("Left button", "Place a light on the ground"),
+    ("Escape", "Return to Select"),
+];
 
 /// A light's whole form, drawn in the inspector: the light picked in the world
 /// and the numbers behind it.
@@ -40,7 +105,7 @@ pub(crate) fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
         return;
     }
     browse_button(ui, &mut work);
-    new_light_buttons(ui, &mut work);
+    new_default_light(ui, &mut work);
 
     // Draw whatever table the browser has open, which is not always `Light`.
     // Pressing a `ParamsClear` link opens `LightParams`, and the bands belong
@@ -149,27 +214,14 @@ pub(crate) fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     modals(ui, &mut work, None);
 }
 
-/// Make a light: one placed by a click on the ground, or the map's default
-/// light when the map has none. Either copies its weather from the chosen
-/// light or the map's default; see `crate::tools::places::lights::new_light`.
-fn new_light_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
+/// Make the map's default light, offered while the map has none. It copies
+/// its weather from the chosen light; see
+/// `crate::tools::places::lights::new_light`. A light placed by a click is
+/// the toolbar's New Light, [`toolbar`].
+fn new_default_light(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let Some(lights) = work.lights.as_deref_mut() else {
         return;
     };
-    // Each button is as wide as the panel, as Browse above them is: the two
-    // names do not fit side by side at the inspector's narrowest.
-    let button = arm_button(lights.armed, "New Light").min_size(egui::vec2(ui.available_width(), 24.0));
-    if ui
-        .add(button)
-        .on_hover_text(
-            "While on, a click on the ground places a light there: full strength to \
-             50 yards, faded out at 120 yards, with the LightParams of the selected \
-             light or the map's default light. Escape or a second click turns it off.",
-        )
-        .clicked()
-    {
-        lights.armed = !lights.armed;
-    }
     if lights.default_light().is_none() {
         let map = work.session.map_id;
         let button = theme::full_button(ui, "New Default Light");
@@ -186,11 +238,6 @@ fn new_light_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             let line = crate::tools::places::lights::new_light(work.session, lights, work.browser, map, None);
             work.session.status = line;
         }
-    }
-    // What the next click does, while New Light is armed. That Escape turns
-    // it off is in the button's hover text.
-    if lights.armed {
-        theme::note(ui, "Click the ground where the light should stand.");
     }
 }
 
@@ -273,7 +320,7 @@ pub(in crate::ui) fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, r
                     let label_width = LABEL.min(ui.available_width() * 0.45);
                     ui.add_sized(
                         egui::vec2(label_width, 22.0),
-                        egui::Label::new(egui::RichText::new(name).color(theme::INK_DIM))
+                        egui::Label::new(egui::RichText::new(name).color(theme::INK_NAME))
                             .truncate(),
                     )
                     .on_hover_text(tip);
@@ -410,22 +457,14 @@ pub(in crate::ui) fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, re
             });
         }
     }
-    ui.horizontal(|ui| {
-        if !mark.everywhere
-            && ui
-                .button("Fly To")
-                .on_hover_text("Move the camera to this light's position, at the row's stored height.")
-                .clicked()
-        {
-            work.fly.write(crate::tools::places::lights::Lights::fly_to(&mark));
-        }
-        ui.checkbox(&mut lights.show_falloff, "Show Falloff")
-            .on_hover_text(
-                "On: draw this light's FalloffStart and FalloffEnd spheres. \
-                 Off: draw only its marker. Every light near the camera is \
-                 marked either way.",
-            );
-    });
+    if !mark.everywhere
+        && ui
+            .button("Fly To")
+            .on_hover_text("Move the camera to this light's position, at the row's stored height.")
+            .clicked()
+    {
+        work.fly.write(crate::tools::places::lights::Lights::fly_to(&mark));
+    }
 }
 
 /// Make a `LightParams` row copied from `from`, with its bands, through

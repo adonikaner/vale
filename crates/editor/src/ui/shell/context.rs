@@ -549,8 +549,7 @@ fn doodad(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, u
     if item(ui, "Replace model…", true, "Choose a model for the selected doodads in the panel. Each keeps its position, rotation and scale.", "") {
         editing.swap.show(Kind::Doodad);
         // The list is drawn in the panel's Select half.
-        editing.placing.mode = crate::tools::placements::place::Mode::Select;
-        editing.placing.disarm();
+        editing.placing.set_switch(crate::tools::placements::place::Switch::Select);
         chosen = true;
     }
     chosen
@@ -621,8 +620,7 @@ fn wmo(ui: &mut egui::Ui, session: &mut EditSession, editing: &mut Editing, uniq
     if item(ui, "Replace model…", true, "Choose a WMO for the selected WMOs in the panel. Each keeps its position and rotation.", "") {
         editing.swap.show(Kind::Wmo);
         // The list is drawn in the panel's Select half.
-        editing.placing.mode = crate::tools::placements::place::Mode::Select;
-        editing.placing.disarm();
+        editing.placing.set_switch(crate::tools::placements::place::Switch::Select);
         chosen = true;
     }
     chosen
@@ -650,9 +648,9 @@ fn flightpaths(ui: &mut egui::Ui, editing: &mut Editing) -> bool {
     true
 }
 
-/// The doodad and WMO tools' mode switch, which the two tools share, as the
-/// panel's switch and the number keys set it: one entry per mode the tool is
-/// not in.
+/// The doodad and WMO tools' mode, which the two tools share, as the
+/// toolbar and the number keys set it: one entry per mode the tool is not
+/// in.
 fn placement_mode(ui: &mut egui::Ui, editing: &mut Editing, kind: Kind) -> bool {
     let now = editing.placing.switch();
     let mut chosen = false;
@@ -664,7 +662,7 @@ fn placement_mode(ui: &mut egui::Ui, editing: &mut Editing, kind: Kind) -> bool 
             ui,
             &format!("Switch to {name}"),
             true,
-            "The panel's mode switch. The number keys choose a mode; Tab toggles Select.",
+            "The toolbar's mode. The number keys choose a mode; Tab toggles Select.",
             "",
         ) {
             editing.placing.set_switch(to);
@@ -1335,22 +1333,19 @@ fn spawns_ground(
         Mode::Select => ("Switch to Place", Mode::Place),
         Mode::Place => ("Switch to Select", Mode::Select),
     };
-    if item(ui, switch, true, "The panel's Select and Place switch.", "") {
+    if item(ui, switch, true, "The toolbar's mode.", "") {
         match tool {
             Tool::Creatures => {
+                // The chosen template is kept through Select, as the
+                // toolbar keeps it.
                 editing.creatures.mode = to;
-                if to == Mode::Select {
-                    editing.creatures.new_spawn.chosen = None;
-                } else {
+                if to == Mode::Place {
                     // Only one mode may take the click; see the creature panel.
                     editing.waypoints.adding = false;
                 }
             }
             _ => {
                 editing.objects.mode = to;
-                if to == Mode::Select {
-                    editing.objects.new_spawn.chosen = None;
-                }
             }
         }
         chosen = true;

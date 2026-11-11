@@ -613,13 +613,12 @@ pub(crate) fn toolbar<S: SpawnView>(
                         && subject.tool.mode != mode
                     {
                         subject.tool.mode = mode;
-                        // Switching away puts down whatever was on the cursor.
-                        // The tool's `ghost` also does this; doing it here as
-                        // well makes the panel correct on the frame of the
-                        // switch rather than on the frame after.
-                        match mode {
-                            place::Mode::Select => subject.tool.new_spawn.chosen = None,
-                            place::Mode::Place => S::on_place(subject),
+                        // The chosen template is kept through Select, where
+                        // nothing stands on the pointer (`SpawnTool::placing`),
+                        // so a return to Place has it on the pointer again.
+                        // Escape in Place is what clears it.
+                        if mode == place::Mode::Place {
+                            S::on_place(subject);
                         }
                     }
                 }
@@ -1238,9 +1237,7 @@ fn remove_button<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, 
             S::SPAWN
         ),
     };
-    // `theme::full_button` with its text in the colour of a removal.
-    let remove = egui::Button::new(egui::RichText::new(word).color(theme::BAD))
-        .min_size(egui::vec2(ui.available_width(), 24.0));
+    let remove = theme::full_button_text(ui, egui::RichText::new(word).color(theme::BAD));
     if ui.add(remove).on_hover_text(hover).clicked() {
         SpawnTool::<S>::remove(subject.session, guid, now);
         subject.session.status = match spawn.is_new() {

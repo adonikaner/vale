@@ -33,7 +33,7 @@
 //! with its picker, the count, and what the id resolves to — and draws the used
 //! lines and one free one, so a quest with one kill objective is two lines and
 //! not sixteen rows of zeros. [`pair_row`] is that line and it is used for every
-//! id-and-number pair the table has: required items, source items, both kinds
+//! id-and-number pair the table has: required items, source items, both types
 //! of reward item, the five reputation rewards, the three reputation
 //! conditions, the skill and the emotes.
 //!
@@ -72,6 +72,7 @@ use crate::ui::widgets::rowform::{
 use crate::ui::widgets::theme;
 use crate::ui::widgets::thumbnails::Thumbnails;
 use crate::session::EditSession;
+use super::listing::counted;
 use crate::subjects::items::Items;
 use crate::subjects::quests::{
     Hit, Holder, Known, PickFor, Picker, Picture, Quests, Relation, Role, Target, PICK_LIMIT,
@@ -130,7 +131,7 @@ pub(crate) struct Shell<'a> {
     /// Which content patch the server is configured for — half the key a new
     /// row is written under.
     pub(crate) patch: u32,
-    /// A tool to switch to, which the list's "back to Creatures" asks for.
+    /// A tool to switch to, which the list's Back to Creatures asks for.
     /// The shell switches after this returns; this does not write the tool
     /// itself, because the shell holds the tool while it draws this.
     pub(crate) switch_to: &'a mut Option<Tool>,
@@ -355,9 +356,9 @@ pub(in crate::ui) fn target_of(table: &'static str) -> Option<Target> {
 /// What a signed column's two readings are called in the picker's switch.
 fn either_words(column: &str) -> (&'static str, &'static str) {
     match column {
-        "ZoneOrSort" => ("An area", "A quest sort"),
+        "ZoneOrSort" => ("Area", "Quest Sort"),
         "PrevQuestId" | "NextQuestId" => ("Rewarded", "Active"),
-        _ => ("A creature", "A game object"),
+        _ => ("Creature", "Game Object"),
     }
 }
 
@@ -374,7 +375,7 @@ fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
 
     narrowing(ui, work, shell);
 
-    super::listing::search_box(ui, &mut work.quests.query, "title, entry, zone, or quest type");
+    super::listing::search_box(ui, &mut work.quests.query, "Title, entry, zone or quest type");
     let revision = work.session.rows.revision;
     let matches: Vec<usize> = work
         .quests
@@ -431,7 +432,7 @@ fn act_on(ctx: &egui::Context, work: &mut Workspace<'_>, patch: u32, known: &Kno
         RowAct::Keep => work.quests.keep(work.session, known, now),
         RowAct::CopyEntry => {
             ctx.copy_text(known.entry.to_string());
-            work.session.status = format!("quest entry {} is on the clipboard", known.entry);
+            work.session.status = format!("Quest entry {} is on the clipboard", known.entry);
         }
     }
 }
@@ -467,9 +468,11 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
                     egui::RichText::new(name).size(12.5),
                 );
             });
-            ui.horizontal(|ui| {
+            // Wrapped, so the second button goes under the first where the
+            // list is too narrow for both.
+            ui.horizontal_wrapped(|ui| {
                 if ui
-                    .small_button("show all quests")
+                    .small_button("Show All Quests")
                     .on_hover_text("Clear the filter and list every quest.")
                     .clicked()
                 {
@@ -478,7 +481,7 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
                 }
                 if holder == Holder::Creature
                     && ui
-                        .small_button("back to Creatures")
+                        .small_button("Back to Creatures")
                         .on_hover_text("Switch to the Creatures tool, with its previous selection.")
                         .clicked()
                 {
@@ -488,19 +491,22 @@ fn narrowing(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>)
         });
 }
 
-/// New, Copy and Remove.
+/// New, Copy and Remove, as three equal buttons.
 ///
-/// Unlike an item, a quest can be removed — see `vale_mangos::quest`, where
-/// the reason is. A quest in the database is marked: it stays in the list in
-/// red until Apply, and Keep takes the mark off. One this project created
-/// is in no database, so removing it gives the claim up.
+/// A quest can be removed; `vale_mangos::quest` gives the reason. A quest in
+/// the database is marked: it stays in the list in red until Apply, and Keep
+/// takes the mark off. One this project created is in no database, so
+/// removing it gives the claim up.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>) {
     let open = work.quests.open_quest(&work.session.rows.edits);
-    ui.horizontal(|ui| {
-        let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-        let size = egui::vec2(third, 22.0);
-        if ui
-            .add(egui::Button::new("+ New").min_size(size))
+    let removed = open
+        .as_ref()
+        .is_some_and(|known| known.claim == Life::Delete);
+    let ctx = ui.ctx().clone();
+    ui.columns(3, |columns| {
+        let new = theme::full_button(&columns[0], "New");
+        if columns[0]
+            .add(new)
             .on_hover_text(
                 "Create a quest_template row in the reserved entry range, above the entries \
                  upstream vmangos uses: a level 1 quest with no objectives. No creature or \
@@ -511,8 +517,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
             let (patch, now) = (shell.patch, work.now);
             work.quests.create(work.session, "New Quest", patch, now);
         }
-        if ui
-            .add_enabled(open.is_some(), egui::Button::new("Copy").min_size(size))
+        let copy = theme::full_button(&columns[1], "Copy");
+        if columns[1]
+            .add_enabled(open.is_some(), copy)
             .on_hover_text(
                 "Copy this quest to a new entry, with every column as shown. Its givers \
                  and takers are not copied.",
@@ -521,19 +528,16 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
             .clicked()
         {
             if let Some(known) = open.as_ref() {
-                let ctx = ui.ctx().clone();
                 act_on(&ctx, work, shell.patch, known, RowAct::Copy);
             }
         }
-        let removed = open
-            .as_ref()
-            .is_some_and(|known| known.claim == Life::Delete);
         let label = match removed {
             true => "Keep",
             false => "Remove",
         };
-        if ui
-            .add_enabled(open.is_some(), egui::Button::new(label).min_size(size))
+        let remove = theme::full_button(&columns[2], label);
+        if columns[2]
+            .add_enabled(open.is_some(), remove)
             .on_hover_text(match removed {
                 true => "Take the removal mark off this quest.",
                 false => {
@@ -548,7 +552,6 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
             .clicked()
         {
             if let Some(known) = open.as_ref() {
-                let ctx = ui.ctx().clone();
                 let act = match removed {
                     true => RowAct::Keep,
                     false => RowAct::Remove,
@@ -602,15 +605,15 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_>, open
             let Some(open) = open else {
                 match work.quests.open {
                     None => {
-                        theme::heading(ui, "No quest open");
-                        theme::note(
+                        theme::heading_about(
                             ui,
-                            "Select a quest on the left, or create one with + New. Edits \
-                             reach the database only on Apply, in Server\u{2026} on the top bar.",
+                            "No Quest Open",
+                            "Edits reach the database only on Apply, in Server\u{2026} on the top bar.",
                         );
+                        theme::note(ui, "Select a quest on the left, or create one with New.");
                     }
                     Some(_) => {
-                        theme::waiting(ui, "reading the row\u{2026}");
+                        theme::waiting(ui, "Reading the row\u{2026}");
                     }
                 }
                 return;
@@ -646,7 +649,7 @@ fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, shell: &mut Shell<'_
     );
 }
 
-/// The head of the form: the title, then the key and what kind of quest it is.
+/// The head of the form: the title, then the key and the quest's level, zone and type.
 fn head(ui: &mut egui::Ui, open: &Open) {
     let known = &open.known;
     let title = match known.title.is_empty() {
@@ -662,7 +665,7 @@ fn head(ui: &mut egui::Ui, open: &Open) {
     ui.horizontal(|ui| {
         ui.label(theme::number(format!("entry {}", known.entry)));
         if ui
-            .small_button("copy")
+            .small_button("Copy Entry")
             .on_hover_text("Put the entry on the clipboard.")
             .clicked()
         {
@@ -691,14 +694,17 @@ fn head(ui: &mut egui::Ui, open: &Open) {
                     .color(theme::WARN),
             );
         }
+        // The state is the line; what Apply does with it, and the way back,
+        // are its hover text.
         Life::Delete => {
             ui.label(
-                egui::RichText::new(
-                    "Marked for removal. Apply deletes it with its relations; Keep, under \
-                     the search box, takes the mark off.",
-                )
-                .small()
-                .color(theme::BAD),
+                egui::RichText::new("Marked for removal")
+                    .small()
+                    .color(theme::BAD),
+            )
+            .on_hover_text(
+                "Apply deletes it with its relations; Keep, under the search box, takes the \
+                 mark off.",
             );
         }
         Life::Update => {}
@@ -802,13 +808,13 @@ fn field(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open, column: &'sta
                 let written = number_cell(ui, Kind::Signed, showing);
                 let copper: i64 = showing.trim().parse().unwrap_or(0);
                 match copper {
-                    0 => meaning(ui, "nothing"),
+                    0 => meaning(ui, "Nothing"),
                     copper if copper > 0 => {
-                        meaning(ui, format!("pays {}", quest::money_words(copper as u64)))
+                        meaning(ui, format!("Pays {}", quest::money_words(copper as u64)))
                     }
                     copper => meaning(
                         ui,
-                        format!("costs {} to hand in", quest::money_words(copper.unsigned_abs())),
+                        format!("Costs {} to hand in", quest::money_words(copper.unsigned_abs())),
                     ),
                 }
                 Some(written)
@@ -934,7 +940,7 @@ fn id_and_pick(
 fn resolved(ui: &mut egui::Ui, resolver: &mut Resolver<'_>, column: &'static Column, showing: &str) {
     let value: i64 = showing.trim().parse().unwrap_or(0);
     if value == 0 {
-        ui.label(egui::RichText::new("none").small().color(theme::INK_FAINT));
+        ui.label(egui::RichText::new("None").small().color(theme::INK_FAINT));
         return;
     }
     let table = match column.kind {
@@ -1010,10 +1016,12 @@ fn pair_row(
         ui.label(egui::RichText::new(joiner).color(theme::INK_FAINT));
         let was: i64 = b.showing.trim().parse().unwrap_or(0);
         let mut value = was;
-        let response = ui.add_sized(
-            egui::vec2(COUNT, FORM_ROW),
-            egui::DragValue::new(&mut value).speed(0.25),
-        );
+        let response = theme::sunk(ui, |ui| {
+            ui.add_sized(
+                egui::vec2(COUNT, FORM_ROW),
+                egui::DragValue::new(&mut value).speed(0.25),
+            )
+        });
         if response.changed() && value != was {
             commit(work.session, open, second, value.to_string(), work.now);
         }
@@ -1071,11 +1079,10 @@ fn pair_run(
     }
 }
 
-/// A small heading inside a section, over a run of composed lines.
+/// A heading inside a section, over a run of composed lines: a
+/// [`theme::heading_about`], whose info mark names the run's columns.
 fn run_heading(ui: &mut egui::Ui, text: &str, about: &str) {
-    ui.add_space(2.0);
-    ui.label(egui::RichText::new(text).size(12.0).color(theme::INK_DIM))
-        .on_hover_text(about);
+    theme::heading_about(ui, text, about);
 }
 
 /// What the quest asks for, a line per objective.
@@ -1087,7 +1094,7 @@ fn objective_lines(
 ) {
     run_heading(
         ui,
-        "Creatures and game objects",
+        "Creatures and Game Objects",
         "ReqCreatureOrGOId, ReqCreatureOrGOCount, ReqSpellCast and ObjectiveText, a line per \
          objective. The id is a creature, or a game object when it is negative.",
     );
@@ -1134,7 +1141,7 @@ fn objective_lines(
 
     run_heading(
         ui,
-        "Required items",
+        "Required Items",
         "ReqItemId and ReqItemCount: items handed over with the quest.",
     );
     pair_run(
@@ -1151,7 +1158,7 @@ fn objective_lines(
 
     run_heading(
         ui,
-        "Source items",
+        "Source Items",
         "ReqSourceId and ReqSourceCount: items the quest needs in the bags without asking for \
          them, such as what a required item is made from. They are taken away with the quest.",
     );
@@ -1169,7 +1176,7 @@ fn objective_lines(
 
     run_heading(
         ui,
-        "On accept",
+        "On Accept",
         "SrcItemId and SrcItemCount: the item given to the player when the quest is \
          accepted.",
     );
@@ -1177,11 +1184,11 @@ fn objective_lines(
         quest::TEMPLATE_TABLE.column("SrcItemId"),
         quest::TEMPLATE_TABLE.column("SrcItemCount"),
     ) {
-        pair_row(ui, work, open, "Given item", item, "\u{d7}", count, drawn);
+        pair_row(ui, work, open, "Given Item", item, "\u{d7}", count, drawn);
     }
     run_heading(
         ui,
-        "Other objectives",
+        "Other Objectives",
         "RepObjectiveFaction and RepObjectiveValue (a reputation to reach), LimitTime (a time \
          limit) and SrcSpell (a spell cast on the character on accept).",
     );
@@ -1193,7 +1200,7 @@ fn objective_lines(
             ui,
             work,
             open,
-            "Reach reputation",
+            "Reputation Objective",
             faction,
             "\u{2265}",
             value,
@@ -1211,7 +1218,7 @@ fn reward_lines(
 ) {
     run_heading(
         ui,
-        "Choice of one",
+        "Choice of One",
         "RewChoiceItemId and RewChoiceItemCount: the player chooses one.",
     );
     pair_run(
@@ -1227,7 +1234,7 @@ fn reward_lines(
     );
     run_heading(
         ui,
-        "Always given",
+        "Always Given",
         "RewItemId and RewItemCount: every one of these is given.",
     );
     pair_run(
@@ -1257,7 +1264,7 @@ fn reward_lines(
         5,
         drawn,
     );
-    run_heading(ui, "Other rewards", "Money, experience, spells and mail.");
+    run_heading(ui, "Other Rewards", "Money, experience, spells and mail.");
 }
 
 /// Who may take it: the three id-and-value pairs, then the rest.
@@ -1270,13 +1277,13 @@ fn requirement_lines(
     for (label, first, joiner, second) in [
         ("Skill", "RequiredSkill", "\u{2265}", "RequiredSkillValue"),
         (
-            "Reputation at least",
+            "Reputation at Least",
             "RequiredMinRepFaction",
             "\u{2265}",
             "RequiredMinRepValue",
         ),
         (
-            "Reputation below",
+            "Reputation Below",
             "RequiredMaxRepFaction",
             "<",
             "RequiredMaxRepValue",
@@ -1298,7 +1305,7 @@ fn emote_lines(
     open: &Open,
     drawn: &mut Vec<&'static str>,
 ) {
-    run_heading(ui, "Details emotes", "DetailsEmote and DetailsEmoteDelay.");
+    run_heading(ui, "Details Emotes", "DetailsEmote and DetailsEmoteDelay.");
     pair_run(
         ui,
         work,
@@ -1312,7 +1319,7 @@ fn emote_lines(
     );
     run_heading(
         ui,
-        "Reward emotes",
+        "Reward Emotes",
         "OfferRewardEmote and OfferRewardEmoteDelay.",
     );
     pair_run(
@@ -1326,7 +1333,7 @@ fn emote_lines(
         4,
         drawn,
     );
-    run_heading(ui, "Hand-in emotes", "IncompleteEmote and CompleteEmote.");
+    run_heading(ui, "Hand-in Emotes", "IncompleteEmote and CompleteEmote.");
 }
 
 // ---------------------------------------------------------------------------
@@ -1339,17 +1346,15 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     let open = open_now(&work);
     let work = &mut work;
     let Some(open) = open.as_ref() else {
-        theme::heading(ui, "Quest log preview");
+        theme::heading(ui, "Quest Log Preview");
         match work.quests.open {
             None => theme::note(ui, "No quest open."),
-            Some(_) => theme::waiting(ui, "reading the row\u{2026}"),
+            Some(_) => theme::waiting(ui, "Reading the row\u{2026}"),
         }
         return;
     };
     log_entry(ui, work, open);
-    ui.add_space(8.0);
     relations(ui, work, open);
-    ui.add_space(8.0);
     chain(ui, work, open);
     ui.add_space(16.0);
 }
@@ -1390,7 +1395,7 @@ pub(crate) fn preview_text(text: &str) -> String {
 
 /// The log entry, composed from the row with this project's edits over it.
 fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
-    theme::heading(ui, "Quest log preview");
+    theme::heading(ui, "Quest Log Preview");
     let session = &*work.session;
     let title = text_of(session, open, "Title");
     ui.label(
@@ -1589,21 +1594,23 @@ fn log_entry(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     }
 }
 
-/// Who hands the quest out and who takes it back, with the way to add and
-/// remove one.
+/// Who hands the quest out and who takes it back, with the buttons that add
+/// one and, on each row, the button that removes it.
 fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     let entry = open.known.entry;
     let all = work
         .quests
         .relations_of_quest(entry, &work.session.rows.edits);
     for role in [Role::Gives, Role::Takes] {
-        theme::heading(
-            ui,
-            match role {
-                Role::Gives => "Given by",
-                Role::Takes => "Taken by",
-            },
-        );
+        match role {
+            Role::Gives => theme::heading_about(
+                ui,
+                "Given By",
+                "A quest with no giver can still be started by an item's start_quest, another \
+                 quest's NextQuestInChain, or a script.",
+            ),
+            Role::Takes => theme::heading(ui, "Taken By"),
+        }
         let here: Vec<(Relation, Life)> = all
             .iter()
             .copied()
@@ -1613,10 +1620,7 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
             theme::note(
                 ui,
                 match role {
-                    Role::Gives => {
-                        "No creature or game object. The quest can still be started by an \
-                         item's start_quest, another quest's NextQuestInChain, or a script."
-                    }
+                    Role::Gives => "No creature or game object.",
                     Role::Takes => "No creature or game object. The quest cannot be handed in.",
                 },
             );
@@ -1624,27 +1628,38 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
         for (relation, life) in here {
             relation_row(ui, work, relation, life);
         }
-        ui.horizontal(|ui| {
-            for holder in [Holder::Creature, Holder::Object] {
-                if ui
-                    .small_button(format!("+ {}\u{2026}", holder.word()))
-                    .on_hover_text(format!(
-                        "Add a row to {}: a {} that {} this quest. The row names a template \
-                         entry, so it applies to every spawn of that template.",
-                        vale_mangos::quest::relation_table(holder, role),
-                        holder.word(),
-                        role.word()
-                    ))
-                    .clicked()
-                {
-                    let target = match holder {
-                        Holder::Creature => Target::Creature,
-                        Holder::Object => Target::Object,
-                    };
-                    work.quests.picker =
-                        Some(Picker::new(target, PickFor::Relation { holder, role }));
+        // Two equal buttons. The padding is reduced and the text is cut with
+        // an ellipsis where it does not fit: half the inspector at its
+        // narrowest is about 106 points, and the longer label at the usual
+        // padding is wider than that.
+        ui.scope(|ui| {
+            ui.spacing_mut().button_padding.x = 4.0;
+            ui.columns(2, |columns| {
+                for (column, (holder, label)) in columns.iter_mut().zip([
+                    (Holder::Creature, "Add Creature\u{2026}"),
+                    (Holder::Object, "Add Game Object\u{2026}"),
+                ]) {
+                    let button = theme::full_button(column, label).truncate();
+                    if column
+                        .add(button)
+                        .on_hover_text(format!(
+                            "Add a row to {}: a {} that {} this quest. The row names a template \
+                             entry, so it applies to every spawn of that template.",
+                            vale_mangos::quest::relation_table(holder, role),
+                            holder.word(),
+                            role.word()
+                        ))
+                        .clicked()
+                    {
+                        let target = match holder {
+                            Holder::Creature => Target::Creature,
+                            Holder::Object => Target::Object,
+                        };
+                        work.quests.picker =
+                            Some(Picker::new(target, PickFor::Relation { holder, role }));
+                    }
                 }
-            }
+            });
         });
     }
 }
@@ -1652,101 +1667,127 @@ fn relations(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
 /// One relation of the open quest: who, what this project says about the row,
 /// and the button that removes or keeps it. Clicking the name narrows the list
 /// to that creature's quests.
+///
+/// The button, the state and the entry are laid out first, from the row's
+/// right end, so the name has what is left and is cut with an ellipsis.
 fn relation_row(ui: &mut egui::Ui, work: &mut Workspace<'_>, relation: Relation, life: Life) {
     ui.horizontal(|ui| {
-        let colour = match life {
-            Life::Delete => theme::BAD,
-            _ => theme::ACCENT,
-        };
-        let name = work
-            .quests
-            .holder(relation.holder, relation.id, &work.session.rows.edits)
-            .unwrap_or_else(|| format!("{} {}", relation.holder.word(), relation.id));
-        if crate::ui::widgets::reference::link(
-            ui,
-            &name,
-            colour,
-            "Narrow the quest list to the quests this creature or game object gives or takes.",
-        ) {
-            work.quests.show_quests_of(relation.holder, relation.id);
-        }
-        crate::ui::widgets::reference::template_link(
-            ui,
-            work.asks,
-            crate::tools::spawns::spawn::SpawnKind::of_holder(relation.holder),
-            relation.id,
-            theme::number(relation.id.to_string()),
-        );
-        if relation.holder == Holder::Object {
-            ui.label(
-                egui::RichText::new("game object")
-                    .small()
-                    .color(theme::INK_FAINT),
-            );
-        }
-        match life {
-            Life::Insert => {
-                ui.label(egui::RichText::new("new").small().color(theme::WARN));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let about = match life {
+                Life::Insert => "Discards this relation. It is not in the database yet.",
+                _ => "Marks this row for removal. Apply deletes it, after writing the statement \
+                      that restores it.",
+            };
+            if let Some(act) = remove_keep(ui, life, about) {
+                let now = work.now;
+                match act {
+                    RowAct::Keep => work.quests.relate(work.session, relation, now),
+                    _ => work.quests.unrelate(work.session, relation, now),
+                }
             }
-            Life::Delete => {
+            match life {
+                Life::Insert => {
+                    ui.label(egui::RichText::new("New").small().color(theme::WARN));
+                }
+                Life::Delete => {
+                    ui.label(
+                        egui::RichText::new("Marked for removal")
+                            .small()
+                            .color(theme::BAD),
+                    );
+                }
+                Life::Update => {}
+            }
+            if relation.holder == Holder::Object {
                 ui.label(
-                    egui::RichText::new("marked for removal")
+                    egui::RichText::new("Game object")
                         .small()
-                        .color(theme::BAD),
+                        .color(theme::INK_FAINT),
                 );
             }
-            Life::Update => {}
-        }
-        let about = match life {
-            Life::Insert => "Discards this relation. It is not in the database yet.",
-            _ => "Marks this row for removal. Apply deletes it, after writing the statement \
-                  that restores it.",
-        };
-        if let Some(act) = remove_keep(ui, life, about) {
-            let now = work.now;
-            match act {
-                RowAct::Keep => work.quests.relate(work.session, relation, now),
-                _ => work.quests.unrelate(work.session, relation, now),
-            }
-        }
+            crate::ui::widgets::reference::template_link(
+                ui,
+                work.asks,
+                crate::tools::spawns::spawn::SpawnKind::of_holder(relation.holder),
+                relation.id,
+                theme::number(relation.id.to_string()),
+            );
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let colour = match life {
+                    Life::Delete => theme::BAD,
+                    _ => theme::ACCENT,
+                };
+                let name = work
+                    .quests
+                    .holder(relation.holder, relation.id, &work.session.rows.edits)
+                    .unwrap_or_else(|| format!("{} {}", relation.holder.word(), relation.id));
+                if crate::ui::widgets::reference::link(
+                    ui,
+                    &name,
+                    colour,
+                    "Narrow the quest list to the quests this creature or game object gives or takes.",
+                ) {
+                    work.quests.show_quests_of(relation.holder, relation.id);
+                }
+            });
+        });
     });
 }
 
 /// Where the quest sits among the others: what it needs, what it leads to,
 /// and which other quests name it as a prerequisite, which no column of its
-/// own row records.
+/// own row records. Each is a property row named by the relation, whose hover
+/// text names the column.
 fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
     theme::heading(ui, "Chain");
     let entry = open.known.entry as i32;
     let mut any = false;
-    let line = |ui: &mut egui::Ui, work: &mut Workspace<'_>, word: &str, other: u32| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(word).small().color(theme::INK_DIM));
-            reference::name(ui, &mut work.resolver(), quest::TEMPLATE, other);
-            ui.label(theme::number(other.to_string()).color(theme::INK_FAINT));
+    // One row. The other quest's entry is laid out first, from the row's
+    // right end, so its title has what is left. `tag` is the reading of a
+    // signed column, drawn before the title, or empty.
+    let line = |ui: &mut egui::Ui, work: &mut Workspace<'_>, name: &str, about: &str, tag: &str, other: u32| {
+        theme::property(ui, name, about, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(theme::number(other.to_string()).color(theme::INK_FAINT));
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if !tag.is_empty() {
+                        meaning(ui, tag);
+                    }
+                    reference::name(ui, &mut work.resolver(), quest::TEMPLATE, other);
+                });
+            });
         });
     };
     let prev = number_of(work.session, open, "PrevQuestId");
     if prev != 0 {
         any = true;
-        let word = match prev > 0 {
-            true => "requires rewarded",
-            false => "requires active",
+        let (rewarded, active) = either_words("PrevQuestId");
+        let tag = match prev > 0 {
+            true => rewarded,
+            false => active,
         };
-        line(ui, work, word, prev.unsigned_abs() as u32);
+        line(
+            ui,
+            work,
+            "Requires",
+            "PrevQuestId. Rewarded: that quest must be rewarded first. Active: that quest must \
+             be active at the time.",
+            tag,
+            prev.unsigned_abs() as u32,
+        );
     }
-    for (column, word) in [
-        ("NextQuestId", "unlocks"),
-        ("NextQuestInChain", "next in chain"),
+    for (column, name) in [
+        ("NextQuestId", "Unlocks"),
+        ("NextQuestInChain", "Next in Chain"),
     ] {
         let next = number_of(work.session, open, column);
         if next != 0 {
             any = true;
-            line(ui, work, word, next.unsigned_abs() as u32);
+            line(ui, work, name, column, "", next.unsigned_abs() as u32);
         }
     }
     // The other direction, from the list in memory: what names this quest.
-    let named_by: Vec<(u32, &'static str)> = work
+    let named_by: Vec<(u32, &'static str, &'static str)> = work
         .quests
         .all
         .iter()
@@ -1754,20 +1795,24 @@ fn chain(ui: &mut egui::Ui, work: &mut Workspace<'_>, open: &Open) {
         .filter(|other| other.entry as i32 != entry)
         .filter_map(|other| {
             if other.prev.abs() == entry {
-                Some((other.entry, "required by"))
+                Some((other.entry, "Required By", "That quest's PrevQuestId names this quest."))
             } else if other.next.abs() == entry {
-                Some((other.entry, "unlocked by"))
+                Some((other.entry, "Unlocked By", "That quest's NextQuestId names this quest."))
             } else if other.next_in_chain as i32 == entry {
-                Some((other.entry, "previous in chain"))
+                Some((
+                    other.entry,
+                    "Previous in Chain",
+                    "That quest's NextQuestInChain names this quest.",
+                ))
             } else {
                 None
             }
         })
         .take(12)
         .collect();
-    for (other, word) in named_by {
+    for (other, name, about) in named_by {
         any = true;
-        line(ui, work, word, other);
+        line(ui, work, name, about, "", other);
     }
     if !any {
         theme::note(ui, "Not in a chain: no other quest references this quest, and it references none.");
@@ -1925,8 +1970,7 @@ fn hit_row(
     }
     let response = match hit.about.is_empty() {
         true => shape.response,
-        false => shape.response.on_hover_text(hit.about.join("
-")),
+        false => shape.response.on_hover_text(hit.about.join("\n")),
     };
     response.clicked()
 }
@@ -1984,12 +2028,12 @@ pub(in crate::ui) fn picker(
                 format!("Choose the item held in the {} in set {set}", vale_mangos::addon::SLOT_WORDS[*slot])
             }
             PickFor::SpawnData { into, spawns } => match into {
-                crate::subjects::quests::SpawnInto::Pool { .. } => format!("Choose a pool for {} spawn(s)", spawns.len()),
+                crate::subjects::quests::SpawnInto::Pool { .. } => format!("Choose a pool for {}", counted(spawns.len(), "spawn")),
                 crate::subjects::quests::SpawnInto::Event { removed: false, .. } => {
-                    format!("Choose a game event to add {} spawn(s) to", spawns.len())
+                    format!("Choose a game event to add {} to", counted(spawns.len(), "spawn"))
                 }
                 crate::subjects::quests::SpawnInto::Event { removed: true, .. } => {
-                    format!("Choose a game event to remove {} spawn(s) during", spawns.len())
+                    format!("Choose a game event to remove {} during", counted(spawns.len(), "spawn"))
                 }
             },
             PickFor::PlaceInto { into } => match into {
@@ -2003,7 +2047,12 @@ pub(in crate::ui) fn picker(
             PickFor::TableField { column, .. } => format!("Choose {column}"),
             PickFor::ConditionValue { label, .. } => format!("Choose the {label}"),
         };
-        ui.label(egui::RichText::new(heading).strong().size(14.0));
+        // How many matches the list holds is on the title's info mark.
+        super::listing::dialog_title(
+            ui,
+            &heading,
+            &format!("The list shows at most {PICK_LIMIT} matches: type more of the name to narrow it."),
+        );
 
         // The switch, for a column whose sign picks the table.
         if let (Some((positive, negative)), PickFor::Column { column, negated }) =
@@ -2031,9 +2080,9 @@ pub(in crate::ui) fn picker(
         }
 
         let hint = match picker.target {
-            Target::Item | Target::Creature | Target::Object => "part of a name, or an entry",
-            Target::List(_) => "name of a creature, object or item using it, its contents, or an id",
-            _ => "name, or an id",
+            Target::Item | Target::Creature | Target::Object => "Part of a name, or an entry",
+            Target::List(_) => "Name of a creature, object or item using it, its contents, or an id",
+            _ => "Name, or an id",
         };
         let search = ui.add(
             egui::TextEdit::singleline(&mut picker.query)
@@ -2057,7 +2106,7 @@ pub(in crate::ui) fn picker(
             // A search running while the last one's rows are still listed says
             // so too, above them, so a list that is about to change is not
             // taken for the answer.
-            theme::waiting(ui, "searching\u{2026}");
+            theme::waiting(ui, "Searching\u{2026}");
         } else if picker.hits.is_empty() {
             theme::note(ui, "Nothing matches.");
         }
@@ -2074,7 +2123,7 @@ pub(in crate::ui) fn picker(
         if picker.hits.len() >= PICK_LIMIT {
             theme::note(
                 ui,
-                format!("Showing the first {PICK_LIMIT} matches. Type more to narrow the search."),
+                format!("Showing the first {PICK_LIMIT} matches."),
             );
         }
         ui.add_space(4.0);
@@ -2090,7 +2139,7 @@ pub(in crate::ui) fn picker(
                     | PickFor::TableField { .. }
                     | PickFor::ConditionValue { .. }
             ) && ui
-                    .button("Set to none")
+                    .button("Set to None")
                     .on_hover_text("Write 0, which for every reference here means none.")
                     .clicked()
             {
@@ -2245,7 +2294,7 @@ pub(crate) struct HolderQuests<'a> {
 }
 
 /// What a relation needs of the thing that holds it, which is a different
-/// column for each kind of holder — see [`holder_window`].
+/// column for each type of holder — see [`holder_window`].
 pub(crate) enum HolderIs {
     /// A creature's `npc_flags`, and its template's key for writing them.
     Creature { npc_flags: u32, template_key: vale_mangos::row::Key },
@@ -2286,7 +2335,7 @@ pub(crate) fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) 
     };
     let mut keep_open = true;
     let mut switch: Option<Tool> = None;
-    let shown = theme::window(format!("{name} \u{2014} quests"), "holder-quests")
+    let shown = theme::window(format!("{name} \u{2014} Quests"), "holder-quests")
         .open(&mut keep_open)
         .default_size([380.0, 420.0])
         .default_pos([300.0, 120.0])
@@ -2304,7 +2353,7 @@ pub(crate) fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) 
             }
             if subject.quests.all.is_empty() {
                 subject.quests.want();
-                theme::waiting(ui, "reading the quest tables\u{2026}");
+                theme::waiting(ui, "Reading the quest tables\u{2026}");
                 return;
             }
             let all = subject.quests.relations_of_holder(
@@ -2342,7 +2391,7 @@ pub(crate) fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) 
                             window_row(ui, &mut subject, relation, life, &mut switch);
                         }
                         if ui
-                            .small_button("+ quest\u{2026}")
+                            .small_button("Add Quest\u{2026}")
                             .on_hover_text(format!(
                                 "Add a row to {}: a quest this {noun} {}.",
                                 vale_mangos::quest::relation_table(holder, role),
@@ -2359,7 +2408,7 @@ pub(crate) fn holder_window(ctx: &egui::Context, mut subject: HolderQuests<'_>) 
                 });
             ui.add_space(6.0);
             if ui
-                .button("Open in the quest workspace")
+                .button("Open in Quest Workspace")
                 .on_hover_text(format!(
                     "Switch to the Quests tool with the list narrowed to this {noun}'s \
                      quests, to edit their text, objectives and rewards.",
@@ -2447,7 +2496,7 @@ fn not_a_questgiver(ui: &mut egui::Ui, subject: &mut HolderQuests<'_>, entry: u3
                 .color(theme::BAD),
             );
             if ui
-                .small_button("Set type to Quest giver")
+                .small_button("Set Type to Quest Giver")
                 .on_hover_text(
                     "Write type = 2 into gameobject_template. The 24 data columns are \
                      named by the type, so what they hold now is read as a quest giver's \
@@ -2511,11 +2560,11 @@ fn window_row(
         ui.label(theme::number(relation.quest.to_string()).color(theme::INK_FAINT));
         match life {
             Life::Insert => {
-                ui.label(egui::RichText::new("new").small().color(theme::WARN));
+                ui.label(egui::RichText::new("New").small().color(theme::WARN));
             }
             Life::Delete => {
                 ui.label(
-                    egui::RichText::new("marked for removal")
+                    egui::RichText::new("Marked for removal")
                         .small()
                         .color(theme::BAD),
                 );

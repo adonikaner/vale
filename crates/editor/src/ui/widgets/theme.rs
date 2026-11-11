@@ -38,6 +38,15 @@ pub(crate) const INK: Color32 = Color32::from_rgb(0xE2, 0xE6, 0xED);
 pub(crate) const INK_DIM: Color32 = Color32::from_rgb(0xA9, 0xB1, 0xC0);
 pub(crate) const INK_FAINT: Color32 = Color32::from_rgb(0x85, 0x8D, 0x9C);
 
+/// A field's name, wherever a name stands beside its value or control: a
+/// form's page, a [`property`] or [`row`] in a panel, a [`bar_setting`] in a
+/// strip, a dialog. A cool grey one step lighter than [`INK_DIM`], about 9.7
+/// to 1 against [`PANEL`]. A form is a page of up to 170 names read down
+/// their left edge, and at [`INK_DIM`] the column was hard to scan. A value
+/// stays brighter than its name; headings, notes and state lines stay at
+/// [`INK_DIM`] or [`INK_FAINT`].
+pub(crate) const INK_NAME: Color32 = Color32::from_rgb(0xC3, 0xCA, 0xD6);
+
 /// The four surfaces — see the module comment.
 pub(crate) const SHELL: Color32 = Color32::from_rgb(0x15, 0x18, 0x1D);
 pub(crate) const PANEL: Color32 = Color32::from_rgb(0x1E, 0x22, 0x2A);
@@ -427,14 +436,47 @@ const ABOUT_WIDTH: f32 = 300.0;
 /// points to the right of the column in the sections above and below it.
 pub(crate) fn fold(ui: &mut Ui, id: &str, text: &str, body: impl FnOnce(&mut Ui)) {
     let id = ui.make_persistent_id(id);
-    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    fold_row(ui, id, RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT), true, body);
+}
+
+/// [`fold`] that starts folded, for a part of a section most rows leave
+/// alone: a string's other locales, a skill's values.
+pub(crate) fn fold_closed(ui: &mut Ui, id: impl egui::AsIdSalt, text: &str, body: impl FnOnce(&mut Ui)) {
+    let id = ui.make_persistent_id(id);
+    fold_row(ui, id, RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT), false, body);
+}
+
+/// The size of a form section's name, in points: one step over a panel
+/// heading's [`SMALL`], because a form is a page of up to 170 fields and its
+/// sections are what it is scrolled by.
+const SECTION_NAME: f32 = 12.5;
+
+/// A section of a workspace's form: a heading that folds, in the dimmer ink,
+/// or in the pending colour while `edited`, which is when a field under it
+/// carries a change of this project's. `open` is whether it starts open;
+/// egui keeps what it was last set to under `id`.
+///
+/// It is [`fold`] one size up. The forms drew `egui::CollapsingHeader`, which
+/// indents its body behind a vertical rule: a field's name then started 18
+/// points right of the section's name, and a fold inside a section 36.
+pub(crate) fn section(ui: &mut Ui, id: impl egui::AsIdSalt, text: &str, open: bool, edited: bool, body: impl FnOnce(&mut Ui)) {
+    let id = ui.make_persistent_id(id);
+    let colour = match edited {
+        true => WARN,
+        false => INK_DIM,
+    };
+    fold_row(ui, id, RichText::new(text.to_uppercase()).size(SECTION_NAME).color(colour), open, body);
+}
+
+/// The body of [`fold`], [`fold_closed`] and [`section`]: a triangle, the
+/// name, a rule to the right edge, and under them `body` while open.
+fn fold_row(ui: &mut Ui, id: egui::Id, text: RichText, open: bool, body: impl FnOnce(&mut Ui)) {
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open);
     ui.add_space(SECTION_GAP);
     let row = ui
         .horizontal(|ui| {
             let (mark, _) = ui.allocate_exact_size(Vec2::new(8.0, INFO_MARK), egui::Sense::hover());
-            let label = ui.add(
-                egui::Label::new(RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT)).selectable(false),
-            );
+            let label = ui.add(egui::Label::new(text).selectable(false));
             let y = label.rect.center().y;
             let from = label.rect.right() + 6.0;
             let to = ui.max_rect().right();
@@ -482,7 +524,7 @@ pub(crate) fn row<R>(ui: &mut Ui, label: &str, contents: impl FnOnce(&mut Ui) ->
     ui.horizontal(|ui| {
         ui.add_sized(
             [LABEL_WIDTH, ui.spacing().interact_size.y],
-            egui::Label::new(RichText::new(label).color(INK_DIM)).selectable(false),
+            egui::Label::new(RichText::new(label).color(INK_NAME)).selectable(false),
         );
         contents(ui)
     })
@@ -495,7 +537,7 @@ pub(crate) fn row_about<R>(ui: &mut Ui, label: &str, about: &str, contents: impl
     ui.horizontal(|ui| {
         ui.add_sized(
             [LABEL_WIDTH, ui.spacing().interact_size.y],
-            egui::Label::new(RichText::new(label).color(INK_DIM))
+            egui::Label::new(RichText::new(label).color(INK_NAME))
                 .selectable(false)
                 .sense(egui::Sense::hover()),
         )
@@ -526,7 +568,7 @@ pub(crate) fn property<R>(ui: &mut Ui, name: &str, about: &str, contents: impl F
                 |ui| {
                     ui.set_min_size(egui::vec2(PROPERTY_WIDTH, height));
                     ui.add(
-                        egui::Label::new(RichText::new(name).color(INK_DIM))
+                        egui::Label::new(RichText::new(name).color(INK_NAME))
                             .selectable(false)
                             .truncate()
                             .sense(egui::Sense::hover()),
@@ -538,6 +580,42 @@ pub(crate) fn property<R>(ui: &mut Ui, name: &str, about: &str, contents: impl F
             label.on_hover_text(about);
         }
         contents(ui)
+    })
+    .inner
+}
+
+/// A name in a cell of a fixed size: left-aligned, centred vertically, and
+/// cut with an ellipsis. The whole cell answers `sense`, so a hover text or a
+/// right-click menu on the name is reached anywhere in its cell.
+///
+/// The forms sized a `Label` with `add_sized`, which centres it: a page of
+/// names of different lengths then had no common left edge to read down.
+pub(crate) fn name_cell(ui: &mut Ui, size: Vec2, text: RichText, sense: egui::Sense) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(size, sense);
+    if ui.is_rect_visible(rect) {
+        let mut cell = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center))
+                .sense(egui::Sense::hover()),
+        );
+        cell.add(egui::Label::new(text).selectable(false).truncate());
+    }
+    response
+}
+
+/// Draws what `add` adds with a number box's sunk look: a `DragValue` in the
+/// field's fill with a hairline edge. [`field`] and [`bar_field`] are this
+/// at their own widths; a form's value cell calls it with its own.
+pub(crate) fn sunk<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.noninteractive] {
+            state.weak_bg_fill = SUNK;
+            state.bg_fill = SUNK;
+        }
+        w.inactive.bg_stroke = Stroke::new(1.0, LINE);
+        add(ui)
     })
     .inner
 }
@@ -616,9 +694,24 @@ pub(crate) fn value(ui: &mut Ui, text: impl Into<String>) -> egui::Response {
 }
 
 /// A button as wide as the room it is given, for a row of buttons with
-/// common edges: `ui.columns(2, ..)` with one of these in each column.
+/// common edges: `ui.columns(2, ..)` with one of these in each column. Its
+/// text is centred by a growing space on either side of it; a column is a
+/// left-aligned layout, which would otherwise put the text at the button's
+/// left edge.
 pub(crate) fn full_button(ui: &Ui, text: &str) -> egui::Button<'static> {
-    egui::Button::new(text.to_string()).min_size(Vec2::new(ui.available_width(), 24.0))
+    full_button_text(ui, RichText::new(text.to_string()))
+}
+
+/// [`full_button`] with its text styled by the caller: in [`BAD`] for a
+/// removal, or lit for a pointer mode that is armed.
+pub(crate) fn full_button_text(ui: &Ui, text: RichText) -> egui::Button<'static> {
+    // No gap between the spaces and the text, so the spaces cost nothing when
+    // the text only just fits; and a label that still does not fit is cut
+    // with an ellipsis, not wrapped onto a second line of a taller button.
+    egui::Button::new((egui::Atom::grow(), text, egui::Atom::grow()))
+        .gap(0.0)
+        .wrap_mode(egui::TextWrapMode::Truncate)
+        .min_size(Vec2::new(ui.available_width(), 24.0))
 }
 
 /// [`segmented`] in a [`property`] row, as wide as [`field_width`].
@@ -795,7 +888,7 @@ pub(crate) fn bar_keys(ui: &mut Ui, keys: &[(&str, &str)]) -> egui::Response {
 /// A [`toolbar`] setting: its name, then its control, then a little space
 /// before the next.
 pub(crate) fn bar_setting<R>(ui: &mut Ui, name: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.label(RichText::new(name).color(INK_DIM));
+    ui.label(RichText::new(name).color(INK_NAME));
     let inner = control(ui);
     ui.add_space(4.0);
     inner
@@ -807,9 +900,20 @@ pub(crate) fn bar_setting<R>(ui: &mut Ui, name: &str, control: impl FnOnce(&mut 
 /// edge. Answers its rectangle, which the shell adds to the areas a press over
 /// the world does not reach.
 ///
-/// A tool puts here what decides the next click or stroke in the world, so it
-/// sits beside the pointer that uses it, and the inspector keeps what is
-/// already selected.
+/// Every tool that takes clicks in the world has one, and each holds the
+/// same four things, in this order:
+///
+/// 1. the mode, which is what the left button does: a [`bar_group`];
+/// 2. the switches flipped between clicks, and the switches for what the
+///    tool draws in the world: each a [`bar_switch`];
+/// 3. the Keys button, [`bar_keys`], last in the first row;
+/// 4. in a second row, what the chosen mode alone has: the handles of
+///    Select, or the one number an armed mode reads.
+///
+/// These are pressed between clicks in the world, so they sit beside the
+/// pointer. The inspector keeps what is selected, and every value, list and
+/// picker: a brush's numbers, a placement's turn and scale, a switch that
+/// opens rows of values under it.
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     id: &str,
@@ -834,6 +938,21 @@ pub(crate) fn toolbar(
                 .show(ui, contents);
         });
     Some(area.response.rect)
+}
+
+/// The [`toolbar`] of a tool with no mode and no switch: the Keys button
+/// alone. Such a tool still has the bar, so that a tool's mouse and keyboard
+/// controls are found in one place whichever tool is chosen.
+pub(crate) fn toolbar_keys(
+    ctx: &egui::Context,
+    id: &str,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    keys: &[(&str, &str)],
+) -> Option<egui::Rect> {
+    toolbar(ctx, id, viewport, corner, |ui| {
+        bar_keys(ui, keys);
+    })
 }
 
 /// A run of mutually exclusive choices as one control.

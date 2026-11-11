@@ -62,8 +62,8 @@ pub(super) fn run_command(
         }
         Command::CreateTeachingSpell => {
             work.session.status = match tables::learning::add_teaching_spell(work.session, id) {
-                Some(made) => format!("created teaching spell {made} for spell {id}"),
-                None => "teaching spell not created".to_string(),
+                Some(made) => format!("Created teaching spell {made} for spell {id}"),
+                None => "Teaching spell not created".to_string(),
             };
             show(work);
         }
@@ -112,7 +112,7 @@ pub(super) fn run_command(
         }
         Command::AddSubArea => {
             if let Some(at) = tables::zones::add_sub_area(work.session, id) {
-                work.session.status = "sub-area added; enter its name".to_string();
+                work.session.status = "Sub-area added; enter its name".to_string();
                 if here {
                     work.browser.open_row(at);
                 }
@@ -237,7 +237,7 @@ pub(super) fn field_menu(
             work.browser.pick_focus = true;
             ui.close();
         }
-        if named && ui.button("Set to none").clicked() {
+        if named && ui.button("Set to None").clicked() {
             // A kit's slots hold -1 for nothing and every other reference 0,
             // which is what a blank row of the table holds in the field.
             let none = vale_assets::tables::schema::blank_defaults(table_name)
@@ -255,7 +255,7 @@ pub(super) fn field_menu(
         Kind::Flags(_) => format!("0x{raw:08X}"),
         _ => signed(raw),
     };
-    if ui.button(format!("Copy value {value}")).clicked() {
+    if ui.button(format!("Copy Value {value}")).clicked() {
         ui.ctx().copy_text(value);
         ui.close();
     }

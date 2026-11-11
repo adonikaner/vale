@@ -1,17 +1,16 @@
-//! The parts of the doodad and WMO panels that the two share: the mode
-//! switch, the Keys button, the Handles row, and the placement picker, which
-//! is the model browser by folder, search, Starred and Recent, and the
-//! preview of the chosen model. The state is
-//! [`crate::tools::placements::place`].
+//! What the doodad and WMO tools share: the toolbar over the viewport, and
+//! in the inspector the placement picker, which is the model browser by
+//! folder, search, Starred and Recent, and the preview of the chosen model.
+//! The state is [`crate::tools::placements::place`].
 //!
 //! ```text
-//! [ Select | Place | Cluster ]   the mode switch; Cluster on the doodad tool only
-//! Keys                           the mode's mouse and keyboard controls, on hover
+//! toolbar     [Select | Place | Cluster]  Keys     Cluster on the doodad tool only
+//!             Handles [Move | Turn | Off]          in Select
 //!
-//! Place     Model and the browser, Placement, Ground, Scatter
-//! Cluster   Models, Cluster, Add Models and the browser, Placement, Ground,
-//!           Scatter
-//! Select    the Handles row, then the doodad or WMO panel's own sections
+//! inspector   Place     Model and the browser, Placement, Ground, Scatter
+//!             Cluster   Models, Cluster, Add Models and the browser,
+//!                       Placement, Ground, Scatter
+//!             Select    the doodad or WMO panel's own sections
 //! ```
 //!
 //! Ground is drawn on the doodad tool only.
@@ -24,19 +23,97 @@ use crate::tools::placements::place;
 use crate::tools::placements::swap::Swap;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split_folder};
 use crate::ui::widgets::preview::preview_pane;
-use crate::ui::widgets::theme::{self, field, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_setting, field, property};
 
-/// The mode switch, and the model picker shown in Place and Cluster mode.
+/// The doodad or WMO tool's toolbar over the viewport:
+///
+/// ```text
+/// [Select | Place | Cluster]  Keys
+/// Handles [Move | Turn | Off]
+/// ```
+///
+/// Cluster is the doodad tool's only. The second row is drawn in Select, the
+/// one mode with a selection to move. The mode is one field of the placer
+/// and the handles are one field of the gizmo, so each is a
+/// [`theme::bar_group`]. The Keys button lists the chosen mode's controls.
+/// See [`theme::toolbar`], and `crate::ui::tools::spawns::spawn::toolbar`,
+/// which lays the spawn tools' out the same way.
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    kind: Kind,
+    placing: &mut Placing,
+    handles: &mut Handles,
+) -> Option<egui::Rect> {
+    let id = match kind {
+        Kind::Doodad => "doodads-toolbar",
+        Kind::Wmo => "wmos-toolbar",
+    };
+    theme::toolbar(ctx, id, viewport, corner, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let was = placing.switch();
+            bar_group(ui, |ui| {
+                for (name, to) in place::switches(kind) {
+                    let hover = match to {
+                        Switch::Select => "Click a placement to select it, and drag to move it.",
+                        Switch::Place => "Choose a model in the inspector, then click the ground to place it.",
+                        Switch::Cluster => {
+                            "Choose models in the inspector, then click the ground to place several \
+                             of them over a circle."
+                        }
+                    };
+                    if bar_segment(ui, was == *to, name).on_hover_text(hover).clicked() && was != *to {
+                        // Select puts down the model on the cursor and
+                        // Place picks it up again. `aim` also does both;
+                        // doing it here as well makes the bar and the panel
+                        // correct on the frame of the switch.
+                        placing.set_switch(*to);
+                    }
+                }
+            });
+            bar_keys(ui, match (placing.switch(), kind) {
+                (Switch::Select, Kind::Doodad) => &super::doodads::KEYS,
+                (Switch::Select, Kind::Wmo) => &super::wmos::KEYS,
+                (Switch::Place, Kind::Doodad) => &PLACE_DOODAD_KEYS,
+                (Switch::Place, Kind::Wmo) => &PLACE_WMO_KEYS,
+                (Switch::Cluster, _) => &CLUSTER_KEYS,
+            });
+        });
+        if placing.switch() == Switch::Select {
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                bar_setting(ui, "Handles", |ui| {
+                    bar_group(ui, |ui| {
+                        for (name, to) in HANDLES {
+                            let hover = match to {
+                                Handles::Move => "Drag an arrow to move along one axis.",
+                                Handles::Turn => "Drag a ring to turn about one axis.",
+                                Handles::Off => "No handles: a click selects and a drag moves along the ground.",
+                            };
+                            if bar_segment(ui, *handles == to, name).on_hover_text(hover).clicked() {
+                                *handles = to;
+                            }
+                        }
+                    });
+                });
+            });
+        }
+    })
+}
+
+/// The model picker and the placement rows, shown in Place and Cluster mode.
 ///
 /// Shared by the two placement tools, because choosing a model is the same
 /// action whichever list it goes into; see [`crate::tools::placements::place`] for the rest
 /// of the reasoning. Returns `true` while the tool is in Place or Cluster
-/// mode, which tells the caller to draw the placement rows instead of the
-/// selection.
+/// mode, which tells the caller that the panel is drawn and the selection's
+/// sections are not.
 ///
-/// The panel has no instruction lines for the mode. The Keys button under
-/// the switch lists the mode's controls; in Select the caller draws it, with
-/// its own table.
+/// The mode is chosen on the toolbar, [`toolbar`], and the panel has no
+/// instruction lines for it: the toolbar's Keys button lists its controls.
 pub(super) fn placing(
     ui: &mut egui::Ui,
     placing: &mut Placing,
@@ -44,40 +121,13 @@ pub(super) fn placing(
     portraits: &mut crate::preview::portraits::Portraits,
     favourites: &mut crate::prefs::favourites::Favourites,
 ) -> bool {
-    let was = placing.switch();
-    let mut to = was;
-    theme::segmented(ui, &mut to, place::switches(kind), |a, b| a == b);
-    if to != was {
-        // Switching to Select drops whatever was on the cursor. `aim` also
-        // does this; doing it here as well makes the panel correct on the
-        // frame of the switch rather than the frame after.
-        placing.set_switch(to);
-    }
     match placing.switch() {
         Switch::Select => return false,
-        Switch::Place => {
-            keys(ui, match kind {
-                Kind::Doodad => &PLACE_DOODAD_KEYS,
-                Kind::Wmo => &PLACE_WMO_KEYS,
-            });
-            model(ui, placing, kind, portraits, favourites);
-        }
-        Switch::Cluster => {
-            keys(ui, &CLUSTER_KEYS);
-            cluster(ui, placing, portraits, favourites);
-        }
+        Switch::Place => model(ui, placing, kind, portraits, favourites),
+        Switch::Cluster => cluster(ui, placing, portraits, favourites),
     }
     placement(ui, placing, kind);
     true
-}
-
-/// The Keys button under the mode switch: hovering it lists the mode's mouse
-/// and keyboard controls as a table.
-///
-/// It is [`theme::bar_keys`], the toolbar's control, drawn in the inspector
-/// because the placement tools have no toolbar over the viewport.
-pub(super) fn keys(ui: &mut egui::Ui, keys: &[(&str, &str)]) {
-    theme::bar_keys(ui, keys);
 }
 
 /// Place mode's mouse and keyboard controls on the doodad tool, for the Keys
@@ -119,18 +169,6 @@ const CLUSTER_KEYS: [(&str, &str); 9] = [
     ("1, 2, 3", "Select, Place, Cluster"),
     ("Tab", "Switch between Select and placing"),
 ];
-
-/// The Handles row of the doodad and WMO panels in Select mode: which
-/// handles the selected placement carries in the viewport.
-pub(super) fn handles(ui: &mut egui::Ui, handles: &mut Handles) {
-    property(
-        ui,
-        "Handles",
-        "Move: drag an arrow to move along one axis. Turn: drag a ring to turn about one axis. \
-         Off: no handles. A click selects and a drag moves along the ground.",
-        |ui| theme::property_segmented(ui, handles, &HANDLES, |a, b| a == b),
-    );
-}
 
 /// A number as a [`property`] row: the name, then a [`field`]. `about`, when
 /// not empty, is shown when either the name or the field is hovered.

@@ -92,12 +92,7 @@ pub(crate) fn toolbar(
             {
                 terrain.only_inside = !terrain.only_inside;
             }
-            if bar_switch(ui, terrain.objects_follow, "Objects Follow")
-                .on_hover_text(OBJECTS_FOLLOW)
-                .clicked()
-            {
-                terrain.objects_follow = !terrain.objects_follow;
-            }
+            objects_follow(ui, &mut terrain.objects_follow);
             bar_keys(ui, match terrain.selecting {
                 false => &SCULPT_KEYS,
                 true => &SELECT_KEYS,
@@ -561,18 +556,19 @@ fn locks(ui: &mut egui::Ui, terrain: &mut Terrain) {
     }
 }
 
-/// What the Objects Follow switch does, for its hover here and in the grade
-/// and road panels.
+/// What the Objects Follow switch does, for its hover text.
 const OBJECTS_FOLLOW: &str = "When the ground moves, every doodad and WMO on it moves up or down by the \
                               same amount, in the same undo entry. Off: placements keep their stored \
                               height and the ground moves through them. Creature and game object spawns \
                               are rows in the world database and are not moved.";
 
-/// The switch the height brush and the grade share: whether what stands on
-/// the ground is carried when the ground moves. One function, so the two
-/// panels word it alike.
+/// The Objects Follow switch of the terrain, grade and road toolbars: whether
+/// what stands on the ground is carried when the ground moves. One function,
+/// so the three toolbars word it alike.
 pub(super) fn objects_follow(ui: &mut egui::Ui, on: &mut bool) {
-    ui.checkbox(on, "Doodads and WMOs follow the ground").on_hover_text(OBJECTS_FOLLOW);
+    if bar_switch(ui, *on, "Objects Follow").on_hover_text(OBJECTS_FOLLOW).clicked() {
+        *on = !*on;
+    }
 }
 
 /// The height brush's inspector panel. The modes are on the toolbar,

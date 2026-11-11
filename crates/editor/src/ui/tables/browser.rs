@@ -28,8 +28,8 @@ pub(super) fn browser_panel(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::
 /// its row in the Tables workspace's list.
 fn table_about(name: &str) -> String {
     let fields = match schema::for_table(name) {
-        Some(_) => "named fields",
-        None => "numbered fields",
+        Some(_) => "Named fields",
+        None => "Numbered fields",
     };
     let rows = crate::server::rows::MAPPED
         .iter()
@@ -40,10 +40,10 @@ fn table_about(name: &str) -> String {
         .find(|(dbc, _)| *dbc == name)
         .map(|(_, table)| *table);
     match (rows, vale_mangos::datadir::server_reads_dbc(name), companion) {
-        (Some(table), _, _) => format!("{fields} · the server reads {table}"),
-        (None, true, Some(table)) => format!("{fields} · the server reads the file, and {table} for a new row"),
-        (None, true, None) => format!("{fields} · the server reads the file"),
-        (None, false, _) => format!("{fields} · not sent to the server"),
+        (Some(table), _, _) => format!("{fields} \u{b7} the server reads {table}"),
+        (None, true, Some(table)) => format!("{fields} \u{b7} the server reads the file, and {table} for a new row"),
+        (None, true, None) => format!("{fields} \u{b7} the server reads the file"),
+        (None, false, _) => format!("{fields} \u{b7} not sent to the server"),
     }
 }
 
@@ -95,7 +95,7 @@ pub(super) fn table_list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let width = ui.available_width();
     ui.add(
         egui::TextEdit::singleline(&mut work.browser.table_query)
-            .hint_text("table name")
+            .hint_text("Table name")
             .desired_width(width),
     );
     ui.add_space(4.0);
@@ -123,8 +123,8 @@ pub(super) fn table_list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                     .path_for(&vale_assets::tables::dbc::dbc_path(name))
                     .is_some_and(|disk| disk.exists());
                 let mark = match (work.session.unsaved_tables.contains(name), carried) {
-                    (true, _) => "unsaved",
-                    (false, true) => "edited",
+                    (true, _) => "Unsaved",
+                    (false, true) => "Edited",
                     (false, false) => "",
                 };
                 let shape = theme::list_row(
@@ -149,7 +149,7 @@ pub(super) fn table_list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 }
 
 /// The left column: the workspace's parts and the chain's tabs, a search box,
-/// and the rows that match.
+/// the buttons on the table and on the open row, and the rows that match.
 pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     // The parts of a workspace of several tools, which for this panel is
     // Items and Sets. The shell switches after the frame is drawn.
@@ -213,15 +213,19 @@ pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     ui.add(
         egui::TextEdit::singleline(&mut work.browser.query)
             .hint_text(match previews(&table_name) {
-                true => "name, id, a model's name, or what it belongs to",
-                false => "name, id, or what it belongs to",
+                true => "Name, ID, a model's name, or what it belongs to",
+                false => "Name, ID, or what it belongs to",
             })
             .desired_width(width),
     );
     ui.add_space(4.0);
-    table_actions(ui, work);
-    ui.add_space(2.0);
-    row_actions(ui, work);
+    // The padding is reduced for the two rows of equal buttons; see
+    // `table_actions`.
+    ui.scope(|ui| {
+        ui.spacing_mut().button_padding.x = 4.0;
+        table_actions(ui, work);
+        row_actions(ui, work);
+    });
     ui.add_space(2.0);
 
     // `matches` is rebuilt only when the query or the table changed, so this is
@@ -287,18 +291,22 @@ pub(super) fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 /// text boxes one usually does. Discard adds the table to
 /// `EditSession::discard_asked`, and `crate::collab::changes::discard` takes
 /// back its unsaved edits after the frame, as new edits in the project's log.
+///
+/// The four are equal columns of the list's width. A label is cut with an
+/// ellipsis, and [`list`] reduces the buttons' padding, because a quarter of
+/// the list at its narrowest, 220 points, is 46 points and Discard at the
+/// usual padding is wider than that.
 fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let unsaved = work.session.unsaved_tables.contains(&table_name);
     let undo = work.session.history.next_undo().map(|c| c.label.clone());
     let redo = work.session.history.next_redo().map(|c| c.label.clone());
-    ui.horizontal(|ui| {
-        let quarter = ((ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 4.0).max(40.0);
-        let size = egui::vec2(quarter, 22.0);
-        if ui
-            .add_enabled(undo.is_some(), egui::Button::new("Undo").min_size(size))
+    ui.columns(4, |columns| {
+        let button = theme::full_button(&columns[0], "Undo").truncate();
+        if columns[0]
+            .add_enabled(undo.is_some(), button)
             .on_hover_text(match &undo {
-                Some(label) => format!("Ctrl+Z — {label}"),
+                Some(label) => format!("Ctrl+Z \u{2014} {label}"),
                 None => "Nothing to undo.".to_string(),
             })
             .clicked()
@@ -306,10 +314,11 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             work.session.undo(work.assets);
             work.browser.forget_buffers();
         }
-        if ui
-            .add_enabled(redo.is_some(), egui::Button::new("Redo").min_size(size))
+        let button = theme::full_button(&columns[1], "Redo").truncate();
+        if columns[1]
+            .add_enabled(redo.is_some(), button)
             .on_hover_text(match &redo {
-                Some(label) => format!("Ctrl+Y — {label}"),
+                Some(label) => format!("Ctrl+Y \u{2014} {label}"),
                 None => "Nothing to redo.".to_string(),
             })
             .clicked()
@@ -317,8 +326,9 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             work.session.redo(work.assets);
             work.browser.forget_buffers();
         }
-        if ui
-            .add_enabled(unsaved, egui::Button::new("Save").min_size(size))
+        let button = theme::full_button(&columns[2], "Save").truncate();
+        if columns[2]
+            .add_enabled(unsaved, button)
             .on_hover_text(match work.role.joined() {
                 true => "Submit this editor's edits to the host as one changelist, as Ctrl+S does. The host saves them.".to_string(),
                 false => "Save the project, as Ctrl+S does: every table, tile and server row, submitted as one changelist.".to_string(),
@@ -328,8 +338,9 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         {
             work.session.save_asked = true;
         }
-        if ui
-            .add_enabled(unsaved, egui::Button::new("Discard").min_size(size))
+        let button = theme::full_button(&columns[3], "Discard").truncate();
+        if columns[3]
+            .add_enabled(unsaved, button)
             .on_hover_text(format!(
                 "Take back every edit of this editor's to {table_name} that is in no changelist, \
                  so its rows are as the project's file holds them, or the archives' when the \
@@ -346,36 +357,31 @@ fn table_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     });
 }
 
-/// `+ New`, `Clone`, `Delete`: the three things that make or unmake a row of
+/// `New`, `Clone`, `Delete`: the three things that make or unmake a row of
 /// the open table, each one entry on the undo stack. See `crate::tables`.
 /// Clone and Delete are two of the row's commands, which its right-click
-/// menu also lists.
+/// menu also lists. The three are equal columns of the list's width.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let open = work.browser.open;
-    ui.horizontal(|ui| {
-        let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-        let size = egui::vec2(third, 22.0);
+    ui.columns(3, |columns| {
         // A new area is a zone on the open map, with an explore bit of its
         // own; a blank row would be on map 0 and share bit 0 with two shipped
         // rows. A sub-area is made from its zone's row.
         let zones = table_name == tables::zones::area::TABLE;
         let (word, about) = match zones {
             true => (
-                "+ New Zone",
+                "New Zone",
                 format!(
                     "A new zone on the open map, {} ({}), under the next id, with an explore \
                      bit no other area holds. A sub-area is made from its zone's row.",
                     work.session.map, work.session.map_id
                 ),
             ),
-            false => ("+ New", format!("A blank {table_name} row under the next id.")),
+            false => ("New", format!("A blank {table_name} row under the next id.")),
         };
-        if ui
-            .add_sized(size, egui::Button::new(word))
-            .on_hover_text(about)
-            .clicked()
-        {
+        let button = theme::full_button(&columns[0], word).truncate();
+        if columns[0].add(button).on_hover_text(about).clicked() {
             let made = match zones {
                 true => {
                     let map = work.session.map_id;
@@ -387,7 +393,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 work.browser.open_row(at);
             }
         }
-        for (name, command) in [("Clone", Command::Clone), ("Delete", Command::Delete)] {
+        for (column, (name, command)) in
+            columns[1..].iter_mut().zip([("Clone", Command::Clone), ("Delete", Command::Delete)])
+        {
             // The button keeps its one word. What the menu's entry says after
             // it, which for a delete is what it breaks, is in the tooltip.
             let said = open.and_then(|record| {
@@ -398,14 +406,15 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 Some(said) if said != name => format!("{said}. {about}"),
                 _ => about.to_string(),
             };
-            if ui
-                .add_enabled(open.is_some(), egui::Button::new(name).min_size(size))
+            let button = theme::full_button(column, name).truncate();
+            if column
+                .add_enabled(open.is_some(), button)
                 .on_hover_text(tip)
                 .on_disabled_hover_text("Open a row first.")
                 .clicked()
             {
                 if let Some(record) = open {
-                    let ctx = ui.ctx().clone();
+                    let ctx = column.ctx().clone();
                     run_command(&ctx, work, &table_name, record, command);
                 }
             }
@@ -439,7 +448,7 @@ pub(super) fn row_pictured(
     chosen: bool,
 ) -> egui::Response {
     let title = match label.title.is_empty() {
-        true => format!("row {}", label.id),
+        true => format!("Row {}", label.id),
         false => label.title.clone(),
     };
     let shape = theme::list_row(

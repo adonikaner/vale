@@ -441,19 +441,19 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .num_columns(2)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Type").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Type").color(theme::INK_NAME));
             let mut word = type_words(&vpath);
             word[..1].make_ascii_uppercase();
             ui.label(word);
             ui.end_row();
-            ui.label(egui::RichText::new("Size").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Size").color(theme::INK_NAME));
             match size {
                 Some(bytes) => ui.label(size_words(bytes)),
                 None => ui.label(egui::RichText::new("does not read").color(theme::BAD)),
             };
             ui.end_row();
             content_rows(ui, work, &content);
-            ui.label(egui::RichText::new("Project").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Project").color(theme::INK_NAME));
             match replaced {
                 true => ui
                     .label(egui::RichText::new("replaces this file").color(theme::WARN))

@@ -271,7 +271,7 @@ pub(crate) fn card(ui: &mut egui::Ui, work: &mut Workspace<'_>, lab: &mut Lab, r
 
             // The export.
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Export as").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Export as").color(theme::INK_NAME));
                 ui.add(
                     egui::TextEdit::singleline(&mut lab.export_path)
                         .desired_width(fits(ui, 300.0))

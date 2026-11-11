@@ -444,7 +444,7 @@ fn the_patch(
     ui.add_space(8.0);
     let last = patch::last(&session.project);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Name").color(theme::INK_NAME));
         ui.add(
             egui::TextEdit::singleline(name)
                 .desired_width(240.0)
@@ -601,7 +601,7 @@ fn the_server(
         match server.resolve() {
             Some((at, source)) => {
                 ui.label(
-                    egui::RichText::new(format!("world database {}", at.line()))
+                    egui::RichText::new(format!("World database {}", at.line()))
                         .small()
                         .color(theme::GOOD),
                 )
@@ -609,26 +609,20 @@ fn the_server(
             }
             None => {
                 ui.label(
-                    egui::RichText::new("no world database: saving writes sql\\ files and applies nothing")
+                    egui::RichText::new("No world database: a save writes sql\\ files and applies nothing")
                         .small()
                         .color(theme::WARN),
                 );
+                if ui
+                    .small_button("Settings\u{2026}")
+                    .on_hover_text("Set this machine's world database and map tools.")
+                    .clicked()
+                {
+                    *ask_settings = true;
+                }
             }
         }
     });
-    ui.add_space(6.0);
-    if server.resolve().is_none() {
-        ui.horizontal(|ui| {
-            theme::note(ui, "No world database is set, so nothing can be applied.");
-            if ui
-                .small_button("Settings\u{2026}")
-                .on_hover_text("Set this machine's world database and map tools.")
-                .clicked()
-            {
-                *ask_settings = true;
-            }
-        });
-    }
     this_project(ui, session, assets, server, queue, standings, now, playing, step, ask_tile_files, gate);
 }
 
@@ -666,8 +660,13 @@ fn this_project(
     // The server's tiles, which are files and not rows. The tile step on its
     // own, so it can be checked apart from the rest of a publish; the map
     // window has the per-tile form of this button.
-    ui.add_space(10.0);
-    theme::heading(ui, "Server Tiles");
+    theme::heading_about(
+        ui,
+        "Server Tiles",
+        "Regenerate Changed Tiles writes maps, vmaps and mmaps under the server's DataDir with \
+         the four map tools set in Project \u{2192} Settings\u{2026}. To regenerate selected \
+         tiles only, use Server files in Edit Map.",
+    );
     // `None` until the first count, which runs on a worker, has finished. The
     // button is enabled while the count is unknown; a press with nothing
     // changed says so on the status line.
@@ -712,12 +711,6 @@ fn this_project(
             };
         }
     });
-    theme::note(
-        ui,
-        "Writes maps, vmaps and mmaps under the server's DataDir with the four map tools \
-         set in Project \u{2192} Settings\u{2026}. To regenerate selected tiles only, use Server \
-         files in Edit Map.",
-    );
     ui.horizontal(|ui| {
         if ui
             .add_enabled(gate.writes(), egui::Button::new("Server Tile Files\u{2026}"))
@@ -745,19 +738,21 @@ fn this_project(
     });
 
     // What a publish hands over as rows.
-    ui.add_space(10.0);
     theme::heading(ui, "Migration");
     let released = crate::server::publish::release::released(&session.project);
     let last = match &released.id {
         Some(id) => format!(
-            "last migration {id}, {} row(s) changed by it",
-            released.entries.len()
+            "Last migration {id}, {} changed by it",
+            match released.entries.len() {
+                1 => "1 row".to_string(),
+                n => format!("{n} rows"),
+            }
         ),
-        None => "no migration written yet".to_string(),
+        None => "No migration written yet".to_string(),
     };
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(gate.release_refused().is_none(), egui::Button::new("Write migration"))
+            .add_enabled(gate.release_refused().is_none(), egui::Button::new("Write Migration"))
             .on_hover_text(
                 "Save every subject's rows, then write publish\\migrations\\<stamp>_world.sql in \
                  vmangos' add_migration format. A migration holds every row the project \
@@ -1101,7 +1096,7 @@ fn which_project(
                 );
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
+                    ui.label(egui::RichText::new("Name").color(theme::INK_NAME));
                     ui.add(
                         egui::TextEdit::singleline(&mut doomed.typed)
                             .hint_text(&doomed.name)
@@ -1560,13 +1555,13 @@ fn who(
     egui::Grid::new("playtest-login-grid")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Account").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Account").color(theme::INK_NAME));
             ui.text_edit_singleline(&mut login.account);
             ui.end_row();
-            ui.label(egui::RichText::new("Password").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Password").color(theme::INK_NAME));
             ui.add(egui::TextEdit::singleline(&mut login.password).password(true));
             ui.end_row();
-            ui.label(egui::RichText::new("Character").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Character").color(theme::INK_NAME));
             ui.add(egui::TextEdit::singleline(&mut login.character).hint_text("last played"));
             ui.end_row();
         });

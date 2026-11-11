@@ -20,7 +20,7 @@
 //!               dialog, a display row's picture, and an item set worn
 //! sounds.rs     the buttons that play a sound column's sounds
 //! sound_files.rs the Files section of a `SoundEntries` row's form, its Play
-//!               and Import sound… buttons, and the file dialog
+//!               and Import Sound… buttons, and the file dialog
 //! modals/       the dialogs a form opens: the reference pickers, a table's
 //!               rows, a mask, a texture and a model
 //! storyboard.rs the one view of a row that is not a form: a spell's visual
@@ -31,7 +31,8 @@
 //! ```
 //!
 //! This file holds what the files above share: [`Workspace`], the sizes, the
-//! entry point [`draw`], and the table inspector, [`table`].
+//! entry point [`draw`], the table inspector, [`table`], and a form's line of
+//! state with an info mark, [`note_about`].
 //!
 //! ## Why a data subject replaces the viewport
 //!
@@ -119,12 +120,12 @@
 //! a popup on the first click outside it, which does not suit a list that must
 //! be scrolled and typed into.
 //!
-//! The same reference also offers: `+ new` when it names nothing, which makes a
-//! blank row in the target table and points this column at it; `copy` when it
+//! The same reference also offers: `New` when it names nothing, which makes a
+//! blank row in the target table and points this column at it; `Copy` when it
 //! names a kit or an effect, which copies that row and points this column at
 //! the copy, so a kit shared by forty spells becomes this visual's own; and
-//! `clone chain` on a spell's visual, which copies the visual with every kit
-//! and effect it names and points the spell at the copy. The list's `+ New`,
+//! `Clone Chain` on a spell's visual, which copies the visual with every kit
+//! and effect it names and points the spell at the copy. The list's `New`,
 //! `Clone` and `Delete` are the same three operations on the open table. Each
 //! of these operations is one entry on the undo stack. See `crate::tables`.
 //!
@@ -134,7 +135,7 @@
 //! chosen from a list of labels. The picker for a `SpellVisual`, a
 //! `SpellVisualKit` or a `SpellVisualEffectName` column has the preview in
 //! the dialog ([`modals::pick::pick_previewing`]): a press on a row plays it, and a double
-//! press, Enter or Use writes it. `Look like a spell…` ([`modals::looks_like::looks_like`])
+//! press, Enter or Use writes it. `Choose from Spell…` ([`modals::looks_like::looks_like`])
 //! chooses a spell's visual by another spell, played, and either shares that
 //! spell's visual or clones it. The Visuals and Kits tabs have the same
 //! preview beside their fields ([`previews::chain_show`]). The stage is one picture,
@@ -155,7 +156,7 @@
 //! Every string in `Spell.dbc` is eight columns and a flags word, and an enUS
 //! install leaves seven of the eight empty, so drawing them all would make two
 //! thirds of the form blank boxes. They are real columns and stay editable,
-//! under an Other locales fold at the end of the section that is closed by
+//! under an Other Locales fold at the end of the section that is closed by
 //! default.
 //!
 //! ## Field widths
@@ -466,6 +467,25 @@ fn with_blp(path: &str) -> String {
     }
 }
 
+/// One line of a form's state with an info mark after it, which shows
+/// `about` when hovered: the rule behind the state, or how the section is
+/// used.
+///
+/// A section of a form is [`theme::section`], whose heading has no info mark
+/// as [`theme::heading_about`]'s has, so what a reader needs once is put on
+/// the mark after the section's state line.
+pub(in crate::ui::tables) fn note_about(ui: &mut egui::Ui, text: impl Into<String>, about: &str) {
+    ui.horizontal_wrapped(|ui| {
+        theme::note(ui, text);
+        let (_, mark) = ui.allocate_space(egui::Vec2::splat(NOTE_MARK));
+        theme::info(ui, ui.id().with("about"), mark, about);
+    });
+}
+
+/// The width and height of [`note_about`]'s info mark, in points: the size
+/// of the mark on a [`theme::heading_about`].
+const NOTE_MARK: f32 = 14.0;
+
 /// Which view of the open row is drawn.
 ///
 /// This is a view rather than a second panel. `Spell.dbc` row 74 is Fireball
@@ -501,7 +521,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, story: Story<'_>)
     }
     if work.session.table(&table_name).is_none() {
         ui.add_space(12.0);
-        ui.label(egui::RichText::new(format!("opening {table_name}.dbc…")).color(theme::INK_DIM));
+        ui.label(egui::RichText::new(format!("Opening {table_name}.dbc\u{2026}")).color(theme::INK_DIM));
         return;
     }
 
@@ -525,7 +545,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, story: Story<'_>)
     // need.
     browser_panel(ui, |ui| list(ui, &mut work));
     // Leave a gap between the list and the form. The panel's margin ends at its
-    // edge, so without a gap `< back` and the section heads touch the list's
+    // edge, so without a gap `Back` and the section heads touch the list's
     // border. The gap is a child `Ui` inset by [`theme::FORM_GAP`] rather than a
     // frame, because the storyboard and the lab dock their own panels into the
     // `Ui` they are given, and a frame's content rectangle is not settled until
@@ -545,31 +565,37 @@ pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>, story: Story<'_>)
 /// than the row.
 pub(in crate::ui) fn table(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     let name = work.browser.table.clone();
-    // The Tables workspace on its list of tables: nothing is selected.
+    // The Tables workspace on its list of tables: nothing is selected. What
+    // to do is on the heading's info mark.
     if name.is_empty() {
-        theme::heading(ui, "Table");
-        theme::note(ui, "Choose a table to see its file and the open row's references.");
+        theme::heading_about(ui, "Table", "Choose a table to see its file and the open row's references.");
+        theme::property(ui, "File", "", |ui| {
+            ui.label(egui::RichText::new("None").color(theme::INK_DIM));
+        });
         return;
     }
     let session = &mut *work.session;
     theme::heading(ui, "Table");
-    theme::row(ui, "file", |ui| {
-        ui.label(theme::number(format!("{name}.dbc")));
+    theme::property(ui, "File", "", |ui| {
+        theme::value(ui, format!("{name}.dbc"));
     });
     if let Some(open) = session.table(&name) {
         let rows = open.record_count();
         let fields = open.field_count();
-        theme::row(ui, "rows", |ui| {
-            ui.label(theme::number(format!("{rows} x {fields}")));
+        theme::property(ui, "Rows", "", |ui| {
+            theme::value(ui, rows.to_string());
+        });
+        theme::property(ui, "Fields", "", |ui| {
+            theme::value(ui, fields.to_string());
         });
     }
     let unsaved = session.unsaved_tables.contains(&name);
-    theme::row(ui, "status", |ui| match unsaved {
+    theme::property(ui, "Status", "", |ui| match unsaved {
         true => {
-            ui.label(egui::RichText::new("unsaved").color(theme::WARN));
+            ui.label(egui::RichText::new("Unsaved").color(theme::WARN));
         }
         false => {
-            ui.label(egui::RichText::new("saved").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Saved").color(theme::INK_DIM));
         }
     });
     if unsaved && theme::primary(ui, "Save").on_hover_text("Save the project, as Ctrl+S does.").clicked() {
@@ -580,7 +606,6 @@ pub(in crate::ui) fn table(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     // A display table's open row, drawn, and an item set worn.
     previews::display_preview(ui, &mut work);
     previews::set_preview(ui, &mut work);
-    ui.add_space(4.0);
 
     reference::references(ui, &mut work);
 }

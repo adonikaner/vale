@@ -1,16 +1,18 @@
 //! The holes tool's panel. The state is [`crate::tools::ground::holes`].
+//! The tool has no mode and no switch, so its toolbar over the viewport is
+//! the Keys button alone ([`theme::toolbar_keys`] with [`KEYS`]).
 
 use bevy_egui::egui;
 
 use crate::session::EditSession;
 use crate::ui::widgets::theme::{self, property};
 
-/// The tool's mouse and keyboard controls, for the Square heading's info
-/// mark. The tool has no toolbar over the viewport to hold them.
-const KEYS: &str = "Left button: cut\n\
-                    Drag: cut every square it crosses\n\
-                    Shift + left button: fill\n\n\
-                    16 squares per chunk; the file has no finer unit.";
+/// The tool's mouse and keyboard controls, for the toolbar's Keys button.
+pub(crate) const KEYS: [(&str, &str); 3] = [
+    ("Left button", "Cut"),
+    ("Drag", "Cut every square it crosses"),
+    ("Shift + left button", "Fill"),
+];
 
 /// The hole tool, which has no settings.
 ///
@@ -19,7 +21,7 @@ const KEYS: &str = "Left button: cut\n\
 /// over and what the tile already has, which the square outline in the
 /// viewport does not show.
 pub(in crate::ui::tools) fn holes(ui: &mut egui::Ui, holes: &crate::tools::ground::holes::Holes, session: &EditSession) {
-    theme::heading_about(ui, "Square", KEYS);
+    theme::heading_about(ui, "Square", "16 squares per chunk; the file has no finer unit.");
     match holes.at {
         Some(at) => {
             property(ui, "Tile", "", |ui| {

@@ -134,7 +134,7 @@ pub(super) fn form(
             });
         // A dialog that plays its own rows has the stage while it is up.
         match dialog_previews(work) {
-            true => empty_pane(ui, "the preview is shown in the open dialog"),
+            true => empty_pane(ui, "The preview is shown in the open dialog."),
             false => {
                 let title = match spell {
                     Some(id) => format!("Preview — spell {id}"),
@@ -260,14 +260,14 @@ pub(super) fn form(
             });
         ui.data_mut(|data| data.insert_temp(width_id, shown.response.rect.width()));
         match dialog_previews(work) {
-            true => empty_pane(ui, "the preview is shown in the open dialog"),
+            true => empty_pane(ui, "The preview is shown in the open dialog."),
             false => match chain_show(work, &table_name, id) {
                 Some((show, title)) => {
                     super::storyboard::stage_pane(ui, stage, Some(show), &title, &[], None)
                 }
                 None => {
                     stage.close();
-                    empty_pane(ui, "no preview for this row");
+                    empty_pane(ui, "No preview for this row.");
                 }
             },
         }
@@ -377,7 +377,7 @@ fn head(
     // also lists: an area's two and a display's rebake.
     let mut own_command: Option<Command> = None;
     ui.horizontal(|ui| {
-        if !work.browser.back.is_empty() && ui.button("< back").clicked() {
+        if !work.browser.back.is_empty() && ui.button("Back").clicked() {
             work.browser.go_back();
         }
         work.icon(ui, icon, HEAD_ICON);
@@ -391,19 +391,19 @@ fn head(
                 ui.label(egui::RichText::new(title).strong().size(17.0).color(theme::INK));
                 ui.label(theme::number(format!("#{}", label.id)).color(theme::INK_DIM));
                 if work.session.unsaved_tables.contains(&table_name) {
-                    ui.label(egui::RichText::new("unsaved").color(theme::WARN));
+                    ui.label(egui::RichText::new("Unsaved").color(theme::WARN));
                 }
                 // Actions on this row other than editing a field.
                 match table_name.as_str() {
                     "SpellVisual" => {
                         clone_chain = ui
-                            .button("Clone chain")
+                            .button("Clone Chain")
                             .on_hover_text(tables::commands::command_about(Command::CloneChain))
                             .clicked();
                     }
                     "SpellVisualEffectName" if !lab.on_character(label.id) => {
                         open_lab = ui
-                            .button("Position on character…")
+                            .button("Position on Character\u{2026}")
                             .on_hover_text(
                                 "Attach this model to a character model at an attachment point, \
                                  position it, and bake the offset into a copy of the model. \
@@ -450,7 +450,7 @@ fn head(
                         .color(theme::INK_FAINT),
                 );
                 copy_id = ui
-                    .small_button("copy id")
+                    .small_button("Copy ID")
                     .on_hover_text(tables::commands::command_about(Command::CopyId))
                     .clicked();
             });
@@ -622,27 +622,19 @@ pub(in crate::ui) fn section_block(
         .iter()
         .filter_map(|&field| schema.column(field))
         .partition(|column| !matches!(column.kind, Kind::Locale(_) | Kind::LocaleFlags));
-    egui::CollapsingHeader::new(egui::RichText::new(section.name).size(14.0).strong())
-        .default_open(true)
-        .show(ui, |ui| {
-            for column in main {
-                field_row(ui, work, record, column);
-            }
-            if !other.is_empty() {
-                egui::CollapsingHeader::new(
-                    egui::RichText::new(format!("Other locales ({})", other.len()))
-                        .size(12.0)
-                        .color(theme::INK_DIM),
-                )
-                .id_salt((section.name, "locales"))
-                .default_open(false)
-                .show(ui, |ui| {
-                    for column in other {
-                        field_row(ui, work, record, column);
-                    }
-                });
-            }
-        });
+    theme::section(ui, section.name, section.name, true, false, |ui| {
+        for column in main {
+            field_row(ui, work, record, column);
+        }
+        if !other.is_empty() {
+            let name = format!("Other Locales ({})", other.len());
+            theme::fold_closed(ui, (section.name, "locales"), &name, |ui| {
+                for column in other {
+                    field_row(ui, work, record, column);
+                }
+            });
+        }
+    });
 }
 
 /// One field of the open table: its name, and the widget its kind asks for.

@@ -83,11 +83,11 @@ pub(super) fn field_in(
         // edge.
         let label_width = LABEL.min(ui.available_width() * 0.45);
         // The name takes a right-click; see [`field_menu`].
-        ui.add_sized(
+        theme::name_cell(
+            ui,
             egui::vec2(label_width, 22.0),
-            egui::Label::new(egui::RichText::new(column.name).color(theme::INK_DIM))
-                .truncate()
-                .sense(egui::Sense::click()),
+            egui::RichText::new(column.name).color(theme::INK_NAME),
+            egui::Sense::click(),
         )
         .on_hover_text(tip)
         .context_menu(|ui| field_menu(ui, work, table_name, record, column, raw));
@@ -119,10 +119,9 @@ pub(super) fn field_in(
             }
             Kind::Float => {
                 let mut value = f32::from_bits(raw);
-                let response = ui.add_sized(
-                    egui::vec2(VALUE, 22.0),
-                    egui::DragValue::new(&mut value).speed(0.01),
-                );
+                let response = theme::sunk(ui, |ui| {
+                    ui.add_sized(egui::vec2(VALUE, 22.0), egui::DragValue::new(&mut value).speed(0.01))
+                });
                 if response.changed() {
                     write(work, table_name, record, column, value.to_bits());
                 }
@@ -315,7 +314,7 @@ pub(super) fn field_in(
                         .unwrap_or(0);
                     presence(ui, work.model_present(id));
                     if ui
-                        .small_button("browse…")
+                        .small_button("Browse{2026}")
                         .on_hover_text("search every model in the archives by path")
                         .clicked()
                     {
@@ -413,7 +412,7 @@ fn item_cell(
         ));
     }
     if raw == 0 {
-        ui.label(egui::RichText::new("none").color(theme::INK_FAINT));
+        ui.label(egui::RichText::new("None").color(theme::INK_FAINT));
         return;
     }
     crate::ui::widgets::reference::name(
@@ -453,7 +452,7 @@ fn item_cell(
              count towards the set bonuses until set_id matches.",
         );
         if ui
-            .small_button("write set_id")
+            .small_button("Write set_id")
             .on_hover_text(format!("Write set_id {set} on this item's item_template row. One undo entry."))
             .clicked()
         {
@@ -480,7 +479,7 @@ pub(super) fn presence(ui: &mut egui::Ui, present: Option<bool>) {
 
 /// A number field at the common width.
 pub(super) fn number<T: egui::emath::Numeric>(ui: &mut egui::Ui, value: &mut T) -> egui::Response {
-    ui.add_sized(egui::vec2(VALUE, 22.0), egui::DragValue::new(value))
+    theme::sunk(ui, |ui| ui.add_sized(egui::vec2(VALUE, 22.0), egui::DragValue::new(value)))
 }
 
 pub(super) fn write(work: &mut Workspace<'_>, table_name: &str, record: usize, column: &Column, value: u32) {

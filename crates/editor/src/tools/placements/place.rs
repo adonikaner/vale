@@ -88,6 +88,18 @@
 //! The chosen single model is kept while Cluster is on, so switching back to
 //! Place finds it on the cursor again. This module's own preview and click do
 //! nothing in Cluster mode.
+//!
+//! ## What was on the cursor is remembered
+//!
+//! [`Placing::path`] is the model on the cursor and is `None` outside Place
+//! mode, because the preview, the click and both picks read it. A switch to
+//! Select, to the other placement tool or to any other tool therefore takes
+//! the model off the cursor. Until 2026-11-11 that also lost it, so placing a
+//! tree, selecting it to move it and returning to Place meant finding the
+//! tree in the picker again. [`Placing::put_down`] now keeps the model with
+//! its turn, scale and tilt, one per [`Kind`], and [`Placing::pick_up`]
+//! returns it to the cursor when the tool is next in Place. `Escape` is the
+//! one thing that forgets it ([`Placing::disarm`]).
 
 use crate::pick::Cursor;
 use crate::session::EditSession;
@@ -153,7 +165,7 @@ pub(crate) enum Mode {
 /// The two modes, as a list for the panel.
 pub(crate) const MODES: [(&str, Mode); 2] = [("Select", Mode::Select), ("Place", Mode::Place)];
 
-/// The doodad and WMO panels' mode switch: [`Mode`], with the doodad tool's
+/// The mode on the doodad and WMO tools' toolbar: [`Mode`], with the doodad tool's
 /// Place split into one model and a cluster. See the module comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Switch {
@@ -239,6 +251,15 @@ impl Scatter {
     }
 }
 
+/// A model taken off the cursor, as it was. See [`Placing::put_down`].
+#[derive(Debug, Clone, PartialEq)]
+struct Held {
+    path: String,
+    turn: f32,
+    tilt: [f32; 2],
+    scale: f32,
+}
+
 /// What is armed, and what it would look like.
 #[derive(Resource)]
 pub(crate) struct Placing {
@@ -246,6 +267,9 @@ pub(crate) struct Placing {
     /// The model on the cursor, or `None` when the tool is disarmed, which is
     /// its usual state.
     pub(crate) path: Option<String>,
+    /// What each kind last had on the cursor when it was put down, for
+    /// [`Self::pick_up`]. See the module comment.
+    last: [Option<Held>; 2],
     pub(crate) kind: Kind,
     /// Degrees about the world's up axis. This is the only axis set before a
     /// placement lands; the gizmo sets the other two afterwards.
@@ -307,6 +331,7 @@ impl Default for Placing {
         Placing {
             mode: Mode::default(),
             path: None,
+            last: [None, None],
             kind: Kind::default(),
             turn: 0.0,
             tilt: [0.0; 2],
@@ -382,19 +407,20 @@ impl Placing {
         }
     }
 
-    /// Change mode, as the panel's switch, the number keys and the right-click
-    /// menu do. Select puts down the model on the cursor; Place and Cluster
-    /// keep it, so switching between the two loses neither the chosen model
-    /// nor the cluster's list.
+    /// Change mode, as the toolbar, the number keys and the right-click menu
+    /// do. Select puts down the model on the cursor and Place picks it up
+    /// again; Place and Cluster keep it, so switching between the two loses
+    /// neither the chosen model nor the cluster's list.
     pub(crate) fn set_switch(&mut self, to: Switch) {
         match to {
             Switch::Select => {
                 self.mode = Mode::Select;
-                self.disarm();
+                self.put_down();
             }
             Switch::Place => {
                 self.mode = Mode::Place;
                 self.cluster.on = false;
+                self.pick_up();
             }
             Switch::Cluster => {
                 self.mode = Mode::Place;
@@ -439,10 +465,43 @@ impl Placing {
         self.mode == Mode::Place && self.kind == Kind::Doodad && self.cluster.on
     }
 
-    /// Clear the model on the cursor. `Escape` and a tool change call this.
+    /// Clear the model on the cursor and forget it, so [`Self::pick_up`] does
+    /// not return it. `Escape` calls this.
     pub(crate) fn disarm(&mut self) {
         self.path = None;
+        self.last[self.kind as usize] = None;
         self.trouble = None;
+    }
+
+    /// Take the model off the cursor and keep it for [`Self::pick_up`]. A
+    /// switch to Select and a tool change call this. With nothing on the
+    /// cursor it changes nothing, so calling it on every frame spent outside
+    /// Place keeps what was put down first.
+    pub(crate) fn put_down(&mut self) {
+        if let Some(path) = self.path.take() {
+            self.last[self.kind as usize] = Some(Held {
+                path,
+                turn: self.turn,
+                tilt: self.tilt,
+                scale: self.scale,
+            });
+        }
+        self.trouble = None;
+    }
+
+    /// Put back on the cursor what this kind last had there, at the turn,
+    /// tilt and scale it had. With a model already on the cursor, or nothing
+    /// kept, it changes nothing.
+    pub(crate) fn pick_up(&mut self) {
+        if self.path.is_some() {
+            return;
+        }
+        if let Some(held) = self.last[self.kind as usize].clone() {
+            self.path = Some(held.path);
+            self.turn = held.turn;
+            self.tilt = held.tilt;
+            self.scale = held.scale;
+        }
     }
 
     /// The catalogue for a kind, which the panel lists.
@@ -701,11 +760,11 @@ fn aim(
     viewport: Res<crate::ui::Viewport>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
 ) {
-    // Disarm when the tool changes or editing stops. A model left on the
-    // cursor after a switch to the terrain brush would be placed by the next
-    // click of somebody who thinks they are painting.
+    // The model is put down when the tool changes or editing stops. A model
+    // left on the cursor after a switch to the terrain brush would be placed
+    // by the next click of somebody who thinks they are painting.
     if !matches!(*tool, Tool::Doodads | Tool::Wmos) || !state.editing() {
-        placing.disarm();
+        placing.put_down();
         return;
     }
     // A switch between the doodad and WMO tools puts down the other tool's
@@ -716,13 +775,17 @@ fn aim(
         _ => Kind::Doodad,
     };
     if placing.kind != kind {
-        placing.disarm();
+        placing.put_down();
         placing.kind = kind;
     }
     if placing.mode != Mode::Place {
-        placing.disarm();
+        placing.put_down();
         return;
     }
+    // In Place with nothing on the cursor: this tool is in Place again after
+    // another tool or a playtest, and takes back what it put down. `Escape`
+    // forgets the model, so a cursor cleared with it stays clear.
+    placing.pick_up();
     if !placing.armed() || wants.wants_keyboard_input() {
         return;
     }
@@ -1422,6 +1485,13 @@ mod tests {
 
         placing.set_switch(Switch::Select);
         assert!(!placing.armed() && placing.path.is_none());
+
+        placing.set_switch(Switch::Place);
+        assert_eq!(placing.path.as_deref(), Some("world\\c.m2"), "Place takes back what Select put down");
+        placing.disarm();
+        placing.set_switch(Switch::Select);
+        placing.set_switch(Switch::Place);
+        assert!(placing.path.is_none(), "Escape forgets the model");
 
         placing.cluster.on = true;
         placing.mode = Mode::Place;

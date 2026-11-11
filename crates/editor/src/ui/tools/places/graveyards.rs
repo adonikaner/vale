@@ -7,8 +7,9 @@
 //! `crate::tools::places::graveyards` for the pointer.
 //!
 //! ```text
-//! above the scroll   the count of graveyards, and New Graveyard and Link
-//!                    Zone, which arm the pointer
+//! toolbar            Select, or New Graveyard or Link Zone, which arm the
+//!                    pointer, and the Keys button
+//! above the scroll   the count of graveyards
 //! Graveyard <id>     the name
 //! Location           X, Y and Z, then Fly To, Snap to Ground and Remove
 //! Server Rows        the facing
@@ -21,8 +22,7 @@
 
 use bevy_egui::egui;
 
-use super::triggers::arm_button;
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, property};
 use crate::session::EditSession;
 use crate::tools::places::graveyards::{self, Armed, Graveyards};
 use crate::tables;
@@ -62,7 +62,6 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
 
     theme::note(ui, format!("{} graveyards on this map", graveyards.points.list.len()));
     ui.add_space(4.0);
-    controls(ui, graveyards);
 
     egui::ScrollArea::vertical()
         .id_salt("graveyards")
@@ -108,48 +107,77 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         });
 }
 
-/// What a click on empty ground does: the two modes the pointer can be armed
-/// in, as equal buttons, and under them the zone the pointer is over while
-/// Link Zone is armed.
-fn controls(ui: &mut egui::Ui, graveyards: &mut Graveyards) {
-    ui.columns(2, |columns| {
-        let armed = graveyards.armed == Armed::NewPlace;
-        let button = arm_button(armed, "New Graveyard").min_size(egui::vec2(columns[0].available_width(), 24.0));
-        if columns[0]
-            .add(button)
-            .on_hover_text("Armed, a click on the ground makes a graveyard there. Escape disarms.")
-            .clicked()
-        {
-            graveyards.armed = match armed {
-                true => Armed::Nothing,
-                false => Armed::NewPlace,
+/// The graveyard tool's toolbar over the viewport:
+///
+/// ```text
+/// [Select | New Graveyard | Link Zone]  Keys
+/// Under the pointer: Elwynn Forest (12).
+/// ```
+///
+/// New Graveyard and Link Zone arm the pointer, and Escape returns to
+/// Select. Link Zone needs a selected graveyard and the server's rows. The
+/// second row is drawn only while Link Zone is chosen, and names the zone the
+/// next click links. See [`theme::toolbar`].
+pub(crate) fn toolbar(
+    ctx: &egui::Context,
+    viewport: egui::Rect,
+    corner: Option<egui::Rect>,
+    graveyards: &mut Graveyards,
+) -> Option<egui::Rect> {
+    theme::toolbar(ctx, "graveyards-toolbar", viewport, corner, |ui| {
+        let armed = graveyards.armed;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_group(ui, |ui| {
+                if bar_segment(ui, armed == Armed::Nothing, "Select")
+                    .on_hover_text("Click a graveyard to select it, and drag to move it.")
+                    .clicked()
+                {
+                    graveyards.armed = Armed::Nothing;
+                }
+                if bar_segment(ui, armed == Armed::NewPlace, "New Graveyard")
+                    .on_hover_text("A click on the ground makes a graveyard there.")
+                    .clicked()
+                {
+                    graveyards.armed = Armed::NewPlace;
+                }
+                let can_link = graveyards.points.selected.is_some() && graveyards.held().is_some();
+                if ui
+                    .add_enabled_ui(can_link || armed == Armed::LinkZone, |ui| {
+                        bar_segment(ui, armed == Armed::LinkZone, "Link Zone")
+                    })
+                    .inner
+                    .on_hover_text(
+                        "A click on the ground links the selected graveyard to the zone under \
+                         the click, for both factions.",
+                    )
+                    .on_disabled_hover_text("Select a graveyard. Available once the server's rows are read.")
+                    .clicked()
+                {
+                    graveyards.armed = Armed::LinkZone;
+                }
+            });
+            bar_keys(ui, &KEYS);
+        });
+        if graveyards.armed == Armed::LinkZone {
+            ui.add_space(2.0);
+            let under = match graveyards.pointed_zone {
+                Some(zone) => format!("Under the pointer: {} ({zone}).", graveyards.zone_name(zone)),
+                None => "The pointer is not over open ground.".to_string(),
             };
+            theme::note(ui, under);
         }
-        let linking = graveyards.armed == Armed::LinkZone;
-        let button = arm_button(linking, "Link Zone").min_size(egui::vec2(columns[1].available_width(), 24.0));
-        let link = columns[1].add_enabled(graveyards.points.selected.is_some() && graveyards.held().is_some(), button);
-        if link
-            .on_hover_text(
-                "Armed, a click on the ground links the selected graveyard to the zone \
-                 under the click, for both factions. Escape disarms.",
-            )
-            .on_disabled_hover_text("Select a graveyard. Available once the server's rows are read.")
-            .clicked()
-        {
-            graveyards.armed = match linking {
-                true => Armed::Nothing,
-                false => Armed::LinkZone,
-            };
-        }
-    });
-    if graveyards.armed == Armed::LinkZone {
-        let under = match graveyards.pointed_zone {
-            Some(zone) => format!("Under the pointer: {} ({zone}).", graveyards.zone_name(zone)),
-            None => "The pointer is not over open ground.".to_string(),
-        };
-        theme::note(ui, under);
-    }
+    })
 }
+
+/// The tool's mouse and keyboard controls, for the toolbar's Keys button.
+const KEYS: [(&str, &str); 5] = [
+    ("Left button", "Select a graveyard"),
+    ("Drag", "Move across the horizontal plane"),
+    ("Ctrl + drag", "Move up and down"),
+    ("Delete", "Remove the selected graveyard"),
+    ("Escape", "Return to Select, then drop the selection"),
+];
 
 /// The place's name and position.
 fn place_block(

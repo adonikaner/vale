@@ -220,7 +220,8 @@ fn ticks<'a>(label: impl Into<egui::WidgetText>) -> egui::containers::menu::Menu
 // The page layout: one field per row, in three fixed columns
 // ---------------------------------------------------------------------------
 
-/// How wide the name cell of a page row is. The name is centred in it.
+/// How wide the name cell of a page row is. The name starts at its left
+/// edge.
 pub(crate) const FORM_LABEL: f32 = 210.0;
 
 /// How wide the value cell is: a number box, or the number half of a
@@ -258,9 +259,10 @@ fn label_width_id() -> egui::Id {
 
 /// One section of a page: a heading that folds, and the rows under it.
 ///
-/// `edited` marks the heading when a column under it carries an edit of this
-/// project's, and such a section opens whatever `open` says, so an edit is
-/// never hidden under a folded heading.
+/// `edited` draws the heading in the pending colour when a column under it
+/// carries an edit of this project's, and such a section opens whatever
+/// `open` says, so an edit is never hidden under a folded heading. It is
+/// [`theme::section`].
 pub(crate) fn section<R>(
     ui: &mut egui::Ui,
     id: impl egui::AsIdSalt,
@@ -269,21 +271,17 @@ pub(crate) fn section<R>(
     open: bool,
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) {
-    let title = match edited {
-        true => format!("{title} \u{b7}"),
-        false => title.to_string(),
-    };
-    egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
-        .id_salt(id)
-        .default_open(open || edited)
-        .show(ui, body);
+    theme::section(ui, id, title, open || edited, edited, |ui| {
+        body(ui);
+    });
 }
 
 /// One row of a page: the name cell, then whatever `contents` draws.
 ///
 /// The name cell is [`FORM_LABEL`] wide, or 45% of the form when the form has
 /// less room than that; [`page_spacing`] decides which, once. The name is
-/// centred in it and truncated rather than wrapped. `about` is the hover text.
+/// left-aligned in it and truncated rather than wrapped. `about` is the hover
+/// text.
 ///
 /// Text in the row is truncated at the form's right edge, with the whole of
 /// it on hover. A horizontal layout otherwise extends a label past the edge,
@@ -304,11 +302,13 @@ pub(crate) fn page_row<R>(
             .unwrap_or_else(|| FORM_LABEL.min(ui.available_width() * 0.45));
         let colour = match edited {
             true => theme::WARN,
-            false => theme::INK_DIM,
+            false => theme::INK_NAME,
         };
-        let cell = ui.add_sized(
+        let cell = theme::name_cell(
+            ui,
             egui::vec2(width, FORM_ROW),
-            egui::Label::new(egui::RichText::new(name).color(colour)).truncate(),
+            egui::RichText::new(name).color(colour),
+            egui::Sense::hover(),
         );
         if !about.is_empty() {
             cell.on_hover_text(about);
@@ -319,7 +319,8 @@ pub(crate) fn page_row<R>(
 }
 
 /// A numeric column in the value cell, as a drag-or-type box at the page's
-/// width, so a column of them lines up.
+/// width, so a column of them lines up, drawn sunk ([`theme::sunk`]) so it is
+/// told from a button.
 ///
 /// A `DragValue` rather than a text field: a text field rebuilt from the
 /// stored value every frame cannot be typed into. `-8817.5` is typed one
@@ -336,22 +337,26 @@ pub(crate) fn number_cell(ui: &mut egui::Ui, kind: Kind, showing: &str) -> Optio
         Kind::Float => {
             let was: f32 = showing.trim().parse().unwrap_or(0.0);
             let mut value = was;
-            let response = ui.add_sized(
-                egui::vec2(FORM_VALUE, FORM_ROW),
-                egui::DragValue::new(&mut value).speed(0.25).max_decimals(4),
-            );
+            let response = theme::sunk(ui, |ui| {
+                ui.add_sized(
+                    egui::vec2(FORM_VALUE, FORM_ROW),
+                    egui::DragValue::new(&mut value).speed(0.25).max_decimals(4),
+                )
+            });
             (response.changed() && value != was).then(|| vale_mangos::sql::float(value))
         }
         _ => {
             let was: i64 = showing.trim().parse().unwrap_or(0);
             let mut value = was;
-            let response = ui.add_sized(
-                egui::vec2(FORM_VALUE, FORM_ROW),
-                egui::DragValue::new(&mut value)
-                    .speed(0.25)
-                    .range(integer_range(kind))
-                    .clamp_existing_to_range(false),
-            );
+            let response = theme::sunk(ui, |ui| {
+                ui.add_sized(
+                    egui::vec2(FORM_VALUE, FORM_ROW),
+                    egui::DragValue::new(&mut value)
+                        .speed(0.25)
+                        .range(integer_range(kind))
+                        .clamp_existing_to_range(false),
+                )
+            });
             (response.changed() && value != was).then(|| value.to_string())
         }
     }
@@ -471,7 +476,7 @@ pub(crate) fn flags_cell(
     let value = signed as u32;
     let mut written = number_cell(ui, Kind::Signed, showing);
     let words = match signed < 0 {
-        true => format!("all ({signed})"),
+        true => format!("All ({signed})"),
         false => schema::mask_words(bits, value),
     };
     let room = ui.available_width() >= 200.0;
@@ -495,11 +500,11 @@ pub(crate) fn flags_cell(
             }
         });
         let hover = match room {
-            true => "tick any number of the named bits; the list stays open until you \
-                     click outside it"
+            true => "Tick any number of the named bits. The list stays open until a \
+                     click outside it."
                 .to_string(),
-            false => format!("{words}\n\ntick any number of the named bits; the list stays \
-                              open until you click outside it"),
+            false => format!("{words}\n\nTick any number of the named bits. The list stays \
+                              open until a click outside it."),
         };
         button.on_hover_text(hover);
     });
@@ -787,8 +792,10 @@ pub(in crate::ui) struct Renumber<'a> {
     pub(crate) reaches: String,
 }
 
-/// The `entry` box of a form whose row can be renumbered, and the sentence
-/// after it that says what pressing Enter does.
+/// The `entry` box of a form whose row can be renumbered. Its hover text
+/// says what pressing Enter does. After it, only while one applies: why the
+/// last number typed was refused, or the entry the database still holds a
+/// renumbered row at.
 ///
 /// Committed on Enter or on leaving the box rather than per keystroke: a key
 /// that moved on every digit typed would re-key the row four times on the way
@@ -803,12 +810,14 @@ pub(in crate::ui) fn entry_cell(
 ) {
     let mut text = draft_or(ui, id, renumber.entry.to_string());
     // The value cell's own size, so the key lines up with the numbers under it.
-    let response = ui.add_sized(
-        egui::vec2(FORM_VALUE, FORM_ROW),
-        egui::TextEdit::singleline(&mut text)
-            .id(id)
-            .horizontal_align(egui::Align::Center),
-    );
+    let response = ui
+        .add_sized(
+            egui::vec2(FORM_VALUE, FORM_ROW),
+            egui::TextEdit::singleline(&mut text)
+                .id(id)
+                .horizontal_align(egui::Align::Center),
+        )
+        .on_hover_text(format!("{}\n\n{}", renumber_does(renumber), renumber.reaches));
     let trouble_id = id.with("trouble");
     if let Some(text) = finished(ui, id, &response, text) {
         let trouble = match text.trim().parse::<u32>() {
@@ -828,28 +837,24 @@ pub(in crate::ui) fn entry_cell(
         ui.label(egui::RichText::new(why).small().color(theme::BAD));
         return;
     }
-    let (word, colour) = renumber_words(renumber);
-    ui.label(egui::RichText::new(word).small().color(colour))
+    // A renumbered row the database still holds at its old entry is state,
+    // and is drawn. What the box does is in its hover text.
+    if !renumber.is_new && renumber.read_entry != renumber.entry {
+        ui.label(
+            egui::RichText::new(format!("Entry {} in the database until applied", renumber.read_entry))
+                .small()
+                .color(theme::WARN),
+        )
         .on_hover_text(&renumber.reaches);
+    }
 }
 
-/// What an entry box says it does: renumber a new row, say where the
-/// database still holds a renumbered one, or renumber a row the database
-/// holds together with every reference to it.
-fn renumber_words(renumber: &Renumber<'_>) -> (String, egui::Color32) {
-    match (renumber.is_new, renumber.read_entry != renumber.entry) {
-        (true, _) => (format!("renumbers this new {}", renumber.noun), theme::INK_FAINT),
-        (_, true) => (
-            format!(
-                "the database holds it at entry {} until this is applied",
-                renumber.read_entry
-            ),
-            theme::WARN,
-        ),
-        _ => (
-            "renumbers the row and every world database reference to it".to_string(),
-            theme::INK_FAINT,
-        ),
+/// What typing a number into an entry box does: renumber a new row, or
+/// renumber a row the database holds together with every reference to it.
+fn renumber_does(renumber: &Renumber<'_>) -> String {
+    match renumber.is_new {
+        true => format!("Renumbers this new {}.", renumber.noun),
+        false => "Renumbers the row and every world database reference to it.".to_string(),
     }
 }
 

@@ -469,12 +469,17 @@ impl Standing {
     /// One line stating what the project changes and how much of it has been
     /// applied.
     pub(crate) fn line(&self) -> String {
+        let rows = |count: usize| match count {
+            1 => "1 row".to_string(),
+            n => format!("{n} rows"),
+        };
         match (self.changed, self.applied) {
-            (0, 0) => "nothing changed".to_string(),
-            (changed, 0) => format!("{changed} row(s) changed, none applied"),
+            (0, 0) => "No changes".to_string(),
+            (changed, 0) => format!("{} changed, none applied", rows(changed)),
             (0, applied) => format!(
-                "{applied} row(s) applied, none of them changed by this project any more; \
-                 Restore reverts them"
+                "{} applied, none of them changed by this project any more; \
+                 Restore reverts them",
+                rows(applied)
             ),
             (changed, applied) => {
                 let caveat = match (self.outstanding, self.current) {
@@ -484,7 +489,7 @@ impl Standing {
                         .to_string(),
                     (out, _) => format!(" \u{2014} {out} not applied yet"),
                 };
-                format!("{changed} row(s) changed, {applied} applied{caveat}")
+                format!("{} changed, {applied} applied{caveat}", rows(changed))
             }
         }
     }

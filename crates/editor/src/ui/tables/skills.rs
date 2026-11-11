@@ -9,7 +9,7 @@ use bevy_egui::egui;
 use crate::tables;
 use crate::tables::commands::Command;
 use crate::tables::learning::ability;
-use crate::ui::tables::Workspace;
+use crate::ui::tables::{note_about, Workspace};
 use crate::ui::tables::commands::run_command;
 use crate::ui::tables::reference::follow_reference;
 use crate::ui::widgets::theme;
@@ -42,7 +42,7 @@ struct Ability {
     /// The row's id.
     id: u32,
     spell: u32,
-    /// The spell's name and rank, or `spell N` when `Spell` has no such row.
+    /// The spell's name and rank, or `Spell N` when `Spell` has no such row.
     name: String,
     rank: String,
     /// The classes and races the row is for, in words, or empty for every
@@ -127,7 +127,7 @@ fn abilities(ui: &egui::Ui, work: &mut Workspace<'_>, skill: u32) -> Arc<Vec<Abi
         let label = work.browser.describe_id(work.session, "Spell", spell);
         let (name, rank) = match label {
             Some(label) if !label.title.is_empty() => (label.title, label.sub),
-            _ => (format!("spell {spell}"), String::new()),
+            _ => (format!("Spell {spell}"), String::new()),
         };
         all.push(Ability { row, id, spell, name, rank, who: who.join(" \u{b7} "), with_line, req, min, max });
     }
@@ -168,10 +168,12 @@ fn recipe_points(min: u32, max: u32) -> [(u32, Difficulty); 3] {
 /// A skill line's spells: one line per `SkillLineAbility` row that names the
 /// line, with the spell's icon, name and rank, who the row is for, whether
 /// learning the line teaches it, and a recipe's four skill values in the
-/// trade skill window's colours. The name opens the spell in Spells; edit
-/// opens the row in Abilities; remove deletes the row.
+/// trade skill window's colours. The name opens the spell in Spells; Edit
+/// opens the row in Abilities; Remove deletes the row. Each of those says so
+/// in its hover text, and the hover text of a recipe's numbers says what
+/// they are, so the section has no line of instructions.
 ///
-/// Under the list, + Add a spell… makes a row in the line and opens the
+/// Under the list, Add Spell… makes a row in the line and opens the
 /// spell picker on it, and Show in Abilities lists the line's rows there.
 pub(super) fn abilities_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let Some((skill, line_name)) = work.session.table("SkillLine").and_then(|lines| {
@@ -188,87 +190,71 @@ pub(super) fn abilities_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, recor
         0 => "Abilities".to_string(),
         n => format!("Abilities ({n})"),
     };
-    egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
-        .id_salt("skill-line-abilities")
-        .default_open(true)
-        .show(ui, |ui| {
-            if all.is_empty() {
-                theme::note(
-                    ui,
-                    "No SkillLineAbility row names this skill line, so it holds no spells. Add \
-                     one below, or from a spell's form under Learning.",
-                );
-            } else {
-                let recipes = all.iter().any(Ability::is_recipe);
-                theme::note(
-                    ui,
-                    match recipes {
-                        true => "Each line is a SkillLineAbility row. A spell's name opens it in \
-                                 Spells; edit opens the row with every field. A recipe's numbers \
-                                 are the skill values at which it turns yellow, green and grey, \
-                                 with an orange ReqSkillValue before them when it is above 1.",
-                        false => "Each line is a SkillLineAbility row. A spell's name opens it in \
-                                  Spells; edit opens the row with every field.",
-                    },
-                );
-            }
-            let filter_id = egui::Id::new(("skill-abilities-filter", skill));
-            let mut filter: String = ui.data(|data| data.get_temp(filter_id)).unwrap_or_default();
-            if all.len() >= FILTER_FROM {
-                ui.add(
-                    egui::TextEdit::singleline(&mut filter)
-                        .hint_text("name, rank, class or spell id")
-                        .desired_width(280.0),
-                );
-                ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
-            }
-            let shown: Vec<&Ability> = all.iter().filter(|line| line.matches(&filter)).collect();
-            if shown.is_empty() && !all.is_empty() {
-                theme::note(ui, "No ability matches the filter.");
-            }
-            let mut follow: Option<(&'static str, u32)> = None;
-            let mut remove: Option<usize> = None;
-            egui::ScrollArea::vertical()
-                .id_salt(("skill-abilities-list", skill))
-                .max_height(LIST_HEIGHT)
-                .auto_shrink([false, true])
-                .show_rows(ui, LINE, shown.len(), |ui, range| {
-                    for line in &shown[range] {
-                        ui.allocate_ui(egui::vec2(ui.available_width(), LINE), |ui| {
-                            ability_line(ui, work, line, &mut follow, &mut remove);
-                        });
-                    }
-                });
-            ui.horizontal(|ui| {
-                if ui
-                    .button("+ Add a spell\u{2026}")
-                    .on_hover_text(tables::commands::command_about(Command::AddSpellToSkillLine))
-                    .clicked()
-                {
-                    let ctx = ui.ctx().clone();
-                    run_command(&ctx, work, "SkillLine", record, Command::AddSpellToSkillLine);
-                }
-                if !all.is_empty()
-                    && crate::ui::widgets::reference::link(
-                        ui,
-                        "Show in Abilities",
-                        theme::ACCENT,
-                        "Open the Abilities part filtered by this skill line's name.",
-                    )
-                {
-                    work.browser.back.push(("SkillLine".to_string(), record));
-                    work.browser.look_at(ability::TABLE);
-                    work.browser.followed = true;
-                    work.browser.query = line_name.clone();
+    theme::section(ui, "skill-line-abilities", &title, true, false, |ui| {
+        if all.is_empty() {
+            note_about(
+                ui,
+                "No SkillLineAbility row names this skill line, so it holds no spells.",
+                "Add a spell with Add Spell\u{2026} below, or from a spell's form under Learning.",
+            );
+        }
+        let filter_id = egui::Id::new(("skill-abilities-filter", skill));
+        let mut filter: String = ui.data(|data| data.get_temp(filter_id)).unwrap_or_default();
+        if all.len() >= FILTER_FROM {
+            ui.add(
+                egui::TextEdit::singleline(&mut filter)
+                    .hint_text("Name, rank, class or spell ID")
+                    .desired_width(280.0),
+            );
+            ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+        }
+        let shown: Vec<&Ability> = all.iter().filter(|line| line.matches(&filter)).collect();
+        if shown.is_empty() && !all.is_empty() {
+            theme::note(ui, "No ability matches the filter.");
+        }
+        let mut follow: Option<(&'static str, u32)> = None;
+        let mut remove: Option<usize> = None;
+        egui::ScrollArea::vertical()
+            .id_salt(("skill-abilities-list", skill))
+            .max_height(LIST_HEIGHT)
+            .auto_shrink([false, true])
+            .show_rows(ui, LINE, shown.len(), |ui, range| {
+                for line in &shown[range] {
+                    ui.allocate_ui(egui::vec2(ui.available_width(), LINE), |ui| {
+                        ability_line(ui, work, line, &mut follow, &mut remove);
+                    });
                 }
             });
-            if let Some((table, id)) = follow {
-                follow_reference(work, table, id);
+        ui.horizontal(|ui| {
+            if ui
+                .button("Add Spell\u{2026}")
+                .on_hover_text(tables::commands::command_about(Command::AddSpellToSkillLine))
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                run_command(&ctx, work, "SkillLine", record, Command::AddSpellToSkillLine);
             }
-            if let Some(row) = remove {
-                tables::rows::delete_row(work.session, ability::TABLE, row);
+            if !all.is_empty()
+                && crate::ui::widgets::reference::link(
+                    ui,
+                    "Show in Abilities",
+                    theme::ACCENT,
+                    "Open the Abilities part filtered by this skill line's name.",
+                )
+            {
+                work.browser.back.push(("SkillLine".to_string(), record));
+                work.browser.look_at(ability::TABLE);
+                work.browser.followed = true;
+                work.browser.query = line_name.clone();
             }
         });
+        if let Some((table, id)) = follow {
+            follow_reference(work, table, id);
+        }
+        if let Some(row) = remove {
+            tables::rows::delete_row(work.session, ability::TABLE, row);
+        }
+    });
 }
 
 /// One line of [`abilities_block`].
@@ -301,19 +287,19 @@ fn ability_line(
             ui.label(egui::RichText::new(&line.who).small().color(theme::INK_DIM));
         }
         if line.with_line {
-            ui.label(egui::RichText::new("learned with the line").small().color(theme::INK_FAINT))
+            ui.label(egui::RichText::new("Learned with the line").small().color(theme::INK_FAINT))
                 .on_hover_text("LearnOnGetSkill is set: a character that gains the skill line learns this spell.");
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button("remove")
+                .small_button("Remove")
                 .on_hover_text("Remove this SkillLineAbility row. One undo entry.")
                 .clicked()
             {
                 *remove = Some(line.row);
             }
             if ui
-                .small_button("edit")
+                .small_button("Edit")
                 .on_hover_text(format!("Open SkillLineAbility {} with every field.", line.id))
                 .clicked()
             {
@@ -322,9 +308,12 @@ fn ability_line(
             if line.is_recipe() {
                 ui.add_space(8.0);
                 let points = recipe_points(line.min, line.max);
+                // The hover says what the numbers are: the section has no
+                // line of instructions to say it.
                 let hover = format!(
-                    "Yellow from {}, green from {}, grey from {}, by MinValue and MaxValue. \
-                     ReqSkillValue is {}.",
+                    "The skill values at which the recipe turns yellow, green and grey: yellow \
+                     from {}, green from {}, grey from {}, by MinValue and MaxValue. \
+                     ReqSkillValue is {}, and is drawn in orange before them when it is above 1.",
                     points[0].0, points[1].0, points[2].0, line.req
                 );
                 ui.scope(|ui| {
@@ -351,8 +340,10 @@ fn ability_line(
 
 /// A `SkillTiers` row's steps, in place of its Steps section's 32 columns:
 /// one line per step with its `MaxValue` and its `Cost`, and an empty line
-/// after the last step to add the next one. remove on the last step clears
-/// both of its columns, as one undo entry.
+/// after the last step to add the next one. Remove on the last step clears
+/// both of its columns, as one undo entry. The first line says how many of
+/// the steps are used, and its info mark says what a tier is and how a step
+/// is added.
 pub(super) fn steps_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     const TABLE: &str = "SkillTiers";
     let Some(table) = work.session.table(TABLE) else {
@@ -374,75 +365,74 @@ pub(super) fn steps_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: u
         0 => "Steps".to_string(),
         n => format!("Steps ({n})"),
     };
-    egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
-        .id_salt("skill-tier-steps")
-        .default_open(true)
-        .show(ui, |ui| {
-            theme::note(
-                ui,
-                "A skill line whose race/class row names this tier is ranked: its maximum skill \
-                 value rises one step at a time, as a profession's goes 75, 150, 225 and 300. \
-                 Type into the empty line to add a step.",
-            );
-            let mut clear: Option<usize> = None;
-            egui::Grid::new(("skill-tier-steps-grid", record))
-                .num_columns(4)
-                .spacing(egui::vec2(12.0, 6.0))
-                .show(ui, |ui| {
-                    ui.label(egui::RichText::new("Step").small().color(theme::INK_DIM));
-                    ui.label(egui::RichText::new("MaxValue").small().color(theme::INK_DIM));
-                    ui.label(egui::RichText::new("Cost").small().color(theme::INK_DIM));
-                    ui.end_row();
-                    for (step, &(max, cost)) in steps.iter().enumerate().take((used + 1).min(schema::SKILL_TIER_STEPS)) {
-                        let empty = step == used;
-                        ui.label(egui::RichText::new(format!("{}", step + 1)).color(match empty {
-                            true => theme::INK_FAINT,
-                            false => theme::INK,
-                        }));
-                        for (field, value) in [(schema::SKILL_TIER_MAX + step, max), (schema::SKILL_TIER_COST + step, cost)] {
-                            let mut typed = value as i64;
-                            let changed = ui
-                                .add_sized(
-                                    egui::vec2(STEP_VALUE, 22.0),
-                                    egui::DragValue::new(&mut typed).range(0..=i64::from(u32::MAX)),
-                                )
-                                .changed();
-                            if changed && typed as u32 != value {
-                                let name = schema::SKILL_TIERS.column(field).map_or("", |column| column.name);
-                                tables::fields::set_field(
-                                    work.session,
-                                    TABLE,
-                                    record,
-                                    field,
-                                    typed as u32,
-                                    &format!("Edit {name}"),
-                                    work.now,
-                                );
-                            }
+    theme::section(ui, "skill-tier-steps", &title, true, false, |ui| {
+        note_about(
+            ui,
+            format!("{used} of {} steps used", schema::SKILL_TIER_STEPS),
+            "A skill line whose race/class row names this tier is ranked: its maximum skill \
+             value rises one step at a time, as a profession's goes 75, 150, 225 and 300. \
+             Type into the empty line to add a step.",
+        );
+        let mut clear: Option<usize> = None;
+        egui::Grid::new(("skill-tier-steps-grid", record))
+            .num_columns(4)
+            .spacing(egui::vec2(12.0, 6.0))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Step").small().color(theme::INK_DIM));
+                ui.label(egui::RichText::new("MaxValue").small().color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Cost").small().color(theme::INK_DIM));
+                ui.end_row();
+                for (step, &(max, cost)) in steps.iter().enumerate().take((used + 1).min(schema::SKILL_TIER_STEPS)) {
+                    let empty = step == used;
+                    ui.label(egui::RichText::new(format!("{}", step + 1)).color(match empty {
+                        true => theme::INK_FAINT,
+                        false => theme::INK,
+                    }));
+                    for (field, value) in [(schema::SKILL_TIER_MAX + step, max), (schema::SKILL_TIER_COST + step, cost)] {
+                        let mut typed = value as i64;
+                        let changed = theme::sunk(ui, |ui| {
+                            ui.add_sized(
+                                egui::vec2(STEP_VALUE, 22.0),
+                                egui::DragValue::new(&mut typed).range(0..=i64::from(u32::MAX)),
+                            )
+                        })
+                        .changed();
+                        if changed && typed as u32 != value {
+                            let name = schema::SKILL_TIERS.column(field).map_or("", |column| column.name);
+                            tables::fields::set_field(
+                                work.session,
+                                TABLE,
+                                record,
+                                field,
+                                typed as u32,
+                                &format!("Edit {name}"),
+                                work.now,
+                            );
                         }
-                        if step + 1 == used
-                            && ui
-                                .small_button("remove")
-                                .on_hover_text("Set this step's MaxValue and Cost to 0. One undo entry.")
-                                .clicked()
-                        {
-                            clear = Some(step);
-                        }
-                        ui.end_row();
                     }
-                });
-            if let Some(step) = clear {
-                tables::fields::set_fields(
-                    work.session,
-                    TABLE,
-                    record,
-                    &[(schema::SKILL_TIER_MAX + step, 0), (schema::SKILL_TIER_COST + step, 0)],
-                    "Remove a tier step",
-                    &format!("{TABLE} {record} remove step {step}"),
-                    work.now,
-                );
-            }
-        });
+                    if step + 1 == used
+                        && ui
+                            .small_button("Remove")
+                            .on_hover_text("Set this step's MaxValue and Cost to 0. One undo entry.")
+                            .clicked()
+                    {
+                        clear = Some(step);
+                    }
+                    ui.end_row();
+                }
+            });
+        if let Some(step) = clear {
+            tables::fields::set_fields(
+                work.session,
+                TABLE,
+                record,
+                &[(schema::SKILL_TIER_MAX + step, 0), (schema::SKILL_TIER_COST + step, 0)],
+                "Remove a tier step",
+                &format!("{TABLE} {record} remove step {step}"),
+                work.now,
+            );
+        }
+    });
 }
 
 #[cfg(test)]

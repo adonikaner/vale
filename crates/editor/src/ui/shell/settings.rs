@@ -274,7 +274,7 @@ fn setting_row(ui: &mut egui::Ui, label: &str, contents: impl FnOnce(&mut egui::
     ui.horizontal(|ui| {
         ui.add_sized(
             [96.0, ui.spacing().interact_size.y],
-            egui::Label::new(egui::RichText::new(label).color(theme::INK_DIM)).selectable(false),
+            egui::Label::new(egui::RichText::new(label).color(theme::INK_NAME)).selectable(false),
         );
         contents(ui);
     });

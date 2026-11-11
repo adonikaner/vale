@@ -69,7 +69,13 @@ pub(crate) fn window(
             Table::Creature => "Model for this creature",
             Table::Object => "Model for this object",
         };
-        ui.label(egui::RichText::new(what).strong().size(14.0));
+        // What the search covers is on the title's info mark.
+        super::listing::dialog_title(
+            ui,
+            what,
+            "Display rows have no name. Search text is matched against the model path and, \
+             for creatures, the skin names.",
+        );
         ui.label(
             egui::RichText::new(format!("{} \u{b7} {}", open.target.column, open.table.name()))
                 .small()
@@ -77,7 +83,7 @@ pub(crate) fn window(
         );
         let search = ui.add(
             egui::TextEdit::singleline(&mut open.query)
-                .hint_text("model path or display id")
+                .hint_text("Model path or display id")
                 .desired_width(WIDTH - 24.0),
         );
         if open.focus {
@@ -87,11 +93,7 @@ pub(crate) fn window(
 
         let total = open.matches(session, assets).len();
         if total == 0 {
-            theme::note(
-                ui,
-                "No matches. Display rows have no name; search text is matched against the \
-                 model path and, for creatures, the skin names.",
-            );
+            theme::note(ui, "No matches.");
         }
         let range = super::items::pager(ui, &mut open.page, total, PAGE);
         let page: Vec<u32> = open.matches(session, assets)[range].to_vec();
@@ -123,7 +125,7 @@ pub(crate) fn window(
                 close = true;
             }
             if ui
-                .button("Set to none")
+                .button("Set to None")
                 .on_hover_text(
                     "Writes 0. The editor draws a creature with display 0 as a box and a \
                      game object with display 0 as a marker.",
@@ -134,7 +136,7 @@ pub(crate) fn window(
             }
             ui.label(
                 egui::RichText::new(format!(
-                    "{total} of {} row(s) with a model \u{b7} Esc closes",
+                    "{total} of {} rows with a model \u{b7} Esc closes",
                     open.facts(session, assets).len()
                 ))
                 .small()
@@ -262,18 +264,18 @@ fn preview(
                     }
                 }
                 None if id == 0 => {
-                    ui.label(egui::RichText::new("no model").small().color(theme::INK_DIM));
+                    ui.label(egui::RichText::new("No model").small().color(theme::INK_DIM));
                 }
                 None => {
                     ui.label(
-                        egui::RichText::new("no display row with this id, or the row has no model")
+                        egui::RichText::new("No display row with this id, or the row has no model")
                             .small()
                             .color(theme::BAD),
                     );
                 }
             }
             used = ui
-                .button("Use this display")
+                .button("Use This Display")
                 .on_hover_text("Writes this display id into the column and closes the picker.")
                 .clicked();
         });

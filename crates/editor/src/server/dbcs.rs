@@ -179,12 +179,16 @@ impl Standing {
     /// One line for the panel.
     pub(crate) fn line(&self) -> String {
         if self.carried.is_empty() && self.saved == 0 {
-            return "no server DBC file changed".to_string();
+            return "No server DBC file changed".to_string();
         }
+        let files = |count: usize| match count {
+            1 => "1 server DBC file".to_string(),
+            n => format!("{n} server DBC files"),
+        };
         let mut line = match (self.carried.len(), self.differ.len()) {
-            (0, _) => "no server DBC file changed".to_string(),
-            (n, 0) => format!("{n} server DBC file(s), all in DataDir\\5875\\dbc"),
-            (n, d) => format!("{n} server DBC file(s), {d} not in DataDir\\5875\\dbc yet"),
+            (0, _) => "No server DBC file changed".to_string(),
+            (n, 0) => format!("{}, all in DataDir\\5875\\dbc", files(n)),
+            (n, d) => format!("{}, {d} not in DataDir\\5875\\dbc yet", files(n)),
         };
         if !self.stale.is_empty() {
             line.push_str(&format!(

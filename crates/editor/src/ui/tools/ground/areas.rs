@@ -9,14 +9,14 @@ use crate::tools::placements::place;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split, split_folder};
 use crate::ui::widgets::theme::{self, field, property};
 
-/// The tool's mouse and keyboard controls and what an area id covers, for
-/// the Brush Area heading's info mark. The tool has no toolbar over the
-/// viewport to hold them.
-const KEYS: &str = "Left button: paint\n\
-                    Ctrl + wheel: radius\n\
-                    Space: take the area under the pointer\n\n\
-                    Area ids are per chunk (33 yd); the file has no finer unit. A playtest \
-                    shows this area as the zone text.";
+/// The tool's mouse and keyboard controls, for the toolbar's Keys button.
+/// The tool has no mode and no switch, so its toolbar over the viewport is
+/// that button alone ([`theme::toolbar_keys`]).
+pub(crate) const KEYS: [(&str, &str); 3] = [
+    ("Left button", "Paint"),
+    ("Ctrl + wheel", "Radius"),
+    ("Space", "Take the area under the pointer"),
+];
 
 /// Whether the server lets a character walk on the chunk under the pointer.
 ///
@@ -129,7 +129,12 @@ pub(in crate::ui::tools) fn zones(
         None => theme::note(ui, "Pointer is not over an open tile"),
     }
 
-    theme::heading_about(ui, "Brush Area", KEYS);
+    theme::heading_about(
+        ui,
+        "Brush Area",
+        "Area ids are per chunk (33 yd); the file has no finer unit. A playtest \
+         shows this area as the zone text.",
+    );
     property(ui, "Area", "", |ui| {
         theme::value(ui, name_of(areas.brush.area));
     });

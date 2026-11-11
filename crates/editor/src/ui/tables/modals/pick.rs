@@ -77,7 +77,7 @@ pub(super) fn pick_previewing(
                     ui.set_width(PICKER_WIDTH);
                     let box_ = ui.add(
                         egui::TextEdit::singleline(&mut work.browser.pick_query)
-                            .hint_text("name, id, or model name")
+                            .hint_text("Name, ID, or model name")
                             .desired_width(PICKER_WIDTH),
                     );
                     if work.browser.pick_focus {
@@ -135,7 +135,7 @@ pub(super) fn pick_previewing(
                 }
                 ui.label(
                     egui::RichText::new(
-                        "click previews the row · double-click, Enter or Use chooses it · \
+                        "Click previews the row \u{b7} double-click, Enter or Use chooses it \u{b7} \
                          Esc closes",
                     )
                     .small()
@@ -195,7 +195,7 @@ fn icon_cell(
         }
     }
     let title = match label.title.is_empty() {
-        true => format!("row {}", label.id),
+        true => format!("Row {}", label.id),
         false => label.title.clone(),
     };
     response.on_hover_text(match path {
@@ -251,7 +251,7 @@ pub(super) fn pick(
         );
         let box_ = ui.add(
             egui::TextEdit::singleline(&mut work.browser.pick_query)
-                .hint_text("name or id")
+                .hint_text("Name or ID")
                 .desired_width(width),
         );
         if work.browser.pick_focus {
@@ -353,7 +353,7 @@ pub(super) fn pick(
                         "\u{25b6} plays \u{b7} click a name to choose it \u{b7} Esc \
                          closes \u{b7} PageUp and PageDown turn the pages"
                     }
-                    false => "Esc closes · PageUp and PageDown turn the pages",
+                    false => "Esc closes \u{b7} PageUp and PageDown turn the pages",
                 })
                 .small()
                 .color(theme::INK_FAINT),

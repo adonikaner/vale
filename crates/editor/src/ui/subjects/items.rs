@@ -1,69 +1,69 @@
-//! The workspace an item is edited in: the list, the form, and a picture of
-//! what the row says it looks like.
+//! The Items workspace: the list of items, the open item's form, and in the
+//! inspector its tooltip, its appearance and a preview. The state is
+//! [`crate::subjects::items`].
 //!
-//! ## Three parts, because an item is three questions
+//! ## The three parts
 //!
 //! ```text
-//! left       which item          24,000 rows, searched by name, entry or kind
+//! left       which item          24,000 rows, searched by name, entry, class,
+//!                                slot or level
 //! middle     what it is          129 columns, in rowform's page layout
-//! inspector  what it looks like  the display row, as a picture
+//! inspector  what it looks like  the tooltip, the display row and a preview
 //! ```
 //!
-//! The third part is drawn in the shell's inspector ([`inspector`]), which
-//! is the spell workspace's arrangement and the shell's own rule: the inspector
-//! is about the selection. It was a column of this workspace's own beside an
-//! inspector that had nothing to say, and at a 1280-point window the two of
-//! them and the list left the form 168 points — less than one page row. The
-//! inspector is resizable to the same 560 points that column was, and the
-//! picture takes whatever width it is given.
+//! The third part is drawn in the shell's inspector ([`inspector`]), as the
+//! spell workspace's is. The shell's rule is that the inspector describes the
+//! selection. The third part was once a column of this workspace beside the
+//! inspector; in a 1280-point window that column, the inspector and the list
+//! left the form 168 points wide, which is less than one page row. The
+//! inspector can be resized to 560 points, the width that column had, and the
+//! picture takes the width it is given.
 //!
-//! [`crate::ui::tables`]'s two parts plus one, and the third is the reason this
-//! is not that panel. A spell's row points at a chain of other rows and the
-//! useful thing to draw beside it is the chain; an item's row points at exactly
-//! one thing you cannot read — `display_id`, whose only meaning is what it
-//! looks like — and the useful thing to draw beside it is that.
+//! The list and the form are [`crate::ui::tables`]'s two parts. The third part
+//! is why this is a separate panel. A spell's row points at a chain of other
+//! rows, and the chain is drawn beside it. An item's row points at one thing
+//! that cannot be read as text, `display_id`, so what the display row looks
+//! like is drawn beside it.
 //!
-//! ## The appearance is chosen by looking at it
+//! ## The appearance is chosen from pictures
 //!
-//! `display_id` is a row of `ItemDisplayInfo.dbc` and there are tens of
-//! thousands of them. `2589` is not a choice anybody can make by reading, which
-//! is the tileset picker's problem and the model browser's problem and is
-//! solved here the same way: a grid of pictures, paged, with a preview under it
-//! and a search over the one piece of text a display row carries, which is its
-//! icon name.
+//! `display_id` names a row of `ItemDisplayInfo.dbc`, which has tens of
+//! thousands of rows, and a number such as `2589` does not say what its row
+//! looks like. The tileset picker and the model browser have the same problem
+//! and the same answer: a paged grid of pictures, a preview under it, and a
+//! search over the only text a display row carries, its icon name.
 //!
-//! A cell is a model where the row has one and an icon where it does not,
-//! and that is not a fallback: it is what the two kinds of item are. A
-//! sword, a helm and a pauldron hang geometry off the wearer and can be looked
-//! at; a shirt, a pair of gloves and a robe paint textures into the wearer's
-//! own skin and have no geometry at all, so the only picture of one that exists
-//! outside a dressed character is the icon in the bag. Drawing an empty square
-//! for the second kind would be drawing nothing for most of the table.
+//! A cell shows a model where the row has one and an icon where it does not.
+//! These are the two types of item. A sword, a helm and a pauldron attach
+//! geometry to the wearer. A shirt, a pair of gloves and a robe paint textures
+//! into the wearer's skin and have no geometry, so the only picture of one
+//! outside a dressed character is its bag icon. An empty square for the second
+//! type would leave most of the table without a picture.
 //!
-//! ## What the form says that the number does not
+//! ## What the form shows beside a number
 //!
-//! Every column whose number means something is drawn as the something: a
-//! quality is a coloured word, a class and a subclass are two menus where the
-//! second depends on the first, `buy_price` is gold and silver, `delay` is a
-//! swing in seconds, a spell is its name out of `Spell.dbc`, a skill is its
-//! name out of `SkillLine.dbc`, and the two mask columns are lists of ticks.
-//! The number is still there, still editable, and still what is written.
+//! Every column whose number has a meaning is drawn with the meaning: a
+//! quality is a coloured word, a class and a subclass are two menus of which
+//! the second depends on the first, `buy_price` is gold and silver, `delay` is
+//! a swing time in seconds, a spell is its name from `Spell.dbc`, a skill is
+//! its name from `SkillLine.dbc`, and the two mask columns are lists of ticks.
+//! The number is still shown, can still be edited, and is what is written.
 //!
 //! ## Nothing here reaches the database
 //!
 //! An edit goes into the project's own store through
 //! [`EditSession::set_server_edit`], already escaped, and onto the undo stack.
-//! A save writes it into `sql\items.sql`; Apply is what runs the
-//! statements, and — unlike the creature half — it then asks a running playtest
-//! to `.reload item_template`, which makes the change live for every copy of
-//! that item already in the world. See [`crate::server::items`], where the
-//! reason that works is.
+//! A save writes it into `sql\items.sql`. Apply runs the statements and then,
+//! unlike the creature subject's apply, asks a running playtest to
+//! `.reload item_template`, which makes the change live for every copy of the
+//! item already in the world. [`crate::server::items`] gives the reason that
+//! works.
 //!
-//! Apply is not on this panel. It is on the bar's Server…, with the
-//! spells' and the creatures' and in the same words, because one vocabulary in
-//! one place is worth more than a button where the edit was made. What this
-//! panel keeps is the state — what the project changes and how much of it the
-//! database holds — which is about the item on screen. See [`crate::ui::shell::sync`].
+//! Apply is not on this panel. It is on the bar's Server…, beside the spells'
+//! and the creatures' and in the same words, so that the server operations
+//! have one vocabulary in one place. This panel keeps the state: what the
+//! project changes and how much of it the database holds. See
+//! [`crate::ui::shell::sync`].
 
 use crate::ui::shell::asks::{ShellAsk, ShellAsks};
 use crate::ui::widgets::reference::{self, Resolver};
@@ -72,6 +72,7 @@ use crate::ui::widgets::rowform::{
     FieldCtx, Hook, Renumber, RowAct,
 };
 use crate::ui::widgets::theme;
+use super::listing::counted;
 use crate::ui::widgets::thumbnails::Thumbnails;
 use crate::session::EditSession;
 use crate::subjects::items::{Filter, Items, Known, Look, DISPLAY_PAGE};
@@ -80,38 +81,36 @@ use vale_mangos::item::{self, Column, Group, Kind};
 use vale_mangos::row::Life;
 use bevy_egui::egui;
 
-/// How tall one row of the list is, and how big the icon in it is drawn — the
-/// editor's own, so that this list and the spell list are one list drawn
-/// twice. See [`theme::list_row`].
+/// The height of one list row and the size of the icon in it: the editor's
+/// own, which the spell list uses too. See [`theme::list_row`].
 const ROW_HEIGHT: f32 = theme::LIST_ROW;
 
 const ICON: f32 = theme::LIST_PICTURE;
 
-/// …and the one at the head of the form, which has room for more.
+/// The size of the icon at the head of the form.
 const HEAD_ICON: f32 = 36.0;
 
-/// How big one cell of the appearance picker's grid is, and how many fit
-/// across it.
+/// The size of one cell of the appearance picker's grid, how many cells fit
+/// across it, and the gap between two.
 ///
-/// 60 points is a little under twice a list row's icon: enough to tell a sword
-/// from a mace, which is what a grid is for, and not enough to tell this sword
-/// from the one beside it — which is what the preview pane under it is for.
+/// 60 points is a little under twice a list row's icon. It is enough to tell
+/// a sword from a mace. The preview pane under the grid is for telling one
+/// sword from another.
 const CELL: f32 = 60.0;
 const GRID_COLUMNS: usize = 8;
 const CELL_GAP: f32 = 4.0;
 
-/// …so the dialog is exactly that many cells wide, rather than a number that
-/// happens to fit today. A width the grid does not divide into leaves a ragged
-/// column on the right of every page.
+/// The dialog's width: [`GRID_COLUMNS`] cells and the modal's margins. A
+/// width the grid does not divide into leaves a ragged column at the right
+/// of every page.
 const PICKER_WIDTH: f32 = GRID_COLUMNS as f32 * (CELL + CELL_GAP) + 24.0;
 
-/// What the seven qualities are drawn in, from `ItemQualityColors`
+/// The colours of the seven qualities, from vmangos' `ItemQualityColors`
 /// (`SharedDefines.h:205`).
 ///
-/// The server's own table rather than a set of colours chosen here: a quality
-/// is the one column of an item whose whole content is a colour, and a list
-/// that used the editor's palette for it would be showing something other than
-/// what the game shows.
+/// They are the server's table and not colours chosen here. A quality's
+/// whole content is a colour, and a list that used the editor's palette for
+/// it would show something other than what the game shows.
 const QUALITY_COLOURS: [egui::Color32; 7] = [
     egui::Color32::from_rgb(0x9d, 0x9d, 0x9d),
     egui::Color32::from_rgb(0xff, 0xff, 0xff),
@@ -131,36 +130,46 @@ pub(crate) fn quality_colour(quality: u32) -> egui::Color32 {
         .unwrap_or(theme::INK)
 }
 
+/// `text` with its first letter in upper case, for a value whose name the
+/// state keeps in lower case.
+fn capitalised(text: &str) -> String {
+    let mut letters = text.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => String::new(),
+    }
+}
+
 /// Everything the workspace needs, as one argument.
 pub(crate) struct Workspace<'a> {
     pub(crate) session: &'a mut EditSession,
     pub(crate) items: &'a mut Items,
     pub(crate) assets: &'a GameAssets,
-    /// The icons, which are BLP textures decoded like any other — see
+    /// The icons, which are BLP textures decoded like any other. See
     /// [`crate::ui::widgets::thumbnails`].
     pub(crate) thumbnails: &'a mut Thumbnails,
-    /// …and the models, which are rendered — see [`crate::preview::portraits`].
+    /// The models, which are rendered. See [`crate::preview::portraits`].
     pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
-    /// The quest workspace's state, for two things it already has: the
-    /// reference picker, which is one dialog over every table a row names, and
-    /// the quest list, which names `start_quest`. See [`field`].
+    /// The quest workspace's state, for the reference picker, which is one
+    /// dialog over every table a row names, and for the quest list, which
+    /// names `start_quest`. See [`field`].
     pub(crate) quests: &'a mut crate::subjects::quests::Quests,
-    /// …and the loot window's, for the Loot toggle at the head of the
-    /// form: what the item contains and what it disenchants into — see
+    /// The loot window's state, for the Loot toggle at the head of the form:
+    /// what the item contains and what it disenchants into. See
     /// [`super::loot`].
     pub(crate) loot: &'a mut crate::subjects::loot::Loot,
-    /// …and the queue an apply's `.reload item_template` goes on, whose status
-    /// this panel shows: an item change is the one here that goes live without
-    /// a restart, so whether the reload landed is worth saying beside the item.
+    /// The queue an apply's `.reload item_template` goes on, whose status
+    /// this panel shows. An item change is the one here that goes live
+    /// without a restart, so the form shows whether the reload was answered.
     pub(crate) reloads: &'a mut crate::server::reload::Reloads,
-    /// …and the bar's Server…, which is where every server operation is.
-    /// See [`crate::ui::shell::sync`].
+    /// The bar's Server…, which holds every server operation. See
+    /// [`crate::ui::shell::sync`].
     pub(crate) server_panel: &'a mut crate::ui::shell::popover::Popover,
     /// Where each server subject stands, held for half a second; the items'
     /// line in the form is read from it. See [`crate::server::sync::Standings`].
     pub(crate) standings: &'a mut crate::server::sync::Standings,
-    /// Which content patch the server is configured for — half the key a new
-    /// row is written under.
+    /// The content patch the server is configured for, which is half the key
+    /// a new row is written under.
     pub(crate) patch: u32,
     /// The frame clock the undo stack folds a gesture by.
     pub(crate) now: f64,
@@ -219,22 +228,21 @@ pub(crate) fn draw(ui: &mut egui::Ui, mut work: Workspace<'_>) {
 // The list
 // ---------------------------------------------------------------------------
 
-/// The left column: what there is, what matches, and the four things that are
-/// about the table rather than about a row of it.
+/// The left column: the workspace's parts, the heading with the row count,
+/// the search box, the New, Copy and Remove buttons, and the rows.
 fn list(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     // The workspace's two parts, Items and Sets. The shell switches after
     // the frame is drawn.
     if let Some(part) = crate::ui::shell::rail::parts(ui, crate::tools::Tool::Items) {
         work.asks.push(ShellAsk::Part(part));
     }
-    // The rail's own word. The table's name belongs on the fields that are
-    // written to it, and the heading of a list is where somebody looks to know
-    // which list they are in.
+    // The heading is the workspace's name on the rail, which says which list
+    // this is. The table's name is on the fields that are written to it.
     let (count, trouble, read) = (work.items.count(), work.items.trouble.clone(), !work.items.all.is_empty());
     if !super::listing::heading(ui, "Items", item::TEMPLATE, count, trouble.as_deref(), read) {
         return;
     }
-    super::listing::search_box(ui, &mut work.items.query, "name, entry, class, slot or level");
+    super::listing::search_box(ui, &mut work.items.query, "Name, entry, class, slot or level");
     let revision = work.session.rows.revision;
     let matches: Vec<usize> = {
         let edits = &work.session.rows.edits;
@@ -296,25 +304,29 @@ fn act_on(ctx: &egui::Context, work: &mut Workspace<'_>, known: &Known, act: Row
         RowAct::Keep => work.items.keep(work.session, known, now),
         RowAct::CopyEntry => {
             ctx.copy_text(known.entry.to_string());
-            work.session.status = format!("item entry {} is on the clipboard", known.entry);
+            work.session.status = format!("Item entry {} is on the clipboard", known.entry);
         }
     }
 }
 
-/// New, Copy and Remove — the three things that make or unmake a row.
+/// New, Copy and Remove, as three equal buttons: what makes a row and what
+/// marks one for removal.
 ///
 /// An item in the database is marked: it stays in the list in red until
 /// Apply, and Keep takes the mark off. One this project created is in no
 /// database, so removing it gives the claim up. A removal needs a restart of
-/// the server, and the apply sends no reload while one is in the plan — see
+/// the server, and the apply sends no reload while one is in the plan; see
 /// `vale_mangos::item`'s module comment.
 fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let open = work.open_item();
-    ui.horizontal(|ui| {
-        let third = ((ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0).max(40.0);
-        let size = egui::vec2(third, 22.0);
-        if ui
-            .add(egui::Button::new("+ New").min_size(size))
+    let removed = open
+        .as_ref()
+        .is_some_and(|known| known.claim == Life::Delete);
+    let ctx = ui.ctx().clone();
+    ui.columns(3, |columns| {
+        let new = theme::full_button(&columns[0], "New");
+        if columns[0]
+            .add(new)
             .on_hover_text(
                 "Creates an item_template row with an entry from 2,000,000 up, clear of \
                  upstream vmangos entries. It starts as a common-quality Junk item with a \
@@ -326,8 +338,9 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             let now = work.now;
             work.items.create(work.session, "New Item", patch, now);
         }
-        if ui
-            .add_enabled(open.is_some(), egui::Button::new("Copy").min_size(size))
+        let copy = theme::full_button(&columns[1], "Copy");
+        if columns[1]
+            .add_enabled(open.is_some(), copy)
             .on_hover_text(
                 "Creates a copy of this item under a new entry. Each column takes the \
                  value shown: this project's edit where there is one, otherwise the \
@@ -337,19 +350,16 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .clicked()
         {
             if let Some(known) = open.as_ref() {
-                let ctx = ui.ctx().clone();
                 act_on(&ctx, work, known, RowAct::Copy);
             }
         }
-        let removed = open
-            .as_ref()
-            .is_some_and(|known| known.claim == Life::Delete);
         let label = match removed {
             true => "Keep",
             false => "Remove",
         };
-        if ui
-            .add_enabled(open.is_some(), egui::Button::new(label).min_size(size))
+        let remove = theme::full_button(&columns[2], label);
+        if columns[2]
+            .add_enabled(open.is_some(), remove)
             .on_hover_text(match removed {
                 true => "Unmarks this item for removal.",
                 false => {
@@ -365,7 +375,6 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             .clicked()
         {
             if let Some(known) = open.as_ref() {
-                let ctx = ui.ctx().clone();
                 let act = match removed {
                     true => RowAct::Keep,
                     false => RowAct::Remove,
@@ -376,23 +385,21 @@ fn row_actions(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     });
 }
 
-/// One row of the list: the icon, the name in its quality's colour, what kind
-/// of thing it is, and the entry on the right.
+/// One row of the list: the icon, the name in its quality's colour, the
+/// item's class, slot and level, and the entry on the right.
 ///
-/// [`theme::list_row`] is the row, and it is the same row the spell list is
-/// made of — see its own note, which is why this is a dozen lines rather than
-/// fifty. Two things are this panel's: the picture, which is the item's bag
-/// icon out of the thumbnail cache, and the colour of the name, which for
-/// an item is a fact about the row rather than a choice of palette.
+/// The row is [`theme::list_row`], which the spell list is made of too. Two
+/// things are this panel's: the picture, which is the item's bag icon from
+/// the thumbnail cache, and the colour of the name, which for an item is the
+/// row's quality and not a choice of palette.
 fn row(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
     known: &Known,
     chosen: bool,
 ) -> egui::Response {
-    // What the project says about the row, on the row. A new item and an
-    // edited one are different things and both are invisible in a list that
-    // only shows what was read.
+    // What the project says about the row is drawn on the row. What was read
+    // does not tell a new item or one marked for removal from the rest.
     let (sub, tint) = match known.claim {
         Life::Insert => (
             format!("{} \u{b7} new", known.sub()),
@@ -415,8 +422,8 @@ fn row(
         },
         chosen,
     );
-    // Asked for on every frame the row is drawn, which is what keeps it
-    // fresh: only the rows actually on screen pay for a decode.
+    // Asked for on every frame the row is drawn, so only the rows on screen
+    // are decoded.
     let icon = work
         .items
         .look(work.assets, known.display_id, known.inventory_type)
@@ -451,17 +458,17 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         .id_salt("item-form")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // The spell form's own spacing — see `rowform::page_spacing`.
+            // The spell form's spacing. See `rowform::page_spacing`.
             page_spacing(ui);
             edits_block(ui, work);
             let Some(known) = work.open_item() else {
-                theme::heading(ui, "No item open");
-                theme::note(
+                theme::heading_about(
                     ui,
-                    "Choose an item on the left, or create one with + New. Every column \
-                     of the row is edited here; nothing is written to the database until \
-                     Apply, in Server\u{2026} on the top bar.",
+                    "No Item Open",
+                    "Every column of the row is edited here. Nothing is written to the \
+                     database until Apply, in Server\u{2026} on the top bar.",
                 );
+                theme::note(ui, "Choose an item on the left, or create one with New.");
                 return;
             };
             head(ui, work, &known);
@@ -478,7 +485,7 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
                 .filter(|held| held.entry == known.entry)
                 .map(|held| held.row.clone());
             let Some(row) = row else {
-                theme::waiting(ui, "reading the row\u{2026}");
+                theme::waiting(ui, "Reading the row\u{2026}");
                 return;
             };
             // A row the database does not hold: a removal that has been
@@ -502,17 +509,17 @@ fn form(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         });
 }
 
-/// What this project changes about the server's items, and the way to the
-/// panel that applies it.
+/// What this project changes about the server's items, and the button that
+/// opens the panel that applies it.
 ///
-/// The creature panel's own block one subject along, with the same two parts:
-/// the state here, where the thing being edited is, and the verbs on the bar's
-/// Server… with the other two subjects'. See [`crate::ui::shell::sync`], whose module
-/// comment is the argument for one panel.
+/// It has the creature panel's two parts: the state is here, beside what is
+/// being edited, and Apply, Restore and Discard are on the bar's Server…
+/// with the other subjects'. [`crate::ui::shell::sync`]'s module comment
+/// gives the reason for one panel.
 ///
-/// A project that changes nothing says nothing. The block is about what is
-/// waiting to be applied, and a standing sentence explaining that there is
-/// none is a line of chrome above every item anybody ever opens.
+/// Nothing is drawn for a project that changes nothing. The block is about
+/// what is waiting to be applied, and a line saying there is nothing would
+/// be drawn above every item that is opened.
 fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let standing = work.standings.of(
         crate::server::sync::Half::Row(crate::server::stack::Subject::Items),
@@ -537,16 +544,13 @@ fn edits_block(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 ///
 /// The key is on the second line and not beside the name. `Thunderfury,
 /// Blessed Blade of the Windseeker` is forty-three characters at seventeen
-/// points; put `entry 19019` after it on one row and egui lays the two out
-/// overlapping, because a horizontal layout clips rather than wraps. The
-/// second line has room for the key and for what the item is, which are the
-/// same kind of fact.
+/// points, and with `entry 19019` after it on one row egui draws the two
+/// overlapping, because a horizontal layout clips and does not wrap. The
+/// second line has room for the key and for the item's class, slot and level.
 fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
     ui.horizontal(|ui| {
-        // The icon, at the head of the form. `ui::tables`'s spell head has
-        // one for the same reason: a name tells you which row is open and the
-        // picture tells you what it is, and the second is the faster of the two
-        // to read.
+        // The icon. `ui::tables`'s spell head has one too: the name says
+        // which row is open, and the picture is read faster than the name.
         let icon = work
             .items
             .look(work.assets, known.display_id, known.inventory_type)
@@ -574,7 +578,7 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
             ui.horizontal(|ui| {
                 ui.label(theme::number(format!("entry {}", known.entry)));
                 if ui
-                    .small_button("copy")
+                    .small_button("Copy Entry")
                     .on_hover_text("Copies the entry to the clipboard.")
                     .clicked()
                 {
@@ -597,8 +601,8 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
                         .small()
                         .color(theme::INK_DIM),
                 );
-                // Loot is a window over the workspace, following the open
-                // item as it follows a selected creature — see `super::loot`.
+                // Loot is a window over the workspace. It follows the open
+                // item as it follows a selected creature; see `super::loot`.
                 if ui
                     .selectable_label(work.loot.open, "Loot")
                     .on_hover_text(
@@ -621,14 +625,17 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
                     .color(theme::WARN),
             );
         }
+        // The state is the line; what Apply does with it, and the way back,
+        // are its hover text.
         Life::Delete => {
             ui.label(
-                egui::RichText::new(
-                    "Marked for removal. Apply deletes it with its loot and vendor rows; \
-                     restart the server afterwards. Keep, under the search box, unmarks it.",
-                )
-                .small()
-                .color(theme::BAD),
+                egui::RichText::new("Marked for removal")
+                    .small()
+                    .color(theme::BAD),
+            )
+            .on_hover_text(
+                "Apply deletes it with its loot and vendor rows; restart the server \
+                 afterwards. Keep, under the search box, unmarks it.",
             );
         }
         Life::Update => {}
@@ -637,10 +644,10 @@ fn head(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known) {
 
 /// Every group of the table's columns: the first three open, the rest folded.
 ///
-/// 129 columns is more than a person reads at once and the ones worth reading
-/// first are not the ones that come first in the table.
+/// 129 columns are more than a person reads at once, and the ones read first
+/// are not the first in the table.
 ///
-/// One field per row, in `rowform`'s page layout: the name centred in a
+/// One field per row, in `rowform`'s page layout: the name left-aligned in a
 /// fixed cell, the value in a fixed cell beside it, and what the value means
 /// after that. It is the spell form's arrangement at the spell form's widths.
 /// The packed grid this replaced put a text box, a menu and a number box at
@@ -725,9 +732,8 @@ fn field(
             (Hook::Cell, Kind::Subclass) => {
                 Some(choice_cell(ui, showing, item::subclasses(known.class), field.id))
             }
-            // A display id is picked by looking at it. The number stays
-            // editable beside the button, because an id read off a wiki is a
-            // thing people have in hand.
+            // A display id is chosen from pictures. The number stays editable
+            // beside the button, for an id that is already known.
             (Hook::Cell, Kind::Ref("ItemDisplayInfo")) => {
                 Some(display_field(ui, items, thumbnails, resolver.asks, assets, known, showing))
             }
@@ -744,14 +750,13 @@ fn field(
     }
 }
 
-/// The `entry` column, which is the row's own key and is editable anyway.
+/// The `entry` column, which is the row's own key and can be edited.
 ///
-/// What it does is one thing whatever the row is: the project's claim on the
-/// row is re-keyed; see [`crate::subjects::items::Items::rekey`]. For a row
-/// that is in the database the apply then moves the row, every other
-/// content-patch version of it, and every column of the world database that
-/// names an item by entry; the sentence under the box says so, and says what
-/// that cannot reach.
+/// Whatever the row is, the project's claim on the row is re-keyed; see
+/// [`crate::subjects::items::Items::rekey`]. For a row that is in the
+/// database the apply then moves the row, every other content-patch version
+/// of it, and every column of the world database that names an item by
+/// entry. The box's hover text says so, and says what that cannot reach.
 fn entry_field(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -780,8 +785,8 @@ fn entry_field(
     entry_cell(ui, id.with("entry"), &renumber, |wanted| items.rekey(session, known, wanted, now));
 }
 
-/// The `display_id` column: the number, the icon it resolves to, and the
-/// button that opens the grid.
+/// The `display_id` column: the number, the icon it resolves to, the button
+/// that opens the grid, and what the display row is made of.
 fn display_field(
     ui: &mut egui::Ui,
     items: &mut Items,
@@ -817,14 +822,14 @@ fn display_field(
     match look {
         Some(look) => {
             let made_of = match look.has_models() {
-                true => format!("{} model(s)", look.models.len()),
-                false => format!("{} texture(s)", look.painted()),
+                true => counted(look.models.len(), "model"),
+                false => counted(look.painted(), "texture"),
             };
             reference::display_link(ui, egui::RichText::new(made_of).small(), asks, "ItemDisplayInfo", id);
         }
         None if id != 0 => {
             ui.label(
-                egui::RichText::new("not in ItemDisplayInfo.dbc")
+                egui::RichText::new("Not in ItemDisplayInfo.dbc")
                     .small()
                     .color(theme::BAD),
             );
@@ -866,7 +871,7 @@ fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAss
     let mut moves: Vec<(u32, u32)> = Vec::new();
     if unlisted {
         ui.label(
-            egui::RichText::new("not in the set's item list")
+            egui::RichText::new("Not in the set's item list")
                 .small()
                 .color(theme::WARN),
         )
@@ -875,7 +880,7 @@ fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAss
              do not list this item. The client lists a set's pieces from those columns.",
         );
         if ui
-            .small_button("add")
+            .small_button("Add")
             .on_hover_text("Writes the item into the set's first empty item column. One undo entry.")
             .clicked()
         {
@@ -884,7 +889,7 @@ fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAss
     }
     for other in elsewhere {
         ui.label(
-            egui::RichText::new(format!("still listed in set {other}"))
+            egui::RichText::new(format!("Still listed in set {other}"))
                 .small()
                 .color(theme::WARN),
         )
@@ -893,7 +898,7 @@ fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAss
              set_id does not name that set.",
         );
         if ui
-            .small_button("remove")
+            .small_button("Remove")
             .on_hover_text(format!("Removes the item from set {other}'s item columns. One undo entry."))
             .clicked()
         {
@@ -912,14 +917,13 @@ fn set_membership(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAss
 // The inspector's part: the appearance
 // ---------------------------------------------------------------------------
 
-/// The shell's inspector, while the item workspace is up: a picture of what
-/// the open item looks like, and what the display row it names is made of.
+/// The shell's inspector while the item workspace is shown: the open item's
+/// tooltip, what the display row it names is made of, and a preview.
 ///
-/// The picture is as wide as the inspector. The panel is resizable and the
-/// pane takes what it is given, so how much of the window is spent on looking
-/// at the thing is the person's to say — see
-/// [`crate::ui::widgets::preview::preview_pane_at`], which takes the width as its cap
-/// rather than the 170 points the placement pickers use.
+/// The preview is as wide as the inspector. The panel can be resized and
+/// the pane takes the width it is given; see
+/// [`crate::ui::widgets::preview::preview_pane_at`], which takes the width
+/// as its cap and not the 170 points the placement pickers use.
 pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Looking<'_>) {
     let work = &mut work;
     let Some(known) = work.open_item() else {
@@ -938,7 +942,6 @@ pub(crate) fn inspector(ui: &mut egui::Ui, mut work: Looking<'_>) {
         });
     } else {
         plate(ui, work, &known);
-        ui.add_space(10.0);
         appearance(ui, work, &known);
     }
 }
@@ -949,28 +952,27 @@ const SIDE_BY_SIDE: f32 = 2.0 * PLATE_WIDTH;
 
 /// The widest a tooltip is drawn. The game sizes a plate to its longest
 /// line and wraps a spell sentence; this is about the width a wrapped
-/// `Equip:` line takes on the reference at its default scale.
+/// `Equip:` line takes in the game at its default scale.
 const PLATE_WIDTH: f32 = 270.0;
 
-/// The open item's tooltip, as the game would draw it, composed from the
-/// form's values on every frame, so an edit shows on the frame it is made.
+/// The open item's tooltip as the game draws it, composed from the form's
+/// values on every frame, so an edit shows on the frame it is made.
 ///
-/// The lines are `vale_client::interface::plate::item_plate`'s, which is the
-/// function the client's own `GameTooltip` draws an item through: the same
-/// order, the same `GlobalStrings.lua` keys and the same colours. What is the
-/// editor's is the frame and the font. The game draws the plate in
-/// `Fonts\FRIZQT__.TTF` over `Interface\Tooltips\UI-Tooltip-Background`; this
-/// draws it in the editor's own font over the colour
-/// `TOOLTIP_DEFAULT_BACKGROUND_COLOR` names in `GameTooltip.lua`.
+/// The lines are `vale_client::interface::plate::item_plate`'s, the function
+/// the client's own `GameTooltip` draws an item through: the same order, the
+/// same `GlobalStrings.lua` keys and the same colours. The frame and the
+/// font are the editor's. The game draws the plate in `Fonts\FRIZQT__.TTF`
+/// over `Interface\Tooltips\UI-Tooltip-Background`; this draws it in the
+/// editor's font over the colour `TOOLTIP_DEFAULT_BACKGROUND_COLOR` names in
+/// `GameTooltip.lua`.
 ///
-/// Composed for a character who meets every requirement, so the race,
+/// It is composed for a character who meets every requirement, so the race,
 /// class and level lines are white. The client colours each by the player
-/// looking at it, and there is no player here; red on every restricted item
-/// would say something about nobody.
+/// looking at it, and a preview has no player.
 fn plate(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
     theme::heading(ui, "Tooltip");
     let Some(info) = work.items.open_info(&work.session.rows.edits, known) else {
-        theme::waiting(ui, "reading the row\u{2026}");
+        theme::waiting(ui, "Reading the row\u{2026}");
         return;
     };
     let tables = work.assets.display_tables().ok();
@@ -1067,8 +1069,8 @@ fn draw_plate(ui: &mut egui::Ui, lines: &[vale_client::interface::plate::PlateLi
         });
 }
 
-/// What the open item looks like: the picture, the body it is drawn on,
-/// and what the display row is made of.
+/// The Appearance and Preview sections: the display row the item names and
+/// what it is made of, then the picture and the body it is drawn on.
 fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
     let known = known.clone();
     theme::heading(ui, "Appearance");
@@ -1076,13 +1078,12 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
     let look = work
         .items
         .look(work.assets, display_id, known.inventory_type);
-    ui.horizontal(|ui| {
+    theme::property(ui, "Display", "", |ui| {
         match (display_id, look.is_some()) {
             (0, _) | (_, false) => {
-                ui.label(theme::number(format!("display {display_id}")));
+                ui.label(theme::number(display_id.to_string()));
             }
             _ => {
-                ui.label(theme::number("display"));
                 crate::ui::widgets::reference::display_link(
                     ui,
                     theme::number(display_id.to_string()),
@@ -1112,50 +1113,42 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         );
         return;
     };
-    // The icon beside its name, small. It is still a fact about the row and
-    // it is still what a bag shows; what it is no longer is the picture, for
-    // the kind of item that has a better one.
-    ui.horizontal(|ui| {
+    // The bag icon and its name. The preview below is the model where the
+    // row has one, so the icon is drawn small here.
+    theme::property(ui, "Icon", "", |ui| {
         icon_square(ui, work, look.icon.as_deref(), ICON);
-        ui.label(
-            egui::RichText::new(&look.icon_name)
-                .small()
-                .color(theme::INK_DIM),
-        );
+        theme::value(ui, look.icon_name.as_str());
     });
+    look_rows(ui, &look);
 
-    ui.add_space(6.0);
     let side = ui.available_width();
     // A model where the row has one, and the body it paints where it does
-    // not. See the module comment: these are the two kinds of item, and both
-    // of them have a picture — what changes is whether the thing being looked
-    // at is the item or the wearer.
+    // not. These are the module comment's two types of item: the preview
+    // shows the item for the first and the wearer for the second.
     let on_a_body = match look.models.first() {
         Some(worn) => {
             let key = work.portraits.want_large_worn(worn);
             crate::ui::widgets::preview::preview_pane_at(ui, work.portraits, &key, side);
             if look.models.len() > 1 {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} more model(s) \u{2014} the preview shows the left shoulder",
-                        look.models.len() - 1
-                    ))
-                    .small()
-                    .color(theme::INK_FAINT),
+                theme::note(
+                    ui,
+                    format!(
+                        "{}; the preview shows the left shoulder",
+                        counted(look.models.len() - 1, "more model")
+                    ),
                 );
             }
             false
         }
-        // No model: a body only where the row would actually change one.
+        // No model: a body is drawn only where the row changes one.
         //
-        // Three kinds of row land here and only two of them are worn. A shirt,
-        // a glove and a robe paint components of the wearer's composite; a
-        // cloak paints none of them and is the wearer's own group-15 geoset
-        // with a texture, which is why the dressing is asked rather than the
-        // row; and some rows switch a geoset group without painting. A trade
-        // good, a bag, a reagent and a quest item are none of the three:
-        // they are an icon and nothing else, and a body drawn for one would be
-        // a naked human standing in for a stack of copper ore.
+        // A row with no model is worn in three cases. A shirt, a glove and a
+        // robe paint components of the wearer's composite. A cloak paints
+        // none of them and is the wearer's own group-15 geoset with a
+        // texture, which is why the dressing is asked and not the row. Some
+        // rows switch a geoset group without painting. A trade good, a bag,
+        // a reagent and a quest item are none of the three: each is an icon
+        // only, and a body drawn for one would show nothing of the item.
         None => {
             let worn = work
                 .items
@@ -1175,8 +1168,8 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
                     true
                 }
                 // Nothing is worn, or no body resolved for this race. The icon
-                // is the only picture of it there is, which for most of these
-                // rows is also all the game ever shows.
+                // is the only picture of the row, and for most of these rows
+                // it is all the game shows.
                 (worn, wearable) => {
                     ui.vertical_centered(|ui| {
                         icon_square(ui, work, look.icon.as_deref(), side.min(96.0));
@@ -1201,19 +1194,17 @@ fn appearance(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known) {
         }
     };
 
-    // Which body, for both kinds that have one. A helm is cut per race and
-    // gender; a garment is painted onto whichever body is standing there.
+    // The body, for both previews that have one. A helm is cut per race and
+    // gender; a garment is painted onto the body that is drawn.
     body_picker(ui, work, &known, on_a_body);
-
-    ui.add_space(6.0);
-    look_detail(ui, &look);
+    look_files(ui, &look);
 }
 
 /// One decoded icon in a square of its own, or the empty well where there is
 /// none.
 ///
-/// The well is drawn either way, so a column does not jump as the picture
-/// arrives — the list rows' own rule one panel along.
+/// The well is drawn either way, so a column does not move when the picture
+/// arrives, as in the list rows.
 fn icon_square(ui: &mut egui::Ui, work: &mut Looking<'_>, path: Option<&str>, side: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::hover());
     ui.painter().rect_filled(rect, 3.0, theme::SUNK);
@@ -1235,146 +1226,117 @@ fn icon_square(ui: &mut egui::Ui, work: &mut Looking<'_>, path: Option<&str>, si
     }
 }
 
-/// Which body the preview uses — the two cases where it changes the
-/// picture.
+/// The preview body's race and gender, drawn in the two cases where they
+/// change the picture.
 ///
 /// A helm's row names `Helm_Plate_D_04.mdx` and the archive holds sixteen
-/// files, eight race codes times two genders; and an appearance with no model
-/// of its own is drawn on a body, which is a different body per race. Every
-/// other item is one file whatever is wearing it, so the picker is not drawn.
+/// files, eight race codes times two genders. An appearance with no model of
+/// its own is drawn on a body, which differs by race. Every other item is
+/// one file whatever wears it, so the rows are not drawn for it: they would
+/// change nothing.
 fn body_picker(ui: &mut egui::Ui, work: &mut Looking<'_>, known: &Known, on_a_body: bool) {
-    // A helm, or anything drawn on a body. Everything else is one model with
-    // one file, and a picker that changed nothing would be a control that lies.
+    // A helm, which is inventory type 1, or anything drawn on a body.
     if !on_a_body && known.inventory_type != 1 {
         return;
     }
     body_choice(ui, work.items);
 }
 
-/// The race and gender a preview body is drawn as, which the item's picture
-/// and an item set's share. Changes no row.
+/// The race and gender a preview body is drawn as, as two property rows. The
+/// item's preview and an item set's share them. Changes no row.
 pub(crate) fn body_choice(ui: &mut egui::Ui, items: &mut crate::subjects::items::Items) {
-    const RACES: [(u8, &str); 8] = [
-        (1, "Human"),
-        (2, "Orc"),
-        (3, "Dwarf"),
-        (4, "Night Elf"),
-        (5, "Undead"),
-        (6, "Tauren"),
-        (7, "Gnome"),
-        (8, "Troll"),
+    const RACES: [(&str, u8); 8] = [
+        ("Human", 1),
+        ("Orc", 2),
+        ("Dwarf", 3),
+        ("Night Elf", 4),
+        ("Undead", 5),
+        ("Tauren", 6),
+        ("Gnome", 7),
+        ("Troll", 8),
     ];
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("on").small().color(theme::INK_DIM));
-        let was = items.race;
-        let mut race = was;
-        egui::ComboBox::from_id_salt("item-race")
-            .selected_text(
-                RACES
-                    .iter()
-                    .find(|(id, _)| *id == race)
-                    .map(|(_, name)| *name)
-                    .unwrap_or("Human"),
-            )
-            .show_ui(ui, |ui| {
-                for (id, name) in RACES {
-                    ui.selectable_value(&mut race, id, name);
-                }
-            });
-        let mut gender = items.gender;
-        egui::ComboBox::from_id_salt("item-gender")
-            .selected_text(match gender {
-                0 => "male",
-                _ => "female",
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut gender, 0, "male");
-                ui.selectable_value(&mut gender, 1, "female");
-            });
-        if race != was || gender != items.gender {
-            items.race = race;
-            items.gender = gender;
-        }
-    })
-    .response
-    .on_hover_text(
-        "Race and gender of the preview body. Does not change the row. A helmet has one \
-         model per race and gender \u{2014} the display row names one file and the \
-         archive holds sixteen \u{2014} and a garment is painted onto the body that \
-         wears it.",
-    );
+    const GENDERS: [(&str, u8); 2] = [("Male", 0), ("Female", 1)];
+    const ABOUT: &str = "Race and gender of the preview body. Does not change the row. A helmet has one \
+                         model per race and gender \u{2014} the display row names one file and the \
+                         archive holds sixteen \u{2014} and a garment is painted onto the body that \
+                         wears it.";
+    theme::property(ui, "Race", ABOUT, |ui| {
+        theme::choice(ui, "item-race", &mut items.race, &RACES, |a, b| a == b);
+    });
+    // A gender other than 0 is shown as Female.
+    theme::property(ui, "Gender", ABOUT, |ui| {
+        theme::choice(ui, "item-gender", &mut items.gender, &GENDERS, |a, b| (*a == 0) == (*b == 0));
+    });
 }
 
-/// What the display row is made of, under the picture.
-fn look_detail(ui: &mut egui::Ui, look: &Look) {
-    if look.has_models() {
-        egui::CollapsingHeader::new("Models")
-            .id_salt("item-models")
-            .default_open(false)
-            .show(ui, |ui| {
-                for worn in &look.models {
-                    ui.label(
-                        egui::RichText::new(&worn.path)
-                            .small()
-                            .color(theme::INK_DIM),
-                    );
-                    if let Some(skin) = worn.skins.get(4).filter(|skin| !skin.is_empty()) {
-                        ui.label(egui::RichText::new(skin).small().color(theme::INK_FAINT));
-                    }
-                }
-            });
-    }
-    if look.painted() > 0 {
-        egui::CollapsingHeader::new(format!("Textures ({})", look.painted()))
-            .id_salt("item-textures")
-            .default_open(false)
-            .show(ui, |ui| {
-                theme::note(
-                    ui,
-                    "Painted into the wearer's own 256x256 body composite, one per \
-                     component.",
-                );
-                use vale_assets::tables::item::Component;
-                for (component, path) in Component::ALL.iter().zip(look.textures.iter()) {
-                    if path.is_empty() {
-                        continue;
-                    }
-                    ui.label(
-                        egui::RichText::new(format!("{:?}: {path}", component))
-                            .small()
-                            .color(theme::INK_DIM),
-                    );
-                }
-            });
-    }
+/// The display row's geoset columns, as property rows under the icon. A row
+/// is drawn only for a column that is not all zero.
+fn look_rows(ui: &mut egui::Ui, look: &Look) {
     if look.geoset_groups.iter().any(|group| *group != 0) {
-        ui.label(
-            egui::RichText::new(format!(
-                "geosets {} / {} / {}",
-                look.geoset_groups[0], look.geoset_groups[1], look.geoset_groups[2]
-            ))
-            .small()
-            .color(theme::INK_DIM),
-        )
-        .on_hover_text(
+        theme::property(
+            ui,
+            "Geoset Groups",
             "geosetGroup[3]: the geoset variant the wearer switches to, such as a cuff, \
              a boot leg or a robe skirt. 0 is the default, the bare body.",
+            |ui| {
+                theme::value(
+                    ui,
+                    format!(
+                        "{} / {} / {}",
+                        look.geoset_groups[0], look.geoset_groups[1], look.geoset_groups[2]
+                    ),
+                );
+            },
         );
     }
     if look.helmet_hides.iter().any(|id| *id != 0) {
-        ui.label(
-            egui::RichText::new(format!(
-                "hides {} / {}",
-                look.helmet_hides[0], look.helmet_hides[1]
-            ))
-            .small()
-            .color(theme::INK_DIM),
-        )
-        .on_hover_text(
+        theme::property(
+            ui,
+            "Helmet Hides",
             "helmetGeosetVis, per gender: a HelmetGeosetVisData.dbc row that lists, per \
              race, which of the wearer's geosets (hair, facial hair, ears) this helmet \
              hides.",
+            |ui| {
+                theme::value(ui, format!("{} / {}", look.helmet_hides[0], look.helmet_hides[1]));
+            },
         );
+    }
+}
+
+/// The files the display row names, under the preview: its models with their
+/// skins, and its body textures by component. Each list is folded at first.
+fn look_files(ui: &mut egui::Ui, look: &Look) {
+    if look.has_models() {
+        theme::fold_closed(ui, "item-models", "Models", |ui| {
+            for worn in &look.models {
+                ui.label(
+                    egui::RichText::new(&worn.path)
+                        .small()
+                        .color(theme::INK_DIM),
+                );
+                if let Some(skin) = worn.skins.get(4).filter(|skin| !skin.is_empty()) {
+                    ui.label(egui::RichText::new(skin).small().color(theme::INK_FAINT));
+                }
+            }
+        });
+    }
+    if look.painted() > 0 {
+        theme::fold_closed(ui, "item-textures", &format!("Textures ({})", look.painted()), |ui| {
+            use vale_assets::tables::item::Component;
+            for (component, path) in Component::ALL.iter().zip(look.textures.iter()) {
+                if path.is_empty() {
+                    continue;
+                }
+                theme::property(
+                    ui,
+                    &format!("{component:?}"),
+                    "Painted into the wearer's own 256x256 body composite, one per component.",
+                    |ui| {
+                        theme::value(ui, path.as_str());
+                    },
+                );
+            }
+        });
     }
 }
 
@@ -1382,11 +1344,11 @@ fn look_detail(ui: &mut egui::Ui, look: &Look) {
 // The appearance picker
 // ---------------------------------------------------------------------------
 
-/// Every appearance, as pictures.
+/// The appearance picker: every `ItemDisplayInfo.dbc` row as a picture.
 ///
-/// A dialog rather than a popup, for `ui::tables`'s reason: egui dismisses a
-/// popup on the first click it does not own, and a grid that has to be scrolled
-/// and typed into is not a thing a popup holds well.
+/// It is a dialog and not a popup, for `ui::tables`'s reason: egui closes a
+/// popup on the first click outside it, and this grid is scrolled and typed
+/// into.
 fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let Some(known) = work.open_item() else {
         work.items.close_picker();
@@ -1396,33 +1358,33 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let mut chosen: Option<u32> = None;
     let response = egui::Modal::new(egui::Id::new("item-display-pick")).show(ui.ctx(), |ui| {
         ui.set_width(PICKER_WIDTH);
-        ui.label(
-            egui::RichText::new("Appearance for this item")
-                .strong()
-                .size(14.0),
+        super::listing::dialog_title(
+            ui,
+            "Appearance for this item",
+            "Search text is matched against the display row's icon name, its only text. The \
+             filter may also exclude appearances this item's slot allows.",
         );
         ui.horizontal(|ui| {
             let box_ = ui.add(
                 egui::TextEdit::singleline(&mut work.items.display_query)
-                    .hint_text("icon name or display id")
+                    .hint_text("Icon name or display id")
                     .desired_width(PICKER_WIDTH - 260.0),
             );
             if work.items.display_focus {
                 box_.request_focus();
                 work.items.display_focus = false;
             }
-            // This narrowing is by the item rather than by what was typed.
-            // 29,604 rows is three hundred pages; the slot this
-            // item is worn in cuts it to the appearances that could go
-            // there, which is what somebody choosing one is after. See
+            // The filter narrows by the item and not by what was typed.
+            // 29,604 rows are three hundred pages; the slot this item is
+            // worn in cuts them to the appearances that could go there. See
             // `crate::subjects::items::fits_slot`.
             let was = work.items.filter;
             let mut filter = was;
             egui::ComboBox::from_id_salt("item-display-filter")
-                .selected_text(filter.name())
+                .selected_text(capitalised(filter.name()))
                 .show_ui(ui, |ui| {
                     for option in Filter::ALL {
-                        ui.selectable_value(&mut filter, option, option.name());
+                        ui.selectable_value(&mut filter, option, capitalised(option.name()));
                     }
                 });
             if filter != was {
@@ -1434,12 +1396,7 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
         let worn = known.inventory_type;
         let total = work.items.display_matches(work.assets, worn).len();
         if total == 0 {
-            theme::note(
-                ui,
-                "No matches. Search text is matched against the display row's icon \
-                 name, its only text. The filter above may also exclude appearances \
-                 this item's slot allows.",
-            );
+            theme::note(ui, "No matches.");
         }
         let range = pager(ui, &mut work.items.display_page, total, DISPLAY_PAGE);
         let page: Vec<u32> = work.items.display_matches(work.assets, worn)[range].to_vec();
@@ -1460,9 +1417,8 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             });
 
         ui.add_space(6.0);
-        // The one under the pointer, large. A cell is 60 points and is
-        // enough to tell a sword from a mace; it is not enough to tell this
-        // sword from the one beside it, which is what the pane is for.
+        // The appearance under the pointer, large. A 60-point cell tells a
+        // sword from a mace, and the pane tells one sword from another.
         if let Some(id) = work.items.display_preview {
             if preview(ui, work, &known, id) {
                 chosen = Some(id);
@@ -1475,7 +1431,7 @@ fn picker(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
             }
             ui.label(
                 egui::RichText::new(format!(
-                    "{total} of {} appearance(s) \u{b7} Esc closes",
+                    "{total} of {} appearances \u{b7} Esc closes",
                     work.items.display_facts(work.assets).len()
                 ))
                 .small()
@@ -1563,9 +1519,9 @@ fn cell(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) -> 
 
 /// The picker's own preview: the id under the pointer, large, with its name.
 ///
-/// Answers whether Use this one was pressed, so that choosing from the pane
-/// and clicking the cell itself are the same gesture reaching the same place —
-/// see [`picker`], which is where the column is written.
+/// Answers whether Use This Display was pressed. Choosing from the pane and
+/// clicking the cell both answer the id to [`picker`], which writes the
+/// column.
 fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) -> bool {
     let look = work.items.look(work.assets, id, known.inventory_type);
     let mut used = false;
@@ -1605,8 +1561,8 @@ fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) 
                             .size(13.0),
                     );
                     let what = match look.has_models() {
-                        true => format!("{} model(s) on the wearer", look.models.len()),
-                        false => format!("{} body texture(s)", look.painted()),
+                        true => format!("{} on the wearer", counted(look.models.len(), "model")),
+                        false => counted(look.painted(), "body texture"),
                     };
                     ui.label(egui::RichText::new(what).small().color(theme::INK_DIM));
                     if look.has_models() {
@@ -1619,7 +1575,7 @@ fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) 
                 }
                 None => {
                     ui.label(
-                        egui::RichText::new("not in ItemDisplayInfo.dbc")
+                        egui::RichText::new("Not in ItemDisplayInfo.dbc")
                             .small()
                             .color(theme::BAD),
                     );
@@ -1628,7 +1584,7 @@ fn preview(ui: &mut egui::Ui, work: &mut Workspace<'_>, known: &Known, id: u32) 
             // The same answer a click on the cell gives. The column is
             // written in one place, by [`picker`]; this only says which id.
             used = ui
-                .button("Use this display")
+                .button("Use This Display")
                 .on_hover_text("Writes this display id into the item's display_id and closes the picker.")
                 .clicked();
         });

@@ -1074,6 +1074,60 @@ fn draw(
             );
             viewport.floating.extend(bar);
         }
+        Tool::Grade => {
+            let bar = tools::ground::grade::toolbar(&ctx, world_rect, corner, &mut editing.grading);
+            viewport.floating.extend(bar);
+        }
+        Tool::Shading => {
+            let bar = tools::ground::shading::toolbar(&ctx, world_rect, corner, &mut editing.shading);
+            viewport.floating.extend(bar);
+        }
+        Tool::Water => {
+            let bar = tools::ground::water::toolbar(&ctx, world_rect, corner, &mut editing.water);
+            viewport.floating.extend(bar);
+        }
+        Tool::Doodads | Tool::Wmos => {
+            let kind = match *tool {
+                Tool::Doodads => crate::tools::placements::place::Kind::Doodad,
+                _ => crate::tools::placements::place::Kind::Wmo,
+            };
+            let bar = tools::placements::place::toolbar(
+                &ctx,
+                world_rect,
+                corner,
+                kind,
+                &mut editing.placing,
+                &mut editing.gizmo.handles,
+            );
+            viewport.floating.extend(bar);
+        }
+        Tool::Lights => {
+            let bar = tools::places::lights::toolbar(&ctx, world_rect, corner, &mut editing.lights);
+            viewport.floating.extend(bar);
+        }
+        Tool::Triggers => {
+            let bar = tools::places::triggers::toolbar(&ctx, world_rect, corner, &mut editing.triggers);
+            viewport.floating.extend(bar);
+        }
+        Tool::Graveyards => {
+            let bar = tools::places::graveyards::toolbar(&ctx, world_rect, corner, &mut editing.graveyards);
+            viewport.floating.extend(bar);
+        }
+        // A tool with no mode and no switch has the Keys button alone, so a
+        // tool's controls are found in the same place under every tool.
+        Tool::Holes | Tool::Areas | Tool::Chunks | Tool::Measure => {
+            let (id, keys): (&str, &[(&str, &str)]) = match *tool {
+                Tool::Holes => ("holes-toolbar", &tools::ground::holes::KEYS),
+                Tool::Areas => ("areas-toolbar", &tools::ground::areas::KEYS),
+                Tool::Chunks => ("chunks-toolbar", &tools::ground::chunks::KEYS),
+                _ => ("measure-toolbar", &tools::measure::KEYS),
+            };
+            let bar = widgets::theme::toolbar_keys(&ctx, id, world_rect, corner, keys);
+            viewport.floating.extend(bar);
+        }
+        // Select has no settings and takes no click that changes anything.
+        // Sweep acts on every tile from the inspector, not on a click. A
+        // workspace covers the viewport.
         _ => {}
     }
     // The Foliage window, for the three tools whose panels open it. It is

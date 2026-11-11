@@ -160,7 +160,7 @@ pub(crate) fn sound_dialog(
 
 /// The dialog's form: the folder, the mono mix and the sample rate.
 fn form(ui: &mut egui::Ui, import: &mut SoundImport) {
-    ui.label(egui::RichText::new("Folder").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Folder").color(theme::INK_NAME));
     // The field holds only the part of the folder after the purpose's root,
     // as a ground texture's folder field holds the part after `Tileset\`. For
     // Other, and for a folder outside the root copied from a field's row,
@@ -191,7 +191,7 @@ fn form(ui: &mut egui::Ui, import: &mut SoundImport) {
     ui.end_row();
     let converted = (0..import.files.len()).any(|f| !import.kept(f));
     if converted && import.files.iter().any(|f| f.pcm.channels > 1) {
-        ui.label(egui::RichText::new("Channels").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Channels").color(theme::INK_NAME));
         ui.checkbox(&mut import.mono, "Mix to mono").on_hover_text(
             "Mix a stereo file's two channels into one. The game plays a creature's, a spell's or an \
              object's sound from one point in the world, and 6,717 of the 6,845 shipped WAVs are mono.",
@@ -199,7 +199,7 @@ fn form(ui: &mut egui::Ui, import: &mut SoundImport) {
         ui.end_row();
     }
     if converted {
-        ui.label(egui::RichText::new("Sample rate").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Sample rate").color(theme::INK_NAME));
         ui.horizontal(|ui| {
             ui.radio_value(&mut import.rate, sound::RATES[0], "22,050 Hz")
                 .on_hover_text("The rate of 6,777 of the 6,845 shipped WAVs.");
@@ -280,17 +280,17 @@ fn row(ui: &mut egui::Ui, import: &mut SoundImport) {
         .spacing([10.0, 4.0])
         .show(ui, |ui| {
             let entry = &mut import.entry;
-            ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Name").color(theme::INK_NAME));
             ui.add(egui::TextEdit::singleline(&mut entry.name).desired_width(220.0))
                 .on_hover_text("The row's Name. The interface's Lua plays a sound by this name, with PlaySound.");
             ui.end_row();
-            ui.label(egui::RichText::new("SoundType").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("SoundType").color(theme::INK_NAME));
             ui.add(egui::DragValue::new(&mut entry.kind).range(0..=255));
             ui.end_row();
-            ui.label(egui::RichText::new("Volume").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Volume").color(theme::INK_NAME));
             ui.add(egui::DragValue::new(&mut entry.volume).range(0.0..=1.0).speed(0.01).max_decimals(2));
             ui.end_row();
-            ui.label(egui::RichText::new("Distances").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Distances").color(theme::INK_NAME));
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut entry.min_distance).range(0.0..=1000.0).speed(0.5).suffix(" yd"))
                     .on_hover_text("Within this distance the sound plays at full volume.");
@@ -299,7 +299,7 @@ fn row(ui: &mut egui::Ui, import: &mut SoundImport) {
                     .on_hover_text("Beyond this range the sound is not started at all.");
             });
             ui.end_row();
-            ui.label(egui::RichText::new("Flags").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Flags").color(theme::INK_NAME));
             ui.add(egui::DragValue::new(&mut entry.flags).hexadecimal(4, false, true));
             ui.end_row();
         });

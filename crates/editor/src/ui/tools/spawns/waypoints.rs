@@ -738,9 +738,7 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             subject.waypoints.selected = Some(index + 1);
         }
     });
-    // `theme::full_button` with its text in the colour of a removal.
-    let remove = egui::Button::new(egui::RichText::new("Remove Point").color(theme::BAD))
-        .min_size(egui::vec2(ui.available_width(), 24.0));
+    let remove = theme::full_button_text(ui, egui::RichText::new("Remove Point").color(theme::BAD));
     if ui
         .add(remove)
         .on_hover_text("Removes this point. Later points are renumbered.")

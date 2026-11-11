@@ -33,7 +33,7 @@ use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
 /// The road tool's toolbar over the viewport:
 ///
 /// ```text
-/// Line [Straight | Curved]  Height [Ground | Points]  Keys
+/// Line [Straight | Curved]  Height [Ground | Points]  Objects Follow  Keys
 /// Smoothing
 /// ```
 ///
@@ -87,6 +87,7 @@ pub(crate) fn toolbar(
                     }
                 });
             });
+            objects_follow(ui, &mut road.objects_follow);
             bar_keys(ui, &KEYS);
         });
         if road.follow_ground {
@@ -260,7 +261,7 @@ fn point_heights(ui: &mut egui::Ui, road: &mut RoadTool) {
                         |ui| {
                             ui.set_min_size(egui::vec2(POINT_NAME, height));
                             ui.add(
-                                egui::Label::new(egui::RichText::new(format!("Point {}", i + 1)).color(theme::INK_DIM))
+                                egui::Label::new(egui::RichText::new(format!("Point {}", i + 1)).color(theme::INK_NAME))
                                     .selectable(false)
                                     .truncate(),
                             );
@@ -336,7 +337,6 @@ fn ground(ui: &mut egui::Ui, road: &mut RoadTool) {
             field(ui, egui::DragValue::new(&mut road.offset).speed(0.05).range(-10.0..=10.0).fixed_decimals(2).suffix(" yd"));
         },
     );
-    objects_follow(ui, &mut road.objects_follow);
 }
 
 /// The Surface section: the texture painted down the middle of the road.

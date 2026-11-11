@@ -144,7 +144,7 @@ pub(crate) fn model_dialog(ctx: &egui::Context, assets: &mut Assets, session: &E
 
 /// Where it goes, under what name, how large and whether it is solid.
 fn form(ui: &mut egui::Ui, import: &mut ModelImport) {
-    ui.label(egui::RichText::new("Folder").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Folder").color(theme::INK_NAME));
     // A creature's and a doodad's root is fixed, so the model is where the
     // display tables and the placement tools look for it.
     let root = match import.purpose {
@@ -174,12 +174,12 @@ fn form(ui: &mut egui::Ui, import: &mut ModelImport) {
         }
     }
     ui.end_row();
-    ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Name").color(theme::INK_NAME));
     if ui.add(egui::TextEdit::singleline(&mut import.name).desired_width(280.0)).changed() {
         import.name_textures();
     }
     ui.end_row();
-    ui.label(egui::RichText::new("Scale").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Scale").color(theme::INK_NAME));
     ui.horizontal(|ui| {
         ui.add(egui::DragValue::new(&mut import.scale).speed(0.01).range(0.001..=1000.0).max_decimals(3));
         ui.label(
@@ -198,7 +198,7 @@ fn form(ui: &mut egui::Ui, import: &mut ModelImport) {
         }
     });
     ui.end_row();
-    ui.label(egui::RichText::new("Collision").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Collision").color(theme::INK_NAME));
     ui.horizontal(|ui| {
         ui.radio_value(&mut import.collision, Collision::None, "None")
             .on_hover_text("Walked through, as grass, birds and every creature are.");

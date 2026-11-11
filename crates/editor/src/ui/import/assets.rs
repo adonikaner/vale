@@ -1276,13 +1276,13 @@ pub(super) fn content_of(ui: &egui::Ui, work: &mut Work<'_>, whose: Whose, kind:
 /// model; Format, Length and Played by for a sound.
 pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Content) {
     if let Some(head) = &content.texture {
-        ui.label(egui::RichText::new("Dimensions").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Dimensions").color(theme::INK_NAME));
         ui.label(format!("{}x{}", head.width, head.height));
         ui.end_row();
-        ui.label(egui::RichText::new("Compression").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Compression").color(theme::INK_NAME));
         ui.label(&head.words);
         ui.end_row();
-        ui.label(egui::RichText::new("Mipmaps").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Mipmaps").color(theme::INK_NAME));
         ui.label(match head.mips {
             true => "yes",
             false => "no",
@@ -1290,16 +1290,16 @@ pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Con
         ui.end_row();
     }
     if let Some(facts) = &content.model {
-        ui.label(egui::RichText::new("Geometry").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Geometry").color(theme::INK_NAME));
         ui.label(format!("{} vertices, {} triangles", facts.vertices, facts.triangles));
         ui.end_row();
-        ui.label(egui::RichText::new("Bones").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Bones").color(theme::INK_NAME));
         ui.label(match facts.bones {
             0 => "none animated".to_string(),
             n => n.to_string(),
         });
         ui.end_row();
-        ui.label(egui::RichText::new("Textures").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Textures").color(theme::INK_NAME));
         let named: Vec<String> = facts
             .textures
             .iter()
@@ -1313,7 +1313,7 @@ pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Con
         ui.end_row();
     }
     if let Some(heard) = &content.sound {
-        ui.label(egui::RichText::new("Format").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Format").color(theme::INK_NAME));
         match heard.format {
             Some(format) if format.is_shipped_wav() || matches!(format, vale_edit::sound::Format::Mp3 { .. }) => {
                 ui.label(format.words())
@@ -1324,7 +1324,7 @@ pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Con
             None => ui.label(egui::RichText::new("not a WAV or an MP3").color(theme::BAD)),
         };
         ui.end_row();
-        ui.label(egui::RichText::new("Length").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Length").color(theme::INK_NAME));
         match &heard.seconds {
             Ok(seconds) => ui.label(sounds::seconds_words(*seconds)),
             Err(why) => ui.label(egui::RichText::new(format!("does not decode: {why}")).color(theme::BAD)),
@@ -1332,7 +1332,7 @@ pub(super) fn content_rows(ui: &mut egui::Ui, work: &mut Work<'_>, content: &Con
         ui.end_row();
     }
     if let Some(rows) = &content.played_by {
-        ui.label(egui::RichText::new("Played By").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Played By").color(theme::INK_NAME));
         let named: Vec<String> = rows
             .iter()
             .take(6)
@@ -1458,19 +1458,19 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
         .num_columns(2)
         .spacing([12.0, 4.0])
         .show(ui, |ui| {
-            ui.label(egui::RichText::new("Type").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Type").color(theme::INK_NAME));
             let mut word = sort.word().to_string();
             word[..1].make_ascii_uppercase();
             ui.label(&word).on_hover_text(used_as(sort));
             ui.end_row();
-            ui.label(egui::RichText::new("Size").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Size").color(theme::INK_NAME));
             ui.label(match &gloss_own {
                 Some(pair) => format!("{}, and {} for its _s file", size_words(own.bytes), size_words(pair.bytes)),
                 None => size_words(own.bytes),
             });
             ui.end_row();
             if let Some(entry) = &imported {
-                ui.label(egui::RichText::new("Imported From").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Imported From").color(theme::INK_NAME));
                 let there = entry.source.is_file();
                 ui.label(match there {
                     true => egui::RichText::new(entry.source.display().to_string()).color(theme::INK),
@@ -1479,12 +1479,12 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 ui.end_row();
             }
             if sort.generated() && !from.is_empty() {
-                ui.label(egui::RichText::new("Made From").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Made From").color(theme::INK_NAME));
                 ui.label(&from);
                 ui.end_row();
             }
             if sort.generated() {
-                ui.label(egui::RichText::new("Standing").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Standing").color(theme::INK_NAME));
                 match &standing {
                     None => ui.label(egui::RichText::new("up to date").color(theme::GOOD)),
                     Some(standing) => ui.label(egui::RichText::new(standing).color(theme::WARN)),
@@ -1493,7 +1493,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
             }
             content_rows(ui, work, &content);
             if let Some(gloss) = &gloss {
-                ui.label(egui::RichText::new("Gloss File").color(theme::INK_DIM));
+                ui.label(egui::RichText::new("Gloss File").color(theme::INK_NAME));
                 match (&gloss_own, gloss_shipped) {
                     (Some(_), _) => ui.label(basename(gloss)),
                     (None, true) => ui.label(format!("{} (the archives')", basename(gloss))),
@@ -1502,7 +1502,7 @@ fn details(ui: &mut egui::Ui, work: &mut Work<'_>) {
                 ui.end_row();
             }
             let shipped = in_archives(ui.ctx(), work.game, &own.vpath);
-            ui.label(egui::RichText::new("Archives").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Archives").color(theme::INK_NAME));
             ui.label(match shipped {
                 true => egui::RichText::new("replaces the archives' file at this path").color(theme::WARN),
                 false => egui::RichText::new("a new path").color(theme::INK),
@@ -1996,7 +1996,7 @@ pub(crate) fn import_dialog(
 
 /// The dialog's rows: where, under what name, and the choices the purpose has.
 fn form(ui: &mut egui::Ui, import: &mut Import) {
-    ui.label(egui::RichText::new("Folder").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Folder").color(theme::INK_NAME));
     match import.purpose {
         // Only the folder under `Tileset\` is typed, so a ground texture
         // cannot be put where the texture tool does not look.
@@ -2035,10 +2035,10 @@ fn form(ui: &mut egui::Ui, import: &mut Import) {
         }
     }
     ui.end_row();
-    ui.label(egui::RichText::new("Name").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Name").color(theme::INK_NAME));
     ui.add(egui::TextEdit::singleline(&mut import.name).desired_width(220.0));
     ui.end_row();
-    ui.label(egui::RichText::new("Compression").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Compression").color(theme::INK_NAME));
     if import.ground() {
         ui.label("DXT1, and DXT3 for its _s file").on_hover_text(
             "As every shipped ground texture is: the plain file has no alpha, and the _s file \
@@ -2061,7 +2061,7 @@ fn form(ui: &mut egui::Ui, import: &mut Import) {
             });
     }
     ui.end_row();
-    ui.label(egui::RichText::new("Mipmaps").color(theme::INK_DIM));
+    ui.label(egui::RichText::new("Mipmaps").color(theme::INK_NAME));
     ui.checkbox(&mut import.mips, "Write the mip chain").on_hover_text(
         "Every smaller level down to 1x1. Without them a texture shimmers when drawn small. \
          Most shipped textures have them.",
@@ -2069,7 +2069,7 @@ fn form(ui: &mut egui::Ui, import: &mut Import) {
     ui.end_row();
     let odd = !import.width.is_power_of_two() || !import.height.is_power_of_two();
     if odd {
-        ui.label(egui::RichText::new("Resize").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Resize").color(theme::INK_NAME));
         ui.checkbox(&mut import.resize, "Up to powers of two")
             .on_hover_text("Each side up to the next power of two, by bilinear filtering.");
         ui.end_row();
@@ -2077,7 +2077,7 @@ fn form(ui: &mut egui::Ui, import: &mut Import) {
     // The purpose's size, where it has one and the picture is larger.
     if let Some(side) = import.purpose.largest() {
         if import.width.max(import.height) > side {
-            ui.label(egui::RichText::new("Size").color(theme::INK_DIM));
+            ui.label(egui::RichText::new("Size").color(theme::INK_NAME));
             ui.checkbox(&mut import.shrink, format!("Down to {side}x{side}"))
                 .on_hover_text(match import.purpose {
                     Purpose::Icon => "Every icon the game ships is 64x64, and the interface draws them at that size.",
@@ -2088,7 +2088,7 @@ fn form(ui: &mut egui::Ui, import: &mut Import) {
         }
     }
     if import.ground() {
-        ui.label(egui::RichText::new("Gloss").color(theme::INK_DIM));
+        ui.label(egui::RichText::new("Gloss").color(theme::INK_NAME));
         ui.horizontal(|ui| {
             ui.radio_value(&mut import.gloss, Gloss::Matte, "Matte")
                 .on_hover_text("No highlight from the sun on this ground.");

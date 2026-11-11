@@ -1,12 +1,10 @@
 //! The WMO tool's panel. The state is [`crate::tools::placements::wmos`].
 //!
-//! In Place mode the whole panel is the picker's,
-//! [`super::place::placing`]. In Select mode:
+//! The mode, the handles and the Keys button are on the toolbar over the
+//! viewport, [`super::place::toolbar`]. In Place mode the whole panel is the
+//! picker's, [`super::place::placing`]. In Select mode:
 //!
 //! ```text
-//! [ Select | Place ]         the mode switch
-//! Keys                       Select mode's controls, on hover
-//! Handles                    Move, Turn or Off
 //! Selection                  the group and its buttons, the Replace Model
 //!                            list, the locked WMOs, and the primary's model,
 //!                            id and tile
@@ -18,17 +16,16 @@
 use bevy_egui::egui;
 
 use crate::session::EditSession;
-use crate::tools::placements::gizmo::Gizmo;
 use crate::tools::placements::place::{Kind, Placing};
 use crate::tools::placements::wmos;
 use crate::ui::tools::placements::group::{group, locked_placements, Group};
 use crate::tools::placements::swap::Swap;
-use crate::ui::tools::placements::place::{handles, keys, number_row, placing, replacing};
+use crate::ui::tools::placements::place::{number_row, placing, replacing};
 use crate::ui::widgets::theme::{self, property};
 
-/// Select mode's mouse and keyboard controls, for the Keys button. The last
-/// entry is the control a doodad has and a WMO lacks.
-const KEYS: [(&str, &str); 18] = [
+/// Select mode's mouse and keyboard controls, for the toolbar's Keys button.
+/// The last entry is the control a doodad has and a WMO lacks.
+pub(super) const KEYS: [(&str, &str); 18] = [
     ("Left button", "Select a WMO"),
     ("Shift + left button", "Add or remove one"),
     ("Drag on empty ground", "Select a rectangle"),
@@ -61,7 +58,6 @@ pub(in crate::ui::tools) fn wmo(
     session: &mut EditSession,
     selection: &mut wmos::Selection,
     held: &mut wmos::Held,
-    gizmo: &mut Gizmo,
     placer: &mut Placing,
     swap: &mut Swap,
     portraits: &mut crate::preview::portraits::Portraits,
@@ -71,8 +67,6 @@ pub(in crate::ui::tools) fn wmo(
     if placing(ui, placer, Kind::Wmo, portraits, favourites) {
         return;
     }
-    keys(ui, &KEYS);
-    handles(ui, &mut gizmo.handles);
 
     theme::heading_about(
         ui,
@@ -244,7 +238,6 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         session,
         &mut editing.wmos,
         &mut editing.wmo_held,
-        &mut editing.gizmo,
         &mut editing.placing,
         &mut editing.swap,
         &mut editing.portraits,
