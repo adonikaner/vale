@@ -198,8 +198,17 @@ impl Icon {
     }
 }
 
-/// The size of one cell of the grid, in points.
-const CELL: egui::Vec2 = egui::vec2(66.0, 58.0);
+/// The narrowest and the height of one cell of the grid, in points. A row
+/// holds as many cells of at least this width as fit, and they share the
+/// row's width equally, so the grid's right edge is the panel's.
+const CELL: egui::Vec2 = egui::vec2(62.0, 58.0);
+
+/// The space between two cells, in points.
+const CELL_GAP: f32 = 4.0;
+
+/// The fill of a cell that is neither chosen nor hovered: one step off the
+/// panel, so the grid reads as a set of tiles to press.
+const CELL_FILL: egui::Color32 = egui::Color32::from_rgb(0x24, 0x29, 0x32);
 
 /// The presets as a grid of icons over names, with the chosen one marked,
 /// and marked as modified when `modified`. A click chooses a preset; the right
@@ -212,10 +221,15 @@ pub(super) fn grid(
     modified: bool,
 ) -> Option<Ask> {
     let mut asked = None;
+    let room = ui.available_width();
+    let across = (((room + CELL_GAP) / (CELL.x + CELL_GAP)).floor() as usize).max(1);
+    let cell = egui::vec2(((room - CELL_GAP * (across - 1) as f32) / across as f32).floor(), CELL.y);
+    // The cell width is rounded down, so `across` cells and their gaps never
+    // exceed the row and the layout wraps after exactly that many.
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.spacing_mut().item_spacing = egui::vec2(CELL_GAP, CELL_GAP);
         for (at, (name, icon)) in presets.iter().enumerate() {
-            let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(cell, egui::Sense::click());
             let on = chosen == Some(at);
             let painter = ui.painter();
             match (on, response.hovered()) {
@@ -224,9 +238,11 @@ pub(super) fn grid(
                     painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.0, theme::ACCENT), egui::StrokeKind::Inside);
                 }
                 (false, true) => {
-                    painter.rect_filled(rect, 3.0, theme::RAISED);
+                    painter.rect_filled(rect, 3.0, theme::RAISED_HOT);
                 }
-                (false, false) => {}
+                (false, false) => {
+                    painter.rect_filled(rect, 3.0, CELL_FILL);
+                }
             }
             let picture = egui::Rect::from_min_size(rect.min + egui::vec2(0.0, 4.0), egui::vec2(rect.width(), 24.0));
             icon.paint(painter, picture, if on { theme::INK } else { theme::INK_DIM });
@@ -296,9 +312,15 @@ pub(super) fn section(
     chosen: Option<usize>,
     modified: bool,
 ) -> Option<Ask> {
-    theme::heading(ui, "Brushes");
+    theme::heading_about(
+        ui,
+        "Brushes",
+        "Click a brush to use it. Right-click a brush to copy, rename or delete it.\n\n\
+         A change to the settings below is kept for this session. Save writes it into the \
+         chosen brush, Discard drops it, and choosing another brush drops it.",
+    );
     let mut asked = grid(ui, id, presets, chosen, modified);
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     ui.horizontal(|ui| {
         if ui
             .add_enabled(modified, egui::Button::new("Save"))
@@ -324,25 +346,14 @@ pub(super) fn section(
             asked = Some(Ask::New);
         }
     });
-    theme::note(
-        ui,
-        "Click a brush to use it. Changes to the settings are kept for this session until \
-         saved into the brush or discarded; choosing another brush drops them. Right-click a \
-         brush to copy, rename or delete it.",
-    );
     asked
 }
 
-/// The Brush Settings section under the grid, as a heading that folds. Open
-/// at first; egui keeps whether it is open under `id`, so it stays as it was
-/// left. The heading is drawn as [`theme::heading`]'s text is, so it reads as
-/// one of the panel's sections.
+/// The Brush Settings section under the grid, as a heading that folds
+/// ([`theme::fold`]). Open at first; egui keeps whether it is open under
+/// `id`, so it stays as it was left.
 pub(super) fn settings(ui: &mut egui::Ui, id: &str, body: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(4.0);
-    egui::CollapsingHeader::new(egui::RichText::new("BRUSH SETTINGS").size(theme::SMALL).color(theme::INK_FAINT))
-        .id_salt(id)
-        .default_open(true)
-        .show(ui, body);
+    theme::fold(ui, id, "Brush Settings", body);
 }
 
 /// The toolbar's Brush drop-down: the presets by name, the chosen one with an

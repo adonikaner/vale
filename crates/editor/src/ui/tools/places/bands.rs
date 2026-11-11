@@ -32,7 +32,7 @@
 //! it would rewrite rows nobody edited.
 
 use crate::ui::tables::Workspace;
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 use crate::tables;
 use vale_assets::tables::light::{
     float_band_row, int_band_row, BAND_KEYS, BAND_TIME_FIELD, BAND_VALUE_FIELD, DAY,
@@ -211,10 +211,15 @@ fn write(work: &mut Workspace<'_>, table: &'static str, band: &Band, label: &str
     );
 }
 
-/// Draw every band a `LightParams` row owns, each as a day of colour.
+/// Draw every band a `LightParams` row owns, each as a strip across the day,
+/// under two headings that fold: the colours, open at first, and the float
+/// values, folded at first.
 ///
 /// This is the only route into the two band tables: they are reached by
 /// arithmetic on this row's id, and nothing points at them.
+///
+/// The headings are `egui::CollapsingHeader`s in the table form's size and
+/// weight, because they are drawn under that form's own sections.
 pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour: u32) {
     for (table, count, names, notes) in [
         (
@@ -231,7 +236,7 @@ pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32
         ),
     ] {
         if !work.session.open_table(work.assets, table) {
-            theme::note(ui, format!("opening {table}.dbc…"));
+            theme::note(ui, format!("Opening {table}.dbc\u{2026}"));
             continue;
         }
         let colours = table == "LightIntBand";
@@ -267,7 +272,8 @@ pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32
     }
 }
 
-/// One band: its name, its day, and its keys when it is opened.
+/// One band: a triangle that opens it, then a property row of its name and
+/// its day, and under them its keys while it is open.
 #[allow(clippy::too_many_arguments)]
 fn one(
     ui: &mut egui::Ui,
@@ -291,20 +297,15 @@ fn one(
         // section headers beside this one draw correctly because
         // `CollapsingHeader` paints its marker rather than using a glyph.
         open.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
-        let label = ui.add_sized(
-            egui::vec2(120.0, 18.0),
-            egui::Label::new(egui::RichText::new(name).size(12.5).color(theme::INK_DIM)).truncate(),
-        );
-        let mut tip = format!("band {index}");
+        let mut tip = format!("Band {index}");
         if !note.is_empty() {
             tip.push_str("\n\n");
             tip.push_str(note);
         }
-        label.on_hover_text(tip);
-        match colours {
+        property(ui, name, &tip, |ui| match colours {
             true => strip(ui, &band, hour),
             false => numbers(ui, &band, hour),
-        }
+        });
     });
 
     // Indented by hand rather than through `show_body_indented`, which needs
@@ -321,10 +322,10 @@ fn one(
 /// Draw the band across a whole day, with its keys marked and the world's
 /// current hour shown on it.
 ///
-/// The strip shows the colour at every time, in order, so a sunrise looks like
-/// a sunrise. The keys are the ticks under it. The hour is the line across it
-/// and comes from the world, so the colour under that line is the one on
-/// screen behind the panel.
+/// The strip shows the colour at every time of the day, in order. The keys
+/// are the ticks under it. The hour is the line across it and comes from the
+/// world, so the colour under that line is the one on screen behind the
+/// panel.
 fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
     let width = ui.available_width().max(60.0);
     let (rect, response) =
@@ -335,7 +336,7 @@ fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "no keys",
+            "No keys",
             egui::FontId::proportional(theme::SMALL),
             theme::INK_FAINT,
         );
@@ -351,8 +352,8 @@ fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
         painter.rect_filled(
             egui::Rect::from_min_size(
                 egui::pos2(x, rect.top()),
-                // A hair over a step, so rounding does not leave gaps between
-                // the samples.
+                // One point wider than a step, so rounding does not leave gaps
+                // between the samples.
                 egui::vec2(step + 1.0, rect.height()),
             ),
             0.0,
@@ -471,7 +472,7 @@ fn keys(
                         (packed & 0xff) as u8,
                     ];
                     if ui.color_edit_button_srgb(&mut rgb).changed() {
-                        // The top byte rides through untouched — see
+                        // The top byte is written back as it was read; see
                         // `schema::Kind::Colour`.
                         edited.values[n] = (packed & 0xff00_0000)
                             | (u32::from(rgb[0]) << 16)
@@ -494,7 +495,7 @@ fn keys(
                 }
             }
             if ui
-                .small_button("×")
+                .small_button("\u{d7}")
                 .on_hover_text("Remove this key from the band")
                 .clicked()
             {
@@ -504,13 +505,14 @@ fn keys(
     }
 
     ui.horizontal(|ui| {
+        // The limit is the disabled button's hover text. As the text of
+        // `on_hover_text` it was never shown, because egui shows that only
+        // for an enabled widget.
         let full = edited.times.len() >= BAND_KEYS;
         if ui
-            .add_enabled(!full, egui::Button::new("+ key").small())
-            .on_hover_text(match full {
-                true => format!("a band holds at most {BAND_KEYS} keys"),
-                false => "Add a key in the middle of the longest gap between keys".to_string(),
-            })
+            .add_enabled(!full, egui::Button::new("Add Key").small())
+            .on_hover_text("Add a key in the middle of the longest gap between keys")
+            .on_disabled_hover_text(format!("A band holds at most {BAND_KEYS} keys"))
             .clicked()
         {
             add(&mut edited);
@@ -621,7 +623,7 @@ mod tests {
         let flat = band(&[600], &[0x123456]);
         assert_eq!(flat.at(0), Some(0x123456));
         assert_eq!(flat.at(2879), Some(0x123456));
-        // A band with no keys says nothing rather than saying black.
+        // A band with no keys has no value, which is not the same as black.
         assert_eq!(band(&[], &[]).at(0), None);
     }
 

@@ -1,8 +1,9 @@
 //! The road tool's controls, in two places.
 //!
 //! ```text
-//! viewport toolbar   the line: straight or curved, and where its height
-//!                    comes from; the keys
+//! viewport toolbar   the line: straight or curved, where its height comes
+//!                    from, and the Keys button; under them Smoothing while
+//!                    the height comes from the ground
 //! inspector          Road (the points, the measurements and Apply Road), Point Heights
 //!                    while the points set the height, Ground, Surface, Verge,
 //!                    Edges and Tilesets
@@ -26,18 +27,19 @@ use crate::tools::ground::textures::Textures;
 use crate::ui::tools::ground::terrain::objects_follow;
 use crate::ui::tools::ground::textures::{swatch, tileset_browser};
 use crate::ui::widgets::folders::split;
-use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
+use crate::ui::widgets::theme::{self, bar_field, bar_group, bar_keys, bar_segment, bar_setting, field, property};
 use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
 
 /// The road tool's toolbar over the viewport:
 ///
 /// ```text
-/// Line  Straight  Curved | Height  Ground  Points  Smoothing
-/// the keys
+/// Line [Straight | Curved]  Height [Ground | Points]  Keys
+/// Smoothing
 /// ```
 ///
-/// Smoothing is shown only while the height comes from the ground. See
-/// [`theme::toolbar`].
+/// The second row is shown only while the height comes from the ground,
+/// which is when Smoothing is read. Each pair is a [`theme::bar_group`], of
+/// which one is chosen. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     viewport: egui::Rect,
@@ -46,45 +48,54 @@ pub(crate) fn toolbar(
 ) -> Option<egui::Rect> {
     theme::toolbar(ctx, "road-toolbar", viewport, corner, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().item_spacing.x = 6.0;
             bar_setting(ui, "Line", |ui| {
-                if bar_toggle(ui, !road.curved, "Straight")
-                    .on_hover_text("Straight segments between the points.")
-                    .clicked()
-                {
-                    road.curved = false;
-                }
-                if bar_toggle(ui, road.curved, "Curved")
-                    .on_hover_text("A smooth curve through the points.")
-                    .clicked()
-                {
-                    road.curved = true;
-                }
+                bar_group(ui, |ui| {
+                    if bar_segment(ui, !road.curved, "Straight")
+                        .on_hover_text("Straight segments between the points.")
+                        .clicked()
+                    {
+                        road.curved = false;
+                    }
+                    if bar_segment(ui, road.curved, "Curved")
+                        .on_hover_text("A smooth curve through the points.")
+                        .clicked()
+                    {
+                        road.curved = true;
+                    }
+                });
             });
-            bar_gap(ui);
             bar_setting(ui, "Height", |ui| {
-                if bar_toggle(ui, road.follow_ground, "Ground")
-                    .on_hover_text(
-                        "The road's height follows the ground under its centre line, averaged \
-                         over the smoothing distance.",
-                    )
-                    .clicked()
-                {
-                    road.follow_ground = true;
-                }
-                if bar_toggle(ui, !road.follow_ground, "Points")
-                    .on_hover_text(
-                        "The road's height runs from each point's height to the next. The heights \
-                         are listed in the inspector.",
-                    )
-                    .clicked()
-                {
-                    road.follow_ground = false;
-                }
+                bar_group(ui, |ui| {
+                    if bar_segment(ui, road.follow_ground, "Ground")
+                        .on_hover_text(
+                            "The road's height follows the ground under its centre line, averaged \
+                             over the smoothing distance.",
+                        )
+                        .clicked()
+                    {
+                        road.follow_ground = true;
+                    }
+                    if bar_segment(ui, !road.follow_ground, "Points")
+                        .on_hover_text(
+                            "The road's height runs from each point's height to the next. The heights \
+                             are listed in the inspector.",
+                        )
+                        .clicked()
+                    {
+                        road.follow_ground = false;
+                    }
+                });
             });
-            if road.follow_ground {
+            bar_keys(ui, &KEYS);
+        });
+        if road.follow_ground {
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
                 bar_setting(ui, "Smoothing", |ui| {
-                    ui.add(
+                    bar_field(
+                        ui,
                         egui::DragValue::new(&mut road.smoothing)
                             .speed(0.5)
                             .range(0.0..=200.0)
@@ -96,22 +107,21 @@ pub(crate) fn toolbar(
                          over. Zero follows every bump.",
                     );
                 });
-            }
-        });
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(
-                    "Left button: add a point \u{b7} Drag a point: move it \u{b7} Shift + click a \
-                     point: remove it \u{b7} Backspace: remove the last point \u{b7} Enter: apply \
-                     \u{b7} Right button: insert or remove a point",
-                )
-                .size(theme::SMALL)
-                .color(theme::INK_FAINT),
-            )
-            .wrap(),
-        );
+            });
+        }
     })
 }
+
+/// The road tool's mouse and keyboard controls, for the toolbar's Keys
+/// button.
+const KEYS: [(&str, &str); 6] = [
+    ("Left button", "Add a point"),
+    ("Drag a point", "Move it"),
+    ("Shift + click a point", "Remove it"),
+    ("Backspace", "Remove the last point"),
+    ("Enter", "Apply"),
+    ("Right button", "Insert or remove a point"),
+];
 
 /// The road tool's inspector: Road, Point Heights while the points set the
 /// height, Ground, Surface and Verge, then Edges and Tilesets while either
@@ -156,32 +166,37 @@ fn panel(
 /// length, its height at the two ends and its steepest slope, then Apply Road
 /// and what the last apply did.
 fn summary(ui: &mut egui::Ui, road: &mut RoadTool, session: &mut EditSession) {
-    theme::heading(ui, "Road");
+    theme::heading_about(ui, "Road", "To change an applied road, undo it, adjust it and apply again.");
     property(ui, "Points", "", |ui| {
-        ui.label(theme::number(road.points.len().to_string()));
-        ui.add_space(6.0);
-        let any = !road.points.is_empty();
-        if ui.add_enabled(any, egui::Button::new("Remove Last")).on_hover_text("Backspace.").clicked() {
+        theme::value(ui, road.points.len().to_string());
+    });
+    // A row of two equal buttons under the count: beside it they were wider
+    // than the row.
+    let any = !road.points.is_empty();
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Remove Last");
+        if columns[0].add_enabled(any, button).on_hover_text("Backspace.").clicked() {
             road.points.pop();
         }
-        if ui.add_enabled(any, egui::Button::new("Clear")).on_hover_text("Remove every point.").clicked() {
+        let button = theme::full_button(&columns[1], "Clear");
+        if columns[1].add_enabled(any, button).on_hover_text("Remove every point.").clicked() {
             road.clear();
         }
     });
     if let Some(path) = road::path(session, road) {
         property(ui, "Length", "Along the centre line.", |ui| {
-            ui.label(theme::number(format!("{:.1} yd", path.length())));
+            theme::value(ui, format!("{:.1} yd", path.length()));
         });
         if let Some((first, last)) = path.ends() {
             property(ui, "Height", "The road's height at its first and last point.", |ui| {
-                ui.label(theme::number(format!("{first:.1} to {last:.1} yd")));
+                theme::value(ui, format!("{first:.1} to {last:.1} yd"));
             });
         }
         property(
             ui,
             "Steepest Slope",
             "The steepest slope along the centre line, measured over runs of 8 yards. Above \
-             about 50° a character slides rather than climbs.",
+             about 50\u{b0} a character slides rather than climbs.",
             |ui| {
                 let degrees = path.steepest(8.0).atan().to_degrees();
                 // As on the Grade panel: amber near the limit, red over it.
@@ -190,7 +205,7 @@ fn summary(ui: &mut egui::Ui, road: &mut RoadTool, session: &mut EditSession) {
                     d if d > 35.0 => theme::WARN,
                     _ => theme::INK,
                 };
-                ui.label(theme::number(format!("{degrees:.0}°")).color(colour));
+                ui.label(egui::RichText::new(format!("{degrees:.0}\u{b0}")).color(colour));
             },
         );
     }
@@ -212,15 +227,22 @@ fn summary(ui: &mut egui::Ui, road: &mut RoadTool, session: &mut EditSession) {
         None if !road.said.is_empty() => theme::note(ui, road.said.clone()),
         None => {}
     }
-    theme::note(ui, "To change an applied road, undo it, adjust it and apply again.");
 }
+
+/// How wide the name column of a Point Heights row is, in points: "Point 99"
+/// and no more. A [`property`] row's 96-point column leaves too little for
+/// the height and Remove at the inspector's narrowest.
+const POINT_NAME: f32 = 56.0;
 
 /// The Point Heights section, shown while the road's height comes from its
 /// points: each point's height, and Remove.
+///
+/// A row is the point's name, its height and Remove. Remove is laid out
+/// first, from the row's right end, and the height takes what is left.
 fn point_heights(ui: &mut egui::Ui, road: &mut RoadTool) {
-    theme::heading(ui, "Point Heights");
+    theme::heading_about(ui, "Point Heights", "A point takes the ground's height where it is placed.");
     if road.points.is_empty() {
-        theme::note(ui, "A point takes the ground's height where it is placed.");
+        theme::note(ui, "No points.");
         return;
     }
     let mut remove = None;
@@ -230,15 +252,30 @@ fn point_heights(ui: &mut egui::Ui, road: &mut RoadTool) {
         .auto_shrink([false, true])
         .show(ui, |ui| {
             for (i, point) in road.points.iter_mut().enumerate() {
-                property(ui, &format!("Point {}", i + 1), "", |ui| {
-                    ui.add(egui::DragValue::new(&mut point.height).speed(0.25).fixed_decimals(1).suffix(" yd"))
-                        .on_hover_text(
-                            "The road's height at this point. It is set to the ground's height \
-                             where the point is placed or dropped.",
-                        );
-                    if ui.small_button("Remove").clicked() {
-                        remove = Some(i);
-                    }
+                ui.horizontal(|ui| {
+                    let height = ui.spacing().interact_size.y;
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(POINT_NAME, height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_size(egui::vec2(POINT_NAME, height));
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(format!("Point {}", i + 1)).color(theme::INK_DIM))
+                                    .selectable(false)
+                                    .truncate(),
+                            );
+                        },
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                        field(ui, egui::DragValue::new(&mut point.height).speed(0.25).fixed_decimals(1).suffix(" yd"))
+                            .on_hover_text(
+                                "The road's height at this point. It is set to the ground's height \
+                                 where the point is placed or dropped.",
+                            );
+                    });
                 });
             }
         });
@@ -264,7 +301,7 @@ fn ground(ui: &mut egui::Ui, road: &mut RoadTool) {
         "Width",
         "From the centre line to the edge of the part moved fully to the road's height.",
         |ui| {
-            ui.add(egui::DragValue::new(&mut road.width).speed(0.1).range(0.5..=60.0).fixed_decimals(1).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut road.width).speed(0.1).range(0.5..=60.0).fixed_decimals(1).suffix(" yd"));
         },
     );
     property(
@@ -273,11 +310,11 @@ fn ground(ui: &mut egui::Ui, road: &mut RoadTool) {
         "How far past the width the road blends back into the ground. Zero leaves a vertical \
          face along both sides.",
         |ui| {
-            ui.add(egui::DragValue::new(&mut road.shoulder).speed(0.1).range(0.0..=100.0).fixed_decimals(1).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut road.shoulder).speed(0.1).range(0.0..=100.0).fixed_decimals(1).suffix(" yd"));
         },
     );
     property(ui, "Falloff", "How the shoulder blends from the road's height to the ground.", |ui| {
-        bar_choice(ui, "road-falloff", &mut road.falloff, &FALLOFFS, |a, b| a == b);
+        theme::choice(ui, "road-falloff", &mut road.falloff, &FALLOFFS, |a, b| a == b);
     });
     property(ui, "Strength", "How far toward the road's height the ground moves.", |ui| {
         percent(ui, &mut road.strength, 5.0..=100.0);
@@ -287,7 +324,7 @@ fn ground(ui: &mut egui::Ui, road: &mut RoadTool) {
         "Crown",
         "How far the centre stands above the edges. Negative makes a dished road.",
         |ui| {
-            ui.add(egui::DragValue::new(&mut road.crown).speed(0.01).range(-2.0..=2.0).fixed_decimals(2).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut road.crown).speed(0.01).range(-2.0..=2.0).fixed_decimals(2).suffix(" yd"));
         },
     );
     property(
@@ -296,7 +333,7 @@ fn ground(ui: &mut egui::Ui, road: &mut RoadTool) {
         "Added to the road's height everywhere. Negative sinks the road into the ground; \
          positive raises it as a causeway.",
         |ui| {
-            ui.add(egui::DragValue::new(&mut road.offset).speed(0.05).range(-10.0..=10.0).fixed_decimals(2).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut road.offset).speed(0.05).range(-10.0..=10.0).fixed_decimals(2).suffix(" yd"));
         },
     );
     objects_follow(ui, &mut road.objects_follow);
@@ -335,10 +372,10 @@ fn surface(
     }
     let surface = &mut road.surface;
     property(ui, "Width", "From the centre line to where the texture starts to fade.", |ui| {
-        ui.add(egui::DragValue::new(&mut surface.width).speed(0.1).range(0.5..=60.0).fixed_decimals(1).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut surface.width).speed(0.1).range(0.5..=60.0).fixed_decimals(1).suffix(" yd"));
     });
     property(ui, "Softness", "How far past its width the texture fades out.", |ui| {
-        ui.add(egui::DragValue::new(&mut surface.softness).speed(0.05).range(0.0..=20.0).fixed_decimals(1).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut surface.softness).speed(0.05).range(0.0..=20.0).fixed_decimals(1).suffix(" yd"));
     });
     property(ui, "Opacity", "How visible the texture is where it is solid.", |ui| {
         percent(ui, &mut surface.opacity, 5.0..=100.0);
@@ -394,10 +431,10 @@ fn verge(
     }
     let verge = &mut road.verge;
     property(ui, "Width", "How far the band reaches past the surface's width.", |ui| {
-        ui.add(egui::DragValue::new(&mut verge.width).speed(0.1).range(0.5..=40.0).fixed_decimals(1).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut verge.width).speed(0.1).range(0.5..=40.0).fixed_decimals(1).suffix(" yd"));
     });
     property(ui, "Softness", "How far past its width the band's outer edge fades out.", |ui| {
-        ui.add(egui::DragValue::new(&mut verge.softness).speed(0.05).range(0.0..=20.0).fixed_decimals(1).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut verge.softness).speed(0.05).range(0.0..=20.0).fixed_decimals(1).suffix(" yd"));
     });
     property(ui, "Opacity", "How visible the texture is where it is solid.", |ui| {
         percent(ui, &mut verge.opacity, 5.0..=100.0);
@@ -413,11 +450,11 @@ fn edges(ui: &mut egui::Ui, road: &mut RoadTool) {
         "Ragged",
         "How far the painted edges wander in and out of a smooth line. Zero is smooth.",
         |ui| {
-            ui.add(egui::DragValue::new(&mut road.ragged).speed(0.05).range(0.0..=5.0).fixed_decimals(1).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut road.ragged).speed(0.05).range(0.0..=5.0).fixed_decimals(1).suffix(" yd"));
         },
     );
     property(ui, "Grain", "The size of one wander of the edges and of one patch of wear.", |ui| {
-        ui.add(egui::DragValue::new(&mut road.grain).speed(0.25).range(1.0..=40.0).fixed_decimals(0).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut road.grain).speed(0.25).range(1.0..=40.0).fixed_decimals(0).suffix(" yd"));
     });
     ui.checkbox(&mut road.reuse_hidden, "Reuse a hidden layer").on_hover_text(
         "When a chunk already has four textures, give the road's texture the layer that shows \
@@ -428,7 +465,11 @@ fn edges(ui: &mut egui::Ui, road: &mut RoadTool) {
 /// The Tilesets section: which of the two textures a click sets, the Textures
 /// tool's brush texture as a shortcut, and the list.
 fn tilesets(ui: &mut egui::Ui, road: &mut RoadTool, textures: &mut Textures, thumbnails: &mut Thumbnails) {
-    theme::heading(ui, "Tilesets");
+    let about = match road.slot {
+        Slot::Surface => "Click a tileset to set the surface texture.",
+        Slot::Verge => "Click a tileset to set the verge texture.",
+    };
+    theme::heading_about(ui, "Tilesets", about);
     if road.paint_surface && road.paint_verge {
         property(
             ui,
@@ -436,7 +477,12 @@ fn tilesets(ui: &mut egui::Ui, road: &mut RoadTool, textures: &mut Textures, thu
             "Which of the road's textures a click in the list sets. A click on a texture above \
              chooses it too.",
             |ui| {
-                theme::segmented(ui, &mut road.slot, &[("Surface", Slot::Surface), ("Verge", Slot::Verge)], |a, b| a == b);
+                theme::property_segmented(
+                    ui,
+                    &mut road.slot,
+                    &[("Surface", Slot::Surface), ("Verge", Slot::Verge)],
+                    |a, b| a == b,
+                );
             },
         );
     }
@@ -452,7 +498,6 @@ fn tilesets(ui: &mut egui::Ui, road: &mut RoadTool, textures: &mut Textures, thu
     {
         road.choose(textures.brush.texture.clone(), textures.brush.effect_id);
     }
-    theme::note(ui, format!("Click a tileset to set the {name} texture."));
     if let Some(Some(path)) = tileset_browser(ui, textures, thumbnails, &chosen) {
         // A texture chosen from the list grows nothing until Foliage is set:
         // grass down the middle of a road is rarely what was meant.
@@ -467,8 +512,12 @@ const FOLIAGE: &str = "What a layer the road adds grows: MCLY effectId, a Ground
 /// A section heading with the section's switch in it: a checkbox, the name in
 /// [`theme::heading`]'s style, and its rule. Answers whether the switch was
 /// turned on this frame.
+///
+/// The space above is 6 points and not a heading's 10, and there is none
+/// below: a checkbox row is 8 points taller than a heading's, so these put
+/// the name where a heading's would be.
 fn switch_heading(ui: &mut egui::Ui, text: &str, on: &mut bool, about: &str) -> bool {
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     let turned_on = ui
         .horizontal(|ui| {
             let response = ui
@@ -483,7 +532,6 @@ fn switch_heading(ui: &mut egui::Ui, text: &str, on: &mut bool, about: &str) -> 
             response.changed() && *on
         })
         .inner;
-    ui.add_space(2.0);
     turned_on
 }
 
@@ -515,7 +563,7 @@ fn texture_card(
                         egui::Stroke::new(1.0, theme::LINE),
                         egui::StrokeKind::Inside,
                     );
-                    theme::note(ui, "No texture chosen. Click one in the tileset list below.");
+                    theme::note(ui, "No texture chosen.");
                     return;
                 }
                 swatch(ui, thumbnails, path);
@@ -543,10 +591,7 @@ fn texture_card(
 /// A fraction from 0 to 1 edited as a percentage in `range`.
 fn percent(ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>) {
     let mut percent = *value * 100.0;
-    if ui
-        .add(egui::DragValue::new(&mut percent).speed(0.5).range(range).fixed_decimals(0).suffix("%"))
-        .changed()
-    {
+    if field(ui, egui::DragValue::new(&mut percent).speed(0.5).range(range).fixed_decimals(0).suffix("%")).changed() {
         *value = percent / 100.0;
     }
 }

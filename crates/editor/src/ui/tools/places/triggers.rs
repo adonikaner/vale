@@ -10,13 +10,28 @@
 //! columns are `crate::ui::widgets::rowform`'s fields, each with the edited
 //! mark and the revert arrow of every other server row's form. What the
 //! pointer does in the world is described in `crate::tools::places::triggers`.
+//!
+//! ```text
+//! above the scroll   the count of triggers, New Trigger, which arms the
+//!                    pointer, and the radius of a new trigger
+//! Trigger <id>       the shape and its size
+//! Location           X, Y and Z, then Fly To, Snap to Ground and Remove
+//! Server Rows        the template row's columns, then Teleport, Inn, the
+//!                    quest and Battleground entrance, each with its rows
+//!                    while it is on
+//! Server             the button that opens the Server panel
+//! ```
+//!
+//! With no trigger selected, a Selection section takes the place of the
+//! three in the middle. While a place is being picked, the panel opens with
+//! what the pointer does and a Cancel button.
 
 use bevy_egui::egui;
 
 use crate::ui::shell::asks::ShellAsks;
 use crate::ui::widgets::reference::Resolver;
 use crate::ui::widgets::rowform::{number_cell, page_spacing, server_field, FieldCtx, Hook};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 use crate::session::EditSession;
 use crate::subjects::quests::Quests;
 use crate::tools::places::triggers::{self, Armed, PickFor, Triggers};
@@ -39,9 +54,24 @@ pub(crate) struct Subject<'a> {
     pub(crate) quests: &'a mut Quests,
     /// Where the map's name asks the shell to open its row.
     pub(crate) asks: &'a mut ShellAsks,
-    /// Where the Fly to buttons send their requests. See
+    /// Where the Fly To buttons send their requests. See
     /// [`crate::camera::FlyTo`].
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
+}
+
+/// A button that arms a mode of the pointer and shows whether it is armed:
+/// lit while `on`, and framed while off. The graveyard and light panels use
+/// it too.
+///
+/// `egui::Button::selectable` draws an unselected button with no frame until
+/// it is hovered, so an unarmed mode was drawn as bare text.
+pub(super) fn arm_button(on: bool, text: &str) -> egui::Button<'static> {
+    match on {
+        true => egui::Button::new(egui::RichText::new(text.to_string()).color(theme::INK))
+            .fill(theme::ACCENT_SUNK)
+            .stroke(egui::Stroke::new(1.0, theme::ACCENT)),
+        false => egui::Button::new(text.to_string()),
+    }
 }
 
 pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
@@ -57,7 +87,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         fly,
     } = subject;
     if !session.open_table(assets, places::TRIGGERS) {
-        theme::note(ui, "opening AreaTrigger.dbc\u{2026}");
+        theme::note(ui, "Opening AreaTrigger.dbc\u{2026}");
         return;
     }
     if pick_banner(ui, session, triggers) {
@@ -74,22 +104,36 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         .show(ui, |ui| {
             match triggers.points.selected.and_then(|id| triggers.trigger(id).copied()) {
                 Some(trigger) => {
-                    ui.add_space(4.0);
                     theme::heading(ui, &format!("Trigger {}", trigger.id));
                     volume(ui, session, triggers, fly, &trigger, now);
-                    ui.add_space(6.0);
-                    theme::heading(ui, "Server rows");
+                    theme::heading_about(
+                        ui,
+                        "Server Rows",
+                        "The template row's label, script, condition and cooldown are read at \
+                         server start, so a change to them needs a restart.",
+                    );
                     server_half(ui, session, triggers, behaviour, &mut Rows { assets, quests, asks, fly }, &trigger, now);
                 }
-                None => theme::note(
-                    ui,
-                    "Click a trigger in the world. Each is coloured by what the server does \
-                     with it: purple a teleport, green an inn, gold a quest objective, red a \
-                     battleground entrance, pink a script, blue nothing the editor has read.",
-                ),
+                None => {
+                    theme::heading_about(
+                        ui,
+                        "Selection",
+                        "Click a trigger in the world. Each is coloured by what the server does \
+                         with it: purple a teleport, green an inn, gold a quest objective, red a \
+                         battleground entrance, pink a script, blue nothing the editor has read.",
+                    );
+                    property(ui, "Selected", "", |ui| {
+                        theme::value(ui, "None");
+                    });
+                }
             }
-            ui.add_space(6.0);
-            theme::heading(ui, "Server");
+            theme::heading_about(
+                ui,
+                "Server",
+                "The client reads AreaTrigger.dbc from the project on the next playtest. The \
+                 server reads areatrigger_template at startup only, so a new or moved trigger \
+                 needs a restart; teleports, inns and quest triggers are live on a reload.",
+            );
             if ui
                 .button("Server\u{2026}")
                 .on_hover_text(
@@ -101,12 +145,6 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
             {
                 server_panel.show();
             }
-            theme::note(
-                ui,
-                "The client reads AreaTrigger.dbc from the project on the next playtest. The \
-                 server reads areatrigger_template at startup only, so a new or moved trigger \
-                 needs a restart; teleports, inns and quest triggers are live on a reload.",
-            );
             ui.add_space(12.0);
         });
 }
@@ -116,9 +154,13 @@ fn summary(ui: &mut egui::Ui, triggers: &Triggers) {
     theme::note(ui, format!("{} triggers on this map", triggers.points.list.len()));
     if !triggers.blocks.is_empty() {
         let maps: Vec<String> = triggers.blocks.iter().map(u32::to_string).collect();
+        let noun = match maps.len() {
+            1 => "map",
+            _ => "maps",
+        };
         ui.label(
             egui::RichText::new(format!(
-                "The rows of map(s) {} are not one block of AreaTrigger.dbc. The client reads \
+                "The rows of {noun} {} are not one block of AreaTrigger.dbc. The client reads \
                  only the first block of the current map, so the rows past it never fire.",
                 maps.join(", ")
             ))
@@ -130,30 +172,26 @@ fn summary(ui: &mut egui::Ui, triggers: &Triggers) {
 
 /// What a click on empty ground does, and the size of a new trigger.
 fn controls(ui: &mut egui::Ui, triggers: &mut Triggers) {
-    ui.horizontal_wrapped(|ui| {
-        let armed = triggers.armed == Armed::NewTrigger;
-        if ui
-            .selectable_label(armed, "New trigger")
-            .on_hover_text(
-                "Armed, a click on the ground makes a sphere trigger there, resting on \
-                 the ground. It is added after this map's last row, because the client \
-                 reads only the first block of each map's rows.",
-            )
-            .clicked()
-        {
-            triggers.armed = match armed {
-                true => Armed::Nothing,
-                false => Armed::NewTrigger,
-            };
-        }
-    });
-    theme::row(ui, "new radius", |ui| {
-        ui.add(egui::DragValue::new(&mut triggers.radius).range(0.5..=200.0).speed(0.25).suffix(" yd"))
+    let armed = triggers.armed == Armed::NewTrigger;
+    let button = arm_button(armed, "New Trigger").min_size(egui::vec2(ui.available_width(), 24.0));
+    if ui
+        .add(button)
+        .on_hover_text(
+            "Armed, a click on the ground makes a sphere trigger there, resting on \
+             the ground. It is added after this map's last row, because the client \
+             reads only the first block of each map's rows. Escape disarms.",
+        )
+        .clicked()
+    {
+        triggers.armed = match armed {
+            true => Armed::Nothing,
+            false => Armed::NewTrigger,
+        };
+    }
+    property(ui, "New Radius", "", |ui| {
+        theme::field(ui, egui::DragValue::new(&mut triggers.radius).range(0.5..=200.0).speed(0.25).suffix(" yd"))
             .on_hover_text("Radius of a new trigger.");
     });
-    if triggers.armed != Armed::Nothing {
-        theme::note(ui, "Escape disarms.");
-    }
 }
 
 /// The selected trigger's shape, size and place.
@@ -166,22 +204,19 @@ fn volume(
     now: f64,
 ) {
     let mut sphere = trigger.is_sphere();
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("shape").color(theme::INK_FAINT));
-        let a = ui.radio_value(&mut sphere, true, "Sphere");
-        let b = ui.radio_value(&mut sphere, false, "Box");
-        if a.changed() || b.changed() {
-            triggers::set_sphere(session, trigger, sphere, now);
-            triggers.stale();
-        }
+    property(ui, "Shape", "", |ui| {
+        theme::property_segmented(ui, &mut sphere, &[("Sphere", true), ("Box", false)], |a, b| a == b);
     });
+    if sphere != trigger.is_sphere() {
+        triggers::set_sphere(session, trigger, sphere, now);
+        triggers.stale();
+    }
     let mut fields: Vec<(usize, u32)> = Vec::new();
     match trigger.is_sphere() {
         true => {
             let mut radius = trigger.radius;
-            theme::row(ui, "radius", |ui| {
-                if ui
-                    .add(egui::DragValue::new(&mut radius).range(0.1..=500.0).speed(0.1).suffix(" yd"))
+            property(ui, "Radius", "", |ui| {
+                if theme::field(ui, egui::DragValue::new(&mut radius).range(0.1..=500.0).speed(0.1).suffix(" yd"))
                     .changed()
                 {
                     fields.push((tf::RADIUS, radius.to_bits()));
@@ -190,24 +225,22 @@ fn volume(
         }
         false => {
             let mut extent = trigger.extent;
-            for (axis, (label, field)) in [("length", tf::BOX_LENGTH), ("width", tf::BOX_WIDTH), ("height", tf::BOX_HEIGHT)]
+            for (axis, (label, column)) in [("Length", tf::BOX_LENGTH), ("Width", tf::BOX_WIDTH), ("Height", tf::BOX_HEIGHT)]
                 .into_iter()
                 .enumerate()
             {
-                theme::row(ui, label, |ui| {
-                    if ui
-                        .add(egui::DragValue::new(&mut extent[axis]).range(0.1..=1000.0).speed(0.1).suffix(" yd"))
+                property(ui, label, "", |ui| {
+                    if theme::field(ui, egui::DragValue::new(&mut extent[axis]).range(0.1..=1000.0).speed(0.1).suffix(" yd"))
                         .on_hover_text("Full side length, not the half-extent.")
                         .changed()
                     {
-                        fields.push((field, extent[axis].to_bits()));
+                        fields.push((column, extent[axis].to_bits()));
                     }
                 });
             }
             let mut degrees = trigger.yaw.to_degrees();
-            theme::row(ui, "yaw", |ui| {
-                if ui
-                    .add(egui::DragValue::new(&mut degrees).speed(0.5).suffix("\u{b0}"))
+            property(ui, "Yaw", "", |ui| {
+                if theme::field(ui, egui::DragValue::new(&mut degrees).speed(0.5).suffix("\u{b0}"))
                     .on_hover_text("Rotation of the box about the vertical axis. AreaTrigger.dbc stores it in radians.")
                     .changed()
                 {
@@ -216,11 +249,12 @@ fn volume(
             });
         }
     }
+    theme::heading(ui, "Location");
     let mut at = trigger.at;
-    for (axis, (label, field)) in [("x", tf::X), ("y", tf::Y), ("z", tf::Z)].into_iter().enumerate() {
-        theme::row(ui, label, |ui| {
-            if ui.add(egui::DragValue::new(&mut at[axis]).speed(0.25).suffix(" yd")).changed() {
-                fields.push((field, at[axis].to_bits()));
+    for (axis, (label, column)) in [("X", tf::X), ("Y", tf::Y), ("Z", tf::Z)].into_iter().enumerate() {
+        property(ui, label, "", |ui| {
+            if theme::field(ui, egui::DragValue::new(&mut at[axis]).speed(0.25).suffix(" yd")).changed() {
+                fields.push((column, at[axis].to_bits()));
             }
         });
     }
@@ -228,12 +262,16 @@ fn volume(
         triggers::set_volume(session, trigger, &fields, "Edit area trigger", now);
         triggers.stale();
     }
-    ui.horizontal(|ui| {
-        if ui.button("Fly to").clicked() {
+    // The commands, as equal buttons two to a row.
+    ui.add_space(6.0);
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Fly To");
+        if columns[0].add(button).clicked() {
             fly.write(crate::camera::FlyTo::at(trigger.at.into()));
         }
-        if ui
-            .button("Snap to ground")
+        let button = theme::full_button(&columns[1], "Snap to Ground");
+        if columns[1]
+            .add(button)
             .on_hover_text("Places the trigger on the ground under its centre, where the ground is open.")
             .clicked()
         {
@@ -247,27 +285,31 @@ fn volume(
                 triggers.stale();
             }
         }
-        let shipped = triggers.points.is_shipped(trigger.id);
-        let remove = ui.button(match shipped {
+    });
+    let shipped = triggers.points.is_shipped(trigger.id);
+    let mut remove = false;
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], match shipped {
             true => "Remove\u{2026}",
             false => "Remove",
         });
-        if remove
+        remove = columns[0]
+            .add(button)
             .on_hover_text(
                 "Removes the row from AreaTrigger.dbc, and the teleport, inn and quest rows \
                  that name it from the project's server rows.",
             )
-            .clicked()
-        {
-            match shipped {
-                true => triggers.points.confirm_remove = Some(trigger.id),
-                false => {
-                    let line = triggers::remove_trigger(session, triggers, trigger.id, now);
-                    session.status = line;
-                }
+            .clicked();
+    });
+    if remove {
+        match shipped {
+            true => triggers.points.confirm_remove = Some(trigger.id),
+            false => {
+                let line = triggers::remove_trigger(session, triggers, trigger.id, now);
+                session.status = line;
             }
         }
-    });
+    }
     if triggers.points.confirm_remove == Some(trigger.id) {
         ui.label(
             egui::RichText::new(
@@ -277,12 +319,14 @@ fn volume(
             .size(theme::SMALL)
             .color(theme::WARN),
         );
-        ui.horizontal(|ui| {
-            if ui.button("Remove trigger").clicked() {
+        ui.columns(2, |columns| {
+            let button = theme::full_button(&columns[0], "Remove Trigger");
+            if columns[0].add(button).clicked() {
                 let line = triggers::remove_trigger(session, triggers, trigger.id, now);
                 session.status = line;
             }
-            if ui.button("Cancel").clicked() {
+            let button = theme::full_button(&columns[1], "Cancel");
+            if columns[1].add(button).clicked() {
                 triggers.points.confirm_remove = None;
             }
         });
@@ -311,8 +355,8 @@ fn pick_banner(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trig
         "Press on the ground to set the position, drag before releasing to set the \
          facing, and release to write both. Escape cancels.",
     );
-    theme::row(ui, "facing", |ui| {
-        ui.label(theme::number(format!("{:.0}\u{b0}", pick.facing.to_degrees().rem_euclid(360.0))));
+    property(ui, "Facing", "", |ui| {
+        theme::value(ui, format!("{:.0}\u{b0}", pick.facing.to_degrees().rem_euclid(360.0)));
     });
     if ui.button("Cancel").clicked() {
         triggers.end_pick();
@@ -324,6 +368,9 @@ fn pick_banner(ui: &mut egui::Ui, session: &mut EditSession, triggers: &mut Trig
 
 /// The buttons that pick a place on `map` for one of the trigger's rows: on
 /// this map, or on the row's map, which the editor opens for the pick.
+///
+/// The row wraps and its buttons are not equal columns: the first names the
+/// map, and a long name does not fit half the panel's width.
 fn pick_buttons(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -335,7 +382,7 @@ fn pick_buttons(
     at: [f32; 3],
     facing: f32,
 ) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let here = map == session.map_id;
         let name = session
             .maps
@@ -343,7 +390,7 @@ fn pick_buttons(
             .find(|(id, _)| *id == map)
             .map_or_else(|| format!("map {map}"), |(_, name)| name.clone());
         let label = match here {
-            true => "Pick on this map".to_string(),
+            true => "Pick on This Map".to_string(),
             false => format!("Pick on {name}\u{2026}"),
         };
         let tip = match here {
@@ -360,7 +407,7 @@ fn pick_buttons(
             }
         }
         if ui
-            .add_enabled(here, egui::Button::new("Fly to"))
+            .add_enabled(here, egui::Button::new("Fly To"))
             .on_disabled_hover_text("The place is on another map.")
             .clicked()
         {
@@ -369,8 +416,11 @@ fn pick_buttons(
     });
 }
 
-/// A map, chosen from the session's list.
-fn map_choice(ui: &mut egui::Ui, session: &EditSession, salt: (&str, u32), map: &mut u32) {
+/// A map, chosen from the session's list. `width`, when given, is the width
+/// of a [`property`] row's control: the list is at least that wide, and a
+/// longer name is cut with an ellipsis at the row's end. Without it the list
+/// is as wide as egui makes it, for a cell of the page layout.
+fn map_choice(ui: &mut egui::Ui, session: &EditSession, salt: (&str, u32), map: &mut u32, width: Option<f32>) {
     let name = |map: u32| {
         session
             .maps
@@ -378,17 +428,19 @@ fn map_choice(ui: &mut egui::Ui, session: &EditSession, salt: (&str, u32), map: 
             .find(|(known, _)| *known == map)
             .map_or_else(|| format!("map {map}"), |(_, name)| name.clone())
     };
-    egui::ComboBox::from_id_salt(salt)
+    let mut list = egui::ComboBox::from_id_salt(salt)
         .selected_text(format!("{map} {}", name(*map)))
-        .height(320.0)
-        .show_ui(ui, |ui| {
-            for (known, known_name) in &session.maps {
-                ui.selectable_value(map, *known, format!("{known:>4}  {known_name}"));
-            }
-        });
+        .height(320.0);
+    if let Some(width) = width {
+        list = list.width(width).truncate();
+    }
+    list.show_ui(ui, |ui| {
+        for (known, known_name) in &session.maps {
+            ui.selectable_value(map, *known, format!("{known:>4}  {known_name}"));
+        }
+    });
 }
 
-/// What the server does with the trigger.
 /// What the teleport's fields resolve a reference through, besides the
 /// session.
 struct Rows<'a> {
@@ -398,6 +450,7 @@ struct Rows<'a> {
     fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
+/// What the server does with the trigger.
 fn server_half(
     ui: &mut egui::Ui,
     session: &mut EditSession,
@@ -412,7 +465,7 @@ fn server_half(
         return;
     }
     if triggers.held().is_none() {
-        theme::note(ui, "reading the five areatrigger tables\u{2026}");
+        theme::note(ui, "Reading the five areatrigger tables\u{2026}");
         return;
     }
     let id = trigger.id;
@@ -455,9 +508,8 @@ fn server_half(
 
     let quest = triggers.quest(&edits, id).filter(|(_, _, life)| *life != Life::Delete);
     let mut number = quest.map_or(0, |(quest, _, _)| quest);
-    theme::row(ui, "quest", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut number).speed(1.0))
+    property(ui, "Quest", "", |ui| {
+        if theme::field(ui, egui::DragValue::new(&mut number).speed(1.0))
             .on_hover_text(
                 "areatrigger_involvedrelation: standing inside completes this quest's \
                  exploration objective. 0 for none.",
@@ -489,9 +541,8 @@ fn template(
         .unwrap_or((vale_mangos::trigger::Template { id, ..Default::default() }, false));
     let text = vale_mangos::sql::text;
     let mut name = template.name.clone();
-    theme::row(ui, "label", |ui| {
-        if ui
-            .text_edit_singleline(&mut name)
+    property(ui, "Label", "", |ui| {
+        if theme::text_field(ui, &mut name)
             .on_hover_text("areatrigger_template.name: a description for people reading the table. The game does not show it.")
             .changed()
         {
@@ -519,9 +570,12 @@ fn template(
 
     let mut script_name = template.script_name.clone();
     let suggestions = triggers.script_names();
-    theme::row(ui, "C++ script", |ui| {
+    property(ui, "C++ Script", "", |ui| {
+        // The text box is narrower than `theme::text_field`'s by the list
+        // button after it, which is 34 points wide, and the space between.
+        let width = (theme::field_width(ui) - 8.0 - 34.0 - ui.spacing().item_spacing.x).max(40.0);
         let typed = ui
-            .text_edit_singleline(&mut script_name)
+            .add(egui::TextEdit::singleline(&mut script_name).desired_width(width))
             .on_hover_text(
                 "areatrigger_template.script_name: a script the server's C++ registers under this \
                  name. It runs instead of the script id. Empty for none.",
@@ -533,7 +587,7 @@ fn template(
             .width(18.0)
             .show_ui(ui, |ui| {
                 ui.label(
-                    egui::RichText::new("script names used by other triggers")
+                    egui::RichText::new("Script names used by other triggers")
                         .size(theme::SMALL)
                         .color(theme::INK_FAINT),
                 );
@@ -552,19 +606,23 @@ fn template(
     });
 
     let mut script_id = template.script_id;
-    theme::row(ui, "script id", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut script_id).speed(1.0))
+    property(ui, "Script ID", "", |ui| {
+        if theme::field(ui, egui::DragValue::new(&mut script_id).speed(1.0))
             .on_hover_text("areatrigger_template.script_id: the areatrigger_scripts rows to run, or 0.")
             .changed()
         {
             triggers::set_template(session, triggers, id, "script_id", script_id.to_string(), now);
         }
+    });
+    // The button for the script has a row of its own, in the control's
+    // column: beside the number it does not fit the row at the inspector's
+    // narrowest.
+    property(ui, "", "", |ui| {
         let table = vale_mangos::scripts::AREATRIGGER;
         match script_id {
             0 => {
                 if ui
-                    .button("Create script")
+                    .button("Create Script")
                     .on_hover_text(
                         "Sets the script id to the trigger's own id, the shipped convention, and \
                          opens the script window on it to add steps.",
@@ -576,7 +634,7 @@ fn template(
                 }
             }
             script => {
-                if ui.button("Open script").on_hover_text("Opens areatrigger_scripts in the script window.").clicked() {
+                if ui.button("Open Script").on_hover_text("Opens areatrigger_scripts in the script window.").clicked() {
                     behaviour.open_script(table, script);
                 }
             }
@@ -585,32 +643,42 @@ fn template(
 
     let mut condition = template.condition_id;
     let column = format!("areatrigger_template {id} condition_id");
-    theme::row(ui, "condition", |ui| {
-        let typed = ui
-            .add(egui::DragValue::new(&mut condition).speed(1.0))
+    let mut typed = false;
+    property(ui, "Condition", "", |ui| {
+        typed = theme::field(ui, egui::DragValue::new(&mut condition).speed(1.0))
             .on_hover_text("areatrigger_template.condition_id: a row of `conditions` the character must meet for the script to run, or 0.")
             .changed();
-        let answered = crate::ui::subjects::conditions::cell(ui, egui::Id::new(("trigger-condition", id)), &column, template.condition_id, None);
-        if let Some(condition) = answered.or(typed.then_some(condition)).filter(|condition| *condition != template.condition_id) {
-            triggers::set_template(session, triggers, id, "condition_id", condition.to_string(), now);
-        }
     });
+    // What the condition tests and the buttons that choose or make one are
+    // on the next line at the panel's width: they need 190 points, which no
+    // row has beside its name.
+    let answered = ui
+        .horizontal(|ui| {
+            crate::ui::subjects::conditions::cell(ui, egui::Id::new(("trigger-condition", id)), &column, template.condition_id, None)
+        })
+        .inner;
+    if let Some(condition) = answered.or(typed.then_some(condition)).filter(|condition| *condition != template.condition_id) {
+        triggers::set_template(session, triggers, id, "condition_id", condition.to_string(), now);
+    }
     let mut cooldown = template.cooldown;
-    theme::row(ui, "cooldown", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut cooldown).speed(1.0).suffix(" s"))
+    property(ui, "Cooldown", "", |ui| {
+        if theme::field(ui, egui::DragValue::new(&mut cooldown).speed(1.0).suffix(" s"))
             .on_hover_text("areatrigger_template.cooldown: seconds before the script can run again on this map instance, or 0.")
             .changed()
         {
             triggers::set_template(session, triggers, id, "cooldown", cooldown.to_string(), now);
         }
     });
-    let runs = match (template.script_name.is_empty(), template.script_id) {
-        (false, _) => format!("Runs the C++ script {}.", template.script_name),
-        (true, 0) => "Runs no script.".to_string(),
-        (true, script) => format!("Runs areatrigger_scripts {script}."),
-    };
-    theme::note(ui, format!("{runs} The template is read at server start, so a change needs a restart."));
+    // What the columns above come to. That the template is read at server
+    // start is on the Server Rows heading's info mark.
+    theme::note(
+        ui,
+        match (template.script_name.is_empty(), template.script_id) {
+            (false, _) => format!("Runs the C++ script {}.", template.script_name),
+            (true, 0) => "Runs no script.".to_string(),
+            (true, script) => format!("Runs areatrigger_scripts {script}."),
+        },
+    );
 }
 
 /// The battleground entrance block: off, or the battleground, the side and
@@ -648,21 +716,23 @@ fn entrance(
     let Some(entrance) = live else { return };
     let f = vale_mangos::sql::float;
     let mut team = entrance.team;
-    theme::row(ui, "side", |ui| {
+    property(ui, "Side", "", |ui| {
         let named = TEAMS.iter().find(|known| known.value == team).map_or_else(|| team.to_string(), |known| known.name.to_string());
-        egui::ComboBox::from_id_salt(("entrance side", id)).selected_text(named).show_ui(ui, |ui| {
-            for known in TEAMS {
-                ui.selectable_value(&mut team, known.value, known.name);
-            }
-        });
+        egui::ComboBox::from_id_salt(("entrance side", id))
+            .selected_text(named)
+            .width(theme::field_width(ui))
+            .show_ui(ui, |ui| {
+                for known in TEAMS {
+                    ui.selectable_value(&mut team, known.value, known.name);
+                }
+            });
     });
     if team != entrance.team {
         triggers::set_entrance(session, triggers, id, "team", team.to_string(), now);
     }
     let mut battleground = entrance.bg_template;
-    theme::row(ui, "battleground", |ui| {
-        if ui
-            .add(egui::DragValue::new(&mut battleground).speed(0.1))
+    property(ui, "Battleground", "", |ui| {
+        if theme::field(ui, egui::DragValue::new(&mut battleground).speed(0.1))
             .on_hover_text("A battleground_template id: the battleground whose list opens.")
             .changed()
         {
@@ -670,30 +740,33 @@ fn entrance(
         }
     });
     let mut exit_map = entrance.exit_map;
-    theme::row(ui, "exit map", |ui| map_choice(ui, session, ("entrance exit map", id), &mut exit_map));
+    property(ui, "Exit Map", "", |ui| {
+        let width = theme::field_width(ui);
+        map_choice(ui, session, ("entrance exit map", id), &mut exit_map, Some(width));
+    });
     if exit_map != entrance.exit_map {
         triggers::set_entrance(session, triggers, id, "exit_map", exit_map.to_string(), now);
     }
     let mut exit = entrance.exit;
-    for (axis, (label, column)) in [("x", "exit_position_x"), ("y", "exit_position_y"), ("z", "exit_position_z")]
+    for (axis, (label, column)) in [("Exit X", "exit_position_x"), ("Exit Y", "exit_position_y"), ("Exit Z", "exit_position_z")]
         .into_iter()
         .enumerate()
     {
-        theme::row(ui, label, |ui| {
-            if ui.add(egui::DragValue::new(&mut exit[axis]).speed(0.25).suffix(" yd")).changed() {
+        property(ui, label, "", |ui| {
+            if theme::field(ui, egui::DragValue::new(&mut exit[axis]).speed(0.25).suffix(" yd")).changed() {
                 triggers::set_entrance(session, triggers, id, column, f(exit[axis]), now);
             }
         });
     }
     let mut degrees = entrance.orientation.to_degrees();
-    theme::row(ui, "facing", |ui| {
-        if ui.add(egui::DragValue::new(&mut degrees).speed(1.0).suffix("\u{b0}")).changed() {
+    property(ui, "Exit Facing", "", |ui| {
+        if theme::field(ui, egui::DragValue::new(&mut degrees).speed(1.0).suffix("\u{b0}")).changed() {
             triggers::set_entrance(session, triggers, id, "exit_orientation", f(degrees.rem_euclid(360.0).to_radians()), now);
         }
     });
     let mut name = entrance.name.clone();
-    theme::row(ui, "label", |ui| {
-        if ui.text_edit_singleline(&mut name).changed() {
+    property(ui, "Label", "", |ui| {
+        if theme::text_field(ui, &mut name).changed() {
             triggers::set_entrance(session, triggers, id, "name", vale_mangos::sql::text(&name), now);
         }
     });
@@ -785,7 +858,7 @@ fn teleport(
                     "target_map" => {
                         let was: u32 = showing.trim().parse().unwrap_or(0);
                         let mut map = was;
-                        map_choice(ui, resolver.session, ("trigger target map", id), &mut map);
+                        map_choice(ui, resolver.session, ("trigger target map", id), &mut map, None);
                         Some((map != was).then(|| map.to_string()))
                     }
                     "target_orientation" => {

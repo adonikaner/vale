@@ -7,7 +7,16 @@ use crate::pick::Cursor;
 use crate::session::EditSession;
 use crate::tools::placements::place;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split, split_folder};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, field, property};
+
+/// The tool's mouse and keyboard controls and what an area id covers, for
+/// the Brush Area heading's info mark. The tool has no toolbar over the
+/// viewport to hold them.
+const KEYS: &str = "Left button: paint\n\
+                    Ctrl + wheel: radius\n\
+                    Space: take the area under the pointer\n\n\
+                    Area ids are per chunk (33 yd); the file has no finer unit. A playtest \
+                    shows this area as the zone text.";
 
 /// Whether the server lets a character walk on the chunk under the pointer.
 ///
@@ -19,15 +28,14 @@ use crate::ui::widgets::theme;
 /// It is a server flag. vmangos reads `MCNK`'s `0x02` when it builds `mmaps`;
 /// this client does not read it. Marking a hill changes where a character may
 /// go once the server's maps are rebuilt from the edited files, and never
-/// changes anything on screen. The panel states this, because otherwise the
-/// checkbox appears to do nothing.
+/// changes anything on screen. The checkbox's hover states this, because
+/// otherwise the checkbox appears to do nothing.
 fn impassability(ui: &mut egui::Ui, session: &mut EditSession, cursor: &Cursor) {
     use crate::tools::ground::areas;
 
-    theme::heading(ui, "Walkable");
+    theme::heading_about(ui, "Walkable", "No shipped 1.12 tile sets this bit, measured over 1,024 chunks.");
     let Some((coord, chunk)) = cursor.tile.zip(cursor.chunk) else {
-        theme::note(ui, "pointer is not over a chunk");
-        ui.add_space(6.0);
+        theme::note(ui, "Pointer is not over a chunk");
         return;
     };
     let marked = session
@@ -35,12 +43,12 @@ fn impassability(ui: &mut egui::Ui, session: &mut EditSession, cursor: &Cursor) 
         .get(&coord)
         .is_some_and(|tile| vale_edit::adt::impass::impassable(tile, chunk));
 
-    theme::row(ui, "chunk", |ui| {
-        ui.label(theme::number(format!("{},{} · {chunk}", coord.0, coord.1)));
+    property(ui, "Chunk", "", |ui| {
+        theme::value(ui, format!("{},{} \u{b7} {chunk}", coord.0, coord.1));
     });
     let mut wanted = marked;
     if ui
-        .checkbox(&mut wanted, "impassable")
+        .checkbox(&mut wanted, "Impassable")
         .on_hover_text(
             "MCNK flag 0x02. vmangos reads it when it builds mmaps, so it decides where a \
              character may walk once the server's maps are rebuilt. This client does not \
@@ -53,11 +61,6 @@ fn impassability(ui: &mut egui::Ui, session: &mut EditSession, cursor: &Cursor) 
     if let Some(count) = areas::impassable_count(session, coord) {
         theme::note(ui, format!("{count} of 256 chunks marked on this tile"));
     }
-    theme::note(
-        ui,
-        "No shipped 1.12 tile sets this bit, measured over 1,024 chunks.",
-    );
-    ui.add_space(6.0);
 }
 
 /// The zone tool: where the pointer is, what it would paint, and the area tree.
@@ -84,7 +87,7 @@ pub(in crate::ui::tools) fn zones(
         .or_else(|| tables.and_then(|tables| tables.areas()));
     // The tree opens on the map being edited. Its top level is `AreaTable`'s
     // thirty-six maps, most of them instances that a continent edit does not
-    // need; opening there would add a click to every use. `all` on the
+    // need; opening there would add a click to every use. `All` on the
     // breadcrumb goes up to them.
     if areas.folder.is_empty() {
         if let Some(map) = tables
@@ -99,33 +102,37 @@ pub(in crate::ui::tools) fn zones(
     // it is named rather than shown as an error.
     let name_of = |id: u32| area_name(table, id);
 
-    theme::heading(ui, "Under the pointer");
+    theme::heading(ui, "Under the Pointer");
     match areas.at {
         Some((tile, chunk)) => {
-            theme::row(ui, "tile", |ui| {
-                ui.label(theme::number(format!("{},{}", tile.0, tile.1)));
+            property(ui, "Tile", "", |ui| {
+                theme::value(ui, format!("{},{}", tile.0, tile.1));
             });
-            theme::row(ui, "chunk", |ui| {
-                ui.label(theme::number(chunk.to_string()));
+            property(ui, "Chunk", "", |ui| {
+                theme::value(ui, chunk.to_string());
             });
             let here = areas.under.unwrap_or(0);
-            ui.label(egui::RichText::new(name_of(here)).color(theme::INK));
+            property(ui, "Area", "", |ui| {
+                theme::value(ui, name_of(here));
+            });
             // The zone the area sits in, which is the name the interface
             // shows: `GetZoneText` is the parent and `GetSubZoneText` is the
             // row itself, so a subzone shows both.
             if let Some(zone) = table.and_then(|table| table.zone_of(here)) {
                 if zone.id != here {
-                    theme::note(ui, format!("in {}", zone.name));
+                    property(ui, "Zone", "", |ui| {
+                        theme::value(ui, zone.name.clone());
+                    });
                 }
             }
         }
-        None => theme::note(ui, "pointer is not over an open tile"),
+        None => theme::note(ui, "Pointer is not over an open tile"),
     }
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Brush area");
-    ui.label(egui::RichText::new(name_of(areas.brush.area)).color(theme::INK));
-    theme::note(ui, "space takes the area under the pointer");
+    theme::heading_about(ui, "Brush Area", KEYS);
+    property(ui, "Area", "", |ui| {
+        theme::value(ui, name_of(areas.brush.area));
+    });
     // What the area on the brush is, and the two ways to make one. The rows
     // are AreaTable's, which the Zones workspace edits; the shell carries
     // each request out after the panel is drawn. See `tools::ground::areas::Ask`.
@@ -135,7 +142,7 @@ pub(in crate::ui::tools) fn zones(
         let zone = table
             .and_then(|table| table.zone_of(areas.brush.area))
             .map(|zone| zone.name.clone());
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(on_brush.is_some(), egui::Button::new("Edit\u{2026}").small())
                 .on_hover_text(
@@ -172,8 +179,9 @@ pub(in crate::ui::tools) fn zones(
             }
         });
     }
-    theme::row(ui, "radius", |ui| {
-        ui.add(
+    property(ui, "Radius", "", |ui| {
+        field(
+            ui,
             egui::DragValue::new(&mut areas.brush.radius)
                 .speed(0.5)
                 .range(crate::tools::ground::areas::RADIUS)
@@ -182,30 +190,37 @@ pub(in crate::ui::tools) fn zones(
     });
     theme::note(
         ui,
-        format!("{} chunk(s) under the brush", areas.covered.len()),
+        match areas.covered.len() {
+            1 => "1 chunk under the brush".to_string(),
+            n => format!("{n} chunks under the brush"),
+        },
     );
 
-    ui.add_space(4.0);
     theme::heading(ui, "Area");
     if let Some(table) = table {
         if let Some(picked) = area_tree(ui, areas, table, tables) {
             areas.brush.area = picked;
         }
     } else {
-        theme::note(ui, "no AreaTable.dbc: the archives did not open");
-        theme::row(ui, "id", |ui| {
-            ui.add(egui::DragValue::new(&mut areas.brush.area).speed(1.0));
+        theme::note(ui, "No AreaTable.dbc: the archives did not open");
+        property(ui, "ID", "", |ui| {
+            field(ui, egui::DragValue::new(&mut areas.brush.area).speed(1.0));
         });
     }
 
-    ui.add_space(4.0);
     theme::heading(ui, "Tile");
     // The areas the tile is made of. The viewport cannot show this, because
     // an area's extent is invisible.
     match areas.at.and_then(|(tile, _)| session.tiles.get(&tile)) {
         Some(tile) => {
             let census = vale_edit::adt::area::census(tile);
-            theme::note(ui, format!("{} area(s) across 256 chunks", census.len()));
+            theme::note(
+                ui,
+                match census.len() {
+                    1 => "1 area across 256 chunks".to_string(),
+                    n => format!("{n} areas across 256 chunks"),
+                },
+            );
             for (id, count) in census.iter().take(8) {
                 ui.horizontal(|ui| {
                     ui.label(
@@ -223,18 +238,8 @@ pub(in crate::ui::tools) fn zones(
                 });
             }
         }
-        None => theme::note(ui, "no tile open under the pointer"),
+        None => theme::note(ui, "No tile open under the pointer"),
     }
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    theme::note(ui, "left button paints · ctrl + wheel resizes");
-    theme::note(ui, "space takes the area under the pointer");
-    theme::note(
-        ui,
-        "area ids are per chunk (33 yd); the file has no finer unit",
-    );
-    theme::note(ui, "a playtest shows this area as the zone text");
 }
 
 /// `AreaTable`'s own hierarchy as a tree. Returns the row a click chose.
@@ -287,7 +292,7 @@ pub(super) fn area_tree(
 
     ui.add(
         egui::TextEdit::singleline(&mut areas.search)
-            .hint_text("search the areas")
+            .hint_text("Search areas")
             .desired_width(f32::INFINITY),
     );
     let needle = areas.search.to_ascii_lowercase();
@@ -309,14 +314,14 @@ pub(super) fn area_tree(
     }
 
     let here = areas.folder.clone();
-    // `all` names the level above the maps; see [`breadcrumb`].
-    let mut go = breadcrumb(ui, &here, "all", &Default::default());
+    // `All` names the level above the maps; see [`breadcrumb`].
+    let mut go = breadcrumb(ui, &here, "All", &Default::default());
     let (folders, files) = split_folder(&paths, &here);
     theme::note(
         ui,
         match folders.len() {
             0 => format!("{} areas", files.len()),
-            n => format!("{n} folders · {} areas", files.len()),
+            n => format!("{n} folders \u{b7} {} areas", files.len()),
         },
     );
     let row = ui.spacing().interact_size.y + 6.0;
@@ -340,9 +345,9 @@ pub(super) fn area_tree(
 /// for is shown as the number.
 pub(super) fn area_name(table: Option<&vale_assets::tables::area::Areas>, id: u32) -> String {
     match (id, table.and_then(|table| table.get(id))) {
-        (0, _) => "no area (0)".to_string(),
+        (0, _) => "No area (0)".to_string(),
         (id, Some(area)) => format!("{} ({id})", area.name),
-        (id, None) => format!("area {id}"),
+        (id, None) => format!("Area {id}"),
     }
 }
 

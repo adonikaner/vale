@@ -1,17 +1,53 @@
 //! The doodad tool's panel. The state is [`crate::tools::placements::doodads`].
+//!
+//! In Place and Cluster mode the whole panel is the picker's,
+//! [`super::place::placing`]. In Select mode:
+//!
+//! ```text
+//! [ Select | Place | Cluster ]   the mode switch
+//! Keys                           Select mode's controls, on hover
+//! Handles                        Move, Turn or Off
+//! Selection                      the group and its buttons, the Replace Model
+//!                                list, the locked doodads, and the primary's
+//!                                model, id and tile
+//! Position, Rotation, Scale      the primary's numbers
+//! Duplicate                      for one doodad
+//! ```
 
 use bevy_egui::egui;
 
 use crate::session::EditSession;
 use crate::tools::placements::doodads::Selection;
-use crate::tools::placements::gizmo::{Gizmo, HANDLES, Handles};
+use crate::tools::placements::gizmo::Gizmo;
 use crate::tools::placements::place::{Kind, Placing};
 use crate::ui::tools::placements::group::{group, locked_placements, Group};
 use crate::tools::placements::swap::Swap;
-use crate::ui::tools::placements::place::{placing, replacing};
-use crate::ui::widgets::theme;
+use crate::ui::tools::placements::place::{handles, keys, number_row, placing, replacing};
+use crate::ui::widgets::theme::{self, property};
 
-/// The doodad tool: what is standing on the ground.
+/// Select mode's mouse and keyboard controls, for the Keys button.
+const KEYS: [(&str, &str); 18] = [
+    ("Left button", "Select a doodad"),
+    ("Shift + left button", "Add or remove one"),
+    ("Drag on empty ground", "Select a rectangle"),
+    ("Drag", "Move"),
+    ("Ctrl + drag", "Drop onto the ground"),
+    ("Arrows", "Nudge"),
+    ("Page Up, Page Down", "Raise, lower"),
+    (", and .", "Turn about Z"),
+    ("Shift + any of those keys", "Ten times as far"),
+    ("Alt + mouse", "Turn"),
+    ("Ctrl + Alt + mouse", "Snap the turn"),
+    ("Ctrl + wheel", "Scale"),
+    ("Delete", "Remove"),
+    ("Ctrl + D", "Duplicate; a group is copied two yards north"),
+    ("Ctrl + C", "Copy"),
+    ("Ctrl + V", "Paste at the pointer"),
+    ("1, 2, 3", "Select, Place, Cluster"),
+    ("Tab", "Switch between Select and placing"),
+];
+
+/// The doodad tool's panel: the placements of M2 models.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::ui::tools) fn doodad(
     ui: &mut egui::Ui,
@@ -28,20 +64,16 @@ pub(in crate::ui::tools) fn doodad(
     if placing(ui, placer, Kind::Doodad, portraits, favourites) {
         return;
     }
-    ui.add_space(4.0);
-    theme::heading(ui, "Handles");
-    theme::segmented(ui, &mut gizmo.handles, &HANDLES, |a, b| a == b);
-    theme::note(
-        ui,
-        match gizmo.handles {
-            Handles::Move => "drag an arrow to move along one axis",
-            Handles::Turn => "drag a ring to turn about one axis",
-            Handles::Off => "no handles: click selects, drag moves along the ground",
-        },
-    );
+    keys(ui, &KEYS);
+    handles(ui, &mut gizmo.handles);
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Selection");
+    theme::heading_about(
+        ui,
+        "Selection",
+        "Click a doodad in the world to select it, or drag a rectangle on \
+         empty ground. Selection tests the model's triangles rather than \
+         its bounding box, and only visible placements can be selected.",
+    );
     let chosen: Vec<(u32, &str)> =
         selection.members().map(|at| (at.unique_id, at.path.as_str())).collect();
     match group(ui, &chosen, "doodads") {
@@ -77,17 +109,13 @@ pub(in crate::ui::tools) fn doodad(
     if selection.count() > 0 {
         replacing(ui, swap, placer, Kind::Doodad, selection.count(), portraits, favourites);
     }
+    if selection.at.is_none() {
+        theme::note(ui, "No doodad selected");
+    }
     locked_placements(ui, session, Kind::Doodad);
     let grouped = selection.count() > 1;
     let Selection { at, align, .. } = &mut *selection;
     let Some(at) = at.as_mut() else {
-        theme::note(
-            ui,
-            "Click a doodad in the world to select it, or drag a rectangle on \
-             empty ground. Selection tests the model's triangles rather than \
-             its bounding box, and only visible placements can be selected.",
-        );
-        theme::note(ui, "tab, or 1 and 2, switch select and place");
         return;
     };
 
@@ -100,61 +128,53 @@ pub(in crate::ui::tools) fn doodad(
         .next()
         .unwrap_or(&at.path)
         .to_string();
-    ui.label(egui::RichText::new(leaf).color(theme::INK))
-        .on_hover_text(at.path.clone());
-    theme::note(
-        ui,
-        format!("id {} · tile {},{}", at.unique_id, at.tile.0, at.tile.1),
-    );
+    property(ui, "Model", "", |ui| {
+        theme::value(ui, leaf).on_hover_text(at.path.clone());
+    });
+    property(ui, "ID", "", |ui| {
+        theme::value(ui, at.unique_id.to_string());
+    });
+    property(ui, "Tile", "", |ui| {
+        theme::value(ui, format!("{}, {}", at.tile.0, at.tile.1));
+    });
 
     let was = at.record;
-    ui.add_space(4.0);
-    theme::heading(ui, "Position");
     // World coordinates, not the file's. `MDDF` measures from the map corner
     // in its own axis order, which no other tool reports. The status line,
     // `.gps` in the game and every other check in this project use world
     // coordinates. `vale_assets::world::adt` does the conversion both ways.
+    theme::heading_about(ui, "Position", "World coordinates: X north, Y west, Z up.");
     let mut world = vale_assets::world::adt::placement_to_world(at.record.position);
-    for (label, axis) in [("x", 0), ("y", 1), ("z", 2)] {
-        theme::row(ui, label, |ui| {
-            ui.add(
-                egui::DragValue::new(&mut world[axis])
-                    .speed(0.1)
-                    .fixed_decimals(2),
-            );
-        });
+    for (name, axis) in [("X", 0), ("Y", 1), ("Z", 2)] {
+        number_row(ui, name, "", egui::DragValue::new(&mut world[axis]).speed(0.1).fixed_decimals(2));
     }
     at.record.position = vale_assets::world::adt::placement_from_world(world);
-    theme::note(ui, "x north · y west · z up");
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Rotation");
     // The angles are converted too. The file's three angles are in a different
     // order and with different signs from the world's, so showing them raw
     // would label as "x" a field that turns the model about z.
     // `placement_euler_to_world` is the single definition of the mapping; see
     // the module comment.
+    theme::heading_about(ui, "Rotation", "Right-handed, about the world's own axes.");
     let mut turns = vale_assets::world::adt::placement_euler_to_world(at.record.rotation);
-    for (label, axis) in [("about x", 0), ("about y", 1), ("about z", 2)] {
-        theme::row(ui, label, |ui| {
-            ui.add(
-                egui::DragValue::new(&mut turns[axis])
-                    .speed(1.0)
-                    .fixed_decimals(1)
-                    .suffix("°"),
-            );
-        });
+    for (name, axis) in [("About X", 0), ("About Y", 1), ("About Z", 2)] {
+        number_row(
+            ui,
+            name,
+            "",
+            egui::DragValue::new(&mut turns[axis]).speed(1.0).fixed_decimals(1).suffix("\u{b0}"),
+        );
     }
     at.record.rotation = vale_assets::world::adt::placement_euler_from_world(turns);
-    theme::note(ui, "right-handed, about the world's own axes");
     // Slope alignment: the two leans are rewritten from the ground's normal
     // under the origin and the turn is kept; see `doodads::lean_onto_ground`.
     // A button applies it to every selected placement, each to the ground
     // under its own origin, and a switch applies it to every later ctrl-drag.
     let mut each: Option<Lean> = None;
-    ui.horizontal(|ui| {
-        if ui
-            .small_button("Align to slope")
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Align to Slope");
+        if columns[0]
+            .add(button)
             .on_hover_text(
                 "Set the rotation about x and y so the model stands perpendicular \
                  to the slope under its origin. The rotation about z is kept. In a \
@@ -167,8 +187,9 @@ pub(in crate::ui::tools) fn doodad(
                 session.status = "the doodad's origin is not over open ground".to_string();
             }
         }
-        if ui
-            .small_button("Stand upright")
+        let button = theme::full_button(&columns[1], "Stand Upright");
+        if columns[1]
+            .add(button)
             .on_hover_text("Set the rotation about x and y to zero, keeping the rotation about z. In a group, applies to every member.")
             .clicked()
         {
@@ -176,62 +197,48 @@ pub(in crate::ui::tools) fn doodad(
             crate::tools::placements::doodads::stand_upright(at);
         }
     });
-    ui.checkbox(align, "ctrl-drag also aligns to slope")
+    ui.checkbox(align, "Ctrl + drag also aligns to slope")
         .on_hover_text(
-            "A ctrl-drag that drops the doodad onto the ground also aligns \
+            "A Ctrl + drag that drops the doodad onto the ground also aligns \
              it to the slope there.",
         );
 
-    ui.add_space(4.0);
     theme::heading(ui, "Scale");
     // The file stores unit scale as 1024. The panel shows a multiplier and
     // writes the file's number.
     let mut scale = f32::from(at.record.scale) / 1024.0;
-    theme::row(ui, "scale", |ui| {
-        if ui
-            .add(
-                egui::DragValue::new(&mut scale)
-                    .speed(0.01)
-                    .range(crate::tools::placements::doodads::SCALE_RANGE)
-                    .fixed_decimals(3)
-                    .suffix("x"),
-            )
-            .changed()
-        {
-            // Clamped only to what the field can hold; see `doodads::SCALE`,
-            // which is `MDDF`'s own `u16`.
-            at.record.scale = (scale * 1024.0).round().clamp(1.0, f32::from(u16::MAX)) as u16;
-        }
-    });
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    theme::note(ui, "drag to move · ctrl-drag drops it onto the ground");
-    theme::note(
+    if number_row(
         ui,
-        "arrows nudge · page up/down raises and lowers · shift moves ten times as far",
-    );
-    theme::note(ui, ", and . turn about z · alt + mouse turns it");
-    theme::note(ui, "ctrl + wheel scales · ctrl with alt snaps the turn");
-    theme::note(ui, "delete removes it · ctrl+d duplicates");
-    theme::note(ui, "shift + click adds or removes one");
-    theme::note(ui, "drag on empty ground selects a rectangle");
-    theme::note(ui, "ctrl+c copies · ctrl+v pastes at the pointer");
-    theme::note(ui, "tab, or 1 and 2, switch select and place");
-
-    ui.add_space(6.0);
-    if grouped {
-        theme::note(ui, "ctrl+d copies the whole group two yards north");
-    } else if theme::primary(ui, "Duplicate")
-        .on_hover_text(
-            "Ctrl+D. Puts a copy of this placement on the cursor at the same turn \
-         and size. Click to place it.",
-        )
-        .clicked()
+        "Scale",
+        "",
+        egui::DragValue::new(&mut scale)
+            .speed(0.01)
+            .range(crate::tools::placements::doodads::SCALE_RANGE)
+            .fixed_decimals(3)
+            .suffix("x"),
+    )
+    .changed()
     {
-        let turns = vale_assets::world::adt::placement_euler_to_world(was.rotation);
-        let scale = f32::from(was.scale) / 1024.0;
-        placer.arm(Kind::Doodad, at.path.clone(), turns[2], scale);
+        // Clamped only to what the field can hold; see `doodads::SCALE`,
+        // which is `MDDF`'s own `u16`.
+        at.record.scale = (scale * 1024.0).round().clamp(1.0, f32::from(u16::MAX)) as u16;
+    }
+
+    // Over a group, Ctrl + D copies the whole group in place and the button
+    // is not drawn; the Keys button says so.
+    if !grouped {
+        ui.add_space(6.0);
+        if theme::primary(ui, "Duplicate")
+            .on_hover_text(
+                "Ctrl+D. Puts a copy of this placement on the cursor at the same turn \
+                 and size. Click to place it.",
+            )
+            .clicked()
+        {
+            let turns = vale_assets::world::adt::placement_euler_to_world(was.rotation);
+            let scale = f32::from(was.scale) / 1024.0;
+            placer.arm(Kind::Doodad, at.path.clone(), turns[2], scale);
+        }
     }
 
     // A change made in the fields above becomes one history entry, recorded

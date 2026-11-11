@@ -3,15 +3,21 @@
 //! `Light.dbc` picked in the viewport, so its form is drawn with the table
 //! workspace's fields. The state is [`crate::tools::places::lights`]; a light's
 //! bands are [`super::bands`].
+//!
+//! [`sphere_block`] and [`place_strip`] are also drawn by the table
+//! workspace's form (`crate::ui::tables::form`), among that form's own
+//! sections. `sphere_block` is laid out to that form's measure for that
+//! reason: its heading and rows match the Conditions section drawn under it.
 
 use bevy_egui::egui;
 
+use super::triggers::arm_button;
 use crate::tables::Modal;
 use crate::tables;
 use crate::ui::tables::form::{fields, section_block};
 use crate::ui::tables::modals::modals;
 use crate::ui::tables::{LABEL, VALUE, Workspace};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, property};
 
 use vale_assets::tables::schema;
 
@@ -30,12 +36,11 @@ use vale_assets::tables::schema;
 /// the five conditions, which hold the colours.
 pub(crate) fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     if !work.session.open_table(work.assets, "Light") {
-        theme::note(ui, "opening Light.dbc…");
+        theme::note(ui, "Opening Light.dbc\u{2026}");
         return;
     }
     browse_button(ui, &mut work);
     new_light_buttons(ui, &mut work);
-    ui.add_space(6.0);
 
     // Draw whatever table the browser has open, which is not always `Light`.
     // Pressing a `ParamsClear` link opens `LightParams`, and the bands belong
@@ -51,33 +56,33 @@ pub(crate) fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     let table_name = work.browser.table.clone();
     let on_the_light = table_name == "Light";
     let Some(record) = work.browser.open else {
-        theme::note(
+        theme::heading_about(
             ui,
+            "Selection",
             "Click a light in the world to edit it. Every light near the camera \
              is marked; the selected light has its falloff spheres drawn in the \
              world and its fields listed here.",
         );
+        property(ui, "Selected", "", |ui| {
+            theme::value(ui, "None");
+        });
         modals(ui, &mut work, None);
         return;
     };
 
-    // A `< back` button to return from a followed reference. The middle
+    // A Back button to return from a followed reference. The middle
     // workspace has one in its heading; without this one the inspector had no
     // way back after following a reference to another table.
     if !work.browser.back.is_empty() {
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.button("< back").clicked() {
+            if ui.button("Back").clicked() {
                 work.browser.go_back();
             }
             if !on_the_light {
-                ui.label(
-                    egui::RichText::new(format!("in {table_name}"))
-                        .size(12.0)
-                        .color(theme::INK_FAINT),
-                );
+                theme::note(ui, format!("In {table_name}"));
             }
         });
-        ui.add_space(4.0);
     }
 
     let label = work.browser.describe(work.session, &table_name, record);
@@ -87,23 +92,15 @@ pub(crate) fn light_inspector(ui: &mut egui::Ui, mut work: Workspace<'_>) {
     };
     theme::heading(ui, &title);
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(format!(
-                "{table_name}.dbc  row {record}  ·  id {}",
-                label.id
-            ))
-            .size(12.0)
-            .color(theme::INK_FAINT),
-        );
+        theme::note(ui, format!("{table_name}.dbc \u{b7} Row {record} \u{b7} ID {}", label.id));
         if work.session.unsaved_tables.contains(&table_name) {
-            ui.label(egui::RichText::new("unsaved").color(theme::WARN));
+            ui.label(egui::RichText::new("Unsaved").size(theme::SMALL).color(theme::WARN));
         }
     });
-    ui.add_space(4.0);
     if on_the_light {
         place_strip(ui, &mut work, record);
-        ui.add_space(6.0);
     }
+    ui.add_space(4.0);
 
     let schema = schema::for_table(&table_name);
     egui::ScrollArea::vertical()
@@ -159,37 +156,41 @@ fn new_light_buttons(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     let Some(lights) = work.lights.as_deref_mut() else {
         return;
     };
-    ui.horizontal(|ui| {
+    // Each button is as wide as the panel, as Browse above them is: the two
+    // names do not fit side by side at the inspector's narrowest.
+    let button = arm_button(lights.armed, "New Light").min_size(egui::vec2(ui.available_width(), 24.0));
+    if ui
+        .add(button)
+        .on_hover_text(
+            "While on, a click on the ground places a light there: full strength to \
+             50 yards, faded out at 120 yards, with the LightParams of the selected \
+             light or the map's default light. Escape or a second click turns it off.",
+        )
+        .clicked()
+    {
+        lights.armed = !lights.armed;
+    }
+    if lights.default_light().is_none() {
+        let map = work.session.map_id;
+        let button = theme::full_button(ui, "New Default Light");
         if ui
-            .selectable_label(lights.armed, "New light")
+            .add(button)
             .on_hover_text(
-                "While on, a click on the ground places a light there: full strength to \
-                 50 yards, faded out at 120 yards, with the LightParams of the selected \
-                 light or the map's default light. Escape or a second click turns it off.",
+                "This map has no default light (the light that applies wherever no \
+                 other light covers). Creates one with the LightParams of the selected \
+                 light, another light on this map, or light 1 (the Eastern Kingdoms \
+                 default).",
             )
             .clicked()
         {
-            lights.armed = !lights.armed;
+            let line = crate::tools::places::lights::new_light(work.session, lights, work.browser, map, None);
+            work.session.status = line;
         }
-        if lights.default_light().is_none() {
-            let map = work.session.map_id;
-            if ui
-                .button("New default light")
-                .on_hover_text(
-                    "This map has no default light (the light that applies wherever no \
-                     other light covers). Creates one with the LightParams of the selected \
-                     light, another light on this map, or light 1 (the Eastern Kingdoms \
-                     default).",
-                )
-                .clicked()
-            {
-                let line = crate::tools::places::lights::new_light(work.session, lights, work.browser, map, None);
-                work.session.status = line;
-            }
-        }
-    });
+    }
+    // What the next click does, while New Light is armed. That Escape turns
+    // it off is in the button's hover text.
     if lights.armed {
-        theme::note(ui, "Click the ground where the light should stand. Escape cancels.");
+        theme::note(ui, "Click the ground where the light should stand.");
     }
 }
 
@@ -209,7 +210,7 @@ fn browse_button(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
     if ui
         .add_sized(
             egui::vec2(ui.available_width(), 24.0),
-            egui::Button::new(format!("Browse all {count} lights…")),
+            egui::Button::new(format!("Browse All {count} Lights\u{2026}")),
         )
         .on_hover_text("Choose a light from a list, including lights not on screen. The camera moves to the chosen light.")
         .clicked()
@@ -226,10 +227,14 @@ fn browse_button(ui: &mut egui::Ui, work: &mut Workspace<'_>) {
 ///
 /// The unit changes and the radius names do not: `FalloffStart` and
 /// `FalloffEnd` keep the columns' names. The three coordinates are labelled as
-/// the world's `x`, `y` and `z`, because after conversion they no longer match
+/// the world's `X`, `Y` and `Z`, because after conversion they no longer match
 /// the columns they come from. The axes swap, so the field holding the world's
 /// x is `InternalZ` in the file. Each field's tooltip names the column it
 /// writes and its unit.
+///
+/// The heading and the rows are the table form's and not the inspector's
+/// property rows: this section is drawn among that form's own sections, in
+/// the table workspace and in the inspector, and matches them.
 ///
 /// The five columns are
 /// [`light_field`](vale_assets::tables::light::light_field)'s: three
@@ -280,21 +285,21 @@ pub(in crate::ui) fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, r
             };
             row(
                 ui,
-                "x",
+                "X",
                 &mut x,
                 "The world's x. Stored as InternalZ, which is northward from \
                  the corner of the map in 1/36 of a yard.",
             );
             row(
                 ui,
-                "y",
+                "Y",
                 &mut y,
                 "The world's y. Stored as InternalX, which is westward from \
                  the corner of the map in 1/36 of a yard.",
             );
             row(
                 ui,
-                "z",
+                "Z",
                 &mut z,
                 "The world's z. Stored as InternalY, in 1/36 of a yard. A \
                  drag in the world moves x and y only, so z changes only \
@@ -344,18 +349,22 @@ pub(in crate::ui) fn sphere_block(ui: &mut egui::Ui, work: &mut Workspace<'_>, r
     );
 }
 
-/// The strip under a `Light` row's heading: where the light is, and a button
-/// to fly the camera there.
+/// The rows under a `Light` row's heading: where the light is and how far it
+/// reaches, a button to fly the camera there, and whether its falloff
+/// spheres are drawn.
 ///
 /// The row's three coordinates are stored in a form that cannot be read at a
 /// glance (`612096, 0, 998400`, in 1/36 of a yard from the corner of the map),
-/// so the form alone does not show where the light is. This strip gives the
-/// position in world coordinates, keeps the viewport's ring on the open row,
-/// and flies the camera there.
+/// so the form alone does not show where the light is. These rows give the
+/// position in world coordinates, keep the viewport's ring on the open row,
+/// and fly the camera there.
 ///
-/// It is drawn only for `Light`. The other four tables of the chain have no
-/// position: a `LightParams` row is a look, and where it applies is whichever
-/// lights point at it.
+/// They are drawn only for `Light`. The other four tables of the chain have
+/// no position: a `LightParams` row is a look, and where it applies is
+/// whichever lights point at it.
+///
+/// The position and the radii are property rows and the button is under
+/// them. On one line they were wider than the inspector.
 pub(in crate::ui) fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, record: usize) {
     let Some(id) = work
         .session
@@ -384,44 +393,38 @@ pub(in crate::ui) fn place_strip(ui: &mut egui::Ui, work: &mut Workspace<'_>, re
         return;
     };
 
+    match mark.everywhere {
+        // The default light applies everywhere and its coordinates are not
+        // read, so there is no position to fly to.
+        true => {
+            property(ui, "Position", "", |ui| {
+                theme::value(ui, "Default light, whole map");
+            });
+        }
+        false => {
+            property(ui, "Position", "", |ui| {
+                theme::value(ui, format!("{:.0}, {:.0}, {:.0}", mark.at.x, mark.at.y, mark.at.z));
+            });
+            property(ui, "Falloff", "", |ui| {
+                theme::value(ui, format!("{:.0}..{:.0} yd", mark.start, mark.end));
+            });
+        }
+    }
     ui.horizontal(|ui| {
-        if mark.everywhere {
-            // The default light applies everywhere and its coordinates are not
-            // read, so there is no position to fly to.
-            ui.label(
-                egui::RichText::new("default light (whole map)")
-                    .size(13.0)
-                    .color(theme::INK_DIM),
-            );
-        } else {
-            if ui
-                .button("Fly to")
+        if !mark.everywhere
+            && ui
+                .button("Fly To")
                 .on_hover_text("Move the camera to this light's position, at the row's stored height.")
                 .clicked()
-            {
-                work.fly.write(crate::tools::places::lights::Lights::fly_to(&mark));
-            }
-            ui.label(
-                theme::number(format!(
-                    "{:.0}, {:.0}, {:.0}",
-                    mark.at.x, mark.at.y, mark.at.z
-                ))
-                .color(theme::INK_DIM),
-            );
-            ui.label(
-                egui::RichText::new(format!("{:.0}..{:.0} yd", mark.start, mark.end))
-                    .size(13.0)
-                    .color(theme::INK_DIM),
-            );
+        {
+            work.fly.write(crate::tools::places::lights::Lights::fly_to(&mark));
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.checkbox(&mut lights.show_falloff, "falloff")
-                .on_hover_text(
-                    "On: draw this light's FalloffStart and FalloffEnd spheres. \
-                     Off: draw only its marker. Every light near the camera is \
-                     marked either way.",
-                );
-        });
+        ui.checkbox(&mut lights.show_falloff, "Show Falloff")
+            .on_hover_text(
+                "On: draw this light's FalloffStart and FalloffEnd spheres. \
+                 Off: draw only its marker. Every light near the camera is \
+                 marked either way.",
+            );
     });
 }
 
@@ -441,8 +444,8 @@ pub(in crate::ui) fn new_light_params(
     }
     let made = tables::rows::copy_light_params(work.session, from, assign);
     work.session.status = match made {
-        Some(id) => format!("created LightParams {id} with its bands, copied from LightParams {from}"),
-        None => "could not create a LightParams row".to_string(),
+        Some(id) => format!("Created LightParams {id} with its bands, copied from LightParams {from}"),
+        None => "Could not create a LightParams row".to_string(),
     };
     made
 }

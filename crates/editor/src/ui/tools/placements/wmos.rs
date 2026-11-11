@@ -1,17 +1,55 @@
 //! The WMO tool's panel. The state is [`crate::tools::placements::wmos`].
+//!
+//! In Place mode the whole panel is the picker's,
+//! [`super::place::placing`]. In Select mode:
+//!
+//! ```text
+//! [ Select | Place ]         the mode switch
+//! Keys                       Select mode's controls, on hover
+//! Handles                    Move, Turn or Off
+//! Selection                  the group and its buttons, the Replace Model
+//!                            list, the locked WMOs, and the primary's model,
+//!                            id and tile
+//! Position, Rotation, Sets   the primary's numbers
+//! Bounds                     the size of the primary's box, read and not edited
+//! Duplicate                  for one WMO
+//! ```
 
 use bevy_egui::egui;
 
 use crate::session::EditSession;
-use crate::tools::placements::gizmo::{Gizmo, HANDLES};
+use crate::tools::placements::gizmo::Gizmo;
 use crate::tools::placements::place::{Kind, Placing};
 use crate::tools::placements::wmos;
 use crate::ui::tools::placements::group::{group, locked_placements, Group};
 use crate::tools::placements::swap::Swap;
-use crate::ui::tools::placements::place::{placing, replacing};
-use crate::ui::widgets::theme;
+use crate::ui::tools::placements::place::{handles, keys, number_row, placing, replacing};
+use crate::ui::widgets::theme::{self, property};
 
-/// The building tool: `MODF` placements.
+/// Select mode's mouse and keyboard controls, for the Keys button. The last
+/// entry is the control a doodad has and a WMO lacks.
+const KEYS: [(&str, &str); 18] = [
+    ("Left button", "Select a WMO"),
+    ("Shift + left button", "Add or remove one"),
+    ("Drag on empty ground", "Select a rectangle"),
+    ("Drag", "Move"),
+    ("Ctrl + drag", "Drop onto the ground"),
+    ("Arrows", "Nudge 5 yd"),
+    ("Page Up, Page Down", "Raise, lower 5 yd"),
+    (", and .", "Turn about Z"),
+    ("Shift + any of those keys", "Ten times as far"),
+    ("Alt + mouse", "Turn"),
+    ("Ctrl + Alt + mouse", "Snap the turn"),
+    ("Delete", "Remove"),
+    ("Ctrl + D", "Duplicate; a group is copied two yards north"),
+    ("Ctrl + C", "Copy"),
+    ("Ctrl + V", "Paste at the pointer"),
+    ("1, 2", "Select, Place"),
+    ("Tab", "Switch between Select and Place"),
+    ("Ctrl + wheel", "No scale: MODF has no scale field in 1.12"),
+];
+
+/// The WMO tool's panel: `MODF` placements.
 ///
 /// The same as the doodad panel without a scale, because 1.12's record does
 /// not carry one. Instead it has two sets (which dressing of the model this
@@ -33,12 +71,15 @@ pub(in crate::ui::tools) fn wmo(
     if placing(ui, placer, Kind::Wmo, portraits, favourites) {
         return;
     }
-    ui.add_space(4.0);
-    theme::heading(ui, "Handles");
-    theme::segmented(ui, &mut gizmo.handles, &HANDLES, |a, b| a == b);
+    keys(ui, &KEYS);
+    handles(ui, &mut gizmo.handles);
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Selection");
+    theme::heading_about(
+        ui,
+        "Selection",
+        "Click a WMO in the world to select it, or drag a rectangle on \
+         empty ground. Only visible placements can be selected.",
+    );
     let chosen: Vec<(u32, &str)> =
         selection.members().map(|at| (at.unique_id, at.path.as_str())).collect();
     match group(ui, &chosen, "WMOs") {
@@ -74,14 +115,12 @@ pub(in crate::ui::tools) fn wmo(
     if selection.count() > 0 {
         replacing(ui, swap, placer, Kind::Wmo, selection.count(), portraits, favourites);
     }
+    if selection.at.is_none() {
+        theme::note(ui, "No WMO selected");
+    }
     locked_placements(ui, session, Kind::Wmo);
     let grouped = selection.count() > 1;
     let Some(at) = selection.at.as_mut() else {
-        theme::note(
-            ui,
-            "Click a building in the world to select it, or drag a rectangle on \
-             empty ground. Only visible placements can be selected.",
-        );
         return;
     };
 
@@ -91,26 +130,22 @@ pub(in crate::ui::tools) fn wmo(
         .next()
         .unwrap_or(&at.path)
         .to_string();
-    ui.label(egui::RichText::new(leaf).color(theme::INK))
-        .on_hover_text(at.path.clone());
-    theme::note(
-        ui,
-        format!("id {} · tile {},{}", at.unique_id, at.tile.0, at.tile.1),
-    );
+    property(ui, "Model", "", |ui| {
+        theme::value(ui, leaf).on_hover_text(at.path.clone());
+    });
+    property(ui, "ID", "", |ui| {
+        theme::value(ui, at.unique_id.to_string());
+    });
+    property(ui, "Tile", "", |ui| {
+        theme::value(ui, format!("{}, {}", at.tile.0, at.tile.1));
+    });
 
     let was = at.record;
-    ui.add_space(4.0);
-    theme::heading(ui, "Position");
+    theme::heading_about(ui, "Position", "World coordinates: X north, Y west, Z up.");
     let mut world = vale_assets::world::adt::placement_to_world(at.record.position);
     let before = world;
-    for (label, axis) in [("x", 0), ("y", 1), ("z", 2)] {
-        theme::row(ui, label, |ui| {
-            ui.add(
-                egui::DragValue::new(&mut world[axis])
-                    .speed(0.1)
-                    .fixed_decimals(2),
-            );
-        });
+    for (name, axis) in [("X", 0), ("Y", 1), ("Z", 2)] {
+        number_row(ui, name, "", egui::DragValue::new(&mut world[axis]).speed(0.1).fixed_decimals(2));
     }
     if world != before {
         // Moved through the tool's own function so the bounding box moves too.
@@ -118,81 +153,59 @@ pub(in crate::ui::tools) fn wmo(
         // loaded, so a box left behind is wrong there; see `wmos::refit`.
         wmos::set_world_position(&mut at.record, &was, world);
     }
-    theme::note(ui, "x north · y west · z up");
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Rotation");
+    theme::heading_about(ui, "Rotation", "Right-handed, about the world's own axes.");
     let mut turns = vale_assets::world::adt::placement_euler_to_world(at.record.rotation);
-    for (label, axis) in [("about x", 0), ("about y", 1), ("about z", 2)] {
-        theme::row(ui, label, |ui| {
-            ui.add(
-                egui::DragValue::new(&mut turns[axis])
-                    .speed(1.0)
-                    .fixed_decimals(1)
-                    .suffix("°"),
-            );
-        });
+    for (name, axis) in [("About X", 0), ("About Y", 1), ("About Z", 2)] {
+        number_row(
+            ui,
+            name,
+            "",
+            egui::DragValue::new(&mut turns[axis]).speed(1.0).fixed_decimals(1).suffix("\u{b0}"),
+        );
     }
     at.record.rotation = vale_assets::world::adt::placement_euler_from_world(turns);
-    theme::note(ui, "right-handed, about the world's own axes");
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Sets");
-    theme::row(ui, "doodad set", |ui| {
-        ui.add(egui::DragValue::new(&mut at.record.doodad_set).speed(0.1));
-    });
-    theme::row(ui, "name set", |ui| {
-        ui.add(egui::DragValue::new(&mut at.record.name_set).speed(0.1));
-    });
-    theme::note(ui, "indices into the WMO's doodad sets and name sets");
+    theme::heading_about(ui, "Sets", "Indices into the WMO's doodad sets and name sets.");
+    number_row(ui, "Doodad Set", "", egui::DragValue::new(&mut at.record.doodad_set).speed(0.1));
+    number_row(ui, "Name Set", "", egui::DragValue::new(&mut at.record.name_set).speed(0.1));
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Bounds");
     // Read-only: the box has to agree with the geometry, so it is not typed.
     // `wmos::publish` re-fits it from the drawn geometry when the button comes
     // up.
+    theme::heading_about(ui, "Bounds", "Re-fitted from the drawn geometry when a drag ends.");
     let span = [
         at.record.bounds_upper[0] - at.record.bounds_lower[0],
         at.record.bounds_upper[1] - at.record.bounds_lower[1],
         at.record.bounds_upper[2] - at.record.bounds_lower[2],
     ];
-    theme::note(
-        ui,
-        format!(
-            "{:.0} x {:.0} x {:.0} yd",
-            span[0].abs(),
-            span[1].abs(),
-            span[2].abs()
-        ),
-    );
-    theme::note(ui, "re-fitted from the drawn geometry when a drag ends");
+    property(ui, "Size", "", |ui| {
+        theme::value(
+            ui,
+            format!(
+                "{:.0} x {:.0} x {:.0} yd",
+                span[0].abs(),
+                span[1].abs(),
+                span[2].abs()
+            ),
+        );
+    });
 
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    theme::note(ui, "drag to move · ctrl-drag drops it onto the ground");
-    theme::note(ui, "arrows nudge 5 yd · shift nudges ten times as far");
-    theme::note(ui, ", and . turn about z · alt + mouse turns it");
-    theme::note(ui, "delete removes it · ctrl+d duplicates");
-    theme::note(ui, "shift + click adds or removes one");
-    theme::note(ui, "drag on empty ground selects a rectangle");
-    theme::note(ui, "ctrl+c copies · ctrl+v pastes at the pointer");
-    theme::note(ui, "tab, or 1 and 2, switch select and place");
-    theme::note(ui, "no scale: MODF has no scale field in 1.12");
-
-    ui.add_space(6.0);
     // Over a group, `Ctrl+D` copies the whole group in place rather than
-    // arming the placer with one — see `crate::tools::placements::group`.
-    if grouped {
-        theme::note(ui, "ctrl+d copies the whole group two yards north");
-    } else if theme::primary(ui, "Duplicate")
-        .on_hover_text(
-            "Ctrl+D. Puts a copy of this building on the cursor at the same turn. \
-         Click to place it.",
-        )
-        .clicked()
-    {
-        let turns = vale_assets::world::adt::placement_euler_to_world(was.rotation);
-        placer.arm(Kind::Wmo, at.path.clone(), turns[2], 1.0);
+    // arming the placer with one, and the button is not drawn; the Keys
+    // button says so. See `crate::tools::placements::group`.
+    if !grouped {
+        ui.add_space(6.0);
+        if theme::primary(ui, "Duplicate")
+            .on_hover_text(
+                "Ctrl+D. Puts a copy of this WMO on the cursor at the same turn. \
+                 Click to place it.",
+            )
+            .clicked()
+        {
+            let turns = vale_assets::world::adt::placement_euler_to_world(was.rotation);
+            placer.arm(Kind::Wmo, at.path.clone(), turns[2], 1.0);
+        }
     }
 
     let Some(record) = selection.edited(&was) else {

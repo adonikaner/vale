@@ -6,7 +6,7 @@
 //! spawn's 19 columns, in the sidebar because they describe one place in the
 //! world.
 //! `gameobject_template`'s 34 columns are in a window opened by the Edit
-//! Template… button because they apply to every object of that kind. Each form
+//! Template… button because they apply to every spawn of that entry. Each form
 //! states which of the two it is before its first field, and both are
 //! [`crate::ui::widgets::rowform`]'s page: one column per row under a folding heading per
 //! group.
@@ -40,7 +40,7 @@
 //! needs, the summary and the quest and loot windows, and the form with its
 //! `data` columns named by type.
 //!
-//! Apply, Put back and Discard are on the top bar's Server… panel, in the
+//! Apply, Restore and Discard are on the top bar's Server… panel, in the
 //! Objects block. See [`crate::ui::shell::sync`].
 
 use bevy_egui::egui;
@@ -146,8 +146,8 @@ impl SpawnView for GameObjectSubject {
                       shows the chosen object.",
         edit_selected: "Opens the 34 gameobject_template columns in a separate window. The 24 \
                         data columns are labelled with the field names of this object's type.",
-        none_chosen: "No object chosen. Search below by name or entry, or choose a type, then \
-                      click the ground to place the chosen object.",
+        search: "Search by name or entry, or choose a type, then click the ground to place the \
+                 chosen object.",
         too_short: "Type two letters of a name, or an entry, or choose a type.",
         no_model: Some(
             "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The object is placed and \
@@ -203,44 +203,40 @@ impl SpawnView for GameObjectSubject {
         Self::row_line(subject, known)
     }
 
+    /// The chosen object's type and display, as the summary of a selected
+    /// spawn's template names them, and the profession a gathering node
+    /// needs.
     fn chosen_detail(ui: &mut egui::Ui, subject: &mut Subject<'_>, chosen: &Known) {
         let gathered = gathered_by(locks(&mut subject.tool.own.locks, subject.assets), chosen);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let faint = |text: String| egui::RichText::new(text).small().color(theme::INK_DIM);
-            ui.label(faint(format!("{} · display", chosen.type_word())));
-            let id = egui::RichText::new(chosen.display_id.to_string()).small();
-            match chosen.display_id {
-                0 => {
-                    ui.label(id.color(theme::INK_DIM));
-                }
-                display => reference::display_link(ui, id, subject.asks, DisplayTable::Object.name(), display),
-            }
-            if let Some(words) = gathered {
-                ui.label(faint(format!("· {words}")));
-            }
+        property(ui, "Type", "gameobject_template.type. It names the 24 data columns.", |ui| {
+            theme::value(ui, chosen.type_word());
         });
+        property(ui, "Display", "displayId, a GameObjectDisplayInfo.dbc row.", |ui| match chosen.display_id {
+            0 => {
+                super::spawn::value_in(ui, "None", theme::INK_DIM);
+            }
+            display => reference::display_link(
+                ui,
+                egui::RichText::new(display.to_string()),
+                subject.asks,
+                DisplayTable::Object.name(),
+                display,
+            ),
+        });
+        if let Some(words) = gathered {
+            property(ui, "Gathering", "The profession a gathering node needs, from its lock.", |ui| {
+                theme::value(ui, words);
+            });
+        }
     }
 
     /// The type filter. With a type chosen, the list fills without any search
     /// text.
     fn search_filters(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("type").color(theme::INK_DIM));
-            let shown = match subject.tool.new_spawn.of_type {
-                Some(kind) => gameobject::value_word(&gameobject::TYPES, kind),
-                None => "any".to_string(),
-            };
-            egui::ComboBox::from_id_salt("object-type-filter")
-                .selected_text(shown)
-                .width(ui.available_width() - 8.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut subject.tool.new_spawn.of_type, None, "any");
-                    for named in gameobject::TYPES {
-                        ui.selectable_value(&mut subject.tool.new_spawn.of_type, Some(named.value), named.name);
-                    }
-                })
-                .response
+        let mut options: Vec<(&str, Option<u32>)> = vec![("Any", None)];
+        options.extend(gameobject::TYPES.iter().map(|named| (named.name, Some(named.value))));
+        property(ui, "Type", "", |ui| {
+            theme::choice(ui, "object-type-filter", &mut subject.tool.new_spawn.of_type, &options, |a, b| a == b)
                 .on_hover_text(
                     "Filters the matches by gameobject_template.type. With a type chosen, the \
                      list shows matches without search text. Mining veins, herbs and treasure \
@@ -308,37 +304,35 @@ impl SpawnView for GameObjectSubject {
             let locks = locks(&mut subject.tool.own.locks, subject.assets);
             format!("{id} \u{2014} {}", lock_words(locks, id))
         });
-        egui::Grid::new("gameobject-data-summary").num_columns(2).spacing([8.0, 2.0]).show(ui, |ui| {
-            let mut rows: Vec<(&str, String)> = vec![
-                ("Type", known.type_word()),
-                ("Display", known.display_id.to_string()),
-                ("Size", format!("{}", known.size)),
-                ("Faction", known.faction.to_string()),
-                ("Flags", gameobject::mask_words(&gameobject::FLAGS, known.flags)),
-            ];
-            if let Some(lock) = lock {
-                rows.push(("Lock", lock));
-            }
-            if let Some(loot) = known.loot() {
-                rows.push(("Loot", format!("gameobject_loot_template {loot}")));
-            }
-            for (name, value) in rows {
-                ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                match name == "Display" && known.display_id != 0 {
-                    true => reference::display_link(
-                        ui,
-                        egui::RichText::new(value),
-                        subject.asks,
-                        DisplayTable::Object.name(),
-                        known.display_id,
-                    ),
-                    false => {
-                        ui.label(egui::RichText::new(value).color(theme::INK));
-                    }
+        // The name, its hover and the value. The hovers are the ones the
+        // summary of a selected spawn's template has; see [`what_it_is`].
+        let mut rows: Vec<(&str, &str, String)> = vec![
+            ("Type", "gameobject_template.type. It names the 24 data columns.", known.type_word()),
+            ("Display", "displayId, a GameObjectDisplayInfo.dbc row.", known.display_id.to_string()),
+            ("Size", "The model's scale.", format!("{}", known.size)),
+            ("Faction", "A FactionTemplate.dbc row.", known.faction.to_string()),
+            ("Flags", "", gameobject::mask_words(&gameobject::FLAGS, known.flags)),
+        ];
+        if let Some(lock) = lock {
+            rows.push(("Lock", "A Lock.dbc row, and what opens it.", lock));
+        }
+        if let Some(loot) = known.loot() {
+            rows.push(("Loot", "The gameobject_loot_template id, from the lootId data column.", loot.to_string()));
+        }
+        for (name, about, value) in rows {
+            property(ui, name, about, |ui| match name == "Display" && known.display_id != 0 {
+                true => reference::display_link(
+                    ui,
+                    egui::RichText::new(value),
+                    subject.asks,
+                    DisplayTable::Object.name(),
+                    known.display_id,
+                ),
+                false => {
+                    theme::value(ui, value);
                 }
-                ui.end_row();
-            }
-        });
+            });
+        }
     }
 
     fn list_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known) {
@@ -465,12 +459,13 @@ fn spawn_data(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
 
 /// The Game Object Template section: a summary of the object's template with
 /// a picture of its model, and the buttons that open the template window and
-/// the workspace. The note under the heading states the template's scope, in
-/// the warning colour while this project changes the row.
+/// the workspace. The heading's info mark states the template's scope. While
+/// this project changes the row, a line under the heading says so and repeats
+/// the scope, in the warning colour.
 fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     let edited = subject.session.rows.edits.touches(gameobject::TEMPLATE, &spawn.template_key());
-    theme::heading(ui, GameObjectSubject::TEXT.heading);
     let Some(known) = spawn.known.clone() else {
+        theme::heading(ui, GameObjectSubject::TEXT.heading);
         ui.label(
             egui::RichText::new(format!(
                 "No gameobject_template row for entry {} at content patch {}. The server skips \
@@ -484,11 +479,9 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         return;
     };
     let scope = format!("Changes apply to every spawn of entry {}, on every map.", spawn.entry);
-    match edited {
-        true => {
-            ui.label(egui::RichText::new(format!("Edited. {scope}")).size(theme::SMALL).color(theme::WARN));
-        }
-        false => theme::note(ui, scope),
+    theme::heading_about(ui, GameObjectSubject::TEXT.heading, &scope);
+    if edited {
+        ui.label(egui::RichText::new(format!("Edited. {scope}")).size(theme::SMALL).color(theme::WARN));
     }
 
     let lock = known.lock().map(|id| format!("{id}: {}", lock_words(locks(&mut subject.tool.own.locks, subject.assets), id)));
@@ -498,15 +491,15 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         ui.vertical(|ui| {
             ui.set_max_width(width);
             property(ui, "Entry", "The gameobject_template entry.", |ui| {
-                super::spawn::value(ui, spawn.entry.to_string());
+                theme::value(ui, spawn.entry.to_string());
             });
             if spawn.patch() != 0 {
                 property(ui, "Content Patch", "The patch column of the template row the server uses.", |ui| {
-                    super::spawn::value(ui, spawn.patch().to_string());
+                    theme::value(ui, spawn.patch().to_string());
                 });
             }
             property(ui, "Type", "gameobject_template.type. It names the 24 data columns.", |ui| {
-                super::spawn::value(ui, known.type_word());
+                theme::value(ui, known.type_word());
             });
             property(ui, "Display", "displayId, a GameObjectDisplayInfo.dbc row.", |ui| match known.display_id {
                 0 => {
@@ -521,22 +514,22 @@ fn what_it_is(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                 ),
             });
             property(ui, "Size", "The model's scale.", |ui| {
-                super::spawn::value(ui, format!("{}", known.size));
+                theme::value(ui, format!("{}", known.size));
             });
             property(ui, "Faction", "A FactionTemplate.dbc row.", |ui| {
-                super::spawn::value(ui, known.faction.to_string());
+                theme::value(ui, known.faction.to_string());
             });
             property(ui, "Flags", "", |ui| {
-                super::spawn::value(ui, gameobject::mask_words(&gameobject::FLAGS, known.flags));
+                theme::value(ui, gameobject::mask_words(&gameobject::FLAGS, known.flags));
             });
             if let Some(lock) = &lock {
                 property(ui, "Lock", "A Lock.dbc row, and what opens it.", |ui| {
-                    super::spawn::value(ui, lock.clone()).on_hover_text(lock.clone());
+                    theme::value(ui, lock.clone()).on_hover_text(lock.clone());
                 });
             }
             if let Some(loot) = known.loot() {
                 property(ui, "Loot", "The gameobject_loot_template id, from the lootId data column.", |ui| {
-                    super::spawn::value(ui, loot.to_string());
+                    theme::value(ui, loot.to_string());
                 });
             }
         });

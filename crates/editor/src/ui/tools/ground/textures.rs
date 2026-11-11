@@ -1,8 +1,8 @@
 //! The texture brush's controls, in two places.
 //!
 //! ```text
-//! viewport toolbar   the brush preset, Paint or Erase, Texture Count, and the
-//!                    keys
+//! viewport toolbar   Paint or Erase, the brush preset, Texture Count and the
+//!                    Keys button
 //! inspector          the brush presets and the brush's settings, the brush's
 //!                    texture and its foliage, the tileset list, and the layers
 //!                    of the chunk under the pointer or pinned
@@ -27,7 +27,7 @@ use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
 use crate::tools::placements::place;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split, split_folder};
-use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_setting, bar_switch, field, property};
 use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
 use vale_edit::ops::paint::PaintBrush;
 
@@ -81,13 +81,10 @@ pub(in crate::ui::tools) fn paint(
 
     tileset_chosen(ui, textures, thumbnails, session, assets, foliage, portraits);
 
-    theme::heading(ui, "Tilesets");
+    theme::heading_about(ui, "Tilesets", "Click a tileset to paint with it.");
     if !tileset_picker(ui, textures, thumbnails, session) {
         return;
     }
-    theme::note(ui, "Click a tileset to paint with it.");
-
-    ui.add_space(6.0);
     chunk_layers(ui, thumbnails, textures, session, cursor, assets, foliage, portraits, now);
 }
 
@@ -95,15 +92,15 @@ pub(in crate::ui::tools) fn paint(
 /// falloff, shape, spray, and the two switches about the limit of four
 /// textures to a chunk. The section is [`super::presets::settings`].
 ///
-/// Opacity and Reuse Hidden Layer are disabled while erasing, which always
-/// goes to nothing and never adds a layer.
+/// Opacity and the Reuse a hidden layer box are disabled while erasing,
+/// which always goes to nothing and never adds a layer.
 fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
     let erasing = brush.erase;
     property(ui, "Radius", "The outer ring. Ctrl + wheel over the ground.", |ui| {
-        ui.add(egui::DragValue::new(&mut brush.radius).speed(0.25).range(textures::RADIUS).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut brush.radius).speed(0.25).range(textures::RADIUS).suffix(" yd"));
     });
     property(ui, "Strength", "How fast a held stroke reaches its opacity. Shift + wheel over the ground.", |ui| {
-        ui.add(egui::DragValue::new(&mut brush.strength).speed(0.05).range(textures::RATE).suffix("/s"));
+        field(ui, egui::DragValue::new(&mut brush.strength).speed(0.05).range(textures::RATE).suffix("/s"));
     });
     property(
         ui,
@@ -113,10 +110,13 @@ fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
         |ui| {
             let mut percent = brush.opacity * 100.0;
             let response = ui
-                .add_enabled(
-                    !erasing,
-                    egui::DragValue::new(&mut percent).speed(0.5).range(1.0..=100.0).fixed_decimals(0).suffix("%"),
-                )
+                .add_enabled_ui(!erasing, |ui| {
+                    field(
+                        ui,
+                        egui::DragValue::new(&mut percent).speed(0.5).range(1.0..=100.0).fixed_decimals(0).suffix("%"),
+                    )
+                })
+                .inner
                 .on_disabled_hover_text("Erase always reduces the texture to 0%.");
             if response.changed() {
                 brush.opacity = percent / 100.0;
@@ -130,17 +130,18 @@ fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
          the paint fades along the falloff to nothing at the outer ring, and a held stroke goes \
          no further than that fade. Alt + wheel over the ground.",
         |ui| {
-            ui.add(egui::DragValue::new(&mut brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
+            field(ui, egui::DragValue::new(&mut brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
         },
     );
     property(ui, "Falloff", "How the strength fades from the inner ring to the outer ring. Keys 1 to 5.", |ui| {
-        bar_choice(ui, "textures-falloff", &mut brush.falloff, &textures::FALLOFFS, |a, b| a == b);
+        theme::choice(ui, "textures-falloff", &mut brush.falloff, &textures::FALLOFFS, |a, b| a == b);
     });
     property(ui, "Shape", "The brush's outline. Shift + 1, 2 or 3.", |ui| {
-        bar_choice(ui, "textures-shape", &mut brush.shape, &textures::SHAPES, |a, b| a == b);
+        theme::choice(ui, "textures-shape", &mut brush.shape, &textures::SHAPES, |a, b| a == b);
     });
     // Spray: a stroke in patches. One number while it is solid, and the patch
-    // size only once it is not.
+    // size only once it is not. At 100% the field reads "100%  Solid": the
+    // word is part of the suffix, which egui leaves out of the text it edits.
     property(
         ui,
         "Spray",
@@ -149,20 +150,23 @@ fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
          the edge between two textures.",
         |ui| {
             let mut percent = brush.density * 100.0;
-            if ui
-                .add(egui::DragValue::new(&mut percent).speed(0.5).range(5.0..=100.0).fixed_decimals(0).suffix("%"))
-                .changed()
+            let suffix = match brush.density >= 1.0 {
+                true => "%  Solid",
+                false => "%",
+            };
+            if field(
+                ui,
+                egui::DragValue::new(&mut percent).speed(0.5).range(5.0..=100.0).fixed_decimals(0).suffix(suffix),
+            )
+            .changed()
             {
                 brush.density = percent / 100.0;
-            }
-            if brush.density >= 1.0 {
-                theme::note(ui, "Solid");
             }
         },
     );
     if brush.density < 1.0 {
         property(ui, "Grain", "How many yards a patch is across. A blend map's texel is half a yard.", |ui| {
-            ui.add(egui::DragValue::new(&mut brush.grain).speed(0.05).range(0.5..=20.0).fixed_decimals(1).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut brush.grain).speed(0.05).range(0.5..=20.0).fixed_decimals(1).suffix(" yd"));
         });
     }
     // The two switches about the limit of four textures to a chunk, which is
@@ -186,15 +190,15 @@ fn brush_settings(ui: &mut egui::Ui, brush: &mut PaintBrush) {
 /// The texture brush's toolbar over the viewport:
 ///
 /// ```text
-/// Brush | Paint  Erase | Texture Count
-/// the keys
+/// [Paint | Erase]  Brush  Texture Count  Keys
 /// ```
 ///
 /// The toolbar holds what decides what a stroke does and the switches about
 /// the view. The brush's settings are in the inspector beside the presets,
 /// because a preset is those settings. Shift held is the other of Paint and
 /// Erase for the length of a stroke. `texture_count` is the view bar's Texture
-/// count guide. See [`theme::toolbar`].
+/// count guide. Paint and Erase are a [`theme::bar_group`], of which one is
+/// chosen; Texture Count is a [`theme::bar_switch`]. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     viewport: egui::Rect,
@@ -209,7 +213,21 @@ pub(crate) fn toolbar(
     theme::toolbar(ctx, "textures-toolbar", viewport, corner, |ui| {
         let brush = &mut textures.brush;
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_group(ui, |ui| {
+                if bar_segment(ui, !brush.erase, "Paint")
+                    .on_hover_text("Paint the brush's texture onto the ground.")
+                    .clicked()
+                {
+                    brush.erase = false;
+                }
+                if bar_segment(ui, brush.erase, "Erase")
+                    .on_hover_text("Remove the brush's texture from the ground. Shift held erases for one stroke.")
+                    .clicked()
+                {
+                    brush.erase = true;
+                }
+            });
             let names: Vec<&str> = brushes.paint.list.iter().map(|preset| preset.name.as_str()).collect();
             let modified = brushes.paint.modified(&Paint::of(brush));
             let picked = bar_setting(ui, "Brush", |ui| {
@@ -218,21 +236,7 @@ pub(crate) fn toolbar(
             if let Some(at) = picked {
                 brushes.act_paint(Ask::Choose(at), brush);
             }
-            bar_gap(ui);
-            if bar_toggle(ui, !brush.erase, "Paint")
-                .on_hover_text("Paint the brush's texture onto the ground.")
-                .clicked()
-            {
-                brush.erase = false;
-            }
-            if bar_toggle(ui, brush.erase, "Erase")
-                .on_hover_text("Remove the brush's texture from the ground. Shift held erases for one stroke.")
-                .clicked()
-            {
-                brush.erase = true;
-            }
-            bar_gap(ui);
-            if bar_toggle(ui, *texture_count, "Texture Count")
+            if bar_switch(ui, *texture_count, "Texture Count")
                 .on_hover_text(
                     "Write over each chunk near the camera the number of texture layers it \
                      carries, 1 to 4, in red where it carries four and a stroke adding a \
@@ -243,21 +247,23 @@ pub(crate) fn toolbar(
             {
                 *texture_count = !*texture_count;
             }
+            bar_keys(ui, &KEYS);
         });
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(
-                    "Left button: paint \u{b7} Shift: erase \u{b7} Ctrl + wheel: radius \u{b7} \
-                     Shift + wheel: strength \u{b7} Alt + wheel: core \u{b7} 1-5: falloff \u{b7} \
-                     Shift + 1-3: shape \u{b7} Space: pin the chunk",
-                )
-                .size(theme::SMALL)
-                .color(theme::INK_FAINT),
-            )
-            .wrap(),
-        );
     })
 }
+
+/// The texture brush's mouse and keyboard controls, for the toolbar's Keys
+/// button.
+const KEYS: [(&str, &str); 8] = [
+    ("Left button", "Paint, or erase in Erase"),
+    ("Shift", "The other of Paint and Erase while held"),
+    ("Ctrl + wheel", "Radius"),
+    ("Shift + wheel", "Strength"),
+    ("Alt + wheel", "Core"),
+    ("1 to 5", "Falloff"),
+    ("Shift + 1 to 3", "Shape"),
+    ("Space", "Pin the chunk"),
+];
 
 /// The texture brush's texture, and what a new layer of it grows.
 fn tileset_chosen(
@@ -269,9 +275,9 @@ fn tileset_chosen(
     foliage: &mut Foliage,
     portraits: &mut Portraits,
 ) {
-    theme::heading(ui, "Brush Texture");
+    theme::heading_about(ui, "Brush Texture", "Choose a texture from the tileset list below.");
     if textures.brush.texture.is_empty() {
-        theme::note(ui, "No texture selected. Choose one from the tileset list below.");
+        theme::note(ui, "No texture selected.");
         return;
     }
     let chosen = textures.brush.texture.clone();
@@ -348,7 +354,7 @@ pub(super) fn tileset_browser(
             .desired_width(f32::INFINITY),
     );
     if !textures.catalogue.iter().any(|path| !path.is_empty()) {
-        theme::note(ui, "Loading tilesets…");
+        theme::note(ui, "Loading tilesets\u{2026}");
         return None;
     }
     // Folders, as in the model picker. `Tileset\Elwynn\` is the set a zone was
@@ -367,7 +373,7 @@ pub(super) fn tileset_browser(
             ui,
             match folders.len() {
                 0 => format!("{} tilesets", files.len()),
-                n => format!("{n} folders · {} tilesets", files.len()),
+                n => format!("{n} folders \u{b7} {} tilesets", files.len()),
             },
         );
         egui::ScrollArea::vertical()
@@ -548,10 +554,15 @@ fn chunk_layers(
     portraits: &mut Portraits,
     now: f64,
 ) {
-    theme::heading(ui, "Chunk");
+    theme::heading_about(
+        ui,
+        "Chunk",
+        "Move the pointer over the ground to show the chunk under it. Press Space over a chunk \
+         to pin it.\n\nLayer changes apply only to a pinned chunk.",
+    );
     let pinned = textures.pinned.is_some();
     let Some((coord, chunk)) = textures::shown(textures, cursor) else {
-        theme::note(ui, "Move the pointer over the ground to show the chunk under it. Press Space to pin it.");
+        theme::note(ui, "No chunk under the pointer.");
         return;
     };
     let Some(layers) = textures::layers_of(session, coord, chunk) else {
@@ -560,16 +571,24 @@ fn chunk_layers(
     };
 
     property(ui, "Location", "", |ui| {
-        ui.label(egui::RichText::new(format!("Tile {}, {} \u{b7} Chunk {chunk}", coord.0, coord.1)).color(theme::INK));
+        theme::value(ui, format!("Tile {}, {} \u{b7} Chunk {chunk}", coord.0, coord.1));
     });
     let full = layers.len() >= vale_edit::adt::alpha::MAX_LAYERS;
-    property(ui, "Layers", "A chunk carries at most four textures.", |ui| {
-        let colour = match full {
-            true => theme::WARN,
-            false => theme::INK,
-        };
-        ui.label(egui::RichText::new(format!("{} of {}", layers.len(), vale_edit::adt::alpha::MAX_LAYERS)).color(colour));
-    });
+    property(
+        ui,
+        "Layers",
+        "A chunk carries at most four textures. On a chunk with four, remove or swap a layer to \
+         paint a different texture, or turn on Reuse a hidden layer in Brush Settings.",
+        |ui| {
+            let colour = match full {
+                true => theme::WARN,
+                false => theme::INK,
+            };
+            ui.label(
+                egui::RichText::new(format!("{} of {}", layers.len(), vale_edit::adt::alpha::MAX_LAYERS)).color(colour),
+            );
+        },
+    );
     property(
         ui,
         "Status",
@@ -580,7 +599,9 @@ fn chunk_layers(
                 true => ("Pinned", theme::WARN),
                 false => ("Following pointer", theme::INK),
             };
-            ui.label(egui::RichText::new(words).color(colour));
+            // The button is laid out first, from the row's right end, so
+            // the words have what is left and are cut with an ellipsis at
+            // the inspector's narrowest.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button(match pinned {
@@ -594,12 +615,12 @@ fn chunk_layers(
                         false => Some((coord, chunk)),
                     };
                 }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(words).color(colour)).truncate());
+                });
             });
         },
     );
-    if !pinned {
-        theme::note(ui, "Layer changes apply only to a pinned chunk. Press Space over a chunk to pin it.");
-    }
 
     let mut drop: Option<usize> = None;
     let mut rebase: Option<String> = None;
@@ -679,32 +700,39 @@ fn chunk_layers(
                 }
                 // Only 164 layers in Azeroth are animated, all of them lava,
                 // so the direction and speed are shown only once the switch is
-                // on.
+                // on. They are rows of their own: the switch, the direction
+                // and the speed on one row are wider than the panel.
+                let (mut turn, mut rate, mut on) = layer.animation;
+                let mut moved = false;
                 property(
                     ui,
                     "Animation",
                     "MCLY texture animation: scrolls this layer's texture coordinates, as on \
                      the Burning Steppes lava.",
                     |ui| {
-                        let (mut turn, mut rate, mut on) = layer.animation;
                         ui.add_enabled_ui(pinned, |ui| {
-                            let mut moved = ui
+                            moved |= ui
                                 .checkbox(&mut on, "Scrolls")
                                 .on_disabled_hover_text("Pin the chunk (press Space over it).")
                                 .changed();
-                            if on {
-                                moved |= crawl_direction(ui, index, &mut turn);
-                                moved |= ui
-                                    .add(egui::DragValue::new(&mut rate).speed(0.1).range(0..=7).prefix("Speed "))
-                                    .on_hover_text("0 to 7: each step doubles it.")
-                                    .changed();
-                            }
-                            if moved {
-                                crawl = Some((index, turn, rate, on));
-                            }
                         });
                     },
                 );
+                if on {
+                    property(ui, "Direction", "", |ui| {
+                        ui.add_enabled_ui(pinned, |ui| moved |= crawl_direction(ui, index, &mut turn));
+                    });
+                    property(ui, "Speed", "", |ui| {
+                        ui.add_enabled_ui(pinned, |ui| {
+                            moved |= field(ui, egui::DragValue::new(&mut rate).speed(0.1).range(0..=7))
+                                .on_hover_text("0 to 7: each step doubles it.")
+                                .changed();
+                        });
+                    });
+                }
+                if moved {
+                    crawl = Some((index, turn, rate, on));
+                }
                 if layer.animation.2 {
                     theme::note(ui, crawls(layer.animation));
                 }
@@ -732,19 +760,22 @@ fn chunk_layers(
         textures::set_layer_animation(session, coord, chunk, index, turn, rate, on, now);
     }
 
-    // The two commands that act on more than one layer at a time.
+    // The two commands that act on more than one layer at a time, as a row
+    // of two equal buttons.
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(pinned && layers.len() > 1, egui::Button::new("Clear to Base"))
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Clear to Base");
+        if columns[0]
+            .add_enabled(pinned && layers.len() > 1, button)
             .on_hover_text("Remove every layer from this chunk except the base.")
             .on_disabled_hover_text("Pin a chunk with more than one layer (press Space over it).")
             .clicked()
         {
             textures::clear_paint(session, coord, chunk);
         }
-        if ui
-            .add_enabled(chosen.is_some(), egui::Button::new("Set Tile Base"))
+        let button = theme::full_button(&columns[1], "Set Tile Base");
+        if columns[1]
+            .add_enabled(chosen.is_some(), button)
             .on_hover_text(
                 "Make the brush's texture the base of all 256 chunks of this tile, under \
                  whatever each already carries. One undo entry.",
@@ -760,11 +791,7 @@ fn chunk_layers(
     });
     if full {
         ui.add_space(2.0);
-        theme::note(
-            ui,
-            "This chunk has four textures, the maximum. Remove or swap a layer to paint a \
-             different texture, or turn on Reuse Hidden Layer on the toolbar.",
-        );
+        theme::note(ui, "This chunk has four textures, the maximum.");
     }
 }
 
@@ -853,7 +880,7 @@ fn crawl_direction(ui: &mut egui::Ui, index: usize, turn: &mut u32) -> bool {
     let was = *turn;
     egui::ComboBox::from_id_salt(("layer-direction", index))
         .selected_text(COMPASS[(*turn & 7) as usize])
-        .width(48.0)
+        .width(theme::field_width(ui))
         .show_ui(ui, |ui| {
             for (step, name) in COMPASS.iter().enumerate() {
                 ui.selectable_value(turn, step as u32, *name);

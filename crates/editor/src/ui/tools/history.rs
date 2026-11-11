@@ -19,12 +19,13 @@ pub(super) fn history(
         if ui
             .add_enabled(
                 undo.is_some(),
-                egui::Button::new("Undo").min_size(egui::vec2(half, 22.0)),
+                egui::Button::new("Undo").min_size(egui::vec2(half, 24.0)),
             )
             .on_hover_text(match &undo {
                 Some(label) => format!("Ctrl+Z — {label}"),
                 None => "Ctrl+Z".to_string(),
             })
+            .on_disabled_hover_text("Nothing to undo.")
             .clicked()
         {
             session.undo(assets);
@@ -32,24 +33,24 @@ pub(super) fn history(
         if ui
             .add_enabled(
                 redo.is_some(),
-                egui::Button::new("Redo").min_size(egui::vec2(half, 22.0)),
+                egui::Button::new("Redo").min_size(egui::vec2(half, 24.0)),
             )
             .on_hover_text(match &redo {
                 Some(label) => format!("Ctrl+Y — {label}"),
                 None => "Ctrl+Y".to_string(),
             })
+            .on_disabled_hover_text("Nothing to redo.")
             .clicked()
         {
             session.redo(assets);
         }
     });
+    // The line names the edit Undo takes back. With none it is not drawn:
+    // the disabled button already says so.
     let depth = session.history.depth_done();
-    theme::note(
-        ui,
-        match (&undo, depth) {
-            (Some(label), 1) => format!("{label} — 1 step to undo"),
-            (Some(label), n) => format!("{label} — {n} steps to undo"),
-            (None, _) => "nothing to undo".to_string(),
-        },
-    );
+    match (&undo, depth) {
+        (Some(label), 1) => theme::note(ui, format!("{label} — 1 step to undo")),
+        (Some(label), n) => theme::note(ui, format!("{label} — {n} steps to undo")),
+        (None, _) => {}
+    }
 }

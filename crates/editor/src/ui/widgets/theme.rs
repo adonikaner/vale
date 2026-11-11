@@ -29,9 +29,14 @@ use bevy_egui::egui;
 use egui::{Color32, CornerRadius, Margin, RichText, Stroke, Ui, Vec2};
 
 /// Text, and the two quieter weights of it.
+///
+/// The contrast ratios against [`PANEL`] are 12.6, 7.4 and 4.8 to 1. The
+/// faintest weight is used for notes and section headings at [`SMALL`], so it
+/// is kept above 4.5 to 1, the ratio WCAG AA asks of small text. At
+/// its earlier value, (108, 116, 132), it was 3.4 to 1.
 pub(crate) const INK: Color32 = Color32::from_rgb(0xE2, 0xE6, 0xED);
-pub(crate) const INK_DIM: Color32 = Color32::from_rgb(0x94, 0x9C, 0xAC);
-pub(crate) const INK_FAINT: Color32 = Color32::from_rgb(0x6C, 0x74, 0x84);
+pub(crate) const INK_DIM: Color32 = Color32::from_rgb(0xA9, 0xB1, 0xC0);
+pub(crate) const INK_FAINT: Color32 = Color32::from_rgb(0x85, 0x8D, 0x9C);
 
 /// The four surfaces — see the module comment.
 pub(crate) const SHELL: Color32 = Color32::from_rgb(0x15, 0x18, 0x1D);
@@ -43,14 +48,27 @@ pub(crate) const RAISED_HOT: Color32 = Color32::from_rgb(0x35, 0x3C, 0x4A);
 /// The hairline everything is separated by.
 pub(crate) const LINE: Color32 = Color32::from_rgb(0x30, 0x36, 0x42);
 
-/// A button that cannot be pressed.
-///
-/// It has a fill of its own. egui draws a disabled widget from
-/// `widgets.noninteractive`, whose fill on a panel is the panel colour, so a
-/// disabled button was invisible: "Save" with nothing to save disappeared
-/// instead of greying out. A control that stays visible while unavailable
-/// shows where it will be when it becomes available.
+/// The fill of a tile or a well that holds nothing or cannot be pressed,
+/// where the editor paints one itself: one step off [`PANEL`].
 pub(crate) const DEAD: Color32 = Color32::from_rgb(0x23, 0x27, 0x30);
+
+/// The outline of a button, a drop-down list and a checkbox: lighter than
+/// [`LINE`], so a control has an edge against the panel and against its own
+/// fill.
+///
+/// It is also what keeps a disabled button visible. egui 0.35 draws a
+/// disabled button from the same visuals as an enabled one and multiplies
+/// every colour by [`DISABLED_ALPHA`]. The renderer blends in linear light,
+/// where a share of a dark colour is much less than that share as bright:
+/// [`RAISED`] at one half comes out one level off the panel, and a disabled
+/// button was drawn as its text alone, which reads as a label. This outline
+/// at [`DISABLED_ALPHA`] comes out about 13 levels off the panel, so the
+/// button keeps its shape.
+pub(crate) const EDGE: Color32 = Color32::from_rgb(0x3D, 0x44, 0x52);
+
+/// How much of a disabled widget's colour is kept. See [`EDGE`]. At this
+/// value a disabled button's text is about as bright as [`INK_FAINT`].
+const DISABLED_ALPHA: f32 = 0.6;
 
 /// The only accent colour. Selection, the active tool and the primary action
 /// all use this blue, so one colour means "active" everywhere in the editor.
@@ -172,21 +190,21 @@ fn paint(style: &mut egui::Style) {
     // every surface is docked to an edge.
     v.window_shadow = egui::epaint::Shadow::NONE;
     v.popup_shadow = egui::epaint::Shadow::NONE;
+    v.disabled_alpha = DISABLED_ALPHA;
 
     let w = &mut v.widgets;
-    // egui draws a disabled widget from `noninteractive`, as well as a label;
-    // see [`DEAD`]. A frame paints `bg_fill` and a button paints
-    // `weak_bg_fill`, so the two differ here, while in every other state they
-    // match.
+    // A frame paints `bg_fill` and a button paints `weak_bg_fill`, so the
+    // two differ here, while in every other state they match.
     w.noninteractive.bg_fill = PANEL;
     w.noninteractive.weak_bg_fill = DEAD;
     w.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
     w.noninteractive.fg_stroke = Stroke::new(1.0, INK_FAINT);
     w.noninteractive.corner_radius = CornerRadius::same(3);
 
+    // A disabled button is drawn from these too; see [`EDGE`].
     w.inactive.bg_fill = RAISED;
     w.inactive.weak_bg_fill = RAISED;
-    w.inactive.bg_stroke = Stroke::new(1.0, LINE);
+    w.inactive.bg_stroke = Stroke::new(1.0, EDGE);
     w.inactive.fg_stroke = Stroke::new(1.0, INK);
     w.inactive.corner_radius = CornerRadius::same(3);
 
@@ -226,6 +244,16 @@ fn paint(style: &mut egui::Style) {
     s.slider_width = 128.0;
     s.combo_width = 132.0;
     s.interact_size.y = 22.0;
+    // A scroll bar is drawn whenever its area has more than it shows. egui's
+    // default bar is drawn only while the pointer is over the area, so a
+    // panel cut off at the bottom of the window did not show that it
+    // scrolls. The bar has a strip of its own, so it covers no content.
+    s.scroll = egui::style::ScrollStyle {
+        floating_width: 4.0,
+        floating_allocated_width: 6.0,
+        dormant_handle_opacity: 0.45,
+        ..egui::style::ScrollStyle::floating()
+    };
 }
 
 /// A progress bar, with the kind of work and the current step written on it.
@@ -311,21 +339,139 @@ pub(crate) const PROGRESS_HEIGHT: f32 = 22.0;
 /// starts after the text rather than crossing it, so the heading reads as a
 /// word and not as a divider with a caption.
 pub(crate) fn heading(ui: &mut Ui, text: &str) {
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        let label = ui.label(
-            RichText::new(text.to_uppercase())
-                .size(SMALL)
-                .color(INK_FAINT),
+    heading_row(ui, text, 0.0);
+}
+
+/// The space above a section heading. It is larger than the space between
+/// two rows, so the rows under one heading read as a group.
+const SECTION_GAP: f32 = 10.0;
+
+/// The body of [`heading`]: the name, then the rule, which stops `reserve`
+/// points short of the right edge. Answers the row's rectangle.
+fn heading_row(ui: &mut Ui, text: &str, reserve: f32) -> egui::Rect {
+    ui.add_space(SECTION_GAP);
+    let row = ui
+        .horizontal(|ui| {
+            let label = ui.add(
+                egui::Label::new(RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT)).selectable(false),
+            );
+            let y = label.rect.center().y;
+            let from = label.rect.right() + 6.0;
+            let to = ui.max_rect().right() - reserve;
+            if to > from {
+                ui.painter().hline(from..=to, y, Stroke::new(1.0, LINE));
+            }
+            // The row is as tall as an info mark whether or not it has one,
+            // so every heading is the same height.
+            ui.allocate_exact_size(Vec2::new(0.0, INFO_MARK), egui::Sense::hover());
+        })
+        .response
+        .rect;
+    ui.add_space(3.0);
+    row
+}
+
+/// The width and height of an [`info`] mark, in points.
+const INFO_MARK: f32 = 14.0;
+
+/// [`heading`], with an [`info`] mark at its right end that shows `about`
+/// when hovered.
+///
+/// For what a reader needs once: how a section's controls are used, or what
+/// a rule covers. Text drawn permanently under the heading is for the
+/// section's state, which changes.
+pub(crate) fn heading_about(ui: &mut Ui, text: &str, about: &str) {
+    let row = heading_row(ui, text, INFO_MARK + 6.0);
+    let mark = egui::Rect::from_center_size(
+        egui::pos2(ui.max_rect().right() - INFO_MARK * 0.5, row.center().y),
+        Vec2::splat(INFO_MARK),
+    );
+    info(ui, ui.id().with(("about", text)), mark, about);
+}
+
+/// A lower-case i in a ring, drawn in `rect`, which shows `about` when
+/// hovered. Painted because the editor's typeface has no such glyph.
+///
+/// Interacted with under `id` and not allocated, because the rectangle is
+/// inside a row that is already laid out, as [`star_button`]'s is.
+pub(crate) fn info(ui: &Ui, id: egui::Id, rect: egui::Rect, about: &str) -> egui::Response {
+    let response = ui.interact(rect, id, egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let colour = match response.hovered() {
+            true => INK,
+            false => INK_FAINT,
+        };
+        let painter = ui.painter();
+        let centre = rect.center();
+        painter.circle_stroke(centre, rect.width() * 0.5 - 1.0, Stroke::new(1.0, colour));
+        painter.circle_filled(centre - Vec2::new(0.0, 3.0), 0.9, colour);
+        painter.line_segment(
+            [centre - Vec2::new(0.0, 1.0), centre + Vec2::new(0.0, 3.5)],
+            Stroke::new(1.4, colour),
         );
-        let y = label.rect.center().y;
-        let from = label.rect.right() + 6.0;
-        let to = ui.max_rect().right();
-        if to > from {
-            ui.painter().hline(from..=to, y, Stroke::new(1.0, LINE));
-        }
-    });
-    ui.add_space(2.0);
+    }
+    response.on_hover_ui(|ui| {
+        ui.set_max_width(ABOUT_WIDTH);
+        ui.label(about);
+    })
+}
+
+/// How wide the text of an [`info`] mark's hover is wrapped, in points.
+const ABOUT_WIDTH: f32 = 300.0;
+
+/// A section that folds: [`heading`] with a triangle before the name, which
+/// a click turns. Open at first; egui keeps whether it is open under `id`.
+///
+/// The body is not indented. `egui::CollapsingHeader` indents its body
+/// behind a vertical rule, which put a folding section's label column 12
+/// points to the right of the column in the sections above and below it.
+pub(crate) fn fold(ui: &mut Ui, id: &str, text: &str, body: impl FnOnce(&mut Ui)) {
+    let id = ui.make_persistent_id(id);
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true);
+    ui.add_space(SECTION_GAP);
+    let row = ui
+        .horizontal(|ui| {
+            let (mark, _) = ui.allocate_exact_size(Vec2::new(8.0, INFO_MARK), egui::Sense::hover());
+            let label = ui.add(
+                egui::Label::new(RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT)).selectable(false),
+            );
+            let y = label.rect.center().y;
+            let from = label.rect.right() + 6.0;
+            let to = ui.max_rect().right();
+            if to > from {
+                ui.painter().hline(from..=to, y, Stroke::new(1.0, LINE));
+            }
+            mark
+        });
+    let response = ui.interact(row.response.rect, id.with("heading"), egui::Sense::click());
+    if response.clicked() {
+        state.toggle(ui);
+    }
+    // The triangle points down while the section is open and right while it
+    // is folded, turning with egui's own animation.
+    let openness = state.openness(ui.ctx());
+    let centre = row.inner.center();
+    let colour = match response.hovered() {
+        true => INK,
+        false => INK_FAINT,
+    };
+    let turn = egui::emath::Rot2::from_angle(openness * std::f32::consts::FRAC_PI_2);
+    let points = [Vec2::new(-2.5, -3.5), Vec2::new(3.0, 0.0), Vec2::new(-2.5, 3.5)]
+        .map(|corner| centre + turn * corner)
+        .to_vec();
+    ui.painter().add(egui::Shape::convex_polygon(points, colour, Stroke::NONE));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    ui.add_space(3.0);
+    state.show_body_unindented(ui, body);
+}
+
+/// The size of a panel's title, in points: the tool's name at the top of the
+/// inspector.
+pub(crate) const TITLE: f32 = 17.0;
+
+/// A panel's title.
+pub(crate) fn title(ui: &mut Ui, text: &str) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(text).size(TITLE).color(INK)).selectable(false))
 }
 
 /// One labelled row: the name in a fixed column, the control in what is left.
@@ -396,6 +542,103 @@ pub(crate) fn property<R>(ui: &mut Ui, name: &str, about: &str, contents: impl F
     .inner
 }
 
+/// The widest a [`field`], a [`choice`] or a [`property_segmented`] is drawn,
+/// in points. The inspector can be dragged to [`INSPECTOR_MAX`], and a number
+/// field 440 points wide puts its value far from its name.
+pub(crate) const FIELD_MAX: f32 = 220.0;
+
+/// The width of a control that fills a [`property`] row: what is left of the
+/// row, up to [`FIELD_MAX`].
+pub(crate) fn field_width(ui: &Ui) -> f32 {
+    ui.available_width().min(FIELD_MAX)
+}
+
+/// A number in a [`property`] row: a drag-or-type box as wide as
+/// [`field_width`], drawn sunk.
+///
+/// egui draws a `DragValue` as a button, so a number that is typed into and
+/// a button that is pressed had the same fill, and each box was as wide as
+/// its own digits. A sunk box is what a text field looks like in this theme
+/// ([`SUNK`]), and one width gives a section's values a common left and right
+/// edge.
+pub(crate) fn field(ui: &mut Ui, value: egui::DragValue<'_>) -> egui::Response {
+    let size = [field_width(ui), ui.spacing().interact_size.y];
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.noninteractive] {
+            state.weak_bg_fill = SUNK;
+            state.bg_fill = SUNK;
+        }
+        w.inactive.bg_stroke = Stroke::new(1.0, LINE);
+        ui.add_sized(size, value)
+    })
+    .inner
+}
+
+/// One of a list of named values in a [`property`] row, as a drop-down list
+/// as wide as [`field_width`]. `same` compares as [`segmented`]'s does.
+pub(crate) fn choice<T: Copy>(
+    ui: &mut Ui,
+    id: &str,
+    current: &mut T,
+    options: &[(&str, T)],
+    same: impl Fn(&T, &T) -> bool,
+) -> egui::Response {
+    let shown = options.iter().find(|(_, value)| same(value, current)).map_or("", |(name, _)| name);
+    let mut picked = None;
+    let response = egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .width(field_width(ui))
+        .show_ui(ui, |ui| {
+            for (name, value) in options {
+                if ui.selectable_label(same(value, current), *name).clicked() {
+                    picked = Some(*value);
+                }
+            }
+        })
+        .response;
+    if let Some(value) = picked {
+        *current = value;
+    }
+    response
+}
+
+/// One line of text in a [`property`] row: an edit box as wide as
+/// [`field_width`].
+pub(crate) fn text_field(ui: &mut Ui, text: &mut String) -> egui::Response {
+    ui.add(egui::TextEdit::singleline(text).desired_width(field_width(ui) - 8.0))
+}
+
+/// A value in a [`property`] row that is read and not edited: the text in
+/// [`INK`], cut with an ellipsis at the row's end.
+pub(crate) fn value(ui: &mut Ui, text: impl Into<String>) -> egui::Response {
+    ui.add(egui::Label::new(RichText::new(text.into()).color(INK)).truncate())
+}
+
+/// A button as wide as the room it is given, for a row of buttons with
+/// common edges: `ui.columns(2, ..)` with one of these in each column.
+pub(crate) fn full_button(ui: &Ui, text: &str) -> egui::Button<'static> {
+    egui::Button::new(text.to_string()).min_size(Vec2::new(ui.available_width(), 24.0))
+}
+
+/// [`segmented`] in a [`property`] row, as wide as [`field_width`].
+pub(crate) fn property_segmented<T: Copy>(
+    ui: &mut Ui,
+    current: &mut T,
+    options: &[(&str, T)],
+    same: impl Fn(&T, &T) -> bool,
+) {
+    let width = field_width(ui);
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, ui.spacing().interact_size.y),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_max_width(width);
+            segmented(ui, current, options, same);
+        },
+    );
+}
+
 /// X, Y and Z on one line, three equal columns of the width there is, each a
 /// drag-or-type box in yards. Answers whether any changed.
 ///
@@ -420,9 +663,133 @@ pub(crate) fn xyz(ui: &mut Ui, at: &mut [f32; 3]) -> bool {
     moved
 }
 
-/// A [`toolbar`] button that shows whether it is on.
-pub(crate) fn bar_toggle(ui: &mut Ui, on: bool, text: &str) -> egui::Response {
-    ui.add(egui::Button::selectable(on, text).min_size(Vec2::new(0.0, 24.0)))
+/// How tall a [`toolbar`]'s controls are, in points. One height for all of
+/// them, so a row of different controls has one top and one bottom edge.
+pub(crate) const BAR_HEIGHT: f32 = 26.0;
+
+/// A number on a [`toolbar`]: a drag-or-type box drawn sunk, as [`field`] is
+/// in a panel, as wide as its digits and no narrower than 56 points.
+pub(crate) fn bar_field(ui: &mut Ui, value: egui::DragValue<'_>) -> egui::Response {
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.noninteractive] {
+            state.weak_bg_fill = SUNK;
+            state.bg_fill = SUNK;
+        }
+        w.inactive.bg_stroke = Stroke::new(1.0, LINE);
+        ui.spacing_mut().interact_size.x = 56.0;
+        ui.add(value)
+    })
+    .inner
+}
+
+/// A [`toolbar`] setting that is either on or off and belongs to no set: a
+/// box that is ticked while it is on, then the name.
+///
+/// [`bar_segment`] is one of a set, of which exactly one is chosen. The box
+/// tells the two apart, and tells an off switch from a button that acts.
+pub(crate) fn bar_switch(ui: &mut Ui, on: bool, text: &str) -> egui::Response {
+    const PAD: f32 = 8.0;
+    const BOX: f32 = 12.0;
+    const GAP: f32 = 6.0;
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let ink = match on {
+        true => INK,
+        false => INK_DIM,
+    };
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, ink);
+    let size = Vec2::new(PAD + BOX + GAP + galley.size().x + PAD, BAR_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let (fill, edge) = match (on, response.hovered()) {
+            (true, _) => (ACCENT_SUNK, ACCENT),
+            (false, true) => (RAISED_HOT, INK_FAINT),
+            (false, false) => (RAISED, LINE),
+        };
+        painter.rect(rect, CornerRadius::same(3), fill, Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+        let tick = egui::Rect::from_center_size(
+            egui::pos2(rect.left() + PAD + BOX * 0.5, rect.center().y),
+            Vec2::splat(BOX),
+        );
+        match on {
+            true => {
+                painter.rect_filled(tick, CornerRadius::same(2), ACCENT);
+                let c = tick.center();
+                painter.add(egui::Shape::line(
+                    vec![c + Vec2::new(-3.0, 0.0), c + Vec2::new(-1.0, 2.5), c + Vec2::new(3.5, -2.5)],
+                    Stroke::new(1.6, SHELL),
+                ));
+            }
+            false => {
+                painter.rect(tick, CornerRadius::same(2), SUNK, Stroke::new(1.0, INK_FAINT), egui::StrokeKind::Inside);
+            }
+        }
+        painter.galley(
+            egui::pos2(tick.right() + GAP, rect.center().y - galley.size().y * 0.5),
+            galley,
+            ink,
+        );
+    }
+    response
+}
+
+/// A set of [`bar_segment`]s on a [`toolbar`], of which one is chosen: a
+/// sunk well with the segments side by side, as [`segmented`] is in a panel.
+/// It is as wide as its segments, and it does not wrap.
+pub(crate) fn bar_group<R>(ui: &mut Ui, segments: impl FnOnce(&mut Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(SUNK)
+        .stroke(Stroke::new(1.0, LINE))
+        .corner_radius(CornerRadius::same(3))
+        .inner_margin(Margin::same(1))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            // An unchosen segment has no fill until it is hovered, so the
+            // chosen one is the only lit part of the well. Its outline is
+            // transparent and not absent: a button's padding is reduced by
+            // its outline's width, so a segment with no outline would be two
+            // points larger than the chosen one and its text a point off.
+            let w = &mut ui.visuals_mut().widgets;
+            w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+            w.inactive.bg_stroke = Stroke::new(1.0, Color32::TRANSPARENT);
+            w.hovered.weak_bg_fill = RAISED;
+            w.hovered.bg_stroke = Stroke::new(1.0, Color32::TRANSPARENT);
+            w.active.bg_stroke = Stroke::new(1.0, Color32::TRANSPARENT);
+            ui.horizontal(segments).inner
+        })
+        .inner
+}
+
+/// One choice of a [`bar_group`], lit while it is the chosen one.
+pub(crate) fn bar_segment(ui: &mut Ui, on: bool, text: &str) -> egui::Response {
+    let button = match on {
+        true => egui::Button::new(RichText::new(text).color(INK))
+            .fill(ACCENT_SUNK)
+            .stroke(Stroke::new(1.0, ACCENT)),
+        false => egui::Button::new(RichText::new(text).color(INK_DIM)),
+    };
+    ui.add(button.corner_radius(CornerRadius::same(2)).min_size(Vec2::new(0.0, BAR_HEIGHT - 2.0)))
+}
+
+/// A [`toolbar`]'s Keys button: hovering it lists the tool's mouse and
+/// keyboard controls as a table, the control on the left and what it does on
+/// the right.
+///
+/// A bar used to end in one faint line holding all of them, separated by
+/// dots. That line was a row of the bar over the viewport at all times, and
+/// eight controls in one sentence had to be read through to find one.
+pub(crate) fn bar_keys(ui: &mut Ui, keys: &[(&str, &str)]) -> egui::Response {
+    ui.add(egui::Button::new(RichText::new("Keys").color(INK_DIM)).min_size(Vec2::new(0.0, BAR_HEIGHT)))
+        .on_hover_ui(|ui| {
+            egui::Grid::new("bar-keys").num_columns(2).spacing([14.0, 5.0]).show(ui, |ui| {
+                for (key, does) in keys {
+                    ui.label(RichText::new(*key).color(INK));
+                    ui.label(RichText::new(*does).color(INK_DIM));
+                    ui.end_row();
+                }
+            });
+        })
 }
 
 /// A [`toolbar`] setting: its name, then its control, then a little space
@@ -432,42 +799,6 @@ pub(crate) fn bar_setting<R>(ui: &mut Ui, name: &str, control: impl FnOnce(&mut 
     let inner = control(ui);
     ui.add_space(4.0);
     inner
-}
-
-/// The space and rule between two groups of [`toolbar`] controls.
-pub(crate) fn bar_gap(ui: &mut Ui) {
-    ui.add_space(2.0);
-    ui.separator();
-    ui.add_space(2.0);
-}
-
-/// One of a short list of named values on a [`toolbar`], as a drop-down list.
-/// `same` compares as [`segmented`]'s does, so a variant carrying data can be
-/// compared on its discriminant.
-pub(crate) fn bar_choice<T: Copy>(
-    ui: &mut Ui,
-    id: &str,
-    current: &mut T,
-    options: &[(&str, T)],
-    same: impl Fn(&T, &T) -> bool,
-) -> egui::Response {
-    let shown = options.iter().find(|(_, value)| same(value, current)).map_or("", |(name, _)| name);
-    let mut picked = None;
-    let response = egui::ComboBox::from_id_salt(id)
-        .selected_text(shown)
-        .width(72.0)
-        .show_ui(ui, |ui| {
-            for (name, value) in options {
-                if ui.selectable_label(same(value, current), *name).clicked() {
-                    picked = Some(*value);
-                }
-            }
-        })
-        .response;
-    if let Some(value) = picked {
-        *current = value;
-    }
-    response
 }
 
 /// A tool's bar over the top of the viewport, to the right of `corner` (the

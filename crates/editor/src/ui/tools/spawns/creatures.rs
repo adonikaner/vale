@@ -15,7 +15,9 @@
 //! Apart from drawing the columns, the panel exists to state that scope. A
 //! person editing `level_min` in a form that does not say which row it is on
 //! cannot tell "make this one guard elite" from "make every Stormwind guard
-//! elite".
+//! elite". The template's scope is on the info mark of the Creature Template
+//! heading, under that heading while the project changes the row, and at the
+//! head of the template window.
 //!
 //! The two rows are drawn in two places on the same split: the columns of the
 //! clicked spawn are in the sidebar, and the columns of its template are behind
@@ -27,8 +29,8 @@
 //! Location           position, facing, height above the ground
 //! Creature Template  a read-only summary of the template row, Edit
 //!                    Template… and Open in Workspace
-//! Related Data       the buttons that open the creature's other windows,
-//!                    one row per kind
+//! Related Data       the buttons that open the creature's other windows, in
+//!                    rows by what each is about
 //! Addon              the spawn's creature_addon row
 //! Formation, Links, Pool, Game Events
 //! Spawn Row          the spawn's own 21 columns
@@ -137,7 +139,7 @@ pub(crate) struct CreaturePanel<'a> {
 
 impl<'a> Subject<'a> {
     /// The panel's subject out of the shell's state. `gizmo` is whether the
-    /// panel draws the Handles switch, which only the inspector does.
+    /// subject carries the gizmo, which only the toolbar's Handles use.
     pub(in crate::ui) fn new(
         session: &'a mut EditSession,
         editing: &'a mut Editing<'_>,
@@ -193,7 +195,7 @@ impl SpawnView for CreatureSubject {
         click: "Click a creature in the viewport to show its properties here. The nearest ones \
                 are drawn as models; everything further out is a dome.",
         models: "Draw the nearest spawns as creature models. Off, every spawn is drawn as a \
-                 ring, as spawns past the model limit already are.",
+                 dome, as spawns past the model limit already are.",
         budget: "The maximum number of models drawn at once. The busiest tile on map 0 holds 288 \
                  spawns and the editor streams a 7x7 block, so drawing every one of them is \
                  several thousand creatures.",
@@ -212,9 +214,8 @@ impl SpawnView for CreatureSubject {
         edit_chosen: "Open creature_template's 78 columns in a separate window. The window \
                       follows the chosen creature.",
         edit_selected: "Open creature_template's 78 columns in a separate window. The window can \
-                        be moved off the panel and stay open while you work in the viewport.",
-        none_chosen: "No creature chosen. Search below by name or entry, then click the ground \
-                      to place it.",
+                        be moved off the panel and stays open while the viewport is in use.",
+        search: "Search by name or entry, then click the ground to place the chosen creature.",
         too_short: "Type at least two letters of a name, or an entry.",
         no_model: None,
         list_search: "name, subname or entry",
@@ -276,24 +277,26 @@ impl SpawnView for CreatureSubject {
         }
     }
 
+    /// The chosen creature's level, faction and display, as the summary of a
+    /// selected spawn's template names them.
     fn chosen_detail(ui: &mut egui::Ui, subject: &mut Subject<'_>, chosen: &Known) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(
-                egui::RichText::new(format!(
-                    "level {}–{} · faction {} · display",
-                    chosen.level.0, chosen.level.1, chosen.faction
-                ))
-                .small()
-                .color(theme::INK_DIM),
-            );
-            let id = egui::RichText::new(chosen.display_id.to_string()).small();
-            match chosen.display_id {
-                0 => {
-                    ui.label(id.color(theme::INK_DIM));
-                }
-                display => reference::display_link(ui, id, subject.asks, DisplayTable::Creature.name(), display),
+        property(ui, "Level", "", |ui| {
+            theme::value(ui, levels(chosen));
+        });
+        property(ui, "Faction", "A FactionTemplate.dbc row.", |ui| {
+            theme::value(ui, chosen.faction.to_string());
+        });
+        property(ui, "Display", "display_id1, a CreatureDisplayInfo.dbc row.", |ui| match chosen.display_id {
+            0 => {
+                super::spawn::value_in(ui, "None", theme::INK_DIM);
             }
+            display => reference::display_link(
+                ui,
+                egui::RichText::new(display.to_string()),
+                subject.asks,
+                DisplayTable::Creature.name(),
+                display,
+            ),
         });
     }
 
@@ -309,9 +312,10 @@ impl SpawnView for CreatureSubject {
         subject.own.waypoints.forget();
     }
 
+    /// Services is a flag of the creature tool's own, on or off by itself.
     fn beside_markers(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
         let on = subject.tool.own.show_services;
-        if theme::bar_toggle(ui, on, "Services")
+        if theme::bar_switch(ui, on, "Services")
             .on_hover_text(
                 "Draw an icon over each creature within 150 yards for each service its npc_flags \
                  offer: quests, vendor, trainer, flight master, innkeeper, banker and others. The \
@@ -358,30 +362,26 @@ impl SpawnView for CreatureSubject {
     }
 
     fn list_summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known) {
-        egui::Grid::new("creature-data-summary").num_columns(2).spacing([8.0, 2.0]).show(ui, |ui| {
-            for (name, value) in [
-                ("Level", levels(known)),
-                ("Rank", creature::value_word(&creature::RANKS, known.rank)),
-                ("Faction", known.faction.to_string()),
-                ("Display", known.display_id.to_string()),
-                ("NPC flags", creature::mask_words(&creature::NPC_FLAGS, known.npc_flags)),
-            ] {
-                ui.label(egui::RichText::new(name).color(theme::INK_DIM));
-                match name == "Display" && known.display_id != 0 {
-                    true => reference::display_link(
-                        ui,
-                        egui::RichText::new(value),
-                        subject.asks,
-                        DisplayTable::Creature.name(),
-                        known.display_id,
-                    ),
-                    false => {
-                        ui.label(egui::RichText::new(value).color(theme::INK));
-                    }
+        for (name, value) in [
+            ("Level", levels(known)),
+            ("Rank", creature::value_word(&creature::RANKS, known.rank)),
+            ("Faction", known.faction.to_string()),
+            ("Display", known.display_id.to_string()),
+            ("NPC Flags", creature::mask_words(&creature::NPC_FLAGS, known.npc_flags)),
+        ] {
+            property(ui, name, "", |ui| match name == "Display" && known.display_id != 0 {
+                true => reference::display_link(
+                    ui,
+                    egui::RichText::new(value),
+                    subject.asks,
+                    DisplayTable::Creature.name(),
+                    known.display_id,
+                ),
+                false => {
+                    theme::value(ui, value);
                 }
-                ui.end_row();
-            }
-        });
+            });
+        }
     }
 
     fn list_windows(ui: &mut egui::Ui, subject: &mut Subject<'_>, known: &Known) {
@@ -460,13 +460,14 @@ fn spawn_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
 /// columns: the spawn's `creature_addon` row, which overrides the template's
 /// display, mount, equipment set and auras for this one spawn and says how
 /// it stands. A checkbox makes the row or removes it; its columns follow,
-/// one per row of the page layout. See [`crate::subjects::addons`].
+/// one per row of the page layout. The heading's info mark says what the row
+/// is and when the server reads it. See [`crate::subjects::addons`].
 fn addon_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     use vale_mangos::addon;
     use vale_mangos::row::Life;
-    theme::heading(ui, "Addon");
-    theme::note(
+    theme::heading_about(
         ui,
+        "Addon",
         "The creature_addon row: this spawn's own display, mount, weapons, stance, emote \
          and auras, over the template's. The server reads it at startup; a change needs a \
          restart.",
@@ -659,18 +660,16 @@ fn addon_field(
 /// looking at a spawn (how strong it is, what it offers) without the 78 that
 /// editing it needs. Editing is in [`super::spawn::template_window`].
 ///
-/// The note under the heading states the template's scope, which is what
-/// tells an edit here from an edit to the spawn. It is in the warning colour
-/// while this project changes the row.
+/// The heading's info mark states the template's scope, which is what tells
+/// an edit to the template from an edit to the spawn. While this project
+/// changes the row, a line under the heading says so and repeats the scope,
+/// in the warning colour.
 fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
     let edited = subject.session.rows.edits.touches(creature::TEMPLATE, &spawn.template_key());
-    theme::heading(ui, CreatureSubject::TEXT.heading);
     let scope = format!("Changes apply to every spawn of entry {}, on every map.", spawn.entry);
-    match edited {
-        true => {
-            ui.label(egui::RichText::new(format!("Edited. {scope}")).size(theme::SMALL).color(theme::WARN));
-        }
-        false => theme::note(ui, scope),
+    theme::heading_about(ui, CreatureSubject::TEXT.heading, &scope);
+    if edited {
+        ui.label(egui::RichText::new(format!("Edited. {scope}")).size(theme::SMALL).color(theme::WARN));
     }
 
     // The few columns worth reading at a glance, from the row the map query
@@ -682,21 +681,21 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
         ui.vertical(|ui| {
             ui.set_max_width(width);
             property(ui, "Entry", "The creature_template entry.", |ui| {
-                super::spawn::value(ui, spawn.entry.to_string());
+                theme::value(ui, spawn.entry.to_string());
             });
             if spawn.patch != 0 {
                 property(ui, "Content Patch", "The patch column of the template row the server uses.", |ui| {
-                    super::spawn::value(ui, spawn.patch.to_string());
+                    theme::value(ui, spawn.patch.to_string());
                 });
             }
             property(ui, "Level", "", |ui| {
-                super::spawn::value(ui, levels_of(spawn.level));
+                theme::value(ui, levels_of(spawn.level));
             });
             property(ui, "Rank", "", |ui| {
-                super::spawn::value(ui, creature::value_word(&creature::RANKS, spawn.rank));
+                theme::value(ui, creature::value_word(&creature::RANKS, spawn.rank));
             });
             property(ui, "Faction", "A FactionTemplate.dbc row.", |ui| {
-                super::spawn::value(ui, spawn.faction.to_string());
+                theme::value(ui, spawn.faction.to_string());
             });
             property(ui, "Display", "display_id1, a CreatureDisplayInfo.dbc row.", |ui| match spawn.display_id {
                 0 => {
@@ -711,7 +710,7 @@ fn summary(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn) {
                 ),
             });
             property(ui, "NPC Flags", "What the creature offers: npc_flags.", |ui| {
-                super::spawn::value(ui, creature::mask_words(&creature::NPC_FLAGS, spawn.npc_flags));
+                theme::value(ui, creature::mask_words(&creature::NPC_FLAGS, spawn.npc_flags));
             });
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -738,10 +737,10 @@ fn levels_of((low, high): (u32, u32)) -> String {
     }
 }
 
-/// The buttons that open what a creature has besides its template, one
-/// property row per kind: its path, its AI, what a player can do with it,
-/// what it sells and teaches, and its items. Each is a toggle, lit while its
-/// window is open, and each window follows the selection.
+/// The buttons that open what a creature has besides its template, in five
+/// property rows: its path, its AI, what a player can do with it, what it
+/// sells and teaches, and its items. Each is a toggle, lit while its window
+/// is open, and each window follows the selection.
 ///
 /// `spawn` is the selected spawn in the world. The Creatures workspace draws
 /// the same rows with none, and then the path is left out, because a path
@@ -756,7 +755,7 @@ pub(in crate::ui) fn windows(
     if let Some(spawn) = spawn {
         property(ui, "Movement", "The spawn's waypoint path.", |ui| waypoints_button(ui, subject, spawn));
     }
-    property(ui, "AI", "The creature's scripted behaviour and combat spells.", |ui| {
+    button_row(ui, "AI", "The creature's scripted behaviour and combat spells.", |ui| {
         // Events and Spells: see `crate::ui::subjects::behaviour`.
         if ui
             .add(egui::Button::new("Events").selected(subject.own.behaviour.events_open))
@@ -782,7 +781,7 @@ pub(in crate::ui) fn windows(
             subject.own.behaviour.spells_open = !subject.own.behaviour.spells_open;
         }
     });
-    property(ui, "Interaction", "What a player can do when talking to the creature.", |ui| {
+    button_row(ui, "Interaction", "What a player can do when talking to the creature.", |ui| {
         // Quests: `crate::ui::subjects::quests` draws the window, and the
         // shell keeps it on the chosen creature.
         let quests_open = subject
@@ -820,7 +819,7 @@ pub(in crate::ui) fn windows(
             subject.own.gossip.trail.clear();
         }
     });
-    property(ui, "Services", "What the creature sells and teaches.", |ui| {
+    button_row(ui, "Services", "What the creature sells and teaches.", |ui| {
         // Vendor and Trainer: see `crate::ui::subjects::services`.
         use crate::subjects::services::Kind;
         if ui
@@ -846,7 +845,7 @@ pub(in crate::ui) fn windows(
             subject.own.services.toggle(Kind::Trainer);
         }
     });
-    property(ui, "Items", "What the creature drops and holds.", |ui| {
+    button_row(ui, "Items", "What the creature drops and holds.", |ui| {
         // Loot: the rows this creature's three loot columns name. See
         // `crate::ui::subjects::loot`.
         if ui
@@ -906,6 +905,16 @@ fn waypoints_button(ui: &mut egui::Ui, subject: &mut Subject<'_>, spawn: &Spawn)
         }
     }
 }
+
+/// A [`property`] row holding buttons, which go onto a second line when the
+/// row is narrower than they are. At the inspector's narrowest, the two
+/// buttons of a Related Data row are wider than the room beside the name.
+fn button_row(ui: &mut egui::Ui, name: &str, about: &str, buttons: impl FnOnce(&mut egui::Ui)) {
+    property(ui, name, about, |ui| {
+        ui.horizontal_wrapped(buttons);
+    });
+}
+
 /// The side of the picture beside the summary, in points.
 const SUMMARY_PICTURE: f32 = 56.0;
 

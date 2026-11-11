@@ -106,12 +106,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editin
     let tool = subject.tool;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(tool.name())
-                .strong()
-                .size(13.0)
-                .color(theme::INK),
-        );
+        theme::title(ui, tool.name());
         // A workspace in the main window can be moved to a window of its own.
         // See `crate::popout`.
         if tool.covers_viewport() && !editing.popout.holds(tool) {
@@ -131,11 +126,10 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editin
             });
         }
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     if tool.edits() {
         history(ui, subject.session, subject.assets);
     }
-    ui.add_space(4.0);
     (tool.spec().inspector)(ui, subject, editing);
 }
 

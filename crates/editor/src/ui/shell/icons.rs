@@ -1,12 +1,13 @@
-//! The view bar's icons, drawn by [`super::viewbar`] for the bottom toolbar's
-//! view toggles. The rail's tools and the two pointer tools have icons of
-//! their own, painted with egui's painter ([`super::toolicons`]).
+//! Image files compiled into the editor as view bar icons. [`super::viewbar`]
+//! draws one in place of the switch's painted icon
+//! ([`super::viewicons`]). The rail's tools and the two pointer tools have
+//! painted icons of their own ([`super::toolicons`]).
 //!
-//! ## No icons are shipped yet
+//! ## No image is shipped yet
 //!
-//! [`EMBEDDED`] is empty, so every view toggle draws its short label (`FOG`,
-//! `WMO`). A button with no icon
-//! is a complete button, so nothing here decides whether a toggle exists.
+//! [`EMBEDDED`] is empty, so every view toggle draws its painted icon. A
+//! button with no image is a complete button, so nothing here decides whether
+//! a toggle exists.
 //!
 //! ## Adding an icon
 //!

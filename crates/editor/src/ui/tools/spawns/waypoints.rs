@@ -44,7 +44,7 @@
 
 use bevy_egui::egui;
 
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, field, property};
 use crate::server::creatures::{PATHS_VPATH, SQL_VPATH};
 use crate::server::store::Gesture;
 use crate::session::EditSession;
@@ -63,8 +63,8 @@ pub(crate) struct Subject<'a> {
     pub(crate) behaviour: &'a mut Behaviour,
     /// The frame clock the undo stack folds a gesture by.
     pub(crate) now: f64,
-    /// Where the Fly here button and a double-click on a point send its request. See
-    /// [`crate::camera::FlyTo`].
+    /// Where the Fly Here button and a double-click on a point send their
+    /// request. See [`crate::camera::FlyTo`].
     pub(crate) fly: &'a mut bevy::prelude::Messages<crate::camera::FlyTo>,
 }
 
@@ -111,7 +111,6 @@ pub(crate) fn window(ctx: &egui::Context, subject: &mut Subject<'_>) -> Option<e
             head(ui, subject, &path);
             ui.add_space(4.0);
             controls(ui, subject, &mut path);
-            ui.add_space(2.0);
             // The list and the selected point's form are two columns, each
             // with its own scroll, so the form stays on screen wherever the
             // list is scrolled. A path has as many points as somebody gives it
@@ -236,7 +235,9 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
         Which::Spawn => theme::note(ui, which.about()),
         Which::Template => warning(
             ui,
-            "This spawn has no `creature_movement` rows, so the server uses its template's path from `creature_movement_template`. Editing these points changes the path of every spawn of this creature that has no `creature_movement` rows.",
+            "This spawn has no creature_movement rows, so the server uses its template's path \
+             from creature_movement_template. Editing these points changes the path of every \
+             spawn of this creature that has no creature_movement rows.",
         ),
     }
 
@@ -259,12 +260,15 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
     // The movement generator's minimum number of nodes is the other way a
     // path has no effect: it refuses a cyclic path of one node.
     if path.nodes.len() < walk.needs_nodes() {
+        let has = match path.nodes.len() {
+            1 => "1 point".to_string(),
+            n => format!("{n} points"),
+        };
         warning(
             ui,
             format!(
-                "{} point(s). This movement generator needs at least {} points, so the \
-                 creature stands still.",
-                path.nodes.len(),
+                "{has}. This movement generator needs at least {} points, so the creature stands \
+                 still.",
                 walk.needs_nodes()
             ),
         );
@@ -281,11 +285,15 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
         .map(|(index, _)| (index + 1).to_string())
         .collect();
     if !missing.is_empty() {
+        let (points, name, those) = match missing.len() {
+            1 => ("Point", "names", "that point"),
+            _ => ("Points", "name", "those points"),
+        };
         warning(
             ui,
             format!(
-                "Point(s) {} name a script id that {CREATURE_MOVEMENT} does not hold. When the server \
-                 loads this path it skips those points and writes the reason to its database error log.",
+                "{points} {} {name} a script id that {CREATURE_MOVEMENT} does not hold. When the server \
+                 loads this path it skips {those} and writes the reason to its database error log.",
                 missing.join(", ")
             ),
         );
@@ -301,55 +309,52 @@ fn head(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &Path) {
     }
 }
 
-/// The switches, and the operations on the whole path. What acts on one point
-/// is on that point's form.
+/// The window's bar: the two switches, and the operations on the whole path.
+/// What acts on one point is on that point's form.
+///
+/// The row is laid out as a viewport toolbar is. Add Points and Snap to
+/// Ground are each on or off by itself, so each is a [`theme::bar_switch`],
+/// and the buttons are the bar's height.
 fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     ui.horizontal(|ui| {
-        // Add points stays on after a click rather than acting only while
+        // Add Points stays on after a click rather than acting only while
         // held, so a scripted run can build a path; see the module comment of
-        // `crate::tools::spawns::waypoints`. While on, it is drawn the way a
-        // chosen segment is, to show that a mode is on.
+        // `crate::tools::spawns::waypoints`.
         let armed = subject.waypoints.adding;
-        let add = egui::Button::new(egui::RichText::new("Add points").color(match armed {
-            true => theme::INK,
-            false => theme::INK_DIM,
-        }))
-        .fill(match armed {
-            true => theme::ACCENT_SUNK,
-            false => theme::RAISED,
-        })
-        .stroke(match armed {
-            true => egui::Stroke::new(1.0, theme::ACCENT),
-            false => egui::Stroke::NONE,
-        });
-        if ui
-            .add(add)
+        if theme::bar_switch(ui, armed, "Add Points")
             .on_hover_text(
                 "While on, a click on the ground adds a point there: after the selected \
                  point, or at the end when none is selected. Clicks do not select other \
-                 creatures until it is off.",
+                 creatures until it is off. A path created this way for a creature with no \
+                 rows is written to creature_movement for this spawn.",
             )
             .clicked()
         {
             subject.waypoints.adding = !armed;
         }
-        ui.checkbox(&mut subject.waypoints.follow_ground, "Snap to ground")
+        let follows = subject.waypoints.follow_ground;
+        if theme::bar_switch(ui, follows, "Snap to Ground")
             .on_hover_text(
                 "A point added or dragged takes the height of the terrain under the pointer. \
                  Turn it off for a creature that flies, or one walking on a building's floor: \
                  the terrain under a building is not the surface it stands on.",
-            );
+            )
+            .clicked()
+        {
+            subject.waypoints.follow_ground = !follows;
+        }
 
         // The two that undo or delete the whole path, at the other end of the
         // row from the switches.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Two different undos, with labels that say which. Discard path
-            // edits gives up this project's claim on the path; Clear all
-            // points empties the path, which is an edit that deletes every row.
+            // Two different undos, with labels that say which. Discard Path
+            // Edits gives up this project's claim on the path; Clear All
+            // Points empties the path, which is an edit that deletes every row.
             if ui
                 .add_enabled(
                     !path.nodes.is_empty(),
-                    egui::Button::new(egui::RichText::new("Clear all points").color(theme::BAD)),
+                    egui::Button::new(egui::RichText::new("Clear All Points").color(theme::BAD))
+                        .min_size(egui::vec2(0.0, theme::BAR_HEIGHT)),
                 )
                 .on_hover_text(
                     "Removes every point. This is an edit: Apply writes a DELETE and no INSERTs, \
@@ -364,7 +369,10 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             }
             let edited = subject.waypoints.edited(Some(subject.session));
             if ui
-                .add_enabled(edited, egui::Button::new("Discard path edits"))
+                .add_enabled(
+                    edited,
+                    egui::Button::new("Discard Path Edits").min_size(egui::vec2(0.0, theme::BAR_HEIGHT)),
+                )
                 .on_hover_text(
                     "Discards this project's edits to the path. The window and the world show \
                      the database's rows again. The database is not changed.",
@@ -389,7 +397,7 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         });
     });
 
-    // Copy path to spawn, offered while the template's path is open. A
+    // Copy Path to Spawn, offered while the template's path is open. A
     // template path is shared, so changing one spawn's route means giving
     // that spawn its own copy. The server's `GetDefaultPath` takes the spawn's
     // own path first, so the copy is used from the moment it is applied, and
@@ -398,9 +406,11 @@ fn controls(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         let guid = subject.waypoints.subject.map(|open| open.guid);
         if let Some(guid) = guid {
             if ui
-                .button("Copy path to spawn")
+                .button("Copy Path to Spawn")
                 .on_hover_text(
-                    "Copies these points into `creature_movement` under this guid. `creature_movement_template` is not changed. The server uses a spawn's `creature_movement` rows before its template's, so only this spawn changes.",
+                    "Copies these points into creature_movement under this guid. \
+                     creature_movement_template is not changed. The server uses a spawn's \
+                     creature_movement rows before its template's, so only this spawn changes.",
                 )
                 .clicked()
             {
@@ -462,12 +472,8 @@ fn row_font() -> egui::FontId {
 /// with its numbers in columns under the heading's names.
 fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     if path.nodes.is_empty() {
-        theme::note(
-            ui,
-            "This creature has no rows in creature_movement or creature_movement_template. \
-             Turn on Add points and click the ground to create a path; it is written to \
-             creature_movement for this spawn.",
-        );
+        // How a path is created is on the Add Points switch's hover.
+        theme::note(ui, "This creature has no rows in creature_movement or creature_movement_template.");
         return;
     }
 
@@ -476,10 +482,10 @@ fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     let painter = ui.painter();
     for (name, at, align) in [
         ("#", COLUMNS[0], egui::Align2::RIGHT_CENTER),
-        ("x", COLUMNS[1], egui::Align2::RIGHT_CENTER),
-        ("y", COLUMNS[2], egui::Align2::RIGHT_CENTER),
-        ("z", COLUMNS[3], egui::Align2::RIGHT_CENTER),
-        ("wait", COLUMNS[4], egui::Align2::CENTER_CENTER),
+        ("X", COLUMNS[1], egui::Align2::RIGHT_CENTER),
+        ("Y", COLUMNS[2], egui::Align2::RIGHT_CENTER),
+        ("Z", COLUMNS[3], egui::Align2::RIGHT_CENTER),
+        ("Wait", COLUMNS[4], egui::Align2::CENTER_CENTER),
     ] {
         painter.text(
             egui::pos2(header.left() + 6.0 + at, header.center().y),
@@ -556,14 +562,14 @@ fn list(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         });
 }
 
-/// How wide the form's number boxes are, so they line up in one column.
-const FIELD: f32 = 120.0;
-
-/// The selected point's own columns, and what can be done to the point.
+/// The selected point's own columns, as property rows under the columns'
+/// names, and what can be done to the point.
 fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     let Some(index) = subject.waypoints.selected else {
-        theme::heading(ui, "Point");
-        theme::note(ui, "Click a point, here or in the world, to edit it.");
+        theme::heading_about(ui, "Point", "Click a point, here or in the world, to edit it.");
+        property(ui, "Selected", "", |ui| {
+            super::spawn::value_in(ui, "None", theme::INK_DIM);
+        });
         return;
     };
     let Some(node) = path.nodes.get(index).cloned() else {
@@ -574,111 +580,99 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
     let mut edited = node.clone();
     let mut changed = false;
     let point = PathPoint { which: path.which, owner: path.owner, index };
-    let field = |ui: &mut egui::Ui, value: egui::DragValue<'_>| {
-        ui.add_sized([FIELD, ui.spacing().interact_size.y], value).changed()
-    };
-    egui::Grid::new("waypoint-node")
-        .num_columns(2)
-        .spacing([10.0, 4.0])
-        .show(ui, |ui| {
-            for (name, value, about) in [
-                (
-                    "position_x",
-                    &mut edited.x,
-                    "the point's position, in world coordinates",
-                ),
-                ("position_y", &mut edited.y, ""),
-                ("position_z", &mut edited.z, ""),
-            ] {
-                ui.label(egui::RichText::new(name).color(theme::INK_DIM))
-                    .on_hover_text(about);
-                changed |= field(ui, egui::DragValue::new(value).speed(0.25).fixed_decimals(2));
-                ui.end_row();
-            }
-
-            ui.label(egui::RichText::new("waittime").color(theme::INK_DIM))
-                .on_hover_text(
-                    "How long the creature waits here, in milliseconds. The server applies \
-                     the point's orientation only at a point with a waittime.",
-                );
-            changed |= field(ui, egui::DragValue::new(&mut edited.waittime).speed(100.0).suffix(" ms"));
-            ui.end_row();
-
-            ui.label(egui::RichText::new("wander_distance").color(theme::INK_DIM))
-                .on_hover_text("How far the creature may wander from the point while it waits.");
-            changed |= field(ui, egui::DragValue::new(&mut edited.wander_distance).speed(0.1).suffix(" yd"));
-            ui.end_row();
-
-            ui.label(egui::RichText::new("script_id").color(theme::INK_DIM))
-                .on_hover_text(
-                    "A creature_movement_scripts id, or 0. The script runs when the creature \
-                     reaches this point. If that table has no such id, the server skips this \
-                     point when it loads the path, and the path is one point shorter.",
-                );
-            changed |= field(ui, egui::DragValue::new(&mut edited.script_id).speed(1.0));
-            ui.end_row();
-
-            // The script's buttons go on a row of their own, because the
-            // form's column is narrower than the id box and four buttons.
-            ui.label("");
-            let answered = ui
-                .horizontal(|ui| {
-                    script_controls(
-                        ui,
-                        subject.session,
-                        subject.behaviour,
-                        CREATURE_MOVEMENT,
-                        edited.script_id,
-                        None,
-                        ScriptAnswer::Point(point),
-                        subject.now,
-                    )
-                })
-                .inner;
-            if let Some(id) = answered.and_then(|id| id.parse::<u32>().ok()) {
-                edited.script_id = id;
-                changed = true;
-            }
-            ui.end_row();
-
-            ui.label(egui::RichText::new("path_id").color(theme::INK_DIM))
-                .on_hover_text("A creature_movement_special path to run here, or 0.");
-            changed |= field(ui, egui::DragValue::new(&mut edited.path_id).speed(1.0));
-            ui.end_row();
-
-            // The facing is a checkbox and a number, because the column's
-            // empty value is 100 rather than 0 and a person typing 0 into it
-            // would be setting a real facing of due east. See
-            // `vale_mangos::path::NO_FACING`.
+    // The rows are named by the column, as the rows of a spawn's and a
+    // template's form are, and as the window's warnings name them.
+    for (name, value) in [
+        ("position_x", &mut edited.x),
+        ("position_y", &mut edited.y),
+        ("position_z", &mut edited.z),
+    ] {
+        property(ui, name, "The point's position, in world coordinates.", |ui| {
+            changed |= field(ui, egui::DragValue::new(value).speed(0.25).fixed_decimals(2)).changed();
+        });
+    }
+    property(
+        ui,
+        "waittime",
+        "How long the creature waits here, in milliseconds. The server applies the point's \
+         orientation only at a point with a waittime.",
+        |ui| {
+            changed |= field(ui, egui::DragValue::new(&mut edited.waittime).speed(100.0).suffix(" ms")).changed();
+        },
+    );
+    property(
+        ui,
+        "wander_distance",
+        "How far the creature may wander from the point while it waits.",
+        |ui| {
+            changed |= field(ui, egui::DragValue::new(&mut edited.wander_distance).speed(0.1).suffix(" yd")).changed();
+        },
+    );
+    property(
+        ui,
+        "script_id",
+        "A creature_movement_scripts id, or 0. The script runs when the creature reaches this \
+         point. If that table has no such id, the server skips this point when it loads the \
+         path, and the path is one point shorter.",
+        |ui| {
+            changed |= field(ui, egui::DragValue::new(&mut edited.script_id).speed(1.0)).changed();
+        },
+    );
+    // The script's buttons are on a row of their own under the id, in the
+    // value column: the id box and four buttons do not fit one row.
+    let answered = property(ui, "", "", |ui| {
+        script_controls(
+            ui,
+            subject.session,
+            subject.behaviour,
+            CREATURE_MOVEMENT,
+            edited.script_id,
+            None,
+            ScriptAnswer::Point(point),
+            subject.now,
+        )
+    });
+    if let Some(id) = answered.and_then(|id| id.parse::<u32>().ok()) {
+        edited.script_id = id;
+        changed = true;
+    }
+    property(ui, "path_id", "A creature_movement_special path to run here, or 0.", |ui| {
+        changed |= field(ui, egui::DragValue::new(&mut edited.path_id).speed(1.0)).changed();
+    });
+    // The facing is a checkbox and a number, because the column's empty
+    // value is 100 rather than 0 and a person typing 0 into it would be
+    // setting a real facing of due east. See `vale_mangos::path::NO_FACING`.
+    property(
+        ui,
+        "orientation",
+        "Whether the creature faces a direction on arrival. Off writes 100, which is what the \
+         server reads as \"no facing\" \u{2014} not 0, which is a real facing of due east.",
+        |ui| {
             let mut faces = edited.has_orientation();
-            if ui
-                .checkbox(&mut faces, egui::RichText::new("orientation").color(theme::INK_DIM))
-                .on_hover_text(
-                    "Whether the creature faces a direction on arrival. Off writes 100, which is \
-                     what the server reads as \"no facing\" — not 0, which is a real facing of \
-                     due east.",
-                )
-                .changed()
-            {
+            if ui.checkbox(&mut faces, "").changed() {
                 edited.orientation = match faces {
                     true => 0.0,
                     false => path::NO_FACING,
                 };
                 changed = true;
             }
-            if faces {
-                changed |= field(
-                    ui,
-                    egui::DragValue::new(&mut edited.orientation)
-                        .speed(0.05)
-                        .range(0.0..=std::f32::consts::TAU)
-                        .suffix(" rad"),
-                );
-            } else {
-                theme::note(ui, "none");
+            match faces {
+                true => {
+                    changed |= field(
+                        ui,
+                        egui::DragValue::new(&mut edited.orientation)
+                            .speed(0.05)
+                            .range(0.0..=std::f32::consts::TAU)
+                            .suffix(" rad"),
+                    )
+                    .changed();
+                }
+                false => {
+                    super::spawn::value_in(ui, "None", theme::INK_DIM);
+                }
             }
-            ui.end_row();
-        });
+        },
+    );
     if edited.has_orientation() && !edited.faces() {
         warning(
             ui,
@@ -695,13 +689,17 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
         write(subject, path, "Edit waypoint");
     }
 
+    // Two rows of two equal buttons, then the removal at the form's width, so
+    // the five have common edges.
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        if ui.button("Fly here").clicked() {
+    ui.columns(2, |columns| {
+        let fly = theme::full_button(&columns[0], "Fly Here");
+        if columns[0].add(fly).clicked() {
             subject.fly.write(crate::camera::FlyTo::at(bevy::prelude::Vec3::new(node.x, node.y, node.z)));
         }
-        if ui
-            .button("Insert after")
+        let insert = theme::full_button(&columns[1], "Insert After");
+        if columns[1]
+            .add(insert)
             .on_hover_text("Inserts a new point half way to the next point.")
             .clicked()
         {
@@ -718,9 +716,10 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             subject.waypoints.selected = Some(index + 1);
         }
     });
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(index > 0, egui::Button::new("Earlier"))
+    ui.columns(2, |columns| {
+        let earlier = theme::full_button(&columns[0], "Earlier");
+        if columns[0]
+            .add_enabled(index > 0, earlier)
             .on_hover_text("Moves this point one place earlier in the path.")
             .clicked()
         {
@@ -728,8 +727,9 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             write(subject, path, "Reorder waypoints");
             subject.waypoints.selected = Some(index - 1);
         }
-        if ui
-            .add_enabled(index + 1 < path.nodes.len(), egui::Button::new("Later"))
+        let later = theme::full_button(&columns[1], "Later");
+        if columns[1]
+            .add_enabled(index + 1 < path.nodes.len(), later)
             .on_hover_text("Moves this point one place later in the path.")
             .clicked()
         {
@@ -737,22 +737,25 @@ fn node_form(ui: &mut egui::Ui, subject: &mut Subject<'_>, path: &mut Path) {
             write(subject, path, "Reorder waypoints");
             subject.waypoints.selected = Some(index + 1);
         }
-        if ui
-            .button(egui::RichText::new("Remove point").color(theme::BAD))
-            .on_hover_text("Removes this point. Later points are renumbered.")
-            .clicked()
-        {
-            path.remove(index);
-            write(subject, path, "Remove waypoint");
-            // Keep a selection where there is still one to have, so a run of
-            // removals does not need a click between each.
-            subject.waypoints.selected = match path.nodes.is_empty() {
-                true => None,
-                false => Some(index.min(path.nodes.len() - 1)),
-            };
-            subject.session.status = format!("removed point {}", index + 1);
-        }
     });
+    // `theme::full_button` with its text in the colour of a removal.
+    let remove = egui::Button::new(egui::RichText::new("Remove Point").color(theme::BAD))
+        .min_size(egui::vec2(ui.available_width(), 24.0));
+    if ui
+        .add(remove)
+        .on_hover_text("Removes this point. Later points are renumbered.")
+        .clicked()
+    {
+        path.remove(index);
+        write(subject, path, "Remove waypoint");
+        // Keep a selection where there is still one to have, so a run of
+        // removals does not need a click between each.
+        subject.waypoints.selected = match path.nodes.is_empty() {
+            true => None,
+            false => Some(index.min(path.nodes.len() - 1)),
+        };
+        subject.session.status = format!("removed point {}", index + 1);
+    }
 }
 
 /// The line under the form that says what a point's script is: how many

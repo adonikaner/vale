@@ -11,8 +11,16 @@
 //! raised ground is walkable, fog off to see the next tile. So they are one
 //! click away here.
 //!
-//! A button draws the icon [`super::icons`] has under its switch label, and
-//! its short label from [`ART`] when there is none. No icons are shipped yet.
+//! A button draws its switch's icon, painted by [`super::viewicons`], and
+//! the switch's name is in its hover text. An image [`super::icons`] has
+//! under the switch's label is drawn in place of the painted icon, and a
+//! switch with neither is drawn as its short label from [`ART`].
+//!
+//! A switch that is off is drawn dim. One that is off and on by default, a
+//! layer taken out of the frame, also has a line struck through it: the
+//! brightness of a 24-point icon alone did not show which layers were out.
+//! A switch that is off by default has no line while off, because twelve
+//! struck icons in a row hid the one that mattered.
 //!
 //! ## The seven groups
 //!
@@ -45,21 +53,23 @@
 //! The world, overlay and frame buttons are derived from the client's three
 //! lists, `render::tuning::SWITCHES`, `render::overlay::OVERLAYS` and
 //! `world::camera::SWITCHES`, so a switch added to the client appears here
-//! without this file changing, drawn as its three-letter label. A hand-kept
-//! list here would fall behind the client's, as the interface manifests, the
-//! file trees and `--tool` each did.
+//! without this file changing, drawn as its three-letter label until
+//! [`super::viewicons`] has an icon for it; a test there fails while one has
+//! none. A hand-kept list here would fall behind the client's, as the
+//! interface manifests, the file trees and `--tool` each did.
 //!
 //! The navmesh button is the one this file adds itself, because the client
 //! cannot draw a server file. See [`crate::navmesh`].
 //!
-//! [`ART`] is hand-kept, but it only maps a switch label to a short label; a
-//! switch it does not list is drawn as its own first letters.
+//! [`ART`] is hand-kept, but it only maps a switch label to a short label,
+//! for a switch with no icon; a switch it does not list is drawn as its own
+//! first letters.
 //!
 //! ## A lit button is one moved off its default
 //!
 //! Nineteen of the twenty layer switches default to on in the editor, so
 //! lighting every on button would light nineteen and show nothing. The accent
-//! marks a button that is not in its default state, and the label's or icon's
+//! marks a button that is not in its default state, and the icon's
 //! brightness shows on and off.
 //! The status line prints the same state as command-line flags.
 //!
@@ -73,6 +83,7 @@ use bevy_egui::egui;
 use egui::{Color32, CornerRadius, RichText, Stroke, Ui, Vec2};
 
 use super::icons::Icons;
+use super::viewicons::ViewIcon;
 use crate::ui::widgets::theme;
 
 use vale_client::render::tuning::{WorldTuning, SWITCHES as WORLD};
@@ -131,8 +142,9 @@ const PICTURE: f32 = 24.0;
 /// What a toggle is labelled: `(label, short)`.
 ///
 /// `label` is the client's own name for the switch, which joins this table
-/// to the three lists, and is also the name [`super::icons`] looks an icon up
-/// by. `short` is drawn when the switch has no icon.
+/// to the three lists, and is also the name [`super::icons`] and
+/// [`super::viewicons`] look an icon up by. `short` is drawn when the switch
+/// has no icon.
 ///
 /// A label absent from this table is drawn from [`initials`].
 pub(crate) const ART: [(&str, &str); 32] = [
@@ -409,7 +421,7 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
         let restore = ui
             .add_sized(
                 [52.0, BUTTON],
-                egui::Button::new(RichText::new("reset").size(12.0).color(theme::INK_DIM)),
+                egui::Button::new(RichText::new("Reset").size(12.0).color(theme::INK_DIM)),
             )
             .on_hover_text("Put every toggle on this bar back to its default.");
         if restore.clicked() {
@@ -636,10 +648,9 @@ fn rule(ui: &mut Ui) {
 
 /// One square button. Returns whether it was pressed.
 ///
-/// Drawn as its icon when there is one and as its short label when there is
-/// not, with the same fill, size and frame either way. egui's default
-/// transparent fill made a label button look like loose text rather than a
-/// button.
+/// Painted, as a rail tile is: the fill and frame, then the switch's image
+/// from [`super::icons`], or its painted [`ViewIcon`], or its short label,
+/// in that order of preference. An unavailable button senses no click.
 fn toggle(
     ui: &mut Ui,
     icons: &Icons,
@@ -649,64 +660,99 @@ fn toggle(
     available: bool,
     help: &str,
 ) -> bool {
-    let short = art(label);
     // Lit when it is not in its default state. See the module comment.
     let moved = on != was;
-    let fill = match (available, moved) {
-        (false, _) => theme::DEAD,
-        (true, true) => theme::ACCENT_SUNK,
-        (true, false) => theme::RAISED,
+    let sense = match available {
+        true => egui::Sense::click(),
+        false => egui::Sense::hover(),
     };
-    let stroke = match moved {
-        true => Stroke::new(1.0, theme::ACCENT),
-        false => Stroke::new(1.0, theme::LINE),
-    };
-
-    let button = match icons.get(label) {
-        Some(id) => {
-            // An off button is the same icon tinted darker; egui multiplies
-            // the image by the tint. A separate greyed drawing per icon would
-            // read as a different icon at this size.
-            let tint = match (on, available) {
-                (_, false) => Color32::from_gray(0x44),
-                (true, _) => Color32::WHITE,
-                (false, _) => Color32::from_gray(0x78),
-            };
-            egui::Button::image(
-                egui::Image::new((id, Vec2::splat(PICTURE)))
-                    .tint(tint)
-                    .corner_radius(CornerRadius::same(2)),
-            )
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON), sense);
+    if ui.is_rect_visible(rect) {
+        let fill = match (available, moved, response.hovered()) {
+            (false, _, _) => theme::DEAD,
+            (true, true, _) => theme::ACCENT_SUNK,
+            (true, false, true) => theme::RAISED_HOT,
+            (true, false, false) => theme::RAISED,
+        };
+        let stroke = match available && moved {
+            true => Stroke::new(1.0, theme::ACCENT),
+            false => Stroke::new(1.0, theme::LINE),
+        };
+        let painter = ui.painter_at(rect);
+        painter.rect(rect, CornerRadius::same(3), fill, stroke, egui::StrokeKind::Inside);
+        let ink = match (available, on) {
+            (false, _) => theme::INK_FAINT.gamma_multiply(0.6),
+            (true, true) => theme::INK,
+            (true, false) => theme::INK_FAINT,
+        };
+        let picture = egui::Rect::from_center_size(rect.center(), Vec2::splat(PICTURE));
+        match (icons.get(label), ViewIcon::of(label)) {
+            (Some(id), _) => {
+                // An off button is the same image tinted darker; egui
+                // multiplies the image by the tint.
+                let tint = match (available, on) {
+                    (false, _) => Color32::from_gray(0x44),
+                    (true, true) => Color32::WHITE,
+                    (true, false) => Color32::from_gray(0x78),
+                };
+                let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                painter.image(id, picture, whole, tint);
+            }
+            (None, Some(icon)) => icon.paint(&painter, picture, ink, fill),
+            (None, None) => {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    art(label),
+                    egui::FontId::proportional(13.0),
+                    ink,
+                );
+            }
         }
-        None => {
-            let colour = match (on, available) {
-                (_, false) => theme::INK_FAINT,
-                (true, _) => theme::INK,
-                (false, _) => theme::INK_DIM,
-            };
-            egui::Button::new(RichText::new(short).size(13.0).strong().color(colour))
+        // A layer taken out of the frame is struck through, from the bottom
+        // left to the top right. The line has an edge in the fill's colour,
+        // so it stays apart from the icon it crosses.
+        if available && !on && was {
+            let reach = PICTURE * 0.5 - 1.0;
+            let ends = [
+                rect.center() + Vec2::new(-reach, reach),
+                rect.center() + Vec2::new(reach, -reach),
+            ];
+            painter.line_segment(ends, Stroke::new(4.5, fill));
+            painter.line_segment(ends, Stroke::new(1.5, theme::INK));
         }
-    };
-    let button = button
-        .fill(fill)
-        .stroke(stroke)
-        .corner_radius(CornerRadius::same(3));
+    }
 
     // The hover text: the switch's name, its state, its group and help.
     let state = match (available, on, moved) {
-        (false, _, _) => "unavailable",
-        (true, true, false) => "on",
-        (true, false, false) => "off",
-        (true, true, true) => "on (default is off)",
-        (true, false, true) => "off (default is on)",
+        (false, _, _) => "Unavailable",
+        (true, true, false) => "On",
+        (true, false, false) => "Off",
+        (true, true, true) => "On (default is off)",
+        (true, false, true) => "Off (default is on)",
     };
-    let hover = format!("{label} — {state}\n{help}");
+    let response = response.on_hover_ui(|ui| {
+        ui.set_max_width(320.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(named(label)).color(theme::INK));
+            ui.label(RichText::new(state).color(match available && moved {
+                true => theme::ACCENT,
+                false => theme::INK_FAINT,
+            }));
+        });
+        ui.label(RichText::new(help).size(theme::SMALL).color(theme::INK_DIM));
+    });
+    available && response.clicked()
+}
 
-    let response = ui
-        .add_enabled_ui(available, |ui| ui.add_sized([BUTTON, BUTTON], button))
-        .inner
-        .on_hover_text(hover);
-    response.clicked()
+/// A switch's label as a name: its first letter in upper case. The client's
+/// labels are lower case because they are also command-line words.
+fn named(label: &str) -> String {
+    let mut letters = label.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => String::new(),
+    }
 }
 
 /// What differs from the default view, as the command-line flags that
@@ -801,6 +847,15 @@ mod tests {
     fn a_switch_with_no_art_still_gets_a_label() {
         assert_eq!(art("something nobody has drawn yet"), "SNH");
         assert_eq!(art("fog"), "FOG");
+    }
+
+    /// A hover text names a switch with a capital, and leaves a label that
+    /// is already in capitals as it is.
+    #[test]
+    fn a_label_is_named_with_a_capital() {
+        assert_eq!(named("sun and moons"), "Sun and moons");
+        assert_eq!(named("MSAA"), "MSAA");
+        assert_eq!(named(""), "");
     }
 
     /// A one-word label keeps its first three letters rather than one

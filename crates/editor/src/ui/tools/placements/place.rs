@@ -1,15 +1,30 @@
-//! The placement picker shared by the doodad and WMO panels: the model
-//! browser by folder, search, Starred and Recent, and the preview of the
-//! chosen model. The state is [`crate::tools::placements::place`].
+//! The parts of the doodad and WMO panels that the two share: the mode
+//! switch, the Keys button, the Handles row, and the placement picker, which
+//! is the model browser by folder, search, Starred and Recent, and the
+//! preview of the chosen model. The state is
+//! [`crate::tools::placements::place`].
+//!
+//! ```text
+//! [ Select | Place | Cluster ]   the mode switch; Cluster on the doodad tool only
+//! Keys                           the mode's mouse and keyboard controls, on hover
+//!
+//! Place     Model and the browser, Placement, Ground, Scatter
+//! Cluster   Models, Cluster, Add Models and the browser, Placement, Ground,
+//!           Scatter
+//! Select    the Handles row, then the doodad or WMO panel's own sections
+//! ```
+//!
+//! Ground is drawn on the doodad tool only.
 
 use bevy_egui::egui;
 
+use crate::tools::placements::gizmo::{Handles, HANDLES};
 use crate::tools::placements::place::{Kind, Placing, Switch};
 use crate::tools::placements::place;
 use crate::tools::placements::swap::Swap;
 use crate::ui::widgets::folders::{breadcrumb, folder_rows, split_folder};
 use crate::ui::widgets::preview::preview_pane;
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, field, property};
 
 /// The mode switch, and the model picker shown in Place and Cluster mode.
 ///
@@ -18,6 +33,10 @@ use crate::ui::widgets::theme;
 /// of the reasoning. Returns `true` while the tool is in Place or Cluster
 /// mode, which tells the caller to draw the placement rows instead of the
 /// selection.
+///
+/// The panel has no instruction lines for the mode. The Keys button under
+/// the switch lists the mode's controls; in Select the caller draws it, with
+/// its own table.
 pub(super) fn placing(
     ui: &mut egui::Ui,
     placing: &mut Placing,
@@ -36,11 +55,93 @@ pub(super) fn placing(
     }
     match placing.switch() {
         Switch::Select => return false,
-        Switch::Place => model(ui, placing, kind, portraits, favourites),
-        Switch::Cluster => cluster(ui, placing, portraits, favourites),
+        Switch::Place => {
+            keys(ui, match kind {
+                Kind::Doodad => &PLACE_DOODAD_KEYS,
+                Kind::Wmo => &PLACE_WMO_KEYS,
+            });
+            model(ui, placing, kind, portraits, favourites);
+        }
+        Switch::Cluster => {
+            keys(ui, &CLUSTER_KEYS);
+            cluster(ui, placing, portraits, favourites);
+        }
     }
     placement(ui, placing, kind);
     true
+}
+
+/// The Keys button under the mode switch: hovering it lists the mode's mouse
+/// and keyboard controls as a table.
+///
+/// It is [`theme::bar_keys`], the toolbar's control, drawn in the inspector
+/// because the placement tools have no toolbar over the viewport.
+pub(super) fn keys(ui: &mut egui::Ui, keys: &[(&str, &str)]) {
+    theme::bar_keys(ui, keys);
+}
+
+/// Place mode's mouse and keyboard controls on the doodad tool, for the Keys
+/// button.
+const PLACE_DOODAD_KEYS: [(&str, &str); 9] = [
+    ("Left button", "Place the model, which stays on the cursor"),
+    (", and .", "Turn"),
+    ("Shift + , or .", "Turn three times as far"),
+    ("Alt + mouse", "Turn the model"),
+    ("Ctrl + Alt + mouse", "Turn in steps of 15\u{b0}"),
+    ("Ctrl + wheel", "Scale"),
+    ("Escape", "Clear the model from the cursor"),
+    ("1, 2, 3", "Select, Place, Cluster"),
+    ("Tab", "Switch between Select and placing"),
+];
+
+/// Place mode's controls on the WMO tool, which has no scale and no Cluster
+/// mode.
+const PLACE_WMO_KEYS: [(&str, &str); 8] = [
+    ("Left button", "Place the model, which stays on the cursor"),
+    (", and .", "Turn"),
+    ("Shift + , or .", "Turn three times as far"),
+    ("Alt + mouse", "Turn the model"),
+    ("Ctrl + Alt + mouse", "Turn in steps of 15\u{b0}"),
+    ("Escape", "Clear the model from the cursor"),
+    ("1, 2", "Select, Place"),
+    ("Tab", "Switch between Select and Place"),
+];
+
+/// Cluster mode's controls.
+const CLUSTER_KEYS: [(&str, &str); 9] = [
+    ("Left button", "Place the cluster; a new layout follows"),
+    (", and .", "Turn the cluster"),
+    ("Shift + , or .", "Turn three times as far"),
+    ("Alt + mouse", "Turn the model"),
+    ("Ctrl + Alt + mouse", "Turn in steps of 15\u{b0}"),
+    ("Ctrl + wheel", "Scale"),
+    ("Escape", "Return to Select"),
+    ("1, 2, 3", "Select, Place, Cluster"),
+    ("Tab", "Switch between Select and placing"),
+];
+
+/// The Handles row of the doodad and WMO panels in Select mode: which
+/// handles the selected placement carries in the viewport.
+pub(super) fn handles(ui: &mut egui::Ui, handles: &mut Handles) {
+    property(
+        ui,
+        "Handles",
+        "Move: drag an arrow to move along one axis. Turn: drag a ring to turn about one axis. \
+         Off: no handles. A click selects and a drag moves along the ground.",
+        |ui| theme::property_segmented(ui, handles, &HANDLES, |a, b| a == b),
+    );
+}
+
+/// A number as a [`property`] row: the name, then a [`field`]. `about`, when
+/// not empty, is shown when either the name or the field is hovered.
+pub(super) fn number_row(ui: &mut egui::Ui, name: &str, about: &str, value: egui::DragValue<'_>) -> egui::Response {
+    property(ui, name, about, |ui| {
+        let response = field(ui, value);
+        match about.is_empty() {
+            true => response,
+            false => response.on_hover_text(about),
+        }
+    })
 }
 
 /// Place mode's top half: the chosen model, its picture, and the browser
@@ -52,24 +153,18 @@ fn model(
     portraits: &mut crate::preview::portraits::Portraits,
     favourites: &mut crate::prefs::favourites::Favourites,
 ) {
-    ui.add_space(4.0);
-    theme::heading(ui, "Model");
+    theme::heading_about(ui, "Model", "Click a model in the list below to choose it.");
     match placing.path.clone() {
         Some(path) => {
-            ui.label(egui::RichText::new(place::leaf(&path)).color(theme::INK))
-                .on_hover_text(&path);
+            theme::value(ui, place::leaf(&path)).on_hover_text(&path);
             // A button that opens the chosen model's folder, because the next
             // model is most likely to be in the same folder.
             let folder = Placing::folder_of(&path);
-            if placing.folder(kind) != folder
-                && ui
-                    .small_button(egui::RichText::new("show folder").color(theme::INK_DIM))
-                    .clicked()
-            {
+            if placing.folder(kind) != folder && ui.button("Show Folder").clicked() {
                 placing.open_folder(kind, &folder);
             }
         }
-        None => theme::note(ui, "no model chosen; pick one below"),
+        None => theme::note(ui, "No model chosen"),
     }
     // A model the archives will not open is reported here. Without this the
     // cursor stays empty and a click writes a record for a file that is not
@@ -90,9 +185,9 @@ fn model(
     //
     // It sits under the chosen model's name, not under the list. The list is
     // three hundred points tall in a panel of six hundred, so a pane under it
-    // would start below the fold and need scrolling to. The browser's dialog
-    // places its pane under its list by the same rule, because that is where
-    // its chosen model is named.
+    // would start below the visible part of the panel and need scrolling to.
+    // The browser's dialog places its pane under its list by the same rule,
+    // because that is where its chosen model is named.
     if let Some(path) = placing.path.clone() {
         ui.add_space(4.0);
         preview_pane(ui, portraits, &path);
@@ -101,7 +196,7 @@ fn model(
     ui.add_space(4.0);
     ui.add(
         egui::TextEdit::singleline(&mut placing.search)
-            .hint_text("search the models")
+            .hint_text("Search the models")
             .desired_width(f32::INFINITY),
     );
 
@@ -115,44 +210,38 @@ fn model(
 }
 
 /// What Place and Cluster mode share below the models: the turn and scale,
-/// the slope, Scatter, and the keys.
+/// the slope, and Scatter.
 fn placement(ui: &mut egui::Ui, placing: &mut Placing, kind: Kind) {
-    ui.add_space(4.0);
-    theme::heading(ui, "Placement");
-    theme::row(ui, "turn", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut placing.turn)
-                .speed(1.0)
-                .fixed_decimals(1)
-                .suffix("°"),
-        );
-    });
-    if kind == Kind::Doodad {
-        theme::row(ui, "scale", |ui| {
-            ui.add(
-                egui::DragValue::new(&mut placing.scale)
-                    .speed(0.01)
-                    .range(crate::tools::placements::doodads::SCALE_RANGE)
-                    .fixed_decimals(3)
-                    .suffix("x"),
-            );
-        });
-    }
-
-    if placing.clustering() {
-        theme::note(
+    use crate::tools::placements::doodads::SCALE_RANGE;
+    match placing.clustering() {
+        true => theme::heading_about(
             ui,
+            "Placement",
             "The turn turns the whole cluster about its centre. With Scatter \
              off, every doodad takes this turn and scale.",
+        ),
+        false => theme::heading(ui, "Placement"),
+    }
+    number_row(
+        ui,
+        "Turn",
+        "",
+        egui::DragValue::new(&mut placing.turn).speed(1.0).fixed_decimals(1).suffix("\u{b0}"),
+    );
+    if kind == Kind::Doodad {
+        number_row(
+            ui,
+            "Scale",
+            "",
+            egui::DragValue::new(&mut placing.scale).speed(0.01).range(SCALE_RANGE).fixed_decimals(3).suffix("x"),
         );
     }
 
     // Slope alignment: a drop is leaned onto the ground under the cursor, and
     // the ghost shows the lean. Doodads only. See `Placing::align`.
     if kind == Kind::Doodad {
-        ui.add_space(4.0);
         theme::heading(ui, "Ground");
-        ui.checkbox(&mut placing.align, "align each placement to the slope")
+        ui.checkbox(&mut placing.align, "Align each placement to the slope")
             .on_hover_text(
                 "Tilts each placed model to the ground normal under the \
                  cursor, keeping the current turn, instead of using the \
@@ -162,18 +251,17 @@ fn placement(ui: &mut egui::Ui, placing: &mut Placing, kind: Kind) {
 
     // Scatter: every drop rolls the next one's turn, size and lean inside
     // these bounds. See `crate::tools::placements::place`'s module comment.
-    ui.add_space(4.0);
     theme::heading(ui, "Scatter");
     match placing.clustering() {
         true => ui
-            .checkbox(&mut placing.scatter.on, "randomise each doodad")
+            .checkbox(&mut placing.scatter.on, "Randomise each doodad")
             .on_hover_text(
                 "Gives each doodad of the cluster its own random turn, scale \
                  and tilt within the ranges below. The previews show what the \
                  next click writes.",
             ),
         false => ui
-            .checkbox(&mut placing.scatter.on, "randomise after each placement")
+            .checkbox(&mut placing.scatter.on, "Randomise after each placement")
             .on_hover_text(
                 "After each placement, picks a random turn, scale and tilt for \
                  the next one within the ranges below. The preview shows what \
@@ -181,83 +269,50 @@ fn placement(ui: &mut egui::Ui, placing: &mut Placing, kind: Kind) {
             ),
     };
     if placing.scatter.on {
-        theme::row(ui, "turn", |ui| {
-            ui.checkbox(&mut placing.scatter.turn, "any angle");
+        property(ui, "Turn", "", |ui| {
+            ui.checkbox(&mut placing.scatter.turn, "Any angle");
         });
         if kind == Kind::Doodad {
-            theme::row(ui, "scale", |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut placing.scatter.size.0)
-                        .speed(0.01)
-                        .range(crate::tools::placements::doodads::SCALE_RANGE)
-                        .fixed_decimals(2)
-                        .suffix("x"),
-                );
-                ui.label(egui::RichText::new("to").color(theme::INK_FAINT));
-                ui.add(
-                    egui::DragValue::new(&mut placing.scatter.size.1)
-                        .speed(0.01)
-                        .range(crate::tools::placements::doodads::SCALE_RANGE)
-                        .fixed_decimals(2)
-                        .suffix("x"),
-                );
-            });
-            theme::row(ui, "tilt", |ui| {
-                ui.add(
-                    egui::DragValue::new(&mut placing.scatter.tilt_max)
-                        .speed(0.5)
-                        .range(0.0..=90.0)
-                        .fixed_decimals(1)
-                        .suffix("°"),
-                )
-                .on_hover_text(
-                    "Maximum tilt from vertical, in any direction. Zero keeps the model upright.",
-                );
-            });
+            // The two bounds are a row each. Side by side with their suffix,
+            // they do not fit beside the name at the inspector's narrowest.
+            number_row(
+                ui,
+                "Scale From",
+                "",
+                egui::DragValue::new(&mut placing.scatter.size.0).speed(0.01).range(SCALE_RANGE).fixed_decimals(2).suffix("x"),
+            );
+            number_row(
+                ui,
+                "Scale To",
+                "",
+                egui::DragValue::new(&mut placing.scatter.size.1).speed(0.01).range(SCALE_RANGE).fixed_decimals(2).suffix("x"),
+            );
+            number_row(
+                ui,
+                "Tilt",
+                "Maximum tilt from vertical, in any direction. Zero keeps the model upright.",
+                egui::DragValue::new(&mut placing.scatter.tilt_max).speed(0.5).range(0.0..=90.0).fixed_decimals(1).suffix("\u{b0}"),
+            );
         }
         // A cluster draws its members' values with its layout, which New
-        // layout redraws.
+        // Layout redraws.
         if !placing.clustering()
             && ui
-                .small_button("Randomise now")
+                .button("Randomise Now")
                 .on_hover_text("Pick new random values for the next placement without placing anything.")
                 .clicked()
         {
             placing.roll();
         }
     }
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    match placing.clustering() {
-        true => {
-            theme::note(ui, "left button places the cluster · a new layout follows");
-            theme::note(ui, ", and . turn the cluster · shift turns three times as far");
-            theme::note(ui, "ctrl + wheel scales");
-            theme::note(ui, "escape returns to select");
-        }
-        false => {
-            theme::note(ui, "left button places · the model stays on the cursor");
-            theme::note(ui, ", and . turn · shift turns three times as far");
-            if kind == Kind::Doodad {
-                theme::note(ui, "ctrl + wheel scales");
-            }
-            theme::note(ui, "escape clears the model from the cursor");
-        }
-    }
-    theme::note(ui, "alt + mouse turns the model · ctrl snaps to 15°");
-    theme::note(
-        ui,
-        match kind {
-            Kind::Doodad => "1, 2 and 3 choose select, place and cluster · tab toggles select",
-            Kind::Wmo => "tab, or 1 and 2, switch select and place",
-        },
-    );
 }
 
 /// Cluster mode's top half: the cluster's models, how many doodads a click
 /// places, over how wide a circle and how far apart, and the browser that
 /// adds and removes models. See [`crate::tools::placements::cluster`].
+///
+/// A setting whose Random switch is on is two rows, From and To, each with
+/// its own hover.
 fn cluster(
     ui: &mut egui::Ui,
     placing: &mut Placing,
@@ -265,139 +320,142 @@ fn cluster(
     favourites: &mut crate::prefs::favourites::Favourites,
 ) {
     use crate::tools::placements::cluster::{MOST, WIDEST};
-    ui.add_space(4.0);
-    theme::heading(ui, "Models");
+    theme::heading_about(
+        ui,
+        "Models",
+        "Each doodad is one of these models, each equally likely. Click a model \
+         under Add Models to add it, or a highlighted one to take it out.",
+    );
     // The models, each with a button that takes it out.
     let mut drop: Option<usize> = None;
     for (at, path) in placing.cluster.models.iter().enumerate() {
         ui.horizontal(|ui| {
             if ui
-                .small_button("×")
+                .small_button("\u{d7}")
                 .on_hover_text("Take this model out of the cluster.")
                 .clicked()
             {
                 drop = Some(at);
             }
-            ui.label(egui::RichText::new(place::leaf(path)).color(theme::INK))
-                .on_hover_text(path);
+            theme::value(ui, place::leaf(path)).on_hover_text(path);
         });
     }
     if let Some(at) = drop {
         placing.cluster.models.remove(at);
     }
-    theme::note(
-        ui,
-        match placing.cluster.models.is_empty() {
-            true => "No models. Click models below to add them to the cluster.",
-            false => {
-                "Each doodad is one of these, each equally likely. Click a model \
-                 under Add Models to add it, or a highlighted one to take it out."
-            }
-        },
-    );
+    if placing.cluster.models.is_empty() {
+        theme::note(ui, "No models");
+    }
 
     // The settings come before the browser, which is several hundred points
-    // tall: under it they would start below the fold.
-    ui.add_space(4.0);
+    // tall: under it they would start below the visible part of the panel.
     theme::heading(ui, "Cluster");
-    theme::row(ui, "count", |ui| {
-        let cluster = &mut placing.cluster;
-        match cluster.random_count {
-            false => {
-                ui.add(egui::DragValue::new(&mut cluster.count).speed(0.2).range(1..=MOST))
-                    .on_hover_text("How many doodads one click places.");
-            }
-            true => {
-                ui.add(egui::DragValue::new(&mut cluster.count_range.0).speed(0.2).range(1..=MOST))
-                    .on_hover_text("The fewest doodads one click places.");
-                ui.label(egui::RichText::new("to").color(theme::INK_FAINT));
-                ui.add(egui::DragValue::new(&mut cluster.count_range.1).speed(0.2).range(1..=MOST))
-                    .on_hover_text("The most doodads one click places.");
-            }
-        }
-    });
-    theme::row(ui, "", |ui| {
-        ui.checkbox(&mut placing.cluster.random_count, "random count")
-            .on_hover_text(
-                "Each click places a number of doodads drawn between the two \
-                 bounds, rather than the same number every time.",
+    let cluster = &mut placing.cluster;
+    match cluster.random_count {
+        false => {
+            number_row(
+                ui,
+                "Count",
+                "How many doodads one click places.",
+                egui::DragValue::new(&mut cluster.count).speed(0.2).range(1..=MOST),
             );
-    });
-    theme::row(ui, "radius", |ui| {
-        let cluster = &mut placing.cluster;
-        fn yards(value: &mut f32) -> egui::DragValue<'_> {
-            egui::DragValue::new(value)
-                .speed(0.25)
-                .range(1.0..=WIDEST)
-                .fixed_decimals(1)
-                .suffix(" yd")
         }
-        match cluster.random_radius {
-            false => {
-                ui.add(yards(&mut cluster.radius)).on_hover_text(
-                    "The radius of the circle the doodads are spread over, drawn round the pointer.",
-                );
-            }
-            true => {
-                ui.add(yards(&mut cluster.radius_range.0))
-                    .on_hover_text("The smallest radius one click covers.");
-                ui.label(egui::RichText::new("to").color(theme::INK_FAINT));
-                ui.add(yards(&mut cluster.radius_range.1))
-                    .on_hover_text("The largest radius one click covers.");
-            }
-        }
-    });
-    theme::row(ui, "", |ui| {
-        ui.checkbox(&mut placing.cluster.random_radius, "random radius")
-            .on_hover_text(
-                "Each click spreads the doodads over a circle whose radius is \
-                 drawn between the two bounds. The circle round the pointer \
-                 shows the next click's.",
+        true => {
+            number_row(
+                ui,
+                "Count From",
+                "The fewest doodads one click places.",
+                egui::DragValue::new(&mut cluster.count_range.0).speed(0.2).range(1..=MOST),
             );
-    });
-    let widest = placing.cluster.widest() * 2.0;
-    theme::row(ui, "spacing", |ui| {
-        let cluster = &mut placing.cluster;
-        fn apart(value: &mut f32, widest: f32) -> egui::DragValue<'_> {
-            egui::DragValue::new(value)
-                .speed(0.05)
-                .range(0.0..=widest)
-                .fixed_decimals(1)
-                .suffix(" yd")
-        }
-        match cluster.random_spacing {
-            false => {
-                ui.add(apart(&mut cluster.spacing, widest))
-                    .on_hover_text("The least distance between two doodads of one cluster.");
-            }
-            true => {
-                ui.add(apart(&mut cluster.spacing_range.0, widest))
-                    .on_hover_text("The smallest spacing one click keeps.");
-                ui.label(egui::RichText::new("to").color(theme::INK_FAINT));
-                ui.add(apart(&mut cluster.spacing_range.1, widest))
-                    .on_hover_text("The largest spacing one click keeps.");
-            }
-        }
-    });
-    theme::row(ui, "", |ui| {
-        ui.checkbox(&mut placing.cluster.random_spacing, "random spacing")
-            .on_hover_text(
-                "Each click keeps its doodads apart by a spacing drawn between \
-                 the two bounds: some clusters dense, some sparse.",
+            number_row(
+                ui,
+                "Count To",
+                "The most doodads one click places.",
+                egui::DragValue::new(&mut cluster.count_range.1).speed(0.2).range(1..=MOST),
             );
-    });
+        }
+    }
+    ui.checkbox(&mut cluster.random_count, "Random count")
+        .on_hover_text(
+            "Each click places a number of doodads drawn between the two \
+             bounds, rather than the same number every time.",
+        );
+    fn yards(value: &mut f32) -> egui::DragValue<'_> {
+        egui::DragValue::new(value)
+            .speed(0.25)
+            .range(1.0..=WIDEST)
+            .fixed_decimals(1)
+            .suffix(" yd")
+    }
+    match cluster.random_radius {
+        false => {
+            number_row(
+                ui,
+                "Radius",
+                "The radius of the circle the doodads are spread over, drawn round the pointer.",
+                yards(&mut cluster.radius),
+            );
+        }
+        true => {
+            number_row(ui, "Radius From", "The smallest radius one click covers.", yards(&mut cluster.radius_range.0));
+            number_row(ui, "Radius To", "The largest radius one click covers.", yards(&mut cluster.radius_range.1));
+        }
+    }
+    ui.checkbox(&mut cluster.random_radius, "Random radius")
+        .on_hover_text(
+            "Each click spreads the doodads over a circle whose radius is \
+             drawn between the two bounds. The circle round the pointer \
+             shows the next click's.",
+        );
+    let widest = cluster.widest() * 2.0;
+    fn apart(value: &mut f32, widest: f32) -> egui::DragValue<'_> {
+        egui::DragValue::new(value)
+            .speed(0.05)
+            .range(0.0..=widest)
+            .fixed_decimals(1)
+            .suffix(" yd")
+    }
+    match cluster.random_spacing {
+        false => {
+            number_row(
+                ui,
+                "Spacing",
+                "The least distance between two doodads of one cluster.",
+                apart(&mut cluster.spacing, widest),
+            );
+        }
+        true => {
+            number_row(
+                ui,
+                "Spacing From",
+                "The smallest spacing one click keeps.",
+                apart(&mut cluster.spacing_range.0, widest),
+            );
+            number_row(
+                ui,
+                "Spacing To",
+                "The largest spacing one click keeps.",
+                apart(&mut cluster.spacing_range.1, widest),
+            );
+        }
+    }
+    ui.checkbox(&mut cluster.random_spacing, "Random spacing")
+        .on_hover_text(
+            "Each click keeps its doodads apart by a spacing drawn between \
+             the two bounds: some clusters dense, some sparse.",
+        );
     let (laid, asked) = (placing.cluster.layout.len() as u32, placing.cluster.asked);
     let spacing = placing.cluster.laid_spacing;
     let next = match (laid < asked, placing.cluster.random_count) {
-        (true, _) => Some(format!("next click: {laid} of {asked} fit at {spacing:.1} yd spacing")),
-        (false, true) => Some(format!("next click: {laid} doodads")),
+        (true, _) => Some(format!("Next click: {laid} of {asked} fit at {spacing:.1} yd spacing")),
+        (false, true) => Some(format!("Next click: {laid} doodads")),
         (false, false) => None,
     };
     if let Some(next) = next.filter(|_| !placing.cluster.models.is_empty()) {
         theme::note(ui, next);
     }
     if ui
-        .small_button("New layout")
+        .button("New Layout")
         .on_hover_text(
             "Draw new places, models, a new count, radius and spacing where \
              they are random, and with \
@@ -408,11 +466,10 @@ fn cluster(
         placing.cluster.redraw();
     }
 
-    ui.add_space(4.0);
     theme::heading(ui, "Add Models");
     ui.add(
         egui::TextEdit::singleline(&mut placing.search)
-            .hint_text("search the models")
+            .hint_text("Search the models")
             .desired_width(f32::INFINITY),
     );
     let chosen = placing.cluster.models.clone();
@@ -441,34 +498,34 @@ pub(super) fn replacing(
         return;
     }
     let noun = match (kind, count) {
-        (Kind::Doodad, 1) => "doodad",
-        (Kind::Doodad, _) => "doodads",
+        (Kind::Doodad, 1) => "Doodad",
+        (Kind::Doodad, _) => "Doodads",
         (Kind::Wmo, 1) => "WMO",
         (Kind::Wmo, _) => "WMOs",
     };
-    ui.add_space(4.0);
-    theme::heading(ui, "Replace model");
-    theme::note(
+    theme::heading_about(
         ui,
+        "Replace Model",
         match kind {
             Kind::Doodad => {
                 "Each selected doodad takes the model chosen here and keeps its \
-                 position, rotation and scale."
+                 position, rotation and scale. Click a model in the list below to \
+                 choose it."
             }
             Kind::Wmo => {
                 "Each selected WMO takes the WMO chosen here and keeps its position \
                  and rotation. Its bounds are taken from the new WMO; a doodad set \
-                 the new WMO lacks becomes set 0."
+                 the new WMO lacks becomes set 0. Click a WMO in the list below to \
+                 choose it."
             }
         },
     );
     match swap.with.clone() {
         Some(path) => {
-            ui.label(egui::RichText::new(place::leaf(&path)).color(theme::INK))
-                .on_hover_text(&path);
+            theme::value(ui, place::leaf(&path)).on_hover_text(&path);
             preview_pane(ui, portraits, &path);
         }
-        None => theme::note(ui, "no model chosen; pick one below"),
+        None => theme::note(ui, "No model chosen"),
     }
     ui.horizontal(|ui| {
         let ready = swap.with.is_some() && count > 0;
@@ -479,13 +536,13 @@ pub(super) fn replacing(
         {
             swap.asked = Some(kind);
         }
-        if ui.small_button("Cancel").clicked() {
+        if ui.button("Cancel").clicked() {
             swap.close();
         }
     });
     ui.add(
         egui::TextEdit::singleline(&mut swap.search)
-            .hint_text("search the models")
+            .hint_text("Search the models")
             .desired_width(f32::INFINITY),
     );
     let chosen: Vec<String> = swap.with.iter().cloned().collect();
@@ -533,7 +590,7 @@ fn browse(
     let needle = search.to_ascii_lowercase();
     let catalogue = placing.catalogue(kind);
     if !catalogue.iter().any(|path| !path.is_empty()) {
-        theme::note(ui, "reading the model list…");
+        theme::note(ui, "Reading the model list\u{2026}");
         return None;
     }
     let total = catalogue.len();
@@ -582,7 +639,7 @@ fn browse(
         ui,
         match folders.len() {
             0 => format!("{} models", files.len()),
-            n => format!("{n} folders · {} models", files.len()),
+            n => format!("{n} folders \u{b7} {} models", files.len()),
         },
     );
 

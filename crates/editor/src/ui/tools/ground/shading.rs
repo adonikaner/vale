@@ -3,7 +3,17 @@
 use bevy_egui::egui;
 
 use crate::tools::ground::terrain::{FALLOFFS, SHAPES};
-use crate::ui::widgets::theme;
+use crate::ui::widgets::theme::{self, field, property};
+
+/// The brush's mouse and keyboard controls, for the Brush Settings heading's
+/// info mark. The tool has no toolbar over the viewport to hold them.
+const KEYS: &str = "Left button: paint\n\
+                    Ctrl + wheel: radius\n\
+                    Shift + wheel: strength\n\
+                    Alt + wheel: core\n\
+                    1 to 5: mode\n\
+                    6 to 0: falloff\n\
+                    Shift + 1 to 3: shape";
 
 /// The shading brush: `MCCV`, the light painted onto the ground's vertices.
 ///
@@ -13,29 +23,74 @@ use crate::ui::widgets::theme;
 /// swatch could not express "keep the hue and halve the light", which is the
 /// most common shading edit.
 ///
+/// The sections are the height brush's: Brush Settings with the mode, radius,
+/// strength, core, falloff and shape as rows, then the section only this
+/// brush has, Colour.
+///
 /// See `crate::tools::ground::shading` for the deviation this brush is part of.
 pub(in crate::ui::tools) fn shading(ui: &mut egui::Ui, shading: &mut crate::tools::ground::shading::Shading) {
     use crate::tools::ground::shading;
 
-    theme::heading(ui, "Brush");
-    theme::segmented(ui, &mut shading.brush.mode, &shading::MODES, |a, b| a == b);
+    theme::heading_about(ui, "Brush Settings", KEYS);
+    property(ui, "Mode", "", |ui| {
+        theme::choice(ui, "shading-mode", &mut shading.brush.mode, &shading::MODES, |a, b| a == b);
+    });
+    property(ui, "Radius", "", |ui| {
+        field(
+            ui,
+            egui::DragValue::new(&mut shading.brush.radius)
+                .speed(0.5)
+                .range(shading::RADIUS)
+                .suffix(" yd"),
+        );
+    });
+    property(ui, "Strength", "", |ui| {
+        field(
+            ui,
+            egui::DragValue::new(&mut shading.brush.strength)
+                .speed(0.05)
+                .range(shading::RATE)
+                .suffix("/s"),
+        );
+    });
+    property(ui, "Core", "", |ui| {
+        field(
+            ui,
+            egui::DragValue::new(&mut shading.brush.core)
+                .speed(0.01)
+                .range(crate::tools::CORE)
+                .fixed_decimals(2),
+        );
+    });
+    property(ui, "Falloff", "", |ui| {
+        theme::choice(ui, "shading-falloff", &mut shading.brush.falloff, &FALLOFFS, |a, b| a == b);
+    });
+    property(ui, "Shape", "", |ui| {
+        theme::choice(ui, "shading-shape", &mut shading.brush.shape, &SHAPES, |a, b| a == b);
+    });
 
-    ui.add_space(4.0);
-    theme::heading(ui, "Colour");
+    theme::heading_about(
+        ui,
+        "Colour",
+        "MCCV is a per-vertex colour multiplier; the reference client does not \
+         read it. A chunk painted back to neutral drops its MCCV data, so an \
+         undone tile is written back byte for byte.",
+    );
     // Only `Paint` reads the colour. The other four modes aim at values they
     // decide themselves (white, black, the mean, neutral), so a picker beside
     // them would do nothing. The height brush hides its scale row for the
     // same reason.
     match shading.brush.mode {
         vale_edit::ops::shade::Shade::Paint => {
-            theme::row(ui, "tint", |ui| {
+            property(ui, "Tint", "", |ui| {
                 ui.color_edit_button_rgb(&mut shading.picked);
             });
         }
-        _ => theme::note(ui, "this mode sets its own colour"),
+        _ => theme::note(ui, "This mode sets its own colour."),
     }
-    theme::row(ui, "brightness", |ui| {
-        ui.add(
+    property(ui, "Brightness", "", |ui| {
+        field(
+            ui,
             egui::DragValue::new(&mut shading.brightness)
                 .speed(0.01)
                 .range(0.0..=vale_edit::ops::shade::SHADE_MAX)
@@ -46,73 +101,13 @@ pub(in crate::ui::tools) fn shading(ui: &mut egui::Ui, shading: &mut crate::tool
     // The combined value in the file's own units, which is what the region
     // stores and what is compared between two chunks.
     let aim = shading.target();
-    theme::note(
-        ui,
-        format!(
-            "target {:.2}, {:.2}, {:.2}; 1.00 leaves a vertex unchanged",
-            aim[0], aim[1], aim[2]
-        ),
-    );
-    if ui.button("Reset to neutral").clicked() {
+    property(ui, "Target", "1.00 leaves a vertex unchanged.", |ui| {
+        theme::value(ui, format!("{:.2}, {:.2}, {:.2}", aim[0], aim[1], aim[2]));
+    });
+    if ui.button("Reset to Neutral").clicked() {
         shading.picked = [1.0, 1.0, 1.0];
         shading.brightness = 1.0;
     }
-
-    // The same three headings as the height brush, in the same order. With one
-    // heading, Shape, over the radius, strength, core, falloff row and shape
-    // row, the two unlabelled segmented controls at the bottom read as part of
-    // the rows above them.
-    ui.add_space(4.0);
-    theme::heading(ui, "Size");
-    theme::row(ui, "radius", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut shading.brush.radius)
-                .speed(0.5)
-                .range(shading::RADIUS)
-                .suffix(" yd"),
-        );
-    });
-    theme::row(ui, "strength", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut shading.brush.strength)
-                .speed(0.05)
-                .range(shading::RATE)
-                .suffix("/s"),
-        );
-    });
-    theme::row(ui, "core", |ui| {
-        ui.add(
-            egui::DragValue::new(&mut shading.brush.core)
-                .speed(0.01)
-                .range(crate::tools::CORE)
-                .fixed_decimals(2),
-        );
-    });
-
-    ui.add_space(4.0);
-    theme::heading(ui, "Falloff");
-    theme::segmented(ui, &mut shading.brush.falloff, &FALLOFFS, |a, b| a == b);
-
-    ui.add_space(4.0);
-    theme::heading(ui, "Shape");
-    theme::segmented(ui, &mut shading.brush.shape, &SHAPES, |a, b| a == b);
-
-    ui.add_space(6.0);
-    theme::heading(ui, "Keys");
-    theme::note(ui, "left button paints");
-    theme::note(ui, "ctrl + wheel resizes · shift + wheel the strength");
-    theme::note(ui, "alt + wheel the core");
-    theme::note(ui, "1 - 5 pick the mode · 6 - 0 the falloff");
-    theme::note(ui, "shift + 1 · 2 · 3 pick the shape");
-
-    ui.add_space(6.0);
-    theme::heading(ui, "About");
-    theme::note(
-        ui,
-        "MCCV is a per-vertex colour multiplier; the reference client does not \
-         read it. A chunk painted back to neutral drops its MCCV data, so an \
-         undone tile is written back byte for byte.",
-    );
 }
 
 /// The shading brush's inspector panel. The drawing tablet's settings are in

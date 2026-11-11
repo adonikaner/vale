@@ -28,6 +28,8 @@
 //! toolicons.rs  the icons of the rail's tools and the two pointer tools,
 //!               painted with egui's painter
 //! viewbar.rs    every toggle that changes what the viewport shows
+//! viewicons.rs  the icons of the view bar's switches, painted with egui's
+//!               painter
 //! status.rs     the status line at the bottom
 //! popout.rs     the pop-out window: a workspace in an OS window of its own,
 //!               drawn with the same functions as the main window's middle
@@ -37,7 +39,8 @@
 //!               object under it: a title and four or five attributes
 //! servicemarks.rs the icons over a creature's head that say what it offers,
 //!               drawn in the viewport under the creature tool
-//! icons.rs      the view bar's icons compiled into the editor (none yet)
+//! icons.rs      images compiled into the editor to draw in place of the view
+//!               bar's painted icons (none yet)
 //! asks.rs       what a panel asks the shell to do after the frame is drawn:
 //!               open a row in another workspace, switch tools, import a
 //!               texture, make an area
@@ -61,3 +64,4 @@ pub(crate) mod tilefiles;
 pub(crate) mod toolicons;
 pub(crate) mod topbar;
 pub(crate) mod viewbar;
+pub(crate) mod viewicons;

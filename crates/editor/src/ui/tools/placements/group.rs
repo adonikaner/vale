@@ -27,8 +27,9 @@ pub(super) enum Group {
     Drop(u32),
 }
 
-/// How many doodads or WMOs of the map are locked, and a button that unlocks
-/// them all. See `crate::session::locks::PlacementLocks`.
+/// The Locked row: how many doodads or WMOs of the map are locked, and a
+/// button that unlocks them all. Not drawn while none is locked. See
+/// `crate::session::locks::PlacementLocks`.
 pub(super) fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, kind: Kind) {
     let noun = match kind {
         Kind::Doodad => "doodads",
@@ -38,10 +39,14 @@ pub(super) fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, ki
     if locked == 0 {
         return;
     }
-    ui.horizontal(|ui| {
-        theme::note(ui, format!("{locked} {noun} locked on this map, marked red"));
+    let about = match kind {
+        Kind::Doodad => "The doodads locked on this map. They are drawn red.",
+        Kind::Wmo => "The WMOs locked on this map. They are drawn red.",
+    };
+    theme::property(ui, "Locked", about, |ui| {
+        theme::value(ui, locked.to_string());
         if ui
-            .small_button("Unlock all")
+            .button("Unlock All")
             .on_hover_text(format!(
                 "Unlock every locked {} on this map. Right-click one to unlock it alone.",
                 noun.trim_end_matches('s')
@@ -60,18 +65,22 @@ pub(super) fn locked_placements(ui: &mut egui::Ui, session: &mut EditSession, ki
 ///
 /// `chosen` is every member's unique id and path, the primary first. With one
 /// placement this draws the buttons that act on one as well as on many:
-/// "Select all of this model", which makes a group of one model in one press,
-/// "Replace model…" and "Lock". See `crate::tools::placements::group`.
+/// Select All of This Model, which makes a group of one model in one press,
+/// Replace Model and Lock. See `crate::tools::placements::group`.
 pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Group {
     let Some(&(_, primary)) = chosen.first() else {
         return Group::Nothing;
     };
     let mut asked = Group::Nothing;
     if chosen.len() > 1 {
-        ui.label(
-            egui::RichText::new(format!("{} {noun} selected", chosen.len()))
-                .strong()
-                .color(theme::INK),
+        theme::property(
+            ui,
+            "Selected",
+            "The values below are the primary selection's, which is drawn brighter. \
+             Dragging, the handles, the keys and Delete act on all of them.",
+            |ui| {
+                theme::value(ui, format!("{} {noun}", chosen.len()));
+            },
         );
         // What the group is made of, most numerous first: a sweep of a forest
         // is thirty of one tree and a hand-picked group is a few of several.
@@ -85,16 +94,11 @@ pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Gr
         }
         counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
         for (leaf, count) in counts.iter().take(6) {
-            theme::note(ui, format!("{count} × {leaf}"));
+            theme::note(ui, format!("{count} \u{d7} {leaf}"));
         }
         if counts.len() > 6 {
-            theme::note(ui, format!("…and {} other models", counts.len() - 6));
+            theme::note(ui, format!("{} other models", counts.len() - 6));
         }
-        theme::note(
-            ui,
-            "The values below are the primary selection's (drawn brighter). \
-             Dragging, the handles, the keys and Delete act on all of them.",
-        );
         let member = |index: usize| {
             let (id, path) = chosen[index];
             crate::ui::widgets::members::Member {
@@ -109,10 +113,12 @@ pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Gr
             None => {}
         }
     }
+    // The labels differ too much in length for equal columns: the longest
+    // does not fit half the inspector at its narrowest. The row wraps.
     ui.horizontal_wrapped(|ui| {
         let leaf = primary.rsplit(['\\', '/']).next().unwrap_or(primary);
         if ui
-            .small_button("Select all of this model")
+            .button("Select All of This Model")
             .on_hover_text(format!(
                 "Add every {leaf} in the open tiles to the selection."
             ))
@@ -121,7 +127,7 @@ pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Gr
             asked = Group::AllOfModel;
         }
         if ui
-            .small_button("Replace model…")
+            .button("Replace Model\u{2026}")
             .on_hover_text(format!(
                 "Choose a model for the selected {noun}. Each keeps its position \
                  and rotation."
@@ -131,7 +137,7 @@ pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Gr
             asked = Group::Replace;
         }
         if ui
-            .small_button("Lock")
+            .button("Lock")
             .on_hover_text(format!(
                 "Lock the selected {noun}: no tool selects, moves or deletes them, and \
                  moving the ground does not carry them, until they are unlocked. \
@@ -143,17 +149,18 @@ pub(super) fn group(ui: &mut egui::Ui, chosen: &[(u32, &str)], noun: &str) -> Gr
         }
         if chosen.len() > 1 {
             if ui
-                .small_button("Select primary only")
+                .button("Select Primary Only")
                 .on_hover_text("Keep the primary (brighter) selection and deselect the rest.")
                 .clicked()
             {
                 asked = Group::Only;
             }
-            if ui.small_button("Clear").clicked() {
+            if ui.button("Clear").clicked() {
                 asked = Group::Clear;
             }
         }
     });
+    // A little room between the buttons and the rows under them.
     ui.add_space(4.0);
     asked
 }

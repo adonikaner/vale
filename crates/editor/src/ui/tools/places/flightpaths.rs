@@ -2,9 +2,10 @@
 //!
 //! ```text
 //! viewport toolbar   what a click in the world does: Select, New Node,
-//!                    Connect, Add Points, and under the armed one its own
-//!                    settings and what the next click does; Show Transports
-//!                    and Show Unselected, which decide which paths are drawn
+//!                    Connect or Add Points; Show Transports and Show
+//!                    Unselected, which decide which paths are drawn; the
+//!                    Keys button; under them the armed mode's settings, and
+//!                    under those a line naming the next click
 //! inspector          the map's summary and flight map, then the properties
 //!                    of one selection: the node, the path or the point,
 //!                    chosen with a breadcrumb when more than one is selected
@@ -16,9 +17,10 @@
 //! selected.
 //!
 //! Each selection is drawn as named sections of property rows: the name in a
-//! fixed column, the value or its control after it. A section ends with one
-//! line saying how to change what it shows in the viewport. A node's paths and
-//! a path's points are tables, one row each, and a click on a row selects it.
+//! fixed column, the value or its control after it. How a section's values
+//! are changed in the viewport is on the info mark at the end of its heading.
+//! A node's paths and a path's points are tables, one row each, and a click
+//! on a row selects it.
 //!
 //! Selecting a point also selects its path, and a path keeps the node it was
 //! reached from, so up to three selections are held at once. The inspector
@@ -37,7 +39,7 @@ use crate::session::EditSession;
 use crate::tables;
 use crate::tools::places::flightpaths::{self, Armed, Flightpaths, Route};
 use crate::ui::widgets::reference;
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, bar_field, bar_group, bar_keys, bar_segment, bar_setting, bar_switch, field, property};
 use vale_assets::tables::taxi::{node_fields as nf, path_fields as pf, path_node_fields as wf};
 use vale_edit::dbc::taxi;
 
@@ -109,7 +111,6 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
                 (Some(Level::Node), Some(id), _, _) => node_card(ui, session, flights, fly, id, now),
                 _ => nothing_selected(ui),
             }
-            ui.add_space(16.0);
             server_footer(ui, server_panel);
             ui.add_space(12.0);
         });
@@ -140,9 +141,11 @@ fn overview(
                 count(ui, transports, "transport paths");
             });
             if !flights.findings.is_empty() {
-                egui::CollapsingHeader::new(
-                    egui::RichText::new(format!("Validation: {} warning(s)", flights.findings.len())).color(theme::WARN),
-                )
+                let warnings = match flights.findings.len() {
+                    1 => "Validation: 1 warning".to_string(),
+                    n => format!("Validation: {n} warnings"),
+                };
+                egui::CollapsingHeader::new(egui::RichText::new(warnings).color(theme::WARN))
                 .id_salt(("flightpaths", "findings"))
                 .default_open(false)
                 .show(ui, |ui| {
@@ -190,7 +193,7 @@ fn flight_map_line(
                 ui,
                 "Flight Map",
                 "This map is a world map continent. Its flight map is part of the game data and is not edited here.",
-                |ui| value(ui, "Standard"),
+                |ui| theme::value(ui, "Standard"),
             );
         }
         flightpaths::FlightMap::Missing => {
@@ -207,16 +210,14 @@ fn flight_map_line(
                         true => theme::INK,
                         false => theme::WARN,
                     };
-                    ui.label(egui::RichText::new("None").color(colour));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        make = ui
-                            .small_button("Create")
+                    make = value_then(ui, "None", colour, |ui| {
+                        ui.small_button("Create")
                             .on_hover_text(
                                 "Add a WorldMapContinent.dbc row for this map, with a square box over its \
                                  tiles and nodes, and draw Interface\\TaxiFrame\\TAXIMAP<map>.blp from its \
                                  minimap tiles. Client only: the server reads neither.",
                             )
-                            .clicked();
+                            .clicked()
                     });
                 },
             );
@@ -228,8 +229,7 @@ fn flight_map_line(
                 "Flight Map",
                 "This map's WorldMapContinent.dbc row. The client draws only the nodes inside its box.",
                 |ui| {
-                    value(ui, format!("Custom, {side:.0} yd square"));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    value_then(ui, format!("Custom, {side:.0} yd square"), theme::INK, |ui| {
                         ui.menu_button("\u{2026}", |ui| {
                             if ui
                                 .button("Refit Flight Map")
@@ -338,34 +338,63 @@ fn title(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Label::new(egui::RichText::new(text).strong().size(TITLE).color(theme::INK)).truncate());
 }
 
-/// A property's value that is not edited here.
-fn value(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
-    ui.add(egui::Label::new(egui::RichText::new(text.into()).color(theme::INK)).truncate())
-}
-
-/// A property's value in another colour.
+/// A property's value in another colour than [`theme::value`]'s.
 fn value_in(ui: &mut egui::Ui, text: impl Into<String>, colour: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text.into()).color(colour)).truncate())
 }
 
-/// The panel with nothing selected: what each toolbar mode does, and the key
-/// to the node colours.
+/// A property's value with `controls` at the right end of its row. The
+/// controls are laid out first, so the value is cut with an ellipsis to the
+/// room they leave and the row is never wider than the panel.
+fn value_then<R>(
+    ui: &mut egui::Ui,
+    text: impl Into<String>,
+    colour: egui::Color32,
+    controls: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let inner = controls(ui);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| value_in(ui, text, colour));
+        inner
+    })
+    .inner
+}
+
+/// A faint reading under a property row's control, in the control's column:
+/// what the number above it comes to in another unit.
+fn under(ui: &mut egui::Ui, text: impl Into<String>) {
+    property(ui, "", "", |ui| {
+        ui.add(egui::Label::new(egui::RichText::new(text.into()).size(theme::SMALL).color(theme::INK_DIM)).truncate());
+    });
+}
+
+/// The number a text starts with, for a field whose text continues after its
+/// number. `None` when it starts with none.
+fn leading_number(text: &str) -> Option<f64> {
+    let text = text.trim_start();
+    let end = text
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .unwrap_or(text.len());
+    text[..end].parse().ok()
+}
+
+/// A button in the danger colour, as wide as the room it is given.
+fn remove_button(ui: &egui::Ui, text: &str) -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new(text.to_string()).color(theme::BAD))
+        .min_size(egui::vec2(ui.available_width(), 24.0))
+}
+
+/// The panel with nothing selected: that nothing is, and the key to the node
+/// colours. What each toolbar mode does is on the mode's hover text.
 fn nothing_selected(ui: &mut egui::Ui) {
-    title(ui, "No Selection");
-    theme::note(ui, "Click a node, a path or a point in the viewport to show its properties here.");
-    theme::heading(ui, "Viewport Toolbar");
-    for (mode, what) in [
-        ("Select", "Select nodes, paths and points. Drag to move; Ctrl + drag moves vertically."),
-        ("New Node", "Click the ground to create a node."),
-        ("Connect", "With a node selected, click another node to create a path to it."),
-        ("Add Points", "With a path selected, click near it to insert a point."),
-        ("Show Transports", "Also draw the boat and zeppelin paths."),
-        ("Show Unselected", "Draw every path. Off, only the selection's paths are drawn."),
-    ] {
-        property(ui, mode, "", |ui| {
-            ui.add(egui::Label::new(egui::RichText::new(what).size(theme::SMALL).color(theme::INK_DIM)).wrap());
-        });
-    }
+    theme::heading_about(
+        ui,
+        "Selection",
+        "Click a node, a path or a point in the viewport to show its properties here.",
+    );
+    property(ui, "Selected", "", |ui| {
+        theme::value(ui, "None");
+    });
     theme::heading(ui, "Legend");
     for (mounts, label) in [
         ([1, 1], "Node available to both factions"),
@@ -409,24 +438,11 @@ fn above_ground(ui: &mut egui::Ui, session: &EditSession, at: [f32; 3]) {
             false => theme::INK,
         };
         value_in(ui, format!("{above:.1} yd"), colour);
-        ui.label(egui::RichText::new(format!("ground Z {ground:.1}")).size(theme::SMALL).color(theme::INK_FAINT));
+        ui.add(
+            egui::Label::new(egui::RichText::new(format!("Ground Z {ground:.1}")).size(theme::SMALL).color(theme::INK_FAINT))
+                .truncate(),
+        );
     });
-}
-
-/// A row of command buttons, with a destructive one at the right end.
-fn actions(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), remove: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        left(ui);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), remove);
-    });
-}
-
-/// A button in the danger colour.
-fn remove_button(ui: &mut egui::Ui, text: &str, hover: &str) -> bool {
-    ui.button(egui::RichText::new(text).color(theme::BAD))
-        .on_hover_text(hover)
-        .clicked()
 }
 
 /// A copper amount as the game writes it.
@@ -511,12 +527,11 @@ fn node_card(
 
     theme::heading(ui, "Taxi Node");
     property(ui, "ID", "The TaxiNodes.dbc row ID, which is also the server's taxi_nodes ID.", |ui| {
-        value(ui, id.to_string());
+        theme::value(ui, id.to_string());
     });
     let mut name = node.name.clone();
     property(ui, "Name", "The name the flight map shows for the node.", |ui| {
-        let edit = egui::TextEdit::singleline(&mut name).desired_width(ui.available_width()).hint_text("Name");
-        if ui.add(edit).changed() {
+        if theme::text_field(ui, &mut name).changed() {
             tables::fields::set_text(session, taxi::NODES, node.record, nf::NAME, &name, "Rename flight node", now);
             flights.stale();
         }
@@ -528,14 +543,18 @@ fn node_card(
         |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             dot(ui, side_colour(node.mounts), 4.0);
-            value(ui, side_word(&node));
+            theme::value(ui, side_word(&node));
         },
     );
     if let Some(differ) = sides_differ(&node) {
         warn_line(ui, &differ);
     }
 
-    theme::heading(ui, "Location");
+    theme::heading_about(
+        ui,
+        "Location",
+        "To move the node, drag it in the viewport. Ctrl + drag moves it vertically.",
+    );
     let mut at = node.at;
     if theme::xyz(ui, &mut at) {
         flightpaths::move_node(session, flights, id, bevy::math::Vec3::from(at), now);
@@ -546,9 +565,12 @@ fn node_card(
         "Moving the node also moves the first point of every path leaving it and the last \
          point of every path arriving at it.",
     );
-    theme::note(ui, "To move the node, drag it in the viewport. Ctrl + drag moves it vertically.");
 
-    theme::heading(ui, "Mounts");
+    theme::heading_about(
+        ui,
+        "Mounts",
+        "Creature entries. 0 makes the node unavailable to that faction. Standard mounts: 2224 (Horde), 541 (Alliance).",
+    );
     let mut mounts = node.mounts;
     let mut remounted = false;
     for (n, (label, tip)) in [
@@ -566,11 +588,21 @@ fn node_card(
     .iter()
     .enumerate()
     {
+        // The field writes None after a 0, which is what 0 means here. The
+        // parser reads the number and ignores the rest.
         property(ui, label, tip, |ui| {
-            remounted |= ui.add(egui::DragValue::new(&mut mounts[n]).speed(1.0)).on_hover_text(*tip).changed();
-            if mounts[n] == 0 {
-                ui.label(egui::RichText::new("None").size(theme::SMALL).color(theme::INK_FAINT));
-            }
+            remounted |= field(
+                ui,
+                egui::DragValue::new(&mut mounts[n])
+                    .speed(1.0)
+                    .custom_formatter(|entry, _| match entry == 0.0 {
+                        true => "0  None".to_string(),
+                        false => format!("{entry:.0}"),
+                    })
+                    .custom_parser(leading_number),
+            )
+            .on_hover_text(*tip)
+            .changed();
         });
     }
     if remounted {
@@ -585,38 +617,35 @@ fn node_card(
         );
         flights.stale();
     }
-    theme::note(
-        ui,
-        "Creature entries. 0 makes the node unavailable to that faction. Standard mounts: 2224 (Horde), 541 (Alliance).",
-    );
 
+    // The commands, as equal buttons two to a row.
     let mut removed = false;
-    actions(
-        ui,
-        |ui| {
-            if ui.button("Fly To").on_hover_text("Move the camera to the node.").clicked() {
-                fly.write(crate::camera::FlyTo::at(node.at.into()));
+    ui.add_space(6.0);
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Fly To");
+        if columns[0].add(button).on_hover_text("Move the camera to the node.").clicked() {
+            fly.write(crate::camera::FlyTo::at(node.at.into()));
+        }
+        let button = theme::full_button(&columns[1], "Snap to Ground");
+        if columns[1]
+            .add(button)
+            .on_hover_text("Set Z to the ground under the node, where the ground is loaded.")
+            .clicked()
+        {
+            if let Some(ground) = crate::tools::placements::doodads::ground_height(session, at[0], at[1]) {
+                let to = bevy::math::Vec3::new(at[0], at[1], ground);
+                flightpaths::move_node(session, flights, id, to, now);
+                flights.stale();
             }
-            if ui
-                .button("Snap to Ground")
-                .on_hover_text("Set Z to the ground under the node, where the ground is loaded.")
-                .clicked()
-            {
-                if let Some(ground) = crate::tools::placements::doodads::ground_height(session, at[0], at[1]) {
-                    let to = bevy::math::Vec3::new(at[0], at[1], ground);
-                    flightpaths::move_node(session, flights, id, to, now);
-                    flights.stale();
-                }
-            }
-        },
-        |ui| {
-            removed = remove_button(
-                ui,
-                "Remove Node",
-                "Remove the node, every path leaving or arriving at it, and their points. One undo entry.",
-            );
-        },
-    );
+        }
+    });
+    ui.columns(2, |columns| {
+        let button = remove_button(&columns[0], "Remove Node");
+        removed = columns[0]
+            .add(button)
+            .on_hover_text("Remove the node, every path leaving or arriving at it, and their points. One undo entry.")
+            .clicked();
+    });
     if removed {
         match taxi::remove_node(&mut session.tables, id) {
             Ok(done) => {
@@ -671,9 +700,14 @@ fn connections(ui: &mut egui::Ui, flights: &mut Flightpaths, id: u32) {
     }
     links.sort_by_key(|link| flights.name(link.other).to_lowercase());
 
-    theme::heading(ui, &format!("Paths ({})", links.len()));
+    theme::heading_about(
+        ui,
+        &format!("Paths ({})", links.len()),
+        "Click a name to select that node, or a cost to select that path. To add a path, choose \
+         Connect in the viewport toolbar and click another node.",
+    );
     if links.is_empty() {
-        theme::note(ui, "No paths. To add one, choose Connect in the viewport toolbar and click another node.");
+        theme::note(ui, "No paths.");
         return;
     }
     let widths = [0.0, 72.0, 72.0];
@@ -718,7 +752,6 @@ fn connections(ui: &mut egui::Ui, flights: &mut Flightpaths, id: u32) {
             }
         }
     });
-    theme::note(ui, "Click a cost to select that path. To add a path, choose Connect in the viewport toolbar.");
     if let Some(path) = chosen_path {
         flights.select_path(path);
     } else if let Some(node) = chosen_node {
@@ -836,7 +869,7 @@ fn path_card(
 
     theme::heading(ui, "Taxi Path");
     property(ui, "ID", "The TaxiPath.dbc row ID.", |ui| {
-        value(ui, id.to_string());
+        theme::value(ui, id.to_string());
     });
     for (name, end) in [("From", route.path.from), ("To", route.path.to)] {
         property(ui, name, "", |ui| {
@@ -854,7 +887,7 @@ fn path_card(
         "Type",
         "A transport path has no mount at either end. Boats and zeppelins use these rows.",
         |ui| {
-            value(ui, match route.transport {
+            theme::value(ui, match route.transport {
                 true => "Transport",
                 false => "Flight",
             })
@@ -862,7 +895,7 @@ fn path_card(
     );
     let mut cost = route.path.cost;
     property(ui, "Cost", "Copper, before the reputation discount the server applies.", |ui| {
-        if ui.add(egui::DragValue::new(&mut cost).speed(10.0).suffix(" c")).changed() {
+        if field(ui, egui::DragValue::new(&mut cost).speed(10.0).suffix(" c")).changed() {
             tables::fields::set_fields(
                 session,
                 taxi::PATHS,
@@ -874,10 +907,13 @@ fn path_card(
             );
             flights.stale();
         }
-        ui.label(egui::RichText::new(money(cost)).size(theme::SMALL).color(theme::INK_DIM));
     });
+    // The cost as the game writes it. It has a row of its own because the
+    // field and this text together are wider than the row at the inspector's
+    // narrowest.
+    under(ui, money(cost));
     property(ui, "Length", "Measured point to point, including height, over the points on this map.", |ui| {
-        value(ui, format!("{:.0} yd", route.length));
+        theme::value(ui, format!("{:.0} yd", route.length));
     });
     property(ui, "Return Path", "The path from this path's end node back to its start node.", |ui| match back {
         Some(back) => {
@@ -886,8 +922,7 @@ fn path_card(
             }
         }
         None => {
-            value_in(ui, "None", theme::WARN);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            value_then(ui, "None", theme::WARN, |ui| {
                 if ui
                     .small_button("Create")
                     .on_hover_text("Create the path in the opposite direction through the same points, at the same cost.")
@@ -910,30 +945,34 @@ fn path_card(
     });
 
     let mut removed = false;
-    actions(
-        ui,
-        |ui| {
-            if ui
-                .button("Fly To")
-                .on_hover_text("Frame the whole path. From that far back the fog can hide the ground; FOG on the view bar turns it off.")
-                .clicked()
-            {
-                if let Some(flight) = flights.path_flight(id) {
-                    fly.write(flight);
-                }
+    ui.add_space(6.0);
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Fly To");
+        if columns[0]
+            .add(button)
+            .on_hover_text("Frame the whole path. From that far back the fog can hide the ground; FOG on the view bar turns it off.")
+            .clicked()
+        {
+            if let Some(flight) = flights.path_flight(id) {
+                fly.write(flight);
             }
-            if ui
-                .button("Snap Ends")
-                .on_hover_text("Move the first point to the node the path leaves and the last to the node it reaches.")
-                .clicked()
-            {
-                snap_ends(session, flights, &route, now);
-            }
-        },
-        |ui| {
-            removed = remove_button(ui, "Remove Path", "Remove this path and its points. The return path is kept.");
-        },
-    );
+        }
+        let button = theme::full_button(&columns[1], "Snap Ends");
+        if columns[1]
+            .add(button)
+            .on_hover_text("Move the first point to the node the path leaves and the last to the node it reaches.")
+            .clicked()
+        {
+            snap_ends(session, flights, &route, now);
+        }
+    });
+    ui.columns(2, |columns| {
+        let button = remove_button(&columns[0], "Remove Path");
+        removed = columns[0]
+            .add(button)
+            .on_hover_text("Remove this path and its points. The return path is kept.")
+            .clicked();
+    });
     if removed {
         match taxi::remove_path(&mut session.tables, id) {
             Ok(done) => {
@@ -949,17 +988,21 @@ fn path_card(
     }
 
     let samples = samples(session, flights, &route);
-    theme::heading(ui, "Height Profile");
-    profile(ui, flights, &samples);
-    theme::note(ui, "Line: the path's height. Shaded: the ground below it. Click a point to select it.");
-
-    theme::heading(ui, &format!("Points ({})", samples.len()));
-    points_table(ui, flights, &samples);
-    theme::note(
+    theme::heading_about(
         ui,
-        "To move a point, drag it in the viewport; Ctrl + drag moves it vertically. To insert one, \
-         choose Add Points in the viewport toolbar. Delete removes the selected point.",
+        "Height Profile",
+        "Line: the path's height. Shaded: the ground below it. Click a point to select it.",
     );
+    profile(ui, flights, &samples);
+
+    theme::heading_about(
+        ui,
+        &format!("Points ({})", samples.len()),
+        "Click a row to select that point. To move a point, drag it in the viewport; Ctrl + drag \
+         moves it vertically. To insert one, choose Add Points in the viewport toolbar. Delete \
+         removes the selected point.",
+    );
+    points_table(ui, flights, &samples);
 }
 
 /// The path's points as a table: index, X, Y, Z and action. A Z under the
@@ -1137,7 +1180,8 @@ fn snap_ends(session: &mut EditSession, flights: &mut Flightpaths, route: &Route
     }
     session.status = match moved {
         0 => "Neither end's node is on this map".to_string(),
-        n => format!("{n} end(s) moved to their nodes"),
+        1 => "1 end moved to its node".to_string(),
+        n => format!("{n} ends moved to their nodes"),
     };
     flights.stale();
 }
@@ -1162,8 +1206,8 @@ fn point_card(
     theme::heading(ui, "Path Point");
     let mut step: Option<u32> = None;
     property(ui, "Index", "The point's place in the path, counted from 0.", |ui| {
-        value(ui, format!("{} (last is {})", point.index, route.points.len().saturating_sub(1)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let words = format!("{} (last is {})", point.index, route.points.len().saturating_sub(1));
+        value_then(ui, words, theme::INK, |ui| {
             let next = route.points.get(at_index + 1).map(|p| p.id);
             if ui.add_enabled(next.is_some(), egui::Button::new("\u{203a}").small()).on_hover_text("Next point").clicked() {
                 step = next;
@@ -1175,7 +1219,7 @@ fn point_card(
         });
     });
     property(ui, "ID", "The TaxiPathNode.dbc row ID.", |ui| {
-        value(ui, id.to_string());
+        theme::value(ui, id.to_string());
     });
     property(ui, "Path", "", |ui| {
         let words = format!(
@@ -1203,14 +1247,17 @@ fn point_card(
         return;
     }
 
-    theme::heading(ui, "Location");
+    theme::heading_about(
+        ui,
+        "Location",
+        "To move the point, drag it in the viewport. Ctrl + drag moves it vertically.",
+    );
     let mut at = point.at;
     if theme::xyz(ui, &mut at) {
         flightpaths::move_point(session, flights, id, bevy::math::Vec3::from(at), now);
         flights.stale();
     }
     above_ground(ui, session, at);
-    theme::note(ui, "To move the point, drag it in the viewport. Ctrl + drag moves it vertically.");
 
     theme::heading(ui, "Action");
     let (mut flag, mut delay) = (point.action_flag, point.delay);
@@ -1220,18 +1267,22 @@ fn point_card(
         "Type",
         "ActionFlag: 0 for a point flown through, 1 a teleport to the next point, 2 a stop. Standard flights use 0.",
         |ui| {
+            // A drop-down list and not three segments: at the inspector's
+            // narrowest the three names do not fit the row. A flag that is
+            // none of the three is shown as its number.
             if ACTIONS.iter().any(|(_, value)| *value == flag) {
                 let before = flag;
-                theme::segmented(ui, &mut flag, &ACTIONS, |a, b| a == b);
+                theme::choice(ui, "flightpaths-action", &mut flag, &ACTIONS, |a, b| a == b);
                 changed |= flag != before;
             } else {
-                changed |= ui.add(egui::DragValue::new(&mut flag).range(0..=2)).changed();
+                changed |= field(ui, egui::DragValue::new(&mut flag).range(0..=2)).changed();
             }
         },
     );
     property(ui, "Delay", "Seconds the flight waits at a Stop point.", |ui| {
         changed |= ui
-            .add_enabled(flag == 2, egui::DragValue::new(&mut delay).suffix(" s"))
+            .add_enabled_ui(flag == 2, |ui| field(ui, egui::DragValue::new(&mut delay).suffix(" s")))
+            .inner
             .on_disabled_hover_text("Used only when Type is Stop.")
             .changed();
     });
@@ -1257,52 +1308,47 @@ fn point_card(
     }
 
     let mut removed = false;
-    actions(
-        ui,
-        |ui| {
-            if ui.button("Fly To").on_hover_text("Move the camera to the point.").clicked() {
-                fly.write(crate::camera::FlyTo::at(point.at.into()));
-            }
-        },
-        |ui| {
-            removed = ui
-                .add_enabled(route.points.len() > 2, egui::Button::new(egui::RichText::new("Remove Point").color(theme::BAD)))
-                .on_hover_text("Remove this point. Each later point's index moves down by one.")
-                .on_disabled_hover_text("A path needs at least two points.")
-                .clicked();
-        },
-    );
+    ui.add_space(6.0);
+    ui.columns(2, |columns| {
+        let button = theme::full_button(&columns[0], "Fly To");
+        if columns[0].add(button).on_hover_text("Move the camera to the point.").clicked() {
+            fly.write(crate::camera::FlyTo::at(point.at.into()));
+        }
+        let button = remove_button(&columns[1], "Remove Point");
+        removed = columns[1]
+            .add_enabled(route.points.len() > 2, button)
+            .on_hover_text("Remove this point. Each later point's index moves down by one.")
+            .on_disabled_hover_text("A path needs at least two points.")
+            .clicked();
+    });
     if removed {
         let line = flightpaths::remove_selected_point(session, flights);
         session.status = line;
     }
 }
 
-/// Where the edits reach the server, as one line and a button.
+/// The Server section: the button that opens the Server panel, with how the
+/// edits reach the server on the heading's info mark.
 fn server_footer(ui: &mut egui::Ui, server_panel: &mut crate::ui::shell::popover::Popover) {
-    ui.separator();
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Server restart required after Apply").size(theme::SMALL).color(theme::INK_FAINT))
-            .on_hover_text(
-                "A node is a row of taxi_nodes. Paths and their points are TaxiPath.dbc and \
-                 TaxiPathNode.dbc, which the server reads from DataDir\\5875\\dbc. Apply on the \
-                 Server panel writes both, and so does a save with Apply on save on. vmangos \
-                 reads all three at startup only: restart the server after applying.",
-            );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("Server\u{2026}")
-                .on_hover_text(
-                    "Open the Server panel. Apply in its Client tables block writes the nodes as \
-                     taxi_nodes rows and copies TaxiPath.dbc and TaxiPathNode.dbc into \
-                     DataDir\\5875\\dbc; Restore copies the server's original files back.",
-                )
-                .clicked()
-            {
-                server_panel.show();
-            }
-        });
-    });
+    theme::heading_about(
+        ui,
+        "Server",
+        "Server restart required after Apply.\n\nA node is a row of taxi_nodes. Paths and their \
+         points are TaxiPath.dbc and TaxiPathNode.dbc, which the server reads from \
+         DataDir\\5875\\dbc. Apply on the Server panel writes both, and so does a save with Apply \
+         on save on. vmangos reads all three at startup only: restart the server after applying.",
+    );
+    if ui
+        .button("Server\u{2026}")
+        .on_hover_text(
+            "Open the Server panel. Apply in its Client tables block writes the nodes as \
+             taxi_nodes rows and copies TaxiPath.dbc and TaxiPathNode.dbc into \
+             DataDir\\5875\\dbc; Restore copies the server's original files back.",
+        )
+        .clicked()
+    {
+        server_panel.show();
+    }
 }
 
 /// What a click in the world does, as the toolbar draws it.
@@ -1326,11 +1372,21 @@ impl Mode {
 }
 
 /// The toolbar over the top of the viewport while the flight path tool is
-/// chosen: the four modes, the armed mode's settings and what the next click
-/// does, and whether the transport paths are drawn. It sits to the right of
-/// `corner`, the Select and Measure buttons, in the same row. Answers its
-/// rectangle, which the shell adds to the areas a press over the world does
-/// not reach.
+/// chosen:
+///
+/// ```text
+/// [Select | New Node | Connect | Add Points]  Show Transports  Show Unselected  Keys
+/// Clearance  Draw by Hand  Return Path
+/// Click the end node for the path from Stormwind.
+/// ```
+///
+/// The second and third lines are drawn only while a mode other than Select
+/// is armed: the second holds that mode's settings, and New Node has none;
+/// the third names the next click. The four modes are a
+/// [`theme::bar_group`], of which one is chosen; a switch is a
+/// [`theme::bar_switch`]. It sits to the right of `corner`, the Select and
+/// Measure buttons, in the same row. Answers its rectangle, which the shell
+/// adds to the areas a press over the world does not reach.
 pub(crate) fn strip(
     ctx: &egui::Context,
     viewport: egui::Rect,
@@ -1343,83 +1399,127 @@ pub(crate) fn strip(
     })
 }
 
-/// The four modes, and the two switches that decide which paths are drawn.
+/// The first row: the four modes, the two switches that decide which paths
+/// are drawn, and the Keys button.
 fn modes(ui: &mut egui::Ui, flights: &mut Flightpaths) {
     let mode = Mode::of(flights.armed);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        let button = |ui: &mut egui::Ui, on: bool, enabled: bool, text: &str| {
-            ui.add_enabled(enabled, egui::Button::selectable(on, text).min_size(egui::vec2(0.0, 26.0)))
-        };
-        if button(ui, mode == Mode::Select, true, "Select")
-            .on_hover_text("Click a node, a path or a point to select it. Drag to move; Ctrl + drag moves vertically.")
-            .clicked()
-        {
-            flights.disarm();
-        }
-        if button(ui, mode == Mode::NewNode, true, "New Node")
-            .on_hover_text(
-                "Click the ground to create a node there, available to both factions with mounts \
-                 2224 (Horde) and 541 (Alliance). The server uses a node only when a flight master \
-                 stands near it.",
-            )
-            .clicked()
-        {
-            flights.disarm();
-            flights.armed = Armed::NewNode;
-        }
-        let connect = button(ui, mode == Mode::Connect, flights.node.is_some() || mode == Mode::Connect, "Connect")
-            .on_hover_text(
-                "Click another node to create a path from the selected node to it, with points every \
-                 120 yards at the clearance above the ground, or drawn by hand.",
-            )
-            .on_disabled_hover_text("Select the start node first.");
-        if connect.clicked() && mode != Mode::Connect {
-            if let Some(from) = flights.node {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        bar_group(ui, |ui| {
+            if bar_segment(ui, mode == Mode::Select, "Select")
+                .on_hover_text("Click a node, a path or a point to select it. Drag to move; Ctrl + drag moves vertically.")
+                .clicked()
+            {
                 flights.disarm();
-                flights.arm_connect(from);
             }
-        }
-        if button(ui, mode == Mode::AddPoints, flights.path.is_some() || mode == Mode::AddPoints, "Add Points")
-            .on_hover_text(
-                "Click the ground to insert a point into the selected path, in the leg nearest the \
-                 click, at the clearance above the ground or the leg's own height, whichever is higher.",
-            )
-            .on_disabled_hover_text("Select a path first.")
-            .clicked()
-        {
-            flights.disarm();
-            flights.armed = Armed::AddPoints;
-        }
-        ui.add_space(4.0);
-        ui.separator();
-        ui.add_space(4.0);
-        let transports = flights.transports;
-        if button(ui, transports, true, "Show Transports")
+            if bar_segment(ui, mode == Mode::NewNode, "New Node")
+                .on_hover_text(
+                    "Click the ground to create a node there, available to both factions with mounts \
+                     2224 (Horde) and 541 (Alliance). The server uses a node only when a flight master \
+                     stands near it.",
+                )
+                .clicked()
+            {
+                flights.disarm();
+                flights.armed = Armed::NewNode;
+            }
+            let connect = ui
+                .add_enabled_ui(flights.node.is_some() || mode == Mode::Connect, |ui| {
+                    bar_segment(ui, mode == Mode::Connect, "Connect")
+                })
+                .inner
+                .on_hover_text(
+                    "Click another node to create a path from the selected node to it, with points every \
+                     120 yards at the clearance above the ground, or drawn by hand.",
+                )
+                .on_disabled_hover_text("Select the start node first.");
+            if connect.clicked() && mode != Mode::Connect {
+                if let Some(from) = flights.node {
+                    flights.disarm();
+                    flights.arm_connect(from);
+                }
+            }
+            if ui
+                .add_enabled_ui(flights.path.is_some() || mode == Mode::AddPoints, |ui| {
+                    bar_segment(ui, mode == Mode::AddPoints, "Add Points")
+                })
+                .inner
+                .on_hover_text(
+                    "Click the ground to insert a point into the selected path, in the leg nearest the \
+                     click, at the clearance above the ground or the leg's own height, whichever is higher.",
+                )
+                .on_disabled_hover_text("Select a path first.")
+                .clicked()
+            {
+                flights.disarm();
+                flights.armed = Armed::AddPoints;
+            }
+        });
+        if bar_switch(ui, flights.transports, "Show Transports")
             .on_hover_text(
                 "Also draw the boat and zeppelin paths. They are paths whose end nodes have no \
                  mount for either faction, and they share TaxiPath.dbc with the flights.",
             )
             .clicked()
         {
-            flights.transports = !transports;
+            flights.transports = !flights.transports;
         }
-        let unselected = flights.unselected;
-        if button(ui, unselected, true, "Show Unselected")
+        if bar_switch(ui, flights.unselected, "Show Unselected")
             .on_hover_text(
                 "Draw every path. Off, only the selected path and the selected node's paths \
                  are drawn and can be clicked. Also on the right-click menu.",
             )
             .clicked()
         {
-            flights.unselected = !unselected;
+            flights.unselected = !flights.unselected;
         }
+        bar_keys(ui, keys_of(flights.armed));
     });
 }
 
-/// Under an armed mode: its settings and what the next click does.
+/// The armed mode's mouse and keyboard controls, for the toolbar's Keys
+/// button.
+fn keys_of(armed: Armed) -> &'static [(&'static str, &'static str)] {
+    match armed {
+        Armed::Nothing => &SELECT_KEYS,
+        Armed::NewNode => &NEW_NODE_KEYS,
+        Armed::Connect { .. } => &CONNECT_KEYS,
+        Armed::Draw { .. } => &DRAW_KEYS,
+        Armed::AddPoints => &ADD_POINTS_KEYS,
+    }
+}
+
+/// The Select mode's controls.
+const SELECT_KEYS: [(&str, &str); 5] = [
+    ("Left button", "Select a node, a path or a point"),
+    ("Drag", "Move the node or point"),
+    ("Ctrl + drag", "Move it vertically"),
+    ("Delete", "Remove the selected point"),
+    ("Esc", "Deselect the point, then the path, then the node"),
+];
+
+/// The New Node mode's controls.
+const NEW_NODE_KEYS: [(&str, &str); 2] = [("Left button", "Create a node on the ground"), ("Esc", "Cancel")];
+
+/// The Connect mode's controls while Draw by Hand is off.
+const CONNECT_KEYS: [(&str, &str); 2] = [("Left button", "Create the path to the node clicked"), ("Esc", "Cancel")];
+
+/// The Connect mode's controls while Draw by Hand is on.
+const DRAW_KEYS: [(&str, &str); 5] = [
+    ("Left button", "Place a point"),
+    ("Ctrl + drag", "Set the height of the next point"),
+    ("Backspace", "Remove the last point"),
+    ("Left button on a node", "Finish the path"),
+    ("Esc", "Cancel"),
+];
+
+/// The Add Points mode's controls.
+const ADD_POINTS_KEYS: [(&str, &str); 2] = [("Left button", "Insert a point into the selected path"), ("Esc", "Cancel")];
+
+/// Under an armed mode: its settings on one row, and the line naming the
+/// next click on the row after.
 fn armed_settings(ui: &mut egui::Ui, flights: &mut Flightpaths) {
-    let hint = match flights.armed {
+    let next = match flights.armed {
         Armed::Nothing => return,
         Armed::NewNode => "Click the ground to place a node.".to_string(),
         Armed::AddPoints => {
@@ -1429,53 +1529,49 @@ fn armed_settings(ui: &mut egui::Ui, flights: &mut Flightpaths) {
         Armed::Connect { from } => {
             settings_row(ui, |ui| {
                 clearance(ui, flights);
-                ui.separator();
-                if ui
-                    .checkbox(&mut flights.draw_by_hand, "Draw by Hand")
-                    .on_hover_text("Place the path's points one click at a time before choosing the end node.")
-                    .changed()
-                {
-                    flights.arm_connect(from);
-                }
+                draw_by_hand(
+                    ui,
+                    flights,
+                    from,
+                    "Place the path's points one click at a time before choosing the end node.",
+                );
                 return_path(ui, flights);
             });
             format!("Click the end node for the path from {}.", short(&flights.name(from), 24))
         }
         Armed::Draw { from } => {
-            let placed = flights.draft.as_ref().map_or(0, |draft| draft.points.len());
+            let placed = match flights.draft.as_ref().map_or(0, |draft| draft.points.len()) {
+                1 => "1 point placed".to_string(),
+                n => format!("{n} points placed"),
+            };
             settings_row(ui, |ui| {
                 if let Some(draft) = flights.draft.as_mut() {
-                    ui.label(egui::RichText::new("Height").color(theme::INK_DIM));
-                    ui.add(egui::DragValue::new(&mut draft.height).speed(1.0).suffix(" yd"))
-                        .on_hover_text("The height the next point is placed at. Ctrl + drag in the world sets it too.");
-                    ui.separator();
+                    bar_setting(ui, "Height", |ui| {
+                        bar_field(ui, egui::DragValue::new(&mut draft.height).speed(1.0).suffix(" yd"))
+                            .on_hover_text("The height the next point is placed at. Ctrl + drag in the world sets it too.");
+                    });
                 }
-                if ui
-                    .checkbox(&mut flights.draw_by_hand, "Draw by Hand")
-                    .on_hover_text("Off, the path is created with points every 120 yards when the end node is clicked.")
-                    .changed()
-                {
-                    flights.arm_connect(from);
-                }
+                draw_by_hand(
+                    ui,
+                    flights,
+                    from,
+                    "Off, the path is created with points every 120 yards when the end node is clicked.",
+                );
                 return_path(ui, flights);
             });
             format!(
-                "From {}: {placed} point(s) placed. Click: place a point \u{b7} Ctrl + drag: set height \u{b7} \
-                 Backspace: remove the last \u{b7} Click a node: finish",
+                "From {}: {placed}. Click the ground to place a point, or a node to finish the path.",
                 short(&flights.name(from), 20)
             )
         }
     };
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(hint).size(theme::SMALL).color(theme::INK_DIM));
-        ui.label(egui::RichText::new("Esc: cancel").size(theme::SMALL).color(theme::INK_FAINT));
-    });
+    theme::note(ui, next);
 }
 
-/// One line of an armed mode's settings, spaced from the modes above it.
+/// One row of an armed mode's settings, spaced from the modes above it.
 fn settings_row(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(2.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         contents(ui);
     });
@@ -1483,17 +1579,33 @@ fn settings_row(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
 
 /// The clearance a new point is put at.
 fn clearance(ui: &mut egui::Ui, flights: &mut Flightpaths) {
-    ui.label(egui::RichText::new("Clearance").color(theme::INK_DIM));
-    ui.add(egui::DragValue::new(&mut flights.clearance).range(0.0..=500.0).speed(1.0).suffix(" yd"))
-        .on_hover_text("How far above the ground a new point is put.");
+    bar_setting(ui, "Clearance", |ui| {
+        bar_field(ui, egui::DragValue::new(&mut flights.clearance).range(0.0..=500.0).speed(1.0).suffix(" yd"))
+            .on_hover_text("How far above the ground a new point is put.");
+    });
+}
+
+/// Whether Connect places the path's points by hand. Changing it arms
+/// Connect again from `from`, through [`Flightpaths::arm_connect`]. `about`
+/// is the hover text, which differs with whether a draft is being drawn.
+fn draw_by_hand(ui: &mut egui::Ui, flights: &mut Flightpaths, from: u32, about: &str) {
+    if bar_switch(ui, flights.draw_by_hand, "Draw by Hand").on_hover_text(about).clicked() {
+        flights.draw_by_hand = !flights.draw_by_hand;
+        flights.arm_connect(from);
+    }
 }
 
 /// Whether Connect makes the path back as well.
 fn return_path(ui: &mut egui::Ui, flights: &mut Flightpaths) {
-    ui.checkbox(&mut flights.with_return, "Return Path").on_hover_text(
-        "Also create the path back: the same points in the opposite order. 270 of the 275 standard \
-         flights have one, as a row of its own.",
-    );
+    if bar_switch(ui, flights.with_return, "Return Path")
+        .on_hover_text(
+            "Also create the path back: the same points in the opposite order. 270 of the 275 standard \
+             flights have one, as a row of its own.",
+        )
+        .clicked()
+    {
+        flights.with_return = !flights.with_return;
+    }
 }
 
 /// The flight path tool's inspector panel. The flight paths are client tables

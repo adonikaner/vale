@@ -24,7 +24,7 @@ use crate::preview::portraits::{self, Portraits};
 use crate::session::EditSession;
 use crate::tools::ground::foliage::{self, Catalogue, Filter, Foliage, Set, Target};
 use crate::tools::ground::textures;
-use crate::ui::widgets::theme::{self, property};
+use crate::ui::widgets::theme::{self, field as number_field, property};
 
 /// The side of a model picture in a [`field`], in the window's list, and in
 /// the window's model list.
@@ -157,7 +157,10 @@ fn apply(target: &Target, id: u32, editing: &mut crate::ui::Editing<'_>, session
         Target::Selection { texture } => {
             let changed =
                 crate::tools::ground::chunks::set_foliage(session, &editing.chunks.selected, texture.as_deref(), id);
-            session.status = format!("foliage set on {changed} chunk(s)");
+            session.status = match changed {
+                1 => "Foliage set on 1 chunk".to_string(),
+                n => format!("Foliage set on {n} chunks"),
+            };
         }
     }
 }
@@ -408,19 +411,31 @@ fn detail(
     };
 
     theme::heading(ui, &format!("Set {id}"));
-    property(ui, "Source", "", |ui| {
-        ui.label(match set.project {
-            true => "Project. Saved with the project's tables.",
-            false => "Shipped. Read-only; copy it to change it.",
-        });
-    });
+    property(
+        ui,
+        "Source",
+        "A project set is saved with the project's tables. A shipped set is read-only; copy it \
+         to change it.",
+        |ui| {
+            theme::value(
+                ui,
+                match set.project {
+                    true => "Project",
+                    false => "Shipped",
+                },
+            );
+        },
+    );
     let (with, all) = foliage.uses(id);
     property(ui, "Grown By", "Layers in the open tiles whose MCLY effectId is this row.", |ui| {
-        ui.label(match (foliage.texture.is_empty(), all) {
-            (_, 0) => "No layer in the open tiles".to_string(),
-            (false, _) => format!("{all} layers, {with} of this texture"),
-            (true, _) => format!("{all} layers"),
-        });
+        theme::value(
+            ui,
+            match (foliage.texture.is_empty(), all) {
+                (_, 0) => "No layer in the open tiles".to_string(),
+                (false, _) => format!("{all} layers, {with} of this texture"),
+                (true, _) => format!("{all} layers"),
+            },
+        );
     });
     ui.add_space(4.0);
     let label = match current == Some(id) {
@@ -431,7 +446,12 @@ fn detail(
         applied = Some(id);
     }
 
-    theme::heading(ui, "Models");
+    theme::heading_about(
+        ui,
+        "Models",
+        "A cell's tufts take the four columns in turn, so a model in two columns grows twice as \
+         often, and an empty column leaves its share bare.",
+    );
     // The four columns, each a picture. A click picks the column the large
     // picture shows and, on a project set, the one the model list sets.
     ui.horizontal(|ui| {
@@ -478,11 +498,6 @@ fn detail(
         portraits::paint_large(ui, portraits, pane, &model.path, side)
             .on_hover_text("Drag to turn the model.");
     }
-    theme::note(
-        ui,
-        "A cell's tufts take the four columns in turn, so a model in two columns grows twice as \
-         often, and an empty column leaves its share bare.",
-    );
 
     property(
         ui,
@@ -490,10 +505,13 @@ fn detail(
         "GroundEffectTexture terrainType: the TerrainType row that picks the footstep sound on \
          the layer. A layer with no set walks as Dirt.",
         |ui| match set.project {
+            // Not `theme::choice`: the shown text is the set's footstep
+            // name, which is given for a row the list does not hold too.
             true => {
                 let mut terrain = set.terrain;
                 egui::ComboBox::from_id_salt("foliage-terrain")
                     .selected_text(catalogue.footsteps(id))
+                    .width(theme::field_width(ui))
                     .show_ui(ui, |ui| {
                         for (row, name) in &catalogue.terrains {
                             ui.selectable_value(&mut terrain, *row, name);
@@ -504,16 +522,20 @@ fn detail(
                 }
             }
             false => {
-                ui.label(catalogue.footsteps(id));
+                theme::value(ui, catalogue.footsteps(id));
             }
         },
     );
     property(ui, "Density", "How many tufts one draw of a detail cell plants. The shipped sets use 1 to 20.", |ui| {
         let mut density = set.density;
-        let response = ui.add_enabled(
-            set.project,
-            egui::DragValue::new(&mut density).speed(0.1).range(foliage::DENSITIES).suffix(" per cell"),
-        );
+        let response = ui
+            .add_enabled_ui(set.project, |ui| {
+                number_field(
+                    ui,
+                    egui::DragValue::new(&mut density).speed(0.1).range(foliage::DENSITIES).suffix(" per cell"),
+                )
+            })
+            .inner;
         if response.changed() {
             foliage::set_density(session, id, density, now);
         }
@@ -542,11 +564,11 @@ fn detail(
         }
     });
 
+    // With no column chosen there is no list. Each column's hover says that
+    // a click chooses it.
     if set.project {
         if let Some(slot) = foliage.slot {
             model_list(ui, foliage, catalogue, portraits, session, id, slot);
-        } else {
-            theme::note(ui, "Click a column above to change its model.");
         }
     }
     applied

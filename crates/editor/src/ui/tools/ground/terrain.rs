@@ -3,9 +3,10 @@
 //! state is [`crate::tools::ground::terrain`].
 //!
 //! ```text
-//! viewport toolbar   Sculpt or Select Vertices; in Sculpt the brush preset
-//!                    and the ten modes; in Select Vertices the footprint;
-//!                    Only Inside Selection, Objects Follow, and the keys
+//! viewport toolbar   Sculpt or Select Vertices, Only Inside Selection,
+//!                    Objects Follow and the Keys button; under them, in
+//!                    Sculpt the brush preset and the ten modes, and in
+//!                    Select Vertices the footprint
 //! inspector          in Sculpt the brush presets, the brush's settings,
 //!                    Flatten's target, and the settings of Terrace, Erode,
 //!                    Mountain and Crevice; the vertex selection: its height,
@@ -22,23 +23,22 @@ use bevy_egui::egui;
 use crate::prefs::brushes::{Ask, Brushes, Sculpt};
 use crate::tools::ground::terrain::{FALLOFFS, MODES, SHAPES, Terrain, VertexAsk};
 use crate::tools::ground::terrain;
-use crate::ui::widgets::theme::{self, bar_choice, bar_gap, bar_setting, bar_toggle, property};
+use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_setting, bar_switch, field, property};
 
 use vale_edit::ops::brush::{Erosion, Mode, Only};
 
 /// The terrain tool's toolbar over the viewport:
 ///
 /// ```text
-/// Sculpt  Select Vertices | Brush | Raise  Lower  Flatten  Smooth  Noise
-///                                   Blur  Terrace  Erode  Mountain  Crevice
-/// Only Inside Selection  Objects Follow
-/// the keys
+/// [Sculpt | Select Vertices]  Brush  Only Inside Selection  Objects Follow  Keys
+/// [Raise | Lower | Flatten | Smooth | Noise | Blur | Terrace | Erode | Mountain | Crevice]
 /// ```
 ///
-/// In Select Vertices the first line ends after Select Vertices and the
-/// second starts with the footprint's radius and shape. Only Inside Selection
-/// is shown only while vertices are selected, the one case in which it
-/// changes a stroke. See [`theme::toolbar`].
+/// In Select Vertices the first line has no Brush and the second is the
+/// footprint's radius and shape. Only Inside Selection is shown only while
+/// vertices are selected, the one case in which it changes a stroke. A set
+/// of which one is chosen is a [`theme::bar_group`]; a switch is a
+/// [`theme::bar_switch`]. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
     viewport: egui::Rect,
@@ -50,22 +50,28 @@ pub(crate) fn toolbar(
     // `crate::prefs::brushes`.
     brushes.follow_sculpt(terrain);
     theme::toolbar(ctx, "terrain-toolbar", viewport, corner, |ui| {
+        // The first row: what the left button does, and the switches that
+        // apply to either answer.
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            if bar_toggle(ui, !terrain.selecting, "Sculpt")
-                .on_hover_text("The left button moves the ground with the brush.")
-                .clicked()
-            {
-                terrain.selecting = false;
-            }
-            if bar_toggle(ui, terrain.selecting, "Select Vertices")
-                .on_hover_text("The left button selects the vertices under the footprint, for the inspector to move, level, smooth, tilt or lock.")
-                .clicked()
-            {
-                terrain.selecting = true;
-            }
+            ui.spacing_mut().item_spacing.x = 6.0;
+            bar_group(ui, |ui| {
+                if bar_segment(ui, !terrain.selecting, "Sculpt")
+                    .on_hover_text("The left button moves the ground with the brush.")
+                    .clicked()
+                {
+                    terrain.selecting = false;
+                }
+                if bar_segment(ui, terrain.selecting, "Select Vertices")
+                    .on_hover_text(
+                        "The left button selects the vertices under the footprint, for the inspector \
+                         to move, level, smooth, tilt or lock.",
+                    )
+                    .clicked()
+                {
+                    terrain.selecting = true;
+                }
+            });
             if !terrain.selecting {
-                bar_gap(ui);
                 let names: Vec<&str> = brushes.sculpt.list.iter().map(|preset| preset.name.as_str()).collect();
                 let modified = brushes.sculpt.modified(&Sculpt::of(terrain));
                 let picked = bar_setting(ui, "Brush", |ui| {
@@ -74,34 +80,9 @@ pub(crate) fn toolbar(
                 if let Some(at) = picked {
                     brushes.act_sculpt(Ask::Choose(at), terrain);
                 }
-                bar_gap(ui);
-                for (key, (name, mode)) in MODES.into_iter().enumerate() {
-                    // A flatten's target is set when the stroke begins, so the
-                    // variant held here carries a stale height and is compared
-                    // on its discriminant.
-                    let on = std::mem::discriminant(&terrain.brush.mode) == std::mem::discriminant(&mode);
-                    if bar_toggle(ui, on, name).on_hover_text(terrain::mode_key(key)).clicked() && !on {
-                        terrain.brush.mode = mode;
-                    }
-                }
-            }
-        });
-        ui.add_space(2.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 3.0;
-            if terrain.selecting {
-                bar_setting(ui, "Footprint", |ui| {
-                    ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"))
-                        .on_hover_text("The radius a click selects within. Ctrl + wheel.");
-                });
-                bar_setting(ui, "Shape", |ui| {
-                    bar_choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b)
-                        .on_hover_text("The footprint's outline. Shift + 1, 2 or 3.");
-                });
-                bar_gap(ui);
             }
             if terrain.selected > 0
-                && bar_toggle(ui, terrain.only_inside, "Only Inside Selection")
+                && bar_switch(ui, terrain.only_inside, "Only Inside Selection")
                     .on_hover_text(
                         "On: a brush stroke moves the selected vertices and nothing else, and the \
                          selection is drawn green. Off: strokes move any vertex under the brush that \
@@ -111,23 +92,83 @@ pub(crate) fn toolbar(
             {
                 terrain.only_inside = !terrain.only_inside;
             }
-            if bar_toggle(ui, terrain.objects_follow, "Objects Follow")
+            if bar_switch(ui, terrain.objects_follow, "Objects Follow")
                 .on_hover_text(OBJECTS_FOLLOW)
                 .clicked()
             {
                 terrain.objects_follow = !terrain.objects_follow;
             }
+            bar_keys(ui, match terrain.selecting {
+                false => &SCULPT_KEYS,
+                true => &SELECT_KEYS,
+            });
         });
-        let keys = match terrain.selecting {
-            false => {
-                "Left button: apply \u{b7} Ctrl + wheel: radius \u{b7} Shift + wheel: strength \u{b7} \
-                 Alt + wheel: core \u{b7} 1-5, Shift + 4-8: mode \u{b7} 6-0: falloff \u{b7} Shift + 1-3: shape"
+        ui.add_space(2.0);
+        // The second row: the brush's mode in Sculpt, the footprint in Select
+        // Vertices.
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            match terrain.selecting {
+                false => bar_group(ui, |ui| {
+                    for (key, (name, mode)) in MODES.into_iter().enumerate() {
+                        // A flatten's target is set when the stroke begins, so
+                        // the variant held here carries a stale height and is
+                        // compared on its discriminant.
+                        let on = std::mem::discriminant(&terrain.brush.mode) == std::mem::discriminant(&mode);
+                        if bar_segment(ui, on, name).on_hover_text(terrain::mode_key(key)).clicked() && !on {
+                            terrain.brush.mode = mode;
+                        }
+                    }
+                }),
+                true => {
+                    bar_setting(ui, "Footprint", |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut terrain.brush.radius)
+                                .speed(0.5)
+                                .range(terrain::RADIUS)
+                                .suffix(" yd"),
+                        )
+                        .on_hover_text("The radius a click selects within. Ctrl + wheel.");
+                    });
+                    bar_setting(ui, "Shape", |ui| {
+                        bar_group(ui, |ui| {
+                            for (name, shape) in SHAPES {
+                                let on = terrain.brush.shape == shape;
+                                if bar_segment(ui, on, name)
+                                    .on_hover_text("The footprint's outline. Shift + 1, 2 or 3.")
+                                    .clicked()
+                                {
+                                    terrain.brush.shape = shape;
+                                }
+                            }
+                        });
+                    });
+                }
             }
-            true => "Left button: select \u{b7} Shift: deselect \u{b7} Ctrl + wheel: footprint \u{b7} Shift + 1-3: shape",
-        };
-        ui.add(egui::Label::new(egui::RichText::new(keys).size(theme::SMALL).color(theme::INK_FAINT)).wrap());
+        });
     })
 }
+
+/// The Sculpt mode's mouse and keyboard controls, for the toolbar's Keys
+/// button.
+const SCULPT_KEYS: [(&str, &str); 8] = [
+    ("Left button", "Apply the brush"),
+    ("Ctrl + wheel", "Radius"),
+    ("Shift + wheel", "Strength"),
+    ("Alt + wheel", "Core"),
+    ("1 to 5", "Raise, Lower, Flatten, Smooth, Noise"),
+    ("Shift + 4 to 8", "Blur, Terrace, Erode, Mountain, Crevice"),
+    ("6 to 0", "Falloff"),
+    ("Shift + 1 to 3", "Shape"),
+];
+
+/// The Select Vertices mode's controls, for the same button.
+const SELECT_KEYS: [(&str, &str); 4] = [
+    ("Left button", "Select the vertices under the footprint"),
+    ("Shift + left button", "Deselect them"),
+    ("Ctrl + wheel", "Footprint radius"),
+    ("Shift + 1 to 3", "Footprint shape"),
+];
 
 /// The Brush Settings section's rows: radius, strength, core, the scale for
 /// the modes that read it, falloff and shape. The section is
@@ -138,7 +179,7 @@ pub(crate) fn toolbar(
 fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
     let mode = terrain.brush.mode;
     property(ui, "Radius", "The outer ring. Ctrl + wheel over the ground.", |ui| {
-        ui.add(egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"));
+        field(ui, egui::DragValue::new(&mut terrain.brush.radius).speed(0.5).range(terrain::RADIUS).suffix(" yd"));
     });
     // The limits are the tool's own constants, which document the reason for
     // each. A range written as a literal in the panel would have no stated
@@ -156,7 +197,7 @@ fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
         _ => "How fast a held stroke works. Shift + wheel over the ground.",
     };
     property(ui, "Strength", about, |ui| {
-        ui.add(egui::DragValue::new(&mut terrain.brush.strength).speed(speed).range(range).suffix(suffix));
+        field(ui, egui::DragValue::new(&mut terrain.brush.strength).speed(speed).range(range).suffix(suffix));
     });
     // Crevice has a fixed profile, so the core and falloff do not apply.
     let shaped = !matches!(mode, Mode::Crevice);
@@ -168,7 +209,7 @@ fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
             "Core",
             "The share of the radius at full strength, drawn as the inner ring. Alt + wheel over the ground.",
             |ui| {
-                ui.add(egui::DragValue::new(&mut terrain.brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
+                field(ui, egui::DragValue::new(&mut terrain.brush.core).speed(0.01).range(crate::tools::CORE).fixed_decimals(2));
             },
         );
     }
@@ -180,12 +221,12 @@ fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
     };
     if let Some(about) = scale {
         property(ui, "Scale", about, |ui| {
-            ui.add(egui::DragValue::new(&mut terrain.brush.scale).speed(0.5).range(terrain::SCALE).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut terrain.brush.scale).speed(0.5).range(terrain::SCALE).suffix(" yd"));
         });
     }
     if shaped {
         property(ui, "Falloff", "How the strength fades from the inner ring to the outer ring. Keys 6 to 0.", |ui| {
-            bar_choice(ui, "terrain-falloff", &mut terrain.brush.falloff, &FALLOFFS, |a, b| a == b);
+            theme::choice(ui, "terrain-falloff", &mut terrain.brush.falloff, &FALLOFFS, |a, b| a == b);
         });
     }
     property(
@@ -193,7 +234,9 @@ fn brush_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
         "Shape",
         "The brush's outline. The square is aligned to the chunk grid. Shift + 1, 2 or 3.",
         |ui| {
-            bar_choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b);
+            // A drop-down list and not three segments: at the inspector's
+            // narrowest the three names do not fit the row.
+            theme::choice(ui, "terrain-shape", &mut terrain.brush.shape, &SHAPES, |a, b| a == b);
         },
     );
 }
@@ -208,11 +251,11 @@ fn flatten_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
     });
     if !terrain.flatten_to_cursor {
         property(ui, "Height", "The height the brush flattens to.", |ui| {
-            ui.add(egui::DragValue::new(&mut terrain.flatten_height).speed(0.25).fixed_decimals(1).suffix(" yd"));
+            field(ui, egui::DragValue::new(&mut terrain.flatten_height).speed(0.25).fixed_decimals(1).suffix(" yd"));
         });
     }
     property(ui, "Direction", "Which way the ground may move toward the target.", |ui| {
-        theme::segmented(
+        theme::property_segmented(
             ui,
             &mut terrain.brush.only,
             &[("Both", Only::Both), ("Fill", Only::Fill), ("Cut", Only::Cut)],
@@ -238,17 +281,17 @@ fn mode_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
         Mode::Terrace { .. } => {
             theme::heading(ui, "Terrace");
             property(ui, "Step", "The height of one step.", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.step).speed(0.1).range(terrain::STEP).suffix(" yd"));
+                field(ui, egui::DragValue::new(&mut brush.step).speed(0.1).range(terrain::STEP).suffix(" yd"));
             });
             property(ui, "Sharpness", "How much of each step is level. 1: level steps with vertical risers. 0: a smooth slope of steps.", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.sharpness).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
+                field(ui, egui::DragValue::new(&mut brush.sharpness).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
             });
             theme::note(ui, "The steps are measured from the height where the stroke starts, so that point is on a step.");
         }
         Mode::Erode => {
             theme::heading(ui, "Erode");
             property(ui, "Type", "What wears the ground.", |ui| {
-                theme::segmented(
+                theme::property_segmented(
                     ui,
                     &mut brush.erosion,
                     &[("Water", Erosion::Water), ("Thermal", Erosion::Thermal)],
@@ -257,7 +300,7 @@ fn mode_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
             });
             if brush.erosion == Erosion::Thermal {
                 property(ui, "Talus", "The steepest slope left. Steeper slopes collapse to it.", |ui| {
-                    ui.add(egui::DragValue::new(&mut brush.talus).speed(0.25).range(5.0..=80.0).fixed_decimals(0).suffix("\u{b0}"));
+                    field(ui, egui::DragValue::new(&mut brush.talus).speed(0.25).range(5.0..=80.0).fixed_decimals(0).suffix("\u{b0}"));
                 });
             }
             theme::note(
@@ -271,13 +314,13 @@ fn mode_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
         Mode::Mountain => {
             theme::heading(ui, "Mountain");
             property(ui, "Ridges", "How much of the height follows the ridges. 0 raises like Raise; 1 raises only along the ridges.", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.ridges).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
+                field(ui, egui::DragValue::new(&mut brush.ridges).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
             });
         }
         Mode::Crevice => {
             theme::heading(ui, "Crevice");
             property(ui, "Lip", "The share of the dug ground piled on the rims. 1 keeps all of it; 0 piles none.", |ui| {
-                ui.add(egui::DragValue::new(&mut brush.lip).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
+                field(ui, egui::DragValue::new(&mut brush.lip).speed(0.01).range(0.0..=1.0).fixed_decimals(2));
             });
             theme::note(ui, "The trench is the inner half of the brush and the rims are the outer half.");
         }
@@ -289,24 +332,48 @@ fn mode_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
 /// Answers whether either changed.
 fn tilt_rows(ui: &mut egui::Ui, angle: &mut f32, toward: &mut f32) -> bool {
     let mut changed = false;
+    // Each field writes what its number means after the number: "0° Level",
+    // "135° South-east". The parser reads the number and ignores the rest, so
+    // the text can be typed over or edited in place.
     property(ui, "Tilt", "Slope in degrees. 0 is level.", |ui| {
-        changed |= ui
-            .add(egui::DragValue::new(angle).speed(0.25).range(0.0..=60.0).fixed_decimals(0).suffix("\u{b0}"))
-            .changed();
-        if *angle == 0.0 {
-            theme::note(ui, "Level");
-        }
+        changed |= field(
+            ui,
+            egui::DragValue::new(angle)
+                .speed(0.25)
+                .range(0.0..=60.0)
+                .custom_formatter(|degrees, _| match degrees == 0.0 {
+                    true => "0\u{b0}  Level".to_string(),
+                    false => format!("{degrees:.0}\u{b0}"),
+                })
+                .custom_parser(leading_number),
+        )
+        .changed();
     });
     // The bearing only matters once there is a slope.
     if *angle > 0.0 {
         property(ui, "Uphill", "Compass bearing of the uphill side. 0 is north, 90 east.", |ui| {
-            changed |= ui
-                .add(egui::DragValue::new(&mut *toward).speed(1.0).range(0.0..=359.0).fixed_decimals(0).suffix("\u{b0}"))
-                .changed();
-            theme::note(ui, compass(*toward));
+            changed |= field(
+                ui,
+                egui::DragValue::new(&mut *toward)
+                    .speed(1.0)
+                    .range(0.0..=359.0)
+                    .custom_formatter(|degrees, _| format!("{degrees:.0}\u{b0}  {}", compass(degrees as f32)))
+                    .custom_parser(leading_number),
+            )
+            .changed();
         });
     }
     changed
+}
+
+/// The number a text starts with, for a field whose text continues after its
+/// number. `None` when it starts with none.
+fn leading_number(text: &str) -> Option<f64> {
+    let text = text.trim_start();
+    let end = text
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+        .unwrap_or(text.len());
+    text[..end].parse().ok()
 }
 
 /// The nearest of the eight compass points to a bearing in degrees.
@@ -318,17 +385,17 @@ fn compass(bearing: f32) -> &'static str {
 /// The terrain tool's inspector. In Sculpt: the presets, the brush's
 /// settings, Flatten's target, and the selection described; in Select
 /// Vertices: the selection and its tilt. Both end with the locked vertices.
+///
+/// The panel has no title or instruction line for the mode: the toolbar's
+/// lit segment names the mode, and each of its controls says what it does
+/// when hovered.
 fn panel(ui: &mut egui::Ui, terrain: &mut Terrain, brushes: &mut Brushes) {
     match terrain.selecting {
         true => {
-            title(ui, "Select Vertices");
-            theme::note(ui, "Click the ground to select the vertices under the footprint. The footprint is on the toolbar.");
             selection(ui, terrain);
             tilt(ui, terrain);
         }
         false => {
-            title(ui, "Sculpt");
-            theme::note(ui, "Hold the left button over the ground to apply the brush. The mode is on the toolbar.");
             let presets: Vec<(String, super::presets::Icon)> = brushes
                 .sculpt
                 .list
@@ -364,14 +431,6 @@ fn panel(ui: &mut egui::Ui, terrain: &mut Terrain, brushes: &mut Brushes) {
     locks(ui, terrain);
 }
 
-/// The size of the panel's title.
-const TITLE: f32 = 17.0;
-
-/// The panel's title.
-fn title(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).strong().size(TITLE).color(theme::INK));
-}
-
 /// How many vertices are selected, in words.
 fn selected_words(selected: usize) -> String {
     match selected {
@@ -398,7 +457,8 @@ fn selection(ui: &mut egui::Ui, terrain: &mut Terrain) {
     property(ui, "Height", "The mean height. Drag or type to move the selection up or down.", |ui| {
         let mut mean = terrain.selected_mean;
         let moved = ui
-            .add_enabled(any, egui::DragValue::new(&mut mean).speed(0.1).fixed_decimals(1).suffix(" yd"))
+            .add_enabled_ui(any, |ui| field(ui, egui::DragValue::new(&mut mean).speed(0.1).fixed_decimals(1).suffix(" yd")))
+            .inner
             .on_disabled_hover_text("Select some vertices first.");
         if moved.changed() && mean != terrain.selected_mean {
             terrain.ask = Some(VertexAsk::MoveTo(mean));
@@ -444,9 +504,15 @@ fn tilt(ui: &mut egui::Ui, terrain: &mut Terrain) {
 /// The Locked Vertices section: how many the open tiles hold, and the four
 /// ways to change them, which need Select Vertices.
 fn locks(ui: &mut egui::Ui, terrain: &mut Terrain) {
-    theme::heading(ui, "Locked Vertices");
+    theme::heading_about(
+        ui,
+        "Locked Vertices",
+        "No height operation moves a locked vertex: brush strokes, Grade, Stitch, chunk paste, \
+         height import, and Level, Smooth, Tilt and Height here.\n\nLocks are saved in the \
+         project at once and are not on the undo history. Locked vertices are drawn red.",
+    );
     let any = terrain.selected > 0;
-    property(ui, "Locked", "Locked vertices are drawn red.", |ui| {
+    property(ui, "Locked", "", |ui| {
         ui.label(
             egui::RichText::new(match terrain.locked {
                 0 => "None on the open tiles".to_string(),
@@ -455,45 +521,44 @@ fn locks(ui: &mut egui::Ui, terrain: &mut Terrain) {
             .color(theme::INK),
         );
     });
-    ui.horizontal_wrapped(|ui| {
-        for (label, ask, about, enabled) in [
-            ("Lock Selection", VertexAsk::Lock, "Add the selected vertices to their tiles' locked vertices.", any),
-            (
-                "Unlock Selection",
-                VertexAsk::Unlock,
-                "Remove the selected vertices from their tiles' locked vertices.",
-                any,
-            ),
-            (
-                "Lock Tile Sides",
-                VertexAsk::LockSides,
-                "Lock the vertices on all four sides of each tile that holds part of the \
-                 selection. A tile's side is shared with the tile beside it, so this keeps \
-                 the ground at the seam level with a tile that is not being edited.",
-                any,
-            ),
-            ("Unlock All", VertexAsk::UnlockAll, "Unlock every vertex of every open tile.", terrain.locked > 0),
-        ] {
-            let disabled_why = match ask {
-                VertexAsk::UnlockAll => "No vertex on the open tiles is locked.",
-                _ => "Select some vertices first.",
-            };
-            if ui
-                .add_enabled(enabled, egui::Button::new(label))
-                .on_hover_text(about)
-                .on_disabled_hover_text(disabled_why)
-                .clicked()
-            {
-                terrain.ask = Some(ask);
+    let buttons = [
+        ("Lock Selection", VertexAsk::Lock, "Add the selected vertices to their tiles' locked vertices.", any),
+        (
+            "Unlock Selection",
+            VertexAsk::Unlock,
+            "Remove the selected vertices from their tiles' locked vertices.",
+            any,
+        ),
+        (
+            "Lock Tile Sides",
+            VertexAsk::LockSides,
+            "Lock the vertices on all four sides of each tile that holds part of the \
+             selection. A tile's side is shared with the tile beside it, so this keeps \
+             the ground at the seam level with a tile that is not being edited.",
+            any,
+        ),
+        ("Unlock All", VertexAsk::UnlockAll, "Unlock every vertex of every open tile.", terrain.locked > 0),
+    ];
+    // Two rows of two equal buttons, so the four have common edges.
+    for pair in buttons.chunks(2) {
+        ui.columns(2, |columns| {
+            for (column, (label, ask, about, enabled)) in columns.iter_mut().zip(pair) {
+                let disabled_why = match ask {
+                    VertexAsk::UnlockAll => "No vertex on the open tiles is locked.",
+                    _ => "Select some vertices first.",
+                };
+                let width = column.available_width();
+                if column
+                    .add_enabled(*enabled, egui::Button::new(*label).min_size(egui::vec2(width, 24.0)))
+                    .on_hover_text(*about)
+                    .on_disabled_hover_text(disabled_why)
+                    .clicked()
+                {
+                    terrain.ask = Some(*ask);
+                }
             }
-        }
-    });
-    theme::note(
-        ui,
-        "No height operation moves a locked vertex: brush strokes, Grade, Stitch, chunk paste, \
-         height import, and Level, Smooth, Tilt and Height here. Locks are saved in the project \
-         at once and are not on the undo history.",
-    );
+        });
+    }
 }
 
 /// What the Objects Follow switch does, for its hover here and in the grade

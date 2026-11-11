@@ -33,6 +33,20 @@
 //! vmangos' tables, a `.tele`), and the directory name is usable in none of
 //! them.
 //!
+//! ## Three kinds of control, drawn three ways
+//!
+//! ```text
+//! a menu's button   a faint caption, then the value: "Project default"
+//! a workspace       a tab: a name with no frame, underlined while open
+//! an action         a framed button; Playtest is filled with the accent,
+//!                   and Save has the pending colour's outline while
+//!                   anything is unsaved
+//! ```
+//!
+//! The bar has no product name on it. The window's title has it, and the
+//! 100 points it took put the last workspaces on a second row in a window
+//! 1,600 points wide.
+//!
 //! A menu entry is a command. A form is a popover: an egui menu closes when
 //! anything inside it is clicked, which suits a list of commands and does not
 //! suit text fields, so `Settings…`, `Publish…`, `Go To…` and `Add Bookmark…`
@@ -148,19 +162,6 @@ pub(crate) fn draw(
     collab: &crate::collab::Collab,
 ) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Vale IDE")
-                .strong()
-                .color(theme::INK)
-                .size(13.0),
-        );
-        ui.label(
-            egui::RichText::new("editor")
-                .color(theme::INK_FAINT)
-                .size(13.0),
-        );
-        separator(ui);
-
         // The project comes first: everything else is written into it, and it
         // is the one thing on this bar a person can lose work by being wrong
         // about.
@@ -206,6 +207,9 @@ pub(crate) fn draw(
                 true => running(ui, playing, session),
                 false => not_running(ui, session, assets, popovers, playing, collab),
             }
+            // Three groups, right to left: the playtest; writing the work
+            // down (Server and Save); the shared session (Changes and the
+            // session button).
             separator(ui);
             let at_server = ui.button("Server\u{2026}").on_hover_text(
                 "What this project has done to the world database: Apply on save, Apply and \
@@ -216,6 +220,7 @@ pub(crate) fn draw(
                 popovers.server.toggle(&at_server);
             }
             save(ui, session, assets, playing, in_world, collab.is_joined().then(|| collab.to_submit()));
+            separator(ui);
             let at_changes = super::changes::button(ui, collab);
             popovers.changes.track(&at_changes);
             if at_changes.clicked() {
@@ -351,6 +356,17 @@ fn not_running(
     }
 }
 
+/// The text of a menu's button: `caption` in the faint ink, then `value` in
+/// the full ink, so the value is what is read first and the caption says
+/// what it is a value of.
+fn selector(ui: &egui::Ui, caption: &str, value: &str) -> egui::WidgetText {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    job.append(caption, 0.0, egui::TextFormat::simple(font.clone(), theme::INK_FAINT));
+    job.append(value, 6.0, egui::TextFormat::simple(font, theme::INK));
+    job.into()
+}
+
 /// A hairline between two groups on the bar.
 fn separator(ui: &mut egui::Ui) {
     ui.add_space(4.0);
@@ -384,7 +400,7 @@ fn project(
 ) {
     let (mut ask_projects, mut ask_settings, mut ask_publish) = (false, false, false);
     let menu = ui
-        .menu_button(format!("Project: {}", session.project.name), |ui| {
+        .menu_button(selector(ui, "Project", &session.project.name), |ui| {
             // Disabled while a playtest is running. Switching saves what is
             // unsaved, rebuilds the archive overlay, empties the undo stack
             // and re-reads every tile on screen, and the running client reads
@@ -535,8 +551,14 @@ fn save(
     // running client reads it, so the next cast, the next entity to come into
     // view and the next model to be hung are the edited ones. What is already
     // standing keeps the handles it has.
+    // Unsaved work is pending work, so the button has the pending colour's
+    // outline while there is any.
+    let button = match anything {
+        true => egui::Button::new(label).stroke(egui::Stroke::new(1.0, theme::WARN)),
+        false => egui::Button::new(label),
+    };
     if ui
-        .add_enabled(anything, egui::Button::new(label))
+        .add_enabled(anything, button)
         .on_hover_text(match (joined, in_world) {
             (true, _) => "Submit this editor's edits to the host as one changelist, as Submit in the Changes \
                  window does. The host saves them. Ctrl+S."
@@ -690,7 +712,7 @@ fn map(
     let mut ask_go = false;
     let mut ask_bookmark = false;
     let menu = ui
-        .menu_button(format!("Map: {} ({})", session.map, session.map_id), |ui| {
+        .menu_button(selector(ui, "Map", &format!("{} ({})", session.map, session.map_id)), |ui| {
             // The form is a modal of its own, drawn whether or not the map
             // window is open. See [`crate::ui::map::mapview`].
             if ui

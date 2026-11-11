@@ -365,6 +365,11 @@ fn tile(ui: &mut egui::Ui, subject: &Subject, on: bool, held: Option<&str>, size
 /// and pressing one sends the tool to its window and brings the window
 /// forward (see `crate::popout`). A pop-out window draws the same control
 /// with `world` false, since it has no world to return to.
+///
+/// The workspaces are drawn as tabs: a name with no frame, lit and
+/// underlined in the accent while it is the open one. The bar's other
+/// controls are framed buttons that act or open a form, and a tab changes
+/// what the window shows, so the two are drawn differently.
 pub(crate) fn workspaces(
     ui: &mut egui::Ui,
     tool: &mut Tool,
@@ -375,13 +380,20 @@ pub(crate) fn workspaces(
     world: bool,
 ) {
     let in_world = tool.surface() != Surface::Middle;
-    ui.spacing_mut().item_spacing.x = 2.0;
+    // The tabs' look is set on the caller's `Ui` and put back at the end. A
+    // scope would be a child `Ui`, which a wrapping row places before its
+    // width is known, so the tabs would not wrap.
+    let widgets = ui.visuals().widgets.clone();
+    let spacing = ui.spacing().item_spacing.x;
+    tab_style(ui);
     if !world {
         draw_workspaces(ui, tool, playing, server, popped);
+        ui.visuals_mut().widgets = widgets;
+        ui.spacing_mut().item_spacing.x = spacing;
         return;
     }
     let world = ui
-        .add_enabled(!playing, egui::Button::selectable(in_world, "World"))
+        .add_enabled(!playing, tab(in_world, "World"))
         .on_hover_text(
             "Shows the viewport with the rail tools, Select and Measure. Returns \
              to the tool last used.",
@@ -390,6 +402,7 @@ pub(crate) fn workspaces(
             "Unavailable during a playtest: the viewport shows the game's terrain, \
              streamed around the character. Ctrl+P ends the playtest.",
         );
+    underline(ui, &world, in_world);
     if world.clicked() {
         // With no database the last tool may be a spawn tool that cannot be
         // used; Select can always be.
@@ -400,6 +413,46 @@ pub(crate) fn workspaces(
         };
     }
     draw_workspaces(ui, tool, playing, server, popped);
+    ui.visuals_mut().widgets = widgets;
+    ui.spacing_mut().item_spacing.x = spacing;
+}
+
+/// The visuals a [`tab`] is drawn from: no fill and no outline until it is
+/// hovered. The outline is transparent and not absent, so a tab is the size
+/// of a framed button and the bar's row keeps one height.
+fn tab_style(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing.x = 2.0;
+    let clear = egui::Stroke::new(1.0, egui::Color32::TRANSPARENT);
+    let w = &mut ui.visuals_mut().widgets;
+    w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+    w.inactive.bg_stroke = clear;
+    w.hovered.weak_bg_fill = theme::RAISED;
+    w.hovered.bg_stroke = clear;
+    w.active.weak_bg_fill = theme::RAISED_HOT;
+    w.active.bg_stroke = clear;
+    w.open.weak_bg_fill = theme::RAISED;
+    w.open.bg_stroke = clear;
+}
+
+/// One tab of the workspace control: its name, bright while it is the open
+/// workspace. [`underline`] draws the rest of the lit state.
+fn tab(lit: bool, name: impl Into<String>) -> egui::Button<'static> {
+    egui::Button::new(egui::RichText::new(name.into()).color(match lit {
+        true => theme::INK,
+        false => theme::INK_DIM,
+    }))
+}
+
+/// The accent line under the open workspace's tab.
+fn underline(ui: &egui::Ui, tab: &egui::Response, lit: bool) {
+    if lit && ui.is_rect_visible(tab.rect) {
+        let rect = tab.rect;
+        ui.painter().hline(
+            rect.left() + 5.0..=rect.right() - 5.0,
+            rect.bottom() - 1.0,
+            egui::Stroke::new(2.0, theme::ACCENT),
+        );
+    }
 }
 
 /// The workspace buttons and menus of [`workspaces`], after World.
@@ -420,10 +473,8 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
         let in_window = popped.iter().any(|popped| popped.workspace() == subject.tool);
         let lit = tool.workspace() == subject.tool || in_window;
         if subject.tool.parts().is_empty() {
-            let response = ui.add_enabled(
-                why.is_none(),
-                egui::Button::selectable(lit, subject.name),
-            );
+            let response = ui.add_enabled(why.is_none(), tab(lit, subject.name));
+            underline(ui, &response, lit);
             let response = match why {
                 Some(_) => response.on_disabled_hover_text(tooltip(&subject, why)),
                 None => response.on_hover_text(tooltip(&subject, None)),
@@ -453,7 +504,7 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
             }
         }
         ui.add_enabled_ui(why.is_none(), |ui| {
-            let button = egui::Button::selectable(lit, name);
+            let button = tab(lit, name);
             let (response, _) = egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
                 for &(_, part_tool) in subject.tool.parts() {
                     let Some(entry) = part(part_tool) else { continue };
@@ -470,6 +521,7 @@ fn draw_workspaces(ui: &mut egui::Ui, tool: &mut Tool, playing: bool, server: bo
                     }
                 }
             });
+            underline(ui, &response, lit);
             match why {
                 Some(_) => response.on_disabled_hover_text(tooltip(&subject, why)),
                 None => response.on_hover_text(tooltip(&subject, None)),
