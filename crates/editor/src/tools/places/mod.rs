@@ -9,6 +9,14 @@
 //!                drawn on the map, their nodes and points picked, dragged,
 //!                added and removed. Client tables whose rows are places, so
 //!                the tool keeps the viewport, as lights.rs does
+//! mounts.rs      the creatures a flight node's two mount columns name, read
+//!                from the world database, and the state of the picker one
+//!                is chosen in
+//! transports.rs  the Transports half of flightpaths.rs, the boats and
+//!                zeppelins: their templates and periods on the server, a
+//!                route as one leg per map, a leg drawn by clicking, going to
+//!                a leg on another map, the schedule the client computes, and
+//!                the period written to follow a route edit
 //! triggers.rs    AreaTrigger.dbc's spheres and boxes on the map, picked,
 //!                dragged, made and removed, and the server rows that say what
 //!                each does: a teleport, an inn, a quest objective
@@ -20,4 +28,6 @@
 pub(crate) mod flightpaths;
 pub(crate) mod graveyards;
 pub(crate) mod lights;
+pub(crate) mod mounts;
+pub(crate) mod transports;
 pub(crate) mod triggers;

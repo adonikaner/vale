@@ -100,8 +100,8 @@ pub(in crate::ui) const INDENT: f32 = 14.0;
 /// holds, indented `depth` levels. The arrow points down when `open`, for a
 /// tree whose folders open in place. Answers the row's response.
 ///
-/// The arrow is a painted triangle, not a glyph. egui's bundled fonts have no
-/// `▸`, and a missing glyph draws as a hollow box beside every folder.
+/// The arrow is a painted triangle, not a glyph, so its size is set in
+/// points and not by a text size.
 pub(in crate::ui) fn folder_row(
     ui: &mut egui::Ui,
     shown: &str,

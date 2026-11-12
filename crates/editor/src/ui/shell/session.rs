@@ -64,8 +64,8 @@ pub(crate) fn button(ui: &mut egui::Ui, collab: &Collab) -> egui::Response {
             (Some(theme::ACCENT), format!("Joined \u{b7} {host} \u{b7} {count}"))
         }
     };
-    // The dot is painted rather than typed: the editor's font has no round
-    // bullet glyph. Spaces before the label leave its room.
+    // The dot is painted and not typed: it is in the state's colour and the
+    // button's text is in one. Spaces before the label leave its room.
     let text = match dot {
         Some(_) => format!("    {label}"),
         None => label,

@@ -479,6 +479,46 @@ impl EditSession {
         self.rows.revision += 1;
     }
 
+    /// Write a row's claim as a consequence of the edit just made, on that
+    /// edit's undo entry. `true` when the claim is as asked afterwards.
+    ///
+    /// [`Self::set_server_row`] with the entry taken from
+    /// `vale_edit::undo::History::amend` and not from a gesture. For a row
+    /// whose value is derived from what the last edit changed: a transport's
+    /// period follows its route, so undoing a moved point has to take the
+    /// period back with it, and a period on an entry of its own would be what
+    /// the first undo lands on.
+    ///
+    /// `false` when there is no entry to fold into: the stack is empty, or
+    /// the last thing that happened was an undo. Nothing is written then,
+    /// since a write would be a new entry and would clear the redo branch.
+    pub(crate) fn amend_server_row(
+        &mut self,
+        table: &str,
+        key: &vale_mangos::row::Key,
+        row: Option<&vale_mangos::row::RowEdit>,
+    ) -> bool {
+        let before = self.rows.edits.row_line(table, key);
+        let after = row.map(vale_mangos::row::RowEdit::to_line);
+        if before == after {
+            return true;
+        }
+        if !self.history.amend() {
+            return false;
+        }
+        self.history.record_server(vale_edit::undo::ServerEntry::row(
+            table,
+            key.text(),
+            before,
+            after.clone(),
+        ));
+        self.history.end();
+        self.rows.edits.set_row_line(table, key, after.as_deref());
+        self.rows.edits_unsaved = true;
+        self.rows.revision += 1;
+        true
+    }
+
     /// Set what this project says a creature's waypoint path is, or stop
     /// saying anything about it.
     ///

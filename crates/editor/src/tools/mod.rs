@@ -1692,9 +1692,10 @@ impl Plugin for ToolPlugin {
             spawns::spawn::SpawnKeysPlugin,
             (placements::group::GroupPlugin, placements::swap::SwapPlugin, crate::import::worldmap::WorldMapPlugin),
             measure::MeasureToolPlugin,
-            places::flightpaths::FlightpathToolPlugin,
-            // The two place tools as one entry, which keeps the tuple within
-            // what `add_plugins` accepts.
+            // The flight path tool and its transports as one entry, and the two
+            // place tools as another, which keeps the tuple within what
+            // `add_plugins` accepts.
+            (places::flightpaths::FlightpathToolPlugin, places::transports::TransportPlugin, places::mounts::MountPlugin),
             (places::triggers::TriggerToolPlugin, places::graveyards::GraveyardToolPlugin),
             ground::chunks::ChunkToolPlugin,
             guides::GuidesPlugin,

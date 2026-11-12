@@ -495,8 +495,8 @@ fn list(ui: &mut egui::Ui, work: &mut Work<'_>) {
                         ui.add_space(16.0);
                     }
                     false => {
-                        // Plus and minus: the editor's font has no
-                        // triangle glyphs.
+                        // Plus and minus, which the text face has. A
+                        // triangle is in the fallback face only.
                         let sign = match expanded.contains(&line.entry) {
                             true => "-",
                             false => "+",

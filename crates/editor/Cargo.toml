@@ -51,6 +51,12 @@ serde.workspace = true
 blake3 = "1"
 bevy.workspace = true
 bevy_egui.workspace = true
+# DejaVu Sans, as the typeface behind egui's own for the characters those
+# lack: arrows, geometric shapes, check marks, box drawing and U+FFFD. The
+# crate holds the font files and has no dependencies; only the one face
+# `src/ui/widgets/theme.rs` names is linked. The fonts are under the Bitstream
+# Vera licence, which allows embedding and redistribution.
+dejavu = "2.37"
 # A tile's height map and blend map, written and read as PNG files. See
 # `src/import/images.rs`. The version the CLI already uses for its own pictures.
 png = "0.18"

@@ -56,13 +56,21 @@ pub(crate) fn window(
     }
     let mut close = false;
     let mut chosen: Option<u32> = None;
-    let showing: u32 = session
-        .rows.edits
-        .get(open.target.table, &open.target.key, open.target.column)
-        .map(str::to_string)
-        .or_else(|| open.target.in_database.clone())
-        .and_then(|value| value.trim().parse().ok())
-        .unwrap_or(0);
+    // A kept choice waits for its opener, which closes the picker.
+    if open.chosen.is_some() {
+        *pick = Some(open);
+        return;
+    }
+    let showing: u32 = match open.kept {
+        Some(showing) => showing,
+        None => session
+            .rows.edits
+            .get(open.target.table, &open.target.key, open.target.column)
+            .map(str::to_string)
+            .or_else(|| open.target.in_database.clone())
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0),
+    };
     let response = egui::Modal::new(egui::Id::new("display-pick")).show(ctx, |ui| {
         ui.set_width(WIDTH);
         let what = match open.table {
@@ -144,9 +152,17 @@ pub(crate) fn window(
             );
         });
     });
-    if let Some(id) = chosen {
-        open.target.write(session, id.to_string(), now);
-        close = true;
+    match (chosen, open.kept) {
+        (Some(id), Some(_)) => {
+            open.chosen = Some(id);
+            *pick = Some(open);
+            return;
+        }
+        (Some(id), None) => {
+            open.target.write(session, id.to_string(), now);
+            close = true;
+        }
+        (None, _) => {}
     }
     if response.should_close() {
         close = true;

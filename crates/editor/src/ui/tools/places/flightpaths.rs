@@ -1,9 +1,14 @@
 //! The flight path tool's controls, in two places.
 //!
+//! The tool has two halves, chosen by the first group of the toolbar: Flights,
+//! which this file draws, and Transports, the boats and zeppelins, whose
+//! toolbar and inspector are `super::transports`. Only the chosen half is
+//! drawn in the world.
+//!
 //! ```text
-//! viewport toolbar   what a click in the world does: Select, New Node,
-//!                    Connect or Add Points; Show Transports and Show
-//!                    Unselected, which decide which paths are drawn; the
+//! viewport toolbar   Flights or Transports; then what a click in the world
+//!                    does: Select, New Node, Connect or Add Points; Show
+//!                    Unselected, which decides which paths are drawn; the
 //!                    Keys button; under them the armed mode's settings, and
 //!                    under those a line naming the next click
 //! inspector          the map's summary and flight map, then the properties
@@ -47,6 +52,14 @@ use vale_edit::dbc::taxi;
 pub(crate) struct Subject<'a> {
     pub(crate) session: &'a mut EditSession,
     pub(crate) flights: &'a mut Flightpaths,
+    /// The boats and zeppelins, for the Transports half. See
+    /// [`crate::tools::places::transports`].
+    pub(crate) transports: &'a mut crate::tools::places::transports::Transports,
+    /// The creatures the nodes' mount columns name, and the mount picker.
+    /// See [`crate::tools::places::mounts`].
+    pub(crate) mounts: &'a mut crate::tools::places::mounts::Mounts,
+    /// The pictures of the mounts and of a transport's hull.
+    pub(crate) portraits: &'a mut crate::preview::portraits::Portraits,
     pub(crate) assets: &'a vale_client::assets::GameAssets,
     pub(crate) now: f64,
     /// The top bar's Server… popover, which holds Apply and Put back.
@@ -63,7 +76,7 @@ const TITLE: f32 = 17.0;
 const PROFILE_HEIGHT: f32 = 110.0;
 
 /// The height of one row of a table.
-const TABLE_ROW: f32 = 20.0;
+pub(super) const TABLE_ROW: f32 = 20.0;
 
 /// Which of the three selections the inspector shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +98,9 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
     let Subject {
         session,
         flights,
+        transports,
+        mounts,
+        portraits,
         assets,
         now,
         server_panel,
@@ -97,6 +113,10 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
         }
     }
 
+    if flights.transports {
+        super::transports::panel(ui, session, flights, transports, fly, server_panel, assets, portraits, now);
+        return;
+    }
     overview(ui, session, flights, assets);
     ui.add_space(8.0);
     let level = focus(ui, flights);
@@ -108,12 +128,13 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>) {
             match (level, flights.node, flights.path, flights.point) {
                 (Some(Level::Point), _, _, Some(id)) => point_card(ui, session, flights, fly, id, now),
                 (Some(Level::Path), _, Some(id), _) => path_card(ui, session, flights, fly, id, now),
-                (Some(Level::Node), Some(id), _, _) => node_card(ui, session, flights, fly, id, now),
+                (Some(Level::Node), Some(id), _, _) => node_card(ui, session, flights, mounts, portraits, assets, fly, id, now),
                 _ => nothing_selected(ui),
             }
             server_footer(ui, server_panel);
             ui.add_space(12.0);
         });
+    super::mounts::window(ui.ctx(), mounts, session, flights, assets, portraits, now);
 }
 
 /// The map's counts, the three tables' validation, and the flight map, in one
@@ -273,7 +294,7 @@ fn flight_map_line(
 }
 
 /// One small line in the warning colour.
-fn warn_line(ui: &mut egui::Ui, text: &str) -> egui::Response {
+pub(super) fn warn_line(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.label(egui::RichText::new(text).size(theme::SMALL).color(theme::WARN))
 }
 
@@ -334,19 +355,19 @@ fn short(name: &str, most: usize) -> String {
 }
 
 /// The selection's title: one line, cut with an ellipsis to the panel's width.
-fn title(ui: &mut egui::Ui, text: &str) {
+pub(super) fn title(ui: &mut egui::Ui, text: &str) {
     ui.add(egui::Label::new(egui::RichText::new(text).strong().size(TITLE).color(theme::INK)).truncate());
 }
 
 /// A property's value in another colour than [`theme::value`]'s.
-fn value_in(ui: &mut egui::Ui, text: impl Into<String>, colour: egui::Color32) -> egui::Response {
+pub(super) fn value_in(ui: &mut egui::Ui, text: impl Into<String>, colour: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text.into()).color(colour)).truncate())
 }
 
 /// A property's value with `controls` at the right end of its row. The
 /// controls are laid out first, so the value is cut with an ellipsis to the
 /// room they leave and the row is never wider than the panel.
-fn value_then<R>(
+pub(super) fn value_then<R>(
     ui: &mut egui::Ui,
     text: impl Into<String>,
     colour: egui::Color32,
@@ -370,7 +391,7 @@ fn under(ui: &mut egui::Ui, text: impl Into<String>) {
 
 /// The number a text starts with, for a field whose text continues after its
 /// number. `None` when it starts with none.
-fn leading_number(text: &str) -> Option<f64> {
+pub(super) fn leading_number(text: &str) -> Option<f64> {
     let text = text.trim_start();
     let end = text
         .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
@@ -379,7 +400,7 @@ fn leading_number(text: &str) -> Option<f64> {
 }
 
 /// A button in the danger colour, as wide as the room it is given.
-fn remove_button(ui: &egui::Ui, text: &str) -> egui::Button<'static> {
+pub(super) fn remove_button(ui: &egui::Ui, text: &str) -> egui::Button<'static> {
     theme::full_button_text(ui, egui::RichText::new(text.to_string()).color(theme::BAD))
 }
 
@@ -426,7 +447,7 @@ fn dot(ui: &mut egui::Ui, colour: egui::Color32, radius: f32) {
 
 /// The height of `at` over the ground under it, as a property row. Nothing
 /// when the ground there is not loaded.
-fn above_ground(ui: &mut egui::Ui, session: &EditSession, at: [f32; 3]) {
+pub(super) fn above_ground(ui: &mut egui::Ui, session: &EditSession, at: [f32; 3]) {
     let Some(ground) = crate::tools::placements::doodads::ground_height(session, at[0], at[1]) else {
         return;
     };
@@ -456,13 +477,13 @@ pub(crate) fn money(copper: u32) -> String {
 
 /// A table's column widths across `width`: the fixed ones as given, and the
 /// one given as 0 taking what is left.
-fn column_widths(width: f32, widths: &[f32]) -> Vec<f32> {
+pub(super) fn column_widths(width: f32, widths: &[f32]) -> Vec<f32> {
     let rest = (width - widths.iter().sum::<f32>()).max(0.0);
     widths.iter().map(|&w| if w == 0.0 { rest } else { w }).collect()
 }
 
 /// The rectangles of a row's cells, left to right.
-fn cells(row: egui::Rect, widths: &[f32]) -> Vec<egui::Rect> {
+pub(super) fn cells(row: egui::Rect, widths: &[f32]) -> Vec<egui::Rect> {
     let mut x = row.left();
     widths
         .iter()
@@ -475,7 +496,7 @@ fn cells(row: egui::Rect, widths: &[f32]) -> Vec<egui::Rect> {
 }
 
 /// Text in a cell, cut with an ellipsis to the cell's width.
-fn cell_text(painter: &egui::Painter, cell: egui::Rect, text: &str, colour: egui::Color32, right: bool) {
+pub(super) fn cell_text(painter: &egui::Painter, cell: egui::Rect, text: &str, colour: egui::Color32, right: bool) {
     let mut job = egui::text::LayoutJob::single_section(
         text.to_owned(),
         egui::TextFormat::simple(egui::FontId::proportional(theme::SMALL + 0.5), colour),
@@ -490,7 +511,7 @@ fn cell_text(painter: &egui::Painter, cell: egui::Rect, text: &str, colour: egui
 }
 
 /// A table's header row: the column names, small and faint, over a rule.
-fn table_header(ui: &mut egui::Ui, names: &[(&str, bool)], widths: &[f32]) {
+pub(super) fn table_header(ui: &mut egui::Ui, names: &[(&str, bool)], widths: &[f32]) {
     let (row, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), TABLE_ROW - 2.0), egui::Sense::hover());
     let painter = ui.painter();
     for (cell, (name, right)) in cells(row, &column_widths(row.width(), widths)).into_iter().zip(names) {
@@ -501,7 +522,7 @@ fn table_header(ui: &mut egui::Ui, names: &[(&str, bool)], widths: &[f32]) {
 
 /// The fill of a table row or cell: the chosen one in the accent, a hovered
 /// one raised.
-fn row_fill(painter: &egui::Painter, rect: egui::Rect, chosen: bool, hovered: bool) {
+pub(super) fn row_fill(painter: &egui::Painter, rect: egui::Rect, chosen: bool, hovered: bool) {
     let fill = match (chosen, hovered) {
         (true, _) => theme::ACCENT_SUNK,
         (false, true) => theme::RAISED,
@@ -510,10 +531,14 @@ fn row_fill(painter: &egui::Painter, rect: egui::Rect, chosen: bool, hovered: bo
     painter.rect_filled(rect, 2.0, fill);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn node_card(
     ui: &mut egui::Ui,
     session: &mut EditSession,
     flights: &mut Flightpaths,
+    mounts: &mut crate::tools::places::mounts::Mounts,
+    portraits: &mut crate::preview::portraits::Portraits,
+    assets: &vale_client::assets::GameAssets,
     fly: &mut bevy::prelude::Messages<crate::camera::FlyTo>,
     id: u32,
     now: f64,
@@ -568,53 +593,13 @@ fn node_card(
     theme::heading_about(
         ui,
         "Mounts",
-        "Creature entries. 0 makes the node unavailable to that faction. Standard mounts: 2224 (Horde), 541 (Alliance).",
+        "The creature a character of each faction is flown on from this node. None makes the node \
+         unavailable to that faction. The standard mounts are the wind rider (Horde) and the gryphon (Alliance).",
     );
-    let mut mounts = node.mounts;
-    let mut remounted = false;
-    for (n, (label, tip)) in [
-        (
-            "Horde Mount",
-            "MountCreatureId 1, a creature_template entry. vmangos offers the node to the Horde \
-             only when this is not 0, and flies this creature. 2224 is the wind rider.",
-        ),
-        (
-            "Alliance Mount",
-            "MountCreatureId 2. vmangos offers the node to the Alliance only when this is not 0. \
-             541 is the gryphon.",
-        ),
-    ]
-    .iter()
-    .enumerate()
-    {
-        // The field writes None after a 0, which is what 0 means here. The
-        // parser reads the number and ignores the rest.
-        property(ui, label, tip, |ui| {
-            remounted |= field(
-                ui,
-                egui::DragValue::new(&mut mounts[n])
-                    .speed(1.0)
-                    .custom_formatter(|entry, _| match entry == 0.0 {
-                        true => "0  None".to_string(),
-                        false => format!("{entry:.0}"),
-                    })
-                    .custom_parser(leading_number),
-            )
-            .on_hover_text(*tip)
-            .changed();
-        });
-    }
-    if remounted {
-        tables::fields::set_fields(
-            session,
-            taxi::NODES,
-            node.record,
-            &[(nf::MOUNT, mounts[0]), (nf::MOUNT + 1, mounts[1])],
-            "Change flight node mounts",
-            &format!("TaxiNodes {id} mounts"),
-            now,
-        );
-        flights.stale();
+    // Each column is drawn as its creature and chosen in the mount picker,
+    // which `draw` shows; see `super::mounts`.
+    for side in 0..2 {
+        super::mounts::row(ui, mounts, portraits, assets, &node, side);
     }
 
     // The commands, as equal buttons two to a row.
@@ -1328,14 +1313,16 @@ fn point_card(
 
 /// The Server section: the button that opens the Server panel, with how the
 /// edits reach the server on the heading's info mark.
-fn server_footer(ui: &mut egui::Ui, server_panel: &mut crate::ui::shell::popover::Popover) {
+pub(super) fn server_footer(ui: &mut egui::Ui, server_panel: &mut crate::ui::shell::popover::Popover) {
     theme::heading_about(
         ui,
         "Server",
         "Server restart required after Apply.\n\nA node is a row of taxi_nodes. Paths and their \
          points are TaxiPath.dbc and TaxiPathNode.dbc, which the server reads from \
          DataDir\\5875\\dbc. Apply on the Server panel writes both, and so does a save with Apply \
-         on save on. vmangos reads all three at startup only: restart the server after applying.",
+         on save on. vmangos reads all three at startup only: restart the server after applying.\n\n\
+         A transport's template and its period are rows of gameobject_template and transports, \
+         which the Objects block of the Server panel applies. They are read at startup too.",
     );
     if ui
         .button("Server\u{2026}")
@@ -1374,10 +1361,13 @@ impl Mode {
 /// chosen:
 ///
 /// ```text
-/// [Select | New Node | Connect | Add Points]  Show Transports  Show Unselected  Keys
+/// [Flights | Transports]  [Select | New Node | Connect | Add Points]  Show Unselected  Keys
 /// Clearance  Draw by Hand  Return Path
 /// Click the end node for the path from Stormwind.
 /// ```
+///
+/// With Transports chosen, everything after the first group is
+/// `super::transports::toolbar`.
 ///
 /// The second and third lines are drawn only while a mode other than Select
 /// is armed: the second holds that mode's settings, and New Node has none;
@@ -1391,10 +1381,14 @@ pub(crate) fn strip(
     viewport: egui::Rect,
     corner: Option<egui::Rect>,
     flights: &mut Flightpaths,
+    transports: &mut crate::tools::places::transports::Transports,
 ) -> Option<egui::Rect> {
-    theme::toolbar(ctx, "flightpaths-strip", viewport, corner, |ui| {
-        modes(ui, flights);
-        armed_settings(ui, flights);
+    theme::toolbar(ctx, "flightpaths-strip", viewport, corner, |ui| match flights.transports {
+        true => super::transports::toolbar(ui, flights, transports),
+        false => {
+            modes(ui, flights);
+            armed_settings(ui, flights);
+        }
     })
 }
 
@@ -1404,6 +1398,17 @@ fn modes(ui: &mut egui::Ui, flights: &mut Flightpaths) {
     let mode = Mode::of(flights.armed);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
+        // Which half of the tool is shown. `super::transports::toolbar`
+        // draws the same group with Transports chosen.
+        bar_group(ui, |ui| {
+            let _ = bar_segment(ui, true, "Flights").on_hover_text("The flight nodes and the flight paths between them.");
+            if bar_segment(ui, false, "Transports")
+                .on_hover_text("Show the boats and zeppelins and the routes they sail, in place of the flights.")
+                .clicked()
+            {
+                flights.set_mode(true);
+            }
+        });
         bar_group(ui, |ui| {
             if bar_segment(ui, mode == Mode::Select, "Select")
                 .on_hover_text("Click a node, a path or a point to select it. Drag to move; Ctrl + drag moves vertically.")
@@ -1454,15 +1459,6 @@ fn modes(ui: &mut egui::Ui, flights: &mut Flightpaths) {
                 flights.armed = Armed::AddPoints;
             }
         });
-        if bar_switch(ui, flights.transports, "Show Transports")
-            .on_hover_text(
-                "Also draw the boat and zeppelin paths. They are paths whose end nodes have no \
-                 mount for either faction, and they share TaxiPath.dbc with the flights.",
-            )
-            .clicked()
-        {
-            flights.transports = !flights.transports;
-        }
         if bar_switch(ui, flights.unselected, "Show Unselected")
             .on_hover_text(
                 "Draw every path. Off, only the selected path and the selected node's paths \
@@ -1568,7 +1564,7 @@ fn armed_settings(ui: &mut egui::Ui, flights: &mut Flightpaths) {
 }
 
 /// One row of an armed mode's settings, spaced from the modes above it.
-fn settings_row(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn settings_row(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -1617,6 +1613,9 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         Subject {
             session,
             flights: &mut editing.flightpaths,
+            transports: &mut editing.transports,
+            mounts: &mut editing.mounts,
+            portraits: &mut editing.portraits,
             assets,
             now,
             server_panel,

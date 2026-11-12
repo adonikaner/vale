@@ -86,10 +86,24 @@ pub(crate) struct DisplayPick {
     /// What a creature display id resolves to, memoised: the grid asks for a
     /// row's picture on every frame it is drawn.
     worn: HashMap<u32, Option<Worn>>,
+    /// For a picker opened with [`Self::open_kept`]: the id the opener holds
+    /// now. A choice is then left in [`Self::chosen`] and written nowhere.
+    pub(crate) kept: Option<u32>,
+    /// The id chosen in a picker opened with [`Self::open_kept`], until the
+    /// opener takes it with [`take_kept`].
+    pub(crate) chosen: Option<u32>,
 }
 
 /// How many cells a page holds.
 pub(crate) const PAGE: usize = 40;
+
+/// The id chosen in a picker opened with [`DisplayPick::open_kept`], once,
+/// closing the picker.
+pub(crate) fn take_kept(pick: &mut Option<DisplayPick>) -> Option<u32> {
+    let chosen = pick.as_ref()?.chosen?;
+    *pick = None;
+    Some(chosen)
+}
 
 impl DisplayPick {
     /// Open the picker on a column, previewing the id the column holds.
@@ -107,7 +121,25 @@ impl DisplayPick {
             built: None,
             worn: HashMap::new(),
             home: None,
+            kept: None,
+            chosen: None,
         }
+    }
+
+    /// Open the picker on a value that is not a row's column yet: a field of
+    /// a form for something not made. `column` is what the dialog calls the
+    /// value. The choice is left in [`Self::chosen`] for the opener; see
+    /// [`take_kept`].
+    pub(crate) fn open_kept(table: Table, column: &'static str, showing: u32) -> DisplayPick {
+        let target = ColumnTarget {
+            table: "",
+            key: vale_mangos::row::Key(Vec::new()),
+            column,
+            in_database: None,
+            label: "",
+            subject: String::new(),
+        };
+        DisplayPick { kept: Some(showing), ..DisplayPick::open(table, target, showing) }
     }
 
     /// Every row the table resolves to a model.
@@ -295,5 +327,18 @@ mod tests {
         assert_eq!(filter(facts, "cat"), Vec::<u32>::new());
         assert_eq!(pick.path_of(200), Some("Creature\\Boar\\Boar.m2"));
         assert_eq!(pick.path_of(300), None);
+    }
+
+    /// A picker opened on a kept value leaves its choice for the opener,
+    /// who takes it once.
+    #[test]
+    fn a_kept_choice_is_taken_once() {
+        let mut pick = Some(DisplayPick::open_kept(Table::Object, "displayId", 3015));
+        assert_eq!(pick.as_ref().and_then(|pick| pick.kept), Some(3015));
+        assert_eq!(take_kept(&mut pick), None);
+        assert!(pick.is_some());
+        pick.as_mut().unwrap().chosen = Some(3031);
+        assert_eq!(take_kept(&mut pick), Some(3031));
+        assert!(pick.is_none());
     }
 }

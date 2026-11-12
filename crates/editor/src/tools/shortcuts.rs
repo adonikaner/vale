@@ -1,5 +1,6 @@
-//! The editor's global keys: undo, redo, save, the playtest, and the shell
-//! over one. The shell's plugin, `crate::ui::PanelPlugin`, registers them.
+//! The editor's global keys: undo, redo, save, the playtest, the shell over
+//! one, and `F`, which moves the camera to the selection. The shell's plugin,
+//! `crate::ui::PanelPlugin`, registers them.
 
 use crate::session::EditSession;
 use bevy::prelude::*;
@@ -144,6 +145,108 @@ pub(crate) fn shortcuts(
     }
 }
 
+/// The camera request that shows a selection: one place is looked at from the
+/// camera's current distance, and several are framed from a distance that
+/// fits the box they span. `None` for no places.
+pub(crate) fn framing(places: &[Vec3]) -> Option<crate::camera::FlyTo> {
+    let first = *places.first()?;
+    if places.len() == 1 {
+        return Some(crate::camera::FlyTo::at(first));
+    }
+    let (low, high) = places.iter().fold((first, first), |(low, high), at| (low.min(*at), high.max(*at)));
+    Some(crate::camera::FlyTo {
+        at: (low + high) * 0.5,
+        distance: Some(((high - low).length() * 1.2).clamp(GROUP_NEAREST, GROUP_FARTHEST)),
+    })
+}
+
+/// The nearest and the farthest the camera stands to frame a group, in yards.
+/// The farthest is about what the editor streams.
+const GROUP_NEAREST: f32 = 20.0;
+const GROUP_FARTHEST: f32 = 1500.0;
+
+/// `F`: move the camera to the chosen tool's selection, as the Fly To button
+/// of that tool's panel does.
+///
+/// ```text
+/// doodads, WMOs               the selected placement, or the group framed
+/// creatures, game objects     the selected spawn, or the group framed
+/// lights, area triggers,      the selected row's place
+/// graveyards
+/// flight paths                the selected point, else the selected path
+///                             framed, else the selected node
+/// ```
+///
+/// Nothing happens for a tool with no such selection, while a text field or
+/// the game has the keyboard, with `Ctrl` or `Alt` held, or during a
+/// playtest, where `F` is the game's.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fly_to_selection(
+    keys: Res<ButtonInput<KeyCode>>,
+    wants: Res<bevy_egui::input::EguiWantsInput>,
+    typing: Res<vale_client::lua::api::keyboard::KeyboardFocus>,
+    state: Res<crate::playtest::Playtest>,
+    tool: Res<Tool>,
+    session: Option<Res<EditSession>>,
+    doodads: Res<placements::doodads::Selection>,
+    wmos: Res<placements::wmos::Selection>,
+    creatures: Res<super::spawns::creatures::Creatures>,
+    objects: Res<super::spawns::gameobjects::GameObjects>,
+    lights: Res<super::places::lights::Lights>,
+    flights: Res<super::places::flightpaths::Flightpaths>,
+    triggers: Res<super::places::triggers::Triggers>,
+    graveyards: Res<super::places::graveyards::Graveyards>,
+    mut fly: MessageWriter<crate::camera::FlyTo>,
+) {
+    use crate::tools::points::MapPoint;
+    let held = |key: KeyCode| keys.pressed(key);
+    let modified = held(KeyCode::ControlLeft) || held(KeyCode::ControlRight) || held(KeyCode::AltLeft) || held(KeyCode::AltRight);
+    if !keys.just_pressed(KeyCode::KeyF) || modified || !state.editing() || wants.wants_keyboard_input() || typing.active {
+        return;
+    }
+    let world = |position: [f32; 3]| Vec3::from(vale_assets::world::adt::placement_to_world(position));
+    let flight = match *tool {
+        Tool::Doodads => {
+            let places: Vec<Vec3> = doodads.at.iter().chain(&doodads.also).map(|at| world(at.record.position)).collect();
+            framing(&places)
+        }
+        Tool::Wmos => {
+            let places: Vec<Vec3> = wmos.at.iter().chain(&wmos.also).map(|at| world(at.record.position)).collect();
+            framing(&places)
+        }
+        Tool::Creatures | Tool::GameObjects => {
+            let edits = session.as_ref().map(|session| &session.rows.edits);
+            let places: Vec<Vec3> = super::spawns::spawn::chosen(*tool, &creatures, &objects, edits)
+                .into_iter()
+                .chain(super::spawns::spawn::members(*tool, &creatures, &objects, edits))
+                .map(|standing| standing.at)
+                .collect();
+            framing(&places)
+        }
+        Tool::Lights => lights.chosen().map(super::places::lights::Lights::fly_to),
+        Tool::Flightpaths => match (flights.point.and_then(|id| flights.point(id)), flights.path, flights.node) {
+            (Some((_, point)), _, _) => Some(crate::camera::FlyTo::at(point.at.into())),
+            (None, Some(path), _) => flights.path_flight(path),
+            (None, None, Some(node)) => flights.node(node).map(|node| crate::camera::FlyTo::at(node.at.into())),
+            _ => None,
+        },
+        Tool::Triggers => triggers
+            .points
+            .selected
+            .and_then(|id| triggers.points.get(id))
+            .map(|trigger| crate::camera::FlyTo::at(trigger.position())),
+        Tool::Graveyards => graveyards
+            .points
+            .selected
+            .and_then(|id| graveyards.points.get(id))
+            .map(|place| crate::camera::FlyTo::at(place.position())),
+        _ => None,
+    };
+    if let Some(flight) = flight {
+        fly.write(flight);
+    }
+}
+
 /// The editor's keys taken this frame, by [`take`], for [`shortcuts`].
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub(crate) struct Taken {
@@ -193,4 +296,25 @@ pub(crate) fn take(
 /// The armed path, for the status line.
 fn placing_path(placing: &placements::place::Placing) -> String {
     placing.path.clone().unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One place is looked at from where the camera stands; several are
+    /// framed from a distance that fits them, within the two limits.
+    #[test]
+    fn a_selection_is_looked_at_or_framed() {
+        assert_eq!(framing(&[]), None);
+        let one = Vec3::new(10.0, 20.0, 30.0);
+        assert_eq!(framing(&[one]), Some(crate::camera::FlyTo::at(one)));
+        let group = framing(&[Vec3::ZERO, Vec3::new(100.0, 0.0, 0.0)]).expect("a request");
+        assert_eq!(group.at, Vec3::new(50.0, 0.0, 0.0));
+        assert!(group.distance.is_some_and(|distance| (distance - 120.0).abs() < 1e-3), "{:?}", group.distance);
+        let close = framing(&[Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)]).expect("a request");
+        assert_eq!(close.distance, Some(GROUP_NEAREST));
+        let far = framing(&[Vec3::ZERO, Vec3::new(9000.0, 0.0, 0.0)]).expect("a request");
+        assert_eq!(far.distance, Some(GROUP_FARTHEST));
+    }
 }

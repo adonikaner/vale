@@ -95,9 +95,12 @@ pub(crate) struct Route {
     /// is kept while the path, its points and its ends are unchanged, and the
     /// route's kept line set is built again when it changes.
     pub(crate) revision: u64,
-    /// Whether either end is a node with no mount on either side. Those are
-    /// the ends of the boat and zeppelin routes, which share `TaxiPath.dbc`
-    /// with the flights; `vale taxi` separates them by the same rule.
+    /// Whether the path is a boat's or a zeppelin's route and not a flight:
+    /// either end is a node with no mount on either side, which is the rule
+    /// `vale taxi` separates the two by in the shared `TaxiPath.dbc`, or a
+    /// transport's template names the path ([`Flightpaths::sailed`]). Its
+    /// [`Self::flown`] line is then the ship's; see
+    /// [`super::transports::sailed`].
     pub(crate) transport: bool,
 }
 
@@ -176,8 +179,13 @@ pub(crate) struct Flightpaths {
     /// What `vale_edit::dbc::taxi::check` finds wrong with the three
     /// tables. Empty for the shipped ones.
     pub(crate) findings: Vec<Finding>,
-    /// The session's table revision and the map the lists were built for.
-    built: Option<(u64, u32)>,
+    /// The session's table revision, the map and
+    /// [`super::transports::Transports::sailed_revision`] the lists were
+    /// built for.
+    built: Option<(u64, u32, u64)>,
+    /// The paths a transport's template names, in order. See
+    /// [`Route::transport`].
+    pub(crate) sailed: Vec<u32>,
     /// The last [`Route::revision`] given.
     revisions: u64,
     pub(crate) map: u32,
@@ -201,7 +209,9 @@ pub(crate) struct Flightpaths {
     pub(crate) carry_ends: bool,
     /// Yards above the ground a new point is put at.
     pub(crate) clearance: f32,
-    /// Draw the boat and zeppelin routes as well as the flights.
+    /// Which of the tool's two halves is shown: the boat and zeppelin routes
+    /// when on, the flights and their nodes when off. Only the shown half is
+    /// drawn and picked. See [`Self::set_mode`] and `super::transports`.
     pub(crate) transports: bool,
     /// Draw the paths that are not part of the selection: neither the
     /// selected path nor a path of the selected node. Off, the other paths are
@@ -224,6 +234,7 @@ impl Default for Flightpaths {
             routes: Vec::new(),
             findings: Vec::new(),
             built: None,
+            sailed: Vec::new(),
             revisions: 0,
             map: 0,
             node: None,
@@ -386,6 +397,25 @@ const CURVE_PIECES: usize = 24;
 /// columns. Node 79, Marshal's Refuge, carries the same pair.
 pub(crate) const NEW_NODE_MOUNTS: [u32; 2] = [2224, 541];
 
+/// The mounts of a transport dock: none for either faction.
+pub(crate) const DOCK_MOUNTS: [u32; 2] = [0, 0];
+
+impl Flightpaths {
+    /// Show the transports or the flights, and drop what was selected and
+    /// armed in the other half.
+    pub(crate) fn set_mode(&mut self, transports: bool) {
+        if self.transports == transports {
+            return;
+        }
+        self.transports = transports;
+        self.disarm();
+        self.node = None;
+        self.path = None;
+        self.point = None;
+        self.drag = None;
+    }
+}
+
 pub(crate) struct FlightpathToolPlugin;
 
 impl Plugin for FlightpathToolPlugin {
@@ -410,6 +440,7 @@ fn active(tool: &Tool, state: &crate::playtest::Playtest) -> bool {
 /// `TaxiNodes` and the other two are its chain.
 fn collect(
     mut flights: ResMut<Flightpaths>,
+    transports: Res<super::transports::Transports>,
     session: Option<Res<EditSession>>,
     focus: Res<WorldFocus>,
     tool: Res<Tool>,
@@ -419,10 +450,14 @@ fn collect(
         return;
     }
     let Some(session) = session else { return };
-    let key = (session.table_revision, focus.map_id);
+    let key = (session.table_revision, focus.map_id, transports.sailed_revision);
     if flights.built == Some(key) {
         return;
     }
+    let mut sailed: Vec<u32> = transports.ships.iter().map(|ship| ship.template.path).collect();
+    sailed.sort_unstable();
+    sailed.dedup();
+    flights.sailed = sailed;
     let (Some(nodes), Some(paths), Some(points)) = (
         session.table(taxi::NODES),
         session.table(taxi::PATHS),
@@ -456,6 +491,7 @@ fn rebuild(
         false => HashMap::new(),
     };
     let mut revision = flights.revisions;
+    let sailed = std::mem::take(&mut flights.sailed);
     flights.routes = taxi::paths(paths)
         .into_iter()
         .filter_map(|path| {
@@ -467,14 +503,18 @@ fn rebuild(
             if !here {
                 return None;
             }
-            let transport = [path.from, path.to]
-                .iter()
-                .any(|end| mounts.get(end).is_some_and(|m| *m == [0, 0]));
+            let transport = sailed.binary_search(&path.id).is_ok()
+                || [path.from, path.to]
+                    .iter()
+                    .any(|end| mounts.get(end).is_some_and(|m| *m == DOCK_MOUNTS));
             let same = |route: &Route| route.path == path && route.points == points && route.transport == transport;
             if let Some(route) = old.remove(&path.id).filter(same) {
                 return Some(route);
             }
-            let flown = flown(&points);
+            let flown = match transport {
+                true => super::transports::sailed(&points),
+                false => flown(&points),
+            };
             revision += 1;
             Some(Route {
                 length: taxi::length(&points),
@@ -488,6 +528,7 @@ fn rebuild(
         })
         .collect();
     flights.revisions = revision;
+    flights.sailed = sailed;
     flights.findings = taxi::check(nodes, paths, points);
     flights.map = map;
     // A selection whose row went away with an undo or a removal is dropped
@@ -607,17 +648,20 @@ fn leg_shown(flights: &Flightpaths, route: &Route, a: Vec3, b: Vec3, eye: Vec3) 
     chosen || ((a + b) * 0.5 - eye).length() <= ROUTE_RANGE
 }
 
-/// Whether a route is drawn and picked at all. The selected path always is.
-/// A path of the selected node is unless it is a transport route with
-/// transports hidden. Any other path needs [`Flightpaths::unselected`] on,
-/// and, for a transport route, [`Flightpaths::transports`] too.
+/// Whether a route is drawn and picked at all: a transport route in the
+/// transports half and a flight in the flights half
+/// ([`Flightpaths::transports`]). Within the half, the selected path and the
+/// paths of the selected node always are, and any other path needs
+/// [`Flightpaths::unselected`] on.
 fn route_shown(flights: &Flightpaths, route: &Route) -> bool {
+    if route.transport != flights.transports {
+        return false;
+    }
     let selected = flights.path == Some(route.path.id);
     let of_node = flights
         .node
         .is_some_and(|node| route.path.from == node || route.path.to == node);
-    let kind = flights.transports || !route.transport || selected;
-    kind && (selected || of_node || flights.unselected)
+    selected || of_node || flights.unselected
 }
 
 /// Which handle the pointer is over: the selected path's points first, then
@@ -625,6 +669,7 @@ fn route_shown(flights: &Flightpaths, route: &Route) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn aim(
     mut flights: ResMut<Flightpaths>,
+    transports: Res<super::transports::Transports>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     viewport: Res<crate::ui::Viewport>,
@@ -632,7 +677,9 @@ fn aim(
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
 ) {
-    if !active(&tool, &state) {
+    // While a transport leg is being drawn every click places a point, so
+    // nothing is under the pointer.
+    if !active(&tool, &state) || transports.drawing.is_some() {
         flights.hovered = None;
         return;
     }
@@ -666,9 +713,12 @@ fn aim(
         flights.hovered = Some(handle);
         return;
     }
+    // A transport does not go to its nodes, so the transports half neither
+    // draws nor picks them.
     let nodes: Vec<(f32, Handle)> = flights
         .nodes
         .iter()
+        .filter(|_| !flights.transports)
         .filter(|node| {
             flights.node == Some(node.id) || (Vec3::from(node.at) - eye).length() <= MARKER_RANGE
         })
@@ -704,6 +754,7 @@ fn aim(
 #[allow(clippy::too_many_arguments)]
 fn press(
     mut flights: ResMut<Flightpaths>,
+    transports: Res<super::transports::Transports>,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     tool: Res<Tool>,
@@ -714,7 +765,7 @@ fn press(
     cursor: Res<crate::pick::Cursor>,
     mut session: Option<ResMut<EditSession>>,
 ) {
-    if !active(&tool, &state) || !buttons.just_pressed(MouseButton::Left) {
+    if !active(&tool, &state) || !buttons.just_pressed(MouseButton::Left) || transports.drawing.is_some() {
         return;
     }
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
@@ -984,6 +1035,7 @@ pub(crate) fn move_point(session: &mut EditSession, flights: &Flightpaths, id: u
         &format!("TaxiPathNode {id} position"),
         now,
     );
+    super::transports::carry_handles(session, flights, id, to, now);
 }
 
 /// Put an operation's edits on the undo stack as one entry and mark the
@@ -1215,13 +1267,15 @@ pub(crate) fn remove_selected_point(session: &mut EditSession, flights: &mut Fli
 /// Escape and Delete.
 fn keys(
     mut flights: ResMut<Flightpaths>,
+    transports: Res<super::transports::Transports>,
     keys: Res<ButtonInput<KeyCode>>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     mut session: Option<ResMut<EditSession>>,
 ) {
-    if !active(&tool, &state) || wants.wants_keyboard_input() {
+    // A transport leg being drawn has the keys; see `super::transports::keys`.
+    if !active(&tool, &state) || wants.wants_keyboard_input() || transports.drawing.is_some() {
         return;
     }
     if let Some(draft) = flights.draft.as_mut() {
@@ -1336,14 +1390,30 @@ fn draw(
         if !selected {
             continue;
         }
-        for point in route.points.iter().filter(|point| point.map == map) {
+        // The first and last point of each leg of a transport route are
+        // curve handles, drawn smaller and grey; a stop is drawn larger and
+        // green.
+        let handles: Vec<usize> = match route.transport {
+            true => super::transports::runs(&route.points).into_iter().flat_map(|run| [run.start, run.end - 1]).collect(),
+            false => Vec::new(),
+        };
+        for (at_index, point) in route.points.iter().enumerate().filter(|(_, point)| point.map == map) {
             let at = Vec3::from(point.at);
+            let handle = handles.contains(&at_index);
+            let stop = route.transport && point.action_flag == 2 && !handle;
             let colour = match (flights.point == Some(point.id), hovered == Some(Handle::Point(point.id))) {
                 (true, _) => lit,
                 (false, true) => Color::srgb(1.0, 0.9, 0.6),
+                _ if handle => Color::srgb(0.6, 0.6, 0.65),
+                _ if stop => Color::srgb(0.4, 0.9, 0.5),
                 _ => Color::srgb(1.0, 0.6, 0.15),
             };
-            let radius = marks.visible_radius(bevy(at), MARKER_RADIUS * 0.6);
+            let size = match (handle, stop) {
+                (true, _) => 0.4,
+                (false, true) => 1.2,
+                (false, false) => 0.6,
+            };
+            let radius = marks.visible_radius(bevy(at), MARKER_RADIUS * size);
             marks.sphere(bevy(at), radius, colour, Look::Ghosted);
         }
         // A line from the selected point down to the ground, which shows its
@@ -1358,7 +1428,7 @@ fn draw(
         }
     }
 
-    for node in &flights.nodes {
+    for node in flights.nodes.iter().filter(|_| !flights.transports) {
         let at = Vec3::from(node.at);
         let selected = flights.node == Some(node.id);
         if !selected && (at - eye).length() > MARKER_RANGE {
@@ -1508,6 +1578,7 @@ pub(crate) fn framing_distance(across: f32) -> f32 {
 #[allow(clippy::too_many_arguments)]
 fn scripted(
     mut flights: ResMut<Flightpaths>,
+    mut mounts: ResMut<super::mounts::Mounts>,
     args: Res<crate::args::Args>,
     assets: Res<vale_client::assets::GameAssets>,
     mut session: Option<ResMut<EditSession>>,
@@ -1569,6 +1640,9 @@ fn scripted(
         match flights.node(id).cloned() {
             Some(node) => {
                 flights.select_node(id);
+                if args.tools.pick_mount {
+                    mounts.open(&node, 1);
+                }
                 fly.write(crate::camera::FlyTo::at(Vec3::from(node.at)));
                 let (leaving, arriving) = flights.routes_of(id);
                 info!(
@@ -1584,6 +1658,8 @@ fn scripted(
     if let Some(id) = args.tools.taxi_path {
         match flights.route(id).cloned() {
             Some(route) => {
+                // A transport's route is selected in the transports half.
+                flights.transports = route.transport;
                 flights.select_path(id);
                 if let Some(flight) = flights.path_flight(id) {
                     fly.write(flight);

@@ -306,6 +306,12 @@ pub(crate) struct Editing<'w> {
     /// The flight path subject: the nodes and paths on the map and what is
     /// selected. See [`crate::tools::places::flightpaths`].
     pub(crate) flightpaths: ResMut<'w, crate::tools::places::flightpaths::Flightpaths>,
+    /// The boats and zeppelins that sail the flight path tool's paths. See
+    /// [`crate::tools::places::transports`].
+    pub(crate) transports: ResMut<'w, crate::tools::places::transports::Transports>,
+    /// The creatures the flight nodes' mount columns name, and the mount
+    /// picker. See [`crate::tools::places::mounts`].
+    pub(crate) mounts: ResMut<'w, crate::tools::places::mounts::Mounts>,
     /// The area trigger subject: the triggers on the map, what is selected,
     /// and the server rows read for them. See [`crate::tools::places::triggers`].
     pub(crate) triggers: ResMut<'w, crate::tools::places::triggers::Triggers>,
@@ -477,6 +483,7 @@ impl Plugin for PanelPlugin {
                     .after(crate::pick::aim)
                     .after(crate::tools::shortcuts::take),
             )
+            .add_systems(Update, crate::tools::shortcuts::fly_to_selection.after(crate::pick::aim))
             .add_systems(EguiPrimaryContextPass, draw)
             // One pass per pop-out window slot; see `crate::popout`.
             .add_systems(crate::popout::PopoutPass(0), shell::popout::draw::<0>)
@@ -999,7 +1006,13 @@ fn draw(
     // `widgets::theme::toolbar`.
     match *tool {
         Tool::Flightpaths => {
-            let strip = crate::ui::tools::places::flightpaths::strip(&ctx, world_rect, corner, &mut editing.flightpaths);
+            let strip = crate::ui::tools::places::flightpaths::strip(
+                &ctx,
+                world_rect,
+                corner,
+                &mut editing.flightpaths,
+                &mut editing.transports,
+            );
             viewport.floating.extend(strip);
         }
         Tool::Terrain => {

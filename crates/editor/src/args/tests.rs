@@ -12,14 +12,14 @@ fn parse(list: &[&str]) -> Args {
 
 /// Every flag spelling the parse accepts. A spelling taken out of a table
 /// fails this test.
-const EVERY_FLAG: [&str; 151] = [
+const EVERY_FLAG: [&str; 154] = [
     "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu",
     "--export-heights", "--import-image", "--import-confirm", "--import-model", "--import-sound", "--game-file", "--minimaps", "--tilt",
     "--vertices", "--view", "--reach", "--tool", "--spawn", "--waypoint-add", "--spawn-add",
     "--pick", "--spawn-delete", "--waypoints", "--place", "--row", "--find", "--table", "--lab",
     "--browse", "--pop-out", "--story", "--seek", "--projects", "--doom", "--tiles", "--new-map",
     "--navmesh", "--map-view", "--enclose", "--shot", "--after", "--measure", "--chunks",
-    "--stitch", "--trigger", "--taxi-node", "--taxi-path", "--taxi-connect", "--taxi-node-add",
+    "--stitch", "--trigger", "--taxi-node", "--taxi-path", "--transport", "--pick-mount", "--pick-hull", "--taxi-connect", "--taxi-node-add",
     "--flight-map", "--tour", "--dwell", "--character", "--shell", "--reload", "--revert",
     "--apply", "--template", "--template-new", "--template-entry", "--pick-display", "--quests",
     "--loot", "--loot-add", "--apply-loot", "--revert-loot", "--vendor", "--gossip",

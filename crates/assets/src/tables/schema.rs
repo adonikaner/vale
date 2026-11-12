@@ -460,6 +460,7 @@ pub const ALL: &[&Schema] = &[
     &TAXI_NODES,
     &TAXI_PATH,
     &TAXI_PATH_NODE,
+    &TRANSPORT_ANIMATION,
     &SKILL_LINE,
     &SKILL_LINE_ABILITY,
     &SKILL_RACE_CLASS_INFO,
@@ -2064,6 +2065,42 @@ pub(crate) const TAXI_PATH_NODE: Schema = Schema {
     sections: &[Section {
         name: "Point",
         fields: &[0, 1, 2, 3, 4, 5, 6, 7, 8],
+    }],
+};
+
+/// `TransportAnimation.dbc`: 630 rows of 7 fields. A row is one keyframe of
+/// one elevator, lift or tram; see [`super::transport`], which reads it.
+pub(crate) const TRANSPORT_ANIMATION: Schema = Schema {
+    table: "TransportAnimation",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "Transport",
+            Kind::Int,
+            "The gameobject_template entry of the transport, a game object of \
+             type 11. Every row with one entry is one animation.",
+        ),
+        ca(
+            2,
+            "TimeSeg",
+            Kind::Int,
+            "Milliseconds into the cycle. The rows of an entry are used in the \
+             order of this column, and the highest is the length of the cycle.",
+        ),
+        ca(3, "X", Kind::Float, "Offset from where the object is spawned, in yards, in the object's own frame."),
+        ca(4, "Y", Kind::Float, "Offset from where the object is spawned, in yards."),
+        ca(5, "Z", Kind::Float, "Offset up from where the object is spawned, in yards. Every lift moves on this axis alone."),
+        ca(
+            6,
+            "Sequence",
+            Kind::Reference("AnimationData"),
+            "The animation the model plays from this keyframe to the next.",
+        ),
+    ],
+    sections: &[Section {
+        name: "Keyframe",
+        fields: &[0, 1, 2, 3, 4, 5, 6],
     }],
 };
 

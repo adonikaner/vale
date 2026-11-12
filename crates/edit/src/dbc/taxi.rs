@@ -374,6 +374,56 @@ pub fn remove_point(tables: &mut HashMap<String, DbcFile>, point: u32) -> Result
     Ok(out)
 }
 
+/// Add `points` to the end of a path, in order. Each is a new record and no
+/// other record changes.
+pub fn append_points(
+    tables: &mut HashMap<String, DbcFile>,
+    numbers: &mut dyn Numbers,
+    path: u32,
+    points: &[PointSpec],
+) -> Result<Edits, Refused> {
+    if open(tables, PATHS)?.row_of(path).is_none() {
+        return Err(Refused::NoSuchPath(path));
+    }
+    let table = open(tables, POINTS)?;
+    let first = points_of(table, path).len() as u32;
+    let mut out = Edits::default();
+    for (index, spec) in (first..).zip(points) {
+        let id = take_u32(numbers, &dbc(POINTS), table.max_id() + 1).map_err(Refused::NoNumber)?;
+        out.row(POINTS, append(table, POINTS, id, &point_fields(path, index, spec))?);
+    }
+    Ok(out)
+}
+
+/// Take `count` points out of a path, from the one numbered `first`, moving
+/// every later point down by `count`. Refused when it would leave the path
+/// with fewer than two points.
+///
+/// The records are removed highest first and every index is written after
+/// the last removal, which are the two orders [`Edits`] needs to be reverted.
+pub fn remove_points(tables: &mut HashMap<String, DbcFile>, path: u32, first: u32, count: u32) -> Result<Edits, Refused> {
+    let table = open(tables, POINTS)?;
+    let before = points_of(table, path);
+    let within = |index: u32| index >= first && index - first < count;
+    let mut records: Vec<usize> = before.iter().filter(|point| within(point.index)).map(|point| point.record).collect();
+    if before.len() - records.len() < 2 {
+        return Err(Refused::TooFewPoints);
+    }
+    records.sort_unstable_by(|a, b| b.cmp(a));
+    let mut out = Edits::default();
+    let removed = records.len() as u32;
+    for record in records {
+        out.row(POINTS, take(table, POINTS, record)?);
+    }
+    for later in points_of(table, path).into_iter().filter(|later| later.index >= first + count) {
+        if let Some(cell) = Cell::new(table, later.record, wf::INDEX, later.index - removed) {
+            cell.apply(table);
+            out.cell(POINTS, cell);
+        }
+    }
+    Ok(out)
+}
+
 /// Make a path from one node to another through `points`, which are taken in
 /// order and numbered from 0. Returns the new path's id in [`Edits::made`].
 pub fn new_path(
@@ -830,6 +880,43 @@ mod tests {
         assert!(check(&t[NODES], &t[PATHS], &t[POINTS]).is_empty());
         // Two points left: the next removal is refused.
         assert_eq!(remove_point(&mut t, 100), Err(Refused::TooFewPoints));
+    }
+
+    /// Points are added at the end of a path in order, and a run taken out
+    /// of the middle moves the later points down by its length. Both undo to
+    /// the bytes they started from and redo to the bytes they produced.
+    #[test]
+    fn a_run_of_points_is_appended_and_removed() {
+        let mut t = tables();
+        let start = bytes(&t);
+        let added = append_points(
+            &mut t,
+            &mut Alone,
+            10,
+            &[PointSpec::flying(1, [150.0, 0.0, 60.0]), PointSpec::flying(1, [200.0, 0.0, 60.0])],
+        )
+        .unwrap();
+        assert!(added.cells.is_empty());
+        assert_eq!(indices(&t, 10), [(100, 0), (101, 1), (102, 2), (103, 3), (104, 4)]);
+        assert!(check(&t[NODES], &t[PATHS], &t[POINTS]).is_empty());
+        let grown = bytes(&t);
+
+        let removed = remove_points(&mut t, 10, 1, 2).unwrap();
+        assert_eq!(indices(&t, 10), [(100, 0), (103, 1), (104, 2)]);
+        assert!(check(&t[NODES], &t[PATHS], &t[POINTS]).is_empty());
+        let shrunk = bytes(&t);
+        revert(&mut t, &removed);
+        assert_eq!(bytes(&t), grown);
+        apply(&mut t, &removed);
+        assert_eq!(bytes(&t), shrunk);
+        revert(&mut t, &removed);
+        revert(&mut t, &added);
+        assert_eq!(bytes(&t), start);
+
+        // Fewer than two points left is refused, and so is a path that is
+        // not there.
+        assert_eq!(remove_points(&mut t, 10, 0, 2), Err(Refused::TooFewPoints));
+        assert_eq!(append_points(&mut t, &mut Alone, 77, &[]).err(), Some(Refused::NoSuchPath(77)));
     }
 
     /// Every operation undoes to the bytes it started from and redoes to the

@@ -100,6 +100,17 @@ pub(crate) struct Tools {
     /// map, once its nodes are read: the `WorldMapContinent.dbc` row and the
     /// picture.
     pub(crate) flight_map: bool,
+    /// `--transport <entry>`: the flight path tool's Transports half, with
+    /// the boat or zeppelin of that `gameobject_template` entry selected and
+    /// the camera on the first leg of its route, whose map is opened when it
+    /// is not the open one.
+    pub(crate) transport: Option<u32>,
+    /// `--pick-mount`: with `--taxi-node`, the mount picker open on that
+    /// node's Alliance mount.
+    pub(crate) pick_mount: bool,
+    /// `--pick-hull`: with `--transport`, the model picker open on that
+    /// transport's hull.
+    pub(crate) pick_hull: bool,
 }
 
 pub(super) const FLAGS: &[Flag] = &[
@@ -157,6 +168,12 @@ pub(super) const FLAGS: &[Flag] = &[
         a.tools.taxi_node_add = first(v).and_then(parse_pair);
         a.view.tool = Some(Tool::Flightpaths);
     }),
+    Flag::new("--transport", One, |a, v| {
+        a.tools.transport = number(v);
+        a.view.tool = Some(Tool::Flightpaths);
+    }),
+    Flag::new("--pick-mount", Switch, |a, _| a.tools.pick_mount = true),
+    Flag::new("--pick-hull", Switch, |a, _| a.tools.pick_hull = true),
     Flag::new("--flight-map", Switch, |a, _| {
         a.tools.flight_map = true;
         a.view.tool = Some(Tool::Flightpaths);

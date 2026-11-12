@@ -52,6 +52,9 @@
 //! gameobject.rs the matching pair for game objects: `gameobject_template`,
 //!              whose 24 `data` columns are named by the row's type, and
 //!              `gameobject`, whose facing and rotation quaternion must agree
+//! transport.rs a boat or a zeppelin: the type 15 `gameobject_template` row
+//!              that is one, and `transports`, the length of its round, which
+//!              a project writes as a row at build 5875. Read at startup
 //! item.rs      `item_template`: what an item is, what it does and what it is
 //!              worth. 129 columns, and the one subject here a `.reload` makes
 //!              live
@@ -193,5 +196,6 @@ pub mod spell;
 pub mod sql;
 pub mod taxi;
 pub mod trainer;
+pub mod transport;
 pub mod trigger;
 pub mod vendor;

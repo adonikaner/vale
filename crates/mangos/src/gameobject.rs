@@ -83,8 +83,9 @@ pub const TEMPLATE: &str = "gameobject_template";
 /// Where one stands.
 pub const SPAWN: &str = "gameobject";
 
-/// Both tables.
-pub const TABLES: &[Table] = &[TEMPLATE_TABLE, SPAWN_TABLE];
+/// The two tables, and `transports`, which holds the length of the round of
+/// each template that is a boat or a zeppelin; see [`crate::transport`].
+pub const TABLES: &[Table] = &[TEMPLATE_TABLE, SPAWN_TABLE, crate::transport::PERIOD_TABLE];
 
 /// `gameobject_template`: edited and created, never removed. See the module
 /// comment.
@@ -831,10 +832,15 @@ pub const DEPENDENTS: [(&str, &str); 2] = [
 /// whose index depends on the type; `gameobject_loot_template.entry`, which is
 /// named by `data1` and is not the object's entry; a script's `datalong` where
 /// the command takes an object entry; and the C++ scripts.
-pub const TEMPLATE_REFERENCES: [crate::row::Reference; 10] = {
+///
+/// `transports.entry` is in the list by the loader's own rule:
+/// `LoadTransportTemplates` looks each row's entry up among the transport
+/// templates and logs a row that names none.
+pub const TEMPLATE_REFERENCES: [crate::row::Reference; 11] = {
     use crate::row::Reference as R;
     [
         R::new(SPAWN, "id"),
+        R::new(crate::transport::TABLE, "entry"),
         R::new("gameobject_questrelation", "id"),
         R::new("gameobject_involvedrelation", "id"),
         R::new("pool_gameobject_template", "id"),
@@ -980,12 +986,12 @@ pub fn all_templates_query(wow_patch: u32) -> String {
 
 /// The statements that take back a row this project created, once its
 /// `INSERT` has run: a spawn with the two tables keyed by its guid, a template
-/// on its own. A table that cannot hold a created row answers nothing. See
-/// [`crate::creature::insert_undo_statements`].
+/// or a transport's period on its own. A table that cannot hold a created row
+/// answers nothing. See [`crate::creature::insert_undo_statements`].
 pub fn insert_undo_statements(table: &str, key: &Key) -> Vec<String> {
     match table {
         SPAWN => delete_statements(key),
-        TEMPLATE => vec![crate::row::delete(TEMPLATE, key)],
+        TEMPLATE | crate::transport::TABLE => vec![crate::row::delete(table, key)],
         _ => Vec::new(),
     }
 }

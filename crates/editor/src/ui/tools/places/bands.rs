@@ -291,11 +291,8 @@ fn one(
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
 
     ui.horizontal(|ui| {
-        // egui's own painted triangle, not a text arrow. The interface's four
-        // typefaces are the game's (`Fonts\*.TTF`) and none of them has `▸`
-        // or `▾`, so a button with one in it draws the missing-glyph box. The
-        // section headers beside this one draw correctly because
-        // `CollapsingHeader` paints its marker rather than using a glyph.
+        // egui's own painted triangle, not a text arrow: the marker
+        // `CollapsingHeader` paints on the section headers beside this one.
         open.show_toggle_button(ui, egui::collapsing_header::paint_default_icon);
         let mut tip = format!("Band {index}");
         if !note.is_empty() {

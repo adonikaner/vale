@@ -4,6 +4,12 @@
 //! flightpaths.rs the flight path tool's strip over the viewport (what a
 //!               click on the ground is armed to make) and its panel (the
 //!               selected node, path or point)
+//! mounts.rs     a flight node's two mounts as pictures on its card, and the
+//!               dialog a mount is chosen in: creatures as rendered models,
+//!               searched by name
+//! transports.rs the Transports half of the flight path tool: its toolbar,
+//!               and an inspector of every boat and zeppelin, the selected
+//!               one's ship, the legs of its route, its stops and a preview
 //! triggers.rs   the area trigger tool's panel: the selected trigger's shape
 //!               and place, and its teleport, inn and quest rows
 //! graveyards.rs the graveyard tool's panel: the selected safe place, its
@@ -20,4 +26,6 @@ pub(crate) mod bands;
 pub(crate) mod flightpaths;
 pub(crate) mod graveyards;
 pub(crate) mod lights;
+pub(crate) mod mounts;
+pub(crate) mod transports;
 pub(crate) mod triggers;

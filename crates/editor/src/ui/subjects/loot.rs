@@ -220,8 +220,7 @@ fn set_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, set: Set, fix: Option<
 /// The head of a followed reference set: which it is, and the way back.
 fn reference_head(ui: &mut egui::Ui, subject: &mut Subject<'_>, reference: u32) {
     ui.horizontal(|ui| {
-        // A button with a word on it: egui's bundled fonts carry no arrow, and
-        // a missing glyph draws as a hollow box.
+        // A button with a word on it, not an arrow.
         if ui
             .small_button("Back")
             .on_hover_text("Back to the selection's own set.")

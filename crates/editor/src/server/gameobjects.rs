@@ -44,7 +44,9 @@ pub(crate) const SQL_VPATH: &str = "sql\\gameobjects.sql";
 /// The project path of the revert file an apply writes.
 pub(crate) const REVERT_VPATH: &str = "sql\\gameobjects-revert.sql";
 
-/// The game object subject: `gameobject_template` and `gameobject`.
+/// The game object subject: `gameobject_template`, `gameobject`, and
+/// `transports`, the length of the round of each template that is a boat or a
+/// zeppelin (`vale_mangos::transport`).
 pub(crate) struct GameObjects;
 
 impl RowSubject for GameObjects {
@@ -73,7 +75,7 @@ impl RowSubject for GameObjects {
     }
 
     fn table_list(&self) -> &'static str {
-        "gameobject_template, gameobject"
+        "gameobject_template, gameobject, transports"
     }
 
     fn sql_vpath(&self) -> &'static str {
@@ -108,8 +110,12 @@ impl RowSubject for GameObjects {
         Vec::new()
     }
 
+    /// A spawn or a template arriving at an id that is taken or named is
+    /// refused. A period row is refused only at its whole key: the shipped
+    /// rows of the same entry at lower builds are meant to stand under it.
     fn refuse_arrival(&self, db: &mut Db, row: &Row, own: &Edits) -> Result<(), String> {
         let limit = match row.table.name {
+            vale_mangos::transport::TABLE => return subject::refuse_a_present_key(db, row),
             gameobject::SPAWN => gameobject::MAX_GUID,
             _ => u64::from(gameobject::MAX_ENTRY),
         };
@@ -117,15 +123,18 @@ impl RowSubject for GameObjects {
     }
 
     /// A spawn this project creates is undone by removing it with its two
-    /// dependent tables, a template on its own.
+    /// dependent tables, a template or a period on its own.
     fn undo_of_a_creation(&self, row: &Row) -> Vec<String> {
         gameobject::insert_undo_statements(row.table.name, &row.key)
     }
 
     /// Everything a removed spawn takes with it: the `gameobject` row, then
     /// each dependent table's rows in `gameobject::DEPENDENTS`' order. `None`
-    /// when the spawn is not there.
+    /// when the spawn is not there. A removed period is its one row.
     fn undo_of_a_removal(&self, db: &mut Db, row: &Row) -> Result<Option<Vec<String>>, String> {
+        if row.table.name == vale_mangos::transport::TABLE {
+            return subject::snapshot_one_row(db, row);
+        }
         subject::snapshot_with_dependents(db, row, gameobject::delete_statements(&row.key), &gameobject::DEPENDENTS)
     }
 }
@@ -274,6 +283,36 @@ mod tests {
         let creatures = subject::plan_of(&super::super::creatures::Creatures, &edits);
         assert_eq!(creatures.rows.len(), 1);
         assert!(creatures.refused.is_empty(), "{:?}", creatures.refused);
+    }
+
+    /// A transport's period is this subject's row: created at build 5875 as a
+    /// `DELETE` and an `INSERT`, after the template it names.
+    #[test]
+    fn a_transports_period_is_written_after_its_template() {
+        use vale_mangos::transport::{self, Period};
+        let mut edits = Edits::default();
+        let period = Period::new(2_000_000, "Test Ferry", 123_456);
+        let mut row = RowEdit { life: Life::Insert, ..RowEdit::default() };
+        for change in period.assignments() {
+            row.columns.insert(change.column.to_string(), change.value);
+        }
+        edits.set_row_line(transport::TABLE, &period.key(), Some(&row.to_line()));
+        let mut template = RowEdit { life: Life::Insert, ..RowEdit::default() };
+        for change in transport::new_template("Test Ferry", 3015, 900, transport::SPEED, transport::ACCEL) {
+            template.columns.insert(change.column.to_string(), change.value);
+        }
+        edits.set_row_line(gameobject::TEMPLATE, &gameobject::template_key(2_000_000, 10), Some(&template.to_line()));
+        let plan = plan_from(&edits);
+        assert!(plan.refused.is_empty(), "{:?}", plan.refused);
+        assert_eq!(plan.tables(), vec![gameobject::TEMPLATE, transport::TABLE]);
+        let sql = plan.statements();
+        assert_eq!(sql.len(), 4);
+        assert_eq!(sql[2], "DELETE FROM `transports` WHERE `entry` = 2000000 AND `build` = 5875;");
+        assert!(sql[3].starts_with("INSERT INTO `transports` (`entry`, `build`, "), "{}", sql[3]);
+        assert_eq!(
+            GameObjects.undo_of_a_creation(&plan.rows[1]),
+            vec!["DELETE FROM `transports` WHERE `entry` = 2000000 AND `build` = 5875;".to_string()]
+        );
     }
 
     /// A data column is written under its own name, whatever the type calls it.

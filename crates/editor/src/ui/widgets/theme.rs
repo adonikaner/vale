@@ -177,6 +177,58 @@ pub(crate) fn install(ctx: &egui::Context) {
     // host's preference, so writing only the one showing would make the
     // editor's colours change when the desktop's do. The editor is always dark.
     ctx.all_styles_mut(paint);
+    typefaces(ctx);
+}
+
+/// The name DejaVu Sans is installed under in egui's set of fonts.
+const FALLBACK: &str = "DejaVuSans";
+
+/// Give a context the editor's typefaces, once per context.
+///
+/// egui's own four faces draw Latin, Greek and Cyrillic text and have no
+/// arrows, almost no geometric shapes, no check mark and no U+FFFD. A
+/// character no face has is drawn as a hollow box. See [`definitions`] for
+/// what is added.
+///
+/// `Context::set_fonts` compares the font files byte for byte before it
+/// accepts a set, which is about two megabytes a call, so the set is handed
+/// over once. The mark that it was is kept in the context's own memory: a
+/// second context (a pop-out window) has no mark and is given the set too.
+fn typefaces(ctx: &egui::Context) {
+    let given = egui::Id::new("vale-ide typefaces given");
+    if ctx.data(|data| data.get_temp::<bool>(given)).unwrap_or(false) {
+        return;
+    }
+    ctx.data_mut(|data| data.insert_temp(given, true));
+    ctx.set_fonts(definitions());
+}
+
+/// egui's default faces with DejaVu Sans added behind the text face of each
+/// family.
+///
+/// The order of a family is the order a character is looked up in:
+///
+/// ```text
+/// Proportional  Ubuntu-Light, DejaVu Sans, NotoEmoji, emoji-icon-font
+/// Monospace     Hack, Ubuntu-Light, DejaVu Sans, NotoEmoji, emoji-icon-font
+/// ```
+///
+/// Text that Ubuntu-Light or Hack already draws keeps its face and its
+/// widths. DejaVu Sans stands before the two emoji faces so that arrows and
+/// shapes come from one face: NotoEmoji has `▶` and `◀` and neither `▸` nor
+/// `→`. It has no Chinese, Japanese or Korean characters.
+fn definitions() -> egui::FontDefinitions {
+    use egui::{FontData, FontFamily};
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        FALLBACK.to_owned(),
+        std::sync::Arc::new(FontData::from_static(dejavu::sans::regular())),
+    );
+    for (family, behind) in [(FontFamily::Proportional, 1), (FontFamily::Monospace, 2)] {
+        let faces = fonts.families.entry(family).or_default();
+        faces.insert(behind.min(faces.len()), FALLBACK.to_owned());
+    }
+    fonts
 }
 
 /// The style, applied to whichever of egui's two it is handed.
@@ -399,7 +451,8 @@ pub(crate) fn heading_about(ui: &mut Ui, text: &str, about: &str) {
 }
 
 /// A lower-case i in a ring, drawn in `rect`, which shows `about` when
-/// hovered. Painted because the editor's typeface has no such glyph.
+/// hovered. Painted and not typed, so its size and strokes are set in points
+/// and do not depend on which typeface has such a glyph.
 ///
 /// Interacted with under `id` and not allocated, because the rectangle is
 /// inside a row that is already laid out, as [`star_button`]'s is.
@@ -1055,9 +1108,8 @@ pub(crate) fn waiting(ui: &mut Ui, text: impl Into<String>) {
 }
 
 /// A five-pointed star, painted: lit and filled when `on`, an outline when
-/// not. Painted rather than typed because egui's bundled fonts carry no star,
-/// and a missing glyph draws as a hollow box — the folder rows' triangle is
-/// painted for the same reason.
+/// not. Painted and not typed, as the folder rows' triangle is, so its size
+/// is `radius` and not a text size.
 pub(crate) fn star(painter: &egui::Painter, centre: egui::Pos2, radius: f32, on: bool) {
     let points: Vec<egui::Pos2> = (0..10)
         .map(|i| {
@@ -1296,5 +1348,58 @@ mod tests {
                     });
             });
         }
+    }
+
+    /// The characters egui's own faces lack are drawn once [`install`] has
+    /// run, in both families, and a context without it has no arrow.
+    ///
+    /// A character no face has is drawn as the family's replacement glyph,
+    /// so a character is drawn when its glyph is another part of the font
+    /// atlas than the glyph of a character known to be in no face (U+4E2D:
+    /// none of the five has Han). `has_glyph` is not asked, because egui
+    /// 0.35 answers false for every character of the face that holds the
+    /// replacement glyph, and with the fallback installed that face is
+    /// DejaVu Sans.
+    ///
+    /// The last assertion shows the check measures the added face: on a
+    /// context with egui's defaults the arrow is the replacement glyph.
+    #[test]
+    fn the_fallback_face_draws_what_eguis_own_lack() {
+        use egui::FontId;
+
+        const WANTED: &str = "A\u{e9}\u{44f}\u{3c9}\u{2192}\u{2190}\u{21d2}\u{25cf}\u{25b6}\u{25c0}\u{25b8}\u{25be}\u{2605}\u{2713}\u{2715}\u{2500}\u{fffd}";
+        const IN_NO_FACE: char = '\u{4e2d}';
+        let pass = |ctx: &egui::Context| {
+            // Two passes: a set of fonts handed over in one pass is in use
+            // from the start of the next.
+            for _ in 0..2 {
+                let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+            }
+        };
+        let drawn = |ctx: &egui::Context, font: &FontId, what: char| {
+            let galley = ctx.fonts_mut(|fonts| fonts.layout_no_wrap(what.to_string(), font.clone(), INK));
+            let glyph = &galley.rows[0].row.glyphs[0];
+            (glyph.uv_rect.min, glyph.uv_rect.max)
+        };
+
+        let ctx = egui::Context::default();
+        install(&ctx);
+        pass(&ctx);
+        for font in [FontId::proportional(BODY), FontId::monospace(13.0)] {
+            let replacement = drawn(&ctx, &font, IN_NO_FACE);
+            for wanted in WANTED.chars() {
+                assert_ne!(
+                    drawn(&ctx, &font, wanted),
+                    replacement,
+                    "U+{:04X} is drawn as the replacement glyph in {font:?}",
+                    wanted as u32,
+                );
+            }
+        }
+
+        let plain = egui::Context::default();
+        pass(&plain);
+        let font = FontId::proportional(BODY);
+        assert_eq!(drawn(&plain, &font, '\u{2192}'), drawn(&plain, &font, IN_NO_FACE));
     }
 }
