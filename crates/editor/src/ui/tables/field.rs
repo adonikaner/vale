@@ -314,7 +314,7 @@ pub(super) fn field_in(
                         .unwrap_or(0);
                     presence(ui, work.model_present(id));
                     if ui
-                        .small_button("Browse{2026}")
+                        .small_button("Browse\u{2026}")
                         .on_hover_text("search every model in the archives by path")
                         .clicked()
                     {

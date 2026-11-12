@@ -43,7 +43,7 @@ cargo run -p vale-ide -- --project <name>           # open or create a project
 | `--join <address>` | Join the shared session at that address once the map is open. |
 | `--session-name <name>`, `--session-password <password>` | Fill the session popover's "Name" and "Password" fields. |
 | `--publish [name]` | Write a patch at startup, as "Publish…" does. |
-| `--regenerate`, `--migration` | Run "Regenerate Changed Tiles" or "Write migration" from the Server panel. |
+| `--regenerate`, `--migration` | Run "Regenerate Changed Tiles" or "Write Migration" from the Server panel. |
 | `--apply <subject>`, `--revert <subject>` | Press "Apply" or "Restore" on one Server panel subject: `creatures`, `gameobjects`, `items`, `quests`, `loot`, `services`, `addons`, `formations`, `pools`, `gameevents`, `behaviour`, `conditions`, `gossip`, `maps`, `triggers` or `graveyards`. Each may be given more than once. |
 | `--revert` | Restore the client-table rows the project applied to the database. |
 
@@ -71,7 +71,7 @@ The editor opens the project named by `--project`, otherwise the one named in
 `Edit\last-project.txt`, otherwise `default`. The `default` project can be
 cleared but not deleted.
 
-The "Project: <name>" menu on the top bar holds "Projects…", "Settings…"
+The "Project" menu on the top bar holds "Projects…", "Settings…"
 (see [Settings](#settings)) and "Publish…". "Projects…" opens the Projects
 dialog:
 
@@ -199,15 +199,18 @@ listed.
 ## The screen
 
 - Top bar, on the left:
-  - the "Project: <name>" menu ("Projects…", "Settings…", "Publish…");
-  - the "Map: <name> (<id>)" menu ("New Map…", "Map Properties…", "Open Map",
-    "Edit Map…", "Go To…", "Bookmarks");
+  - the "Project" menu ("Projects…", "Settings…", "Publish…"). Its button
+    shows the open project's name, for example "Project default";
+  - the "Map" menu ("New Map…", "Map Properties…", "Open Map", "Edit Map…",
+    "Go To…", "Bookmarks"). Its button shows the map's name and id, for
+    example "Map Azeroth (0)";
   - the workspace control (see below).
 - Top bar, on the right, in the order an edit reaches them:
   - the session button, "Session…" with no session (see
     [Shared sessions](#shared-sessions));
   - "Changes" (see [Changes and history](#changes-and-history));
-  - Save (see [Saving and undo](#saving-and-undo));
+  - Save, outlined in amber while anything is unsaved (see
+    [Saving and undo](#saving-and-undo));
   - "Server…", the [Server panel](#server-panel);
   - "Playtest", and to its right the button that opens the Playtest popover
     (see [Login](#login)). During a playtest these two are replaced by
@@ -218,8 +221,9 @@ listed.
 - Settings: a setting of this machine is in the Settings window. A setting
   of the project is beside the action it changes: "Apply on save" on the
   Server panel, "Disable caching" in the Playtest popover, and the publish
-  options in "Publish a patch".
-- Workspace control: "World", then "Spells", "Skills", "Items", "Quests",
+  options in the Publish dialog.
+- Workspace control: a row of tabs, with the open workspace's tab underlined.
+  The tabs are "World", then "Spells", "Skills", "Items", "Quests",
   "Creatures", "Game Objects", "Zones", "Sound", "Factions", "Spawning",
   "Tables" and "Assets". "World" shows the viewport and returns to the last
   rail or corner tool. Every other workspace replaces the viewport. A
@@ -256,19 +260,25 @@ listed.
   two columns otherwise. It is hidden while a workspace replaces the viewport
   and during a playtest.
 - Corner: "Select" and "Measure" are icon buttons over the viewport's top-left
-  corner, with their names in the tooltip. Terrain, Road, Textures, Taxi,
-  Creatures and Objects add a toolbar to the right of them, which holds what
-  decides the next click or stroke.
+  corner, with their names in the tooltip.
+- Toolbar: Measure and every rail tool except Sweep add a toolbar to the
+  right of the corner buttons. Its first row holds the tool's modes, which
+  decide what the left button does, then the switches used between clicks,
+  then "Keys", whose hover text lists the tool's keys. A second row holds
+  what the chosen mode alone has, such as "Handles" in Select. A tool with no
+  mode and no switch has "Keys" alone. Values, lists and pickers are in the
+  inspector.
 - Inspector, on the right: the current tool's name, "Undo" and "Redo" for a
   tool that edits, then the tool's settings or the selection's form. A
   workspace's name has "Pop Out" beside it.
-- View bar, above the status line. Each button shows a short label, such as
-  "FOG" or "WMO". The hover text names the switch and says whether it is on
-  and what its default is. A button that is not in its default state is lit.
+- View bar, above the status line. Each switch is a button with an icon. The
+  hover text names the switch and says whether it is on and what its default
+  is. A switch that is off is drawn dim, with a line through it when it is on
+  by default. A button that is not in its default state is lit.
   - switches for world layers (terrain, water, doodads, buildings, fog, sky,
     skyboxes and others) and diagnostic overlays;
-  - "COL", with a collision radius in yards beside it while it is on;
-  - "NAV", the server's navmesh;
+  - "Collision", with a collision radius in yards beside it while it is on;
+  - "Navmesh", the server's navmesh;
   - "Events": which spawns the creature and object tools draw. The choices are
     "Every spawn", "Outside events", or the spawns during one event, listed
     under "During One Event"; see [Game events](#game-events);
@@ -279,11 +289,11 @@ listed.
     larger and in red at four. The button shows how many guides are on, for
     example "Guides 2". Guides change no data and are hidden during a
     playtest;
-  - "MAP", the top-down map view (see [Map view](#map-view)), and "FLY", free
-    flight (see [Camera](#camera));
+  - "Map view", the top-down view (see [Map view](#map-view)), and
+    "Free flight" (see [Camera](#camera));
   - frame settings, which F5, F9 and F10 also toggle;
-  - "reset", which turns all of them back, including NAV, Events, the guides
-    and the map view.
+  - "Reset", which turns all of them back, including the navmesh, Events,
+    the guides and the map view.
 - Status line: the map's id and name, the tile, the camera and pointer
   positions, open tiles, unsaved changes ("N+rows" when server rows are
   owed), progress bars, and the last message. It also prints the view bar's
@@ -300,7 +310,7 @@ Ctrl with + or - changes the size of the whole interface.
 returns the main window to the world. The window has its own workspace
 control (without "World"), the inspector, the status message, and "Dock".
 "Dock" puts the workspace back in the main window and closes the window. A
-workspace button is lit while its workspace is in a window, and pressing it
+workspace's tab is lit while its workspace is in a window, and pressing it
 brings that window forward.
 
 Each workspace can have a window, but the table workspaces (Spells, Skills,
@@ -323,11 +333,11 @@ main window closes them all. "Pop Out" is unavailable during a playtest.
 | Mouse wheel | Zoom |
 
 W and S move level along the ground in the direction the view faces. With
-"FLY" on the view bar, W and S move along the line of sight instead, so W
-with the view pitched down moves toward the ground. A and D move sideways and
-Q and E straight down and up either way. "FLY" is meant for a drawing tablet,
-where the view is steered with the pen and one key. It is unavailable in the
-map view.
+"Free flight" on the view bar, W and S move along the line of sight instead,
+so W with the view pitched down moves toward the ground. A and D move
+sideways and Q and E straight down and up either way. "Free flight" is meant
+for a drawing tablet, where the view is steered with the pen and one key. It
+is unavailable in the map view.
 
 The wheel and a right drag act only when they start over the viewport. A right
 drag turns the view once the pointer has moved more than 4 pixels, or 16
@@ -355,8 +365,8 @@ a "Go to" or "Fly to" button.
 
 ### Map view
 
-"MAP" on the view bar, or `--map-view`, shows the world from straight above,
-with north at the top and no perspective.
+"Map view" on the view bar, or `--map-view`, shows the world from straight
+above, with north at the top and no perspective.
 
 - The wheel sets how much of the map the picture covers, from 20 yards to
   about seven tiles. It starts at one tile.
@@ -441,7 +451,7 @@ Pen pressure affects Terrain, Shading and Textures. The other tools treat a pen 
 
 The toolbar over the viewport chooses what the left button does. "Sculpt" moves the ground. "Select Vertices" chooses vertices.
 
-In Sculpt, the toolbar has the "Brush" preset drop-down and ten modes. Keys 1 to 5 choose the first five and Shift+4 to Shift+8 the other five.
+In Sculpt, the toolbar has the "Brush" preset drop-down on its first row and ten modes on its second row. Keys 1 to 5 choose the first five and Shift+4 to Shift+8 the other five.
 
 | Mode | Key | Effect |
 |---|---|---|
@@ -456,7 +466,7 @@ In Sculpt, the toolbar has the "Brush" preset drop-down and ten modes. Keys 1 to
 | Mountain | Shift+7 | Raises the ground with ridges. |
 | Crevice | Shift+8 | Digs a trench and piles the ground on its rims. |
 
-The second row of the toolbar has "Only Inside Selection" (shown only while vertices are selected) and "Objects Follow".
+The first row of the toolbar also has "Only Inside Selection" (shown only while vertices are selected), "Objects Follow" and the "Keys" button. The hover text of "Keys" lists the mouse and keyboard controls of Sculpt or of Select Vertices, whichever is chosen.
 
 The inspector shows "Brushes" (see [Brush presets](#brush-presets)), then "Brush Settings":
 
@@ -522,7 +532,7 @@ Locks are saved at once to `editor\locks\<Map>_<x>_<y>.txt` in the project. They
 
 #### Objects on moved ground
 
-"Objects Follow" on the Terrain toolbar, and "Doodads and WMOs follow the ground" on Grade and Road, move every doodad and WMO on moved ground up or down by the same amount, in the same undo step. Both are on by default. Off, placements keep their stored height and the ground moves through them. Creature and game object spawns do not move.
+"Objects Follow" on the Terrain, Grade and Road toolbars moves every doodad and WMO on moved ground up or down by the same amount, in the same undo step. Each tool has its own switch, and each is on by default. Off, placements keep their stored height and the ground moves through them. Creature and game object spawns do not move.
 
 #### Right-click menu
 
@@ -544,10 +554,10 @@ The menu has two groups.
 Grade makes a ramp between two points.
 
 1. Click the start, then the end. A third click starts again.
-2. Adjust the "start" and "end" heights, the "width", the "falloff" and the "strength". Each end takes the ground height at the click, and either height can be edited. The panel shows the length and the slope. The slope is shown amber above 35° and red above 50°.
-3. Click "Apply grade". "Clear ends" forgets both points.
+2. Adjust the "Start" and "End" heights under "Ends", and the "Width", the "Falloff" and the "Strength" under "Shape". Each end takes the ground height at the click, and either height can be edited. The panel shows the length and the slope. The slope is shown amber above 35° and red above 50°.
+3. Click "Apply Grade". "Clear Ends" forgets both points.
 
-"Doodads and WMOs follow the ground" is on this panel too.
+The toolbar over the viewport has "Objects Follow" (see [Objects on moved ground](#objects-on-moved-ground)) and the "Keys" button, whose hover text lists the tool's mouse controls.
 
 Right-click menu: "Apply grade", "Clear points".
 
@@ -567,6 +577,8 @@ The toolbar over the viewport sets the line:
 - "Line": "Straight" or "Curved". Curved is the default.
 - "Height": "Ground" follows the ground under the centre line, averaged over "Smoothing" yards. "Points" runs the height from each point's own height to the next.
 
+The toolbar also has "Objects Follow" (see [Objects on moved ground](#objects-on-moved-ground)) and the "Keys" button, whose hover text lists the tool's keys.
+
 The inspector has these sections:
 
 - "Road":
@@ -580,7 +592,6 @@ The inspector has these sections:
   - "Strength".
   - "Crown": how far the centre stands above the edges. Negative makes a dished road.
   - "Offset": added to the road's height everywhere. Negative sinks the road; positive makes a causeway.
-  - "Doodads and WMOs follow the ground".
 - "Surface": the texture, its "Foliage", "Width", "Softness", "Opacity" and "Wear" (patches left unpainted).
 - "Verge", off by default: the texture, its "Foliage", "Width", "Softness" and "Opacity". The verge is a band along both sides of the surface. It stops where the surface is solid, so a chunk the road crosses wholly does not spend one of its four layers on it.
 - "Edges", shown while a texture is painted: "Ragged" (how far the painted edges wander), "Grain" (the size of one wander and of one patch of wear), and "Reuse a hidden layer".
@@ -603,10 +614,12 @@ Right-click menu:
 
 Shading paints the ground's vertex colour.
 
-- "Brush": "Paint", "Lighten", "Darken", "Smooth", "Clear". Keys 1 to 5.
-- "Colour": "tint" (Paint only) and "brightness". The note under them gives the target value; 1.00 leaves a vertex unchanged. "Reset to neutral" restores white at brightness 1.
-- "Size": "radius", "strength", "core".
-- "Falloff" (keys 6 to 0) and "Shape" (Shift+1 to Shift+3).
+The toolbar over the viewport chooses the mode: "Paint", "Lighten", "Darken", "Smooth" or "Clear". Keys 1 to 5. The hover text of the "Keys" button on the toolbar lists the tool's keys.
+
+The inspector has two sections:
+
+- "Brush Settings": "Radius", "Strength", "Core", "Falloff" (keys 6 to 0) and "Shape" (Shift+1 to Shift+3).
+- "Colour": "Tint" (Paint only) and "Brightness". "Target" gives the target value; 1.00 leaves a vertex unchanged. "Reset to Neutral" restores white at brightness 1.
 
 Pen pressure is set in the Settings window; see [Drawing tablet](#drawing-tablet).
 
@@ -620,7 +633,8 @@ The toolbar over the viewport has:
 
 - the "Brush" preset drop-down;
 - "Paint" or "Erase". Holding Shift switches to the other for one stroke;
-- "Texture Count", which writes over each chunk near the camera how many textures it carries, in red where it carries four. It is the same switch as "Texture count" in the view bar's Guides menu.
+- "Texture Count", which writes over each chunk near the camera how many textures it carries, in red where it carries four. It is the same switch as "Texture count" in the view bar's Guides menu;
+- the "Keys" button, whose hover text lists the tool's keys.
 
 The inspector shows "Brushes" (see [Brush presets](#brush-presets)), then "Brush Settings":
 
@@ -643,7 +657,7 @@ The "Chunk" section lists the layers of the pinned chunk, or of the chunk under 
 - "Remove", which removes the layer;
 - on the base layer, "Set Base" in place of Swap and Remove. It makes the brush's texture the base and keeps every blend map;
 - "Foliage", which opens the Foliage window for that layer;
-- "Animation": "Scrolls", with a direction (N to NW) and a "Speed" from 0 to 7, each step doubling it.
+- "Animation": "Scrolls", with a "Direction" (N to NW) and a "Speed" from 0 to 7, each step doubling it.
 
 Under the layers, "Clear to Base" removes every layer except the base. "Set Tile Base" makes the brush's texture the base of all 256 chunks of the tile, as one undo step.
 
@@ -684,18 +698,19 @@ Project sets are saved to the project's `GroundEffectTexture.dbc`, so the publis
 
 ### Holes
 
-Left click cuts a hole in the ground, one square at a time. Dragging cuts every square it crosses. Shift+left click fills a hole. The panel shows the square under the pointer and how many squares of the tile are cut.
+Left click cuts a hole in the ground, one square at a time. Dragging cuts every square it crosses. Shift+left click fills a hole. The panel shows the square under the pointer and how many squares of the tile are cut. The toolbar over the viewport has the "Keys" button alone, whose hover text lists these controls.
 
 Right-click menu: "Cut the whole chunk", "Fill the whole chunk".
 
 ### Water
 
-- "height" sets the water level. Space takes the level and liquid type from the water under the pointer. Ctrl+Space takes the level from the ground.
-- "Liquid" sets the type (Water, Ocean, Magma, Slime) and the "fishable" and "deep water" flags.
-- "Surface": "Flat" or "Sloped". Sloped water runs from a "start" height to an "end" height. Space sets the start and Shift+Space the end; with Ctrl held, the height comes from the ground. Past either end the water is flat.
+- "Height" sets the water level. Space takes the level and liquid type from the water under the pointer. Ctrl+Space takes the level from the ground.
+- "Liquid" sets the "Type" (Water, Ocean, Magma, Slime) and the "Fishable" and "Deep water" flags.
+- "Surface" on the toolbar over the viewport: "Flat" or "Sloped". Sloped water runs from a "Start" height to an "End" height, which take the place of "Height" in the inspector. Space sets the start and Shift+Space the end; with Ctrl held, the height comes from the ground. Past either end the water is flat.
 - The left button floods to the level, and Shift+left drains.
 - Alt+left sets the flags on existing water without changing its level.
 - Ctrl+left recalculates the water's depth from the ground below it.
+- The hover text of the "Keys" button on the toolbar lists the tool's keys, for the chosen surface.
 
 The panel shows how far the level is above or below the ground at the pointer, in red when the water would be under the ground.
 
@@ -704,10 +719,11 @@ The panel shows how far the level is above or below the ground at the pointer, i
 Areas paints area ids from the AreaTable tree.
 
 - Space takes the area under the pointer.
-- "radius" sets the brush size; Ctrl+wheel also changes it.
+- "Radius" sets the brush size; Ctrl+wheel also changes it.
 - "Edit…" opens the brush's area in the Zones workspace.
 - "+ Sub-area" adds a sub-area to the brush's zone. "+ Zone" adds a zone. Each puts the created area on the brush.
-- Under "Walkable", the "impassable" checkbox marks the chunk under the pointer as unwalkable for the server's navmesh.
+- Under "Walkable", the "Impassable" checkbox marks the chunk under the pointer as unwalkable for the server's navmesh.
+- The toolbar over the viewport has the "Keys" button alone, whose hover text lists the tool's keys.
 
 Right-click menu: "Use this area", "Edit this area", "Set impassable" or "Clear impassable".
 
@@ -720,44 +736,45 @@ Selecting:
 - Click selects the chunk under the pointer. Shift+click adds a chunk, or takes a selected one out.
 - Dragging selects a block of chunks. With Shift, the block is added.
 - Ctrl+A selects the tile under the pointer. Ctrl+Shift+A adds it.
-- "Whole tiles" grows the selection to every tile it touches.
-- The "All in <area>" button names the area of the chunk last clicked. It adds every chunk of the open tiles that has that area.
+- "Whole Tiles" grows the selection to every tile it touches.
+- The "Add All in <area>" button names the area of the chunk last clicked. It adds every chunk of the open tiles that has that area.
 - Escape or "Deselect" clears the selection.
+- The toolbar over the viewport has the "Keys" button alone, whose hover text lists the tool's keys.
 
 The panel has seven pages. Each action is one undo step.
 
 - "Paste":
   - "Copy" or Ctrl+C copies the selected chunks. Ctrl+V pastes them centred on the chunk under the pointer. Hold Ctrl to see where the paste will land.
   - "Turn 90°" turns the copy a quarter turn clockwise. "Mirror" swaps its east and west.
-  - "Paste includes" switches each part on or off: heights, textures, shading, holes, water, and area (which includes the impassable flag).
-  - "Height": "Absolute" keeps the copied heights. "Relative" moves them to the level of the ground they replace; water is not moved.
-  - "stitch each paste to the ground around it" joins the pasted block to its surroundings in the same step.
+  - "Paste Includes" switches each part on or off: heights, textures, shading, holes, water, and area (which includes the impassable flag).
+  - "Height": "Level" is "Absolute" or "Relative". Absolute keeps the copied heights. Relative moves them to the level of the ground they replace; water is not moved.
+  - "Stitch each paste to the ground around it" joins the pasted block to its surroundings in the same step.
   - Placed models are not copied.
 - "Stitch": joins the selection's border to the ground around it, so two pieces of terrain that do not meet become one surface.
-  - "Selection", "Ground" or "Halfway" chooses which side moves.
-  - "reach" sets how far from the border the ground follows, up to three chunks.
-  - "border" shows the tallest step along the border.
-  - "Stitch N chunks" applies.
+  - "Moving Side": "Selection", "Ground" or "Halfway" chooses which side moves.
+  - "Reach" sets how far from the border the ground follows, up to three chunks.
+  - "Border" shows how many sides of the selection meet open ground, and "Tallest Step" shows the tallest step along the border.
+  - "Stitch N Chunks" applies.
   - Doodads, WMOs and spawns on moved ground do not move with it.
 - "Area":
-  - "Set" writes the brush's area to every selected chunk. The area is chosen under "Choose an area" or on the Areas tool.
-  - The page lists the areas in the selection, each with "use".
+  - "Set" writes the brush's area to every selected chunk. The area is chosen under "Areas" or on the Areas tool.
+  - The page lists the areas in the selection, each with "Use".
   - Under "Walkable", "Impassable" and "Passable" set the flag the server's navmesh reads.
 - "Holes": "Cut" and "Fill" cut or fill all sixteen squares of every selected chunk.
 - "Paint":
-  - "Base" makes the chosen texture the base of every selected chunk and keeps every blend map. "Clear to base" removes every other layer.
-  - "Selection textures" lists the textures in the selection. Each has three buttons:
-    - "base" moves the texture to the base of every selected chunk and recalculates the blend maps so the ground looks the same. A chunk without the texture gains it under its base. A chunk that carries four other textures is skipped.
-    - "swap" replaces the texture with the chosen texture.
-    - "×" removes it where it is not the base.
-  - "Choose a texture" opens the tileset list.
+  - "Set Base" makes the chosen texture the base of every selected chunk and keeps every blend map. "Clear to Base" removes every other layer.
+  - "Selection Textures" lists the textures in the selection. Each has three buttons:
+    - "To Base" moves the texture to the base of every selected chunk and recalculates the blend maps so the ground looks the same. A chunk without the texture gains it under its base. A chunk that carries four other textures is skipped.
+    - "Swap" replaces the texture with the chosen texture.
+    - "Remove" removes it where it is not the base.
+  - "Tilesets" opens the tileset list.
 - "Foliage":
   - The page lists each texture in the selection with the number of its layers and a "Foliage" field. The field reads "Mixed: N sets" when its layers grow different sets. A click on the field opens the Foliage window for every layer of that texture in the selection.
   - "Set All Layers…" opens it for every layer of the selected chunks.
   - "Clear Foliage" makes every layer grow nothing.
 - "Water":
-  - "liquid cells" counts the wet and buried cells in the selection. A cell is buried when the ground is above its surface at all four corners and at the centre. A cell at a shore that the ground covers only in part is kept, and so is a cell under a hole.
-  - "Remove N buried cells" removes them. A chunk left with no wet cell loses its liquid.
+  - "Liquid Cells" counts the wet and buried cells in the selection. A cell is buried when the ground is above its surface at all four corners and at the centre. A cell at a shore that the ground covers only in part is kept, and so is a cell under a hole.
+  - "Remove N Buried Cells" removes them. A chunk left with no wet cell loses its liquid.
 
 Right-click menu, in four groups:
 
@@ -770,20 +787,22 @@ Right-click menu, in four groups:
 
 ## Models and buildings
 
-Doodads places models (M2) and WMO places buildings. Doodads has three modes, "Select", "Place" and "Cluster"; WMO has "Select" and "Place". 1, 2 and 3 choose a mode (1 and 2 on WMO). Tab switches between Select and the placing mode used last. The right-click menu offers "Switch to <mode>" for the other modes.
+Doodads places models (M2) and WMO places buildings. Doodads has three modes, "Select", "Place" and "Cluster"; WMO has "Select" and "Place". The toolbar over the viewport chooses the mode, and so do 1, 2 and 3 (1 and 2 on WMO). Tab switches between Select and the placing mode used last. The right-click menu offers "Switch to <mode>" for the other modes. "Keys" on the toolbar lists the chosen mode's mouse and keyboard controls in its hover text.
 
 ### Placing
 
-1. Find a model with "search the models" or in the folders. "Starred" and "Recent" keep models you use often; the star on a row stars it. "show folder" opens the chosen model's folder.
+1. In the inspector, find a model with "Search the models" or in the folders. "Starred" and "Recent" keep models you use often; the star on a row stars it. "Show Folder" opens the chosen model's folder.
 2. The chosen model is named under "Model", with a preview that a drag turns.
-3. Under "Placement", set "turn", and for doodads "scale". Under "Ground", "align each placement to the slope" tilts a doodad to the ground under the pointer.
+3. Under "Placement", set "Turn", and for doodads "Scale". Under "Ground", "Align each placement to the slope" tilts a doodad to the ground under the pointer.
 4. Left click places. The model stays on the cursor for the next click. Escape clears it from the cursor.
+
+A switch to Select, to another tool or to a playtest takes the model off the cursor and keeps it, with its turn, tilt and scale. The model is on the cursor again when the tool is next in Place. Doodads and WMO each keep their own model. Escape in Place forgets it.
 
 A placement stands on the surface under the pointer, so a model dropped on a bridge or a building's floor stands on it.
 
 `,` and `.` turn the model 15°, 45° with Shift. Alt and mouse movement turn it freely; add Ctrl to snap to 15°. Ctrl+wheel scales a doodad.
 
-"Scatter" with "randomise after each placement" picks a random turn ("any angle"), "scale" between two values and "tilt" for the next placement. The preview shows what the next click writes. "Randomise now" picks new values without placing anything. A building takes the turn only.
+"Scatter" with "Randomise after each placement" picks a random turn ("Any angle"), a scale between "Scale From" and "Scale To" and a tilt of at most "Tilt" for the next placement. The preview shows what the next click writes. "Randomise Now" picks new values without placing anything. A building takes the turn only.
 
 ### Cluster placement
 
@@ -791,27 +810,27 @@ Cluster mode, on Doodads only, places several doodads with one click.
 
 - "Models": the models a cluster is made of. Click a model under "Add Models" to add it, or a highlighted one to take it out; "×" also takes one out. Each doodad is one of these, each equally likely.
 - "Cluster":
-  - "count": how many doodads one click places, up to 256. "random count" draws the number between two bounds for each click.
-  - "radius": the circle the doodads are spread over, drawn round the pointer. "random radius" draws it between two bounds.
-  - "spacing": the least distance between two doodads of one cluster. "random spacing" draws it between two bounds. A doodad that finds no room is left out, and the panel says so, for example "next click: 18 of 20 fit at 2.0 yd spacing".
-  - "New layout" draws new places, models, count, radius and spacing, and with Scatter on new turns, sizes and tilts.
+  - "Count": how many doodads one click places, up to 256. "Random count" draws the number between two bounds, "Count From" and "Count To", for each click.
+  - "Radius": the circle the doodads are spread over, drawn round the pointer. "Random radius" draws it between two bounds, "Radius From" and "Radius To".
+  - "Spacing": the least distance between two doodads of one cluster. "Random spacing" draws it between two bounds, "Spacing From" and "Spacing To". A doodad that finds no room is left out, and the panel says so, for example "Next click: 18 of 20 fit at 2.0 yd spacing".
+  - "New Layout" draws new places, models, count, radius and spacing, and with Scatter on new turns, sizes and tilts.
 
-Every doodad of the next click is previewed where it will land. Each stands on the terrain under its own position, and leans onto the slope there with "align each placement to the slope" on. "turn" turns the whole cluster about its centre, and `,` and `.` turn it. With Scatter on ("randomise each doodad"), each doodad gets its own turn, scale and tilt; with it off, every doodad takes "turn" and "scale".
+Every doodad of the next click is previewed where it will land. Each stands on the terrain under its own position, and leans onto the slope there with "Align each placement to the slope" on. "Turn" turns the whole cluster about its centre, and `,` and `.` turn it. With Scatter on ("Randomise each doodad"), each doodad gets its own turn, scale and tilt; with it off, every doodad takes "Turn" and "Scale".
 
 A click writes the whole cluster as one undo entry and selects it as a group. A new layout is drawn for the next click. Escape returns to Select.
 
 ### Selecting and editing
 
 - Click selects and drops the rest. A click on nothing drops the selection. Shift+click adds a placement, which becomes the primary, or removes it. Dragging on empty ground selects every placement whose origin is inside the rectangle; with Shift it adds to the selection.
-- "Select all of this model" adds every unlocked placement of the primary's model in the open tiles.
+- "Select All of This Model" adds every unlocked placement of the primary's model in the open tiles.
 - Drag moves the selection across the ground. Ctrl+drag drops it onto the ground.
-- "Position" and "Rotation" take exact values for the primary. x is north, y is west, z is up. Rotation is "about x", "about y" and "about z", about the world's axes.
+- "Position" and "Rotation" take exact values for the primary. x is north, y is west, z is up. Rotation is "About X", "About Y" and "About Z", about the world's axes.
 - Delete removes the selection as one undo entry.
 - Ctrl+D with one placement selected puts a copy on the cursor at the same turn and size ("Duplicate" in the panel does the same). With several selected it copies the group two yards north.
 - Ctrl+C copies the selection. Ctrl+V pastes it with the primary's origin on the surface under the pointer.
-- "Replace model…" opens a model list. Choose a model, then "Replace N doodads" (or WMOs) gives every selected placement that model as one undo entry. A doodad keeps its position, rotation and scale. A WMO keeps its position and rotation, takes its bounds from the new WMO, and a doodad set the new WMO lacks becomes set 0. "Cancel" closes the list.
+- "Replace Model…" opens a model list. Choose a model, then "Replace N Doodads" (or WMOs) gives every selected placement that model as one undo entry. A doodad keeps its position, rotation and scale. A WMO keeps its position and rotation, takes its bounds from the new WMO, and a doodad set the new WMO lacks becomes set 0. "Cancel" closes the list.
 
-With several selected, the panel says how many and of which models. The values shown are the primary's, drawn brighter in the world; dragging, the handles, the keys and Delete act on all of them. "All N" lists the members: click one to make it the primary, "×" takes it out. "Select primary only" keeps the primary, "Clear" drops the selection. A group holds doodads or buildings, not both.
+With several selected, the panel says how many and of which models. The values shown are the primary's, drawn brighter in the world; dragging, the handles, the keys and Delete act on all of them. "All N" lists the members: click one to make it the primary, "×" takes it out. "Select Primary Only" keeps the primary, "Clear" drops the selection. A group holds doodads or buildings, not both.
 
 | Key | Doodads | WMO |
 |---|---|---|
@@ -822,13 +841,13 @@ With several selected, the panel says how many and of which models. The values s
 | Alt + mouse | Turn freely; with Ctrl, in 15° steps | The same |
 | Ctrl+wheel | Scale 5% | none |
 
-Doodads have "Align to slope" and "Stand upright", which act on every selected doodad, each on the ground under its own origin; "ctrl-drag also aligns to slope"; and "scale" under "Scale". Buildings have a "doodad set" and a "name set" under "Sets", and cannot be scaled. "Bounds" shows a building's box, which is fitted to the drawn geometry when a drag ends.
+Doodads have "Align to Slope" and "Stand Upright", which act on every selected doodad, each on the ground under its own origin; "Ctrl + drag also aligns to slope"; and "Scale" under "Scale". Buildings have a "Doodad Set" and a "Name Set" under "Sets", and cannot be scaled. "Bounds" shows a building's box, which is fitted to the drawn geometry when a drag ends.
 
 A placement moved across a tile border is moved into the tile that holds its origin.
 
 ### Handles
 
-"Handles" chooses what is drawn on the primary:
+"Handles", on the second row of the toolbar in Select, chooses what is drawn on the primary:
 
 - "Move": three arrows. Drag an arrow to move along one axis.
 - "Turn": three rings. Drag a ring to turn about one axis.
@@ -838,7 +857,7 @@ A handle keeps the same size on screen at any distance. The part of a handle ins
 
 ### Locked placements
 
-"Lock" under "Selection", or on a placement's right-click menu, locks the selected doodads or WMOs. A locked placement cannot be clicked, is left out of a rectangle and of "Select all of this model", and is not carried when the ground under it moves, so nothing moves or deletes it by accident. Locked placements are drawn in red while their tool is chosen. The panel shows how many are locked on the map, with "Unlock all".
+"Lock" under "Selection", or on a placement's right-click menu, locks the selected doodads or WMOs. A locked placement cannot be clicked, is left out of a rectangle and of "Select All of This Model", and is not carried when the ground under it moves, so nothing moves or deletes it by accident. Locked placements are drawn in red while their tool is chosen. The panel shows how many are locked on the map, with "Unlock All".
 
 Locks are saved at once to `editor\locks\<Map>.placements.txt` in the project. They are not on the undo history and are not published.
 
@@ -857,16 +876,16 @@ The WMO menus are the same, without the doodad-only entries.
 
 Edits `Light.dbc` and the tables it references. Every light near the camera is marked. Click a light to select it. Drag its centre to move it across the plane at its own height, or drag its inner or outer ring to change "FalloffStart" or "FalloffEnd". The height is set in the form only.
 
-The inspector shows the light's position and falloff with "Fly to", and "falloff", which draws or hides the selected light's two spheres. "Sphere" edits "x", "y", "z", "FalloffStart" and "FalloffEnd" in yards. A "FalloffEnd" of zero makes the row the map's default light, shown as "default light (whole map)". "Conditions" lists the five `LightParams` rows the light uses.
+The inspector shows the light's position and falloff with "Fly To". "Show Falloff" on the toolbar over the viewport draws or hides the selected light's two spheres. "Sphere" edits "X", "Y", "Z", "FalloffStart" and "FalloffEnd" in yards. A "FalloffEnd" of zero makes the row the map's default light, shown as "Default light, whole map". "Conditions" lists the five `LightParams` rows the light uses.
 
 A `LightParams` field has two buttons:
 
-- "copy" copies the row with its 18 colour bands and 6 float bands and points the field at the copy. Other lights that use the original keep it.
-- "+ new", on an empty field, creates a row copied from this light's clear `LightParams`, or the Eastern Kingdoms default light's, with its bands.
+- "Copy" copies the row with its 18 colour bands and 6 float bands and points the field at the copy. Other lights that use the original keep it.
+- "New", on an empty field, creates a row copied from this light's clear `LightParams`, or the Eastern Kingdoms default light's, with its bands.
 
-Following a `LightParams` link opens that row in the inspector, with "< back" to return. A `LightParams` row shows its bands under "Colours (N bands)" and "Float values (N bands)": each band is a strip of its colour or value over the day, with its keys marked and the world's current hour across it. Open a band to edit its keys; "+ key" adds one in the longest gap and "×" removes one. The `Skybox` field names a `LightSkybox` row, a model path, which the viewport draws.
+Following a `LightParams` link opens that row in the inspector, with "Back" to return. A `LightParams` row shows its bands under "Colours (N bands)" and "Float values (N bands)": each band is a strip of its colour or value over the day, with its keys marked and the world's current hour across it. Open a band to edit its keys; "Add Key" adds one in the longest gap and "×" removes one. The `Skybox` field names a `LightSkybox` row, a model path, which the viewport draws.
 
-"New light" arms a click on the ground. The light it makes is at full strength to 50 yards and fades out at 120 yards, with the `LightParams` of the selected light or the map's default light. Escape or a second click on "New light" disarms it. "New default light" appears on a map that has none. "Browse all N lights…" lists every row of `Light.dbc`, including lights not on screen, and moves the camera to the one chosen.
+"New Light", the mode beside "Select" on the toolbar, arms a click on the ground. The light it makes is at full strength to 50 yards and fades out at 120 yards, with the `LightParams` of the selected light or the map's default light. Escape or "Select" disarms it. "Keys" on the toolbar lists the chosen mode's controls in its hover text. "New Default Light" appears on a map that has none. "Browse All N Lights…" lists every row of `Light.dbc`, including lights not on screen, and moves the camera to the one chosen.
 
 ### Taxi
 
@@ -880,10 +899,11 @@ A toolbar over the viewport sets what a click does:
 - "Add Points": with a path selected, click near it to insert a point into the nearest leg, at "Clearance" above the ground or the leg's own height, whichever is higher.
 - "Show Transports" also draws the boat and zeppelin paths.
 - "Show Unselected" draws every path. Off, only the selected path and the selected node's paths are drawn and can be clicked. The right-click menu has the same switch: "Show unselected paths" or "Hide unselected paths".
+- "Keys" lists the chosen mode's mouse and keyboard controls in its hover text.
 
 Delete removes the selected point. Escape disarms the mode, then drops the point, the path and the node in turn.
 
-The inspector starts with the map's counts, "Validation: N warning(s)" when the server would report problems, and "Flight Map":
+The inspector starts with the map's counts, "Validation: N warnings" when the server would report problems, and "Flight Map":
 
 - "Standard": a continent whose flight map is game data.
 - "None", with "Create": adds a `WorldMapContinent.dbc` row for the map and draws its flight map picture from the minimap tiles.
@@ -902,28 +922,30 @@ When more than one of a node, a path and a point is selected, a breadcrumb choos
 Edits `AreaTrigger.dbc`, the spheres and boxes the client reports entering, and the server rows that say what each one does. A trigger is coloured by what the server does with it: purple a teleport, green an inn, gold a quest objective, red a battleground entrance, pink a script, blue nothing the editor has read.
 
 - Click selects a trigger. Drag moves it, Ctrl+drag moves it vertically.
-- "New trigger" arms a click on the ground that makes a sphere of "new radius".
-- Delete removes the selected trigger. A shipped trigger asks first in the panel ("Remove trigger" or "Cancel"). Escape disarms, cancels a pick, then deselects.
+- "New Trigger", the mode beside "Select" on the toolbar over the viewport, arms a click on the ground that makes a sphere. While it is chosen, the toolbar's second row has "Radius", the radius of that sphere.
+- Delete removes the selected trigger. A shipped trigger asks first in the panel ("Remove Trigger" or "Cancel"). Escape cancels a pick, then returns to Select, then deselects.
+- "Keys" on the toolbar lists these controls in its hover text.
 
-A selected trigger has "shape" ("Sphere" or "Box"), "radius" or "length", "width", "height" and "yaw", its position, "Fly to", "Snap to ground" and "Remove". "Server rows" holds:
+A selected trigger has "Shape" ("Sphere" or "Box"), "Radius" or "Length", "Width", "Height" and "Yaw", its position, "Fly To", "Snap to Ground" and "Remove". "Server Rows" holds:
 
-- "label", "C++ script" (with a list of the script names other triggers use), "script id" with "Create script" or "Open script", "condition" and "cooldown";
+- "Label", "C++ Script" (with a list of the script names other triggers use), "Script ID" with "Create Script" or "Open Script", "Condition" and "Cooldown";
 - "Teleport", with its target and requirements;
 - "Inn";
-- "quest", a quest whose exploration objective the trigger completes;
-- "Battleground entrance", with "side", "battleground", "exit map", the exit position, "facing" and "label".
+- "Quest", a quest whose exploration objective the trigger completes;
+- "Battleground entrance", with "Side", "Battleground", "Exit Map", the exit position, "Exit Facing" and "Label".
 
-A teleport's target and an entrance's exit are set with "Pick on this map" or "Pick on <map>…": press on the ground for the position, drag before releasing to set the facing, and release to write both. A pick on another map opens that map and returns to the trigger afterwards. Escape or "Cancel" stops a pick.
+A teleport's target and an entrance's exit are set with "Pick on This Map" or "Pick on <map>…": press on the ground for the position, drag before releasing to set the facing, and release to write both. A pick on another map opens that map and returns to the trigger afterwards. Escape or "Cancel" stops a pick.
 
 ### Graveyards
 
 Edits `WorldSafeLocs.dbc`, the places a released spirit appears, and the server's `game_graveyard_zone` and `world_safe_locs_facing` rows. A grey graveyard is linked to no zone.
 
-- Click selects, drag moves, Ctrl+drag moves vertically. Delete removes; a shipped graveyard asks first in the panel ("Remove graveyard" or "Cancel"). Escape disarms, then deselects.
-- "New graveyard" arms a click on the ground.
-- "Link zone" arms a click that links the zone under the pointer, for both factions. The panel names the zone under the pointer.
+- Click selects, drag moves, Ctrl+drag moves vertically. Delete removes; a shipped graveyard asks first in the panel ("Remove Graveyard" or "Cancel"). Escape disarms, then deselects.
+- "New Graveyard", a mode beside "Select" on the toolbar over the viewport, arms a click on the ground.
+- "Link Zone", also a mode on the toolbar, arms a click that links the selected graveyard to the zone under the pointer, for both factions. While it is chosen, the toolbar's second row names the zone under the pointer.
+- "Keys" on the toolbar lists these controls in its hover text.
 
-A selected graveyard has "name", its position, "Fly to", "Snap to ground" and "Remove". Under "Server rows" it has "facing", and "Linked zones (N)" lists its zones, each with a faction and "Unlink"; a link marked for removal has "Cancel removal".
+A selected graveyard has "Name", its position, "Fly To", "Snap to Ground" and "Remove". Under "Server Rows" it has "Facing", and "Linked Zones (N)" lists its zones, each with a faction and "Unlink"; a link marked for removal has "Cancel removal".
 
 ### Sweep
 
@@ -933,9 +955,9 @@ Finds or replaces a texture, model or building path on every tile of the map. Ch
 
 ### Measure
 
-Click a first point and then a second to measure between them; a third click starts over. "Between points" shows the distance, the horizontal distance, the rise, the slope of the line and the facing from the first point to the second in radians, with "Copy". The viewport writes the distance at the middle of the line, and a point's height above the ground when it is on a model.
+Click a first point and then a second to measure between them; a third click starts over. "Between Points" shows the distance, the horizontal distance, the rise, the slope of the line and the facing from the first point to the second in radians, with "Copy Facing". The viewport writes the distance at the middle of the line, and a point's height above the ground when it is on a model.
 
-"First point" and "Second point" show each point's position, with "Copy position" and "Copy .go command", its surface, ground height, tile, chunk, area, slope and water. "Under the pointer" shows the same for the point under the pointer. "Clear points" or Escape clears the points. Measure changes nothing.
+"First Point" and "Second Point" show each point's position, with "Copy Position" and "Copy .go Command", its surface, ground height, tile, chunk, area, slope and water. "Under the Pointer" shows the same for the point under the pointer. "Clear Points" or Escape clears the points. "Keys" on the toolbar over the viewport lists the tool's controls in its hover text. Measure changes nothing.
 
 ## Maps
 
@@ -1017,7 +1039,7 @@ Under the picture, "Map" holds:
 - "Remove map" removes the row and its overlays' rows. Ctrl+Z puts them back; the pictures stay in the project.
 - On a continent, "On the whole world" has "Placement" ("x", "y", "scale" and "Centre"), "Tiles", and "Show on the whole world".
 
-"New Map…" makes a "Zone map" (for a zone with no map yet, on a map that has a continent), a "Continent" (for a map with no continent; its `WorldMapContinent` row also gives the map a flight map) or a "Single map" (for a map with no continent, and one of its zones). Set "Directory", then "Create" adds the rows as one undo entry and fits the rectangle once the map's tiles are read.
+"New map…" makes a "Zone map" (for a zone with no map yet, on a map that has a continent), a "Continent" (for a map with no continent; its `WorldMapContinent` row also gives the map a flight map) or a "Single map" (for a map with no continent, and one of its zones). Set "Directory", then "Create" adds the rows as one undo entry and fits the rectangle once the map's tiles are read.
 
 ## Client tables
 
@@ -1050,15 +1072,15 @@ strip at the head of the list switches between the parts. The "Displays" part
 of "Creatures" has three tabs: "Display Info", "Extra" and "Model Data".
 
 A reference field opens the table it points to. When another workspace edits
-that table, the editor switches to that workspace, and "< back" at the head of
+that table, the editor switches to that workspace, and "Back" at the head of
 the form returns. A table that no workspace edits, such as `SpellIcon`, opens
 in the current workspace.
 
 "Tables" lists every file of `DBFilesClient\` in the archives. Each row says
-whether the table opens with "named fields" or "numbered fields", and how an
+whether the table opens with "Named fields" or "Numbered fields", and how an
 edit reaches the server: "the server reads <table>", "the server reads the
 file", "the server reads the file, and <table> for a new row", or "not sent to
-the server". A table the project has changed is marked "edited", or "unsaved".
+the server". A table the project has changed is marked "Edited", or "Unsaved".
 Choose a table to open it; "‹ Tables" returns to the list. A table with numbered
 fields shows every field as a number, with a decimal box where the four bytes
 read as a float and a text box where the column holds strings.
@@ -1073,31 +1095,31 @@ read as a float and a text box where the column holds strings.
   the changelist. "Discard" takes
   back every unsaved edit to the table, as the Changes window's "Discard"
   does, so its rows are as the project folder's copy holds them, or the
-  archives' copy when the project has none. A joined editor in a shared
-  session has neither, since the host saves.
-- "+ New", "Clone" and "Delete" work on rows, each as one undo entry. "+ New"
+  archives' copy when the project has none. For a joined editor in a shared
+  session, "Save" submits its edits to the host, which saves them.
+- "New", "Clone" and "Delete" work on rows, each as one undo entry. "New"
   adds a blank row under the next id. "Clone" copies the open row under the
   next id and appends " (copy)" to its name.
-- The head of the form shows the row's picture, name and id, "unsaved" while
-  the table has unsaved changes, and "copy id", which puts the id on the
+- The head of the form shows the row's picture, name and id, "Unsaved" while
+  the table has unsaved changes, and "Copy ID", which puts the id on the
   clipboard.
 - Each field has a control for its type. Hovering a field's name shows its
   field index and what the column holds. A text field is written when its box
-  loses focus. Strings in other languages are folded under "Other locales (N)"
+  loses focus. Strings in other languages are folded under "Other Locales (N)"
   at the end of each section.
 - A flags field shows its value in hex and the names of its set bits. "…"
   opens a checklist of the named bits. Set bits that have no name are shown as
   "+0x… unnamed".
 - A reference field shows the id, "…" to open a picker, and the name of the
-  row it points to as a link. It reads "none" when it points at nothing, and
-  "no <table> row has this id" when the row is missing. A reference to a sound
+  row it points to as a link. It reads "None" when it points at nothing, and
+  "No <table> row has this id" when the row is missing. A reference to a sound
   has "▶", which plays it and stops it. A row with different day and night
-  sounds has "▶ day" and "▶ night"; an item's sounds have "▶ pick up" and
-  "▶ put down".
-- Beside an empty visual, kit or effect reference, "+ new" makes a blank row
-  and points the field at it. Beside a kit or effect reference, "copy" copies
+  sounds has "▶ Day" and "▶ Night"; an item's sounds have "▶ Pick Up" and
+  "▶ Put Down".
+- Beside an empty visual, kit or effect reference, "New" makes a blank row
+  and points the field at it. Beside a kit or effect reference, "Copy" copies
   the row and points the field at the copy, so a shared row can be changed for
-  one user only. A visual reference has "clone chain" instead.
+  one user only. A visual reference has "Clone Chain" instead.
 - "Used by" lists the rows that point at this one (not on spell and area
   forms). With a world database it also lists the creature, game object, item
   and quest templates that name the row. Each name is a link.
@@ -1110,10 +1132,10 @@ double-click, press Enter or click "Use". A `SoundEntries` picker has "▶" on
 each row and "Import…", which opens Import Sound and sets the field to the row
 the import adds; see [Importing sounds](#importing-sounds).
 
-The inspector shows the table's file, its rows and fields, "saved" or
-"unsaved", and "Save", which saves the project as Ctrl+S does. Under that it draws a display row or an item set
+The inspector shows the table's file, its rows and fields, "Saved" or
+"Unsaved", and "Save", which saves the project as Ctrl+S does. Under that it draws a display row or an item set
 (see [Display info](#display-info) and [Item sets](#item-sets)), then lists
-the open row's "References" and its "Used by" rows with the column that names
+the open row's "References" and its "Used By" rows with the column that names
 it.
 
 ### Right-click menus in the tables
@@ -1132,8 +1154,8 @@ Right-click a row in the list for its commands: the table's own, then "Clone",
 "Delete" reads "Delete: N references will point at nothing" when other rows
 point at the row. Every command is also a button on the list or the form.
 
-Right-click a field's name for "Open <table> <id>", "Choose…", "Set to none"
-and "Copy value <value>". A block for another table's row on a form, such as a
+Right-click a field's name for "Open <table> <id>", "Choose…", "Set to None"
+and "Copy Value <value>". A block for another table's row on a form, such as a
 spell's skill line rows, takes a right-click on its title for "Open <table>
 <id>" and "Remove".
 
@@ -1146,21 +1168,21 @@ the creature and game object template lists have "Copy entry <entry>".
 A spell's form starts with a "Learning" section. Both parts are optional, and
 most spells need neither.
 
-- "Skill lines" lists the `SkillLineAbility` rows that put the spell in a
+- "Skill Lines" lists the `SkillLineAbility` rows that put the spell in a
   skill line, each with its classes, races, whether learning the line teaches
-  the spell, and the spell that supersedes it. "Skill values" folds the
-  recipe columns. "+ Add to a skill line" adds a row and opens the skill line
+  the spell, and the spell that supersedes it. "Skill Values" folds the
+  recipe columns. "Add to Skill Line" adds a row and opens the skill line
   picker. A mask of zero means every race or every class.
-- "Taught by" lists the spells that teach this one, each marked "instant" or
-  "has a cast time". "+ Create a teaching spell" makes one: a spell under the
+- "Taught By" lists the spells that teach this one, each marked "Instant" or
+  "Has a cast time". "Create Teaching Spell" makes one: a spell under the
   next id with Learn Spell as its first effect, an instant cast, and this
   spell's name, rank and icon. A trainer's list can then name it; see
   [Vendors and trainers](#vendors-and-trainers). A spell whose only teaching
-  spell has a cast time is offered "+ Create an instant teaching spell".
-- On a teaching spell the section says "This is a teaching spell for" and
-  links the spell it teaches.
+  spell has a cast time is offered "Create Instant Teaching Spell".
+- On a teaching spell the section starts with "Teaches", which links the
+  spell it teaches.
 
-Each row block has "open", which opens the row with every field, and "remove".
+Each row block has "Open", which opens the row with every field, and "Remove".
 
 ### Skills
 
@@ -1171,20 +1193,20 @@ dbc folder and the abilities from `skill_line_ability`, each at startup.
 
 A skill line's form lists two blocks after its own fields:
 
-- "Races and classes": the `SkillRaceClassInfo` rows that say which races and
+- "Races and Classes": the `SkillRaceClassInfo` rows that say which races and
   classes have the line, each with its classes, races, flags, minimum level
-  and tier. "+ Add race/class row" adds one for every race and every class.
+  and tier. "Add Race/Class Row" adds one for every race and every class.
 - "Abilities (N)": one line per spell in the line, with its icon, name, rank,
-  races and classes, and "learned with the line" where learning the line
+  races and classes, and "Learned with the line" where learning the line
   teaches it. A recipe shows the skill values at which it turns yellow, green
-  and grey, in those colours. The name opens the spell in "Spells"; "edit"
-  opens the `SkillLineAbility` row; "remove" deletes it. From 12 abilities on,
-  a filter searches by name, rank, class or spell id. "+ Add a spell…" adds a
+  and grey, in those colours. The name opens the spell in "Spells"; "Edit"
+  opens the `SkillLineAbility` row; "Remove" deletes it. From 12 abilities on,
+  a filter searches by name, rank, class or spell id. "Add Spell…" adds a
   row and opens the spell picker. "Show in Abilities" opens the "Abilities"
   part filtered by the line's name.
 
 A `SkillTiers` row's form shows its 16 steps as "Steps (N)", with "MaxValue"
-and "Cost" side by side. Type into the empty line to add a step. "remove" on
+and "Cost" side by side. Type into the empty line to add a step. "Remove" on
 the last step sets both of its values to 0.
 
 ### Item sets
@@ -1193,7 +1215,7 @@ the last step sets both of its values to 0.
 database and opens the item picker with "…". Each bonus is a spell and the
 number of pieces that grants it. Choosing an item in the picker also writes
 the set's id on that item. If a typed number leaves the set and the item
-disagreeing, the form says "item set_id is N" and offers "write set_id" to fix
+disagreeing, the form says "item set_id is N" and offers "Write set_id" to fix
 the item. Without a world database an item column is its number.
 
 Under "Appearance" the inspector shows one body wearing every item of the set.
@@ -1225,7 +1247,7 @@ wearing the row's skin. Click a row to preview it, then double-click or click
 
 A texture field ("TextureVariation1" to "TextureVariation3", "ModelTexture1",
 "ModelTexture2", "InventoryIcon" and the body texture fields) shows a
-thumbnail and "browse…". The texture browser lists the textures in the folder
+thumbnail and "Browse…". The texture browser lists the textures in the folder
 the field's file is read from: the folder of the display's model for a skin,
 the item model's folder for an item skin, `Interface\Icons\` for an icon, and
 the body part's folder under `Item\TextureComponents\` for a body texture. It
@@ -1251,25 +1273,26 @@ effect models it attaches to the body. The preview plays any of them.
   "Impact", "Channel", "State"), then the missile and the area, beside a
   preview of the spell being cast.
 - The head card sets the spell's visual and says how many spells share it.
-  "choose…" picks one from the list, "from spell…" takes another spell's look,
-  "+ new" makes a visual for a spell that has none, and "copy visual" copies a
-  visual other spells share so that changes affect this spell only.
-- Each phase card sets its kit: "choose…", then "+ new" on an empty phase, or
-  "copy" and "clear" on a filled one. "clear" empties the phase and keeps the
+  "Choose…" picks one from the list, "Choose from Spell…" takes another
+  spell's look, "New" makes a visual for a spell that has none, and "Copy
+  Visual" copies a visual other spells share so that changes affect this spell
+  only.
+- Each phase card sets its kit: "Choose…", then "New" on an empty phase, or
+  "Copy" and "Clear" on a filled one. "Clear" empties the phase and keeps the
   kit row.
 - The "Visuals" and "Kits" tabs show the preview beside the fields. A kit is
   played by itself on one body. An edit shows in the preview a moment after
   it is made.
 
-"from spell…" opens "Visual for spell N from another spell", which searches
-spells with a visual by name or id and plays the selected one. "Share visual"
-makes both spells use one visual, so a later change affects both. "Clone
-visual" copies the visual with its kits and effects for this spell alone.
-"Clone chain" on a visual makes the same copy without assigning it, and opens
-the copy.
+"Choose from Spell…" opens "Visual for spell N from another spell", which
+searches spells with a visual by name or id and plays the selected one. "Share
+Visual" makes both spells use one visual, so a later change affects both.
+"Clone Visual" copies the visual with its kits and effects for this spell
+alone. "Clone Chain" on a visual makes the same copy without assigning it, and
+opens the copy.
 
 The preview pane has "Play" or "Pause", "Restart", "◀" and "▶" to step
-between phases, "loop" and "spin". Click or drag the bar under the picture to
+between phases, "Loop" and "Spin". Click or drag the bar under the picture to
 move to a point in the cast. Drag the picture to orbit and use the wheel to
 zoom.
 
@@ -1277,9 +1300,9 @@ zoom.
 
 An effect row shows its model in the preview, with "wireframe", "spin",
 "particles" and "Reset view". The model path field has a dot that is green
-when the archives hold the model, and "browse…".
+when the archives hold the model, and "Browse…".
 
-"Position on character…" opens the attachment lab. Choose a "Reference
+"Position on Character…" opens the attachment lab. Choose a "Reference
 character" and an "Attachment point", then set the offset, rotation and scale;
 "Reset" returns them to zero and one. Drag an arrow to move the model along
 it, or Shift+drag to move it across the screen.
@@ -1295,14 +1318,14 @@ model to it. "Close" hides the reference character and keeps the numbers.
 
 ### Zones
 
-The "Zones" part of "Zones" edits `AreaTable.dbc`. "+ New Zone" makes a zone
+The "Zones" part of "Zones" edits `AreaTable.dbc`. "New Zone" makes a zone
 on the open map, with an explore bit no other area holds. The server reads the
 id, map, parent, explore bit, flags, level, name, team and liquid type from
 `area_template` after a restart; only the client reads the sound columns and
 the other languages.
 
-A zone's form lists its sub-areas under "Sub-areas (N)", with "+ Add a
-sub-area". A sub-area made there takes the zone's map, flags, reverb, ambience
+A zone's form lists its sub-areas under "Sub-areas (N)", with "Add
+Sub-Area". A sub-area made there takes the zone's map, flags, reverb, ambience
 and music, and an unused explore bit. A sub-area's "Parent" field links back
 to its zone.
 
@@ -1327,13 +1350,13 @@ that name its rows:
 | "Items" | `ItemGroupSounds` | an item's pick-up and put-down sounds |
 
 A `SoundEntries` row's form has "▶ Play" at its head, which plays one of the
-row's files, chosen by weight, at the row's volume. "Import sound…" opens
+row's files, chosen by weight, at the row's volume. "Import Sound…" opens
 Import Sound and opens the row it adds.
 
 The "Files (N)" section replaces the twenty File and Weight columns. Each file
 is a line with "▶", its name, its weight, the share of plays that pick it,
 "Change…" and "Remove", and a second line with its format and length. "Remove"
-moves the later files up one slot. "+ Add file…" opens the file dialog on the
+moves the later files up one slot. "Add File…" opens the file dialog on the
 first empty slot. When another slot holds a file, the dialog lists the WAV and
 MP3 files in the row's Directory. Otherwise it lists every one under `Sound\`,
 and the row's Directory becomes the chosen file's folder.
@@ -1387,7 +1410,7 @@ files are not listed.
   when several are chosen.
 
 The details show "Type", "Size", "Imported From" for an imported file, "Made
-from" and "Standing" for a generated one, and "Archives": "replaces the
+From" and "Standing" for a generated one, and "Archives": "replaces the
 archives' file at this path" or "a new path". A texture adds "Dimensions",
 "Compression" and "Mipmaps", and a ground texture its "Gloss File". A model
 adds "Geometry", "Bones", "Textures" and its "Sequences". A sound adds
@@ -1572,15 +1595,19 @@ Creatures and Objects, under "Spawns" on the rail, edit creature and game object
 
 #### Toolbar
 
-The toolbar over the viewport has:
+The first row of the toolbar over the viewport has:
 
-- "Select" and "Place".
-- In Select, "Handles": "Move", "Turn" (the ring about Z) and "Off".
-- In Place, "Random Facing": each placed spawn gets a random facing. The spawn on the pointer shows the next one.
+- "Select" and "Place", as one control.
 - "Models", and "Max", the number of spawns drawn as models, nearest first. Off, every spawn is a marker.
 - "Markers": off, only the selected, hovered and grouped spawns are marked. Spawns can still be clicked.
 - "Objects" on the Creatures tool, "Creatures" on the Objects tool: also mark the other type's spawns near the camera, faded. A click on one selects it and switches to its tool.
 - "Services" (Creatures): an icon over each creature within 150 yards for each service its `npc_flags` offer.
+- "Keys": its hover text lists the keys and mouse buttons of the chosen mode.
+
+The second row has:
+
+- In Select, "Handles": "Move", "Turn" (the ring about Z) and "Off".
+- In Place, "Random Facing": each placed spawn gets a random facing. The spawn on the pointer shows the next one.
 
 The "Events" button on the view bar chooses which spawns both tools draw; see [Game events](#game-events).
 
@@ -1588,12 +1615,12 @@ The top of the inspector counts the spawns "on this map", "near" and "new", with
 
 #### Placing spawns
 
-In Place, choose a template in the inspector, then click the ground. Every click places one spawn. Escape clears the chosen template.
+In Place, choose a template in the inspector, then click the ground. Every click places one spawn. Escape clears the chosen template. A switch to Select keeps the chosen template, and a return to Place has it on the pointer again.
 
-- "Place Into": "Pool" and "Game event", each with "Choose…" and "Clear". "New" beside the pool makes a pool that spawns one member at a time, named after the chosen template. Every spawn placed joins the chosen pool and game event, on the same undo entry.
-- The chosen template's name, a line about it, "Edit Template…", "Open in Workspace" and a preview of its model.
-- "Creature Template" or "Game Object Template": "New" makes a template, "Copy" copies the chosen one to an unused entry with every column as shown, and "Discard" drops a template the project made. A template already in the database cannot be removed. The templates the project makes are listed under "Created by this project (N)".
-- "Search": a name or an entry, at least two letters. On Objects, "type" filters by `gameobject_template.type`; with a type chosen, the list fills without search text. The list shows the first 50 matches.
+- "Place Into": "Pool" and "Game Event", each with "Choose…" and "Clear". "New" beside the pool makes a pool that spawns one member at a time, named after the chosen template. Every spawn placed joins the chosen pool and game event, on the same undo entry.
+- "Creature Template" or "Game Object Template": the chosen template's name, a summary of it, "Edit Template…", "Open in Workspace" and a preview of its model. With no template chosen, "Chosen" reads "None".
+- In the same section, "New" makes a template, "Copy" copies the chosen one to an unused entry with every column as shown, and "Discard" drops a template the project made. A template already in the database cannot be removed. The templates the project makes are listed under "Created by this project (N)".
+- "Search": a name or an entry, at least two letters. On Objects, "Type" filters by `gameobject_template.type`; with a type chosen, the list fills without search text. The list shows the first 50 matches.
 
 #### Selecting spawns
 
@@ -1610,7 +1637,7 @@ The inspector shows the selected spawn in sections:
 
 - "Spawn": "GUID", "State" ("Unchanged", "Edited", "New, not applied", "New, applied", "Marked for removal", "Removed and applied") and "Same Entry". "Go To" moves the camera to it. "Duplicate" copies it two yards north. "Remove Spawn" marks it for removal; for a spawn the project made it reads "Discard Spawn". On a removed spawn it reads "Cancel Removal".
 - "Location": x, y and z, "Facing" in degrees, and "Above Ground".
-- "Creature Template" or "Game Object Template": a summary of the template, with "Edit Template…", which opens the template window, and "Open in Workspace". The note says that changes apply to every spawn of the entry, on every map.
+- "Creature Template" or "Game Object Template": a summary of the template, with "Edit Template…", which opens the template window, and "Open in Workspace". The info mark on the heading says that changes apply to every spawn of the entry, on every map.
 - "Related Data": the buttons that open the template's other windows. Each window follows the selection.
   - Creatures: "Waypoints" ("Movement"); "Events" and "Spells" ("AI"); "Quests" and "Gossip" ("Interaction"); "Vendor" and "Trainer" ("Services"); "Loot" and "Equipment" ("Items").
   - Objects: "Quests" ("Interaction") and "Loot" ("Items").
@@ -1624,21 +1651,21 @@ A game object whose `rotation0` or `rotation1` is not 0 is marked "Tilted": a ch
 
 "Edit Template…" opens the template's columns in a window that can stay open while the pointer works in the world. It follows the chosen template in Place and the selected spawn in Select. Its head says how many spawns of the entry the open map has. The "entry" box renumbers the template; Apply also updates the database columns that name it by entry, and its hover lists which.
 
-A form has one column per line, under a folding heading per group. A column the project changes is drawn in amber, with "↺", which reverts it. A column that names a row of another table has "…" to choose the row by name, and the name it resolves to is a link. A display column draws a picture of the model and has "choose…", which shows every display as a picture. On a creature, `gossip_menu_id` has "open" and "+ new". A game object's `data` columns are named by its type.
+A form has one column per line, under a folding heading per group. A column the project changes is drawn in amber, with "↺", which reverts it. A column that names a row of another table has "…" to choose the row by name, and the name it resolves to is a link. A display column draws a picture of the model and has "Choose…", which shows every display as a picture. On a creature, `gossip_menu_id` has "open" and "+ new". A game object's `data` columns are named by its type.
 
 #### Right-click menu
 
 On a creature spawn: "Edit creature…", "Open in workspace", "Waypoints…", "Quests…", "Loot…", "Events…", "Gossip…" (with the gossip flag), "Vendor…" and "Trainer…" (with those flags), "Equipment…", then "Copy", "Duplicate", "Remove" or "Discard" ("Cancel removal" on a removed spawn), "Drop to terrain", "Select all of this creature", "Place this creature" and "Copy guid". A game object has "Edit object…", "Open in workspace", "Quests…", "Loot…" and the same lower entries, with "Select all of this object" and "Place this object". "Drop to terrain" sets `position_z` to the terrain under each selected spawn, through any bridge or floor.
 
-On the ground: "Paste here", "Place <name> here" (or "Place here"), "Switch to Place" or "Switch to Select", and "Deselect".
+On the ground: "Paste here", "Place <name> here" (or "Place here"), "Switch to Place" or "Switch to Select", and "Deselect". "Place <name> here" places a spawn of the chosen template at the clicked point, in Select as in Place. With no template chosen the entry reads "Place here" and is greyed.
 
 ### Creatures and Game Objects workspaces
 
 "Creatures" and "Game Objects" on the top bar each have two parts, "Templates" and "Displays". Templates lists every `creature_template` or `gameobject_template` row the server loads and edits the open one in the middle of the window. The Displays parts are described under [Display info](#display-info).
 
-- The list is searched by name, subname or entry (Creatures) or by name, type or entry (Game Objects). "+ New", "Copy" and "Discard" do what the Place picker's buttons do. A row's right-click menu has "Copy entry N".
-- The middle shows "This project", with "Server…" when the project changes the subject, then the row's name, its entry and content patch, the "entry" box and the template window's form.
-- The inspector shows the model, a summary, "Place in World", which switches to the rail tool in Place with the template chosen, and "Other tables": the template's windows, as under "Related Data", without "Waypoints".
+- The list is searched by name, subname or entry (Creatures) or by name, type or entry (Game Objects). "New", "Copy" and "Discard" do what the Place picker's buttons do. A row's right-click menu has "Copy entry N".
+- The middle shows "This Project", with "Server…" when the project changes the subject, then the row's name, its entry and content patch, the "entry" box and the template window's form.
+- The inspector shows the model, a summary, "Place in World", which switches to the rail tool in Place with the template chosen, and "Other Tables": the template's windows, as under "Related Data", without "Waypoints".
 
 ### Addons and equipment
 
@@ -1712,12 +1739,12 @@ The Pools part lists every pool, searched by description or entry, with "+ New P
 
 "Items" and "Quests" on the top bar open list-and-form workspaces for `item_template` and `quest_template`.
 
-- "+ New" makes a row, "Copy" copies the open one to an unused entry, and "Remove" marks it for removal ("Keep" takes the mark off). A row the project made is discarded instead. A row's right-click menu has "Open", "Copy", the remove entry and "Copy entry N".
-- "copy" beside the entry puts it on the clipboard.
-- An item's inspector shows its tooltip and "Appearance", where "choose…" picks its display from a picture grid. "Loot" beside the entry opens the item's loot.
-- A quest's inspector shows "Quest log preview", "Given by" and "Taken by" with "+ creature…" and "+ game object…", and "Chain".
+- "New" makes a row, "Copy" copies the open one to an unused entry, and "Remove" marks it for removal ("Keep" takes the mark off). A row the project made is discarded instead. A row's right-click menu has "Open", "Copy", the remove entry and "Copy entry N".
+- "Copy Entry" beside the entry puts it on the clipboard.
+- An item's inspector shows its tooltip and "Appearance", where "Choose…" picks its display from a picture grid. "Loot" beside the entry opens the item's loot.
+- A quest's inspector shows "Quest Log Preview", "Given By" and "Taken By" with "Add Creature…" and "Add Game Object…", and "Chain".
 
-A creature's or object's "Quests" button opens a window that lists the quests it gives and takes under "Gives" and "Takes", with "+ quest…" and "Open in the quest workspace". When the creature lacks the quest giver flag, "Set QUESTGIVER" adds it; on an object of another type, "Set type to Quest giver" sets it.
+A creature's or object's "Quests" button opens a window that lists the quests it gives and takes under "Gives" and "Takes", with "Add Quest…" and "Open in Quest Workspace". When the creature lacks the quest giver flag, "Set QUESTGIVER" adds it; on an object of another type, "Set Type to Quest Giver" sets it.
 
 ### Loot
 
@@ -1748,7 +1775,7 @@ A creature's or object's "Quests" button opens a window that lists the quests it
 
 "Spells" opens the creature's spell list, one line per slot. The window says how many creatures share the list. "Use another list…", "Copy into a new list" and "+ New empty list" set `spell_list_id`.
 
-A script column has "edit…", which opens the script window, "choose…", "+ new" and "clear". The script window lists the steps in order, with the wait before each in seconds. "+ Step" and "+ here" insert a step. Each step has "up", "down", "copy", "remove" and "details". "discard changes" drops the project's edits to the script. In a step that makes the creature talk, "choose…" uses an existing text and "+ new" makes one; the text is edited under the step.
+A script column has "edit…", which opens the script window, "Choose…", "+ new" and "clear". The script window lists the steps in order, with the wait before each in seconds. "+ Step" and "+ here" insert a step. Each step has "up", "down", "copy", "remove" and "details". "discard changes" drops the project's edits to the script. In a step that makes the creature talk, "Choose…" uses an existing text and "+ new" makes one; the text is edited under the step.
 
 ### Gossip
 
@@ -1757,12 +1784,12 @@ A script column has "edit…", which opens the script window, "choose…", "+ ne
 - The top row has "Back", a menu number with "Open", and "New menu".
 - For the creature: "Create gossip menu" or "Replace with new menu", and "Assign menu N". Both set the template's gossip menu and its gossip flag.
 - "Texts": a card per text the menu shows, each with its lines, "Add line", a condition and a script. "Add text" makes a text; "Add existing text" adds one that other menus use.
-- "Options": each option has its text and box text (typed, or a `broadcast_text` row), "type", "npc flag", "action menu" ("New menu", "Open", "choose…"), "script", "point of interest", "box" with "code input" and its cost, and a condition. "Up" and "Down" reorder options. "Add option" adds one.
+- "Options": each option has its text and box text (typed, or a `broadcast_text` row), "type", "npc flag", "action menu" ("New menu", "Open", "Choose…"), "script", "point of interest", "box" with "code input" and its cost, and a condition. "Up" and "Down" reorder options. "Add option" adds one.
 - "Remove" marks a text or an option for removal; "Keep" takes it back.
 
 ### Conditions
 
-A condition cell, found in the gossip, loot, vendor and trainer, quest, event and script, and trigger forms, shows what the condition tests as a link, with "choose…" and, when empty, "+ new". Each opens the condition window.
+A condition cell, found in the gossip, loot, vendor and trainer, quest, event and script, and trigger forms, shows what the condition tests as a link, with "Choose…" and, when empty, "+ new". Each opens the condition window.
 
 - The top row has "Back", an entry number with "Open", "New…" and "List". "List" searches conditions by entry, value or type.
 - "Tests" shows the condition as a tree: "all of these", "any of these", "none of these" or "not all of these", with "+ test", "+ group" and "×". "Save" writes added rows and never changes existing ones; "Revert" drops the edit. "Use" writes the condition into the column the window was opened from.
@@ -1772,27 +1799,27 @@ A condition cell, found in the gossip, loot, vendor and trainer, quest, event an
 
 "Waypoints" on a selected creature opens its path in a window and draws it on the ground. The window follows the selection. The head counts the points, the loop length and the waits, and says whether the path is the spawn's own (`creature_movement`) or its template's (`creature_movement_template`), and whether the creature's `movement_type` walks it.
 
-- "Add points" makes clicks on the ground add points after the selected point. "Snap to ground" gives a point the terrain height under the pointer.
+- "Add Points" makes clicks on the ground add points after the selected point. "Snap to Ground" gives a point the terrain height under the pointer.
 - Click a point, in the list or in the world, to select it, and drag it to move it. A double-click on a row flies the camera there.
-- The form sets each point's position, wait time, wander distance, script, `path_id` and facing. The script has "edit…", "choose…", "+ new" and "clear". A script id the table does not hold is marked: the server skips that point.
-- "Fly here", "Insert after", "Earlier", "Later" and "Remove point" act on the selected point.
-- "Clear all points" empties the path. "Discard path edits" drops the project's edits to it.
-- On a template's path, "Copy path to spawn" gives this spawn its own copy, so the edit changes this spawn only.
+- The form sets each point's position, wait time, wander distance, script, `path_id` and facing. The script has "edit…", "Choose…", "+ new" and "clear". A script id the table does not hold is marked: the server skips that point.
+- "Fly Here", "Insert After", "Earlier", "Later" and "Remove Point" act on the selected point.
+- "Clear All Points" empties the path. "Discard Path Edits" drops the project's edits to it.
+- On a template's path, "Copy Path to Spawn" gives this spawn its own copy, so the edit changes this spawn only.
 
 ## Server panel
 
-"Server…" on the top bar opens what the project has done to the world database. The line at the top names the world database, or says "no world database: saving writes sql\ files and applies nothing". With no database, a note says that nothing can be applied, with "Settings…", which opens the [Settings](#settings) window where the database is set. In a shared session some of the panel's buttons are limited; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
+"Server…" on the top bar opens what the project has done to the world database. The line at the top names the world database, or says "No world database: a save writes sql\ files and applies nothing", with "Settings…", which opens the [Settings](#settings) window where the database is set. In a shared session some of the panel's buttons are limited; see [Playtests and the server in a session](#playtests-and-the-server-in-a-session).
 
 - "Server Operations": "Apply on save" runs the SQL against the world database every time the project is saved. It is on by default and kept per project. A save made with the panels open over a playtest also sends `.reload` for each table that has one.
-- One block per subject: "Client tables", "Creatures", "Objects", "Items", "Quests", "Loot", "Vendors and trainers", "Addons and equipment", "Formations and links", "Pools", "Game events", "Behaviour", "Conditions", "Gossip", "Maps", "Area triggers" and "Graveyards". Each says how many rows the project changes and how many are applied, and is outlined amber while changes are not applied.
+- The subjects are "Client tables", "Creatures", "Objects", "Items", "Quests", "Loot", "Vendors and trainers", "Addons and equipment", "Formations and links", "Pools", "Game events", "Behaviour", "Conditions", "Gossip", "Maps", "Area triggers" and "Graveyards". A subject has a block while the project changes its rows or has rows applied. The block has the subject's name and its buttons, and under them a line that says how many rows the project changes and how many are applied. The block is outlined amber while changes are not applied. The subjects with nothing to apply or restore are named on one line under the blocks, after "No changes:", or after "This project changes no server row:" when that is every subject.
   - "Apply" writes the rows to the database, after writing the statements that restore them. "Restore" puts back the rows it replaced. "Drop Changes" removes the project's changes to the subject, saved or not, as one edit that Undo takes back, without touching the database; Restore still works afterwards. To take back only what is unsaved, use "Discard" in the Changes window.
   - Apply and Restore refuse to run when the world database is not the one the rows were applied to, and name it; point Settings back at it.
   - Apply refuses rows another project has applied to the same world database and not restored, and names the project; restore that project's rows first. Which project applied which rows is read from every project's revert files, each of which names the database its rows were applied to, so a project that is restored, cleared or deleted holds no rows.
   - Applying or restoring a block also restores and applies again the applied blocks below it.
-  - The hover text on a block's name lists its tables and files, and says whether an applied change needs a `.reload` or a server restart.
-  - "Client tables" has "edited as a file" in place of "Drop Changes". Its Apply also copies the project's DBC files that the server reads into `DataDir\5875\dbc\`, keeping the server's originals in `DataDir\vale-editor\originals\` as the server tile files are kept, and Restore copies the originals back. A project that kept the originals in its own `server\dbc-before\` has them moved there on its next Apply or Restore.
+  - The hover text on a subject's name, in a block or on the last line, lists its tables and files, and says whether an applied change needs a `.reload` or a server restart.
+  - "Client tables" has "Edited as a file" in place of "Drop Changes". Its Apply also copies the project's DBC files that the server reads into `DataDir\5875\dbc\`, keeping the server's originals in `DataDir\vale-editor\originals\` as the server tile files are kept, and Restore copies the originals back. A project that kept the originals in its own `server\dbc-before\` has them moved there on its next Apply or Restore.
 - "Server Tiles": "Regenerate Changed Tiles (N)" rebuilds the project's archive and regenerates the server's map files for the tiles changed since the last regeneration. A tile counts as changed when its file changed, or when a model or building it places that the project carries changed, since the server's collision files are built from those too. A changed model on a tile the project does not carry is not seen: select such tiles and use the map window's "Server Files". Restart the server afterwards. The map window's "Server Files" does the same for chosen tiles. "Server Tile Files…" opens the tile file dialog; the line beside it counts the files no longer produced and the files written by other projects.
-- "Migration": "Write migration" writes `publish\migrations\<stamp>_world.sql`: every row the project changes, and the rows an earlier migration changed that the project no longer does, put back, so it applies whether or not the server has the earlier ones. Nothing is written when nothing changed since the last migration. A copy of a host's project writes none.
+- "Migration": "Write Migration" writes `publish\migrations\<stamp>_world.sql`: every row the project changes, and the rows an earlier migration changed that the project no longer does, put back, so it applies whether or not the server has the earlier ones. Nothing is written when nothing changed since the last migration. A copy of a host's project writes none.
 
 ### Server tile files
 
@@ -1815,7 +1842,7 @@ A file the editor did not write is moved to `vale-editor\originals\` when it is 
 
 ## Publishing
 
-"Publish…" in the project menu on the top bar opens "Publish a patch". Only the host publishes in a shared session, and not during a playtest or while a server write is running.
+"Publish…" in the "Project" menu on the top bar opens the Publish dialog. Only the host publishes in a shared session, and not during a playtest or while a server write is running.
 
 - "Name": the patch's folder name. Left empty, the UTC date and time are used. The dialog warns when a patch of that name exists and will be overwritten.
 - "Publish Options", kept per project:
@@ -2005,7 +2032,7 @@ how many are left and how many it needs.
   edits are not counted. An edit that claims nothing, such as an import, is
   counted as "Submit 1 edit". The button reads "Saved by the host" when the
   Changes window lists no edit.
-- "Publish…" and the Server panel's "Write migration".
+- "Publish…" and the Server panel's "Write Migration".
 - Deleting project files in the Assets workspace. A joined editor's Delete
   asks the host. The host sees "<name> asks to delete <file>", with the delete
   button and "Keep", and the editor that asked is told the answer. A delete
@@ -2199,6 +2226,9 @@ unavailable, with the reason on hover:
   the second editor a database of its own in Settings.
 
 ## Keys
+
+"Keys" on a tool's toolbar lists that tool's keys in its hover text. This
+table holds the keys of every tool.
 
 | Key | Action |
 |---|---|
