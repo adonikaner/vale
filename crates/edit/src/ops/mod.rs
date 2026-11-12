@@ -235,11 +235,17 @@ impl TileNames {
 /// leaves the earliest `before` standing, which is the list as it was when the
 /// stroke began.
 ///
+/// `MCLY` and `MCAL` are `None` when the chunk has no such region. Every
+/// shipped 1.12 chunk has both, empty or not, but a chunk made by
+/// `crate::adt::blank` has no `MCAL`, and painting it creates one. A restore
+/// removes a region the capture did not find, so an undone stroke writes the
+/// tile back byte for byte.
+///
 /// [`Change::revert`]: crate::undo::Change::revert
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChunkPaint {
-    mcly: Vec<u8>,
-    mcal: Vec<u8>,
+    mcly: Option<Vec<u8>>,
+    mcal: Option<Vec<u8>>,
     layer_count: u32,
     detail_layers: [u16; 8],
     textures: Vec<u8>,
@@ -251,7 +257,6 @@ impl ChunkPaint {
             tile.chunk(index)
                 .and_then(|chunk| chunk.region(region))
                 .map(|sub| sub.data.clone())
-                .unwrap_or_default()
         };
         ChunkPaint {
             mcly: region(Region::Layers),
@@ -277,12 +282,13 @@ impl ChunkPaint {
             (Region::Layers, &self.mcly),
             (Region::Alpha, &self.mcal),
         ] {
-            match chunk.region_mut(region) {
-                Some(sub) => sub.set(data.clone()),
-                None => {
+            match (chunk.region_mut(region), data) {
+                (Some(sub), Some(data)) => sub.set(data.clone()),
+                (None, Some(data)) => {
                     chunk.regions[region as usize] =
                         Some(crate::adt::SubChunk::new(data.clone()))
                 }
+                (_, None) => chunk.regions[region as usize] = None,
             }
         }
         let mut head = chunk.head_mut();
@@ -302,9 +308,15 @@ impl ChunkPaint {
 /// The whole region rather than one cell, for the reason [`ChunkPaint`] is the
 /// whole of a chunk's paint: giving a dry chunk water adds 804 bytes in the
 /// middle of a two-megabyte file, and there is no smaller unit that inverts.
+///
+/// `MCLQ` is `None` when the chunk has no such region. Every shipped 1.12
+/// chunk has one, empty when it is dry, but a chunk made by
+/// `crate::adt::blank` has none, and giving it water creates one. A restore
+/// removes a region the capture did not find, so an undone stroke writes the
+/// tile back byte for byte.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChunkLiquid {
-    mclq: Vec<u8>,
+    mclq: Option<Vec<u8>>,
     /// The size field as the file wrote it, which for `MCLQ` is zero and
     /// is not derivable from the length. See
     /// `crate::adt::SubChunk::set_keeping_size`.
@@ -317,7 +329,7 @@ impl ChunkLiquid {
         let chunk = tile.chunk(index);
         let region = chunk.and_then(|chunk| chunk.region(Region::Liquid));
         ChunkLiquid {
-            mclq: region.map(|sub| sub.data.clone()).unwrap_or_default(),
+            mclq: region.map(|sub| sub.data.clone()),
             declared: region.map(|sub| sub.declared).unwrap_or(0),
             flags: chunk.map(|chunk| chunk.head().flags()).unwrap_or(0),
         }
@@ -328,16 +340,17 @@ impl ChunkLiquid {
             return;
         };
         chunk.head_mut().set_flags(self.flags);
-        match chunk.region_mut(Region::Liquid) {
-            Some(sub) => {
-                sub.set_keeping_size(self.mclq.clone());
+        match (chunk.region_mut(Region::Liquid), &self.mclq) {
+            (Some(sub), Some(data)) => {
+                sub.set_keeping_size(data.clone());
                 sub.declared = self.declared;
             }
-            None => {
-                let mut sub = crate::adt::SubChunk::new(self.mclq.clone());
+            (None, Some(data)) => {
+                let mut sub = crate::adt::SubChunk::new(data.clone());
                 sub.declared = self.declared;
                 chunk.regions[Region::Liquid as usize] = Some(sub);
             }
+            (_, None) => chunk.regions[Region::Liquid as usize] = None,
         }
     }
 }

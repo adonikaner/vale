@@ -462,7 +462,7 @@ impl Change {
     /// folded back past an index edit would be applied before that edit on a
     /// redo. The case is a group move followed by its members being put in the
     /// tiles their origins are in, all in one entry.
-    pub(crate) fn absorb(&mut self, tile: &TileKey, edit: Edit) {
+    pub(crate) fn absorb(&mut self, tile: &TileKey, mut edit: Edit) {
         for entry in self.entries.iter_mut().rev() {
             let Entry::Tile(had, existing) = entry else {
                 continue;
@@ -470,15 +470,79 @@ impl Change {
             if had != tile {
                 continue;
             }
-            if let Some(merged) = merge(existing, &edit) {
-                *existing = merged;
-                return;
-            }
+            edit = match merge(existing, edit) {
+                None => return,
+                Some(edit) => edit,
+            };
             if existing.renumbers_placements() || edit.renumbers_placements() {
                 break;
             }
         }
         self.entries.push(Entry::Tile(tile.clone(), edit));
+    }
+
+    /// [`Self::absorb`] for several edits to one tile, in the order given.
+    /// The entries it leaves are the ones absorbing them one at a time
+    /// leaves.
+    ///
+    /// `absorb` searches the entries once for each edit. A stroke with a wide
+    /// brush hands over several hundred edits a frame, and its entry holds as
+    /// many, so one search an edit is their product: 1.4 ms a frame at a
+    /// 250-yard brush, and four times that at twice the radius. This reads
+    /// the entries once, into the place of the entry each edit folds into, so
+    /// a frame costs their sum.
+    pub(crate) fn absorb_all(&mut self, tile: &TileKey, edits: Vec<Edit>) {
+        /// Below this many edits one search for each is as cheap as the map.
+        const FEW: usize = 4;
+        if edits.len() < FEW {
+            for edit in edits {
+                self.absorb(tile, edit);
+            }
+            return;
+        }
+        // The newest entry of each kind on this tile, back to the entry
+        // `absorb` stops at, and the newest entry on the tile of any kind.
+        let mut found: std::collections::HashMap<Folds, usize> = std::collections::HashMap::new();
+        let mut newest: Option<usize> = None;
+        for (at, entry) in self.entries.iter().enumerate().rev() {
+            let Entry::Tile(had, existing) = entry else {
+                continue;
+            };
+            if had != tile {
+                continue;
+            }
+            newest.get_or_insert(at);
+            if let Some(folds) = Folds::of(existing) {
+                found.entry(folds).or_insert(at);
+            }
+            if existing.renumbers_placements() {
+                break;
+            }
+        }
+        for mut edit in edits {
+            let folds = Folds::of(&edit);
+            // An edit that renumbers the placements is compared with the
+            // newest entry on the tile and with no entry before it.
+            let into = folds
+                .and_then(|folds| found.get(&folds).copied())
+                .filter(|at| !edit.renumbers_placements() || Some(*at) == newest);
+            if let Some(Entry::Tile(_, existing)) = into.and_then(|at| self.entries.get_mut(at)) {
+                edit = match merge(existing, edit) {
+                    None => continue,
+                    Some(edit) => edit,
+                };
+            }
+            let at = self.entries.len();
+            // No later edit folds into an entry before one that renumbers.
+            if edit.renumbers_placements() {
+                found.clear();
+            }
+            if let Some(folds) = folds {
+                found.insert(folds, at);
+            }
+            newest = Some(at);
+            self.entries.push(Entry::Tile(tile.clone(), edit));
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -769,77 +833,53 @@ pub struct TileRedraw {
     pub reread: bool,
 }
 
-/// Two edits about the same thing, as one edit spanning both.
-fn merge(first: &Edit, second: &Edit) -> Option<Edit> {
-    match (first, second) {
-        (
-            Edit::Heights {
-                chunk: a, before, ..
-            },
-            Edit::Heights {
-                chunk: b, after, ..
-            },
-        ) if a == b => Some(Edit::Heights {
-            chunk: *a,
-            before: before.clone(),
-            after: after.clone(),
-        }),
-        (
-            Edit::Normals {
-                chunk: a, before, ..
-            },
-            Edit::Normals {
-                chunk: b, after, ..
-            },
-        ) if a == b => Some(Edit::Normals {
-            chunk: *a,
-            before: before.clone(),
-            after: after.clone(),
-        }),
-        (
-            Edit::Doodad {
-                index: a, before, ..
-            },
-            Edit::Doodad {
-                index: b, after, ..
-            },
-        ) if a == b => Some(Edit::Doodad {
-            index: *a,
-            before: *before,
-            after: *after,
-        }),
-        (Edit::Placements { before, .. }, Edit::Placements { after, .. }) => {
-            Some(Edit::Placements {
-                before: before.clone(),
-                after: after.clone(),
-            })
+/// What two edits to one tile fold by: both are of the same kind and about
+/// the same chunk or the same placement. An edit of any other kind folds
+/// with nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Folds {
+    Heights(usize),
+    Normals(usize),
+    Paint(usize),
+    Doodad(usize),
+    Building(usize),
+    /// The placement lists, which are the tile's and not a chunk's.
+    Placements,
+}
+
+impl Folds {
+    fn of(edit: &Edit) -> Option<Folds> {
+        match edit {
+            Edit::Heights { chunk, .. } => Some(Folds::Heights(*chunk)),
+            Edit::Normals { chunk, .. } => Some(Folds::Normals(*chunk)),
+            Edit::Paint { chunk, .. } => Some(Folds::Paint(*chunk)),
+            Edit::Doodad { index, .. } => Some(Folds::Doodad(*index)),
+            Edit::Building { index, .. } => Some(Folds::Building(*index)),
+            Edit::Placements { .. } => Some(Folds::Placements),
+            _ => None,
         }
-        (
-            Edit::Building {
-                index: a, before, ..
-            },
-            Edit::Building {
-                index: b, after, ..
-            },
-        ) if a == b => Some(Edit::Building {
-            index: *a,
-            before: *before,
-            after: *after,
-        }),
-        (
-            Edit::Paint {
-                chunk: a, before, ..
-            },
-            Edit::Paint {
-                chunk: b, after, ..
-            },
-        ) if a == b => Some(Edit::Paint {
-            chunk: *a,
-            before: before.clone(),
-            after: after.clone(),
-        }),
-        _ => None,
     }
+}
+
+/// Fold `later` into `first` when the two are about the same thing
+/// ([`Folds`]): `first` keeps its `before` and takes `later`'s `after`, so it
+/// spans both, and the answer is `None`. When they are not, `later` is
+/// handed back.
+fn merge(first: &mut Edit, later: Edit) -> Option<Edit> {
+    let folds = Folds::of(first);
+    if folds.is_none() || folds != Folds::of(&later) {
+        return Some(later);
+    }
+    match (first, later) {
+        (Edit::Heights { after: had, .. }, Edit::Heights { after, .. }) => *had = after,
+        (Edit::Normals { after: had, .. }, Edit::Normals { after, .. }) => *had = after,
+        (Edit::Paint { after: had, .. }, Edit::Paint { after, .. }) => *had = after,
+        (Edit::Doodad { after: had, .. }, Edit::Doodad { after, .. }) => *had = after,
+        (Edit::Building { after: had, .. }, Edit::Building { after, .. }) => *had = after,
+        (Edit::Placements { after: had, .. }, Edit::Placements { after, .. }) => *had = after,
+        (_, later) => return Some(later),
+    }
+    None
 }
 
 /// What has been done, and what has been undone.
@@ -1127,15 +1167,9 @@ impl History {
     pub fn record(&mut self, tile: &TileKey, edits: impl IntoIterator<Item = Edit>) {
         let edits: Vec<Edit> = edits.into_iter().collect();
         if let Some(segment) = self.fold_segment("Edit") {
-            for edit in &edits {
-                segment.absorb(tile, edit.clone());
-            }
+            segment.absorb_all(tile, edits.clone());
         }
-        self.take("Edit", |change| {
-            for edit in edits {
-                change.absorb(tile, edit);
-            }
-        });
+        self.take("Edit", |change| change.absorb_all(tile, edits));
         self.close_segment_unless_open();
     }
 
@@ -2071,6 +2105,57 @@ mod tests {
         assert!(Placements::capture(&tile) == start, "undo puts both back");
         change.apply(&key(32, 48), &mut tile);
         assert!(Placements::capture(&tile) == end, "redo puts both in");
+    }
+
+    /// Edits absorbed several at a time leave the entries that absorbing them
+    /// one at a time leaves: the same edits, in the same order, folded the
+    /// same way. The run mixes the kinds that fold by chunk and by placement
+    /// with one that never folds and one that renumbers the placements, over
+    /// two tiles, in batches from one edit to thirteen.
+    #[test]
+    fn edits_absorbed_together_fold_as_they_do_one_at_a_time() {
+        use crate::ops::Placements;
+        let mut tile = crate::adt::blank::blank_tile(32, 48, "a.blp", 0.0, 0);
+        let none = Placements::capture(&tile);
+        tile.name_model("tree.m2");
+        tile.add_doodad(doodad(1024), 5.0);
+        let one = Placements::capture(&tile);
+
+        // A fixed sequence of numbers, so a failure is the same on every run.
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = |below: u64| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 33) % below) as usize
+        };
+        let mut made = 0u16;
+        let mut make = |next: &mut dyn FnMut(u64) -> usize| {
+            made += 1;
+            let subject = next(5);
+            // One edit in sixteen renumbers the placements.
+            match (next(16), next(4)) {
+                (0, _) => Edit::Placements {
+                    before: Box::new(none.clone()),
+                    after: Box::new(if made % 2 == 0 { none.clone() } else { one.clone() }),
+                },
+                (_, 0) => edit(subject, 0.0, f32::from(made)),
+                (_, 1) => Edit::Normals { chunk: subject, before: vec![0], after: made.to_le_bytes().to_vec() },
+                (_, 2) => Edit::Doodad { index: subject, before: doodad(0), after: doodad(made) },
+                _ => Edit::Holes { chunk: subject, before: 0, after: made },
+            }
+        };
+
+        let (mut singly, mut together) = (Change::new("One at a time"), Change::new("Together"));
+        let sizes = [1, 5, 9, 4, 13, 2, 3, 7];
+        for round in 0..400 {
+            let tile = key(32 + (round % 2) as u32, 48);
+            let batch: Vec<Edit> = (0..sizes[round % sizes.len()]).map(|_| make(&mut next)).collect();
+            for edit in batch.iter().cloned() {
+                singly.absorb(&tile, edit);
+            }
+            together.absorb_all(&tile, batch);
+            assert_eq!(format!("{:?}", together.entries), format!("{:?}", singly.entries), "after round {round}");
+        }
+        assert!(singly.entries.len() > 60, "{} entries: the run did not renumber often enough", singly.entries.len());
     }
 
     /// `invalidates` names, per tile and in the order the tiles were first

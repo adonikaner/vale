@@ -438,6 +438,10 @@ pub fn pools(tile: &AdtFile, chunk: usize) -> Vec<Pool> {
 /// declare a liquid that draws nothing, which the file can hold but nothing
 /// shows. A tool removes water this way: it dries the cells and this drops the
 /// pool.
+///
+/// A chunk with no `MCLQ`, which is what `crate::adt::blank` makes, gets one
+/// only when a pool is written. Left dry, it keeps no region, so writing no
+/// water onto it leaves its bytes as they were.
 pub(crate) fn set_pools(chunk: &mut MapChunk, pools: &[Pool]) {
     let mut data = Vec::with_capacity(pools.len() * BLOCK);
     let mut flags = chunk.head().flags() & !mcnk_flags::LQ_ANY;
@@ -458,6 +462,7 @@ pub(crate) fn set_pools(chunk: &mut MapChunk, pools: &[Pool]) {
         // The size field is left as the file wrote it. See
         // [`crate::adt::SubChunk::set_keeping_size`], and the module comment.
         Some(sub) => sub.set_keeping_size(data),
+        None if data.is_empty() => {}
         None => {
             let mut sub = super::SubChunk::new(data);
             sub.declared = 0;

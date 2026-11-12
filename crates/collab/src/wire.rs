@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 /// The version of these messages. A joining editor sends it in
 /// [`ToHost::Hello`] and the host refuses any other, since postcard encodes
 /// fields by position and two builds that differ read each other wrongly.
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 
 /// The largest frame either end reads, in bytes: 64 MiB.
 pub const MAX_FRAME: usize = 64 << 20;

@@ -65,6 +65,29 @@
 //! carry no sources is read again instead. That happens in the client's own
 //! build, and for a tile that arrived before the switch was set.
 //!
+//! ## What a frame of a wide brush costs
+//!
+//! A brush may be as wide as [`RADIUS`] allows. A 250-yard one changes 208
+//! chunks on up to four tiles on every frame it is held, where a brush
+//! narrower than a chunk changes four. Each frame does three things to each
+//! changed chunk, and none of them may cost more for each chunk as the count
+//! grows:
+//!
+//! * [`stroke`] steps the brush and shades the result. The tiles the brush
+//!   reaches are stepped at the same time on the compute pool.
+//! * `vale_edit::undo::History::record` folds the frame's edits into the
+//!   stroke's entry, and into the journal's segment. It reads the entry once
+//!   for each tile, not once for each edit.
+//! * [`live_ground`] rebuilds each changed chunk's vertices and writes them
+//!   into the draw groups ([`rebuild`]). The tile's chunk headers are read
+//!   once, the chunks are rebuilt on the compute pool, and a vertex's new
+//!   value is found by its index.
+//!
+//! Measured in a release build at 250 yards over the corner four blank tiles
+//! share: about 4 ms a frame for the three together. Before they were written
+//! this way it was 23 ms, of which 19 ms was `live_ground`, and a stroke took
+//! the frame rate from 90 to 30.
+//!
 //! ## What a patched vertex does not move
 //!
 //! A live patch moves the ground's own positions and normals and nothing else.
@@ -537,11 +560,6 @@ fn stroke(
         return;
     }
 
-    // Every tile the circle reaches is edited, not only the one the stroke
-    // began on. A brush that stopped at the tile border left a step in the
-    // ground there: one side raised and the other not, with both files valid.
-    // Every tile in the brush's bounding box is edited, which is usually one;
-    // see [`tiles_under`].
     // A pen's pressure scales this frame's strength and radius. See
     // `crate::tablet::Pressure`.
     let mut brush = terrain.brush;
@@ -587,37 +605,64 @@ fn stroke(
         held.steps = held.steps.wrapping_add(1);
         brush.goal(&ground, [at.x, at.y], seconds, held.steps)
     });
-    for coord in tiles_under(&brush, at) {
-        let key = session.key(coord);
-        let Some(tile) = session.tiles.get_mut(&coord) else {
-            // Not open yet. `open_tiles` opens the block around the focus on
-            // the task pool, a few tiles at a time, and will reach this one
-            // shortly. Skipping it costs a few frames in
-            // which the stroke does not reach that side. Opening it here would
-            // be a two-megabyte parse in the middle of a drag.
-            continue;
-        };
+    // Every tile the circle reaches is edited, not only the one the stroke
+    // began on. A brush that stopped at the tile border left a step in the
+    // ground there: one side raised and the other not, with both files valid.
+    // Every tile in the brush's bounding box is edited, which is usually one;
+    // see [`tiles_under`].
+    //
+    // A tile that is not open yet is not in the list. `open_tiles` opens the
+    // block around the focus on the task pool, a few tiles at a time, and
+    // will reach it shortly. Skipping it costs a few frames in which the
+    // stroke does not reach that side. Opening it here would be a
+    // two-megabyte parse in the middle of a drag.
+    let under = tiles_under(&brush, at);
+    let mut reached: Vec<Reached> = Vec::new();
+    for (coord, tile) in session.tiles.iter_mut().filter(|(coord, _)| under.contains(coord)) {
         // Before the stroke first moves this tile. See [`Held::standing`].
-        if terrain.objects_follow && !held.standing.contains_key(&coord) {
+        if terrain.objects_follow && !held.standing.contains_key(coord) {
             held.standing
-                .insert(coord, vale_edit::ops::follow::standing(tile));
+                .insert(*coord, vale_edit::ops::follow::standing(tile));
         }
         // A stroke kept inside the selection does nothing on a tile with
         // none of it. Locked vertices are put back afterwards, by
         // `hold_locked`, as they are for every height operation.
-        let mask = match (terrain.only_inside, terrain.vertices.get(&coord)) {
+        let mask = match (terrain.only_inside, terrain.vertices.get(coord)) {
             (true, None) => continue,
             (true, Some(set)) => Some((set, Mask::Confine)),
             (false, _) => None,
         };
-        let mut edits = match &goal {
-            Some(goal) => brush.stroke_over(tile, [at.x, at.y], seconds, goal, mask),
-            None => brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask),
-        };
+        reached.push((*coord, tile, mask));
+    }
+    // Each tile's step reads and writes that tile alone: the level and the
+    // goal were taken from every tile above, before any of them moved. So
+    // the tiles of a brush wide enough to reach several are stepped at the
+    // same time, on the compute pool. A step is about 12 microseconds a
+    // chunk: 2.6 ms a frame on one thread for the 208 chunks under a
+    // 250-yard brush, most of it the shading.
+    let step = |tile: &mut vale_edit::adt::AdtFile, mask| match &goal {
+        Some(goal) => brush.stroke_over(tile, [at.x, at.y], seconds, goal, mask),
+        None => brush.stroke_masked(tile, [at.x, at.y], seconds, level, mask),
+    };
+    let mut stepped: Vec<((u32, u32), Vec<Edit>)> = match reached.len() {
+        0 | 1 => reached.into_iter().map(|(coord, tile, mask)| (coord, step(tile, mask))).collect(),
+        _ => bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default).scope(|scope| {
+            for (coord, tile, mask) in reached {
+                let step = &step;
+                scope.spawn(async move { (coord, step(tile, mask)) });
+            }
+        }),
+    };
+    // Recorded in the order `tiles_under` names the tiles, which a map of
+    // open tiles does not keep, so the entry lists a stroke's tiles in the
+    // same order on every run.
+    stepped.sort_by_key(|(coord, _)| under.iter().position(|named| named == coord));
+    for (coord, mut edits) in stepped {
         session.hold_locked(coord, &mut edits);
         if edits.is_empty() {
             continue;
         }
+        let key = session.key(coord);
         let chunks: Vec<usize> = edits.iter().filter_map(Edit::chunk).collect();
         session.history.record(&key, edits);
         for chunk in chunks {
@@ -628,6 +673,10 @@ fn stroke(
         }
     }
 }
+
+/// One tile a stroke reaches in a frame, for [`stroke`]: its coordinate, the
+/// tile, and the selection the step is kept inside when there is one.
+type Reached<'a> = ((u32, u32), &'a mut vale_edit::adt::AdtFile, Option<(&'a Selected, Mask)>);
 
 /// The cell of a chunk on one of its tile's four sides, or `None` for a chunk
 /// inside the tile. `chunk` is the chunk's place in the file, which is row by
@@ -1179,6 +1228,7 @@ fn live_ground(
     tiles: Query<(&TerrainTile, &Children)>,
     grounds: Query<(&Mesh3d, &GroundSources)>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut patch: Local<Patch>,
 ) {
     let Some(session) = session.as_mut() else {
         return;
@@ -1192,34 +1242,16 @@ fn live_ground(
         .map(|(coord, chunks)| (*coord, chunks.iter().copied().collect()))
         .collect();
 
+    let Patch { vertices, slots, hits } = &mut *patch;
     for (coord, chunks) in dirty {
         let Some(tile) = session.tiles.get(&coord) else {
             continue;
         };
-        // The new vertices, as one run per changed chunk, not a map. Every
-        // vertex of every draw group of the tile is looked up here, up to
-        // 81,840 on every frame of a stroke, and a brush smaller than a chunk
-        // touches at most four chunks. At that count four integer comparisons are measurably faster
-        // than a hash lookup.
-        let mut moved: Vec<(u32, Vec<vale_assets::world::adt::MeshVertex>)> = Vec::new();
-        for chunk in &chunks {
-            let (start, _) = vale_edit::adt::mesh::chunk_span(tile, *chunk);
-            let Some(vertices) = vale_edit::adt::mesh::chunk_vertices(tile, *chunk) else {
-                continue;
-            };
-            moved.push((start as u32, vertices));
-        }
-        if moved.is_empty() {
+        // The changed chunks' new vertices in one list, and for each of the
+        // tile's vertices its place in that list. See [`rebuild`].
+        if !rebuild(tile, &chunks, vertices, slots) {
             continue;
         }
-        // Where a tile vertex went, or `None` for one no chunk in this stroke
-        // moved.
-        let at_index = |index: u32| {
-            moved.iter().find_map(|(start, vertices)| {
-                let offset = index.checked_sub(*start)? as usize;
-                vertices.get(offset)
-            })
-        };
 
         let mut reached = false;
         for (_, children) in tiles.iter().filter(|(tile, _)| tile.coord == coord) {
@@ -1230,13 +1262,14 @@ fn live_ground(
                 reached = true;
                 // Which of this group's vertices moved, before touching the
                 // mesh at all: a group holding none of them must not be marked
-                // changed.
-                let hits: Vec<(usize, &vale_assets::world::adt::MeshVertex)> = sources
-                    .0
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(at, source)| at_index(*source).map(|vertex| (at, vertex)))
-                    .collect();
+                // changed. Every vertex of every draw group of the tile is
+                // looked up here, up to 81,840 on every frame of a stroke, so
+                // a lookup is one read of `slots`.
+                hits.clear();
+                hits.extend(sources.0.iter().enumerate().filter_map(|(at, source)| {
+                    let slot = *slots.get(*source as usize)?;
+                    (slot != UNMOVED).then_some((at as u32, slot))
+                }));
                 if hits.is_empty() {
                     continue;
                 }
@@ -1246,7 +1279,7 @@ fn live_ground(
                     reached = false;
                     continue;
                 };
-                write_vertices(&mut mesh, &hits);
+                write_vertices(&mut mesh, vertices, hits);
             }
         }
         if reached {
@@ -1263,6 +1296,125 @@ fn live_ground(
         }
     }
 }
+
+/// The lists [`live_ground`] fills for each tile it patches, kept from one
+/// frame to the next.
+///
+/// A tile's lists are between a few hundred kilobytes and a few megabytes.
+/// Allocated on every frame, each was memory the system had not yet mapped,
+/// and the first write to each page of it cost more than filling the list
+/// did: 0.13 ms a tile for `slots` alone.
+#[derive(Default)]
+struct Patch {
+    /// The changed chunks' new vertices, one chunk after another.
+    vertices: Vec<vale_assets::world::adt::MeshVertex>,
+    /// For each vertex of the tile's mesh, its place in `vertices`, or
+    /// [`UNMOVED`].
+    slots: Vec<u32>,
+    /// One draw group's moved vertices: the place in the group's buffers, and
+    /// the place in `vertices`.
+    hits: Vec<(u32, u32)>,
+}
+
+/// The slot of a tile vertex that no changed chunk holds. See [`Patch`].
+const UNMOVED: u32 = u32::MAX;
+
+/// One chunk's part of [`Patch::vertices`], for [`rebuild`].
+struct Part<'a> {
+    chunk: usize,
+    /// Where the chunk's vertices begin in the tile's mesh.
+    start: usize,
+    /// Where `into` begins in the whole list.
+    first: usize,
+    into: &'a mut [vale_assets::world::adt::MeshVertex],
+}
+
+/// Rebuild the vertices of `chunks` as the tile's mesh wants them now.
+/// `vertices` is left holding them, one chunk after another, and `slots`
+/// saying for each vertex of the tile's mesh where in `vertices` its new value
+/// is, or [`UNMOVED`]. False when no chunk had heights to rebuild from.
+///
+/// The cost for each chunk must not grow with how many chunks changed,
+/// because a wide brush changes most of a tile's 256. It once did, twice
+/// over: each chunk's vertices were built from a reading of all 256 chunk
+/// headers, and each of the tile's vertices was looked up by a search of one
+/// run per changed chunk. At a 250-yard brush, 208 chunks over four tiles, the
+/// two took 19 ms a frame and the frame rate fell from 90 to 30. The headers
+/// are now read once a tile (`vale_edit::adt::mesh::TileLayout`), and a
+/// lookup is one read of `slots`.
+///
+/// More than [`TOGETHER`] chunks are rebuilt on the compute pool, that many
+/// to a task. A chunk's rebuild reads the tile and writes only its own part
+/// of `vertices`, and takes 10 to 20 microseconds: 2 to 4 ms a frame on one
+/// thread for those 208 chunks.
+fn rebuild(
+    tile: &vale_edit::adt::AdtFile,
+    chunks: &[usize],
+    vertices: &mut Vec<vale_assets::world::adt::MeshVertex>,
+    slots: &mut Vec<u32>,
+) -> bool {
+    /// What a part of the list holds until its chunk is written over it.
+    const BLANK: vale_assets::world::adt::MeshVertex = vale_assets::world::adt::MeshVertex {
+        corner: 0,
+        position: [0.0; 3],
+        normal: [0.0; 3],
+        uv: [0.0; 2],
+        colour: [0.0; 4],
+    };
+    let layout = vale_edit::adt::mesh::TileLayout::of(tile);
+    slots.clear();
+    slots.resize(layout.vertex_count(), UNMOVED);
+    vertices.clear();
+    vertices.resize(chunks.iter().map(|chunk| layout.span(*chunk).1).sum(), BLANK);
+
+    let mut parts: Vec<Part> = Vec::with_capacity(chunks.len());
+    let mut rest = vertices.as_mut_slice();
+    let mut first = 0;
+    for chunk in chunks {
+        let (start, count) = layout.span(*chunk);
+        let (into, after) = std::mem::take(&mut rest).split_at_mut(count);
+        rest = after;
+        parts.push(Part { chunk: *chunk, start, first, into });
+        first += count;
+    }
+    // Where a written chunk's vertices begin in the tile's mesh and in the
+    // list, and how many there are.
+    let write = |part: Part| {
+        let count = part.into.len();
+        layout
+            .vertices_over(tile, part.chunk, part.into)
+            .then_some((part.start, part.first, count))
+    };
+    let written: Vec<(usize, usize, usize)> = match parts.len() <= TOGETHER {
+        true => parts.into_iter().filter_map(write).collect(),
+        false => {
+            let mut parts = parts.into_iter();
+            bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default)
+                .scope(|scope| loop {
+                    let batch: Vec<Part> = parts.by_ref().take(TOGETHER).collect();
+                    if batch.is_empty() {
+                        break;
+                    }
+                    let write = &write;
+                    scope.spawn(async move { batch.into_iter().filter_map(write).collect::<Vec<_>>() });
+                })
+                .into_iter()
+                .flatten()
+                .collect()
+        }
+    };
+    for (start, first, count) in &written {
+        for (offset, slot) in slots.iter_mut().skip(*start).take(*count).enumerate() {
+            *slot = (first + offset) as u32;
+        }
+    }
+    !written.is_empty()
+}
+
+/// How many chunks [`rebuild`] rebuilds in one task, and the most it rebuilds
+/// without the pool. A brush narrower than a chunk changes four chunks a
+/// frame, which is less work than handing it to another thread.
+const TOGETHER: usize = 16;
 
 /// Put the grass back on the ground the brush has moved.
 ///
@@ -1367,20 +1519,26 @@ fn live_foliage(
     }
 }
 
-/// Write the moved vertices into one group's buffers.
+/// Write the moved vertices into one group's buffers. `hits` names each by
+/// its place in the group and its place in `vertices`; see [`Patch`].
 ///
 /// Positions and normals cross into Bevy's axes here, which is the same crossing
 /// `render::terrain`'s own builder makes and for the same reason: a change of
 /// basis is a rotation, so a normal takes it exactly as a position does.
-fn write_vertices(mesh: &mut Mesh, hits: &[(usize, &vale_assets::world::adt::MeshVertex)]) {
+fn write_vertices(mesh: &mut Mesh, vertices: &[vale_assets::world::adt::MeshVertex], hits: &[(u32, u32)]) {
     use vale_client::render::axes;
     use bevy::mesh::VertexAttributeValues;
 
+    // Each moved vertex's place in this group's buffers, with its new value.
+    let moved = || {
+        hits.iter()
+            .filter_map(|(at, slot)| Some((*at as usize, vertices.get(*slot as usize)?)))
+    };
     if let Some(VertexAttributeValues::Float32x3(positions)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
     {
-        for (at, vertex) in hits {
-            if let Some(slot) = positions.get_mut(*at) {
+        for (at, vertex) in moved() {
+            if let Some(slot) = positions.get_mut(at) {
                 *slot = axes::to_bevy(vertex.position).to_array();
             }
         }
@@ -1388,8 +1546,8 @@ fn write_vertices(mesh: &mut Mesh, hits: &[(usize, &vale_assets::world::adt::Mes
     if let Some(VertexAttributeValues::Float32x3(normals)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_NORMAL)
     {
-        for (at, vertex) in hits {
-            if let Some(slot) = normals.get_mut(*at) {
+        for (at, vertex) in moved() {
+            if let Some(slot) = normals.get_mut(at) {
                 *slot = axes::to_bevy(vertex.normal).to_array();
             }
         }
@@ -1404,8 +1562,8 @@ fn write_vertices(mesh: &mut Mesh, hits: &[(usize, &vale_assets::world::adt::Mes
     if let Some(VertexAttributeValues::Float32x4(colours)) =
         mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR)
     {
-        for (at, vertex) in hits {
-            if let Some(slot) = colours.get_mut(*at) {
+        for (at, vertex) in moved() {
+            if let Some(slot) = colours.get_mut(at) {
                 *slot = vertex.colour;
             }
         }
@@ -1922,3 +2080,122 @@ pub(crate) const SHAPES: [(&str, Shape); 3] = [
     ("Square", Shape::Square),
     ("Diamond", Shape::Diamond),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use vale_edit::adt::blank::blank_tile;
+
+    /// A held stroke over the corner four tiles share leaves each tile as a
+    /// step of that tile alone leaves it, and is one undo entry that names
+    /// the tiles in [`tiles_under`]'s order. [`stroke`] steps the four on the
+    /// compute pool and reads them out of a map with no order of its own.
+    #[test]
+    fn a_stroke_over_four_tiles_steps_each_as_it_would_alone() {
+        let install = std::env::temp_dir().join(format!("vale-terrain-stroke-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Stroke").unwrap());
+        for coord in [(32, 48), (33, 48), (32, 49), (33, 49)] {
+            session.tiles.insert(coord, blank_tile(coord.0, coord.1, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12));
+        }
+        // A chunk's origin is its corner at the greatest x and y, so the
+        // first chunk of the tile furthest on is at the shared corner.
+        let corner = session.tiles[&(33, 49)].chunk(0).unwrap().head().position();
+        let at = Vec3::new(corner[0], corner[1], 10.0);
+        let mut terrain = Terrain::default();
+        terrain.brush.mode = Mode::Raise;
+        terrain.brush.radius = 120.0;
+        terrain.brush.strength = 30.0;
+        let brush = terrain.brush;
+        let under = tiles_under(&brush, at);
+        assert_eq!(under.len(), 4, "{under:?}");
+
+        let mut alone = Vec::new();
+        for coord in &under {
+            let mut tile = session.tiles[coord].clone();
+            let before = tile.write();
+            let edits = brush.stroke_masked(&mut tile, [at.x, at.y], 0.25, None, None);
+            assert!(!edits.is_empty(), "{coord:?} is under the brush");
+            assert_ne!(tile.write(), before, "{coord:?}");
+            alone.push(tile.write());
+        }
+
+        session.history.begin("Raise terrain");
+        let mut world = World::new();
+        world.insert_resource(session);
+        world.insert_resource(Tool::Terrain);
+        world.insert_resource(terrain);
+        world.insert_resource(Held { on: true, ..Default::default() });
+        world.insert_resource(Cursor { ground: Some(at), ..Default::default() });
+        // Held since an earlier frame: the press itself opens the entry and
+        // asks whether the pointer is over the world.
+        let mut buttons = ButtonInput::<MouseButton>::default();
+        buttons.press(MouseButton::Left);
+        buttons.clear_just_pressed(MouseButton::Left);
+        world.insert_resource(buttons);
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<AccumulatedMouseScroll>();
+        world.init_resource::<bevy_egui::input::EguiWantsInput>();
+        world.init_resource::<crate::ui::Viewport>();
+        world.init_resource::<crate::playtest::Playtest>();
+        world.init_resource::<crate::tablet::Pen>();
+        world.init_resource::<crate::tablet::Tablet>();
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(250));
+        world.insert_resource(time);
+        world.run_system_once(stroke).unwrap();
+
+        let mut session = world.remove_resource::<EditSession>().unwrap();
+        for (coord, alone) in under.iter().zip(&alone) {
+            assert!(session.tiles[coord].write() == *alone, "{coord:?} differs from a step of it alone");
+            assert!(session.unsaved.contains(coord) && session.dirty.contains_key(coord), "{coord:?}");
+        }
+        assert!(!world.resource::<Held>().sides.is_empty(), "the stroke moved chunks on the tiles' sides");
+        session.history.end();
+        let change = session.history.undo().expect("one entry");
+        let named: Vec<vale_edit::TileKey> = under.iter().map(|coord| session.key(*coord)).collect();
+        assert_eq!(change.tiles(), named);
+        assert!(session.history.undo().is_none(), "the four tiles are one entry");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// More chunks than one task takes are rebuilt on the compute pool, and
+    /// what comes back is each asked chunk's own vertices, found through the
+    /// slots of that chunk's span in the tile's mesh. A chunk not asked for
+    /// has no slot.
+    #[test]
+    fn chunks_rebuilt_on_the_pool_are_each_chunks_own_vertices() {
+        let mut tile = blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12);
+        for index in 0..256 {
+            let ramp: Vec<f32> = (0..145).map(|i| 10.0 + (i % 9) as f32 + index as f32 * 0.1).collect();
+            vale_edit::adt::heights::set_heights(tile.chunk_mut(index).unwrap(), &ramp);
+        }
+        vale_edit::ops::Edit::Holes { chunk: 9, before: 0, after: 0b11 }.apply(&mut tile);
+        // Out of order, as a set of dirty chunks is.
+        let chunks: Vec<usize> = (0..256).rev().filter(|chunk| chunk % 3 != 0).collect();
+        assert!(chunks.len() > 4 * TOGETHER);
+        // Lists another tile left behind, longer than this tile needs.
+        let mut patch = Patch { slots: vec![7; 100_000], ..Default::default() };
+        patch.vertices.resize(90_000, vale_edit::adt::mesh::chunk_vertices(&tile, 0).unwrap()[0]);
+        assert!(rebuild(&tile, &chunks, &mut patch.vertices, &mut patch.slots));
+        assert_eq!(patch.slots.len(), vale_edit::adt::mesh::TileLayout::of(&tile).vertex_count());
+        let mut found = 0;
+        for chunk in 0..256 {
+            let (start, count) = vale_edit::adt::mesh::chunk_span(&tile, chunk);
+            let slots = &patch.slots[start..start + count];
+            if !chunks.contains(&chunk) {
+                assert!(slots.iter().all(|slot| *slot == UNMOVED), "chunk {chunk} was not asked for");
+                continue;
+            }
+            let alone = vale_edit::adt::mesh::chunk_vertices(&tile, chunk).unwrap();
+            assert_eq!(alone.len(), count);
+            for (slot, alone) in slots.iter().zip(&alone) {
+                assert!(patch.vertices[*slot as usize] == *alone, "chunk {chunk}");
+                found += 1;
+            }
+        }
+        assert_eq!(found, patch.vertices.len(), "every rebuilt vertex has one slot");
+        assert!(!rebuild(&tile, &[], &mut patch.vertices, &mut patch.slots), "nothing to rebuild");
+    }
+}

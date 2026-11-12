@@ -167,8 +167,7 @@ pub(crate) fn recompute_normals_with(
     let mut put = |index: usize, n: [f32; 3]| {
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
         for k in 0..3 {
-            let scaled = (n[k] / len * 127.0).round().clamp(-127.0, 127.0);
-            normals[index * 3 + k] = scaled as i8;
+            normals[index * 3 + k] = nearest(n[k] / len * 127.0);
         }
     };
 
@@ -210,9 +209,25 @@ pub(crate) fn recompute_normals_with(
     }
 }
 
+/// One component of a normal as `MCNR` stores it: `scaled` rounded to the
+/// nearest whole number, a half going away from zero, within -127..=127. The
+/// same value as `scaled.round().clamp(-127.0, 127.0) as i8`.
+///
+/// `f32::round` is a call into the C library on this target, and a stroke
+/// rounds 435 components for every chunk it shades. The whole part is taken
+/// by a cast instead, and what is left over decides the last step. The
+/// subtraction is exact: `scaled` is within 127 of zero, so its fractional
+/// part is a value an `f32` holds.
+fn nearest(scaled: f32) -> i8 {
+    let scaled = scaled.clamp(-127.0, 127.0);
+    let whole = scaled as i32;
+    let rest = scaled - whole as f32;
+    (whole + i32::from(rest >= 0.5) - i32::from(rest <= -0.5)) as i8
+}
+
 /// The slope through a vertex, in dz per yard along increasing world x or y.
 ///
-/// The grid runs along *decreasing* world coordinates, so the neighbour at a
+/// The grid runs along decreasing world coordinates, so the neighbour at a
 /// lower index is at a higher world position and the subtraction is that way
 /// round. A vertex with only one neighbour — the four sides of a tile — gets the
 /// one-sided difference rather than nothing.
@@ -396,4 +411,29 @@ pub fn normals(chunk: &super::MapChunk) -> Vec<[f32; 3]> {
         .map(|sub| sub.data.as_slice())
         .unwrap_or(&[]);
     vale_assets::world::adt::decode_normals(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `nearest` answers what `f32::round` and a clamp answer, for every
+    /// multiple of 1/1024 from -130 to 130, for the values next to each of
+    /// them on both sides, and for the values that are not numbers.
+    #[test]
+    fn nearest_rounds_as_round_does() {
+        let reference = |v: f32| v.round().clamp(-127.0, 127.0) as i8;
+        let mut checked = 0;
+        for step in -130 * 1024..=130 * 1024 {
+            let exact = step as f32 / 1024.0;
+            for v in [exact, exact.next_up(), exact.next_down()] {
+                assert_eq!(nearest(v), reference(v), "{v:?}");
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 3 * (260 * 1024 + 1));
+        for v in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, f32::MAX, f32::MIN, -0.0] {
+            assert_eq!(nearest(v), reference(v), "{v:?}");
+        }
+    }
 }

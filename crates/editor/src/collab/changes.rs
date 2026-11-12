@@ -1815,6 +1815,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
     }
 
+    /// A paste onto blank tiles, stitched or not and across a tile's corner,
+    /// then undone, leaves every tile as the folder holds it: no tile is
+    /// unsaved, and the paste and its undo are withdrawn from the log. A blank
+    /// tile has no `MCLQ`, so a paste that wrote an empty one left the tile
+    /// unsaved after the undo, and Discard could not clear it.
+    #[test]
+    fn a_paste_undone_again_is_no_change() {
+        use crate::tools::ground::chunks::{paste_at, Chunks};
+        use vale_edit::ops::chunks::{self as grid, block, Cell};
+        let install = std::env::temp_dir().join(format!("vale-collab-paste-undone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Undone").unwrap());
+        let mut assets = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
+        assets.root = install.to_string_lossy().into_owned();
+        let (here, there) = ((32, 48), (33, 48));
+        let coords = [here, there, (32, 49), (33, 49)];
+        for c in coords {
+            session.tiles.insert(c, vale_edit::adt::blank::blank_tile(c.0, c.1, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12));
+        }
+        // The copied block has a shape of its own, so the paste and the
+        // stitch move heights.
+        for index in 0..256 {
+            let tile = session.tiles.get_mut(&here).unwrap();
+            let before = vale_edit::adt::heights::heights(tile.chunk(index).unwrap());
+            let after: Vec<f32> = (0..145).map(|i| 10.0 + (i % 9) as f32 + index as f32 * 0.1).collect();
+            vale_edit::ops::Edit::Heights { chunk: index, before, after }.apply(tile);
+        }
+        let mut collab = Collab::default();
+        collab.author(&assets.root);
+        super::super::keep_the_log(&mut collab, &mut session, &assets);
+        for c in coords {
+            session.unsaved.insert(c);
+            assert!(session.save(c), "the folder holds the tile");
+        }
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+
+        for (at, stitch) in [((8, 8), false), ((8, 8), true), ((15, 15), true)] {
+            let mut chunks = Chunks::default();
+            let cells: std::collections::BTreeSet<Cell> = block(Cell::of(here, (3, 3)), Cell::of(here, (5, 5))).into_iter().collect();
+            chunks.clip = grid::copy(&session, &cells);
+            chunks.stitch_pasted = stitch;
+            paste_at(&mut session, &mut chunks, Cell::of(there, at));
+            super::super::log_own_steps(&mut collab, &mut session, &assets);
+            super::super::after_the_steps(&mut collab, &mut session, &assets);
+            assert_eq!(collab.open_edits(), 1, "at {at:?}");
+
+            session.undo(&assets);
+            assert!(session.unsaved.is_empty(), "at {at:?}, stitch {stitch}: {:?} still unsaved", session.unsaved);
+            super::super::log_own_steps(&mut collab, &mut session, &assets);
+            super::super::after_the_steps(&mut collab, &mut session, &assets);
+            assert_eq!(collab.open_edits(), 0, "at {at:?}, stitch {stitch}");
+        }
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
     /// An edit undone again leaves its tile as the folder holds it: the tile
     /// is not unsaved, and the edit and its undo are withdrawn from the log,
     /// so nothing counts them and no changelist is made.

@@ -1436,4 +1436,61 @@ mod tests {
         let written = paste(&mut tiles, &turned, at, Parts::default(), Level::Absolute);
         assert_eq!(written.cells.len(), 6);
     }
+
+    /// A blank tile's chunks have no `MCLQ` and no `MCAL`. A paste of dry,
+    /// one-layer chunks onto it adds neither region and records no water or
+    /// paint edit. A paste of wet, two-layer chunks adds both, and reverting
+    /// its edits writes the tile back byte for byte, so an undone paste leaves
+    /// the tile as the folder holds it.
+    #[test]
+    fn a_paste_onto_a_blank_tile_reverts_byte_for_byte() {
+        use crate::adt::liquid::Pool;
+        use vale_assets::world::wmo::Liquid;
+        use crate::adt::Region;
+        let (here, there) = ((31, 49), (32, 49));
+        let mut tiles = tiles_at(&[here, there]);
+        let original = tiles[&there].write();
+        let source: BTreeSet<Cell> = block(Cell::of(here, (2, 2)), Cell::of(here, (3, 3))).into_iter().collect();
+        let at = Cell::of(there, (8, 8));
+        let revert = |tiles: &mut HashMap<(u32, u32), AdtFile>, edits: &BTreeMap<(u32, u32), Vec<Edit>>| {
+            for (coord, list) in edits {
+                for edit in list.iter().rev() {
+                    edit.revert(tiles.get_mut(coord).unwrap());
+                }
+            }
+        };
+
+        let dry = copy(&tiles, &source);
+        let Written { edits, .. } = paste(&mut tiles, &dry, at, Parts::default(), Level::Absolute);
+        assert!(
+            edits.values().flatten().all(|edit| !matches!(edit, Edit::Liquid { .. } | Edit::Paint { .. })),
+            "{edits:?}"
+        );
+        assert_eq!(tiles[&there].write(), original);
+
+        let grass = tiles.get_mut(&here).unwrap().name_texture("tileset\\test\\grass.blp");
+        for &cell in &source {
+            let tile = tiles.get_mut(&here).unwrap();
+            let index = cell.chunk_in(tile).unwrap();
+            let chunk = tile.chunk_mut(index).unwrap();
+            let mut paint = alpha::paint(chunk);
+            let mut layer = paint.layers[0].clone();
+            layer.texture_id = grass;
+            paint.layers.push(layer);
+            paint.maps.push(vec![128; paint.maps[0].len()]);
+            alpha::set_paint(chunk, &paint);
+            let mut pool = Pool::flat(Liquid::Water, 1.0);
+            pool.set_wet(0, 0, true);
+            liquid::set_pools(chunk, &[pool]);
+        }
+        let wet = copy(&tiles, &source);
+        let Written { mut edits, moved, .. } = paste(&mut tiles, &wet, at, Parts::default(), Level::Absolute);
+        reshade_across(&mut tiles, &moved, &mut edits);
+        for (cell, _) in wet.footprint(at) {
+            let chunk = tiles[&there].chunk(cell.chunk_in(&tiles[&there]).unwrap()).unwrap();
+            assert!(chunk.region(Region::Liquid).is_some() && chunk.region(Region::Alpha).is_some());
+        }
+        revert(&mut tiles, &edits);
+        assert_eq!(tiles[&there].write(), original);
+    }
 }
