@@ -154,7 +154,7 @@ fn owned_row(
 /// none gets is on the heading's info mark, [`SKILL_LINES_ABOUT`].
 fn skill_lines_of(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
     use tables::learning::ability;
-    theme::heading_about(ui, "Skill Lines", SKILL_LINES_ABOUT);
+    theme::subheading(ui, "Skill Lines", SKILL_LINES_ABOUT);
     if !work.session.open_table(work.assets, ability::TABLE) {
         theme::note(ui, "SkillLineAbility did not open");
         return;
@@ -221,7 +221,7 @@ fn skill_lines_of(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
 /// other way needs none. What a teaching spell is is on the heading's info
 /// mark, [`TAUGHT_BY_ABOUT`].
 fn taught_by(ui: &mut egui::Ui, work: &mut Workspace<'_>, spell: u32) {
-    theme::heading_about(ui, "Taught By", TAUGHT_BY_ABOUT);
+    theme::subheading(ui, "Taught By", TAUGHT_BY_ABOUT);
     let teachers = tables::learning::teachers_of(work.browser, work.session, spell);
     if teachers.is_empty() {
         theme::note(ui, "No teaching spell.");

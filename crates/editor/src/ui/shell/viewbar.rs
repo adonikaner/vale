@@ -22,10 +22,12 @@
 //! A switch that is off by default has no line while off, because twelve
 //! struck icons in a row hid the one that mattered.
 //!
-//! ## The seven groups
+//! ## The eight groups
 //!
 //! ```text
 //! world    a subtraction: the layer is in the frame, and this takes it out
+//! time     the hour the world is lit at: one button that shows the hour and
+//!          opens a slider across the day
 //! overlay  an addition: not in the frame at all, drawn on top of it
 //! server   the server's navmesh, which is the editor's own overlay
 //! spawns   the event filter: which spawns the creature and game object tools
@@ -268,6 +270,16 @@ pub(crate) struct Bar<'a> {
     /// `--guides-menu`: open the Guides menu, which a scripted run cannot
     /// press.
     pub(crate) open_guides: bool,
+    /// The hour set by hand, in half-minutes past midnight, or `None` while
+    /// the server's clock is followed, which only a playtest can do. A copy
+    /// of `WorldClock::override_half_minutes`, written back by the caller
+    /// when it changed.
+    pub(crate) hour: &'a mut Option<u32>,
+    /// The hour the world is lit at now, for the button while `hour` is
+    /// `None`.
+    pub(crate) lit_at: u32,
+    /// `--time-menu`: open the time of day menu, for a picture of it.
+    pub(crate) open_time: bool,
     /// The world switches as the editor sets them in its current state, which
     /// is what a button's "moved" mark and `reset` measure against. See
     /// [`crate::playtest::world_baseline`].
@@ -310,6 +322,10 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
                 *on = !*on;
             }
         }
+
+        // The hour the layers above are lit at.
+        rule(ui);
+        time_menu(ui, bar.hour, bar.lit_at, bar.editing, bar.open_time);
 
         #[cfg(feature = "diagnostics")]
         {
@@ -431,11 +447,119 @@ pub(crate) fn draw(ui: &mut Ui, bar: &mut Bar) {
             *bar.guides = crate::tools::guides::Guides::default();
             *bar.phase = crate::subjects::game_events::Phase::All;
             *bar.map_view = false;
+            *bar.hour = default_hour(bar.editing);
             #[cfg(feature = "diagnostics")]
             {
                 *bar.overlay = editor_overlay(None);
             }
         }
+    });
+}
+
+/// Noon, in half-minutes past midnight: the hour a session opens at.
+pub(crate) const NOON: u32 = 12 * 120;
+
+/// How many half-minutes a day has.
+const DAY: u32 = 24 * 120;
+
+/// The hour the bar's `reset` returns to: noon while editing, and the
+/// server's clock during a playtest, as `crate::playtest` sets them.
+fn default_hour(editing: bool) -> Option<u32> {
+    editing.then_some(NOON)
+}
+
+/// The time of day button and its menu: the hour the world is lit at.
+///
+/// The button shows the hour and is lit while it is not the default
+/// ([`default_hour`]). The menu holds a slider across the day in steps of
+/// five minutes, a box a time can be typed into, and four buttons for
+/// midnight, 06:00, noon and 18:00. During a playtest it also has the switch
+/// that follows the server's clock; while editing there is no server clock
+/// to follow, so the hour is always set by hand.
+///
+/// The hour is a view setting. It is not saved and changes nothing in the
+/// project or on the server.
+fn time_menu(ui: &mut Ui, hour: &mut Option<u32>, lit_at: u32, editing: bool, open: bool) {
+    use crate::ui::tools::places::bands::{clock, minutes_of_day};
+    let shown = hour.unwrap_or(lit_at) % DAY;
+    let moved = *hour != default_hour(editing);
+    let button = egui::Button::new(RichText::new(clock(shown)).size(12.0).color(match moved {
+        false => theme::INK_DIM,
+        true => theme::INK,
+    }))
+    .fill(match moved {
+        false => theme::RAISED,
+        true => theme::ACCENT_SUNK,
+    })
+    .stroke(Stroke::new(
+        1.0,
+        match moved {
+            false => theme::LINE,
+            true => theme::ACCENT,
+        },
+    ))
+    .corner_radius(CornerRadius::same(3))
+    .min_size(Vec2::new(52.0, BUTTON));
+    let (response, _) = egui::containers::menu::MenuButton::from_button(button)
+        .config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+        )
+        .ui(ui, |ui| {
+            // The bar's own tight spacing is for a row of square buttons.
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
+            ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
+            ui.spacing_mut().slider_width = 240.0;
+            ui.set_min_width(320.0);
+            // A menu draws its buttons with no frame, which leaves a number
+            // box and the four hour buttons looking like labels.
+            ui.visuals_mut().button_frame = true;
+            ui.visuals_mut().widgets.inactive.weak_bg_fill = theme::RAISED;
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, theme::LINE);
+            theme::heading(ui, "Time of Day");
+            if !editing {
+                let mut follow = hour.is_none();
+                let switched = ui
+                    .checkbox(&mut follow, "Follow the server's clock")
+                    .on_hover_text("On: the world is lit at the server's time. Off: at the hour set here.");
+                if switched.changed() {
+                    // Taken from where the clock stands, so the sky does not
+                    // change until the hour is moved.
+                    *hour = (!follow).then_some(shown);
+                }
+            }
+            let mut minutes = shown / 2;
+            let was = minutes;
+            ui.horizontal(|ui| {
+                ui.add(egui::Slider::new(&mut minutes, 0..=DAY / 2 - 1).step_by(5.0).show_value(false));
+                ui.add(
+                    egui::DragValue::new(&mut minutes)
+                        .range(0..=DAY / 2 - 1)
+                        .speed(1.0)
+                        .custom_formatter(|minutes, _| clock(minutes as u32 * 2))
+                        .custom_parser(|text| minutes_of_day(text).map(f64::from)),
+                )
+                .on_hover_text("Drag, or type a time as 18:30.");
+            });
+            ui.horizontal(|ui| {
+                for at in [0, 6, 12, 18] {
+                    if ui.button(clock(at * 120)).clicked() {
+                        minutes = at * 60;
+                    }
+                }
+            });
+            if minutes != was {
+                *hour = Some(minutes * 2);
+            }
+            theme::note(ui, "The hour the viewport is lit at. It is not saved and does not change the server's time.");
+        });
+    if open {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
+    response.on_hover_text(match (editing, hour.is_some()) {
+        (true, _) => "time: the hour the world is lit at. Noon when a project opens.",
+        (false, true) => "time: the hour the world is lit at, set by hand in place of the server's clock.",
+        (false, false) => "time: the server's clock, which the world is lit at during a playtest.",
     });
 }
 
@@ -756,9 +880,9 @@ fn named(label: &str) -> String {
 }
 
 /// What differs from the default view, as the command-line flags that
-/// reproduce it: `--without <list>`, `--overlay <list>`, `--navmesh` and
-/// `--guides <list>`, each present only when its list is not empty or its
-/// switch is on. `--without` lists the world switches that are off and on in
+/// reproduce it: `--without <list>`, `--overlay <list>`, `--navmesh`,
+/// `--guides <list>` and `--hour <hh:mm>`, each present only when its list is
+/// not empty, its switch is on, or `hour` is an hour other than noon. `--without` lists the world switches that are off and on in
 /// `baseline`, so a switch the editor turns off itself is not echoed.
 ///
 /// The status line prints them, so a view set up by clicking can be taken
@@ -777,6 +901,7 @@ pub(crate) fn scripted(
     navmesh: bool,
     map_view: bool,
     guides: &crate::tools::guides::Guides,
+    hour: Option<u32>,
 ) -> Vec<String> {
     let mut base = baseline.clone();
     if map_view {
@@ -803,6 +928,9 @@ pub(crate) fn scripted(
     }
     if guides.count() > 0 {
         flags.push(format!("--guides {}", guides.list()));
+    }
+    if let Some(hour) = hour.filter(|hour| *hour != NOON) {
+        flags.push(format!("--hour {}", crate::ui::tools::places::bands::clock(hour)));
     }
     flags
 }
@@ -908,6 +1036,7 @@ mod tests {
                 navmesh,
                 false,
                 &crate::tools::guides::Guides::default(),
+                Some(NOON),
             )
         };
 
@@ -932,8 +1061,25 @@ mod tests {
             false,
             false,
             &guides,
+            Some(NOON),
         );
         assert_eq!(echoed, vec!["--guides chunks,slope"]);
+        // An hour other than noon is echoed as the flag that sets it; the
+        // server's clock, which only a playtest follows, is not.
+        let at = |hour| {
+            scripted(
+                &editing,
+                &editing,
+                #[cfg(feature = "diagnostics")]
+                &overlay,
+                false,
+                false,
+                &crate::tools::guides::Guides::default(),
+                hour,
+            )
+        };
+        assert_eq!(at(Some(18 * 120 + 60)), vec!["--hour 18:30"]);
+        assert!(at(None).is_empty());
     }
 
     /// The map view is echoed as its own flag, and the switches it turns off
@@ -953,6 +1099,7 @@ mod tests {
             false,
             true,
             &crate::tools::guides::Guides::default(),
+            Some(NOON),
         );
         assert_eq!(echoed, vec!["--map-view"]);
     }

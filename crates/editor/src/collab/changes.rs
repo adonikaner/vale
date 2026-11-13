@@ -30,11 +30,28 @@
 //! Edits undone again, or discarded, leave their subjects as the folder
 //! holds them, and they are not changes. Alone and hosting, once none of this
 //! editor's subjects is unsaved, its open edits are withdrawn from the log
-//! ([`withdraw_undone`]; `vale_collab::Log::withdraw`), so nothing counts
-//! them, no changelist is made of them, and in a session what they claimed is
-//! released. Only edits whose every subject is checked that way are
-//! withdrawn: none that writes a file, and none on a map that is not open,
-//! since those are written to the folder when they are made.
+//! ([`withdraw_undone`]; `vale_collab::Log::withdraw_edits`), so nothing
+//! counts them, no changelist is made of them, and in a session what they
+//! claimed is released. Only edits whose every subject is checked that way
+//! are withdrawn ([`withdrawable`]): none that writes a file, and none on a
+//! map that is not open, since those are written to the folder when they are
+//! made. Such an edit stays open, and so does every edit that shares a
+//! subject with it; the other open edits are withdrawn. When one such edit
+//! kept every other open edit from being withdrawn, the count of open edits
+//! grew with nothing unsaved.
+//!
+//! Nothing is withdrawn while recovered edits are offered (*Recovered
+//! edits*). They are open edits that are not applied, so nothing is unsaved
+//! on their account, and that does not show they were undone.
+//!
+//! ## Locks
+//!
+//! A vertex or placement lock is written to the project when it is made
+//! (`editor\locks\`), as a file step, so a session sends it. It changes no
+//! file the game reads and nothing a save writes, so alone and hosting this
+//! editor's lock steps are withdrawn as soon as they are logged
+//! ([`is_locks`]): they are in the log, and they are not open edits, are not
+//! counted and are in no changelist.
 //!
 //! A joined editor's edits are checked by the host when the editor asks
 //! ([`withdraw_theirs`]): the author's unsubmitted changes are taken back on
@@ -79,6 +96,11 @@
 //! Changes window offers Restore, which applies them again unlogged (they are
 //! in the log already), another author's files back into the overlay, and
 //! Discard, which is the project's Discard.
+//!
+//! They are not offered when all of them are this editor's own edits and,
+//! made in order over what the files hold, they leave every subject as the
+//! files hold it: edits undone or discarded before the editor closed. Those
+//! are withdrawn when the log is opened ([`withdraw_recovered_when_unchanged`]).
 //!
 //! ## Revert
 //!
@@ -1109,7 +1131,7 @@ pub(crate) fn withdraw_theirs(collab: &mut Collab, session: &mut EditSession, as
         return false;
     }
     let changes: Vec<(Change, bool)> = theirs.iter().map(|excluded| (excluded.change.clone(), excluded.forward)).collect();
-    if !nets_to_nothing(session, assets, &changes) {
+    if !nets_to_nothing(session, assets, &changes, true) {
         return false;
     }
     let Some(log) = collab.log.as_mut() else { return false };
@@ -1144,7 +1166,7 @@ pub(crate) fn empty_pending_when_unchanged(collab: &mut Collab, session: &mut Ed
             _ => None,
         })
         .collect();
-    if !nets_to_nothing(session, assets, &changes) {
+    if !nets_to_nothing(session, assets, &changes, true) {
         return;
     }
     match super::offline::clear(&session.project) {
@@ -1153,11 +1175,52 @@ pub(crate) fn empty_pending_when_unchanged(collab: &mut Collab, session: &mut Ed
     }
 }
 
+/// When the log is opened: withdraw the recovered edits when they change
+/// nothing, so they are not offered. Only when every one is an edit of this
+/// editor's own that reads back; a file step, another author's edit or an
+/// edit that does not decode leaves them all offered. See *Recovered edits*.
+pub(crate) fn withdraw_recovered_when_unchanged(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets) {
+    let Some(me) = collab.author_id else { return };
+    let Some(log) = collab.log.as_ref() else { return };
+    if collab.changes.recovered.is_empty() {
+        return;
+    }
+    let mut changes: Vec<(Change, bool)> = Vec::new();
+    for seq in &collab.changes.recovered {
+        let own = log.header(*seq).is_some_and(|header| header.author == me && header.changelist.is_none());
+        match (own, log.read(*seq).ok().and_then(|bytes| log::decode(&bytes))) {
+            (true, Some(Step::Edit { change, forward, .. })) => changes.push((change, forward)),
+            _ => return,
+        }
+    }
+    if !nets_to_nothing(session, assets, &changes, false) {
+        return;
+    }
+    let edits = collab.changes.recovered.clone();
+    let author = collab.author(&assets.root);
+    let Some(log) = collab.log.as_mut() else { return };
+    let whole = log.whole_edits(&edits);
+    match log.withdraw_edits(&author, vale_collab::log::now(), &edits) {
+        Ok(_) => {
+            collab.changes.recovered.clear();
+            session.status = format!(
+                "{} in the project's log changed nothing between them, so the log no longer counts them",
+                super::counted(whole, "unsaved edit", "unsaved edits")
+            );
+        }
+        Err(e) => session.status = format!("the undone edits could not be marked in the log: {e}"),
+    }
+}
+
 /// Whether `changes`, each with its direction and in the order made, change
-/// nothing: every tile and table they touch, with them taken back newest
-/// first on a copy, is what this editor holds now, and every server row ends
-/// as it started.
-fn nets_to_nothing(session: &mut EditSession, assets: &GameAssets, changes: &[(Change, bool)]) -> bool {
+/// nothing: every tile and table they touch ends as this editor holds it
+/// now, and every server row ends as it started.
+///
+/// With `applied`, the changes are in what this editor holds, and each tile
+/// and table is compared with a copy on which they are taken back newest
+/// first. Without it they are not, as recovered edits are not, and the copy
+/// has them made oldest first.
+fn nets_to_nothing(session: &mut EditSession, assets: &GameAssets, changes: &[(Change, bool)], applied: bool) -> bool {
     let mut tiles: Vec<vale_edit::TileKey> = Vec::new();
     let mut tables: Vec<String> = Vec::new();
     for (change, _) in changes {
@@ -1172,13 +1235,19 @@ fn nets_to_nothing(session: &mut EditSession, assets: &GameAssets, changes: &[(C
             }
         }
     }
+    // The order the copy is changed in, and whether a change made forward
+    // is applied to it or reverted.
+    let ordered: Vec<&(Change, bool)> = match applied {
+        true => changes.iter().rev().collect(),
+        false => changes.iter().collect(),
+    };
     for key in &tiles {
         let Some(now) = current_tile(session, assets, key) else { return false };
         let mut copy = now.clone();
-        for (change, forward) in changes.iter().rev() {
-            match forward {
-                true => change.revert(key, &mut copy),
-                false => change.apply(key, &mut copy),
+        for (change, forward) in &ordered {
+            match *forward != applied {
+                true => change.apply(key, &mut copy),
+                false => change.revert(key, &mut copy),
             }
         }
         if copy.write() != now.write() {
@@ -1189,10 +1258,10 @@ fn nets_to_nothing(session: &mut EditSession, assets: &GameAssets, changes: &[(C
         session.open_table(assets, name);
         let Some(now) = session.tables.get(name) else { return false };
         let mut copy = now.clone();
-        for (change, forward) in changes.iter().rev() {
-            match forward {
-                true => change.revert_table(name, &mut copy),
-                false => change.apply_table(name, &mut copy),
+        for (change, forward) in &ordered {
+            match *forward != applied {
+                true => change.apply_table(name, &mut copy),
+                false => change.revert_table(name, &mut copy),
             }
         }
         if copy.write() != now.write() {
@@ -1214,34 +1283,102 @@ fn nets_to_nothing(session: &mut EditSession, assets: &GameAssets, changes: &[(C
     rows.iter().all(|(_, first, last)| first == last)
 }
 
-/// Withdraw this editor's open edits when they change nothing. See *Edits
-/// that change nothing*.
+/// Whether a step's groups are lock files and nothing else. See *Locks*.
+pub(crate) fn is_locks(groups: &[Group]) -> bool {
+    !groups.is_empty() && groups.iter().all(|group| matches!(group, Group::File { path } if path.starts_with("editor\\locks\\")))
+}
+
+/// Which of one author's open edits are withdrawn. `open` is the edits oldest
+/// first, each with whether it continues the one before and its groups; `map`
+/// is the open map; `settled` is whether nothing of the author's is unsaved
+/// and no recovered edit is offered. See *Edits that change nothing* and
+/// *Locks*.
+///
+/// A whole edit, a first part with the parts that continue it, is withdrawn
+/// or kept as one. Lock steps are always withdrawn. The rest are withdrawn
+/// only when `settled`, and then only those whose every group is a tile of
+/// the open map, a client table or a server row, and that share no subject
+/// with an edit that is kept: an edit that also touches a file or another
+/// map's tile cannot be checked, and an edit beside it on the same subject
+/// may be what it nets to nothing with.
+fn withdrawable(open: &[(Seq, bool, &[Group])], map: &str, settled: bool) -> Vec<Seq> {
+    // Each whole edit: its numbers and every group its parts touch.
+    let mut whole: Vec<(Vec<Seq>, Vec<&Group>)> = Vec::new();
+    for (seq, continues, groups) in open {
+        match (continues, whole.last_mut()) {
+            (true, Some((seqs, all))) => {
+                seqs.push(*seq);
+                all.extend(groups.iter());
+            }
+            _ => whole.push((vec![*seq], groups.iter().collect())),
+        }
+    }
+    let locks = |groups: &[&Group]| !groups.is_empty() && groups.iter().all(|group| is_locks(std::slice::from_ref(*group)));
+    let checked = |group: &Group| match group {
+        Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => tile.map.eq_ignore_ascii_case(map),
+        Group::Table { .. } | Group::Row { .. } | Group::Record { .. } => true,
+        Group::File { .. } => false,
+    };
+    let subjects = |groups: &[&Group]| -> Vec<String> { groups.iter().filter_map(|group| subject_of(group)).collect() };
+    // Kept: an edit with a group that is not checked. Then, until nothing
+    // more is added, every edit that shares a subject with a kept one.
+    let mut kept: Vec<bool> = whole.iter().map(|(_, groups)| !locks(groups) && !(settled && groups.iter().all(|group| checked(group)))).collect();
+    let mut held: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for ((_, groups), kept) in whole.iter().zip(&kept) {
+        if *kept {
+            held.extend(subjects(groups));
+        }
+    }
+    loop {
+        let mut grew = false;
+        for ((_, groups), kept) in whole.iter().zip(kept.iter_mut()) {
+            if !*kept && !locks(groups) && subjects(groups).iter().any(|subject| held.contains(subject)) {
+                *kept = true;
+                held.extend(subjects(groups));
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    whole.into_iter().zip(kept).filter(|(_, kept)| !kept).flat_map(|((seqs, _), _)| seqs).collect()
+}
+
+/// Withdraw this editor's lock steps, and its open edits that change
+/// nothing. See *Edits that change nothing* and *Locks*.
 pub(crate) fn withdraw_undone(collab: &mut Collab, session: &mut EditSession, assets: &GameAssets) {
     if collab.is_joined() || collab.offline() || session.save_asked || session.history.segment().is_some() {
         return;
     }
-    if !session.unsaved.is_empty() || !session.unsaved_tables.is_empty() || session.rows.unsaved() {
-        return;
-    }
     let Some(me) = collab.author_id else { return };
     let Some(log) = collab.log.as_ref() else { return };
-    let open = log.open_edits(&me);
-    if open.is_empty() {
+    if log.open_count(&me) == 0 {
         return;
     }
-    let map = session.map.clone();
-    let checked = |group: &Group| match group {
-        Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => tile.map.eq_ignore_ascii_case(&map),
-        Group::Table { .. } | Group::Row { .. } | Group::Record { .. } => true,
-        Group::File { .. } => false,
-    };
-    if !open.iter().filter_map(|seq| log.header(*seq)).all(|header| header.groups.iter().all(checked)) {
+    let settled = session.unsaved.is_empty()
+        && session.unsaved_tables.is_empty()
+        && !session.rows.unsaved()
+        && collab.changes.recovered.is_empty();
+    let open: Vec<(Seq, bool, &[Group])> = log
+        .open_edits(&me)
+        .into_iter()
+        .filter_map(|seq| log.header(seq))
+        .map(|header| (header.seq, header.continues, header.groups.as_slice()))
+        .collect();
+    let edits = withdrawable(&open, &session.map, settled);
+    if edits.is_empty() {
         return;
     }
     let author = collab.author(&assets.root);
     let Some(log) = collab.log.as_mut() else { return };
-    if let Err(e) = log.withdraw(&author, vale_collab::log::now()) {
+    if let Err(e) = log.withdraw_edits(&author, vale_collab::log::now(), &edits) {
         session.status = format!("the undone edits could not be marked in the log: {e}");
+        return;
+    }
+    // An edit left open still holds what it claims, and the host releases an
+    // author's claims together, so they are released once none is open.
+    if !log.open_edits(&author.id).is_empty() {
         return;
     }
     // The host's own list changes with the joined editors': the claims the
@@ -1907,6 +2044,148 @@ mod tests {
         assert_eq!(collab.open_edits(), 0);
         let log = collab.log.as_ref().unwrap();
         assert_eq!((log.last(), log.changelists().len()), (2, 0), "both are in the log, in no changelist");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A vertex lock is written to the project when it is made, as a file
+    /// step. It is not an open edit: it is not counted, and an edit undone
+    /// after it is withdrawn as it is with no lock. With the lock's step left
+    /// among the open edits, nothing after it was ever withdrawn, and the
+    /// count grew with nothing unsaved and Save unavailable.
+    #[test]
+    fn a_lock_is_not_an_open_edit() {
+        let install = std::env::temp_dir().join(format!("vale-collab-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Locks").unwrap());
+        let mut assets = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
+        assets.root = install.to_string_lossy().into_owned();
+        let coord = (32, 48);
+        session.tiles.insert(coord, vale_edit::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12));
+        let mut collab = Collab::default();
+        collab.author(&assets.root);
+        super::super::keep_the_log(&mut collab, &mut session, &assets);
+        assert!(session.save(coord), "the folder holds the tile");
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+
+        let sides = vale_edit::ops::vertices::Selected::tile_sides(&session.tiles[&coord]);
+        session.set_locked(coord, sides);
+        super::super::log_own_steps(&mut collab, &mut session, &assets);
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+        assert_eq!(collab.log.as_ref().unwrap().last(), 1, "the lock's file is in the log");
+        assert_eq!(collab.open_edits(), 0, "and is not an open edit");
+
+        let key = session.key(coord);
+        let before = vale_edit::adt::heights::heights(session.tiles[&coord].chunk(5).unwrap());
+        let edit = vale_edit::ops::Edit::Heights { chunk: 5, before, after: vec![20.0; 145] };
+        session.history.begin("Raise terrain");
+        edit.apply(session.tiles.get_mut(&coord).unwrap());
+        session.history.record(&key, [edit]);
+        session.history.end();
+        session.unsaved.insert(coord);
+        // A lock made while the raise is unsaved is withdrawn alone.
+        session.set_locked(coord, Default::default());
+        super::super::log_own_steps(&mut collab, &mut session, &assets);
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+        assert_eq!(collab.open_edits(), 1, "the raise");
+
+        session.undo(&assets);
+        super::super::log_own_steps(&mut collab, &mut session, &assets);
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+        assert_eq!(collab.open_edits(), 0, "the raise and its undo change nothing");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// An edit logged and not saved when the editor closed is offered as
+    /// recovered when the log is opened, and stays an open edit until it is
+    /// restored or discarded. Nothing is unsaved then, because the edit is not
+    /// applied, and that is not a sign that it was undone: withdrawn there,
+    /// the edit was restored and saved into no changelist.
+    #[test]
+    fn a_recovered_edit_stays_open_until_it_is_restored() {
+        let install = std::env::temp_dir().join(format!("vale-collab-recovered-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Recovered").unwrap());
+        let mut assets = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
+        assets.root = install.to_string_lossy().into_owned();
+        let coord = (32, 48);
+        session.tiles.insert(coord, vale_edit::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12));
+        let mut collab = Collab::default();
+        let author = collab.author(&assets.root);
+        super::super::keep_the_log(&mut collab, &mut session, &assets);
+        assert!(session.save(coord), "the folder holds the tile");
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+
+        // An edit logged and never saved, as a closed editor leaves it.
+        let key = session.key(coord);
+        let before = vale_edit::adt::heights::heights(session.tiles[&coord].chunk(5).unwrap());
+        let raise = vale_edit::ops::Edit::Heights { chunk: 5, before, after: vec![20.0; 145] };
+        let step = Step::Edit { change: Change::from_entries("Raise terrain", vec![Entry::Tile(key, raise)]), forward: true, continues: false };
+        let log = collab.log.as_mut().unwrap();
+        log::append(log, 1, &author, &step, &mut session.status);
+
+        let mut reopened = Collab::default();
+        reopened.author(&assets.root);
+        super::super::keep_the_log(&mut reopened, &mut session, &assets);
+        super::super::after_the_steps(&mut reopened, &mut session, &assets);
+        assert_eq!(reopened.changes.recovered, vec![1]);
+        assert_eq!(reopened.open_edits(), 1, "not restored yet, and not withdrawn");
+
+        restore_recovered(&mut reopened, &mut session, &assets);
+        session.unsaved.insert(coord);
+        session.save_files().unwrap();
+        super::super::after_the_steps(&mut reopened, &mut session, &assets);
+        let log = reopened.log.as_ref().unwrap();
+        assert_eq!(log.changelists().len(), 1, "the restored edit is saved into a changelist");
+        assert_eq!(reopened.open_edits(), 0);
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// A raise and its undo left open in the log when the editor closed, with
+    /// a lock's file step between them, are not offered as recovered when
+    /// the log is opened: made in order over the files they change nothing,
+    /// so they are withdrawn, and the lock's step with them.
+    #[test]
+    fn recovered_edits_that_change_nothing_are_not_offered() {
+        let install = std::env::temp_dir().join(format!("vale-collab-recovered-nothing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Nothing").unwrap());
+        let mut assets = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
+        assets.root = install.to_string_lossy().into_owned();
+        let coord = (32, 48);
+        session.tiles.insert(coord, vale_edit::adt::blank::blank_tile(32, 48, r"Tileset\Elwynn\ElwynnGrass01.blp", 10.0, 12));
+        let mut collab = Collab::default();
+        let author = collab.author(&assets.root);
+        super::super::keep_the_log(&mut collab, &mut session, &assets);
+        assert!(session.save(coord), "the folder holds the tile");
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+
+        let key = session.key(coord);
+        let before = vale_edit::adt::heights::heights(session.tiles[&coord].chunk(5).unwrap());
+        let raise = vale_edit::ops::Edit::Heights { chunk: 5, before, after: vec![20.0; 145] };
+        let change = Change::from_entries("Raise terrain", vec![Entry::Tile(key, raise)]);
+        let lock = files::Files {
+            files: vec![files::File { path: r"editor\locks\azeroth_32_48.txt".into(), bytes: Some(b"5 0".to_vec()), before: None }],
+            imported: String::new(),
+            forgotten: String::new(),
+        };
+        let steps = [
+            Step::Edit { change: change.clone(), forward: true, continues: false },
+            Step::Files(lock),
+            Step::Edit { change, forward: false, continues: false },
+        ];
+        let log = collab.log.as_mut().unwrap();
+        for (at, step) in steps.iter().enumerate() {
+            log::append(log, at as Seq + 1, &author, step, &mut session.status);
+        }
+        assert_eq!(log.open_count(&author.id), 3);
+
+        let mut reopened = Collab::default();
+        reopened.author(&assets.root);
+        super::super::keep_the_log(&mut reopened, &mut session, &assets);
+        assert!(reopened.changes.recovered.is_empty(), "{:?}", reopened.changes.recovered);
+        super::super::after_the_steps(&mut reopened, &mut session, &assets);
+        assert_eq!(reopened.open_edits(), 0, "the lock's step is withdrawn as well");
+        assert!(reopened.log.as_ref().unwrap().changelists().is_empty());
         let _ = std::fs::remove_dir_all(&install);
     }
 

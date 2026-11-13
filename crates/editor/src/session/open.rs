@@ -63,17 +63,18 @@ pub(super) fn open(
     live.0 = true;
     // The world is lit by hand, because `render::sky::resolve` declines to
     // resolve at all while neither the server nor a person has said what time it
-    // is, and only a server sends the clock. The same override `--hour` uses.
+    // is, and only a server sends the clock. Noon, or `--hour`; the view bar's
+    // time control changes it afterwards.
     //
     // The game's interface and the login screen's own 3D scene are switched
     // by [`crate::playtest::arrange`], not here. They are off while the editor
     // is editing and on while it is being played, which is one state and not
     // two defaults.
-    let noon = 12 * 120;
+    let hour = args.view.hour.unwrap_or(12 * 120);
     *clock = vale_client::render::sky::WorldClock {
-        half_minutes: noon,
+        half_minutes: hour,
         from_server: false,
-        override_half_minutes: Some(noon),
+        override_half_minutes: Some(hour),
     };
 
     // What the map claims, from the project's own copy of the WDT if it has

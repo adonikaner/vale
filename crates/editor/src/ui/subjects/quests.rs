@@ -1080,9 +1080,9 @@ fn pair_run(
 }
 
 /// A heading inside a section, over a run of composed lines: a
-/// [`theme::heading_about`], whose info mark names the run's columns.
+/// [`theme::subheading`], whose info mark names the run's columns.
 fn run_heading(ui: &mut egui::Ui, text: &str, about: &str) {
-    theme::heading_about(ui, text, about);
+    theme::subheading(ui, text, about);
 }
 
 /// What the quest asks for, a line per objective.

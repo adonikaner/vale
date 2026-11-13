@@ -49,6 +49,14 @@ pub(crate) struct View {
     pub(crate) guides: Option<String>,
     /// `--guides-menu`: open the view bar's Guides menu, for a picture of it.
     pub(crate) guides_menu: bool,
+    /// `--hour <hh:mm>`, or a bare hour: the time of day the world is lit at
+    /// when the session opens, in half-minutes past midnight. It is otherwise
+    /// noon, and the view bar's time control changes it. The client's flag of
+    /// the same name sets the same clock.
+    pub(crate) hour: Option<u32>,
+    /// `--time-menu`: open the view bar's time of day menu, for a picture of
+    /// it.
+    pub(crate) time_menu: bool,
     /// `--view <distance>[,<pitch°>[,<yaw°>]]`: where the camera stands.
     ///
     /// `--at` sets where the editor looks and this sets the distance and angle,
@@ -122,6 +130,8 @@ impl Default for View {
             overlay: None,
             guides: None,
             guides_menu: false,
+            hour: None,
+            time_menu: false,
             camera: None,
             reach: None,
             size: None,
@@ -138,6 +148,24 @@ impl Default for View {
     }
 }
 
+/// `hh:mm`, or a bare hour, as half-minutes past midnight. Anything else is
+/// `None` with a warning, so a scripted picture is not taken at noon when
+/// another hour was asked for.
+fn parse_hour(text: &str) -> Option<u32> {
+    let text = text.trim();
+    let (hours, minutes) = match text.split_once(':') {
+        Some((hours, minutes)) => (hours.parse::<u32>().ok(), minutes.parse::<u32>().ok()),
+        None => (text.parse::<u32>().ok(), Some(0)),
+    };
+    match (hours, minutes) {
+        (Some(hours), Some(minutes)) if hours <= 23 && minutes <= 59 => Some((hours * 60 + minutes) * 2),
+        _ => {
+            bevy::log::warn!("--hour {text}: expected hh:mm, or a bare hour from 0 to 23");
+            None
+        }
+    }
+}
+
 pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--map", One, |a, v| {
         if let Some(map) = text(v) {
@@ -150,6 +178,8 @@ pub(super) const FLAGS: &[Flag] = &[
     Flag::new("--overlay", One, |a, v| a.view.overlay = text(v)),
     Flag::new("--guides", One, |a, v| a.view.guides = text(v)),
     Flag::new("--guides-menu", Switch, |a, _| a.view.guides_menu = true),
+    Flag::new("--hour", One, |a, v| a.view.hour = first(v).and_then(parse_hour)),
+    Flag::new("--time-menu", Switch, |a, _| a.view.time_menu = true),
     Flag::new("--view", One, |a, v| a.view.camera = first(v).and_then(parse_view)),
     Flag::new("--reach", One, |a, v| a.view.reach = number(v)),
     Flag::new("--size", One, |a, v| {

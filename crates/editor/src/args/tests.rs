@@ -12,8 +12,8 @@ fn parse(list: &[&str]) -> Args {
 
 /// Every flag spelling the parse accepts. A spelling taken out of a table
 /// fails this test.
-const EVERY_FLAG: [&str; 154] = [
-    "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu",
+const EVERY_FLAG: [&str; 156] = [
+    "--map", "--at", "--project", "--without", "--overlay", "--guides", "--guides-menu", "--hour", "--time-menu",
     "--export-heights", "--import-image", "--import-confirm", "--import-model", "--import-sound", "--game-file", "--minimaps", "--tilt",
     "--vertices", "--view", "--reach", "--tool", "--spawn", "--waypoint-add", "--spawn-add",
     "--pick", "--spawn-delete", "--waypoints", "--place", "--row", "--find", "--table", "--lab",

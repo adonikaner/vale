@@ -185,8 +185,26 @@ fn unsaved(ui: &mut egui::Ui, collab: &mut Collab, session: &mut EditSession) ->
     }
     let subjects = crate::collab::changes::unsaved_subjects(session);
     theme::heading(ui, &format!("Unsaved ({})", subjects.len()));
-    if subjects.is_empty() {
-        theme::note(ui, "Nothing is unsaved.");
+    // Edits that left nothing unsaved and are in no changelist: files
+    // written into the project as they were made. Save submits them.
+    let written = match subjects.is_empty() {
+        true => collab.written_unsubmitted(),
+        false => 0,
+    };
+    match (subjects.is_empty(), written) {
+        (false, _) => {}
+        (true, 0) => theme::note(ui, "Nothing is unsaved."),
+        (true, n) => {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Nothing is unsaved. {} in no changelist: {} written into the project when made, such as an import. Save puts {} in a changelist.",
+                    crate::collab::counted(n, "edit is", "edits are"),
+                    if n == 1 { "it was" } else { "they were" },
+                    if n == 1 { "it" } else { "them" },
+                ))
+                .color(theme::INK_DIM),
+            );
+        }
     }
     egui::ScrollArea::vertical().id_salt("changes-unsaved").max_height(200.0).auto_shrink([false, true]).show(ui, |ui| {
         for (key, name) in &subjects {
@@ -226,7 +244,7 @@ fn unsaved(ui: &mut egui::Ui, collab: &mut Collab, session: &mut EditSession) ->
     let any = !subjects.is_empty();
     let mut save = false;
     ui.horizontal(|ui| {
-        if ui.add_enabled(any, egui::Button::new("Save")).on_hover_text("Ctrl+S.").clicked() {
+        if ui.add_enabled(any || written > 0, egui::Button::new("Save")).on_hover_text("Ctrl+S.").clicked() {
             save = true;
         }
         if ui

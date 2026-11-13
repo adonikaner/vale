@@ -387,10 +387,10 @@ pub(crate) struct Editing<'w> {
     /// The pop-out window: the workspace in it, and what a panel asked of it.
     /// See [`crate::popout`].
     pub(crate) popout: ResMut<'w, crate::popout::Popout>,
-    /// The time of day the world is showing. Read-only here: the view bar
+    /// The time of day the world is showing. The view bar's time control
     /// sets the hour, and the panels read it so a band's day strip can mark
     /// the viewport's current hour on itself.
-    pub(crate) clock: Res<'w, vale_client::render::sky::WorldClock>,
+    pub(crate) clock: ResMut<'w, vale_client::render::sky::WorldClock>,
     pub(crate) storyboard: ResMut<'w, tables::storyboard::Storyboard>,
     pub(crate) stage: ResMut<'w, crate::preview::stage::Stage>,
     pub(crate) lab: ResMut<'w, crate::preview::lab::Lab>,
@@ -680,6 +680,7 @@ fn draw(
                 viewing.navmesh.on,
                 viewing.top_down.on,
                 &viewing.guides,
+                editing.clock.override_half_minutes,
             )
         }
         #[cfg(not(feature = "diagnostics"))]
@@ -690,6 +691,7 @@ fn draw(
                 viewing.navmesh.on,
                 viewing.top_down.on,
                 &viewing.guides,
+                editing.clock.override_half_minutes,
             )
         }
     };
@@ -711,6 +713,8 @@ fn draw(
         .map(|shown| (shown.row.entry, shown.row.description))
         .collect();
     let mut map_view = viewing.top_down.on;
+    let mut hour = editing.clock.override_half_minutes;
+    let lit_at = editing.clock.half_minutes;
     let mut flight = camera.movement == crate::camera::Movement::Flight;
     egui::Panel::bottom("editor-view")
         .frame(bar(widgets::theme::PANEL))
@@ -736,6 +740,11 @@ fn draw(
                     open_guides: editing.args.view.guides_menu
                         && time.elapsed_secs() > 3.0
                         && !std::mem::replace(&mut editing.projects.guides_shown_once, true),
+                    hour: &mut hour,
+                    lit_at,
+                    open_time: editing.args.view.time_menu
+                        && time.elapsed_secs() > 3.0
+                        && !std::mem::replace(&mut editing.projects.time_shown_once, true),
                     baseline: &baseline,
                     icons: &viewing.icons,
                 },
@@ -750,6 +759,14 @@ fn draw(
     }
     if map_view != viewing.top_down.on {
         viewing.top_down.on = map_view;
+    }
+    // `None` hands the hour back to the server's clock, which `render::sky`
+    // reads on its next pass; an hour set by hand is applied at once.
+    if hour != editing.clock.override_half_minutes {
+        editing.clock.override_half_minutes = hour;
+        if let Some(hour) = hour {
+            editing.clock.half_minutes = hour;
+        }
     }
     let movement = match flight {
         true => crate::camera::Movement::Flight,

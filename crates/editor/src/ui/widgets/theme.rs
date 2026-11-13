@@ -489,14 +489,16 @@ const ABOUT_WIDTH: f32 = 300.0;
 /// points to the right of the column in the sections above and below it.
 pub(crate) fn fold(ui: &mut Ui, id: &str, text: &str, body: impl FnOnce(&mut Ui)) {
     let id = ui.make_persistent_id(id);
-    fold_row(ui, id, RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT), true, body);
+    let text = RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT);
+    fold_row(ui, id, text, true, SECTION_GAP, false, body);
 }
 
 /// [`fold`] that starts folded, for a part of a section most rows leave
 /// alone: a string's other locales, a skill's values.
 pub(crate) fn fold_closed(ui: &mut Ui, id: impl egui::AsIdSalt, text: &str, body: impl FnOnce(&mut Ui)) {
     let id = ui.make_persistent_id(id);
-    fold_row(ui, id, RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT), false, body);
+    let text = RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT);
+    fold_row(ui, id, text, false, SECTION_GAP, false, body);
 }
 
 /// The size of a form section's name, in points: one step over a panel
@@ -504,32 +506,75 @@ pub(crate) fn fold_closed(ui: &mut Ui, id: impl egui::AsIdSalt, text: &str, body
 /// sections are what it is scrolled by.
 const SECTION_NAME: f32 = 12.5;
 
-/// A section of a workspace's form: a heading that folds, in the dimmer ink,
+/// The space above a form section's heading. It is larger than
+/// [`SECTION_GAP`], which is the space above a [`subheading`] inside the
+/// section, so two sections are further apart than two groups of one.
+const FORM_SECTION_GAP: f32 = 16.0;
+
+/// The narrowest form whose sections inset their bodies. A form in a docked
+/// inspector is narrower than this and its rows keep the panel's left edge:
+/// the inset would take 16 of about 300 points there, and the panel's other
+/// sections ([`heading`], [`fold`]) do not inset.
+const INSET_FROM: f32 = 460.0;
+
+/// A section of a workspace's form: a heading that folds, in the full ink,
 /// or in the pending colour while `edited`, which is when a field under it
 /// carries a change of this project's. `open` is whether it starts open;
 /// egui keeps what it was last set to under `id`.
 ///
-/// It is [`fold`] one size up. The forms drew `egui::CollapsingHeader`, which
-/// indents its body behind a vertical rule: a field's name then started 18
-/// points right of the section's name, and a fold inside a section 36.
+/// The body starts at the left edge of the section's name, so the triangle
+/// is the only thing left of it and a field's name is under the first letter
+/// of the section it belongs to. That is one step and it does not accumulate:
+/// a [`subheading`] and a [`fold_closed`] inside the body start at the same
+/// x as the rows, so a form has one name column and one value column. The
+/// forms drew `egui::CollapsingHeader`, which indents every level behind a
+/// vertical rule: a field's name then started 18 points right of the
+/// section's name, and a fold inside a section 36.
 pub(crate) fn section(ui: &mut Ui, id: impl egui::AsIdSalt, text: &str, open: bool, edited: bool, body: impl FnOnce(&mut Ui)) {
     let id = ui.make_persistent_id(id);
     let colour = match edited {
         true => WARN,
-        false => INK_DIM,
+        false => INK,
     };
-    fold_row(ui, id, RichText::new(text.to_uppercase()).size(SECTION_NAME).color(colour), open, body);
+    let inset = ui.available_width() >= INSET_FROM;
+    let text = RichText::new(text.to_uppercase()).size(SECTION_NAME).color(colour);
+    fold_row(ui, id, text, open, FORM_SECTION_GAP, inset, body);
 }
 
-/// The body of [`fold`], [`fold_closed`] and [`section`]: a triangle, the
-/// name, a rule to the right edge, and under them `body` while open.
-fn fold_row(ui: &mut Ui, id: egui::Id, text: RichText, open: bool, body: impl FnOnce(&mut Ui)) {
+/// A heading inside a [`section`], over a group of its rows: the name, small
+/// and faint, with no rule, and an [`info`] mark after it that shows `about`
+/// when hovered. `about` may be empty, and then there is no mark.
+///
+/// It has no rule so that it reads as part of its section: with one, a
+/// section of four groups was five hairlines of the same weight. The mark
+/// follows the name because a form can be the width of the window, and a
+/// mark at the right edge is then far from the name it explains.
+pub(crate) fn subheading(ui: &mut Ui, text: &str, about: &str) {
+    ui.add_space(SECTION_GAP - ui.spacing().item_spacing.y);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.add(egui::Label::new(RichText::new(text.to_uppercase()).size(SMALL).color(INK_FAINT)).selectable(false));
+        // The row is as tall as an info mark whether or not it has one, so
+        // every sub-heading is the same height.
+        let (_, mark) = ui.allocate_space(Vec2::splat(INFO_MARK));
+        if !about.is_empty() {
+            info(ui, ui.id().with(("about", text)), mark, about);
+        }
+    });
+}
+
+/// The body of [`fold`], [`fold_closed`] and [`section`]: `gap` points of
+/// space, a triangle, the name, a rule to the right edge, and under them
+/// `body` while open. With `inset`, the body's left edge is the name's.
+fn fold_row(ui: &mut Ui, id: egui::Id, text: RichText, open: bool, gap: f32, inset: bool, body: impl FnOnce(&mut Ui)) {
     let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, open);
-    ui.add_space(SECTION_GAP);
+    ui.add_space(gap);
+    let mut name_left = 0.0;
     let row = ui
         .horizontal(|ui| {
             let (mark, _) = ui.allocate_exact_size(Vec2::new(8.0, INFO_MARK), egui::Sense::hover());
             let label = ui.add(egui::Label::new(text).selectable(false));
+            name_left = label.rect.left();
             let y = label.rect.center().y;
             let from = label.rect.right() + 6.0;
             let to = ui.max_rect().right();
@@ -557,7 +602,20 @@ fn fold_row(ui: &mut Ui, id: egui::Id, text: RichText, open: bool, body: impl Fn
     ui.painter().add(egui::Shape::convex_polygon(points, colour, Stroke::NONE));
     response.on_hover_cursor(egui::CursorIcon::PointingHand);
     ui.add_space(3.0);
-    state.show_body_unindented(ui, body);
+    let step = match inset {
+        true => (name_left - row.response.rect.left()).max(0.0),
+        false => 0.0,
+    };
+    state.show_body_unindented(ui, |ui| {
+        if step == 0.0 {
+            return body(ui);
+        }
+        // A child over what is left of the width, and not `Ui::indent`:
+        // that reads its step from the style and can draw a vertical rule.
+        let mut rect = ui.available_rect_before_wrap();
+        rect.min.x += step;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(*ui.layout()), body);
+    });
 }
 
 /// The size of a panel's title, in points: the tool's name at the top of the

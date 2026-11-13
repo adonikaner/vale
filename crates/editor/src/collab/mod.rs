@@ -805,6 +805,19 @@ impl Collab {
         }
     }
 
+    /// How many of this editor's edits a save would put in a changelist
+    /// while nothing is unsaved, alone or hosting: the files it wrote into
+    /// the project as they were made, such as an import. Save is offered for
+    /// them, since no other press submits them. None while recovered edits
+    /// are offered: those are open edits too, and the files do not hold
+    /// them. See [`changes`]'s *Submit and Save*.
+    pub(crate) fn written_unsubmitted(&self) -> usize {
+        match self.is_joined() || self.offline() || !self.changes.recovered.is_empty() {
+            true => 0,
+            false => self.open_edits(),
+        }
+    }
+
     /// What a joined editor's Submit closes, for the Save button's label.
     /// See [`ToSubmit`].
     pub(crate) fn to_submit(&self) -> ToSubmit {
@@ -1169,6 +1182,12 @@ fn keep_the_log(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
                 );
             }
             collab.log = Some(log);
+            // Edits undone or discarded before the editor closed are not
+            // offered. A project that took over replays its host's edits,
+            // which is not this check's case.
+            if fetched.is_none() {
+                changes::withdraw_recovered_when_unchanged(collab, session, assets);
+            }
             if let Some(pending) = collab.taken_over.take() {
                 changes::took_over(collab, session, assets, pending);
             }

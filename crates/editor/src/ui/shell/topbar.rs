@@ -219,7 +219,8 @@ pub(crate) fn draw(
             if at_server.clicked() {
                 popovers.server.toggle(&at_server);
             }
-            save(ui, session, assets, playing, in_world, collab.is_joined().then(|| collab.to_submit()));
+            let submit = collab.is_joined().then(|| collab.to_submit());
+            save(ui, session, assets, playing, in_world, submit, collab.written_unsubmitted());
             separator(ui);
             let at_changes = super::changes::button(ui, collab);
             popovers.changes.track(&at_changes);
@@ -492,6 +493,10 @@ fn save(
     // While this editor is joined to another's shared session, whose host
     // saves: what its Submit closes.
     submit: Option<crate::collab::ToSubmit>,
+    // Alone or hosting: this editor's edits in no changelist, which a save
+    // submits. Read only while nothing is unsaved. See
+    // `crate::collab::Collab::written_unsubmitted`.
+    written: usize,
 ) {
     let joined = submit.is_some();
     // The spinner's hover text is the step's name. The step's name is a
@@ -538,6 +543,11 @@ fn save(
     // claims arrive, are counted as edits.
     if let Some(submit) = submit.filter(|submit| submit.edits > 0 && parts.is_empty()) {
         parts.push(plural(submit.edits, "edit", "edits"));
+    }
+    // Files written into the project as they were made, such as an import,
+    // leave nothing unsaved and are still in no changelist until a save.
+    if !joined && parts.is_empty() && written > 0 {
+        parts.push(plural(written, "edit", "edits"));
     }
     let anything = !parts.is_empty();
     let label = match (joined, anything) {
@@ -607,6 +617,8 @@ pub(crate) struct Projects {
     pub(crate) shown_once: bool,
     /// Whether `--guides-menu` has been acted on.
     pub(crate) guides_shown_once: bool,
+    /// Whether `--time-menu` has been acted on.
+    pub(crate) time_shown_once: bool,
     /// Every project under `Edit\`, with what each holds. Read when the
     /// dialog opens and after it makes one, not every frame, because a summary
     /// walks the folder.

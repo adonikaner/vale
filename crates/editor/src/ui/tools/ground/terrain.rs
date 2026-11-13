@@ -35,9 +35,10 @@ use vale_edit::ops::brush::{Erosion, Mode, Only};
 /// ```
 ///
 /// In Select Vertices the first line has no Brush and the second is the
-/// footprint's radius and shape. Only Inside Selection is shown only while
-/// vertices are selected, the one case in which it changes a stroke. A set
-/// of which one is chosen is a [`theme::bar_group`]; a switch is a
+/// footprint's radius and shape. Only Inside Selection is always drawn and
+/// is unavailable while no vertex is selected; the tool switches it off
+/// when the selection becomes empty (`tools::ground::terrain::vertex_asks`).
+/// A set of which one is chosen is a [`theme::bar_group`]; a switch is a
 /// [`theme::bar_switch`]. See [`theme::toolbar`].
 pub(crate) fn toolbar(
     ctx: &egui::Context,
@@ -81,15 +82,20 @@ pub(crate) fn toolbar(
                     brushes.act_sculpt(Ask::Choose(at), terrain);
                 }
             }
-            if terrain.selected > 0
-                && bar_switch(ui, terrain.only_inside, "Only Inside Selection")
-                    .on_hover_text(
-                        "On: a brush stroke moves the selected vertices and nothing else, and the \
-                         selection is drawn green. Off: strokes move any vertex under the brush that \
-                         is not locked. To keep vertices from moving, lock them.",
-                    )
-                    .clicked()
-            {
+            let only_inside = ui
+                .add_enabled_ui(terrain.selected > 0, |ui| {
+                    bar_switch(ui, terrain.only_inside, "Only Inside Selection")
+                })
+                .inner
+                .on_hover_text(
+                    "On: a brush stroke moves the selected vertices and nothing else, and the \
+                     selection is drawn green. Off: strokes move any vertex under the brush that \
+                     is not locked. To keep vertices from moving, lock them.",
+                )
+                .on_disabled_hover_text(
+                    "No vertex is selected. Choose Select Vertices and paint over some ground first.",
+                );
+            if only_inside.clicked() {
                 terrain.only_inside = !terrain.only_inside;
             }
             objects_follow(ui, &mut terrain.objects_follow);
@@ -244,11 +250,15 @@ fn flatten_settings(ui: &mut egui::Ui, terrain: &mut Terrain) {
         ui.checkbox(&mut terrain.flatten_to_cursor, "Height under the pointer")
             .on_hover_text("Sampled where the stroke starts. Off: the height set below.");
     });
-    if !terrain.flatten_to_cursor {
-        property(ui, "Height", "The height the brush flattens to.", |ui| {
-            field(ui, egui::DragValue::new(&mut terrain.flatten_height).speed(0.25).fixed_decimals(1).suffix(" yd"));
-        });
-    }
+    // Always drawn, and unavailable while the target is the pointer's height:
+    // a row that appears when a box is cleared moves every row under it.
+    property(ui, "Height", "The height the brush flattens to, while Target is off.", |ui| {
+        ui.add_enabled_ui(!terrain.flatten_to_cursor, |ui| {
+            field(ui, egui::DragValue::new(&mut terrain.flatten_height).speed(0.25).fixed_decimals(1).suffix(" yd"))
+        })
+        .inner
+        .on_disabled_hover_text("Not read while the target is the height under the pointer.");
+    });
     property(ui, "Direction", "Which way the ground may move toward the target.", |ui| {
         theme::property_segmented(
             ui,
@@ -344,9 +354,14 @@ fn tilt_rows(ui: &mut egui::Ui, angle: &mut f32, toward: &mut f32) -> bool {
         )
         .changed();
     });
-    // The bearing only matters once there is a slope.
-    if *angle > 0.0 {
-        property(ui, "Uphill", "Compass bearing of the uphill side. 0 is north, 90 east.", |ui| {
+    // Drawn at a tilt of 0 as well, where it changes nothing yet: the bearing
+    // can be set before the slope, and the rows under it do not move when
+    // the tilt leaves 0.
+    property(
+        ui,
+        "Uphill",
+        "Compass bearing of the uphill side. 0 is north, 90 east. It has no effect while Tilt is 0.",
+        |ui| {
             changed |= field(
                 ui,
                 egui::DragValue::new(&mut *toward)
@@ -356,8 +371,8 @@ fn tilt_rows(ui: &mut egui::Ui, angle: &mut f32, toward: &mut f32) -> bool {
                     .custom_parser(leading_number),
             )
             .changed();
-        });
-    }
+        },
+    );
     changed
 }
 

@@ -45,7 +45,9 @@
 //! all undone again, are withdrawn ([`Log::withdraw`]): they are in no
 //! changelist and are no longer open, so nothing counts or lists them. They
 //! are written to `changelists.txt` as a line numbered 0, which
-//! [`Log::changelists`] leaves out.
+//! [`Log::changelists`] leaves out. [`Log::withdraw_edits`] withdraws some
+//! of an author's open edits and leaves the rest open, for a caller that
+//! has checked only those.
 //!
 //! ## A copy of the log
 //!
@@ -412,6 +414,21 @@ impl Log {
     /// edits*.
     pub fn withdraw(&mut self, author: &Author, time: u64) -> std::io::Result<usize> {
         let edits = self.open_edits(&author.id);
+        self.withdraw_edits(author, time, &edits)
+    }
+
+    /// Withdraw those of `edits` that are open edits of `author`'s, and leave
+    /// the author's other open edits open. Answers how many were withdrawn.
+    /// The caller passes whole edits: a first part with the parts that
+    /// continue it. See *Withdrawn edits*.
+    pub fn withdraw_edits(&mut self, author: &Author, time: u64, edits: &[Seq]) -> std::io::Result<usize> {
+        let mut edits: Vec<Seq> = edits
+            .iter()
+            .copied()
+            .filter(|seq| self.header(*seq).is_some_and(|header| header.author == author.id && header.changelist.is_none()))
+            .collect();
+        edits.sort_unstable();
+        edits.dedup();
         if edits.is_empty() {
             return Ok(0);
         }
@@ -978,6 +995,28 @@ mod tests {
         assert_eq!(log.changelists().len(), 1, "a withdrawal is not a changelist");
         assert_eq!(log.stale(&[chunk(4), chunk(5), chunk(9)], 1, &[]), vec![chunk(4), chunk(5)]);
         assert_eq!(log.stale(&[chunk(4), chunk(5)], 1, &[3]), vec![chunk(4)]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Some of an author's open edits are withdrawn and the rest stay open,
+    /// counted and holding their groups; an edit of another author's, one
+    /// already withdrawn and a number the log does not have are left alone.
+    #[test]
+    fn some_of_an_authors_open_edits_are_withdrawn() {
+        let dir = folder("withdraw-some");
+        let (sam, alex) = (author(1, "Sam"), author(2, "Alex"));
+        let mut log = Log::open(&dir).unwrap();
+        for (seq, who, at, continues) in [(1, &sam, 3, false), (2, &alex, 4, false), (3, &sam, 5, false), (4, &sam, 5, true), (5, &sam, 6, false)] {
+            log.append(seq, who, 100, vec![chunk(at)], continues, b"").unwrap();
+        }
+        assert_eq!(log.withdraw_edits(&sam, 200, &[4, 3, 2, 9]).unwrap(), 2, "edits 3 and 4, which are one whole edit");
+        assert_eq!(log.withdraw_edits(&sam, 201, &[3]).unwrap(), 0, "withdrawn already");
+        assert_eq!(log.open_edits(&sam.id), vec![1, 5]);
+        assert_eq!((log.open_count(&sam.id), log.open_count(&alex.id)), (2, 1));
+        let log = Log::open(&dir).unwrap();
+        assert_eq!(log.open_edits(&sam.id), vec![1, 5], "read back");
+        assert!(!log.pending().contains_key(&chunk(5)) && log.pending().contains_key(&chunk(6)));
+        assert!(log.changelists().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

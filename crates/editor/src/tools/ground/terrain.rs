@@ -909,6 +909,12 @@ fn vertex_asks(
     if terrain.selected_centre != [centre[0], centre[1]] {
         terrain.selected_centre = [centre[0], centre[1]];
     }
+    // With no vertex selected, Only Inside Selection would stop every stroke,
+    // and its switch is unavailable then, so it is switched off here. A
+    // selection made later starts with it off.
+    if count == 0 && terrain.only_inside {
+        terrain.only_inside = false;
+    }
     if !unpublished.is_empty() && !buttons.pressed(MouseButton::Left) {
         for coord in std::mem::take(&mut *unpublished) {
             session.publish(coord);

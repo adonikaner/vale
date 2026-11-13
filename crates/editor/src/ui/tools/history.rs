@@ -45,12 +45,13 @@ pub(super) fn history(
             session.redo(assets);
         }
     });
-    // The line names the edit Undo takes back. With none it is not drawn:
-    // the disabled button already says so.
+    // The line names the edit Undo takes back. It is drawn with nothing to
+    // undo as well, so the panel under it does not move down a line when the
+    // first edit is made, which happens while a field is being dragged.
     let depth = session.history.depth_done();
     match (&undo, depth) {
         (Some(label), 1) => theme::note(ui, format!("{label} — 1 step to undo")),
         (Some(label), n) => theme::note(ui, format!("{label} — {n} steps to undo")),
-        (None, _) => {}
+        (None, _) => theme::note(ui, "Nothing to undo"),
     }
 }

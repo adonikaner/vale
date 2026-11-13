@@ -130,7 +130,12 @@ pub(crate) fn draw(ui: &mut egui::Ui, subject: Subject<'_>, editing: &mut Editin
     if tool.edits() {
         history(ui, subject.session, subject.assets);
     }
-    (tool.spec().inspector)(ui, subject, editing);
+    // The tool's panel has an id of its own. egui numbers the widgets of a
+    // `Ui` in the order they are added, and a drag is held by the widget's
+    // id: when the undo row above gained its line on the first edit, every
+    // field in the panel was renumbered and the drag that made the edit
+    // stopped. Under a named id the panel's numbering starts at the panel.
+    ui.push_id(("tool-panel", tool.name()), |ui| (tool.spec().inspector)(ui, subject, editing));
 }
 
 /// The Select tool's panel, which has no settings.
