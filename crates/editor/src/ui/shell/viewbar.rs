@@ -509,8 +509,7 @@ fn time_menu(ui: &mut Ui, hour: &mut Option<u32>, lit_at: u32, editing: bool, op
             // The bar's own tight spacing is for a row of square buttons.
             ui.spacing_mut().item_spacing = Vec2::new(6.0, 5.0);
             ui.spacing_mut().button_padding = Vec2::new(6.0, 3.0);
-            ui.spacing_mut().slider_width = 240.0;
-            ui.set_min_width(320.0);
+            ui.spacing_mut().slider_width = 200.0;
             // A menu draws its buttons with no frame, which leaves a number
             // box and the four hour buttons looking like labels.
             ui.visuals_mut().button_frame = true;
@@ -551,7 +550,6 @@ fn time_menu(ui: &mut Ui, hour: &mut Option<u32>, lit_at: u32, editing: bool, op
             if minutes != was {
                 *hour = Some(minutes * 2);
             }
-            theme::note(ui, "The hour the viewport is lit at. It is not saved and does not change the server's time.");
         });
     if open {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));

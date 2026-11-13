@@ -83,6 +83,10 @@ pub(crate) struct Tiles {
     /// changes it; see `super::maps`.
     pub(crate) building: Option<String>,
     pub(crate) building_for: String,
+    /// The building's box in the world, read with [`Self::building`]. `None`
+    /// for a terrain map, and for a building whose root file does not read.
+    /// See `super::building`.
+    pub(crate) building_box: Option<super::building::BuildingBox>,
     /// A picture chosen for import and waiting on the map window's dialog,
     /// and the folder the last file dialog was left in.
     pub(crate) pending: Option<crate::import::images::Pending>,
@@ -125,6 +129,7 @@ impl Default for Tiles {
             asked: None,
             building: None,
             building_for: String::new(),
+            building_box: None,
             pending: None,
             image_dir: None,
             new_map: None,
@@ -931,7 +936,28 @@ fn read_building(
         return;
     }
     tiles.building_for = session.map.clone();
-    tiles.building = load_wdt(&session, &assets).ok().and_then(|wdt| wdt.building());
+    let wdt = load_wdt(&session, &assets).ok();
+    tiles.building = wdt.as_ref().and_then(|wdt| wdt.building());
+    tiles.building_box = match (&tiles.building, &wdt) {
+        (Some(_), Some(wdt)) => building_box(&assets, wdt),
+        _ => None,
+    };
+}
+
+/// The box of the building a WDT places, in the world: the root's bounds
+/// through the placement, as the client places it
+/// (`vale_assets::world::wdt::Wdt::placed_global_wmos`). `None` when the
+/// placement or the root does not read.
+fn building_box(assets: &GameAssets, wdt: &wdt::WdtFile) -> Option<super::building::BuildingBox> {
+    let read = vale_assets::world::wdt::Wdt::parse(&wdt.write()).ok()?;
+    let placed = read.placed_global_wmos().into_iter().next()?;
+    match wmo_bounds(assets, &placed.path) {
+        Ok(root) => Some(super::building::BuildingBox::of(root, &placed.matrix)),
+        Err(why) => {
+            warn!("building: {why}");
+            None
+        }
+    }
 }
 
 /// A tile's placed hulls, as the occluder a bake tests rays against.
@@ -976,6 +1002,7 @@ pub(crate) fn run_asked(
     mut queue: ResMut<crate::server::queue::ServerQueue>,
     step: Res<crate::server::datadir::Step>,
     time: Res<Time>,
+    mut arrival: ResMut<super::building::Arrival>,
 ) {
     use crate::ui::map::mapview::Asked;
 
@@ -983,6 +1010,22 @@ pub(crate) fn run_asked(
         return;
     };
     let Some(mut session) = session else { return };
+
+    // The building of a map with no tiles, which needs no selection: the
+    // camera put on it again, and its server files. See `super::building`.
+    if asked == Asked::GoToBuilding {
+        arrival.asked = true;
+        return;
+    }
+    if asked == Asked::BuildingServerFiles {
+        let under = tiles.building_box.map(|building| building.tiles()).unwrap_or_default();
+        tiles.said = match under.is_empty() {
+            true => "the building's box could not be read, so its tiles are not known".to_string(),
+            false => crate::server::datadir::regenerate_building(&mut session, &assets, &server, &mut queue, &step, &under),
+        };
+        session.status = tiles.said.clone();
+        return;
+    }
 
     // Moving the camera to a tile is not an edit and needs none of the code
     // below.
@@ -1125,6 +1168,8 @@ pub(crate) fn run_asked(
         | Asked::MinimapsAll
         | Asked::NewMap
         | Asked::SaveMap
+        | Asked::GoToBuilding
+        | Asked::BuildingServerFiles
         | Asked::ServerFiles
         | Asked::ExportHeights
         | Asked::ExportBlends
@@ -1574,6 +1619,7 @@ pub(crate) struct TilePlugin;
 impl Plugin for TilePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Tiles>()
+            .init_resource::<super::building::Arrival>()
             .init_resource::<crate::jobs::Running<Baked>>()
             .init_resource::<crate::jobs::Running<Drawn>>()
             .add_systems(
@@ -1584,7 +1630,7 @@ impl Plugin for TilePlugin {
                     restream,
                     collect_bakes,
                     collect_minimaps,
-                    read_building,
+                    (read_building, super::building::place_camera).chain(),
                 ),
             )
             .add_systems(

@@ -3,6 +3,8 @@
 //! the focus. The map window drives the first three.
 //!
 //! ```text
+//! building.rs    a map that is one building: its box, the tiles under it,
+//!                and where the camera is put when the map is opened
 //! maps.rs        a new map: its Map.dbc row, a WDT with no tiles in the
 //!                project, and its map_template row with a dungeon's parent
 //!                and ghost entrance
@@ -15,6 +17,7 @@
 //!                on the task pool, and the tiles it has left closed
 //! ```
 
+pub(crate) mod building;
 pub(crate) mod maps;
 pub(crate) mod open;
 pub(crate) mod sweep;

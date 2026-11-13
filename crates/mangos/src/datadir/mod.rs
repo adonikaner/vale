@@ -111,6 +111,22 @@
 //! New `maps` and `vmaps` files need a server restart, and the report says
 //! so.
 //!
+//! ## A map that is one building
+//!
+//! A map whose WDT places one building and claims no tile (most dungeons)
+//! has no ADT, so the map extractor writes no `.map` for it. The vmap
+//! extractor writes the building as the map's one global spawn: the
+//! assembler puts it in the map's `.vmtree`, which is not tiled, and writes
+//! no `.vmtile`. The navmesh generator finds such a map by its `.vmtree`,
+//! and for a map with no tiles it takes the range of tiles from the bounds
+//! of the building's mesh (`MapBuilder::getGridBounds`), refusing a tile
+//! outside that range. So a [`Building`] runs no map extractor, runs the
+//! vmap step for its map, and builds the navmesh of each tile the caller
+//! names, with no neighbours. A named tile the generator finds outside the
+//! mesh's range is left out and logged, not counted as failed: the caller
+//! names the tiles under the building's bounding box, which can reach one
+//! tile further than its mesh.
+//!
 //! ## Nothing is removed by a run
 //!
 //! A run writes and replaces tile files and removes none. A file it no longer
@@ -355,6 +371,9 @@ pub struct Request {
     /// tools do not read a map that `Map.dbc` does not list, so none is run
     /// for these. See [`map_files`].
     pub removed_maps: Vec<u32>,
+    /// Maps that are one building with no tiles, regenerated whole. See the
+    /// module's *A map that is one building*.
+    pub buildings: Vec<Building>,
     /// The project the run is for, as the [`Ledger`] names it.
     pub project: String,
     /// `mapextractor -f`: store heights as `int16` where the range allows,
@@ -369,6 +388,19 @@ pub struct Request {
     /// no output.
     pub dll_dirs: Vec<PathBuf>,
 }
+
+/// A map that is one building and no tiles, to regenerate whole: its vmap
+/// files, and the navmesh of `tiles`, the tiles under the building. See the
+/// module's *A map that is one building*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Building {
+    pub map: u32,
+    pub tiles: Vec<Tile>,
+}
+
+/// What the navmesh generator prints when asked for a tile of a map with no
+/// tiles that lies outside its building's mesh (`MapBuilder::buildSingleTile`).
+const OUTSIDE_THE_RANGE: &str = "not found in valid tile range";
 
 /// Whether the `.map` files already in `data_dir` store heights as
 /// integers. Reads the `MHGT` header's flag from the first file found for
@@ -515,7 +547,7 @@ pub fn regenerate(
     mut progress: impl FnMut(&str, usize, usize),
 ) -> Result<Outcome, String> {
     let mut out = Outcome::default();
-    if request.tiles.is_empty() && request.removed_maps.is_empty() {
+    if request.tiles.is_empty() && request.removed_maps.is_empty() && request.buildings.is_empty() {
         return Ok(out);
     }
     for sub in ["maps", "vmaps", "mmaps"] {
@@ -534,7 +566,7 @@ pub fn regenerate(
             files.stale(&mut out, sub, &name, &format!("map {map} is not in Map.dbc"))?;
         }
     }
-    if request.tiles.is_empty() {
+    if request.tiles.is_empty() && request.buildings.is_empty() {
         stale_unused_models(&mut files, &mut out)?;
         return Ok(out);
     }
@@ -549,10 +581,20 @@ pub fn regenerate(
     // The step count for the progress bar. The navmesh tiles are estimated
     // as every requested tile plus every neighbour that has a `.map` or is
     // one of the requested tiles.
-    let placement_maps = by_map
-        .values()
-        .filter(|tiles| tiles.iter().any(|(_, reach)| *reach == Reach::Placements))
-        .count();
+    // The maps whose vmap files are made: each with a placement change, and
+    // each that is one building.
+    let mut vmap_maps: Vec<u32> = by_map
+        .iter()
+        .filter(|(_, tiles)| tiles.iter().any(|(_, reach)| *reach == Reach::Placements))
+        .map(|(map, _)| *map)
+        .collect();
+    for building in &request.buildings {
+        if !vmap_maps.contains(&building.map) {
+            vmap_maps.push(building.map);
+        }
+    }
+    let placement_maps = vmap_maps.len();
+    let building_tiles: Vec<Tile> = request.buildings.iter().flat_map(|building| building.tiles.iter().copied()).collect();
     let mut estimated: Vec<Tile> = Vec::new();
     for (tile, _) in &request.tiles {
         for candidate in std::iter::once(*tile).chain(tile.neighbours()) {
@@ -564,7 +606,7 @@ pub fn regenerate(
             }
         }
     }
-    let mut total = by_map.len() + 2 * placement_maps + estimated.len();
+    let mut total = by_map.len() + 2 * placement_maps + estimated.len() + building_tiles.len();
     let mut step = 0usize;
 
     // 1. The .map files: one extractor run per map, covering all of that
@@ -629,11 +671,9 @@ pub fn regenerate(
         }
     }
 
-    // 2. The vmap files, once per map that has a placement change.
-    for (map, tiles) in &by_map {
-        if !tiles.iter().any(|(_, reach)| *reach == Reach::Placements) {
-            continue;
-        }
+    // 2. The vmap files, once per map that has a placement change or is one
+    // building.
+    for map in &vmap_maps {
         progress(&format!("extracting the buildings and models of map {map}"), step, total);
         step += 1;
         let work = scratch.join(format!("vmap-{map:03}"));
@@ -743,6 +783,12 @@ pub fn regenerate(
             }
         }
     }
+    // A building's tiles have no `.map` and no neighbours to stitch.
+    for tile in &building_tiles {
+        if !wanted.contains(tile) {
+            wanted.push(*tile);
+        }
+    }
     // The builds run as separate processes, up to [`PARALLEL`] at once.
     // `buildSingleTile` runs one worker whatever `--threads` says, and one
     // tile takes minutes. Each process rewrites the map's `.mmap` header from
@@ -847,6 +893,10 @@ pub fn regenerate(
             let target = data_dir.join("mmaps").join(tile.mmtile_file());
             match (ok, target.is_file()) {
                 (true, true) => out.mmaps.push(tile.mmtile_file()),
+                (true, false) if building_tiles.contains(&tile) && tail.contains(OUTSIDE_THE_RANGE) => out.log.push(format!(
+                    "map {} tile {},{} is outside the building's mesh, so it has no navmesh",
+                    tile.map, tile.x, tile.y
+                )),
                 (true, false) => out.mmaps_failed.push((
                     tile.mmtile_file(),
                     format!("MoveMapGenerator exited without writing the tile: {tail}"),

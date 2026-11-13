@@ -332,6 +332,7 @@ pub(crate) fn publish(
                 tiles,
                 carried,
                 removed_maps,
+                buildings: Vec::new(),
                 project: project.name.clone(),
                 heights_as_int: datadir::heights_as_int(&real_data_dir, first_map),
                 dll_dirs,

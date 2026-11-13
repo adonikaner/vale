@@ -376,15 +376,26 @@ pub(crate) enum Asked {
     /// Save the form's edits to the map it edits. See
     /// `crate::map::maps::save`.
     SaveMap,
+    /// Put the camera on the map's building again: at the arrival, or over
+    /// the whole building. See `crate::map::building`.
+    GoToBuilding,
+    /// Regenerate the server's files of a map that is one building, whole.
+    /// See `crate::server::datadir::regenerate_building`.
+    BuildingServerFiles,
 }
 
-/// The tiles a fit frames, first and last inclusive: the claimed tiles and
-/// the selection with one empty ring around them, or the whole grid on a map
-/// with no tiles and nothing selected.
-fn fit_bounds(session: &EditSession, selection: &HashSet<(u32, u32)>) -> ((u32, u32), (u32, u32)) {
+/// The tiles a fit frames, first and last inclusive: the claimed tiles, the
+/// tiles under the map's building and the selection, with one empty ring
+/// around them, or the whole grid on a map with none of the three.
+fn fit_bounds(
+    session: &EditSession,
+    selection: &HashSet<(u32, u32)>,
+    building: Option<&crate::map::building::BuildingBox>,
+) -> ((u32, u32), (u32, u32)) {
     let mut lo = (SIDE, SIDE);
     let mut hi = (0u32, 0u32);
-    for &(x, y) in session.claimed.iter().chain(selection.iter()) {
+    let under = building.map(|building| building.tiles()).unwrap_or_default();
+    for &(x, y) in session.claimed.iter().chain(selection.iter()).chain(under.iter()) {
         lo = (lo.0.min(x), lo.1.min(y));
         hi = (hi.0.max(x), hi.1.max(y));
     }
@@ -541,7 +552,7 @@ fn contents(
         .frame(egui::Frame::NONE.inner_margin(egui::Margin { top: 4, ..egui::Margin::ZERO }))
         .show(ui, |ui| status_line(ui, view, session));
 
-    if let Some(more) = map_area(ui, view, session, thumbnails, minimaps, camera_tile) {
+    if let Some(more) = map_area(ui, view, session, thumbnails, minimaps, camera_tile, tiles) {
         asked = Some(more);
     }
     asked
@@ -727,8 +738,10 @@ fn map_area(
     thumbnails: &mut Thumbnails,
     minimaps: &vale_assets::tables::minimap::MinimapTiles,
     camera_tile: (u32, u32),
+    tiles: &crate::map::tiles::Tiles,
 ) -> Option<Asked> {
     let mut asked = None;
+    let building = tiles.building_box.filter(|_| tiles.building_for.eq_ignore_ascii_case(&session.map));
     let size = ui.available_size().max(egui::vec2(160.0, 160.0));
     let (whole, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let area = egui::Rect::from_min_max(whole.min + egui::vec2(RULER, RULER), whole.max);
@@ -739,7 +752,7 @@ fn map_area(
     if let Some(fit) = view.fit.take().or(refit.then_some(Fit::Tiles)) {
         let (lo, hi, max) = match fit {
             Fit::Tiles => {
-                let (lo, hi) = fit_bounds(session, &view.selection);
+                let (lo, hi) = fit_bounds(session, &view.selection, building.as_ref());
                 (lo, hi, FIT_MAX)
             }
             Fit::Whole => ((0, 0), (SIDE - 1, SIDE - 1), MAX_CELL),
@@ -848,6 +861,24 @@ fn map_area(
     for at in visible().filter(|at| view.selection.contains(at)) {
         let sides = boundary(at, |x, y| x >= 0 && y >= 0 && view.selection.contains(&(x as u32, y as u32)));
         paint_sides(&painter, square(at), sides, egui::Stroke::new(line.min(1.5), theme::ACCENT), false);
+    }
+    // A map that is one building has no tiles to draw; its box is drawn
+    // instead, with the building's name when the box is wide enough.
+    if let Some(building) = building {
+        let (from, to) = building.in_tiles();
+        let outline = egui::Rect::from_min_max(egui::pos2(x_of(from[0]), y_of(from[1])), egui::pos2(x_of(to[0]), y_of(to[1])));
+        painter.rect_filled(outline, 0.0, theme::INK.gamma_multiply(0.12));
+        painter.rect_stroke(outline, 0.0, egui::Stroke::new(1.5, theme::INK), egui::StrokeKind::Outside);
+        let leaf = tiles.building.as_deref().map(|path| path.rsplit(['\\', '/']).next().unwrap_or(path)).unwrap_or_default();
+        if outline.width() > 60.0 {
+            painter.text(
+                outline.left_top() + egui::vec2(4.0, 3.0),
+                egui::Align2::LEFT_TOP,
+                leaf,
+                egui::FontId::proportional(theme::SMALL),
+                theme::INK,
+            );
+        }
     }
     if cols.contains(&camera_tile.0) && rows.contains(&camera_tile.1) {
         painter.rect_stroke(square(camera_tile), 0.0, egui::Stroke::new(2.0, theme::GOOD), egui::StrokeKind::Inside);
@@ -1276,7 +1307,26 @@ fn side_panel(
     }
 
     theme::heading(ui, "Server");
-    if ui
+    if tiles.building.is_some() {
+        // A map with no tiles: its building's files, whole. See
+        // `crate::server::datadir::regenerate_building`.
+        let under = tiles.building_box.map(|building| building.tiles().len()).unwrap_or(0);
+        if ui
+            .add_enabled(under > 0 && gate.writes(), egui::Button::new("Server Files"))
+            .on_hover_text(format!(
+                "Saves, rebuilds this project's archive, and regenerates the server's vmaps for the \
+                 building and the navmesh of the {under} tiles under it. The map has no terrain, so \
+                 there are no maps files. Minutes; the bar says which step is running. Restart the \
+                 server afterwards."
+            ))
+            .on_disabled_hover_text(gate.refused.clone().unwrap_or_else(|| {
+                "The building's root file could not be read, so the tiles under it are not known.".to_string()
+            }))
+            .clicked()
+        {
+            asked = Some(Asked::BuildingServerFiles);
+        }
+    } else if ui
         .add_enabled(exist > 0 && gate.writes(), egui::Button::new(format!("Server Files {exist}")))
         .on_hover_text(
             "Saves, rebuilds this project's archive, and regenerates the server's maps, vmaps and \
@@ -1299,6 +1349,16 @@ fn side_panel(
         Some(path) => {
             let leaf = path.rsplit(['\\', '/']).next().unwrap_or(path);
             ui.label(format!("Single-WMO map: {leaf}")).on_hover_text(path.clone());
+            if ui
+                .button("Go to Building")
+                .on_hover_text(
+                    "Puts the camera where a character arrives, the target of the first teleport \
+                     to this map, or over the whole building when no teleport goes there.",
+                )
+                .clicked()
+            {
+                asked = Some(Asked::GoToBuilding);
+            }
         }
         None => theme::note(ui, format!("Terrain, {whole} tiles")),
     }

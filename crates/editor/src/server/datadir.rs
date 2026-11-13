@@ -32,6 +32,13 @@
 //! a tile in the record with the same bytes             left alone
 //! ```
 //!
+//! A map that is one building has no tiles to compare. The map window's
+//! Server Files for such a map regenerates the map whole
+//! ([`regenerate_building`]): its vmap files, and the navmesh of the tiles
+//! under the building (`crate::map::building`). The record is not written for
+//! it, since it holds ADTs. See `vale_mangos::datadir`'s *A map that is one
+//! building*.
+//!
 //! A run removes no server file; see `vale_mangos::datadir`'s section "Nothing
 //! is removed by a run". Stale files are reviewed and removed in the Server
 //! tile files window ([`crate::ui::shell::tilefiles`]).
@@ -890,6 +897,8 @@ enum Which {
     /// The tiles named on `map`, whatever the record says: the map window's
     /// selection.
     Named { map: String, tiles: Vec<(u32, u32)> },
+    /// A map that is one building, whole: `tiles` are the tiles under it.
+    Building { map: u32, tiles: Vec<(u32, u32)> },
 }
 
 /// Where a dev-time run builds the project's archive.
@@ -941,7 +950,7 @@ impl Run {
         session: &mut EditSession,
         assets: &GameAssets,
         server: &super::settings::ServerSettings,
-        chosen: Option<&[(u32, u32)]>,
+        which: Which,
     ) -> Result<Run, String> {
         let tools = tools(server)?;
         let data_dir = data_dir(server)?;
@@ -957,13 +966,6 @@ impl Run {
         // save writes everything; see `EditSession::save_files`.
         let _ = session.save_files();
         repair_project_wdts(session);
-        let which = match chosen {
-            Some(tiles) => Which::Named {
-                map: session.map.clone(),
-                tiles: tiles.to_vec(),
-            },
-            None => Which::Changed,
-        };
         let dll_dirs: Vec<PathBuf> = server
             .conf_path()
             .and_then(|conf| conf.parent().map(Path::to_path_buf))
@@ -996,14 +998,23 @@ impl Run {
         let (dirty, skipped) = match &self.which {
             Which::Changed => dirty(&self.reader, &record, &mut compared),
             Which::Named { map, tiles } => dirty_for(&self.reader, map, tiles, &mut compared),
+            Which::Building { .. } => (Vec::new(), Vec::new()),
         };
         for line in &skipped {
             warn!("server tiles: {line}");
         }
-        if dirty.is_empty() {
+        let building = match &self.which {
+            Which::Building { map, tiles } => Some(datadir::Building {
+                map: *map,
+                tiles: tiles.iter().map(|&(x, y)| Tile::new(*map, x, y)).collect(),
+            }),
+            _ => None,
+        };
+        if dirty.is_empty() && building.is_none() {
             return Ok(Ran::Nothing(match self.which {
                 Which::Changed => "no server tile has changed since the last regeneration",
                 Which::Named { .. } => "no selected tile can be regenerated",
+                Which::Building { .. } => unreachable!("a building is regenerated whole"),
             }
             .to_string()));
         }
@@ -1036,12 +1047,18 @@ impl Run {
         };
 
         let (tiles, carried, removed_maps) = split(&dirty);
-        let first_map = tiles.first().map_or(dirty[0].tile.map, |(tile, _)| tile.map);
+        let first_map = tiles
+            .first()
+            .map(|(tile, _)| tile.map)
+            .or(dirty.first().map(|d| d.tile.map))
+            .or(building.as_ref().map(|building| building.map))
+            .unwrap_or_default();
         let request = client_root.map(|client_root| Request {
             client_root,
             tiles,
             carried,
             removed_maps,
+            buildings: building.into_iter().collect(),
             project: project.name.clone(),
             heights_as_int: datadir::heights_as_int(&self.data_dir, first_map),
             dll_dirs: self.dll_dirs,
@@ -1170,13 +1187,56 @@ pub(crate) fn regenerate(
     if chosen.is_some_and(|tiles| tiles.is_empty()) {
         return "no selected tile can be regenerated".to_string();
     }
-    let run = match Run::gather(session, assets, server, chosen) {
-        Ok(run) => run,
-        Err(e) => return format!("server tiles: {e}"),
+    let which = match chosen {
+        Some(tiles) => Which::Named {
+            map: session.map.clone(),
+            tiles: tiles.to_vec(),
+        },
+        None => Which::Changed,
     };
     let label = match chosen {
         Some(tiles) => format!("regenerating {} server tile(s)", tiles.len()),
         None => "regenerating changed server tiles".to_string(),
+    };
+    queue_run(session, assets, server, queue, step, which, label)
+}
+
+/// Regenerate the server's files of the open map, which is one building and
+/// no tiles: its vmap files, and the navmesh of `tiles`, the tiles under the
+/// building. The map window's Server Files for such a map. See the module
+/// comment.
+pub(crate) fn regenerate_building(
+    session: &mut EditSession,
+    assets: &GameAssets,
+    server: &super::settings::ServerSettings,
+    queue: &mut super::queue::ServerQueue,
+    step: &Step,
+    tiles: &[(u32, u32)],
+) -> String {
+    if queue.busy() {
+        return "a server write is still running".to_string();
+    }
+    let which = Which::Building {
+        map: session.map_id,
+        tiles: tiles.to_vec(),
+    };
+    let label = format!("regenerating the server files of {}", session.map);
+    queue_run(session, assets, server, queue, step, which, label)
+}
+
+/// Gather a run on the main thread and put it on the server queue.
+fn queue_run(
+    session: &mut EditSession,
+    assets: &GameAssets,
+    server: &super::settings::ServerSettings,
+    queue: &mut super::queue::ServerQueue,
+    step: &Step,
+    which: Which,
+    label: String,
+) -> String {
+    let run = match Run::gather(session, assets, server, which) {
+        Ok(run) => run,
+        Err(e) => return format!("server tiles: {e}"),
     };
     let progress = step.clone();
     queue.push(
