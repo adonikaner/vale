@@ -300,6 +300,9 @@ pub(crate) struct Editing<'w> {
     /// folders.
     pub(crate) portraits: ResMut<'w, crate::preview::portraits::Portraits>,
     pub(crate) favourites: ResMut<'w, crate::prefs::favourites::Favourites>,
+    /// The asset drawer under the viewport, which the texture, road, chunk,
+    /// doodad and WMO panels open. See [`shell::drawer`].
+    pub(crate) drawer: ResMut<'w, shell::drawer::Drawer>,
     /// The camera's named places, for the go-to popover.
     pub(crate) bookmarks: ResMut<'w, crate::prefs::bookmarks::Bookmarks>,
     /// The terrain and texture brushes' presets.
@@ -475,6 +478,7 @@ impl Plugin for PanelPlugin {
             .init_resource::<Viewport>()
             .init_resource::<shell::rail::Rail>()
             .init_resource::<shell::asks::ShellAsks>()
+            .init_resource::<shell::drawer::Drawer>()
             .add_plugins((widgets::thumbnails::ThumbnailPlugin, shell::icons::IconPlugin))
             // The keys that work whichever tool is chosen. After the pick,
             // as every tool's input is; a tool whose order against them
@@ -870,9 +874,23 @@ fn draw(
             });
         });
 
-    // The top edge of the two bottom bars, where the sync toast sits. Read
-    // here, after every docked panel has taken its space and before the
-    // middle takes the rest.
+    // The asset drawer, after the inspector so that it shows the section the
+    // inspector drew this frame, and after the rail so that it spans only the
+    // viewport's width. See [`shell::drawer`].
+    shell::drawer::draw(
+        &mut root,
+        !in_world && !tool.covers_viewport(),
+        &mut editing.drawer,
+        &mut editing.textures,
+        &mut editing.placing,
+        &mut editing.thumbnails,
+        &mut editing.portraits,
+        &mut editing.favourites,
+    );
+
+    // The top edge of the bottom bars and the asset drawer, where the sync
+    // toast sits. Read here, after every docked panel has taken its space and
+    // before the middle takes the rest.
     let bars_top = root.available_rect_before_wrap().bottom();
 
     // Where a Data subject's form goes. See

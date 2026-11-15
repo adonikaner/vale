@@ -1,6 +1,6 @@
 //! A list of models and the pager over a long list: a model row with its
-//! picture, name and star, used by the table workspace's model browser and
-//! the placement picker, and the page controls every paged dialog uses.
+//! picture, name and star, used by the table workspace's model browser, and
+//! the page controls every paged dialog uses.
 
 use bevy_egui::egui;
 
@@ -21,10 +21,8 @@ pub(in crate::ui) struct RowHit {
 }
 
 /// One row of a model list: the picture, the file's name with its folder
-/// under it, and a star at the right.
-///
-/// Shared with the inspector's placement picker, which lists the same kind
-/// of thing one tool over; `kind` is which list the star writes to.
+/// under it, and a star at the right. `kind` is which list the star writes
+/// to.
 pub(in crate::ui) fn model_row(
     ui: &mut egui::Ui,
     portraits: &mut crate::preview::portraits::Portraits,

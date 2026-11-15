@@ -1,6 +1,7 @@
 //! A catalogue of paths browsed as folders: the breadcrumb, the folder rows,
-//! and a path split into its folder and file. The model, tileset and area
-//! pickers and the Assets workspace's Game Files part use them.
+//! and a path split into its folder and file. The asset drawer
+//! (`crate::ui::shell::drawer`), the area picker and the Assets workspace's
+//! Game Files part use them.
 //!
 //! A catalogue is lower case, so a folder is found and compared without
 //! case. A name is drawn as the archives or the project spell it
@@ -21,9 +22,9 @@ use crate::ui::widgets::theme;
 /// click reaches any folder on the path.
 ///
 /// `root` names the empty prefix, for a tree whose top level is not one
-/// folder. The model and tileset pickers do not need it: everything they hold
-/// is under `world\` or `tileset\`, so the root is a real segment, and passing
-/// `""` leaves the row unchanged. The area tree needs it: its top level is
+/// folder. The asset drawer does not need it: everything it lists is under
+/// `world\` or `tileset\`, so the root is a real segment, and passing `""`
+/// leaves the row unchanged. The area tree needs it: its top level is
 /// thirty-six maps, and without a name for the level above them the empty
 /// segment draws as an empty button and a map cannot be left once opened.
 pub(in crate::ui) fn breadcrumb(ui: &mut egui::Ui, here: &str, root: &str, spell: &Spellings) -> Option<String> {

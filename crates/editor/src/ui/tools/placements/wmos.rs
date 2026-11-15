@@ -71,10 +71,10 @@ pub(in crate::ui::tools) fn wmo(
     swap: &mut Swap,
     view: &mut crate::tools::placements::wmoview::WmoView,
     portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
+    drawer: &mut crate::ui::shell::drawer::Drawer,
     now: f64,
 ) {
-    if placing(ui, placer, Kind::Wmo, portraits, favourites) {
+    if placing(ui, placer, Kind::Wmo, portraits, drawer) {
         return;
     }
 
@@ -117,7 +117,7 @@ pub(in crate::ui::tools) fn wmo(
         },
     }
     if selection.count() > 0 {
-        replacing(ui, swap, placer, Kind::Wmo, selection.count(), portraits, favourites);
+        replacing(ui, swap, Kind::Wmo, selection.count(), portraits, drawer);
     }
     if selection.at.is_none() {
         theme::note(ui, "No WMO selected");
@@ -272,9 +272,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
                 assets,
                 &mut editing.wmo_spawns,
                 &mut editing.wmo_view,
-                &mut editing.placing,
-                &mut editing.portraits,
-                &mut editing.favourites,
+                &mut editing.drawer,
                 now,
             ),
             _ => {
@@ -296,7 +294,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.swap,
         &mut editing.wmo_view,
         &mut editing.portraits,
-        &mut editing.favourites,
+        &mut editing.drawer,
         now,
     );
 }

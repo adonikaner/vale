@@ -10,21 +10,20 @@
 //!               New Set
 //! Doodad        the chosen doodad: its model, set, place, turn and scale,
 //!               Duplicate and Remove
-//! Add           the model list the Place mode uses; a chosen model is added
-//!               where the next click lands
+//! Add           the model on the cursor; the section opens the asset drawer,
+//!               and a model chosen there is added where the next click lands
 //! ```
 
 use bevy::prelude::*;
 use bevy_egui::egui;
 
 use crate::session::EditSession;
-use crate::tools::placements::place::{Kind, Placing};
 use crate::tools::placements::wmodoodads::{self, Placed, Spawns};
 use crate::tools::placements::wmoview::WmoView;
 use crate::ui::widgets::theme::{self, property};
 use vale_client::assets::GameAssets;
 
-use super::place::{browse, number_row};
+use super::place::number_row;
 
 /// The panel.
 #[allow(clippy::too_many_arguments)]
@@ -34,9 +33,7 @@ pub(in crate::ui::tools) fn panel(
     assets: &GameAssets,
     spawns: &mut Spawns,
     view: &mut WmoView,
-    placing: &mut Placing,
-    portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
+    drawer: &mut crate::ui::shell::drawer::Drawer,
     now: f64,
 ) {
     let Some(placed) = spawns.building.clone() else {
@@ -56,7 +53,7 @@ pub(in crate::ui::tools) fn panel(
             sets(ui, session, assets, view, &placed, editable, now);
             ui.add_enabled_ui(editable, |ui| {
                 chosen(ui, session, assets, spawns, &placed, now);
-                add(ui, spawns, placing, portraits, favourites);
+                add(ui, spawns, drawer);
             });
             ui.add_space(12.0);
         });
@@ -238,18 +235,14 @@ fn chosen(ui: &mut egui::Ui, session: &mut EditSession, assets: &GameAssets, spa
     });
 }
 
-/// The model list; a model chosen is added where the next click lands.
-fn add(
-    ui: &mut egui::Ui,
-    spawns: &mut Spawns,
-    placing: &mut Placing,
-    portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
-) {
+/// The model on the cursor. The section opens the asset drawer while the
+/// building can be edited; a model chosen there is added where the next click
+/// lands.
+fn add(ui: &mut egui::Ui, spawns: &mut Spawns, drawer: &mut crate::ui::shell::drawer::Drawer) {
     theme::heading_about(
         ui,
         "Add",
-        "Choose a model and it follows the pointer; click inside the building where it goes. It goes \
+        "Choose a model in the asset drawer and it follows the pointer; click inside the building where it goes. It goes \
          into the drawn set and into the list of the group whose box holds it, and stays on the cursor \
          for the next. , and . turn it, Ctrl and the wheel scale it, Escape puts it down.",
     );
@@ -265,10 +258,12 @@ fn add(
         }
         None => theme::note(ui, "No model on the cursor"),
     }
-    ui.add(egui::TextEdit::singleline(&mut spawns.search).hint_text("Search the models").desired_width(f32::INFINITY));
-    let chosen: Vec<String> = spawns.adding.iter().cloned().collect();
-    let search = spawns.search.clone();
-    if let Some(picked) = browse(ui, placing, Kind::Doodad, &search, &chosen, portraits, favourites) {
+    // Inside the panel's `add_enabled_ui`, so a building the panel will not
+    // edit offers nothing.
+    if !ui.is_enabled() {
+        return;
+    }
+    if let Some(picked) = drawer.offer(crate::ui::shell::drawer::Purpose::BuildingDoodad, spawns.adding.as_slice()) {
         spawns.adding = Some(picked);
     }
 }

@@ -39,7 +39,7 @@
 //! that chunk did not show until the swap, so a stroke over new ground
 //! appeared one chunk at a time.
 //!
-//! ## What a stroke can be told
+//! ## The brush's settings
 //!
 //! The brush is `vale_edit::ops::paint::PaintBrush`, and the panel sets all of it:
 //!
@@ -64,7 +64,7 @@
 //! all of them, filtered by a search box. It does not offer the tile's own
 //! `MTEX`, which lists only the textures the tile already has.
 //!
-//! ## What a new layer grows
+//! ## The ground effect of a new layer
 //!
 //! `MCLY`'s `effectId` is the ground foliage a layer grows: the tufts and
 //! shrubs `render::foliage` plants. The same row also picks the footstep sound.
@@ -92,8 +92,8 @@ use bevy::prelude::*;
 /// a stroke reaches only the tiles this session has open. The strength has no
 /// meaningful ceiling. It is a fraction of the remaining distance per second,
 /// and one step is clamped to all of that distance, so a large number means
-/// "immediately". Both limits were guesses before (100 yards and 10), and they
-/// refused work the tool can do.
+/// "immediately". The earlier limits, 100 yards and 10, refused values the
+/// tool can apply.
 pub(crate) const RADIUS: std::ops::RangeInclusive<f32> = 0.5..=(crate::OPEN_BLOCK / 2.0);
 pub(crate) const RATE: std::ops::RangeInclusive<f32> = 0.0..=1_000.0;
 
@@ -110,10 +110,11 @@ pub(crate) struct Textures {
     /// How the archives and the project spell [`Self::catalogue`]'s paths,
     /// read with it. See `crate::session::files::Spellings`.
     pub(crate) spellings: std::sync::Arc<crate::session::files::Spellings>,
-    /// What the panel's search box holds. Held here rather than in the panel so
-    /// that it survives the tool being switched away from and back.
+    /// What the asset drawer's search box holds while it lists tilesets. Held
+    /// here rather than in the drawer so that it survives the tool being
+    /// switched away from and back.
     pub(crate) search: String,
-    /// Which folder the picker is showing, as a lower-case path prefix ending
+    /// Which folder the asset drawer shows, as a lower-case path prefix ending
     /// in a separator.
     ///
     /// The model picker has the same arrangement for the same reason. See
@@ -126,9 +127,8 @@ pub(crate) struct Textures {
     ///
     /// The layer list has to be reachable. A person who wants to take a layer
     /// off has to move the pointer to the button. The pointer is then over a
-    /// different chunk, and the panel shows that chunk instead. A user reported
-    /// this: "deleting one requires moving the pointer, at which point whatever
-    /// you were trying to delete has disappeared."
+    /// different chunk, and the panel shows that chunk instead, so the layer
+    /// to be removed is no longer listed.
     ///
     /// Latching when the pointer leaves the viewport does not fix it, because
     /// reaching the panel moves the pointer across every chunk between its
@@ -513,7 +513,7 @@ fn stroke(
 /// A tile with no `TileGround` (built before `LiveEdits` was set), one whose
 /// texture names are no longer an extension of the drawn list, or one being
 /// replaced by a read already in flight, is read again instead: it goes to
-/// `stale`, which is what every texture-set change did before this.
+/// `stale`, the route every texture-set change took before this function.
 #[allow(clippy::too_many_arguments)]
 fn live_regroup(
     mut session: Option<ResMut<EditSession>>,
@@ -1050,8 +1050,8 @@ pub(crate) fn set_layer_effect(
 /// [`set_layer_effect`] does: one entry on the history, folded by `now` so
 /// that a dragged number is one press of undo.
 ///
-/// The tile is read again rather than patched, and the reason is not the paint.
-/// The velocity reaches the shader as part of the draw group's own uniform, and
+/// The tile is read again rather than patched because of the draw groups, not
+/// the paint. The velocity reaches the shader as part of the draw group's own uniform, and
 /// `Adt::to_mesh` groups chunks by their textures and their scroll. A chunk
 /// that starts moving therefore has to leave the group of still chunks it was
 /// grouped with. See `vale_assets::world::adt::TerrainDraw::scrolls`.
@@ -1106,8 +1106,9 @@ pub(crate) fn set_layer_animation(
 
 /// Take one layer off the chunk under the pointer.
 ///
-/// This is the one way out of the four-layer limit. It is a button a person
-/// presses rather than something the brush does for them: dropping a layer
+/// This is the one way to free a slot under the four-layer limit. It is a
+/// button a person presses rather than something the brush does for them:
+/// dropping a layer
 /// discards the blend it was carrying, and the coverage column informs the
 /// choice of which of the four to drop but does not make it.
 ///
@@ -1205,9 +1206,8 @@ pub(crate) fn swap_layer(
 ///
 /// The base is the one part of a chunk's paint no brush can reach: painting
 /// adds a layer over it, and a chunk already at the four-layer limit cannot do
-/// even that. Ground authored on the wrong tileset therefore could not be
-/// corrected. A user asked "is there a way to clear or change the base texture
-/// for a tile?", and there was not.
+/// even that. Without this function, ground authored on the wrong tileset
+/// cannot be corrected.
 ///
 /// It replaces rather than removes, which keeps it well defined: every blend
 /// map and every layer above the base stays exactly as it was, and the one

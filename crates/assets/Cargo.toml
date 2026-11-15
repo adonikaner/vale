@@ -1,6 +1,6 @@
 [package]
 name = "vale-assets"
-description = "Reads 1.12.1 game data: MPQ archive chain plus hand-written WDT/ADT terrain parsers."
+description = "Parsers for the 1.12.1 game data: the MPQ archive chain, terrain, models, buildings, textures, DBC tables and the interface markup."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

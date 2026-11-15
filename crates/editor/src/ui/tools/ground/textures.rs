@@ -4,16 +4,19 @@
 //! viewport toolbar   Paint or Erase, the brush preset, Texture Count and the
 //!                    Keys button
 //! inspector          the brush presets and the brush's settings, the brush's
-//!                    texture and its foliage, the tileset list, and the layers
-//!                    of the chunk under the pointer or pinned
+//!                    texture and its foliage, and the layers of the chunk
+//!                    under the pointer or pinned
 //! ```
+//!
+//! The tilesets are listed in the asset drawer under the viewport
+//! ([`crate::ui::shell::drawer`]), which this panel opens.
 //!
 //! The brush's settings are in the inspector beside the presets, because a
 //! preset is those settings: they are what Save writes into it. The presets
 //! are [`crate::prefs::brushes`]; their grid is [`super::presets`].
 //!
-//! The chunks and road panels use the tileset list and the swatches. The
-//! Foliage fields are [`super::foliage`]'s. The state is
+//! The chunks panel uses [`tileset_picker`], and the chunks and road panels
+//! use the swatches. The Foliage fields are [`super::foliage`]'s. The state is
 //! [`crate::tools::ground::textures`].
 
 use bevy_egui::egui;
@@ -25,8 +28,8 @@ use crate::session::EditSession;
 use crate::tools::ground::foliage::{Foliage, Target};
 use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
-use crate::tools::placements::place;
-use crate::ui::widgets::folders::{breadcrumb, folder_rows, split, split_folder};
+use crate::ui::shell::drawer::{Drawer, Purpose};
+use crate::ui::widgets::folders::split;
 use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_setting, bar_switch, field, property};
 use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
 use vale_edit::ops::paint::PaintBrush;
@@ -54,7 +57,8 @@ fn crawls((turn, rate, on): (u32, u32, bool)) -> String {
 }
 
 /// The texture brush's inspector: the presets and the brush's settings, the
-/// brush's texture, the tileset list, and the chunk's layers.
+/// brush's texture, and the chunk's layers. The tilesets are offered in the
+/// asset drawer.
 pub(in crate::ui::tools) fn paint(
     ui: &mut egui::Ui,
     textures: &mut Textures,
@@ -65,6 +69,7 @@ pub(in crate::ui::tools) fn paint(
     brushes: &mut Brushes,
     foliage: &mut Foliage,
     portraits: &mut Portraits,
+    drawer: &mut Drawer,
     now: f64,
 ) {
     let presets: Vec<(String, super::presets::Icon)> = brushes
@@ -80,11 +85,7 @@ pub(in crate::ui::tools) fn paint(
     super::presets::settings(ui, "textures-brush-settings", |ui| brush_settings(ui, &mut textures.brush));
 
     tileset_chosen(ui, textures, thumbnails, session, assets, foliage, portraits);
-
-    theme::heading_about(ui, "Tilesets", "Click a tileset to paint with it.");
-    if !tileset_picker(ui, textures, thumbnails, session) {
-        return;
-    }
+    tileset_picker(textures, drawer, session);
     chunk_layers(ui, thumbnails, textures, session, cursor, assets, foliage, portraits, now);
 }
 
@@ -275,7 +276,7 @@ fn tileset_chosen(
     foliage: &mut Foliage,
     portraits: &mut Portraits,
 ) {
-    theme::heading_about(ui, "Brush Texture", "Choose a texture from the tileset list below.");
+    theme::heading_about(ui, "Brush Texture", "Click a tileset in the asset drawer under the viewport.");
     if textures.brush.texture.is_empty() {
         theme::note(ui, "No texture selected.");
         return;
@@ -311,185 +312,23 @@ fn tileset_chosen(
     }
 }
 
-/// The tileset picker: the search box and the list by folder. A click sets
-/// the texture brush's chosen texture.
+/// Offer the asset drawer's tilesets for the texture brush. A click there
+/// sets the brush's texture and its foliage.
 ///
 /// Shared by the texture brush's panel and the chunk selection's. Both act
-/// with the brush's chosen texture, so there is one picker and one chosen
-/// texture. Returns `false` while the tileset list is still being read, and
-/// draws nothing below the search box then.
-pub(super) fn tileset_picker(
-    ui: &mut egui::Ui,
-    textures: &mut Textures,
-    thumbnails: &mut Thumbnails,
-    session: &EditSession,
-) -> bool {
-    let chosen = textures.brush.texture.clone();
-    let Some(picked) = tileset_browser(ui, textures, thumbnails, &chosen) else {
-        return false;
+/// with the brush's chosen texture, so there is one chosen texture for both.
+pub(super) fn tileset_picker(textures: &mut Textures, drawer: &mut Drawer, session: &EditSession) {
+    let chosen: Vec<String> = match textures.brush.texture.is_empty() {
+        true => Vec::new(),
+        false => vec![textures.brush.texture.clone()],
     };
-    if let Some(path) = picked {
+    if let Some(path) = drawer.offer(Purpose::Brush, &chosen) {
         // Picking a texture also sets its foliage, from the ground already
         // painted with it. A texture on which no open layer grows anything
         // grows nothing, which matches the shipped ground.
         textures.brush.effect_id = textures::usual_effect(session, &path).unwrap_or(0);
         textures.brush.texture = path;
     }
-    true
-}
-
-/// The search box and the tileset list by folder, with `chosen` marked.
-/// Answers the path clicked this frame, or `None` while the list is still
-/// being read. The search and the open folder are the texture tool's, so
-/// every list opens where the last one was left.
-pub(super) fn tileset_browser(
-    ui: &mut egui::Ui,
-    textures: &mut Textures,
-    thumbnails: &mut Thumbnails,
-    chosen: &str,
-) -> Option<Option<String>> {
-    ui.add(
-        egui::TextEdit::singleline(&mut textures.search)
-            .hint_text("Search tilesets")
-            .desired_width(f32::INFINITY),
-    );
-    if !textures.catalogue.iter().any(|path| !path.is_empty()) {
-        theme::note(ui, "Loading tilesets\u{2026}");
-        return None;
-    }
-    // Folders, as in the model picker. `Tileset\Elwynn\` is the set a zone was
-    // painted with, and with six hundred names in one scroller every one has
-    // to be found by typing. Search still runs flat across the whole
-    // catalogue; see [`crate::ui::tools::placements::place`] for the reason.
-    let needle = textures.search.to_ascii_lowercase();
-    let row = SIDE as f32 + 6.0;
-    let spell = std::sync::Arc::clone(&textures.spellings);
-    let mut picked: Option<String> = None;
-    if needle.is_empty() {
-        let here = textures.folder.clone();
-        let mut go = breadcrumb(ui, &here, "", &spell);
-        let (folders, files) = split_folder(&textures.catalogue, &here);
-        theme::note(
-            ui,
-            match folders.len() {
-                0 => format!("{} tilesets", files.len()),
-                n => format!("{n} folders \u{b7} {} tilesets", files.len()),
-            },
-        );
-        egui::ScrollArea::vertical()
-            .id_salt("tilesets")
-            .max_height(260.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                go = folder_rows(ui, &here, &folders, row, &spell).or(go.take());
-                for path in &files {
-                    if texture_row(ui, thumbnails, path, spell.of(path), chosen) {
-                        picked = Some(path.clone());
-                    }
-                }
-            });
-        if let Some(folder) = go {
-            let mut folder = folder.to_ascii_lowercase();
-            if !folder.ends_with(place::SEP) {
-                folder.push(place::SEP);
-            }
-            textures.folder = folder;
-        }
-    } else {
-        let matches: Vec<String> = textures
-            .catalogue
-            .iter()
-            .filter(|path| !path.is_empty() && path.to_ascii_lowercase().contains(&needle))
-            .cloned()
-            .collect();
-        theme::note(
-            ui,
-            format!("{} of {} tilesets match", matches.len(), textures.catalogue.len()),
-        );
-        // `show_rows` rather than `show`: it builds only the rows on screen,
-        // so only those request a thumbnail and the other six hundred are
-        // never decoded. See [`crate::ui::widgets::thumbnails`].
-        egui::ScrollArea::vertical()
-            .id_salt("tileset-search")
-            .max_height(260.0)
-            .auto_shrink([false, true])
-            .show_rows(ui, row, matches.len(), |ui, range| {
-                for path in &matches[range] {
-                    if texture_row(ui, thumbnails, path, spell.of(path), chosen) {
-                        picked = Some(path.clone());
-                    }
-                }
-            });
-    }
-    Some(picked)
-}
-
-/// One row of the tileset list: a picture, a name, and whether it was clicked.
-///
-/// Laid out by hand rather than built from a `Button`, because the row must be
-/// the same height whether or not its picture has been decoded. If rows changed
-/// size as thumbnails arrived, the list would move under the pointer.
-fn texture_row(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str, shown: &str, chosen: &str) -> bool {
-    let height = SIDE as f32 + 4.0;
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::click(),
-    );
-    let on = chosen.eq_ignore_ascii_case(path);
-    if ui.is_rect_visible(rect) {
-        let painter = ui.painter();
-        if on || response.hovered() {
-            painter.rect_filled(
-                rect,
-                egui::CornerRadius::same(3),
-                match on {
-                    true => theme::ACCENT_SUNK,
-                    false => theme::RAISED,
-                },
-            );
-        }
-        if on {
-            painter.rect_stroke(
-                rect,
-                egui::CornerRadius::same(3),
-                egui::Stroke::new(1.0, theme::ACCENT),
-                egui::StrokeKind::Inside,
-            );
-        }
-        let square = egui::Rect::from_min_size(
-            egui::pos2(rect.left() + 3.0, rect.top() + 2.0),
-            egui::Vec2::splat(SIDE as f32),
-        );
-        swatch_at(ui, thumbnails, path, square);
-        // Two lines and a clip, because the names do not fit on one. The panel
-        // is 288 points wide and `aeriepeaksgravelneedlesbase.blp` is wider;
-        // painted as one line it runs off the edge of the window. The file name
-        // identifies the texture and the folder groups it, so those are the two
-        // lines. The extension is the same on all 621 and is dropped.
-        let (folder, file) = split(shown);
-        let text = ui.painter().with_clip_rect(egui::Rect::from_min_max(
-            egui::pos2(square.right() + 6.0, rect.top()),
-            rect.right_bottom(),
-        ));
-        text.text(
-            egui::pos2(square.right() + 6.0, rect.center().y - 7.0),
-            egui::Align2::LEFT_CENTER,
-            file,
-            egui::FontId::proportional(12.0),
-            match on {
-                true => theme::INK,
-                false => theme::INK_DIM,
-            },
-        );
-        text.text(
-            egui::pos2(square.right() + 6.0, rect.center().y + 7.0),
-            egui::Align2::LEFT_CENTER,
-            folder,
-            egui::FontId::proportional(theme::SMALL),
-            theme::INK_FAINT,
-        );
-    }
-    response.on_hover_text(path.to_string()).clicked()
 }
 
 /// A texture's picture, inline, at [`SIDE`] square.
@@ -500,9 +339,9 @@ pub(super) fn swatch(ui: &mut egui::Ui, thumbnails: &mut Thumbnails, path: &str)
 
 /// [`swatch`] into a rectangle the caller has already allocated.
 ///
-/// Draws a placeholder while the picture is being decoded, so the row keeps
-/// its shape; see [`texture_row`], and [`crate::ui::widgets::thumbnails`] for why a picture
-/// is not available the first time it is requested.
+/// Draws a placeholder while the picture is being decoded, so the swatch keeps
+/// its shape; see [`crate::ui::widgets::thumbnails`] for why a picture is not
+/// available the first time it is requested.
 fn swatch_at(ui: &egui::Ui, thumbnails: &mut Thumbnails, path: &str, rect: egui::Rect) {
     thumbnails.want(path);
     let painter = ui.painter();
@@ -905,6 +744,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.brushes,
         &mut editing.foliage,
         &mut editing.portraits,
+        &mut editing.drawer,
         now,
     );
 }

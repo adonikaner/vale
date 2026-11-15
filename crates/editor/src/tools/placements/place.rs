@@ -71,8 +71,7 @@
 //! carries and the ghost shows. The roll happens after the click, so the model
 //! on the cursor is always what the next click writes, and the "Roll now"
 //! button re-draws it without placing anything. A building takes the turn
-//! only: `MODF` has no scale, and a tilted building is a mistake nine times in
-//! ten.
+//! only: `MODF` has no scale, and a building is almost never meant to lean.
 //!
 //! The random numbers come from a 64-bit xorshift in this file, seeded from
 //! the clock on first use. Three numbers a second do not justify a dependency
@@ -329,11 +328,11 @@ pub(crate) struct Placing {
     /// How the archives and the project spell the two lists' paths, read
     /// with them. See `crate::session::files::Spellings`.
     pub(crate) spellings: std::sync::Arc<crate::session::files::Spellings>,
-    /// What the panel's search box holds, kept per kind so switching between
-    /// them does not lose it.
+    /// What the asset drawer's search box holds while it lists models. One
+    /// for both kinds, and kept when the tool is switched.
     pub(crate) search: String,
-    /// Which folder the picker is showing, one per kind, as a lower-case path
-    /// prefix ending in a separator.
+    /// Which folder the asset drawer shows, one per kind, as a lower-case
+    /// path prefix ending in a separator.
     ///
     /// One per kind because the two catalogues do not share a shape: a doodad
     /// is anywhere under `World\` and a building is always under `World\wmo\`,

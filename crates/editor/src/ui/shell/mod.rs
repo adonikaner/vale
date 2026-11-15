@@ -27,6 +27,8 @@
 //!               edit
 //! toolicons.rs  the icons of the rail's tools and the two pointer tools,
 //!               painted with egui's painter
+//! drawer.rs     the asset drawer under the viewport: the tilesets or the
+//!               models, by folder, for the inspector section that asked
 //! viewbar.rs    every toggle that changes what the viewport shows
 //! viewicons.rs  the icons of the view bar's switches, painted with egui's
 //!               painter
@@ -49,6 +51,7 @@
 pub(crate) mod asks;
 pub(crate) mod changes;
 pub(crate) mod context;
+pub(crate) mod drawer;
 pub(crate) mod hovercard;
 pub(crate) mod icons;
 pub(crate) mod manifest;

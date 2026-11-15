@@ -13,18 +13,18 @@
 //! `vale_edit::wmo`, and an edit is one undo entry
 //! (`crate::session::buildings`).
 //!
-//! ## Every placement of a file shares it
+//! ## An edit reaches every placement of the file
 //!
 //! An edit changes the building's file, and every placement of that file on
-//! every map draws it. A building the game ships is placed many times (an
-//! inn model is a dozen inns), so before the first edit the panel offers
+//! every map draws it. A building the game ships is often placed many times
+//! (one inn model is placed as a dozen inns), so before the first edit the panel offers
 //! Copy for This Placement ([`copy_for_placement`]): the root and its groups
 //! copied into the project under a new name, and this placement pointed at
 //! the copy. Editing the shared file is the other choice, for a building
 //! placed once or a change meant for all of them. A building the project
 //! holds already is edited without asking.
 //!
-//! ## In the viewport
+//! ## Viewport controls
 //!
 //! The controls are the doodad tool's (`super::doodads`), on the building's
 //! spawns:
@@ -56,7 +56,7 @@
 //! is against the file's spawns and the model cache's triangles, not against
 //! the drawn entities.
 //!
-//! ## Angles
+//! ## Spawn rotations and `MDDF` angles
 //!
 //! A spawn's turn is a quaternion; a tile doodad's is `MDDF`'s three angles,
 //! which the gizmo turns. `placement_matrix` builds `Rz * Ry * Rx * Rz(180°)`
@@ -121,13 +121,11 @@ pub(crate) struct Spawns {
     pub(crate) active: bool,
     /// The chosen spawn, by `MODD` index.
     pub(crate) chosen: Option<u16>,
-    /// The model on the cursor, chosen in the panel, with its turn about up
-    /// in degrees and its scale.
+    /// The model on the cursor, chosen in the asset drawer, with its turn
+    /// about up in degrees and its scale.
     pub(crate) adding: Option<String>,
     pub(crate) turn: f32,
     pub(crate) scale: f32,
-    /// The search box over the model list.
-    pub(crate) search: String,
     /// Buildings the person chose to edit in place, by their roots' keys.
     pub(crate) shared: std::collections::HashSet<String>,
     hovered: Option<u16>,
@@ -147,7 +145,6 @@ impl Default for Spawns {
             adding: None,
             turn: 0.0,
             scale: 1.0,
-            search: String::new(),
             shared: Default::default(),
             hovered: None,
             drag: None,
@@ -405,9 +402,9 @@ fn follow_the_mode(
         spawns.adding = None;
         return;
     }
-    // The building is followed in every mode of the editor: Lights mode
-    // shares it, and the file's copy or shared choice
-    // (`super::wmolights`).
+    // The building is followed in every mode of the editor, because Lights
+    // mode (`super::wmolights`) uses the same building and the same choice
+    // between a copy and the shared file.
     let Some((placement, interior)) = placed.iter().find(|(placement, _)| placement.unique_id == super::wmoview::VIEW_ID) else {
         return;
     };
@@ -459,8 +456,8 @@ fn scripted(
             }
             *done = 2;
         }
-        // Once the building drawn is the file the editor shows, which after
-        // a copy is a few frames later.
+        // Runs once the drawn building is the file the editor shows. After a
+        // copy, that is a few frames later.
         2 => {
             let path = view.open.as_ref().map(|open| open.path.clone());
             let (Some(path), Some(mut session)) = (path, session) else { return };
@@ -468,7 +465,7 @@ fn scripted(
                 return;
             }
             spawns.chosen = index;
-            // The camera on the chosen doodad, so a picture shows it.
+            // Fly the camera to the chosen doodad, so a screenshot shows it.
             if let Some(at) = chosen_place(&spawns, Some(&session)) {
                 fly.write(crate::camera::FlyTo { at, distance: Some(14.0) });
             }
@@ -496,7 +493,7 @@ pub(crate) fn angles_of(rotation: [f32; 4]) -> [f32; 3] {
     vale_assets::world::adt::placement_euler_from_world([x.to_degrees(), y.to_degrees(), z.to_degrees()])
 }
 
-/// …and back: `MDDF`'s three angles as a spawn's rotation.
+/// The inverse of [`angles_of`]: `MDDF`'s three angles as a spawn's rotation.
 pub(crate) fn rotation_of(angles: [f32; 3]) -> [f32; 4] {
     let [x, y, z] = vale_assets::world::adt::placement_euler_to_world(angles).map(f32::to_radians);
     (Quat::from_euler(EulerRot::ZYX, z, y, x) * Quat::from_rotation_z(std::f32::consts::PI)).normalize().to_array()
@@ -508,7 +505,7 @@ fn turn_of(rotation: [f32; 4]) -> f32 {
     vale_assets::world::adt::placement_euler_to_world(angles_of(rotation))[2]
 }
 
-/// A spawn's model to the world.
+/// The matrix from a spawn's model axes to the world.
 fn matrix_of(placed: &Placed, doodad: &Doodad) -> Mat4 {
     placed.to_world * Mat4::from_cols_array(&vale_assets::world::wmo::doodad_matrix(doodad.position, doodad.rotation, doodad.scale))
 }
@@ -535,9 +532,9 @@ pub(crate) fn gizmo_held(spawns: &Spawns, session: Option<&EditSession>) -> Opti
     Some((world_of(placed, &doodad), angles_of(doodad.rotation)))
 }
 
-/// …and what a handle or the `Alt` turn writes back: the spawn moved to a
-/// world point and turned to `MDDF`'s angles, folded into one entry per
-/// gesture.
+/// The write-back for [`gizmo_held`]: a handle or the `Alt` turn moves the
+/// spawn to a world point and turns it to `MDDF`'s angles. One gesture is one
+/// undo entry.
 pub(crate) fn gizmo_put(spawns: &Spawns, session: &mut EditSession, assets: &GameAssets, position: Vec3, angles: [f32; 3], now: f64) {
     let (Some(placed), Some(index)) = (spawns.building.as_ref(), spawns.chosen) else { return };
     let local = placed.to_local.transform_point3(position).to_array();
@@ -929,10 +926,10 @@ const HOVERED: Color = Color::srgba(0.89, 0.90, 0.93, 0.8);
 /// spawn's origin and a stem up from it. The handles stand on the chosen one
 /// as well.
 ///
-/// Not a box round the model, as the doodad tool draws: a box of marks drawn
-/// round a building's doodad, of lines or of tubes, stopped that doodad being
-/// drawn, and the same box eight yards to the side did not. The cause is not
-/// found; see the editor's notes on the building editor.
+/// The mark is not a box round the model, as the doodad tool draws. A box of
+/// marks, of lines or of tubes, drawn round a building's doodad stopped that
+/// doodad being drawn; the same box eight yards to the side did not. The
+/// cause is not known; see the editor's notes on the building editor.
 fn draw(spawns: Res<Spawns>, session: Option<Res<EditSession>>, mut marks: ResMut<Marks>) {
     if !spawns.active {
         return;

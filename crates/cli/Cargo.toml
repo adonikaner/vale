@@ -1,6 +1,6 @@
 [package]
 name = "vale-cli"
-description = "Headless driver for the protocol spike and the asset/terrain parsers."
+description = "The vale command-line tool: inspects the game data and talks to a server without opening a window."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

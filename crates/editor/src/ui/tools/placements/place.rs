@@ -1,15 +1,16 @@
 //! What the doodad and WMO tools share: the toolbar over the viewport, and
-//! in the inspector the placement picker, which is the model browser by
-//! folder, search, Starred and Recent, and the preview of the chosen model.
-//! The state is [`crate::tools::placements::place`].
+//! in the inspector the chosen model with its preview, the placement
+//! settings, and the Replace Model section. The models are listed in the
+//! asset drawer under the viewport ([`crate::ui::shell::drawer`]), which
+//! Place, Cluster and Replace Model open. The state is
+//! [`crate::tools::placements::place`].
 //!
 //! ```text
 //! toolbar     [Select | Place | Cluster]  Keys     Cluster on the doodad tool only
 //!             Handles [Move | Turn | Off]          in Select
 //!
-//! inspector   Place     Model and the browser, Placement, Ground, Scatter
-//!             Cluster   Models, Cluster, Add Models and the browser,
-//!                       Placement, Ground, Scatter
+//! inspector   Place     Model, Placement, Ground, Scatter
+//!             Cluster   Models, Cluster, Placement, Ground, Scatter
 //!             Select    the doodad or WMO panel's own sections
 //! ```
 //!
@@ -21,7 +22,7 @@ use crate::tools::placements::gizmo::{Handles, HANDLES};
 use crate::tools::placements::place::{Kind, Placing, Switch};
 use crate::tools::placements::place;
 use crate::tools::placements::swap::Swap;
-use crate::ui::widgets::folders::{breadcrumb, folder_rows, split_folder};
+use crate::ui::shell::drawer::{Drawer, Purpose};
 use crate::ui::widgets::preview::preview_pane;
 use crate::ui::widgets::theme::{self, bar_group, bar_keys, bar_segment, bar_setting, field, property};
 
@@ -107,7 +108,8 @@ pub(crate) fn toolbar(
     })
 }
 
-/// The model picker and the placement rows, shown in Place and Cluster mode.
+/// The chosen model or models and the placement rows, shown in Place and
+/// Cluster mode, which also open the asset drawer.
 ///
 /// Shared by the two placement tools, because choosing a model is the same
 /// action whichever list it goes into; see [`crate::tools::placements::place`] for the rest
@@ -122,12 +124,12 @@ pub(super) fn placing(
     placing: &mut Placing,
     kind: Kind,
     portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
+    drawer: &mut Drawer,
 ) -> bool {
     match placing.switch() {
         Switch::Select | Switch::Areas | Switch::Doodads | Switch::Lights => return false,
-        Switch::Place => model(ui, placing, kind, portraits, favourites),
-        Switch::Cluster => cluster(ui, placing, portraits, favourites),
+        Switch::Place => model(ui, placing, kind, portraits, drawer),
+        Switch::Cluster => cluster(ui, placing, drawer),
     }
     placement(ui, placing, kind);
     true
@@ -185,24 +187,27 @@ pub(super) fn number_row(ui: &mut egui::Ui, name: &str, about: &str, value: egui
     })
 }
 
-/// Place mode's top half: the chosen model, its picture, and the browser
-/// that chooses it.
+/// Place mode's top half: the chosen model and its picture. The asset drawer
+/// chooses it.
 fn model(
     ui: &mut egui::Ui,
     placing: &mut Placing,
     kind: Kind,
     portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
+    drawer: &mut Drawer,
 ) {
-    theme::heading_about(ui, "Model", "Click a model in the list below to choose it.");
+    theme::heading_about(ui, "Model", "Click a model in the asset drawer under the viewport to choose it.");
     match placing.path.clone() {
         Some(path) => {
             theme::value(ui, place::leaf(&path)).on_hover_text(&path);
-            // A button that opens the chosen model's folder, because the next
-            // model is most likely to be in the same folder.
+            // A button that opens the chosen model's folder in the asset
+            // drawer, because the next model is most likely to be in the same
+            // folder.
             let folder = Placing::folder_of(&path);
             if placing.folder(kind) != folder && ui.button("Show Folder").clicked() {
                 placing.open_folder(kind, &folder);
+                placing.search.clear();
+                drawer.show_folder(kind);
             }
         }
         None => theme::note(ui, "No model chosen"),
@@ -221,30 +226,15 @@ fn model(
     }
 
     // A large preview of the chosen model, under its name; see
-    // `crate::preview::portraits`. A row's small picture identifies a model; this one
-    // is large enough to judge it, and a drag turns it.
-    //
-    // It sits under the chosen model's name, not under the list. The list is
-    // three hundred points tall in a panel of six hundred, so a pane under it
-    // would start below the visible part of the panel and need scrolling to.
-    // The browser's dialog places its pane under its list by the same rule,
-    // because that is where its chosen model is named.
+    // `crate::preview::portraits`. A tile's small picture in the asset drawer
+    // identifies a model; this one is large enough to judge it, and a drag
+    // turns it.
     if let Some(path) = placing.path.clone() {
         ui.add_space(4.0);
         preview_pane(ui, portraits, &path);
     }
 
-    ui.add_space(4.0);
-    ui.add(
-        egui::TextEdit::singleline(&mut placing.search)
-            .hint_text("Search the models")
-            .desired_width(f32::INFINITY),
-    );
-
-    let chosen: Vec<String> = placing.path.iter().cloned().collect();
-    let search = placing.search.clone();
-    if let Some(picked) = browse(ui, placing, kind, &search, &chosen, portraits, favourites) {
-        favourites.used(list_of(kind), &picked);
+    if let Some(picked) = drawer.offer(Purpose::Place(kind), placing.path.as_slice()) {
         let (turn, scale) = (placing.turn, placing.scale);
         placing.arm(kind, picked, turn, scale);
     }
@@ -349,23 +339,18 @@ fn placement(ui: &mut egui::Ui, placing: &mut Placing, kind: Kind) {
 }
 
 /// Cluster mode's top half: the cluster's models, how many doodads a click
-/// places, over how wide a circle and how far apart, and the browser that
-/// adds and removes models. See [`crate::tools::placements::cluster`].
+/// places, over how wide a circle and how far apart. The asset drawer adds
+/// and removes models. See [`crate::tools::placements::cluster`].
 ///
 /// A setting whose Random switch is on is two rows, From and To, each with
 /// its own hover.
-fn cluster(
-    ui: &mut egui::Ui,
-    placing: &mut Placing,
-    portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
-) {
+fn cluster(ui: &mut egui::Ui, placing: &mut Placing, drawer: &mut Drawer) {
     use crate::tools::placements::cluster::{MOST, WIDEST};
     theme::heading_about(
         ui,
         "Models",
         "Each doodad is one of these models, each equally likely. Click a model \
-         under Add Models to add it, or a highlighted one to take it out.",
+         in the asset drawer to add it, or a highlighted one to take it out.",
     );
     // The models, each with a button that takes it out.
     let mut drop: Option<usize> = None;
@@ -388,8 +373,6 @@ fn cluster(
         theme::note(ui, "No models");
     }
 
-    // The settings come before the browser, which is several hundred points
-    // tall: under it they would start below the visible part of the panel.
     theme::heading(ui, "Cluster");
     let cluster = &mut placing.cluster;
     match cluster.random_count {
@@ -507,33 +490,24 @@ fn cluster(
         placing.cluster.redraw();
     }
 
-    theme::heading(ui, "Add Models");
-    ui.add(
-        egui::TextEdit::singleline(&mut placing.search)
-            .hint_text("Search the models")
-            .desired_width(f32::INFINITY),
-    );
-    let chosen = placing.cluster.models.clone();
-    let search = placing.search.clone();
-    if let Some(picked) = browse(ui, placing, Kind::Doodad, &search, &chosen, portraits, favourites) {
-        favourites.used(list_of(Kind::Doodad), &picked);
+    if let Some(picked) = drawer.offer(Purpose::Cluster, &placing.cluster.models) {
         placing.cluster.toggle(&picked);
     }
 }
 
-/// The list a doodad or WMO panel shows for replacing the selected
-/// placements' model: the model browser, the chosen model's picture, and the
-/// button that writes it. See [`crate::tools::placements::swap`].
+/// The section a doodad or WMO panel shows for replacing the selected
+/// placements' model: the chosen model's picture and the button that writes
+/// it. The section opens the asset drawer, which chooses the model. See
+/// [`crate::tools::placements::swap`].
 ///
 /// `count` is how many placements are selected.
 pub(super) fn replacing(
     ui: &mut egui::Ui,
     swap: &mut Swap,
-    placing: &mut Placing,
     kind: Kind,
     count: usize,
     portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
+    drawer: &mut Drawer,
 ) {
     if swap.open != Some(kind) {
         return;
@@ -550,14 +524,14 @@ pub(super) fn replacing(
         match kind {
             Kind::Doodad => {
                 "Each selected doodad takes the model chosen here and keeps its \
-                 position, rotation and scale. Click a model in the list below to \
-                 choose it."
+                 position, rotation and scale. Click a model in the asset drawer \
+                 to choose it."
             }
             Kind::Wmo => {
                 "Each selected WMO takes the WMO chosen here and keeps its position \
                  and rotation. Its bounds are taken from the new WMO; a doodad set \
-                 the new WMO lacks becomes set 0. Click a WMO in the list below to \
-                 choose it."
+                 the new WMO lacks becomes set 0. Click a WMO in the asset drawer \
+                 to choose it."
             }
         },
     );
@@ -581,180 +555,17 @@ pub(super) fn replacing(
             swap.close();
         }
     });
-    ui.add(
-        egui::TextEdit::singleline(&mut swap.search)
-            .hint_text("Search the models")
-            .desired_width(f32::INFINITY),
-    );
-    let chosen: Vec<String> = swap.with.iter().cloned().collect();
-    let search = swap.search.clone();
-    if let Some(picked) = browse(ui, placing, kind, &search, &chosen, portraits, favourites) {
-        favourites.used(list_of(kind), &picked);
+    if let Some(picked) = drawer.offer(Purpose::Replace(kind), swap.with.as_slice()) {
         swap.with = Some(picked);
     }
     ui.add_space(4.0);
 }
 
-/// The catalogue as folders rather than one list of several thousand names.
-/// Returns the model a click chose.
-///
-/// A flat list would put 5,816 models and 816 buildings in one scroller, where
-/// every model has to be found by typing, which works only when the name is
-/// already known. The archives' own directories are the game's
-/// grouping (`vale catalogue` prints them, seventeen at the top level), so
-/// the folders are taken from them rather than invented.
-///
-/// Search still runs flat across everything. A search limited to the open
-/// folder would find nothing for a model one directory over.
-///
-/// The starred and recent lists come before the folders, collapsible, and
-/// take no space when empty. Scattering a copse uses the same three models
-/// repeatedly, and without these lists each one needs a search; see
-/// [`crate::prefs::favourites`]. Every row shows the model's picture (see
-/// [`crate::preview::portraits`]), because a file name does not show what the model
-/// looks like.
-///
-/// `search` is the box above it: the placer's own, or the replace list's.
-/// `chosen` are the models drawn as chosen: the placer's one model, the
-/// cluster's list, or the replace list's choice.
-/// The folder shown is the placer's in both, so the replace list opens where
-/// the placer was last browsing.
-pub(super) fn browse(
-    ui: &mut egui::Ui,
-    placing: &mut Placing,
-    kind: Kind,
-    search: &str,
-    chosen: &[String],
-    portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
-) -> Option<String> {
-    let needle = search.to_ascii_lowercase();
-    let catalogue = placing.catalogue(kind);
-    if !catalogue.iter().any(|path| !path.is_empty()) {
-        theme::note(ui, "Reading the model list\u{2026}");
-        return None;
-    }
-    let total = catalogue.len();
-    let list = list_of(kind);
-    let spell = std::sync::Arc::clone(&placing.spellings);
-
-    // Searching: every match, wherever it is, with its folder under it.
-    if !needle.is_empty() {
-        let matches: Vec<String> = catalogue
-            .iter()
-            .filter(|path| !path.is_empty() && path.to_ascii_lowercase().contains(&needle))
-            .cloned()
-            .collect();
-        theme::note(ui, format!("{} of {total} match", matches.len()));
-        return rows(
-            ui, "search", &matches, chosen, true, portraits, favourites, list, &spell,
-        );
-    }
-
-    let mut picked: Option<String> = None;
-    for (name, paths) in [
-        ("Starred", favourites.starred(list)),
-        ("Recent", favourites.recent(list)),
-    ] {
-        if paths.is_empty() {
-            continue;
-        }
-        egui::CollapsingHeader::new(
-            egui::RichText::new(format!("{name} ({})", paths.len()))
-                .size(theme::SMALL)
-                .color(theme::INK_DIM),
-        )
-        .id_salt(("kept", name, kind as u8))
-        .default_open(name == "Starred")
-        .show(ui, |ui| {
-            picked = rows(ui, name, &paths, chosen, false, portraits, favourites, list, &spell)
-                .or(picked.take());
-        });
-    }
-
-    // Browsing: the way back up, then the folders, then what is in this one.
-    let here = placing.folder(kind).to_string();
-    let mut go = breadcrumb(ui, &here, "", &spell);
-    let (folders, files) = split_folder(catalogue, &here);
-    theme::note(
-        ui,
-        match folders.len() {
-            0 => format!("{} models", files.len()),
-            n => format!("{n} folders \u{b7} {} models", files.len()),
-        },
-    );
-
-    let row = ui.spacing().interact_size.y + 6.0;
-    egui::ScrollArea::vertical()
-        .id_salt("models")
-        .max_height(300.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            go = folder_rows(ui, &here, &folders, row, &spell).or(go.take());
-            picked = rows(
-                ui, "here", &files, chosen, false, portraits, favourites, list, &spell,
-            )
-            .or(picked.take());
-        });
-    if let Some(folder) = go {
-        placing.open_folder(kind, &folder);
-    }
-    picked
-}
-
-/// Which of the kept lists a placement kind's picker reads and writes.
-fn list_of(kind: Kind) -> crate::prefs::favourites::Kind {
+/// Which of the kept lists a placement kind's models are starred in and
+/// counted as recent in. The asset drawer reads and writes them.
+pub(in crate::ui) fn list_of(kind: Kind) -> crate::prefs::favourites::Kind {
     match kind {
         Kind::Doodad => crate::prefs::favourites::Kind::Doodad,
         Kind::Wmo => crate::prefs::favourites::Kind::Wmo,
     }
-}
-
-/// A run of model rows. Returns the one a click chose.
-///
-/// Uses `show_rows`, as the tileset list does: the archives name thousands of
-/// models and only the dozen on screen need building. Each row here requests a
-/// rendered picture, so only the rows on screen are rendered. The row is the
-/// workspace model browser's (`crate::ui::widgets::models::model_row`): the picture, the file name
-/// over its folder, and a star.
-#[allow(clippy::too_many_arguments)]
-fn rows(
-    ui: &mut egui::Ui,
-    salt: &str,
-    paths: &[String],
-    chosen: &[String],
-    scroller: bool,
-    portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
-    list: crate::prefs::favourites::Kind,
-    spell: &crate::session::files::Spellings,
-) -> Option<String> {
-    let mut picked: Option<String> = None;
-    let mut draw = |ui: &mut egui::Ui, range: std::ops::Range<usize>| {
-        for path in &paths[range] {
-            let on = chosen.iter().any(|had| had.eq_ignore_ascii_case(path));
-            let hit = crate::ui::widgets::models::model_row(ui, portraits, favourites, list, path, spell.of(path), on);
-            if hit.starred {
-                favourites.toggle(list, path);
-            }
-            if hit.clicked || hit.double {
-                picked = Some(path.clone());
-            }
-        }
-    };
-    match scroller {
-        true => {
-            egui::ScrollArea::vertical()
-                .id_salt(salt)
-                .max_height(300.0)
-                .auto_shrink([false, true])
-                .show_rows(ui, crate::ui::widgets::models::MODEL_ROW, paths.len(), |ui, range| {
-                    draw(ui, range)
-                });
-        }
-        // Already inside the browser's own scroller, which also holds the
-        // folders above these rows; a nested scroller would draw two bars.
-        false => draw(ui, 0..paths.len()),
-    }
-    picked
 }

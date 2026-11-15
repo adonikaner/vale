@@ -43,8 +43,6 @@ pub(crate) struct Swap {
     pub(crate) open: Option<Kind>,
     /// The model chosen in the list.
     pub(crate) with: Option<String>,
-    /// What the list's search box holds.
-    pub(crate) search: String,
     /// The panel's Replace button, for [`replace`] to carry out.
     pub(crate) asked: Option<Kind>,
 }

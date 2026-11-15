@@ -54,10 +54,10 @@ pub(in crate::ui::tools) fn doodad(
     placer: &mut Placing,
     swap: &mut Swap,
     portraits: &mut crate::preview::portraits::Portraits,
-    favourites: &mut crate::prefs::favourites::Favourites,
+    drawer: &mut crate::ui::shell::drawer::Drawer,
     now: f64,
 ) {
-    if placing(ui, placer, Kind::Doodad, portraits, favourites) {
+    if placing(ui, placer, Kind::Doodad, portraits, drawer) {
         return;
     }
 
@@ -101,7 +101,7 @@ pub(in crate::ui::tools) fn doodad(
         },
     }
     if selection.count() > 0 {
-        replacing(ui, swap, placer, Kind::Doodad, selection.count(), portraits, favourites);
+        replacing(ui, swap, Kind::Doodad, selection.count(), portraits, drawer);
     }
     if selection.at.is_none() {
         theme::note(ui, "No doodad selected");
@@ -313,7 +313,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.placing,
         &mut editing.swap,
         &mut editing.portraits,
-        &mut editing.favourites,
+        &mut editing.drawer,
         now,
     );
 }

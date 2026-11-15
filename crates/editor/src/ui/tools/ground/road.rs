@@ -25,7 +25,8 @@ use crate::tools::ground::road::{self, RoadTool, Slot};
 use crate::tools::ground::terrain::FALLOFFS;
 use crate::tools::ground::textures::Textures;
 use crate::ui::tools::ground::terrain::objects_follow;
-use crate::ui::tools::ground::textures::{swatch, tileset_browser};
+use crate::ui::shell::drawer::{Drawer, Purpose};
+use crate::ui::tools::ground::textures::swatch;
 use crate::ui::widgets::folders::split;
 use crate::ui::widgets::theme::{self, bar_field, bar_group, bar_keys, bar_segment, bar_setting, field, property};
 use crate::ui::widgets::thumbnails::{SIDE, Thumbnails};
@@ -137,8 +138,9 @@ fn panel(
     assets: &vale_client::assets::GameAssets,
     foliage: &mut Foliage,
     portraits: &mut Portraits,
+    drawer: &mut Drawer,
 ) {
-    // With one texture painted, the tileset list sets that one.
+    // With one texture painted, a click in the asset drawer sets that one.
     let only = match (road.paint_surface, road.paint_verge) {
         (true, false) => Some(Slot::Surface),
         (false, true) => Some(Slot::Verge),
@@ -159,7 +161,7 @@ fn panel(
     verge(ui, road, textures, thumbnails, session, assets, foliage, portraits);
     if road.paint_surface || road.paint_verge {
         edges(ui, road);
-        tilesets(ui, road, textures, thumbnails);
+        tilesets(ui, road, textures, drawer);
     }
 }
 
@@ -462,12 +464,13 @@ fn edges(ui: &mut egui::Ui, road: &mut RoadTool) {
     );
 }
 
-/// The Tilesets section: which of the two textures a click sets, the Textures
-/// tool's brush texture as a shortcut, and the list.
-fn tilesets(ui: &mut egui::Ui, road: &mut RoadTool, textures: &mut Textures, thumbnails: &mut Thumbnails) {
+/// The Tilesets section: which of the two textures a click in the asset
+/// drawer sets, and the Textures tool's brush texture as a shortcut. The
+/// section offers the drawer.
+fn tilesets(ui: &mut egui::Ui, road: &mut RoadTool, textures: &mut Textures, drawer: &mut Drawer) {
     let about = match road.slot {
-        Slot::Surface => "Click a tileset to set the surface texture.",
-        Slot::Verge => "Click a tileset to set the verge texture.",
+        Slot::Surface => "Click a tileset in the asset drawer to set the surface texture.",
+        Slot::Verge => "Click a tileset in the asset drawer to set the verge texture.",
     };
     theme::heading_about(ui, "Tilesets", about);
     if road.paint_surface && road.paint_verge {
@@ -498,9 +501,13 @@ fn tilesets(ui: &mut egui::Ui, road: &mut RoadTool, textures: &mut Textures, thu
     {
         road.choose(textures.brush.texture.clone(), textures.brush.effect_id);
     }
-    if let Some(Some(path)) = tileset_browser(ui, textures, thumbnails, &chosen) {
-        // A texture chosen from the list grows nothing until Foliage is set:
-        // grass down the middle of a road is rarely what was meant.
+    let chosen: Vec<String> = match chosen.is_empty() {
+        true => Vec::new(),
+        false => vec![chosen],
+    };
+    if let Some(path) = drawer.offer(Purpose::Road, &chosen) {
+        // A texture chosen from the list grows nothing until Foliage is set,
+        // because a road surface rarely needs grass.
         road.choose(path, 0);
     }
 }
@@ -536,9 +543,9 @@ fn switch_heading(ui: &mut egui::Ui, text: &str, on: &mut bool, about: &str) -> 
 }
 
 /// One of the road's two textures as a card: its picture, its name and its
-/// folder. While both textures are painted, the card the tileset list sets
-/// has the accent outline, and a click on the other card moves the list to
-/// it. Answers whether the card was clicked.
+/// folder. While both textures are painted, the card the asset drawer sets
+/// has the accent outline, and a click on the other card makes the drawer
+/// set that one. Answers whether the card was clicked.
 fn texture_card(
     ui: &mut egui::Ui,
     salt: &str,
@@ -582,7 +589,7 @@ fn texture_card(
     let response = ui.interact(frame.rect, ui.id().with(("road-texture", salt)), egui::Sense::click());
     let response = match (path.is_empty(), target) {
         (true, _) => response,
-        (false, true) => response.on_hover_text(format!("{path}\nThe tileset list sets this texture.")),
+        (false, true) => response.on_hover_text(format!("{path}\nA click in the asset drawer sets this texture.")),
         (false, false) => response.on_hover_text(path.to_string()),
     };
     response.clicked()
@@ -609,5 +616,6 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         assets,
         &mut editing.foliage,
         &mut editing.portraits,
+        &mut editing.drawer,
     );
 }

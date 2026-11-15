@@ -11,6 +11,7 @@ use crate::tools::ground::textures::Textures;
 use crate::tools::ground::textures;
 use crate::tools::placements::place;
 use crate::ui::tools::ground::areas::{area_name, area_tree};
+use crate::ui::shell::drawer::Drawer;
 use crate::ui::tools::ground::textures::{swatch, tileset_picker};
 use crate::ui::widgets::theme::{self, field, property};
 use crate::ui::widgets::thumbnails::Thumbnails;
@@ -75,11 +76,12 @@ fn counted(n: usize, noun: &str) -> String {
 ///
 /// The area and the texture an operation writes are the area brush's and the
 /// texture brush's chosen values, picked with the pickers those two panels
-/// draw. A second chosen area or texture kept by this tool would be a second
-/// answer to which one is chosen.
+/// draw. This tool keeps no chosen area or texture of its own, so the panels
+/// cannot disagree about which one is chosen.
 ///
 /// How to select and the tool's keys are on the toolbar's Keys button. A
-/// page has no heading of its own name: the lit segment names it.
+/// page has no heading with its own name: the highlighted segment of the page
+/// control names it.
 ///
 /// The line about the chunk under the pointer is last, as in the measuring
 /// panel: it changes as the pointer moves on and off the world, and above the
@@ -95,6 +97,7 @@ pub(in crate::ui::tools) fn chunks(
     assets: &vale_client::assets::GameAssets,
     foliage: &mut Foliage,
     portraits: &mut Portraits,
+    drawer: &mut Drawer,
 ) {
     use crate::tools::ground::chunks as tool;
 
@@ -169,7 +172,7 @@ pub(in crate::ui::tools) fn chunks(
         tool::Page::Stitch => chunks_stitch(ui, chunks, session, &census),
         tool::Page::Area => chunks_area(ui, chunks, areas, session, tables, &census),
         tool::Page::Holes => chunks_holes(ui, chunks, session, &census),
-        tool::Page::Textures => chunks_textures(ui, chunks, textures, thumbnails, session, &census),
+        tool::Page::Textures => chunks_textures(ui, chunks, textures, thumbnails, drawer, session, &census),
         tool::Page::Foliage => chunks_foliage(ui, &chunks.selected, thumbnails, session, assets, foliage, portraits, &census),
         tool::Page::Water => chunks_water(ui, chunks, session, &census),
     }
@@ -344,8 +347,9 @@ fn chunks_stitch(
 ) {
     use crate::tools::ground::chunks as tool;
 
-    // One value and its step were one line, which is wider than a row, so
-    // the step has a row of its own while the border meets open ground.
+    // The border's side count and its tallest step are wider than one row,
+    // so the step has a row of its own, shown while the border meets open
+    // ground.
     property(ui, "Border", "", |ui| {
         theme::value(
             ui,
@@ -421,7 +425,7 @@ fn chunks_stitch(
 }
 
 /// The Area page: the area id written to the selection, and the impassable
-/// flag beside it, which nothing on screen reads either.
+/// flag. Nothing on screen is drawn from either value.
 fn chunks_area(
     ui: &mut egui::Ui,
     chunks: &mut crate::tools::ground::chunks::Chunks,
@@ -628,6 +632,7 @@ fn chunks_textures(
     chunks: &mut crate::tools::ground::chunks::Chunks,
     textures: &mut Textures,
     thumbnails: &mut Thumbnails,
+    drawer: &mut Drawer,
     session: &mut EditSession,
     census: &crate::tools::ground::chunks::Census,
 ) {
@@ -801,15 +806,9 @@ fn chunks_textures(
             session.status += &format!("; {} skipped: four other textures", counted(full, "chunk"));
         }
     }
-    ui.add_space(4.0);
-    // Open at first only while no texture is chosen, which `theme::fold`
-    // cannot be, so this stays egui's own folding header.
-    egui::CollapsingHeader::new(egui::RichText::new("Tilesets").color(theme::INK_DIM))
-        .id_salt("chunks-texture-picker")
-        .default_open(chosen.is_none())
-        .show(ui, |ui| {
-            tileset_picker(ui, textures, thumbnails, session);
-        });
+    // The texture these commands use is the brush's, chosen in the asset
+    // drawer.
+    tileset_picker(textures, drawer, session);
 }
 
 /// The Foliage page: each texture in the selection with what its layers
@@ -919,5 +918,6 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         assets,
         &mut editing.foliage,
         &mut editing.portraits,
+        &mut editing.drawer,
     );
 }

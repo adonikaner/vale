@@ -6,7 +6,17 @@ patch for the client and the server. The world it shows is drawn by the
 client's renderer. Several editors can work on one project at once; see
 [Shared sessions](#shared-sessions).
 
-Setup is in [README.md](README.md#setup).
+Setup is in [README.md](README.md#getting-started).
+
+## Contents
+
+| Part | Sections |
+|---|---|
+| Basics | [Starting the editor](#starting-the-editor), [Projects](#projects), [The screen](#the-screen), [Camera](#camera), [Right-click menus](#right-click-menus), [Brushes](#brushes), [Keys](#keys) |
+| World | [Terrain tools](#terrain-tools), [Models and buildings](#models-and-buildings), [Other world tools](#other-world-tools), [Maps](#maps) |
+| Data | [DBC tables](#client-tables), [Assets](#assets), [Server content](#server-content), [Server panel](#server-panel), [Settings](#settings) |
+| Publishing and testing | [Publishing](#publishing), [Playtesting](#playtesting) |
+| Collaboration | [Shared sessions](#shared-sessions) |
 
 ## Starting the editor
 
@@ -39,6 +49,8 @@ cargo run -p vale-ide -- --project <name>           # open or create a project
 | `--game-file <archive path>` | Open Game Files on that file, or on that folder when the path ends in `\`. |
 | `--world-map <directory>` | Open World Map on the map whose pictures are in that directory. |
 | `--trigger <id>`, `--taxi-node <id>`, `--taxi-path <id>` | Open that tool on that row, with the camera over it. |
+| `--wmo-areas [<group>]`, `--wmo-doodads [<index>]`, `--wmo-lights [<index>]` | Open the [building editor](#building-editor) in Areas, Doodads or Lights mode, with that group, doodad or light chosen; without a number, the whole building or nothing. They open the map's building, so they are for a single-WMO map. |
+| `--wmo-copy` | With `--wmo-doodads` or `--wmo-lights`, press "Copy for This Placement" once the building is drawn. |
 | `--host <port>` | Host a shared session on that port once the map is open. |
 | `--join <address>` | Join the shared session at that address once the map is open. |
 | `--session-name <name>`, `--session-password <password>` | Fill the session popover's "Name" and "Password" fields. |
@@ -266,11 +278,14 @@ listed.
   decide what the left button does, then the switches used between clicks,
   then "Keys", whose hover text lists the tool's keys. A second row holds
   what the chosen mode alone has, such as "Handles" in Select. A tool with no
-  mode and no switch has "Keys" alone. Values, lists and pickers are in the
-  inspector.
+  mode and no switch has "Keys" alone. Values and pickers are in the
+  inspector. The tileset and model lists are in the asset drawer.
 - Inspector, on the right: the current tool's name, "Undo" and "Redo" for a
   tool that edits, then the tool's settings or the selection's form. A
   workspace's name has "Pop Out" beside it.
+- Asset drawer, under the viewport: the tilesets or the models, by folder, as
+  a grid of pictures. It is shown while an inspector section that chooses a
+  tileset or a model is shown. See [Asset drawer](#asset-drawer).
 - View bar, above the status line. Each switch is a button with an icon. The
   hover text names the switch and says whether it is on and what its default
   is. A switch that is off is drawn dim, with a line through it when it is on
@@ -320,6 +335,48 @@ browser. While one of them is the main window's tool, the shared window says
 so in place of its form. A link opens its workspace in the window that
 already holds it. A playtest docks every window as it starts, and closing the
 main window closes them all. "Pop Out" is unavailable during a playtest.
+
+### Asset drawer
+
+The asset drawer is the panel under the viewport that lists the tilesets or
+the models. It is shown while one of these inspector sections is shown, and a
+click on a file in the drawer goes to that section:
+
+| Section | List | A click on a file |
+|---|---|---|
+| Textures, "Brush Texture"; Chunks, the "Paint" page | Tilesets | Sets the brush's texture and its foliage. |
+| Road, "Tilesets" | Tilesets | Sets the surface or the verge texture, as "Sets" chooses. |
+| Doodads or WMO in Place, "Model" | Doodads or WMOs | Puts the model on the cursor. |
+| Doodads in Cluster, "Models" | Doodads | Adds the model to the cluster, or takes out a highlighted one. |
+| "Replace Model" | Doodads or WMOs | Chooses the model "Replace N" writes. |
+| Building editor in Doodads mode, "Add" | Doodads | Puts the model on the cursor inside the building. |
+
+The drawer is not shown while a workspace replaces the viewport or during a
+playtest. Its top edge is dragged to change its height.
+
+- The header row holds the list's name, what a click does, the search box
+  ("Search the tilesets" or "Search the models"), a slider for the size of the
+  pictures, and "Hide". "Hide" reduces the drawer to the header row, and
+  "Show" opens it again. The section keeps its choice either way.
+- The left side lists the folders, with each folder on the path to the folder
+  shown opened. A click on a closed folder shows it. A click on the folder
+  shown closes it and shows the folder above. For models, "Starred" and
+  "Recent" are listed first, with the number of models in each.
+- The right side shows the folder's path, which can be clicked to go up, the
+  number of folders and files in it, and then its folders and files as
+  tiles. A folder's tile shows how many files are under it. The chosen file
+  has the accent colour. A file's hover text is its full path.
+- With text in the search box, the right side lists every file whose path
+  contains the text, with each file's folder under its name. Choosing a
+  folder clears the search.
+- A model's tile has a star at its top right while the pointer is over it or
+  while it is starred. A click on the star adds the model to "Starred" or
+  removes it. A model chosen with a click is added to "Recent".
+
+The tilesets keep one folder and one search. The models keep one folder per
+kind, doodads and WMOs, and one search for both. All of them are kept when the
+tool is switched. "Show Folder" under "Model" in Place opens the chosen
+model's folder.
 
 ## Camera
 
@@ -596,9 +653,10 @@ The inspector has these sections:
 - "Verge", off by default: the texture, its "Foliage", "Width", "Softness" and "Opacity". The verge is a band along both sides of the surface. It stops where the surface is solid, so a chunk the road crosses wholly does not spend one of its four layers on it.
 - "Edges", shown while a texture is painted: "Ragged" (how far the painted edges wander), "Grain" (the size of one wander and of one patch of wear), and "Reuse a hidden layer".
 - "Tilesets":
-  - With both textures on, "Sets" chooses "Surface" or "Verge" as the texture a click in the list sets. A click on a texture card also chooses it.
+  - With both textures on, "Sets" chooses "Surface" or "Verge" as the texture a click in the drawer sets. A click on a texture card also chooses it.
+  - The section opens the [asset drawer](#asset-drawer) with the tilesets. A click on a tileset there sets the texture "Sets" chooses. With one texture on, it sets that one.
   - "Use Brush Texture" takes the Textures tool's texture and its foliage.
-  - A texture chosen from the list starts with no foliage.
+  - A texture chosen in the drawer starts with no foliage.
 
 The road's points, its centre line, and the edges of the width, shoulder, surface and verge are drawn on the ground.
 
@@ -645,7 +703,7 @@ The inspector shows "Brushes" (see [Brush presets](#brush-presets)), then "Brush
 - "Paint existing layers only" skips chunks that do not carry the texture.
 - "Reuse a hidden layer": on a chunk with four textures, gives the texture the least visible layer if that layer covers under 2% of the chunk. Otherwise the stroke is refused on that chunk.
 
-"Brush Texture" shows the chosen texture and its "Foliage", the foliage a new layer of the texture grows. Choosing a texture sets the foliage to what the open tiles grow on that texture most. A click on the field opens the [Foliage window](#foliage-window). "Tilesets" lists the textures by folder, with a "Search tilesets" box.
+"Brush Texture" shows the chosen texture and its "Foliage", the foliage a new layer of the texture grows. Choosing a texture sets the foliage to what the open tiles grow on that texture most. A click on the field opens the [Foliage window](#foliage-window). The texture is chosen in the [asset drawer](#asset-drawer), which lists the tilesets while the Textures tool is chosen.
 
 Space pins the chunk under the pointer. Pressing it again on the same chunk unpins it. A stroke that meets a full chunk pins that chunk.
 
@@ -767,7 +825,7 @@ The panel has seven pages. Each action is one undo step.
     - "To Base" moves the texture to the base of every selected chunk and recalculates the blend maps so the ground looks the same. A chunk without the texture gains it under its base. A chunk that carries four other textures is skipped.
     - "Swap" replaces the texture with the chosen texture.
     - "Remove" removes it where it is not the base.
-  - "Tilesets" opens the tileset list.
+  - The page opens the [asset drawer](#asset-drawer) with the tilesets. A click on a tileset there makes it the chosen texture. The Textures tool's brush uses the same texture.
 - "Foliage":
   - The page lists each texture in the selection with the number of its layers and a "Foliage" field. The field reads "Mixed: N sets" when its layers grow different sets. A click on the field opens the Foliage window for every layer of that texture in the selection.
   - "Set All Layers…" opens it for every layer of the selected chunks.
@@ -787,11 +845,11 @@ Right-click menu, in four groups:
 
 ## Models and buildings
 
-Doodads places models (M2) and WMO places buildings. Doodads has three modes, "Select", "Place" and "Cluster"; WMO has "Select" and "Place". The toolbar over the viewport chooses the mode, and so do 1, 2 and 3 (1 and 2 on WMO). Tab switches between Select and the placing mode used last. The right-click menu offers "Switch to <mode>" for the other modes. "Keys" on the toolbar lists the chosen mode's mouse and keyboard controls in its hover text.
+Doodads places models (M2) and WMO places buildings. Doodads has three modes, "Select", "Place" and "Cluster"; WMO has "Select" and "Place". The toolbar over the viewport chooses the mode, and so do 1, 2 and 3 (1 and 2 on WMO). Tab switches between Select and the placing mode used last. The right-click menu offers "Switch to <mode>" for the other modes. "Keys" on the toolbar lists the chosen mode's mouse and keyboard controls in its hover text. A building's own areas, doodads and lights are edited in the [building editor](#building-editor).
 
 ### Placing
 
-1. In the inspector, find a model with "Search the models" or in the folders. "Starred" and "Recent" keep models you use often; the star on a row stars it. "Show Folder" opens the chosen model's folder.
+1. Click a model in the [asset drawer](#asset-drawer) under the viewport. Find it by folder or with "Search the models". "Starred" and "Recent" keep models you use often; the star on a tile stars it. "Show Folder" opens the chosen model's folder in the drawer.
 2. The chosen model is named under "Model", with a preview that a drag turns.
 3. Under "Placement", set "Turn", and for doodads "Scale". Under "Ground", "Align each placement to the slope" tilts a doodad to the ground under the pointer.
 4. Left click places. The model stays on the cursor for the next click. Escape clears it from the cursor.
@@ -808,7 +866,7 @@ A placement stands on the surface under the pointer, so a model dropped on a bri
 
 Cluster mode, on Doodads only, places several doodads with one click.
 
-- "Models": the models a cluster is made of. Click a model under "Add Models" to add it, or a highlighted one to take it out; "×" also takes one out. Each doodad is one of these, each equally likely.
+- "Models": the models a cluster is made of. Click a model in the [asset drawer](#asset-drawer) to add it, or a highlighted one to take it out; "×" also takes one out. Each doodad is one of these, each equally likely.
 - "Cluster":
   - "Count": how many doodads one click places, up to 256. "Random count" draws the number between two bounds, "Count From" and "Count To", for each click.
   - "Radius": the circle the doodads are spread over, drawn round the pointer. "Random radius" draws it between two bounds, "Radius From" and "Radius To".
@@ -828,7 +886,7 @@ A click writes the whole cluster as one undo entry and selects it as a group. A 
 - Delete removes the selection as one undo entry.
 - Ctrl+D with one placement selected puts a copy on the cursor at the same turn and size ("Duplicate" in the panel does the same). With several selected it copies the group two yards north.
 - Ctrl+C copies the selection. Ctrl+V pastes it with the primary's origin on the surface under the pointer.
-- "Replace Model…" opens a model list. Choose a model, then "Replace N Doodads" (or WMOs) gives every selected placement that model as one undo entry. A doodad keeps its position, rotation and scale. A WMO keeps its position and rotation, takes its bounds from the new WMO, and a doodad set the new WMO lacks becomes set 0. "Cancel" closes the list.
+- "Replace Model…" opens the "Replace Model" section and the [asset drawer](#asset-drawer). Click a model in the drawer, then "Replace N Doodads" (or WMOs) gives every selected placement that model as one undo entry. A doodad keeps its position, rotation and scale. A WMO keeps its position and rotation, takes its bounds from the new WMO, and a doodad set the new WMO lacks becomes set 0. "Cancel" closes the section.
 
 With several selected, the panel says how many and of which models. The values shown are the primary's, drawn brighter in the world; dragging, the handles, the keys and Delete act on all of them. "All N" lists the members: click one to make it the primary, "×" takes it out. "Select Primary Only" keeps the primary, "Clear" drops the selection. A group holds doodads or buildings, not both.
 
@@ -869,6 +927,84 @@ Locks are saved at once to `editor\locks\<Map>.placements.txt` in the project. T
 - On every menu of the two tools: "Switch to Select", "Switch to Place" or "Switch to Cluster", for the modes the tool is not in.
 
 The WMO menus are the same, without the doodad-only entries.
+
+### Building editor
+
+The building editor shows one building on its own and edits its areas, the doodads and doodad sets its file carries, and its lights.
+
+To open it, select one WMO in the WMO tool's Select mode and click "Edit Building". On a map that is a single WMO, the building cannot be selected; with nothing selected the panel shows "Edit <name>.wmo" instead.
+
+The building is drawn alone, at its file's own origin and with no turn, so the positions the panels show are the file's. The camera moves to the building, and returns to where it was when the editor closes. "Back to the World" on the toolbar closes the editor, and so does Escape when there is nothing else to cancel. Choosing another tool, starting a playtest or opening another map also closes it. Closing selects again the WMO the editor was opened from.
+
+The toolbar holds "Back to the World", the file's name, the modes "Areas", "Doodads" and "Lights" (keys 1, 2 and 3), and "Keys". In Doodads and Lights its second row has "Handles", as in Select (see [Handles](#handles)).
+
+The inspector starts with "Building": "Model", the root file, and "Opened From", the placement's WMO id and name set, or "the map's building".
+
+Each edit is one undo entry, is written to the project's log, and is saved with the project.
+
+#### The game's file or a copy
+
+An edit to a building's doodads, doodad sets or lights changes the building's file, and every placement of that file on every map draws the edit. Before the first edit of a file the game ships, Doodads and Lights mode offer two buttons:
+
+- "Copy for This Placement" copies the root and group files into the project under a new name, `<Name>_copy1.wmo` or the next free number, with every edit made so far. It points the placement the editor was opened from at the copy: the tile's `MODF` record, or the WDT of a single-WMO map. Other placements keep the game's file.
+- "Edit the Shared File" edits the game's file in the project. Every placement draws the edit once the project is saved and published.
+
+A building the project already holds is edited without the choice. Areas mode edits `WMOAreaTable` rows, not the building's file, and does not ask.
+
+#### Areas mode
+
+A building's areas are rows of `WMOAreaTable`. A row is found by the building's WMO id, the placement's name set and the group's id. The whole building's row, group -1, is used by every group with no row of its own. A row names the place, the zone it counts as, and its music and ambience. The client reads the name and the sounds, and the server reads the zone.
+
+- "Area Keys" shows the WMO id and the name set.
+- "Groups (N)" lists "Whole building", then each group in file order, with what its row says. A group with no row of its own is drawn dim. A click on a row, or inside the building in the viewport, chooses that group. The group a click would choose is outlined under the pointer. Ctrl+click chooses more groups beside the first.
+- With several groups chosen, "Give Them <group>'s Row" gives every other chosen group the first group's name, area and sounds, as one undo entry. "Remove Their Rows" removes the rows of every chosen group, the first included, so each takes the whole building's row. "Clear" keeps the first group alone.
+- The chosen group's row is shown with the table workspace's form, with the same pickers and links (see [The list and the form](#the-list-and-the-form)). A reference followed from the form opens that row in the panel, with "Back to the Group's Row". "Remove Row" removes the row.
+- For a group with no row, a note says what the group takes instead, and "Add Row" adds a row that starts with the whole building's name, area and sounds.
+
+A group's shape is its geometry, and the editor does not change it.
+
+#### Doodads mode
+
+- "Doodad Sets (N)" lists each set with its number, name and doodad count. The chosen set is drawn, and a doodad added goes into it. A placement draws the one set its record names ("Doodad Set" in Select mode). Under the list, a name field of at most 19 characters has "Rename", which renames the chosen set, and "New Set", which adds an empty set after the last and draws it.
+- "Doodad" shows the doodad clicked in the viewport: "Model", "Set", "X", "Y" and "Z" in the building's axes, "Turn" about the building's up in degrees, and "Scale". "Duplicate" (Ctrl+D) puts a copy on the cursor at the same turn and scale. "Remove" (Delete) takes the doodad out of the building and out of every group's list.
+- "Add" shows the model on the cursor. Click a model in the [asset drawer](#asset-drawer) and it follows the pointer; click inside the building to add it. It goes into the drawn set and into the list of the group whose box holds it, and stays on the cursor for the next click. "Put Down" or Escape takes it off the cursor.
+
+| Key | Action |
+|---|---|
+| Left button | Choose the doodad under the pointer; with a model on the cursor, add it |
+| Drag | Move the doodad across the level it stands at |
+| Ctrl+drag | Stand it on the surface under the pointer |
+| Arrow keys | Move 0.5 yd |
+| PageUp, PageDown | Raise, lower 0.5 yd |
+| `,` and `.` | Turn 5° about up |
+| Shift with the above | Ten times the step |
+| Alt + mouse | Turn freely; with Ctrl, in steps |
+| Ctrl+wheel | Scale |
+| Delete | Remove |
+| Ctrl+D | Put a copy on the cursor |
+| Escape | Take the model off the cursor, then let go of the doodad, then close the editor |
+
+#### Lights mode
+
+A building's lights light the characters and creatures inside it, and its lamps at night. The light on the walls is baked into the group files' vertex colours, and does not change with them. Each light is drawn as a ball of its own colour.
+
+- "Lights (N)" lists each light with its colour, number, type and intensity. A click on a row or near a light in the viewport chooses it.
+- "Add Light", then a click inside the building, adds a light a yard and a half above the click. It is listed in the group whose box holds it. Escape stops adding.
+- "Light" shows the chosen light: "Type" ("Omni", "Spot", "Directional" or "Ambient"), "Colour", "Intensity" (0 to 10), "Fades", "Fade From" and "Fade To" in yards, and its position. The ring drawn round the light is "Fade To". "Duplicate" (Ctrl+D) adds a copy a yard north and chooses it. "Remove" (Delete) takes the light out of the building and out of every group's list.
+
+A light that is moved stays in the group lists it was in.
+
+| Key | Action |
+|---|---|
+| Left button near a light | Choose it |
+| Drag | Move it across its level |
+| Ctrl+drag | Stand it over the surface under the pointer |
+| Arrow keys | Move 0.5 yd |
+| PageUp, PageDown | Raise, lower 0.5 yd |
+| Shift with the above | Ten times the step |
+| Delete | Remove |
+| Ctrl+D | Add a copy a yard north |
+| Escape | Stop adding, then let go of the light, then close the editor |
 
 ## Other world tools
 
@@ -2244,7 +2380,7 @@ table holds the keys of every tool.
 | Right click | The viewport's menu; a row's or a field's menu in the table editors; a brush preset's menu |
 | Ctrl, Shift, Alt + wheel | Brush radius, strength, core |
 | 1 to 0, Shift+1 to 3 | Brush mode, falloff, shape. On Textures, 1 to 5 choose the falloff |
-| 1, 2, 3 | Select, Place, Cluster (Doodads; 1 and 2 on WMO) |
+| 1, 2, 3 | Select, Place, Cluster (Doodads; 1 and 2 on WMO); Areas, Doodads, Lights (building editor) |
 | Tab | Switch between Select and the placing mode used last (Doodads, WMO) |
 | Space | Pin chunk (Textures), take level from the water (Water), take area (Areas) |
 | Ctrl+Space | Take the level from the ground (Water) |
@@ -2262,7 +2398,7 @@ table holds the keys of every tool.
 | Delete | Remove the selection |
 | Backspace | Remove the last point (Road; Taxi while drawing by hand) |
 | Enter | Apply the road (Road) |
-| Escape | Stop placing, clear points, clear the selection, close a menu |
+| Escape | Stop placing, clear points, clear the selection, close a menu; close the building editor |
 | Shift+click | Add to or remove from the selection; fill a hole; drain water; remove a road point; erase (Textures); deselect vertices (Terrain, Select Vertices) |
 | Alt+click, Ctrl+click | Write the flags onto water already there; work out the water's depth again from the ground (Water) |
 | F5, F9, F10 | Frame settings on the view bar |
