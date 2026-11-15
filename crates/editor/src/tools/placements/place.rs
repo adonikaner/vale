@@ -172,21 +172,38 @@ pub(crate) enum Switch {
     Select,
     Place,
     Cluster,
+    Areas,
+    Doodads,
+    Lights,
 }
 
-/// The doodad tool's three modes. The WMO tool has the first two; see
-/// [`switches`].
+/// The doodad tool's three modes.
 pub(crate) const SWITCHES: [(&str, Switch); 3] = [
     ("Select", Switch::Select),
     ("Place", Switch::Place),
     ("Cluster", Switch::Cluster),
 ];
 
-/// The modes a placement tool's switch offers: Cluster is doodads only.
+/// The WMO tool's two modes. Areas and Doodads are the building editor's
+/// ([`super::wmoview`]), which has a toolbar of its own.
+pub(crate) const WMO_SWITCHES: [(&str, Switch); 2] = [("Select", Switch::Select), ("Place", Switch::Place)];
+
+/// The building editor's three modes. See [`super::wmoareas`],
+/// [`super::wmodoodads`] and [`super::wmolights`].
+pub(crate) const BUILDING_SWITCHES: [(&str, Switch); 3] =
+    [("Areas", Switch::Areas), ("Doodads", Switch::Doodads), ("Lights", Switch::Lights)];
+
+/// Whether a mode is one of the building editor's.
+pub(crate) fn in_building_editor(switch: Switch) -> bool {
+    matches!(switch, Switch::Areas | Switch::Doodads | Switch::Lights)
+}
+
+/// The modes a placement tool's switch offers: Cluster is doodads only, and
+/// Areas WMOs only.
 pub(crate) fn switches(kind: Kind) -> &'static [(&'static str, Switch)] {
     match kind {
         Kind::Doodad => &SWITCHES,
-        Kind::Wmo => &SWITCHES[..2],
+        Kind::Wmo => &WMO_SWITCHES,
     }
 }
 
@@ -264,6 +281,15 @@ struct Held {
 #[derive(Resource)]
 pub(crate) struct Placing {
     pub(crate) mode: Mode,
+    /// The WMO tool's Areas mode, which is Select mode with a click that
+    /// chooses a building's group rather than a WMO. See
+    /// [`super::wmoareas`].
+    areas: bool,
+    /// The WMO tool's Doodad Sets mode, Select mode with a click that
+    /// chooses a building's own doodad. See [`super::wmodoodads`].
+    spawns: bool,
+    /// The building editor's Lights mode. See [`super::wmolights`].
+    lamps: bool,
     /// The model on the cursor, or `None` when the tool is disarmed, which is
     /// its usual state.
     pub(crate) path: Option<String>,
@@ -330,6 +356,9 @@ impl Default for Placing {
     fn default() -> Placing {
         Placing {
             mode: Mode::default(),
+            areas: false,
+            spawns: false,
+            lamps: false,
             path: None,
             last: [None, None],
             kind: Kind::default(),
@@ -401,6 +430,9 @@ impl Placing {
     /// Which of [`SWITCHES`] the panel shows as chosen.
     pub(crate) fn switch(&self) -> Switch {
         match (self.mode, self.clustering()) {
+            (Mode::Select, _) if self.areas => Switch::Areas,
+            (Mode::Select, _) if self.spawns => Switch::Doodads,
+            (Mode::Select, _) if self.lamps => Switch::Lights,
             (Mode::Select, _) => Switch::Select,
             (Mode::Place, false) => Switch::Place,
             (Mode::Place, true) => Switch::Cluster,
@@ -427,7 +459,14 @@ impl Placing {
                 self.kind = Kind::Doodad;
                 self.cluster.on = true;
             }
+            Switch::Areas | Switch::Doodads | Switch::Lights => {
+                self.mode = Mode::Select;
+                self.put_down();
+            }
         }
+        self.areas = to == Switch::Areas;
+        self.spawns = to == Switch::Doodads;
+        self.lamps = to == Switch::Lights;
     }
 
     /// Draw the next turn, size and tilt inside [`Scatter`]'s bounds, if it
@@ -602,6 +641,14 @@ fn modes(row: crate::tools::modes::NumberRow, tool: Res<Tool>, mut placing: ResM
     if press.shift {
         return;
     }
+    // The building editor's own two modes; Tab does nothing there. See
+    // [`super::wmoview`].
+    if in_building_editor(placing.switch()) {
+        if let Some(&(_, to)) = press.digit.and_then(|at| BUILDING_SWITCHES.get(at)) {
+            placing.set_switch(to);
+        }
+        return;
+    }
     let kind = match *tool {
         Tool::Wmos => Kind::Wmo,
         _ => Kind::Doodad,
@@ -682,6 +729,8 @@ struct Ghost;
 /// It is read lazily, like the tileset list, because it walks the listing of
 /// nineteen archives and a session that never places anything should not pay
 /// for that.
+///
+/// The building editor's Doodads mode is the WMO tool's, and lists doodads.
 fn read_catalogue(
     mut placing: ResMut<Placing>,
     tool: Res<Tool>,
@@ -690,6 +739,7 @@ fn read_catalogue(
 ) {
     let kind = match *tool {
         Tool::Doodads => Kind::Doodad,
+        Tool::Wmos if placing.switch() == Switch::Doodads => Kind::Doodad,
         Tool::Wmos => Kind::Wmo,
         _ => return,
     };

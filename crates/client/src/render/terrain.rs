@@ -219,6 +219,14 @@ pub struct TerrainTile {
     pub coord: (u32, u32),
 }
 
+/// A [`TerrainTile`] the streamer neither asks for nor drops: a host for
+/// buildings with no ground, spawned and despawned by its owner. A WMO-only
+/// map's building is one ([`crate::render::globalwmo`]); a host application
+/// that shows a building on its own is another. Its coordinate is a key off
+/// the 64x64 grid, so the 3x3 the streamer wants never includes it.
+#[derive(Component)]
+pub struct HeldTile;
+
 /// A tile's alpha atlas, on the tile root, for a host that changes what the
 /// ground is painted with.
 ///
@@ -993,12 +1001,11 @@ fn request_tiles(
     assets: Res<GameAssets>,
     mut loaded: ResMut<LoadedTiles>,
     mut commands: Commands,
-    // Every tile but the one that is not one. A map with no ADTs hosts its
-    // global WMO on a `TerrainTile` of its own so that the building pass can
-    // find it (see [`crate::render::globalwmo`]) — and it sits at a coordinate
-    // the 3x3 below can never want, so without this exclusion the streamer
-    // despawns it on the first frame and again every time one is spawned.
-    tiles: Query<(Entity, &TerrainTile), Without<crate::render::globalwmo::GlobalWmo>>,
+    // Every tile but a held one ([`HeldTile`]). A held tile sits at a
+    // coordinate the 3x3 below never wants, so without this exclusion the
+    // streamer despawns it on the first frame and again every time one is
+    // spawned.
+    tiles: Query<(Entity, &TerrainTile), Without<HeldTile>>,
     // What a despawning tile owns, for [`retire_tile_assets`], and the queue
     // it is despawned from, for [`retire_tile`].
     (children, grounds, atlases, mut meshes, mut images, mut retiring): (

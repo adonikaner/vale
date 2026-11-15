@@ -86,6 +86,10 @@ impl EditSession {
         self.tables.clear();
         self.unsaved.clear();
         self.unsaved_tables.clear();
+        // A building is read through the project, which is another one now.
+        self.buildings.clear();
+        self.unsaved_buildings.clear();
+        self.building_redraw = Default::default();
         // What is applied is read from the new folder, so no other author's
         // change is held here.
         self.exclude.clear();

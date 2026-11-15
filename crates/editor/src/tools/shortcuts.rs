@@ -169,7 +169,9 @@ const GROUP_FARTHEST: f32 = 1500.0;
 /// of that tool's panel does.
 ///
 /// ```text
-/// doodads, WMOs               the selected placement, or the group framed
+/// doodads, WMOs               the selected placement, or the group framed;
+///                             in the building editor's Doodads mode, the
+///                             chosen doodad
 /// creatures, game objects     the selected spawn, or the group framed
 /// lights, area triggers,      the selected row's place
 /// graveyards
@@ -196,6 +198,7 @@ pub(crate) fn fly_to_selection(
     flights: Res<super::places::flightpaths::Flightpaths>,
     triggers: Res<super::places::triggers::Triggers>,
     graveyards: Res<super::places::graveyards::Graveyards>,
+    building: Res<placements::wmodoodads::Spawns>,
     mut fly: MessageWriter<crate::camera::FlyTo>,
 ) {
     use crate::tools::points::MapPoint;
@@ -210,6 +213,7 @@ pub(crate) fn fly_to_selection(
             let places: Vec<Vec3> = doodads.at.iter().chain(&doodads.also).map(|at| world(at.record.position)).collect();
             framing(&places)
         }
+        Tool::Wmos if building.active => placements::wmodoodads::chosen_place(&building, session.as_deref()).map(crate::camera::FlyTo::at),
         Tool::Wmos => {
             let places: Vec<Vec3> = wmos.at.iter().chain(&wmos.also).map(|at| world(at.record.position)).collect();
             framing(&places)

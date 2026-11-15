@@ -527,12 +527,19 @@ fn save(
         Some(submit) => (submit.tiles, submit.tables, submit.rows),
         None => (session.unsaved.len(), session.unsaved_tables.len(), session.rows.unsaved()),
     };
+    let buildings = match submit {
+        Some(_) => 0,
+        None => session.unsaved_buildings.len(),
+    };
     let mut parts: Vec<String> = Vec::new();
     if tiles > 0 {
         parts.push(plural(tiles, "tile", "tiles"));
     }
     if tables > 0 {
         parts.push(plural(tables, "table", "tables"));
+    }
+    if buildings > 0 {
+        parts.push(plural(buildings, "building", "buildings"));
     }
     if rows {
         // Not a count: the two stores hold rows and whole paths, which do not

@@ -182,12 +182,15 @@ pub(crate) const UNIT_CLASSES: [Value; 4] = [
     Value { value: 8, name: "Mage" },
 ];
 
-/// `MovementGeneratorType`, from `MotionMaster.h:38`. The three a spawn or a
-/// template may declare; the rest are chosen by the server at run time.
-pub(crate) const MOVEMENT_TYPES: [Value; 3] = [
+/// `MovementGeneratorType`, from `MotionMaster.h:38`. The four a spawn or a
+/// template may declare, the values under `MAX_DB_MOTION_TYPE`; the rest are
+/// chosen by the server at run time. Waypoint and Cyclic both walk the
+/// creature's path; see [`crate::path::Walk`].
+pub(crate) const MOVEMENT_TYPES: [Value; 4] = [
     Value { value: 0, name: "Idle" },
     Value { value: 1, name: "Random" },
     Value { value: 2, name: "Waypoint" },
+    Value { value: 3, name: "Cyclic" },
 ];
 
 /// `InhabitTypeValues`, from `CreatureDefines.h:491`. A mask, not a choice:
@@ -504,7 +507,7 @@ pub(crate) const SPAWN_COLUMNS: [Column; 21] = [
     Column { name: "wander_distance", kind: Kind::Float, group: Group::Respawn, about: "yards it wanders from its spawn point" },
     Column { name: "health_percent", kind: Kind::Float, group: Group::Respawn, about: "percent of its health it spawns with" },
     Column { name: "mana_percent", kind: Kind::Float, group: Group::Respawn, about: "percent of its mana it spawns with" },
-    Column { name: "movement_type", kind: Kind::Choice(&MOVEMENT_TYPES), group: Group::Respawn, about: "movement type: idle, random or waypoint" },
+    Column { name: "movement_type", kind: Kind::Choice(&MOVEMENT_TYPES), group: Group::Respawn, about: "movement type: idle, random, waypoint (the path, point to point) or cyclic (the path as one spline, without stopping)" },
     Column { name: "spawn_flags", kind: Kind::Flags(&SPAWN_FLAGS), group: Group::Respawn, about: "flags for this spawn only" },
     Column { name: "visibility_mod", kind: Kind::Float, group: Group::Respawn, about: "yards added to the distance it is seen from" },
     Column { name: "patch_min", kind: Kind::Choice(&PATCHES), group: Group::Respawn, about: "lowest content patch this spawn exists in" },

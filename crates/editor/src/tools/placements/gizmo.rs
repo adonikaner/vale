@@ -61,6 +61,7 @@ use crate::tools::spawns::creatures::Creatures;
 use crate::tools::placements::doodads::Selection;
 use crate::tools::spawns::gameobjects::GameObjects;
 use crate::tools::{placements::doodads, spawns::spawn, placements::wmos, Tool};
+use vale_client::assets::GameAssets;
 use vale_client::render::axes;
 use vale_client::world::camera::WorldCamera;
 use bevy::prelude::*;
@@ -112,22 +113,36 @@ struct Held {
     /// or game-object spawn, whose row stores a facing and no tilt. The x and
     /// y rings are then neither drawn nor grabbed.
     upright: bool,
+    /// Whether each write opens and closes a history entry of its own under
+    /// a gesture subject, which folds a drag into one entry: a spawn's row,
+    /// and a building's own doodad (`super::wmodoodads`). A tile placement's
+    /// writes go into an entry this module opens instead.
+    gestures: bool,
 }
 
 /// What the chosen tool has selected, if anything.
 ///
 /// A spawn's facing is carried as the file's three angles with only the turn
 /// about up set, so the ring arithmetic below is the same for all four tools.
+/// `building` is the building editor's chosen doodad or light, in the world
+/// and as the file's three angles ([`super::wmodoodads::gizmo_held`],
+/// [`super::wmolights::gizmo_held`]); it is the WMO tool's subject while the
+/// editor is open in Doodads or Lights mode.
 fn held(
     tool: Tool,
     doodads: &Selection,
     buildings: &wmos::Selection,
     spawn: Option<spawn::Standing>,
+    building: Option<(Vec3, [f32; 3])>,
 ) -> Option<Held> {
     let (position, rotation) = match tool {
         Tool::Doodads => {
             let at = doodads.at.as_ref()?;
             (at.record.position, at.record.rotation)
+        }
+        Tool::Wmos if building.is_some() => {
+            let (position, rotation) = building?;
+            return Some(Held { position, rotation, upright: false, gestures: true });
         }
         Tool::Wmos => {
             let at = buildings.at.as_ref()?;
@@ -139,6 +154,7 @@ fn held(
                 position: spawn.at,
                 rotation: facing_to_rotation(spawn.orientation),
                 upright: true,
+                gestures: true,
             });
         }
         _ => return None,
@@ -147,6 +163,7 @@ fn held(
         position: Vec3::from(vale_assets::world::adt::placement_to_world(position)),
         rotation,
         upright: false,
+        gestures: false,
     })
 }
 
@@ -184,17 +201,26 @@ fn standing(
 /// `before` off the file, and the building writer moves the `MODF` box with the
 /// position. Writing the records directly here would add a third place where
 /// either step could be missed.
+#[allow(clippy::too_many_arguments)]
 fn put(
     tool: Tool,
     session: &mut EditSession,
     doodads: &mut Selection,
     buildings: &mut wmos::Selection,
+    building: (&super::wmodoodads::Spawns, &super::wmolights::Lamps, &GameAssets),
     spawn: Option<spawn::Standing>,
     was: Held,
     now: Held,
     time: f64,
 ) {
     match tool {
+        // The building editor's chosen doodad; see [`held`].
+        Tool::Wmos if building.0.active => {
+            super::wmodoodads::gizmo_put(building.0, session, building.2, now.position, now.rotation, time);
+        }
+        Tool::Wmos if building.1.active => {
+            super::wmolights::gizmo_put(building.1, building.0, session, building.2, now.position, time);
+        }
         Tool::Doodads => {
             let Some(at) = doodads.at.as_mut() else {
                 return;
@@ -448,6 +474,12 @@ const SPIN_SNAP: f32 = 15.0;
 /// line.
 const GRIP: f32 = 0.12;
 
+/// The handles' own systems: taking a handle and dragging it. A tool's pick
+/// runs after them, so a press on a handle does not also choose what is behind
+/// it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct GizmoSet;
+
 pub(crate) struct GizmoToolPlugin;
 
 impl Plugin for GizmoToolPlugin {
@@ -460,6 +492,7 @@ impl Plugin for GizmoToolPlugin {
             // order, and the selection changes whenever a handle is grabbed.
             (aim, drag)
                 .chain()
+                .in_set(GizmoSet)
                 .after(crate::pick::aim)
                 .before(crate::tools::placements::doodads::select)
                 .before(crate::tools::placements::wmos::select)
@@ -479,6 +512,7 @@ fn aim(
     mut gizmo: ResMut<Gizmo>,
     selection: Res<Selection>,
     buildings: Res<wmos::Selection>,
+    (building, lamps): (Res<super::wmodoodads::Spawns>, Res<super::wmolights::Lamps>),
     creatures: Res<Creatures>,
     objects: Res<GameObjects>,
     session: Option<Res<EditSession>>,
@@ -495,7 +529,9 @@ fn aim(
         return;
     }
     let spawn = standing(*tool, &creatures, &objects, session.as_deref());
-    let Some(at) = held(*tool, &selection, &buildings, spawn) else {
+    let chosen = super::wmodoodads::gizmo_held(&building, session.as_deref())
+        .or_else(|| super::wmolights::gizmo_held(&lamps, &building, session.as_deref()));
+    let Some(at) = held(*tool, &selection, &buildings, spawn, chosen) else {
         return;
     };
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
@@ -546,6 +582,7 @@ fn drag(
     mut gizmo: ResMut<Gizmo>,
     mut selection: ResMut<Selection>,
     mut buildings: ResMut<wmos::Selection>,
+    (building, lamps, assets): (Res<super::wmodoodads::Spawns>, Res<super::wmolights::Lamps>, Res<GameAssets>),
     mut session: Option<ResMut<EditSession>>,
     creatures: Res<Creatures>,
     objects: Res<GameObjects>,
@@ -577,7 +614,9 @@ fn drag(
         return;
     }
     let spawn = standing(*tool, &creatures, &objects, Some(&**session));
-    let Some(was) = held(*tool, &selection, &buildings, spawn) else {
+    let chosen = super::wmodoodads::gizmo_held(&building, Some(&**session))
+        .or_else(|| super::wmolights::gizmo_held(&lamps, &building, Some(&**session)));
+    let Some(was) = held(*tool, &selection, &buildings, spawn, chosen) else {
         gizmo.grab = None;
         return;
     };
@@ -636,7 +675,7 @@ fn drag(
     // from ending that entry — see `vale_edit::undo::History::hold`.
     let secs = time.elapsed_secs_f64();
     let opened = grab.opened;
-    match was.upright {
+    match was.gestures {
         false if !opened => session.history.begin(label.clone()),
         false => {}
         true => session.history.hold(secs),
@@ -647,6 +686,7 @@ fn drag(
             session,
             &mut selection,
             &mut buildings,
+            (&building, &lamps, &assets),
             spawn,
             was,
             now,
@@ -699,6 +739,7 @@ fn drag(
 fn spin(
     mut selection: ResMut<Selection>,
     mut buildings: ResMut<wmos::Selection>,
+    (mut building, lamps, assets): (ResMut<super::wmodoodads::Spawns>, Res<super::wmolights::Lamps>, Res<GameAssets>),
     mut session: Option<ResMut<EditSession>>,
     mut placing: ResMut<super::place::Placing>,
     mut creatures: ResMut<Creatures>,
@@ -745,6 +786,15 @@ fn spin(
         });
         return;
     }
+    // The same for the building editor's model on the cursor.
+    if *tool == Tool::Wmos && building.active && building.adding.is_some() {
+        let turned = building.turn + by;
+        building.turn = wrap(match snap {
+            true => (turned / SPIN_SNAP).round() * SPIN_SNAP,
+            false => turned,
+        });
+        return;
+    }
     // The same for a spawn on the cursor, which each spawn tool holds itself.
     if *tool == Tool::Creatures && creatures.placing() {
         creatures.turn_ghost(by, snap);
@@ -759,7 +809,9 @@ fn spin(
         return;
     };
     let spawn = standing(*tool, &creatures, &objects, Some(&**session));
-    let Some(was) = held(*tool, &selection, &buildings, spawn) else {
+    let chosen = super::wmodoodads::gizmo_held(&building, Some(&**session))
+        .or_else(|| super::wmolights::gizmo_held(&lamps, &building, Some(&**session)));
+    let Some(was) = held(*tool, &selection, &buildings, spawn, chosen) else {
         return;
     };
     let mut world = vale_assets::world::adt::placement_euler_to_world(was.rotation);
@@ -792,7 +844,7 @@ fn spin(
     let turn = super::group::turn_about(Vec3::Z, turned);
     let what = what(*tool);
     // A spawn's write makes its own gesture entry; see [`drag`].
-    if !was.upright {
+    if !was.gestures {
         let subject = match members {
             Members::None => format!("{what} spin"),
             _ => format!("{what} group spin"),
@@ -807,6 +859,7 @@ fn spin(
             session,
             &mut selection,
             &mut buildings,
+            (&building, &lamps, &assets),
             spawn,
             was,
             now,
@@ -834,7 +887,7 @@ fn spin(
     // Closed on every frame, as the arrow keys close theirs: the next frame's
     // `begin_gesture` continues it, and an entry left open would take in
     // whatever is written next, a gizmo drag included.
-    if !was.upright {
+    if !was.gestures {
         session.history.end();
     }
 }
@@ -1001,11 +1054,13 @@ fn angle_in_plane(offset: Vec3, normal: Vec3) -> f32 {
 }
 
 /// Draw whichever handles are on.
+#[allow(clippy::too_many_arguments)]
 fn draw(
     mut marks: ResMut<Marks>,
     gizmo: Res<Gizmo>,
     selection: Res<Selection>,
     buildings: Res<wmos::Selection>,
+    (building, lamps): (Res<super::wmodoodads::Spawns>, Res<super::wmolights::Lamps>),
     creatures: Res<Creatures>,
     objects: Res<GameObjects>,
     session: Option<Res<EditSession>>,
@@ -1017,7 +1072,9 @@ fn draw(
         return;
     }
     let spawn = standing(*tool, &creatures, &objects, session.as_deref());
-    let Some(at) = held(*tool, &selection, &buildings, spawn) else {
+    let chosen = super::wmodoodads::gizmo_held(&building, session.as_deref())
+        .or_else(|| super::wmolights::gizmo_held(&lamps, &building, session.as_deref()));
+    let Some(at) = held(*tool, &selection, &buildings, spawn, chosen) else {
         return;
     };
     let Ok(eye) = camera.single() else { return };

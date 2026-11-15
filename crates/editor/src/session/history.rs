@@ -77,6 +77,7 @@ impl EditSession {
         // An undo can bring a subject back to what the folder holds, and it
         // is then not unsaved.
         self.unmark_matching(&touched, &change.tables(), change.server_steps(true).next().is_some());
+        self.unmark_matching_buildings(&change.building_files());
         touched
     }
 
@@ -96,6 +97,7 @@ impl EditSession {
         }
         self.step_tables(change, &invalidated.tables, forward);
         self.rows.step(change, forward);
+        self.step_buildings(assets, change, forward);
         let mut touched = Vec::new();
         for redraw in &invalidated.tiles {
             if !redraw.tile.map.eq_ignore_ascii_case(&self.map) {

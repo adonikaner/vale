@@ -213,6 +213,13 @@ pub struct PendingDoodads {
     pub(crate) indoor: Vec<PlacedDoodad>,
 }
 
+impl PendingDoodads {
+    /// Whether every placement handed over has been resolved.
+    pub fn is_empty(&self) -> bool {
+        self.outdoor.is_empty() && self.indoor.is_empty()
+    }
+}
+
 /// A placement and what lights it.
 ///
 /// The light is the only difference between an indoor and an outdoor
@@ -362,6 +369,12 @@ pub struct ResidentDoodads {
 }
 
 impl ResidentDoodads {
+    /// Whether every resident in range has been spawned: no stream pass is
+    /// owed since the last were added.
+    pub fn streamed(&self) -> bool {
+        !self.dirty
+    }
+
     /// Moves a placement that may already be spawned.
     ///
     /// A resident holds the transform its batches are spawned with. A caller

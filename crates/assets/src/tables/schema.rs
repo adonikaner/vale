@@ -339,6 +339,16 @@ pub fn chain_for(table: &str) -> &'static [&'static str] {
         // friends, so each of those columns reads as the faction's name.
         "FactionTemplate" => &["Faction", "FactionGroup"],
         "FactionGroup" => &["FactionTemplate", "Faction"],
+        // The area, music, intro and ambience a building's row names, so
+        // each reads as a name, and the sounds those rows play.
+        "WMOAreaTable" => &[
+            "AreaTable",
+            "ZoneMusic",
+            "ZoneIntroMusicTable",
+            "SoundAmbience",
+            "SoundProviderPreferences",
+            "SoundEntries",
+        ],
         "AreaTable" => &[
             "Map",
             "ZoneMusic",
@@ -461,6 +471,7 @@ pub const ALL: &[&Schema] = &[
     &TAXI_PATH,
     &TAXI_PATH_NODE,
     &TRANSPORT_ANIMATION,
+    &WMO_AREA_TABLE,
     &SKILL_LINE,
     &SKILL_LINE_ABILITY,
     &SKILL_RACE_CLASS_INFO,
@@ -2102,6 +2113,118 @@ pub(crate) const TRANSPORT_ANIMATION: Schema = Schema {
         name: "Keyframe",
         fields: &[0, 1, 2, 3, 4, 5, 6],
     }],
+};
+
+/// `WMOAreaTable.dbc`: 21,115 rows of 20 fields. A row is a place inside a
+/// building: what one group of one WMO is called, which zone it counts as,
+/// and what plays there. It is found by three keys, the WMO's `MOHD` id, the
+/// placement's name set and the group's `MOGP` id, and a `-1` group row
+/// stands for every group of the building with no row of its own. See
+/// [`super::wmoarea`], which reads it and gives the measured counts.
+///
+/// vmangos reads four columns from its own copy of the file
+/// (`WMOAreaTableEntry`: the three keys and `AreaTableID`) to say which area
+/// a character inside a building is in. The name and the sounds are the
+/// client's alone.
+pub(crate) const WMO_AREA_TABLE: Schema = Schema {
+    table: "WMOAreaTable",
+    columns: &[
+        c(0, "Id", Kind::Id),
+        ca(
+            1,
+            "WMOID",
+            Kind::Int,
+            "The building: its root file's MOHD id. Every placement of the file shares it.",
+        ),
+        ca(
+            2,
+            "NameSetID",
+            Kind::Int,
+            "Which placements of the building the row is for: those whose MODF name set is this. \
+             One inn model placed in several villages is a different inn in each by its name set.",
+        ),
+        ca(
+            3,
+            "WMOGroupID",
+            Kind::Signed,
+            "The group: its MOGP id, or -1 for the whole building, which a group with no row of \
+             its own takes.",
+        ),
+        ca(
+            4,
+            "SoundProviderPref",
+            Kind::Reference("SoundProviderPreferences"),
+            "The reverb preset heard in the group.",
+        ),
+        ca(
+            5,
+            "SoundProviderPrefUnderwater",
+            Kind::Reference("SoundProviderPreferences"),
+            "The reverb preset heard under water in the group.",
+        ),
+        ca(
+            6,
+            "Ambience",
+            Kind::Reference("SoundAmbience"),
+            "The ambient sound, by day and by night. A tavern's chatter is this column.",
+        ),
+        ca(
+            7,
+            "ZoneMusic",
+            Kind::Reference("ZoneMusic"),
+            "The music played in the group, in place of the zone's.",
+        ),
+        ca(
+            8,
+            "IntroSound",
+            Kind::Reference("ZoneIntroMusicTable"),
+            "The piece played once on entering.",
+        ),
+        ca(
+            9,
+            "Flags",
+            Kind::Int,
+            "Read by vmangos into WMOAreaTableEntry and not used by its area lookup.",
+        ),
+        ca(
+            10,
+            "AreaTableID",
+            Kind::Reference("AreaTable"),
+            "The area the group counts as, for the zone text, the map and the server's area \
+             rules. None keeps the area of the ground under the building.",
+        ),
+        ca(
+            11,
+            "Name",
+            Kind::Text,
+            "The sub-area's name in the zone text and on the minimap. It is this row's own text, \
+             not an AreaTable name. Empty shows the area's name.",
+        ),
+        c(12, "Name koKR", Kind::Locale(LOCALES[1])),
+        c(13, "Name frFR", Kind::Locale(LOCALES[2])),
+        c(14, "Name deDE", Kind::Locale(LOCALES[3])),
+        c(15, "Name enCN", Kind::Locale(LOCALES[4])),
+        c(16, "Name enTW", Kind::Locale(LOCALES[5])),
+        c(17, "Name esES", Kind::Locale(LOCALES[6])),
+        c(18, "Name esMX", Kind::Locale(LOCALES[7])),
+        c(19, "NameFlags", Kind::LocaleFlags),
+    ],
+    sections: &[
+        // The seven other locale names fold away under the name, as a form
+        // draws every locale run.
+        Section {
+            name: "Place",
+            fields: &[11, 12, 13, 14, 15, 16, 17, 18, 19, 10],
+        },
+        Section {
+            name: "Sound",
+            fields: &[7, 8, 6, 4, 5],
+        },
+        Section {
+            name: "Keys",
+            fields: &[0, 1, 2, 3, 9],
+        },
+    ],
 };
 
 // ---------------------------------------------------------------------------

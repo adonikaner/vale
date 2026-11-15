@@ -7,11 +7,11 @@
 //!            built files
 //! ```
 //!
-//! A WMO is **two or more files**. The root (`Stormwind.wmo`) holds the
+//! A WMO is two or more files. The root (`Stormwind.wmo`) holds the
 //! materials, the texture names, the doodad sets and one info record per group;
 //! each group (`Stormwind_000.wmo`, `_001`, ...) holds one room's or one
-//! wall's worth of geometry. The split is the game's own visibility unit: a
-//! group is what the client culls, lights and portals independently.
+//! wall's worth of geometry. The group is the game's visibility unit: the
+//! client culls, lights and portals each group independently.
 //!
 //! ```text
 //! root                                   group
@@ -32,29 +32,27 @@
 //! ## The group file's sub-chunks are nested inside `MOGP`
 //!
 //! `MOGP` is a normal chunk whose payload is a 68-byte header followed by more
-//! chunks. Both reference implementations sidestep the nesting — vmangos'
-//! extractor overwrites `MOGP`'s size with 68 and keeps reading linearly, and
-//! Noggit reads the header and then carries on through the file — because the
-//! two are equivalent in practice: `MOGP` is the last top-level chunk. This
-//! parser does the same, walking from `MOGP`'s payload + 68 to end of file, so a
-//! file whose `MOGP` size field is wrong (they exist) still reads.
+//! chunks. vmangos' extractor overwrites `MOGP`'s size with 68 and keeps reading
+//! linearly; Noggit reads the header and then carries on through the file. Both
+//! work because `MOGP` is the last top-level chunk. This parser does the same:
+//! it walks from `MOGP`'s payload + 68 to the end of the file, so a file whose
+//! `MOGP` size field is wrong still reads. Such files exist.
 //!
 //! ## Sources
 //!
 //! Geometry, placement and the coordinate frame come from vmangos'
-//! `contrib/vmap_extractor/vmapextract/wmo.cpp`, which is the authority this
-//! project uses for anything the server also has an opinion about. The
-//! *rendering* side — materials, `MOBA` batch layout, which blend mode means
-//! what — is not in vmangos at all (it only wants collision), and is taken from
-//! Noggit's `src/noggit/WMO.cpp`, which renders these files correctly.
+//! `contrib/vmap_extractor/vmapextract/wmo.cpp`, which this project follows for
+//! anything the server also reads. The rendering side (materials, `MOBA` batch
+//! layout, the meaning of each blend mode) is not in vmangos, which only needs
+//! collision, and is taken from Noggit's `src/noggit/WMO.cpp`, which renders
+//! these files correctly.
 //!
-//! **`MOVT` vertices are in the same model space as an M2's**, so
-//! [`crate::world::adt::placement_matrix`] applies unchanged. That is not obvious and
-//! it is worth knowing why: vmangos writes M2 vertices through
-//! `fixCoordSystem` and then immediately back through the inverse swap in
-//! `Model::ConvertToVMAPModel` (a no-op overall), and writes `MOVT` **raw**.
-//! Both therefore reach `ModelInstance` — which is where the placement rotation
-//! lives — in the file's own axes.
+//! `MOVT` vertices are in the same model space as an M2's, so
+//! [`crate::world::adt::placement_matrix`] applies unchanged. The reason:
+//! vmangos writes M2 vertices through `fixCoordSystem` and then back through the
+//! inverse swap in `Model::ConvertToVMAPModel` (a no-op overall), and writes
+//! `MOVT` raw. Both therefore reach `ModelInstance`, where the placement
+//! rotation is applied, in the file's own axes.
 
 use crate::world::chunk::{self, Chunk, ChunkReader};
 use crate::AssetError;
@@ -63,16 +61,16 @@ use crate::AssetError;
 pub(crate) const WMO_VERSION: u32 = 17;
 
 /// Bytes in the `MOGP` header that precedes a group's sub-chunks.
-const MOGP_HEADER_SIZE: usize = 68;
+pub const MOGP_HEADER_SIZE: usize = 68;
 
 /// `MOMT` stride.
 const MATERIAL_SIZE: usize = 0x40;
 /// `MOGI` stride.
-const GROUP_INFO_SIZE: usize = 32;
+pub const GROUP_INFO_SIZE: usize = 32;
 /// `MODS` stride.
-const DOODAD_SET_SIZE: usize = 32;
+pub const DOODAD_SET_SIZE: usize = 32;
 /// `MODD` stride.
-const DOODAD_DEF_SIZE: usize = 40;
+pub const DOODAD_DEF_SIZE: usize = 40;
 /// `MOBA` stride.
 const BATCH_SIZE: usize = 24;
 
@@ -85,7 +83,7 @@ pub(crate) mod material_flags {
 }
 
 /// `MOHD` flag bits. Only the two the vertex-colour fixup consults are acted
-/// on; the others are named so a reader knows the field is not a mystery.
+/// on; the others are named to document the field.
 pub mod root_flags {
     pub const DO_NOT_ATTENUATE_VERTICES: u32 = 0x01;
     /// The root's ambient colour is applied by the renderer rather than baked
@@ -97,11 +95,11 @@ pub mod root_flags {
     pub(crate) const DO_NOT_FIX_VERTEX_COLOUR_ALPHA: u32 = 0x08;
 }
 
-/// `MOPY` flag bits — one byte per *triangle*, saying what the surface is for.
+/// `MOPY` flag bits: one byte per triangle, saying what the surface is for.
 ///
-/// Transcribed from vmangos' `MopyFlags` (`vmap_extractor/wmo.h`), which is the
-/// authority here because collision is exactly what its extractor reads them
-/// for. Only the three [`collides`] consults are acted on.
+/// Taken from vmangos' `MopyFlags` (`vmap_extractor/wmo.h`). vmangos is the
+/// source to follow here because its extractor reads these bits for collision,
+/// the same use. Only the three [`collides`] consults are acted on.
 pub mod mopy_flags {
     /// Decoration laid over another surface — grass on a floor, trim on a wall.
     /// Rendered, but not solid on its own.
@@ -121,10 +119,10 @@ pub mod mopy_flags {
 /// isCollision  = (flags & COLLISION) || isRenderFace;
 /// ```
 ///
-/// The `DETAIL` term is the part that is not guessable: a drawn triangle is
-/// normally solid, *except* the decorative ones laid over a surface that is
-/// already solid. Dropping the term costs nothing visible and doubles the
-/// triangle count in exactly the places (floors, walls) that are queried most.
+/// The `DETAIL` term matters: a drawn triangle is solid unless it is decoration
+/// laid over a surface that is already solid. Leaving the term out changes
+/// nothing visible and doubles the triangle count on floors and walls, which are
+/// the surfaces queried most.
 pub(crate) fn collides(flags: u8) -> bool {
     let render_face = flags & mopy_flags::RENDER != 0 && flags & mopy_flags::DETAIL == 0;
     flags & mopy_flags::COLLISION != 0 || render_face
@@ -134,16 +132,16 @@ pub(crate) fn collides(flags: u8) -> bool {
 pub mod group_flags {
     pub const HAS_VERTEX_COLOUR: u32 = 0x0004;
     pub const EXTERIOR: u32 = 0x0008;
-    /// **The second exterior bit, and the one this client used to miss.**
+    /// The second exterior bit.
     ///
-    /// The client never tests `EXTERIOR` on its own: it tests the *pair*,
-    /// `flags & 0x48`, everywhere it asks — including right before the
-    /// visible-group doodad walk. A group carrying
-    /// only this bit is outdoor geometry — a city street, a courtyard, a bridge
-    /// deck — and reading it as indoor draws it flat at its baked colour with no
-    /// sun on it at all, which is most of "certain objects are obnoxiously dark".
+    /// The 1.12.1 client treats a group as exterior when either bit of the mask
+    /// `0x48` is set, never by `EXTERIOR` alone, and that includes deciding which
+    /// doodads of a visible group to draw. A group carrying only this bit is
+    /// outdoor geometry: a city street, a courtyard, a bridge deck. Reading it as
+    /// indoor draws it flat at its baked colour with no sun on it, which was the
+    /// cause of most of the "certain objects are obnoxiously dark" report.
     ///
-    /// See [`WmoGroup::is_exterior`], which is the one place the mask is asked.
+    /// [`WmoGroup::is_exterior`] is the one place the mask is tested.
     pub const EXTERIOR_LIT: u32 = 0x0040;
     /// The group is unreachable — vmangos drops these from collision.
     pub const UNREACHABLE: u32 = 0x0080;
@@ -151,38 +149,36 @@ pub mod group_flags {
     pub const HAS_DOODADS: u32 = 0x0800;
     pub const HAS_WATER: u32 = 0x1000;
     pub const INDOOR: u32 = 0x2000;
-    /// **The group is open sky for the rules that care** — a mount may be
+    /// The group counts as open sky for the rules that ask: a mount may be
     /// summoned on it and an outdoor-only spell cast.
     ///
-    /// It is the one bit both halves read for that question and neither reads
-    /// `INDOOR` or `EXTERIOR` instead. The client's outdoors test
-    /// takes the group the unit's model is linked
-    /// into and answers `(flags >> 15) & 1`; vmangos' `IsOutdoorWMO` is
-    /// `(mogpFlags & 0x8000) != 0`. Stormwind's streets carry it and its
-    /// buildings do not, which is the whole of "you can mount in the city but
-    /// not in the bank". See [`outdoors_at`].
+    /// The client and the server both read this bit for that question, and neither
+    /// reads `INDOOR` or `EXTERIOR` instead. The 1.12.1 client tests bit 15 of the
+    /// flags of the group the unit's model is in; vmangos' `IsOutdoorWMO` is
+    /// `(mogpFlags & 0x8000) != 0`. Stormwind's streets carry it and its buildings
+    /// do not, which is why a character can mount in the city but not in the bank.
+    /// See [`outdoors_at`].
     pub const OUTDOOR: u32 = 0x8000;
-    /// The group's `MLIQ` is sea water rather than fresh. **This is what
-    /// separates ocean from water**, not the liquid type — see
-    /// [`WmoGroup::liquid_kind`].
+    /// The group's `MLIQ` is sea water rather than fresh. This flag, not the liquid
+    /// type, separates ocean from water; see [`WmoGroup::liquid_kind`].
     pub(crate) const LIQUID_IS_OCEAN: u32 = 0x0008_0000;
     /// Invisible geometry that only blocks visibility. Never drawn.
     pub(crate) const ANTIPORTAL: u32 = 0x0400_0000;
 }
 
-/// **How far below the probe the ground may be and still count as covering a
-/// building's floor**, in yards — vmangos' own `z + 2.0f`, which its comment
-/// says it took from `GetHeightStatic()`.
+/// How far below the probe the ground may be and still count as covering a
+/// building's floor, in yards. This is vmangos' `z + 2.0f`, which its comment
+/// says was taken from `GetHeightStatic()`.
 const TERRAIN_OVER_FLOOR: f32 = 2.0;
 
-/// **Is a character whose probe is at `probe_z` under open sky?** — the rule
-/// the server applies to a mount and to every outdoor-only spell, as
+/// Whether a character whose probe is at `probe_z` is under open sky. This is
+/// the rule the server applies to mounting and to every outdoor-only spell, as
 /// `TerrainInfo::IsOutdoors`:
 ///
-/// * no building floor under the probe: **outdoors**;
+/// * no building floor under the probe: outdoors;
 /// * the terrain lies between the probe (plus [`TERRAIN_OVER_FLOOR`]) and the
-///   building floor — a cellar under a hill, a floor the ground has buried —
-///   then the building does not count: **outdoors**;
+///   building floor, as with a cellar under a hill or a floor the ground has
+///   buried: the building does not count, and the character is outdoors;
 /// * otherwise the floor's group decides, by [`group_flags::OUTDOOR`].
 ///
 /// `building` is `(floor height, MOGP flags)` from
@@ -194,10 +190,10 @@ pub fn outdoors_at(building: Option<(f32, u32)>, terrain: Option<f32>, probe_z: 
     building_under(building, terrain, probe_z).is_none_or(|flags| flags & group_flags::OUTDOOR != 0)
 }
 
-/// **The `MOGP` flags of the building group a character counts as standing
-/// in**, or `None` where the building does not count: the first two clauses
-/// of [`outdoors_at`], before the flag is read. The minimap asks this to
-/// decide whether it shows the building's own pictures.
+/// The `MOGP` flags of the building group a character counts as standing in,
+/// or `None` where the building does not count: the first two clauses of
+/// [`outdoors_at`], before the flag is read. The minimap calls this to decide
+/// whether it shows the building's own pictures.
 pub fn building_under(building: Option<(f32, u32)>, terrain: Option<f32>, probe_z: f32) -> Option<u32> {
     let (floor, flags) = building?;
     if let Some(ground) = terrain {
@@ -264,64 +260,62 @@ pub struct WmoDoodad {
     /// `(x, y, z, w)`, straight from the file and normalised.
     pub rotation: [f32; 4],
     pub scale: f32,
-    /// BGRA, and it is **the light this spawn is lit by** — see [`Self::light`].
+    /// BGRA: the light this spawn is lit by. See [`Self::light`].
     pub colour: u32,
-    /// Column-major model-to-**WMO-local** matrix. The renderer multiplies the
+    /// Column-major model-to-WMO-local matrix. The renderer multiplies the
     /// placement's own matrix by this one; see the doc comment on
     /// [`doodad_matrix`].
     pub matrix: [f32; 16],
-    /// **This spawn stands outside and the sun lights it**, not its baked
-    /// colour. Not a field of `MODD` — it is resolved by [`WmoModel::assemble`]
-    /// from `MODR`, the per-group doodad reference list: a spawn referenced by
-    /// an `EXTERIOR` group and by no `INDOOR` one is street furniture — a
-    /// lamp-post, a market stall — and its baked colour is the room light of a
-    /// room it is not in. Lighting those by the bake is what drew Stormwind's
-    /// street lamps at dusk in the middle of the day. A spawn no group
-    /// references keeps its bake, which is the conservative side: the colour is
-    /// at least the building's own measurement.
+    /// The spawn stands outside and is lit by the sun, not by its baked colour.
+    /// Not a field of `MODD`: [`WmoModel::assemble`] resolves it from `MODR`, the
+    /// per-group doodad reference list. A spawn referenced only by exterior groups
+    /// ([`WmoGroup::is_exterior`]) is street furniture, such as a lamp-post or a
+    /// market stall, and its baked colour is the light of a room it is not in.
+    /// Lighting those spawns by the bake drew Stormwind's street lamps at dusk in
+    /// the middle of the day. A spawn no group references keeps its bake, which is
+    /// the conservative choice: the colour is at least the building's own
+    /// measurement.
     pub exterior_lit: bool,
 }
 
 impl WmoDoodad {
-    /// **What a chair standing inside a room is lit by**, normalised RGB and
+    /// The light a spawn standing inside a room is lit by, as normalised RGB in
     /// sRGB as the file states it, or `None` for a spawn that names no light.
     ///
-    /// A `MODD` spawn is the one thing in the world with no lighting of its own
-    /// and no business taking the sun's: it is an ordinary M2, shared with the
-    /// trees outside, so it carries no `MOCV`, and it is standing under a roof,
-    /// so the sun reaches it through the ceiling — which at midnight is the
-    /// difference between a lit tavern and a lit tavern full of black furniture.
-    /// This field is the answer the file gives: one baked colour per *spawn*,
-    /// sampled where the tools put it, so a crate in a cellar is darker than the
-    /// same crate by a window.
+    /// A `MODD` spawn has no lighting of its own and should not take the sun's. It
+    /// is an ordinary M2, shared with the trees outside, so it carries no `MOCV`;
+    /// and it stands under a roof, so lighting it by the sun lights it through the
+    /// ceiling. At midnight that is the difference between a lit tavern and a lit
+    /// tavern full of black furniture. This field is the file's answer: one baked
+    /// colour per spawn, sampled where the tools placed it, so a crate in a cellar
+    /// is darker than the same crate by a window.
     ///
-    /// **It is measured before it is believed**, by `vale wmos`: 6,158 of
-    /// Stormwind's 6,158 spawns carry one and 2,104 of Darkshire's 2,104, at a
-    /// mean peak channel of 133 and 164. A field of zeroes would have meant
-    /// falling back to the root's `MOHD` ambient for everything — which
-    /// Stormwind states as `11/11/11`, i.e. black, so the fallback is a fallback
-    /// and not an alternative.
+    /// Measured by `vale wmos`: 6,158 of Stormwind's 6,158 spawns carry one and
+    /// 2,104 of Darkshire's 2,104, at a mean peak channel of 133 and 164. A field
+    /// of zeroes would have meant falling back to the root's `MOHD` ambient for
+    /// everything, and Stormwind states that ambient as `11/11/11`, which is black.
+    /// The ambient is therefore only a fallback, not an alternative.
     ///
-    /// The high byte is left alone. Every one of those 8,262 spawns has a
-    /// non-zero one and no reading of it produces a difference anyone can point
-    /// at, so it is not treated as an opacity or as a "use me" flag; the
-    /// *colour* being zero is what says a spawn names no light.
+    /// The high byte is not read. Every one of those 8,262 spawns has a non-zero
+    /// high byte and no reading of it produces a visible difference, so it is not
+    /// treated as an opacity or as a "use me" flag. A zero colour is what says a
+    /// spawn names no light.
     pub fn light(&self) -> Option<[f32; 3]> {
         if self.colour & 0x00FF_FFFF == 0 {
             return None;
         }
-        // `CImVector` again — B, G, R, A — which is the same byte order `MOCV`
-        // uses and the reverse of the ambient beside it. See `read_bgra`.
+        // B, G, R, A: the byte order `MOCV` uses, and the reverse of the
+        // `MOHD` ambient's. See `read_bgra`.
         let channel = |shift: u32| ((self.colour >> shift) & 0xFF) as f32 / 255.0;
         Some([channel(16), channel(8), channel(0)])
     }
 
     /// Whether there is anything to draw for this spawn.
     ///
-    /// A `MODN` entry can be empty in a patched archive. Such a spawn used to be
-    /// filtered out of the list at parse time, which silently shifted the
-    /// `MODS`/`MODR` indexing of every spawn after it; it stays in the list now
-    /// and is skipped here, by the consumers that would load a model for it.
+    /// A `MODN` entry can be empty in a patched archive. Removing such a spawn
+    /// from the list at parse time would shift the `MODS`/`MODR` indexing of every
+    /// spawn after it, so it stays in the list and the consumers that would load a
+    /// model for it skip it here.
     pub fn drawable(&self) -> bool {
         !self.path.is_empty() && self.path != ".m2"
     }
@@ -339,52 +333,51 @@ pub struct WmoRoot {
     pub bounds: [[f32; 3]; 2],
     /// `MOHD`'s ambient light colour, normalised, RGB.
     ///
-    /// This is the light an *interior* group is lit by: there is no sun in a
-    /// room, so a batch's colour is this plus its `MOCV` vertex colour. It is
-    /// also subtracted from those vertex colours when they are read (see
-    /// [`WmoGroup::shaded_colours`]), so the two halves cancel and the file's
-    /// own numbers come back out.
+    /// This is the light an interior group is lit by: there is no sun in a room,
+    /// so a batch's colour is this plus its `MOCV` vertex colour. It is also
+    /// subtracted from those vertex colours when they are read (see
+    /// [`WmoGroup::shaded_colours`]), so the two cancel and the file's own numbers
+    /// come back out.
     pub ambient: [f32; 3],
     /// Unique texture paths, in the order the materials first mention them.
     pub textures: Vec<String>,
     pub materials: Vec<WmoMaterial>,
     pub(crate) group_info: Vec<WmoGroupInfo>,
     pub doodad_sets: Vec<WmoDoodadSet>,
-    /// **The lights the building carries** — `MOLT`. Empty for a barn and ten
-    /// for the Goldshire inn; see [`WmoLight`], which carries the layout and
-    /// the measurement that pinned it. 1.12 reads these for nothing at all — a
-    /// WMO is lit by its baked `MOCV` — so drawing anything by them is
-    /// `crate::render::lamps`' deviation rather than the game's.
+    /// The lights the building carries: `MOLT`. Empty for a barn, ten for the
+    /// Goldshire inn; see [`WmoLight`] for the layout and the measurement that
+    /// established it. 1.12 does not use these at all (a WMO is lit by its baked
+    /// `MOCV`), so drawing anything by them is a deviation of
+    /// `crate::render::lamps` from the game.
     pub lights: Vec<WmoLight>,
     pub doodads: Vec<WmoDoodad>,
     /// Raw `MOGN` blob; group headers index into it by byte offset.
     group_names: Vec<u8>,
 }
 
-/// **The most group files a root may claim.**
+/// The largest group count a root may state.
 ///
-/// `MOHD`'s group count is a `u32` read straight out of the file, and it is the
-/// one count in this module that drives real work rather than a slice: [`load`]
-/// both sizes a `Vec` from it and reads that many archive files, one per index.
-/// An unbounded one is therefore an unbounded allocation and an unbounded run of
-/// archive lookups — which is a window that stops answering, then grows to
-/// several gigabytes, then falls over. That is what a damaged read produces:
-/// `wow_mpq` recovers an unreadable sector by filling it with zeros and
-/// returning success, so a root whose header sector is damaged parses with
-/// whatever the surrounding bytes happen to say.
+/// `MOHD`'s group count is a `u32` read straight from the file, and it is the
+/// one count in this module that drives work rather than a slice: [`load`]
+/// reads that many archive files, one per index, and keeps a group for each.
+/// An unbounded count is therefore an unbounded run of archive lookups and an
+/// unbounded allocation: the window stops answering, grows to several
+/// gigabytes, then crashes. A damaged read produces such a count: `wow_mpq`
+/// recovers an unreadable sector by filling it with zeros and returning
+/// success, so a root whose header sector is damaged parses with whatever the
+/// surrounding bytes contain.
 ///
-/// 1,024 is the bound, and the number under it is measured: over all 816 `.wmo`
-/// roots in a 1.12 install the largest is **306**, `stormwind.wmo`. Undercity is
-/// 206 and Orgrimmar 144; nothing else reaches a hundred and fifty. So the bound
-/// is more than three times the largest thing the game ships and still small
-/// enough that the worst case is a thousand archive misses rather than four
-/// billion.
+/// The bound is 1,024. Over all 816 `.wmo` roots in a 1.12 install the largest
+/// count is 306, `stormwind.wmo`. Undercity is 206 and Orgrimmar 144; no other
+/// root reaches 150. The bound is more than three times the largest count the
+/// game ships, and the worst case it allows is a thousand archive misses rather
+/// than four billion.
 ///
-/// It refuses the whole root rather than clamping, because a header that states
-/// an impossible group count is a header whose other fields — the bounds, the
-/// ambient colour, the material offsets — came out of the same bytes and are
-/// not worth trusting either. A refused root is a building that is not drawn and
-/// is reported once, which is this module's documented way to fail.
+/// The whole root is refused rather than clamped, because a header that states
+/// an impossible group count took its other fields (the bounds, the ambient
+/// colour, the material offsets) from the same bytes, and those are not
+/// trustworthy either. A refused root is a building that is not drawn and is
+/// reported once, which is this module's documented way to fail.
 pub(crate) const MAX_GROUPS: u32 = 1024;
 
 impl WmoRoot {
@@ -406,8 +399,8 @@ impl WmoRoot {
         };
 
         // Materials name their textures by byte offset into MOTX, and MOTX can
-        // arrive before or after MOMT depending on nothing in particular. Keep
-        // both raw and resolve once the whole file has been walked.
+        // come before or after MOMT. Keep both raw and resolve once the whole
+        // file has been walked.
         let mut motx: &[u8] = &[];
         let mut momt: &[u8] = &[];
         let mut modn: &[u8] = &[];
@@ -449,7 +442,7 @@ impl WmoRoot {
             ));
         }
         // See [`MAX_GROUPS`]. This is the one field of `MOHD` a caller acts on
-        // rather than reads, so it is the one that has to be believable.
+        // rather than only reads, so it is the one that is checked.
         if root.group_count > MAX_GROUPS {
             return Err(AssetError::malformed(
                 "WMO",
@@ -480,6 +473,13 @@ impl WmoRoot {
         String::from_utf8_lossy(&rest[..end]).into_owned()
     }
 
+    /// Every group's name from `MOGN`, in group order (`_000.wmo` first),
+    /// empty for a group with none. The order is the order of
+    /// [`WmoModel::area_bounds`], so the two can be zipped.
+    pub fn group_names(&self) -> Vec<String> {
+        self.group_info.iter().map(|info| self.group_name(info.name_offset)).collect()
+    }
+
     /// The doodad spawns belonging to one `MODF` doodad set.
     pub fn doodads_in_set(&self, set: u16) -> &[WmoDoodad] {
         doodads_in_set(&self.doodad_sets, &self.doodads, set)
@@ -495,70 +495,70 @@ pub struct WmoBatch {
     pub vertex_start: u16,
     pub(crate) vertex_end: u16,
     /// Index into [`WmoRoot::materials`]. 0xFF means "none" and the batch is
-    /// dropped — despite the field being called `texture` in most references,
-    /// it is a *material* index (Noggit: `materials.at(batch.texture)`).
+    /// dropped. Most references call the field `texture`, but it is a material
+    /// index (Noggit: `materials.at(batch.texture)`).
     pub material: Option<u8>,
-    /// Which of the three `MOBA` sections this batch is in — and therefore
-    /// which lighting law it takes inside an interior group.
+    /// Which of the three `MOBA` sections this batch is in, and therefore which
+    /// lighting law it takes inside an interior group.
     ///
-    /// **Resolved at parse time, before the retain below**, for the same reason
-    /// [`WmoGroup::interior_start`] is: the class is stated as three *counts*
-    /// over the batch list, so dropping a batch first shifts every batch after
-    /// it into its neighbour's law — which draws, and draws plausibly.
+    /// Resolved at parse time, before [`WmoGroup::parse`] drops batches, for the
+    /// same reason as [`WmoGroup::interior_start`]: the sections are stated as
+    /// three counts over the batch list, so dropping a batch first shifts every
+    /// later batch into its neighbour's section. The result still draws and looks
+    /// plausible, so the error is easy to miss.
     pub section: BatchSection,
 }
 
-/// Which `MOBA` section a batch belongs to: the list is laid out
-/// `transBatchCount` transition batches, then `intBatchCount` interior ones,
-/// then the rest exterior, and the three counts are `MOGP` `+0x28`, `+0x2A` and
-/// `+0x2C`.
+/// Which `MOBA` section a batch belongs to. The list holds `transBatchCount`
+/// transition batches, then `intBatchCount` interior ones, then the rest as
+/// exterior; the three counts are `MOGP` `+0x28`, `+0x2A` and `+0x2C`.
 ///
-/// **This is the whole of how a building's inside meets its outside**, and
-/// without it every batch of an indoor group takes one flat law — which is the
-/// hard step of darkness at a doorway. Only the group's own geometry states it;
-/// nothing on the wire and no other file says a word about it.
+/// The sections decide how a building's inside meets its outside. Without them
+/// every batch of an indoor group takes one lighting law, which draws a hard
+/// step of darkness at a doorway. Only the group file states the sections; no
+/// packet and no other file does.
 ///
 /// What each section means is under [`WmoDraw::light`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum BatchSection {
     /// The seam: geometry that is neither wholly in the room nor wholly out of
-    /// it — the doorway arch, the porch, the window reveal.
+    /// it, such as the doorway arch, the porch or the window reveal.
     Trans = 0,
     /// Inside. Lit by its own baked `MOCV` and nothing else.
     Int = 1,
     /// Outside, even where the group around it is not. The default, so a file
-    /// with no counts at all reads as wholly exterior — the conservative side,
-    /// since an exterior law on interior geometry is a lit room and an interior
-    /// law on exterior geometry is a black one.
+    /// with no counts reads as wholly exterior. That is the conservative choice:
+    /// an exterior law on interior geometry gives a lit room, and an interior law
+    /// on exterior geometry gives a black one.
     #[default]
     Ext = 2,
 }
 
 /// `MLIQ`'s header, which is 30 bytes and not 32.
 ///
-/// `sizeof` it in C and a compiler pads the trailing `u16` out to 32, which
-/// reads the first two liquid vertices as part of the header and shifts the
-/// whole grid. vmangos writes the constant out term by term
-/// (`WMOLiquidHeaderSize`) rather than using `sizeof` for exactly that reason.
+/// A C `sizeof` of the struct pads the trailing `u16` out to 32, which reads
+/// the first two liquid vertices as part of the header and shifts the whole
+/// grid. vmangos writes the constant out term by term (`WMOLiquidHeaderSize`)
+/// instead of using `sizeof` for that reason.
 const LIQUID_HEADER_SIZE: usize = 4 * 4 + 3 * 4 + 2;
 
-/// Bytes per `MLIQ` vertex. Two `u16`s this client has no use for, then the
-/// height — which is the only field vmangos' extractor keeps either.
-/// `pub(crate)` because an `MCLQ` vertex is the same union — see `adt.rs`.
+/// Bytes per `MLIQ` vertex: four bytes whose meaning depends on the liquid
+/// type (see [`WmoLiquid::depths`]), then the height, which is the only field
+/// vmangos' extractor keeps. `pub(crate)` because an `MCLQ` vertex is the same
+/// union; see `adt.rs`.
 pub(crate) const LIQUID_VERTEX_SIZE: usize = 8;
 
 /// The side of one liquid tile, in yards.
 ///
-/// **Not stated anywhere in the file** — the grid gives a corner and a count and
-/// nothing else. It is the game's `CHUNKSIZE / 8`: a map chunk is
-/// `533.333/16 = 33.333` yards across and carries an 8x8 liquid grid, and a
-/// WMO's `MLIQ` uses the same spacing. Measured rather than assumed — see
-/// `vale water`, which reports every liquid grid's overhang past the bounding
-/// box of the group that owns it.
+/// The file does not state it; the grid gives a corner and a count only. It is
+/// the game's `CHUNKSIZE / 8`: a map chunk is `533.333/16 = 33.333` yards
+/// across and carries an 8x8 liquid grid, and a WMO's `MLIQ` uses the same
+/// spacing. `vale water` checks it by reporting every liquid grid's overhang
+/// past the bounding box of the group that owns it.
 pub const LIQUID_TILE_SIZE: f32 = crate::world::adt::TILE_SIZE / 16.0 / 8.0;
 
 /// The four liquids the 1.12 client draws, after [`WmoGroup::liquid_kind`]'s
-/// fixup. The numbering is vmangos' and it is *not* `LiquidType.dbc`'s.
+/// fixup. The numbering is vmangos', not `LiquidType.dbc`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Liquid {
     Water,
@@ -568,9 +568,9 @@ pub enum Liquid {
 }
 
 impl Liquid {
-    /// All four, in the order the client's own texture table holds them —
-    /// `lake_a`, `ocean_h`, `lava`, `slime`, indexed by the same
-    /// number [`Self::index`] answers.
+    /// All four, in the order the client numbers their textures (`lake_a`,
+    /// `ocean_h`, `lava`, `slime`), indexed by the number [`Self::index`]
+    /// returns.
     pub const ALL: [Liquid; 4] = [Liquid::Water, Liquid::Ocean, Liquid::Magma, Liquid::Slime];
 
     /// This liquid's place in [`Self::ALL`], so a caller can key a fixed array
@@ -581,13 +581,11 @@ impl Liquid {
 
     /// The texture family the client draws this liquid with.
     ///
-    /// **From the client**, which is the only authority that has an
-    /// opinion: `LiquidType.dbc` in 1.12 is five rows of id, name, type and
-    /// spell id and names no texture at all, so the mapping is a table in the
-    /// client. The five `XTextures\` format strings it holds are
-    /// `river\lake_a.%d.blp`, `river\fast_a.%d.blp`, `ocean\ocean_h.%d.blp`,
-    /// `lava\lava.%d.blp` and `slime\slime.%d.blp`; `fast_a` is the rapids
-    /// variant, which nothing in 1.12's `MLIQ` selects.
+    /// `LiquidType.dbc` in 1.12 is five rows of id, name, type and spell id and
+    /// names no texture, so the 1.12.1 client's liquid textures are fixed. There
+    /// are five `XTextures\` families: `river\lake_a.%d.blp`, `river\fast_a.%d.blp`,
+    /// `ocean\ocean_h.%d.blp`, `lava\lava.%d.blp` and `slime\slime.%d.blp`.
+    /// `fast_a` is the rapids variant, which nothing in 1.12's `MLIQ` selects.
     pub fn texture_pattern(self) -> &'static str {
         match self {
             Liquid::Water => r"XTextures\river\lake_a.%d.blp",
@@ -604,43 +602,32 @@ impl Liquid {
 
     /// Every frame of the flipbook, in order, from 1.
     ///
-    /// The whole set, because the client loads the whole set: frames 1 to 30,
-    /// once per liquid type, latched by a per-type "already loaded" flag.
+    /// All of them, because the client loads all of them: frames 1 to 30, once
+    /// per liquid type.
     pub fn textures(self) -> impl Iterator<Item = String> {
         (1..=LIQUID_FRAMES).map(move |frame| self.texture(frame))
     }
 
-    /// **Which frame of the flipbook is showing**, `elapsed` seconds into a
-    /// session — 0-based, so it indexes [`Self::textures`] directly.
+    /// The frame of the flipbook showing `elapsed` seconds into a session,
+    /// 0-based, so it indexes [`Self::textures`] directly.
     ///
-    /// The client's whole rule is four constants long:
+    /// The frame is the wall clock's position within the type's period, as a
+    /// fraction of the period, times 30, rounded down. The period is 1.25 seconds
+    /// for all four types, so each runs at 24 frames a second. The period is per
+    /// type, which is why this is a method rather than a constant.
     ///
-    /// ```text
-    /// the type's own period, seconds
-    /// × 1000                     -> milliseconds
-    /// the millisecond clock mod the period
-    /// …as a fraction of the period
-    /// × 30                       -> a frame number
-    /// − 0.5, then rounded        -> the frame, floored
-    /// ```
-    ///
-    /// The period table holds **1.25** for every one of the four
-    /// kinds, so all of them run at the same 24 frames a second; it is read per
-    /// type anyway, which is why this is a method rather than a constant.
-    ///
-    /// **It is the wall clock and not the world's**, which is what makes the
-    /// water go on moving while the hour stands still — the game's own hour is
-    /// half-minutes and would advance this frame once every thirty seconds.
+    /// The clock is the wall clock, not the game's time of day, so the water keeps
+    /// moving while the hour stands still. The game's hour advances in half-minutes
+    /// and would step this frame once every thirty seconds.
     pub fn frame_at(self, elapsed: f32) -> u32 {
         let period = self.flipbook_period();
         if period <= 0.0 {
             return 0;
         }
         let phase = (elapsed.rem_euclid(period)) / period;
-        // Floored, which is what the `− 0.5` before the round-to-nearest
-        // amounts to. Clamped because a phase of exactly 1.0 is
-        // reachable through `f32` rounding and the client's own integer
-        // modulo cannot produce it.
+        // Rounded down, as the client rounds it. Clamped because `f32`
+        // rounding can produce a phase of exactly 1.0, which the client's
+        // integer millisecond clock never does.
         ((phase * LIQUID_FRAMES as f32) as u32).min(LIQUID_FRAMES - 1)
     }
 
@@ -652,21 +639,19 @@ impl Liquid {
     }
 }
 
-/// How many frames every liquid flipbook has.
+/// How many frames every liquid flipbook has: 30.
 ///
-/// **Thirty**, and both halves of that are the client's: the load loop stops
-/// at 30, and the float the phase is multiplied by to turn it into a frame
-/// number is `30.0`. Checked
-/// against the archives, where `lake_a.30.blp` exists and `lake_a.31.blp` does
-/// not, for all four families.
+/// The 1.12.1 client loads 30 frames per liquid and divides the period into 30
+/// frames. The archives agree: in all four families frame 30 exists and frame
+/// 31 does not (`lake_a.30.blp`, `lake_a.31.blp`).
 pub const LIQUID_FRAMES: u32 = 30;
 
 /// One group's `MLIQ`: a rectangular grid of liquid over part of the room.
 ///
-/// The grid is `xtiles` by `ytiles` *tiles* and therefore one more than that in
+/// The grid is `xtiles` by `ytiles` tiles, and so one more than that in
 /// vertices each way, laid out from [`Self::base`] along the group's own +X and
-/// +Y. Each tile carries a flag byte whose **low nibble of 15 means no liquid
-/// there** — which is how a pool is a shape rather than a rectangle, and how a
+/// +Y. Each tile carries a flag byte whose low nibble is 15 where there is no
+/// liquid. That is how a pool has a shape other than the rectangle, and how a
 /// grid that covers the whole room can be almost entirely empty.
 #[derive(Debug, Clone)]
 pub struct WmoLiquid {
@@ -677,20 +662,19 @@ pub struct WmoLiquid {
     /// Raw `MLIQ` type. Resolved by [`WmoGroup::liquid_kind`], which needs the
     /// root and the group flags as well.
     pub liquid_type: u16,
-    /// One height per *vertex*, so `(x_tiles + 1) * (y_tiles + 1)` of them, in
+    /// One height per vertex, so `(x_tiles + 1) * (y_tiles + 1)` of them, in
     /// row-major order along +X first.
     pub heights: Vec<f32>,
     /// The first byte of each liquid vertex, parallel to [`Self::heights`].
     ///
-    /// **For water this is the depth**, and it is the field the surface's
-    /// opacity comes from — see [`Self::opacity`]. The 8-byte vertex is a union
-    /// the liquid type selects between: water is
-    /// `{ u8 depth, u8 flow0Pct, u8 flow1Pct, u8 filler, f32 height }`, magma
-    /// and slime are `{ i16 s, i16 t, f32 height }` and carry texture
-    /// coordinates here instead. vmangos reads the height and nothing else,
-    /// because a server does not draw.
+    /// For water this is the depth, and the surface's opacity comes from it; see
+    /// [`Self::opacity`]. The 8-byte vertex is a union selected by the liquid
+    /// type: water is `{ u8 depth, u8 flow0Pct, u8 flow1Pct, u8 filler, f32 height }`,
+    /// magma and slime are `{ i16 s, i16 t, f32 height }` and carry texture
+    /// coordinates in these bytes instead. vmangos reads only the height, because a
+    /// server does not draw.
     pub depths: Vec<u8>,
-    /// One flag byte per *tile*. See [`Self::has_liquid`].
+    /// One flag byte per tile. See [`Self::has_liquid`].
     pub tile_flags: Vec<u8>,
 }
 
@@ -730,8 +714,8 @@ impl WmoLiquid {
         })
     }
 
-    /// Is there liquid on this tile? The low nibble is the per-tile type and
-    /// **15 means none** — the flag that turns a rectangle into a pool.
+    /// Whether this tile carries liquid. The low nibble is the per-tile type, and
+    /// 15 means none; that is what turns the rectangle into a pool.
     pub fn has_liquid(&self, x: usize, y: usize) -> bool {
         self.tile_flags
             .get(y * self.x_tiles + x)
@@ -740,26 +724,24 @@ impl WmoLiquid {
 
     /// The surface's opacity at one grid vertex, 0..255.
     ///
-    /// **Only water and ocean have one.** The 8-byte liquid vertex is a union
-    /// the liquid type picks between, and byte 0 is a depth for water but the
-    /// low half of an `s` texture coordinate for magma and slime — which is
-    /// measured, not assumed, and is the sharpest evidence in the file that the
-    /// union is real: over Stormwind, which is entirely water, byte 0 is **0 at
-    /// every one of the 1,014 dry vertices**, 86 across 3,183 of the pool
-    /// interior, and a scatter of 1..76 around the banks. Over Ironforge, which
-    /// is mostly magma, the same byte is spread flat across all 256 values with
-    /// no plateau at all — a coordinate, not a depth. Reading it as depth there
-    /// would hand a lava pool an opacity that walks with its texture.
+    /// Only water and ocean have one. The 8-byte liquid vertex is a union selected
+    /// by the liquid type, and byte 0 is a depth for water but the low half of an
+    /// `s` texture coordinate for magma and slime. The data shows the union: over
+    /// Stormwind, which is entirely water, byte 0 is 0 at every one of the 1,014
+    /// dry vertices, 86 across 3,183 of the pool interior, and a scatter of 1..76
+    /// around the banks. Over Ironforge, which is mostly magma, the same byte is
+    /// spread evenly across all 256 values with no plateau: a coordinate, not a
+    /// depth. Reading it as depth there would give a lava pool an opacity that
+    /// moves with its texture.
     ///
-    /// So lava and slime are opaque, which is what their textures already say
-    /// (`alphaDepth=0`), and water fades out as it shallows.
+    /// Lava and slime are therefore opaque, which matches their textures
+    /// (`alphaDepth=0`), and water fades out as it gets shallower.
     ///
-    /// The byte is used **as an 8-bit alpha directly**, which is the reading the
-    /// data supports and costs no invented constant: it is exactly zero where
-    /// there is no water, so a pool's edge fades to nothing of its own accord,
-    /// and it rises to a plateau over the middle. What the plateau *means* — how
-    /// opaque deep water should be — is the one part the file does not settle,
-    /// and it is a single multiply here if the canal reads too faint.
+    /// The byte is used directly as an 8-bit alpha. The data supports that reading
+    /// and it needs no invented constant: the byte is zero where there is no water,
+    /// so a pool's edge fades to nothing, and it rises to a plateau over the
+    /// middle. The file does not settle how opaque the plateau should be; if the
+    /// canal reads too faint, the fix is a single multiply here.
     pub fn opacity(&self, index: usize, kind: Liquid) -> u8 {
         match kind {
             Liquid::Water | Liquid::Ocean => self.depths.get(index).copied().unwrap_or(u8::MAX),
@@ -767,12 +749,12 @@ impl WmoLiquid {
         }
     }
 
-    /// Does any of the up-to-four tiles meeting at this vertex carry liquid?
+    /// Whether any of the up to four tiles meeting at this vertex carries liquid.
     ///
-    /// A vertex belongs to no tile of its own — the grid is one larger than the
-    /// tile grid in each axis — so a per-vertex quantity is only meaningful
-    /// where at least one adjacent tile is wet. The dry ones hold whatever the
-    /// authoring tool left behind and must not be averaged in.
+    /// A vertex belongs to no single tile (the vertex grid is one larger than the
+    /// tile grid in each axis), so a per-vertex value is meaningful only where at
+    /// least one adjacent tile is wet. The dry vertices hold whatever the
+    /// authoring tool left and must not be averaged in.
     pub fn vertex_is_wet(&self, index: usize) -> bool {
         let stride = self.x_tiles + 1;
         let (vx, vy) = (index % stride, index / stride);
@@ -786,7 +768,7 @@ impl WmoLiquid {
         .any(|(tx, ty)| tx < self.x_tiles && ty < self.y_tiles && self.has_liquid(tx, ty))
     }
 
-    /// Height at a grid *vertex*, model-space.
+    /// Height at a grid vertex, model-space.
     pub fn height(&self, x: usize, y: usize) -> f32 {
         self.heights
             .get(y * (self.x_tiles + 1) + x)
@@ -825,14 +807,14 @@ pub struct WmoGroup {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u16>,
-    /// `MOPY`'s flag byte, one per *triangle* — so parallel to `indices` in
-    /// threes, not to `positions`. Empty when the group has no `MOPY`.
+    /// `MOPY`'s flag byte, one per triangle: parallel to `indices` in threes, not
+    /// to `positions`. Empty when the group has no `MOPY`.
     ///
-    /// This is what says whether a triangle is solid; see [`collides`]. It is
-    /// kept beside the render geometry rather than resolved here because the
-    /// two answers differ: `WmoModel::assemble` drops batches whose material
-    /// will not resolve and whole groups that are antiportals, and collision
-    /// must not follow it — an invisible collision hull carries no batch at all.
+    /// It says whether a triangle is solid; see [`collides`]. It is kept beside
+    /// the render geometry rather than resolved here because the two answers
+    /// differ: `WmoModel::assemble` drops batches whose material does not resolve
+    /// and whole groups that are antiportals, and collision must not follow it,
+    /// because an invisible collision hull carries no batch at all.
     pub triangle_flags: Vec<u8>,
     pub batches: Vec<WmoBatch>,
     /// `MODR` — which of the root's doodad spawns stand in this group.
@@ -840,28 +822,27 @@ pub struct WmoGroup {
     /// `MOCV` vertex colours, normalised RGBA and parallel to `positions`, or
     /// empty when the group has none.
     ///
-    /// **Raw, as they appear in the file.** The client rewrites them before use;
+    /// Raw, as they appear in the file. The client rewrites them before use;
     /// [`Self::shaded_colours`] is that rewrite, and it needs the root.
     pub colours: Vec<[f32; 4]>,
-    /// First vertex belonging to a batch that is *not* a transparency batch.
+    /// First vertex belonging to a batch that is not a transparency batch.
     ///
     /// The colour fixup treats the two halves of the group differently, and the
     /// boundary is stated only as a batch count in the `MOGP` header — so it has
     /// to be resolved against the batch list before any batch is dropped, which
     /// is why it is a field rather than something the caller recomputes.
     pub(crate) interior_start: u32,
-    /// `MOGP` 0x34 — which liquid the group's `MLIQ` holds, *before* the
-    /// client's fixup. Meaningless without [`Self::liquid`].
+    /// `MOGP` 0x34: which liquid the group's `MLIQ` holds, before the client's
+    /// fixup. Meaningless without [`Self::liquid`].
     pub liquid_type: u32,
-    /// **`MOGP` 0x38 — this group's own id, and the third key into
-    /// `WMOAreaTable.dbc`.** See [`crate::tables::wmoarea`], which is what turns it into
-    /// a place name.
+    /// `MOGP` 0x38: this group's own id, and the third key into
+    /// `WMOAreaTable.dbc`. [`crate::tables::wmoarea`] turns it into a place name.
     ///
-    /// Measured rather than assumed: `ironforge_000.wmo` reads 3558 and its
-    /// neighbours 3559, 3609 and 3698, which land inside the 3549..3652 block
-    /// `WMOAreaTable` carries for root 208 — the `wmo_id` `ironforge.wmo`'s own
-    /// `MOHD` states. Reading it at 0x34 instead gets `liquid_type` (15 in all
-    /// four), which resolves to nothing and would look like a WMO with no areas.
+    /// Checked against data: `ironforge_000.wmo` reads 3558 and its neighbours
+    /// 3559, 3609 and 3698, which fall inside the 3549..3652 block `WMOAreaTable`
+    /// carries for root 208, the `wmo_id` that `ironforge.wmo`'s own `MOHD`
+    /// states. Reading it at 0x34 instead gets `liquid_type` (15 in all four),
+    /// which resolves to nothing and would look like a WMO with no areas.
     pub(crate) group_id: u32,
     /// `MLIQ` — the water, lava or slime standing in this group, if any.
     pub liquid: Option<WmoLiquid>,
@@ -894,12 +875,12 @@ impl WmoGroup {
             group_id: chunk::u32_at(mogp.data, 0x38),
             liquid: None,
         };
-        // MOGP 0x28 and 0x2A: how many of this group's batches are *transition*
-        // batches and how many are *interior* ones. They come first in the batch
-        // list in that order, everything after them is exterior, and the split
-        // is the whole of how a room's light meets the daylight — see
-        // [`BatchSection`]. The colour fixup below also treats the two halves'
-        // vertices differently, which is what `interior_start` resolves.
+        // MOGP 0x28 and 0x2A: how many of this group's batches are transition
+        // batches and how many are interior ones. They come first in the batch
+        // list, in that order, and everything after them is exterior. The split
+        // decides how a room's light meets the daylight; see [`BatchSection`].
+        // The colour fixup below also treats the two halves' vertices
+        // differently, which is what `interior_start` resolves.
         let trans_batches = u16::from_le_bytes([mogp.data[0x28], mogp.data[0x29]]) as usize;
         let int_batches = u16::from_le_bytes([mogp.data[0x2A], mogp.data[0x2B]]) as usize;
 
@@ -939,9 +920,9 @@ impl WmoGroup {
                         .map(|v| [chunk::f32_at(v, 0), chunk::f32_at(v, 4)])
                         .collect();
                 }
-                // Two bytes per triangle — a flag byte and a material index —
-                // and only the flags are wanted. The material a *collision*
-                // triangle names is the one its batch already carries.
+                // Two bytes per triangle, a flag byte and a material index, and
+                // only the flags are wanted. The material a collision triangle
+                // names is the one its batch already carries.
                 b"MOPY" => {
                     group.triangle_flags = c.data.chunks_exact(2).map(|b| b[0]).collect();
                 }
@@ -990,9 +971,9 @@ impl WmoGroup {
             .and_then(|last| group.batches.get(last))
             .map_or(0, |b| b.vertex_end as u32 + 1);
 
-        // …and each batch's own section, stamped for the same reason and at the
-        // same moment: the counts index the list the file wrote, so this has to
-        // happen before anything is dropped from it.
+        // Each batch's section is set here for the same reason: the counts
+        // index the list as the file wrote it, so this has to happen before
+        // anything is dropped from it.
         for (i, batch) in group.batches.iter_mut().enumerate() {
             batch.section = if i < trans_batches {
                 BatchSection::Trans
@@ -1019,17 +1000,16 @@ impl WmoGroup {
         self.flags & group_flags::INDOOR != 0
     }
 
-    /// Is this group lit by the world's sun rather than by its own `MOCV`?
+    /// Whether this group is lit by the world's sun rather than by its own `MOCV`.
     ///
-    /// **The mask is `0x48` and not `0x08`**, which is the client's own — see
-    /// [`group_flags::EXTERIOR_LIT`], where the four instructions are. Reading
-    /// only `EXTERIOR` puts every group carrying the second bit alone under the
-    /// interior law, and those are streets and courtyards: drawn at a bake
-    /// authored to be *multiplied* by daylight, they read as permanent dusk in
-    /// the middle of the day.
+    /// The mask is `0x48`, not `0x08`, as in the 1.12.1 client; see
+    /// [`group_flags::EXTERIOR_LIT`]. Testing only `EXTERIOR` puts every group that
+    /// carries the second bit alone under the interior law, and those groups are
+    /// streets and courtyards: drawn at a bake that was authored to be multiplied
+    /// by daylight, they look like dusk in the middle of the day.
     ///
-    /// Note it is still not the absence of `INDOOR` (0x2000): the bits are
-    /// independent and a group can carry none of the three.
+    /// It is also not the absence of `INDOOR` (0x2000): the bits are independent
+    /// and a group can carry none of the three.
     pub(crate) fn is_exterior(&self) -> bool {
         self.flags & (group_flags::EXTERIOR | group_flags::EXTERIOR_LIT) != 0
     }
@@ -1037,43 +1017,40 @@ impl WmoGroup {
     /// `MOCV` vertex colours with the client's fixup applied, ready to light a
     /// room with. Empty when the group has no `MOCV`.
     ///
-    /// This is the client's own fixup, and it is the one piece of the
-    /// WMO format that cannot be derived from the file alone — it needs the
-    /// root's ambient colour and two of its flags. The transcription is Noggit's
-    /// (`WMOGroup::fix_vertex_color_alpha`), which is prior art known to render
-    /// these files, with two deliberate departures:
+    /// The 1.12.1 client applies this fixup, and it is the one part of the WMO
+    /// format that cannot be derived from the file alone: it needs the root's
+    /// ambient colour and two of its flags. The arithmetic follows Noggit
+    /// (`WMOGroup::fix_vertex_color_alpha`), which is known to render these files,
+    /// with two deliberate differences:
     ///
     /// * Noggit's line 1093 reads `r += ((b * a / 64.f) - ...)` where every
-    ///   neighbouring line assigns to its own channel. That is a copy-paste
-    ///   slip: it drops blue entirely and adds it to red twice. Fixed here.
-    /// * the arithmetic runs on **normalised** components, as Noggit's does.
-    ///   Blizzard's original works on bytes, where `+ rgb * a / 64` is a gain of
-    ///   up to ×5 rather than the ×1.016 it is here — but the original also
-    ///   halves the result and doubles it again in the shader, and Noggit drops
-    ///   both. Following the renderer that works end to end beats reassembling
-    ///   the original from two halves; `vale wmos` prints the resulting
-    ///   range so the choice is checkable against real files rather than taken
-    ///   on trust.
+    ///   neighbouring line assigns to its own channel. That is a copy-paste error:
+    ///   it drops blue and adds it to red twice. It is corrected here.
+    /// * The arithmetic runs on normalised components, as Noggit's does. The
+    ///   1.12.1 client works on bytes, where `+ rgb * a / 64` is a gain of up to
+    ///   ×5 rather than the ×1.016 it is here, but it also halves the result and
+    ///   doubles it again in the shader, and Noggit drops both steps. This crate
+    ///   follows the renderer that works end to end instead of reassembling the
+    ///   client's arithmetic from two halves. `vale wmos` prints the resulting
+    ///   range so the choice can be checked against real files.
     ///
-    /// **The alpha that comes out is the interior emissive mask, and only
-    /// that.** The game's own `MapObjOverbright.bls` — the standard WMO diffuse
-    /// pixel shader whenever the `mapObjOverbright` cvar is on — computes `tex * MOCV * (1 + 4 * MOCV.a)`, so an
-    /// interior vertex's alpha is an authored self-illumination worth up to
-    /// five times the base: hearths, forges, the whitened texels at a portal
-    /// seam. Measured on real tiles the channel has exactly that shape —
-    /// Stormwind's 486,309 coloured verts are 90% zero / 6% low / 3% mid / 1%
-    /// high, Darkshire's 89/7/3/1 (`vale wmos`) — so an interior vertex
+    /// The alpha that comes out is the interior emissive mask, and only that. The
+    /// game's `MapObjOverbright.bls`, the standard WMO diffuse pixel shader
+    /// whenever the `mapObjOverbright` cvar is on, computes
+    /// `tex * MOCV * (1 + 4 * MOCV.a)`, so an interior vertex's alpha is authored
+    /// self-illumination worth up to five times the base: hearths, forges, the
+    /// whitened texels at a portal seam. On real tiles the channel has that shape:
+    /// Stormwind's 486,309 coloured vertices are 90% zero / 6% low / 3% mid / 1%
+    /// high, Darkshire's 89/7/3/1 (`vale wmos`). An interior vertex therefore
     /// keeps its authored alpha here.
     ///
-    /// **And so, as of this round, does a transition vertex's** — a different
-    /// payload read under a different [`BatchSection`], and the one this
-    /// function used to destroy. It is the weight the seam is faded toward the
-    /// daylight by ([`BatchLight::Blend`]); Noggit folds `(1 - a)` into the
-    /// colour instead, which is that fade collapsed against a *black* lit pass,
-    /// and it draws every fully-outdoor vertex of every doorway in the game at
-    /// zero. Both halves are in the same channel and neither is a guess about
-    /// the other: an interior batch never reads it as a weight and a transition
-    /// batch never reads it as an emissive.
+    /// A transition vertex also keeps its alpha. It is a different value, read
+    /// under a different [`BatchSection`]: the weight by which the seam is faded
+    /// toward the daylight ([`BatchLight::Blend`]). Noggit folds `(1 - a)` into
+    /// the colour instead, which is that fade computed against a black lit pass,
+    /// and draws every fully outdoor vertex of every doorway in the game at zero.
+    /// The two values share the channel without conflict: an interior batch never
+    /// reads it as a weight and a transition batch never reads it as an emissive.
     pub fn shaded_colours(&self, root: &WmoRoot) -> Vec<[f32; 4]> {
         let mut colours = self.colours.clone();
         if colours.is_empty() {
@@ -1081,12 +1058,11 @@ impl WmoGroup {
         }
         let interior_start = self.interior_start as usize;
 
-        // The flag says the colours are already final. Their alpha still is
-        // forced, to the client's own values: 1.0 on an exterior group (whose
-        // colours a sun-lit batch never reads anyway) and 0.0 on an interior
-        // one — so a DO_NOT_FIX building deliberately gets no emissive term,
-        // which is what the client's flagged branch leaves for
-        // `MapObjOverbright` to multiply by.
+        // The flag says the colours are already final. Their alpha is still
+        // forced, to the values the client uses: 1.0 on an exterior group (whose
+        // colours a sun-lit batch never reads) and 0.0 on an interior one. A
+        // DO_NOT_FIX building therefore gets no emissive term, which is what the
+        // client leaves for `MapObjOverbright` to multiply by on such a building.
         if root.flags & root_flags::DO_NOT_FIX_VERTEX_COLOUR_ALPHA != 0 {
             let alpha = if self.is_exterior() { 1.0 } else { 0.0 };
             for c in colours.iter_mut().skip(interior_start) {
@@ -1110,15 +1086,15 @@ impl WmoGroup {
                     // Interior: alpha brightens the vertex towards its own lamp.
                     c[k] + c[k] * a / 64.0 - ambient[k]
                 } else {
-                    // A transition vertex's colour is the same bake, ambient
-                    // taken out to be added back in the shader. **Its alpha is
-                    // not consumed here**, which is the change this round: it is
-                    // the weight the seam is faded toward daylight by, and it
-                    // has a batch section of its own to be read under. Folding
-                    // `(1 - a)` into the colour — Noggit's collapse, which
-                    // assumes the lit half of the two-pass draw is black —
-                    // makes a vertex the file marks *fully outdoors* draw as
-                    // fully black, and every doorway in the game has one.
+                    // A transition vertex's colour is the same bake, with
+                    // ambient taken out to be added back in the shader. Its
+                    // alpha is not used here: it is the weight by which the
+                    // seam is faded toward daylight, read under its own batch
+                    // section. Folding `(1 - a)` into the colour (Noggit's
+                    // shortcut, which assumes the lit half of the two-pass
+                    // draw is black) draws a vertex the file marks fully
+                    // outdoors as fully black, and every doorway in the game
+                    // has one.
                     c[k] - ambient[k]
                 }
                 .clamp(0.0, 1.0);
@@ -1142,26 +1118,25 @@ impl WmoGroup {
         self.is_antiportal() || self.flags & group_flags::UNREACHABLE != 0
     }
 
-    /// Which liquid this group's `MLIQ` actually holds.
+    /// Which liquid this group's `MLIQ` holds.
     ///
-    /// **The raw `MOGP` type is not it**, and this is the fixup vmangos'
-    /// extractor applies with "according to https://wowdev.wiki" written over
-    /// it — a chain of four steps, each of which changes the answer:
+    /// The raw `MOGP` type is not the answer. This is the fixup vmangos' extractor
+    /// applies, under a comment that reads "according to https://wowdev.wiki". It
+    /// has four steps, and each changes the answer:
     ///
     /// 1. the root's `USE_LIQUID_TYPE_DBC_ID` flag decides whether the group's
-    ///    number is a `LiquidType.dbc` id or is one *less* than one;
+    ///    number is a `LiquidType.dbc` id or one less than one;
     /// 2. 15 means "not stated here", and the answer is then taken from the
-    ///    first tile in the grid whose own low nibble is not 15 — so a group can
+    ///    first tile in the grid whose own low nibble is not 15, so a group can
     ///    declare nothing and still be full of water;
-    /// 3. the id is folded modulo 4, which is what makes the whole table only
-    ///    four liquids wide however many rows the DBC grows to;
-    /// 4. and the water/ocean pair is separated by a *group* flag (0x80000), not
-    ///    by the type at all — so an ocean that is read as water is a bug no
-    ///    number in `MLIQ` can reveal.
+    /// 3. the id is folded modulo 4, so the table is four liquids wide however
+    ///    many rows the DBC has;
+    /// 4. water and ocean are separated by a group flag (0x80000), not by the
+    ///    type, so no number in `MLIQ` reveals an ocean that is read as water.
     ///
-    /// vmangos additionally special-cases `Stratholme_raid` onto Naxxramas'
-    /// slime; that is a server-side liquid id with no bearing on what is drawn,
-    /// and is not reproduced.
+    /// vmangos also maps `Stratholme_raid` onto Naxxramas' slime; that is a
+    /// server-side liquid id with no effect on what is drawn, and is not
+    /// reproduced.
     pub fn liquid_kind(&self, root: &WmoRoot) -> Option<Liquid> {
         let liquid = self.liquid.as_ref()?;
         let mut entry = if root.flags & root_flags::USE_LIQUID_TYPE_DBC_ID != 0 {
@@ -1243,39 +1218,39 @@ pub struct WmoDraw {
     pub blend: u32,
     pub unlit: bool,
     pub two_sided: bool,
-    /// **Which of the three lighting laws this batch takes**, resolved from the
-    /// group's own flags and the batch's [`BatchSection`].
+    /// Which of the three lighting laws this batch takes, resolved from the
+    /// group's flags and the batch's [`BatchSection`].
     ///
-    /// Decided per *draw* and not per group, which is the whole of this round:
-    /// a room and the daylight outside it meet on the batches the file calls
-    /// transition, and a group-wide answer has nowhere to put that.
+    /// Decided per draw and not per group: a room and the daylight outside it
+    /// meet on the batches the file calls transition, and a per-group answer
+    /// cannot represent that.
     pub light: BatchLight,
-    /// The raw section the law above was derived from, carried beside it so
-    /// `vale wmos` can cross the file's own claim against the group flags —
-    /// the two are different statements and only one of them is measurable.
+    /// The raw section the law above was derived from, kept beside it so
+    /// `vale wmos` can compare the file's section against the group flags. The
+    /// two are different statements and only one of them can be measured.
     pub section: BatchSection,
     /// Which liquid this is, when it is an `MLIQ` surface rather than masonry.
     ///
-    /// **The kind and not a flag, because the colour is looked up by it.** Every
-    /// other draw in a WMO takes both its colour and its alpha from the texel,
-    /// which is right for masonry and glass and wrong for water twice over:
-    /// `lake_a`'s alpha channel is a foam and highlight mask (mean 54 of 255,
-    /// three quarters of the texels under 64), and its *colour* channel is not a
-    /// colour at all — the brightest texel in the whole image reaches 41 of 255,
-    /// greyscale. So the alpha comes off `MLIQ`'s own per-vertex depth (see
-    /// [`WmoLiquid::depths`]) and the colour comes out of `Light.dbc`, which is
-    /// keyed by this. See [`crate::tables::light`].
+    /// The liquid type and not a flag, because the colour is looked up by it.
+    /// Every other draw in a WMO takes both its colour and its alpha from the
+    /// texel, which is right for masonry and glass and wrong for water in both
+    /// channels: `lake_a`'s alpha channel is a foam and highlight mask (mean 54 of
+    /// 255, three quarters of the texels under 64), and its colour channel is not
+    /// a colour: the brightest texel in the image is 41 of 255, greyscale. The
+    /// alpha therefore comes from `MLIQ`'s per-vertex depth (see
+    /// [`WmoLiquid::depths`]) and the colour from `Light.dbc`, keyed by this
+    /// field. See [`crate::tables::light`].
     pub liquid: Option<Liquid>,
 }
 
-/// **What lights one WMO batch** — three laws, and which one a batch takes is
-/// its group's flags crossed with its [`BatchSection`].
+/// What lights one WMO batch: one of three laws, chosen by the group's flags
+/// and the batch's [`BatchSection`].
 ///
-/// The two ends were always here; the middle one is what a doorway is made of.
-/// Without it an indoor group is drawn wholly at its bake and an outdoor one
-/// wholly at the sun, and the geometry between them — the arch, the porch, the
-/// window reveal — has to pick a side. It picked the bake, which is why walking
-/// out of a building crossed a hard step of darkness instead of a gradient.
+/// `Blend` is what a doorway is made of. Without it an indoor group is drawn
+/// wholly at its bake and an outdoor one wholly in the sun, and the geometry
+/// between them (the arch, the porch, the window reveal) has to take one side.
+/// With the bake, walking out of a building crossed a hard step of darkness
+/// instead of a gradient.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum BatchLight {
     /// The world's daylight. Everything outdoors, and every batch of an indoor
@@ -1285,19 +1260,18 @@ pub enum BatchLight {
     /// The room's own baked `MOCV`, plus the root's ambient, and no sun at all —
     /// a ceiling faces down, so a room lit by the sun is a black box.
     Bake,
-    /// **The seam**: the same bake, faded per vertex toward the sun-lit surface
-    /// by the vertex's own `MOCV` alpha. `MOCV × mix(1, sun, alpha)`.
+    /// The seam: the same bake, faded per vertex toward the sun-lit surface by
+    /// the vertex's own `MOCV` alpha. `MOCV × mix(1, sun, alpha)`.
     ///
-    /// The reference draws these batches *twice* — once lit, blended
-    /// `SRC_ALPHA`, and once at the bake blended `ONE_MINUS_SRC_ALPHA` — and the
-    /// two passes collapse to that one product exactly. Which is why a
-    /// transition vertex's alpha must survive [`WmoGroup::shaded_colours`]
-    /// rather than being folded into its colour: folded, alpha 1 means *black*
-    /// where the file means *full daylight*.
+    /// The 1.12.1 client draws these batches twice, once lit and blended
+    /// `SRC_ALPHA` and once at the bake blended `ONE_MINUS_SRC_ALPHA`, and the two
+    /// passes reduce exactly to that one product. That is why a transition
+    /// vertex's alpha must survive [`WmoGroup::shaded_colours`] rather than being
+    /// folded into its colour: folded, alpha 1 means black where the file means
+    /// full daylight.
     ///
-    /// Two-pass identity aside, the reading of the section table comes from a
-    /// D3D capture of the Goldshire inn. What is checked here is the header
-    /// layout and the correlation `vale wmos` prints; see that command.
+    /// This crate checks the header layout and the correlation `vale wmos`
+    /// prints; see that command.
     Blend,
 }
 
@@ -1316,40 +1290,39 @@ pub struct WmoGroupDraw {
     /// Bounding sphere in WMO-local space, for per-group frustum culling.
     pub centre: [f32; 3],
     pub radius: f32,
-    /// The same volume as a box, which is what the sphere was derived from.
+    /// The same volume as a box, from which the sphere was derived.
     ///
-    /// Carried because **a sphere cannot answer "is this character in this
-    /// room"** — a room's sphere reaches well outside its walls, and the
-    /// question the renderer asks of an *indoor* group is a containment test
-    /// rather than a cull. See [`WmoModel::interior_bounds`].
+    /// Kept because a sphere cannot answer whether a character is in this room:
+    /// a room's sphere reaches well outside its walls, and the question the
+    /// renderer asks of an indoor group is a containment test, not a cull. See
+    /// [`WmoModel::interior_bounds`].
     pub bounds: [[f32; 3]; 2],
     /// `MOGP` 0x38 — see [`WmoGroup::group_id`] and [`WmoModel::area_bounds`].
     pub(crate) group_id: u32,
 }
 
 impl WmoGroupDraw {
-    /// **Is this group a room for *lighting* purposes** — the client's own
-    /// `0x48` test, and not [`Self::indoor`].
+    /// Whether this group is a room for lighting purposes: the client's `0x48`
+    /// test, not [`Self::indoor`].
     ///
-    /// The two disagree on most of a city and the disagreement is the whole of
-    /// the "randomly dark objects" report: `INDOOR` is what the portal system
-    /// culls by, `0x48` is what the renderer shades by, and Stormwind's 115
-    /// building shells carry both bits. See [`group_flags::EXTERIOR_LIT`] for
-    /// the mask and [`WmoModel::interior_bounds`] for
-    /// what asks.
+    /// The two disagree on most of a city, and the disagreement caused the
+    /// "randomly dark objects" report: `INDOOR` is what the portal system culls
+    /// by, `0x48` is what the renderer shades by, and Stormwind's 115 building
+    /// shells carry both bits. See [`group_flags::EXTERIOR_LIT`] for the mask and
+    /// [`WmoModel::interior_bounds`] for the caller.
     pub fn is_room(&self) -> bool {
         self.flags & (group_flags::EXTERIOR | group_flags::EXTERIOR_LIT) == 0
     }
 }
 
-/// A whole WMO — root plus every group — flattened into one vertex buffer, one
+/// A whole WMO, root plus every group, flattened into one vertex buffer, one
 /// index buffer and a list of draws.
 ///
-/// One buffer rather than one per group because that is what the terrain does
-/// for the same reason: a group is a *draw range*, not a separate binding, and
-/// nine tiles of buildings would otherwise be a few thousand buffer binds a
-/// frame. Indices are `u32` because the groups are concatenated — each group's
-/// own `MOVI` is `u16` and could not address the whole model.
+/// One buffer rather than one per group, for the same reason as the terrain:
+/// a group is a draw range, not a separate binding, and nine tiles of
+/// buildings would otherwise be a few thousand buffer binds a frame. Indices
+/// are `u32` because the groups are concatenated; each group's own `MOVI` is
+/// `u16` and could not address the whole model.
 #[derive(Debug, Clone)]
 pub struct WmoModel {
     pub path: String,
@@ -1371,8 +1344,7 @@ pub struct WmoModel {
     pub ambient: [f32; 3],
     pub draws: Vec<WmoDraw>,
     pub groups: Vec<WmoGroupDraw>,
-    /// **The lights it states** — `MOLT`, copied from the root. See
-    /// [`WmoLight`].
+    /// The lights it states: `MOLT`, copied from the root. See [`WmoLight`].
     pub lights: Vec<WmoLight>,
     pub doodad_sets: Vec<WmoDoodadSet>,
     pub doodads: Vec<WmoDoodad>,
@@ -1380,7 +1352,7 @@ pub struct WmoModel {
     /// rather than taken from `MOHD`, because `MOHD`'s box includes groups this
     /// build dropped and the renderer culls against what it will really draw.
     pub bounds: [[f32; 3]; 2],
-    /// The building's *solid* triangles, in the same model space as
+    /// The building's solid triangles, in the same model space as
     /// `positions`.
     ///
     /// Carried on the assembled model rather than left to the caller because
@@ -1431,28 +1403,26 @@ impl WmoModel {
             radius: 0.0,
         };
 
-        // **Which spawns the sun lights, off `MODR`.** Each group lists the
-        // spawns standing in it, and the group's own flags say which light it is
-        // under — so a spawn referenced only by outdoor groups is street
-        // furniture and takes the sun, while one any *room* claims keeps its
-        // baked colour (a rug in a doorway is referenced by both, and the room's
-        // answer is the one its colour was baked for). Walked over *all* groups,
-        // including ones the draw loop below skips: whether a room's batches
-        // resolve has no bearing on where its furniture stands.
+        // Which spawns the sun lights, from `MODR`. Each group lists the spawns
+        // standing in it, and the group's flags say which light it is under. A
+        // spawn referenced only by outdoor groups is street furniture and takes
+        // the sun; one any room references keeps its baked colour (a rug in a
+        // doorway is referenced by both, and its colour was baked for the room).
+        // The walk covers all groups, including ones the draw loop below skips:
+        // whether a room's batches resolve has no bearing on where its furniture
+        // stands.
         //
-        // **The question is [`WmoGroup::is_exterior`] and never `INDOOR`.**
-        // Those are two different bits answering two different questions —
-        // `0x2000` is the *portal* system's, and `0x48` is the light's — and a
-        // group carrying both is common enough to be most of a city:
-        // Stormwind's 115 building shells (`BH01`, `DW02`, `ClockTower`,
-        // `NightElf01` — they name themselves in `MOGN`) are `INDOOR` for
-        // culling and exterior-lit for shading, and they carry no `MOCV` at all,
-        // which is the file saying the sun does their walls. Keyed on `INDOOR`,
-        // every crate, barrel, lamp and cart those groups list was drawn at a
-        // flat baked colour in the open air — dark at noon and bright at
-        // midnight, because a bake does not move with the sun. That is the
-        // "randomly dark objects" report, and it is the same wrong bit the batch
-        // law was fixed for one round earlier.
+        // The test is [`WmoGroup::is_exterior`], never `INDOOR`. The two are
+        // different bits for different questions (`0x2000` is the portal
+        // system's, `0x48` is the lighting's), and groups carrying both make up
+        // most of a city: Stormwind's 115 building shells (`BH01`, `DW02`,
+        // `ClockTower`, `NightElf01`, named in `MOGN`) are `INDOOR` for culling
+        // and exterior-lit for shading, and carry no `MOCV`, which means the sun
+        // lights their walls. With the test keyed on `INDOOR`, every crate,
+        // barrel, lamp and cart those groups list was drawn at a flat baked
+        // colour in the open air: dark at noon and bright at midnight, because a
+        // bake does not change with the sun. That was the "randomly dark
+        // objects" report, and the batch lighting law had the same wrong bit.
         let mut indoor_ref = vec![false; model.doodads.len()];
         for group in groups {
             for &spawn in &group.doodad_refs {
@@ -1471,9 +1441,9 @@ impl WmoModel {
         }
 
         for group in groups {
-            // A group with no batches used to be skipped outright. It cannot be
-            // any more: `MLIQ` is a sub-chunk of the *group*, and a room whose
-            // only content is the water standing in it draws nothing else.
+            // A group with no batches is still kept when it has `MLIQ`: liquid is
+            // a sub-chunk of the group, and a room whose only content is the water
+            // standing in it has nothing else to draw.
             if group.is_antiportal() || (group.batches.is_empty() && group.liquid.is_none()) {
                 continue;
             }
@@ -1586,34 +1556,31 @@ impl WmoModel {
         model
     }
 
-    /// **Where the inside of this building is**, one box per indoor group, in
+    /// Where the inside of this building is: one box per indoor group, in
     /// WMO-local space.
     ///
-    /// This is the whole of what an entity's interiority test needs. A `MODD`
-    /// spawn says where it is standing and so needs no test at all — its light
-    /// comes with it — but a *player* walks in and out of the same room, and
-    /// nothing in any file or any packet says which side of the door they are
-    /// on. The building's own idea of what a room is, is `MOGP`'s exterior pair
-    /// being clear ([`WmoGroupDraw::is_room`]) and the geometry that group
-    /// covers.
+    /// This is all an entity's interiority test needs. A `MODD` spawn states
+    /// where it stands and needs no test, because its light comes with it. A
+    /// player walks in and out of the same room, and no file or packet says which
+    /// side of the door they are on. The building's own definition of a room is
+    /// `MOGP`'s exterior pair being clear ([`WmoGroupDraw::is_room`]) plus the
+    /// geometry that group covers.
     ///
-    /// **`INDOOR` is the wrong bit here and used to be the one asked**, which
-    /// put every entity standing against a Stormwind building shell under the
-    /// room light — those 115 groups carry `INDOOR` for the portal system and
-    /// `0x40` for the sun, and their boxes are the outsides of houses. See the
-    /// `MODR` walk in [`WmoModel::assemble`], which had the same wrong bit for
-    /// the same reason.
+    /// `INDOOR` is the wrong bit here. Testing it put every entity standing next
+    /// to a Stormwind building shell under the room light: those 115 groups carry
+    /// `INDOOR` for the portal system and `0x40` for the sun, and their boxes are
+    /// the outsides of houses. The `MODR` walk in [`WmoModel::assemble`] had the
+    /// same wrong bit for the same reason.
     ///
-    /// **A box and not the culling sphere**, because those are answering
-    /// different questions: a sphere over a long room reaches half way across
-    /// the street, and a test that says "indoors" outside the wall lights a
-    /// character standing in the sun by a tavern's lamps.
+    /// A box and not the culling sphere, because they answer different questions:
+    /// a sphere over a long room reaches half way across the street, and a test
+    /// that says "indoors" outside the wall lights a character standing in the
+    /// sun by a tavern's lamps.
     ///
     /// Loose in one direction on purpose: an L-shaped room's box covers the
     /// corner it does not occupy, and a group's box includes its own walls. Both
-    /// err toward calling a doorway indoors, which is the side to err on — the
-    /// cost is a stride of wrong light at a threshold, against a whole room of
-    /// it.
+    /// errors call a doorway indoors, which is the safer side: the cost is a
+    /// stride of wrong light at a threshold, against a whole room of it.
     pub fn interior_bounds(&self) -> Vec<[[f32; 3]; 2]> {
         self.groups
             .iter()
@@ -1622,20 +1589,19 @@ impl WmoModel {
             .collect()
     }
 
-    /// **…and where each of its *areas* is** — the same boxes, every group and
-    /// not only the indoor ones, each with the `MOGP` id
+    /// Where each of this building's areas is: the same boxes, for every group
+    /// and not only the indoor ones, each with the `MOGP` id that
     /// [`crate::tables::wmoarea::WmoAreas`] looks a place name up by.
     ///
-    /// **Not a filter on `indoor`, and that is the whole point of it being a
-    /// second method.** Stormwind's districts — Trade District, Old Town, the
-    /// Mage Quarter — are `EXTERIOR` groups of one open-air WMO, so the
-    /// interiority test cannot answer where you are standing in a city. Ironforge
-    /// is the other way round and both are the same lookup.
+    /// Not a filter on `indoor`, which is why this is a second method.
+    /// Stormwind's districts (Trade District, Old Town, the Mage Quarter) are
+    /// `EXTERIOR` groups of one open-air WMO, so the interiority test cannot say
+    /// where a character is in a city. Ironforge is the other way round, and both
+    /// use the same lookup.
     ///
-    /// It inherits [`Self::interior_bounds`]' looseness and one more of its own:
-    /// a city's district boxes **overlap**, and the first containing box wins.
-    /// The alternative is the portal graph (`MOPT`/`MOPR`), which this client
-    /// does not read.
+    /// It has [`Self::interior_bounds`]' looseness and one more: a city's district
+    /// boxes overlap, and the first containing box wins. The alternative is the
+    /// portal graph (`MOPT`/`MOPR`), which the area lookup does not use.
     pub fn area_bounds(&self) -> Vec<([[f32; 3]; 2], u32)> {
         self.groups
             .iter()
@@ -1643,21 +1609,19 @@ impl WmoModel {
             .collect()
     }
 
-    /// **What the rooms in this building light the things standing in them
-    /// by**, as one colour: the mean of the `MODD` lights of one doodad set.
+    /// The light the rooms in this building give the things standing in them, as
+    /// one colour: the mean of the `MODD` lights of one doodad set.
     ///
-    /// The furniture gets a light *per spawn* and is right to
-    /// ([`WmoDoodad::light`]); an entity cannot, because it moves and the file
-    /// samples nothing where it is standing. The nearest honest answer is what
-    /// the building's own tools measured for the things that do not move, and
-    /// the mean of those is the room's general brightness.
+    /// Furniture gets a light per spawn ([`WmoDoodad::light`]). An entity cannot,
+    /// because it moves and the file samples nothing where it stands. The closest
+    /// substitute is what the building's tools measured for the things that do
+    /// not move, and the mean of those is the room's general brightness.
     ///
-    /// **Not `MOHD`'s ambient, which is the obvious candidate and is black.**
-    /// Stormwind states `11/11/11` — see [`WmoRoot::ambient`] — so lighting a
-    /// player by it would put them in a darker room than the chair beside them,
-    /// which is the bug this is fixing pointing the other way. The ambient is
-    /// still the fallback for a set whose spawns name no light at all, and for a
-    /// building with no furniture in it.
+    /// Not `MOHD`'s ambient, which is the obvious candidate and is black:
+    /// Stormwind states `11/11/11` (see [`WmoRoot::ambient`]), so lighting a
+    /// player by it would put them in a darker room than the chair beside them.
+    /// The ambient is still the fallback for a set whose spawns name no light, and
+    /// for a building with no furniture in it.
     pub fn room_light(&self, set: u16) -> [f32; 3] {
         let spawns = match self.doodad_sets.get(set as usize) {
             Some(s) => {
@@ -1713,29 +1677,27 @@ impl WmoModel {
 
     /// Append one group's `MLIQ` surface to the model's buffers, as one draw.
     ///
-    /// **Water goes through the model material like a wall does**, which is the
-    /// same decision the buildings themselves are drawn under and it buys the
-    /// same thing: no second shader, no second pass, no second cache. Four
-    /// parameters carry the whole of what makes it water rather than masonry,
-    /// and each is read off the file rather than chosen:
+    /// Water goes through the model material like a wall does, as the buildings
+    /// themselves do, so it needs no second shader, pass or cache. Four
+    /// parameters make it water rather than masonry, and each follows from the
+    /// data rather than being chosen:
     ///
-    /// * the **texture** is one frame of the flipbook the 1.12 client names for
-    ///   this liquid ([`Liquid::texture`]) — appended to the model's own texture
-    ///   list, so the renderer loads it with the building's;
-    /// * the **blend mode** follows the texture's alpha: `lake_a` and `ocean_h`
-    ///   are `alphaDepth=8` and blend, `lava` and `slime` are `alphaDepth=0` and
-    ///   are opaque, which is exactly right and is the file's decision and not
-    ///   this client's;
-    /// * **unlit** for lava and slime, which glow, and sun-lit for water;
-    /// * **two-sided**, because a water surface is seen from underneath as soon
-    ///   as anything swims, and because that removes any question about which way
-    ///   round a generated quad is wound.
+    /// * the texture is one frame of the flipbook the 1.12 client uses for this
+    ///   liquid ([`Liquid::texture`]), appended to the model's own texture list so
+    ///   the renderer loads it with the building's;
+    /// * the blend mode follows the texture's alpha: `lake_a` and `ocean_h` are
+    ///   `alphaDepth=8` and blend, `lava` and `slime` are `alphaDepth=0` and are
+    ///   opaque, as the texture files decide;
+    /// * unlit for lava and slime, which glow, and sun-lit for water;
+    /// * two-sided, because a water surface is seen from underneath as soon as
+    ///   anything swims, and because then the winding of a generated quad does
+    ///   not matter.
     ///
-    /// Only the *wet* tiles are emitted. The grid is a rectangle and the pool is
-    /// not: Stormwind's canals are 2,885 wet tiles of 3,905, and emitting the
-    /// dry ones would floor every room the grid overlaps with water.
+    /// Only the wet tiles are emitted. The grid is a rectangle and the pool is
+    /// not: Stormwind's canals are 2,885 wet tiles of 3,905, and emitting the dry
+    /// ones would cover every room the grid overlaps with water.
     ///
-    /// **Static, for now.** The client cycles thirty frames; this draws frame 1.
+    /// Static for now: the client cycles thirty frames, and this draws frame 1.
     /// A flipbook is a material swap per frame across every liquid draw in the
     /// world, which is a batching question rather than a parsing one.
     fn add_liquid(&mut self, group: &WmoGroup, root: &WmoRoot, group_index: u32) {
@@ -1774,10 +1736,10 @@ impl WmoModel {
                     self.normals.push([0.0, 0.0, 1.0]);
                     self.uvs.push(uv);
                     // Black, so the additive light term the vertex colours
-                    // otherwise carry is the identity — this surface is not lit
-                    // by `MOCV`. **The alpha is the payload**: it is the
-                    // surface's opacity, off `MLIQ`'s own per-vertex depth, and
-                    // the reason a liquid draw carries vertex colours at all.
+                    // otherwise carry is the identity: this surface is not lit
+                    // by `MOCV`. The alpha holds the surface's opacity, from
+                    // `MLIQ`'s per-vertex depth, and is the reason a liquid
+                    // draw carries vertex colours at all.
                     let index = corner.1 * (liquid.x_tiles + 1) + corner.0;
                     self.colours.push([0, 0, 0, liquid.opacity(index, kind)]);
                 }
@@ -1802,8 +1764,8 @@ impl WmoModel {
             blend: if translucent { 2 } else { 0 },
             unlit: !translucent,
             two_sided: true,
-            // Not `MOCV`-lit — the sun lights water — but the vertex colours are
-            // kept all the same, because their *alpha* is the opacity. See
+            // Not `MOCV`-lit (the sun lights water), but the vertex colours are
+            // kept, because their alpha is the opacity. See
             // [`WmoDraw::liquid`].
             light: BatchLight::Sun,
             section: BatchSection::Ext,
@@ -1841,18 +1803,18 @@ fn doodads_in_set<'a>(
 
 /// Read a WMO and all its group files, and flatten them into one model.
 ///
-/// A group that will not read is **skipped, not fatal**: a WMO is dozens of
+/// A group that will not read is skipped, not fatal: a WMO is dozens of
 /// files, and one damaged room should cost that room rather than the whole
-/// cathedral. The names of the groups that failed come back alongside the model
-/// so a caller can report them once instead of per frame.
+/// cathedral. The names of the groups that failed come back alongside the
+/// model so a caller can report them once instead of per frame.
 pub fn load(assets: &mut crate::Assets, path: &str) -> Result<(WmoModel, Vec<String>), AssetError> {
     let root = WmoRoot::parse(&assets.read(path)?)?;
 
-    // **Not `with_capacity(group_count)`.** Sizing an allocation from a number a
-    // file states is the shape of the fault [`MAX_GROUPS`] is about, and it buys
-    // nothing here: the groups are pushed one at a time behind an archive read
-    // each, so the growth is free beside the read. The bound above is what makes
-    // the *loop* finite; this is what stops the allocation preceding it.
+    // Not `with_capacity(group_count)`. Sizing an allocation from a number the
+    // file states is the fault [`MAX_GROUPS`] guards against, and it gains
+    // nothing here: the groups are pushed one at a time, each behind an archive
+    // read, so the growth costs nothing beside the reads. The bound limits the
+    // loop; this keeps the allocation from coming before it.
     let mut groups = Vec::new();
     let mut failed = Vec::new();
     for index in 0..root.group_count {
@@ -1862,8 +1824,8 @@ pub fn load(assets: &mut crate::Assets, path: &str) -> Result<(WmoModel, Vec<Str
             .and_then(|raw| WmoGroup::parse(&raw));
         match parsed {
             Ok(mut group) => {
-                // The name lives in the *root*'s MOGN, so it can only be filled
-                // in here, where both halves are in hand.
+                // The name is in the root's MOGN, so it can only be filled in
+                // here, where both files have been read.
                 group.name = root.group_name(group.name_offset);
                 groups.push(group);
             }
@@ -1985,11 +1947,11 @@ impl WmoGroupHeader {
 /// The model-to-WMO-local matrix for one `MODD` spawn, column-major.
 ///
 /// `translate(position) * rotate(quaternion) * scale`, with the quaternion used
-/// exactly as it appears in the file. That last part is worth stating because
-/// Noggit appears to disagree: it builds `inverse(quat(w, -x, -z, y))`. Its
-/// world space is the file's under the permutation `(x, y, z) -> (x, z, -y)`,
-/// and conjugating a quaternion by that permutation is precisely
-/// `(w, x, y, z) -> (w, x, z, -y)` — which is what its `inverse` of the negated
+/// exactly as it appears in the file. This needs stating because Noggit
+/// appears to disagree: it builds `inverse(quat(w, -x, -z, y))`. Its world
+/// space is the file's under the permutation `(x, y, z) -> (x, z, -y)`, and
+/// conjugating a quaternion by that permutation is
+/// `(w, x, y, z) -> (w, x, z, -y)`, which is what its `inverse` of the negated
 /// components comes out as. In the file's own axes, which is where this crate
 /// works, the two cancel and the raw quaternion is the answer.
 pub fn doodad_matrix(position: [f32; 3], rotation: [f32; 4], scale: f32) -> [f32; 16] {
@@ -2045,13 +2007,12 @@ pub fn mul4(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
     out
 }
 
-/// A `CImVector`: four bytes in **B, G, R, A** order, normalised to RGBA.
+/// A BGRA colour: four bytes in B, G, R, A order, normalised to RGBA.
 ///
-/// Note the asymmetry with [`read_argb`] four bytes away in the same header.
-/// The format uses two different colour structs — `CImVector` here and `CArgb`
-/// for `MOHD`'s ambient — and they disagree about byte order. Reading one with
-/// the other's layout swaps red and blue, which on a lighting term looks like a
-/// cold room rather than like an error.
+/// The byte order differs from [`read_argb`], four bytes away in the same
+/// header. The format uses two colour layouts, BGRA here and RGBA for
+/// `MOHD`'s ambient. Reading one with the other's layout swaps red and blue,
+/// which on a lighting term looks like a cold room rather than like an error.
 fn read_bgra(b: &[u8]) -> [f32; 4] {
     [
         b[2] as f32 / 255.0,
@@ -2061,9 +2022,9 @@ fn read_bgra(b: &[u8]) -> [f32; 4] {
     ]
 }
 
-/// A `CArgb`: four bytes in **R, G, B, A** order. Alpha is dropped — nothing
-/// reads the ambient light's alpha, and the client explicitly zeroes it before
-/// use so it cannot disturb a vertex colour's own.
+/// An RGBA colour: four bytes in R, G, B, A order. Alpha is dropped: nothing
+/// reads the ambient light's alpha, and the client zeroes it before use so it
+/// cannot disturb a vertex colour's own.
 fn read_argb(buf: &[u8], at: usize) -> [f32; 3] {
     let byte = |i: usize| buf.get(i).copied().unwrap_or(0) as f32 / 255.0;
     [byte(at), byte(at + 1), byte(at + 2)]
@@ -2086,8 +2047,8 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 
-/// `MOMT` + `MOTX`: 64 bytes per material, each naming its textures by **byte
-/// offset** into the `MOTX` string blob rather than by index.
+/// `MOMT` + `MOTX`: 64 bytes per material, each naming its textures by byte
+/// offset into the `MOTX` string blob rather than by index.
 ///
 /// The offsets are collapsed to a deduplicated path list here, because the
 /// frontend wants an index it can use as an array subscript and several
@@ -2134,14 +2095,13 @@ fn parse_group_info(data: &[u8]) -> Vec<WmoGroupInfo> {
         .collect()
 }
 
-/// **One light a building carries** — `MOLT`, and the game's own answer to
-/// "why is that window lit".
+/// One light a building carries: a `MOLT` record.
 ///
-/// ## The layout
+/// ## Record layout
 ///
 /// `World\\wmo\\Azeroth\\Buildings\\GoldshireInn\\GoldshireInn.wmo` declares
-/// `nLights = 10` in `MOHD` and a `MOLT` of **480 bytes**, so the record is 48.
-/// Reading it as
+/// `nLights = 10` in `MOHD` and a `MOLT` of 480 bytes, so the record is 48
+/// bytes. Read as
 ///
 /// ```text
 /// 0x00 u8      kind          0 omni, 1 spot, 2 direct, 3 ambient
@@ -2156,17 +2116,16 @@ fn parse_group_info(data: &[u8]) -> Vec<WmoGroupInfo> {
 /// 0x2C f32     attenuation end, yards
 /// ```
 ///
-/// gives all ten as `kind = 0`, `use_atten = 1`, `intensity = 1.0`, and
-/// **`start` 5.0..5.9 against `end` 7.0..9.5** — ten records in a row where the
-/// near distance is under the far one and both are plausible yards for a lamp
-/// in a room. The four unread floats are the same `(-0, 0, -1, -0.5)` in every
-/// one of them, which is what a field nothing writes looks like. Getting the
-/// offsets wrong by one float breaks the start/end ordering immediately, which
-/// is why that is the check rather than the count.
+/// all ten give `kind = 0`, `use_atten = 1`, `intensity = 1.0`, and `start`
+/// 5.0..5.9 against `end` 7.0..9.5: in all ten records the near distance is
+/// under the far one, and both are plausible distances in yards for a lamp in
+/// a room. The four unread floats are `(-0, 0, -1, -0.5)` in every record,
+/// which is what an unused field looks like. Offsets wrong by one float break
+/// the start/end ordering immediately, which is why the ordering is the check
+/// rather than the count.
 ///
-/// The colours read warm, which is the other confirmation that this is what it
-/// looks like: `255/255/160` for the ceiling lamps and `255/193/96` for the two
-/// over the hearth.
+/// The colours are warm, which also fits: `255/255/160` for the ceiling lamps
+/// and `255/193/96` for the two over the hearth.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WmoLight {
     /// 0 omni, 1 spot, 2 direct, 3 ambient. Every light in the buildings
@@ -2180,8 +2139,8 @@ pub struct WmoLight {
     /// Whether it also adds its colour times intensity to every surface of
     /// the model, facing it or not. Also set on all ten of the inn's.
     pub ambient: bool,
-    /// Its colour, 0..1, **sRGB as the file states it** — the space every other
-    /// band in this project is summed in. `MOLT` stores BGRA.
+    /// Its colour, 0..1, in sRGB as the file states it, which is the space every
+    /// other band in this project is summed in. `MOLT` stores BGRA.
     pub colour: [f32; 3],
     /// Where it hangs, in the building's own space and axes.
     pub position: [f32; 3],
@@ -2192,9 +2151,9 @@ pub struct WmoLight {
 }
 
 impl WmoLight {
-    /// **Is this a lamp?** — an omni light with a falloff, which is what every
-    /// one measured so far is. A spot, a directional or an ambient light is a
-    /// different fixture and the renderer has nothing to do with it yet.
+    /// Whether this is a lamp: an omni light with a falloff, which every light
+    /// measured so far is. A spot, a directional or an ambient light is a
+    /// different fixture, and the renderer does not handle it yet.
     pub fn is_point(&self) -> bool {
         self.kind == 0 && self.use_atten && self.atten_end > self.atten_start
     }
@@ -2249,13 +2208,13 @@ fn parse_lights(data: &[u8]) -> Vec<WmoLight> {
 mod light_tests {
     use super::*;
 
-    /// **The record's shape, from the ten in the Goldshire inn.**
+    /// The record's shape, from the ten in the Goldshire inn.
     ///
-    /// The bytes are the first of them verbatim. What this pins is the thing
-    /// that would otherwise be a plausible guess: the two attenuation distances
-    /// sit at 0x28 and 0x2C, *after* four floats nothing reads — not
-    /// immediately after `intensity`, which is where the obvious layout puts
-    /// them and where reading them yields `-0.0` and `0.0`.
+    /// The bytes are the first of them verbatim. The test fixes the part that
+    /// would otherwise be a plausible guess: the two attenuation distances are at
+    /// 0x28 and 0x2C, after four floats nothing reads, and not immediately after
+    /// `intensity`, where the obvious layout puts them and where reading gives
+    /// `-0.0` and `0.0`.
     #[test]
     fn a_molt_record_is_forty_eight_bytes_and_its_falloff_is_at_the_end() {
         let mut r = vec![0u8; 0x30];
@@ -2280,13 +2239,13 @@ mod light_tests {
         assert_eq!(l.kind, 0);
         assert!(l.use_atten);
         assert!(l.diffuse && l.ambient);
-        // BGRA on disk, so the warm channel is the *last* byte of the four.
+        // BGRA on disk, so the warm channel is the last byte of the four.
         assert_eq!(l.colour, [1.0, 1.0, 160.0 / 255.0]);
         assert_eq!(l.intensity, 1.0);
         assert_eq!(l.atten_start, 5.0);
         assert!((l.atten_end - 6.972).abs() < 1e-4);
-        // …and the ordering that is the whole check on the offsets: read one
-        // float early and this fails.
+        // The ordering is the check on the offsets: reading one float early
+        // fails it.
         assert!(l.atten_start < l.atten_end);
         assert!(l.is_point());
     }
@@ -2397,16 +2356,17 @@ fn parse_doodad_defs(modd: &[u8], modn: &[u8]) -> Vec<WmoDoodad> {
                 exterior_lit: false,
             }
         })
-        // **A spawn with no name is kept, not filtered.** Every index into this
-        // list is the file's own — `MODS` slices it by start/count and `MODR`
-        // references it by position — so dropping a row here would shift every
+        // A spawn with no name is kept, not filtered. Every index into this
+        // list is the file's own (`MODS` slices it by start and count, `MODR`
+        // references it by position), so dropping a row here would shift every
         // spawn after it onto its neighbour's slot. A pathless spawn is skipped
-        // where it would be *drawn* instead (see [`WmoDoodad::drawable`]).
+        // where it would be drawn instead (see [`WmoDoodad::drawable`]).
         .collect()
 }
 
-/// `MOBA`: 24 bytes per batch — a 12-byte integer bounding box nobody needs,
-/// then the index range, the vertex range, a flag byte and the material.
+/// `MOBA`: 24 bytes per batch: a 12-byte integer bounding box this crate does
+/// not read, then the index range, the vertex range, a flag byte and the
+/// material.
 fn parse_batches(data: &[u8]) -> Vec<WmoBatch> {
     data.chunks_exact(BATCH_SIZE)
         .map(|b| WmoBatch {

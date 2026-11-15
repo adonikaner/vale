@@ -2,12 +2,17 @@
 //!
 //! The mode, the handles and the Keys button are on the toolbar over the
 //! viewport, [`super::place::toolbar`]. In Place mode the whole panel is the
-//! picker's, [`super::place::placing`]. In Select mode:
+//! picker's, [`super::place::placing`]. While the building editor is open
+//! the panel is its heading ([`super::wmoview::heading`]) and the mode's
+//! panel, [`super::wmoareas`]'s, [`super::wmodoodads`]'s or
+//! [`super::wmolights`]'s. In Select mode:
 //!
 //! ```text
 //! Selection                  the group and its buttons, the Replace Model
 //!                            list, the locked WMOs, and the primary's model,
-//!                            id and tile
+//!                            id and tile, with Edit Building; with nothing
+//!                            selected on a map that is one building, Edit
+//!                            for that building
 //! Position, Rotation, Sets   the primary's numbers
 //! Bounds                     the size of the primary's box, read and not edited
 //! Duplicate                  for one WMO
@@ -46,6 +51,10 @@ pub(super) const KEYS: [(&str, &str); 18] = [
     ("Ctrl + wheel", "No scale: MODF has no scale field in 1.12"),
 ];
 
+/// What Edit Building does, for its hover text.
+const EDIT_BUILDING: &str = "Opens the building editor: the building alone in the viewport, its areas, \
+                             and the doodads and doodad sets its file carries.";
+
 /// The WMO tool's panel: `MODF` placements.
 ///
 /// The same as the doodad panel without a scale, because 1.12's record does
@@ -60,6 +69,7 @@ pub(in crate::ui::tools) fn wmo(
     held: &mut wmos::Held,
     placer: &mut Placing,
     swap: &mut Swap,
+    view: &mut crate::tools::placements::wmoview::WmoView,
     portraits: &mut crate::preview::portraits::Portraits,
     favourites: &mut crate::prefs::favourites::Favourites,
     now: f64,
@@ -111,6 +121,14 @@ pub(in crate::ui::tools) fn wmo(
     }
     if selection.at.is_none() {
         theme::note(ui, "No WMO selected");
+        // A map that is one building places it from its WDT, and no tile
+        // lists it, so it cannot be selected; it is opened from here.
+        if let Some(path) = view.global.clone() {
+            let leaf = path.rsplit(['\\', '/']).next().unwrap_or(&path).to_string();
+            if theme::primary(ui, &format!("Edit {leaf}")).on_hover_text(EDIT_BUILDING).clicked() {
+                view.asked = Some(u32::MAX);
+            }
+        }
     }
     locked_placements(ui, session, Kind::Wmo);
     let grouped = selection.count() > 1;
@@ -133,6 +151,9 @@ pub(in crate::ui::tools) fn wmo(
     property(ui, "Tile", "", |ui| {
         theme::value(ui, format!("{}, {}", at.tile.0, at.tile.1));
     });
+    if !grouped && theme::primary(ui, "Edit Building").on_hover_text(EDIT_BUILDING).clicked() {
+        view.asked = Some(at.unique_id);
+    }
 
     let was = at.record;
     theme::heading_about(ui, "Position", "World coordinates: X north, Y west, Z up.");
@@ -232,7 +253,40 @@ pub(in crate::ui::tools) fn wmo(
 
 /// The WMO tool's inspector panel.
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
-    let crate::ui::tools::Subject { session, now, .. } = subject;
+    let crate::ui::tools::Subject { tool, session, assets, now, .. } = subject;
+    if editing.wmo_view.open.is_some() {
+        super::wmoview::heading(ui, &editing.wmo_view);
+        match editing.placing.switch() {
+            crate::tools::placements::place::Switch::Lights => super::wmolights::panel(
+                ui,
+                session,
+                assets,
+                &mut editing.wmo_spawns,
+                &mut editing.wmo_lamps,
+                &mut editing.wmo_view,
+                now,
+            ),
+            crate::tools::placements::place::Switch::Doodads => super::wmodoodads::panel(
+                ui,
+                session,
+                assets,
+                &mut editing.wmo_spawns,
+                &mut editing.wmo_view,
+                &mut editing.placing,
+                &mut editing.portraits,
+                &mut editing.favourites,
+                now,
+            ),
+            _ => {
+                // The mode's state is taken out for the time the workspace
+                // holds the rest of the shell.
+                let mut areas = std::mem::take(&mut *editing.wmo_areas);
+                super::wmoareas::panel(ui, crate::ui::tables::Workspace::new(tool, session, editing, assets, now, false, false), &mut areas);
+                *editing.wmo_areas = areas;
+            }
+        }
+        return;
+    }
     wmo(
         ui,
         session,
@@ -240,6 +294,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
         &mut editing.wmo_held,
         &mut editing.placing,
         &mut editing.swap,
+        &mut editing.wmo_view,
         &mut editing.portraits,
         &mut editing.favourites,
         now,

@@ -247,6 +247,11 @@ pub(crate) fn select(
     if *tool != Tool::Wmos || !state.editing() {
         return;
     }
+    // In Areas mode a click chooses a group, and in Doodad Sets mode a
+    // building's doodad; see `super::wmoareas` and `super::wmodoodads`.
+    if super::place::in_building_editor(placing.switch()) {
+        return;
+    }
     // A right click: the building under the pointer, locked or not, for the
     // menu, as the doodad pick does. See `crate::context`.
     if menu.asked() {
@@ -521,7 +526,7 @@ fn solid_hit(
 /// that no tile claims — which is what a half-finished edit leaves — falls
 /// back to the first match, because refusing to select it would leave no way
 /// to put it right.
-fn find(session: &EditSession, unique_id: u32) -> Option<Selected> {
+pub(crate) fn find(session: &EditSession, unique_id: u32) -> Option<Selected> {
     let mut fallback: Option<Selected> = None;
     for (coord, tile) in &session.tiles {
         let names = tile.building_names();

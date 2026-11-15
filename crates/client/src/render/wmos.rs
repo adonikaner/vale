@@ -102,6 +102,9 @@ pub struct WmoPlacement {
     /// building's dozen, and re-reading a tree costs milliseconds on a loader
     /// thread, against a whole city's staging for a building.
     pub path: String,
+    /// The `MODF` doodad set this placement draws, the only set drawn. A
+    /// host that edits the building's doodads reads it here.
+    pub doodad_set: u16,
 }
 
 /// One drawn batch of one building, for counting.
@@ -146,7 +149,7 @@ pub struct Interior {
     pub areas: Vec<([[f32; 3]; 2], u32)>,
     /// The two keys the area lookup needs beside the group: the building's own
     /// `MOHD` id and this placement's `MODF` name set.
-    pub(crate) wmo_id: u32,
+    pub wmo_id: u32,
     pub name_set: u16,
 }
 
@@ -192,7 +195,7 @@ impl Interior {
     /// First rather than smallest: a city's district boxes overlap and the file
     /// states no priority between them, so picking the tightest would be a rule
     /// this client made up. See [`wmo::WmoModel::area_bounds`].
-    pub(crate) fn group_at(&self, world: [f32; 3]) -> Option<u32> {
+    pub fn group_at(&self, world: [f32; 3]) -> Option<u32> {
         let local = self.inverse.transform_point3(Vec3::from(world)).to_array();
         if !wmo::box_contains(&self.bounds, local) {
             return None;
@@ -408,6 +411,13 @@ impl WmoCache {
         count - self.ready.len()
     }
 
+    /// Forget one building, by its root's path in any case, so the next
+    /// lookup reads it again.
+    pub fn forget(&mut self, path: &str) {
+        self.ready.retain(|had, _| !had.eq_ignore_ascii_case(path));
+        self.failed.retain(|had| !had.eq_ignore_ascii_case(path));
+    }
+
     /// Forgets which buildings would not read, on leaving the world.
     ///
     /// [`Self::failed`] stops a placement asking again for something that is
@@ -439,7 +449,9 @@ impl Plugin for WmoPlugin {
         // No `MaterialPlugin` here: buildings use the model pass's material, and
         // registering it twice would be two plugins fighting over one asset type.
         app.init_resource::<WmoCache>()
+            .add_message::<crate::assets::PathsChanged>()
             .add_systems(Startup, start_loader)
+            .add_systems(Update, forget_changed_buildings.in_set(crate::assets::ForgetChanged))
             .add_systems(Update, (receive_wmos, spawn_wmos, retire_colliders).chain())
             // Switches the placement rather than the batch, so a building is
             // hidden as a whole. Its `MODD` furniture is not affected: it is a
@@ -453,7 +465,35 @@ impl Plugin for WmoPlugin {
 }
 
 fn start_loader(mut cache: ResMut<WmoCache>, assets: Res<crate::assets::GameAssets>) {
-    cache.loader = Some(Loader::start(assets.gamedata_dir.clone()));
+    cache.loader = Some(Loader::start(assets.gamedata_dir.clone(), assets.overlay_cell()));
+}
+
+/// Forget the buildings a [`crate::assets::PathsChanged`] names, so the next
+/// placement of each reads its files again. A group file names its root:
+/// `Name_007.wmo` is part of `Name.wmo`, which is what the cache holds. What
+/// is standing keeps what it was built from; a host that wants it rebuilt
+/// streams its tile again.
+fn forget_changed_buildings(mut changed: MessageReader<crate::assets::PathsChanged>, mut cache: ResMut<WmoCache>) {
+    for change in changed.read() {
+        if change.all {
+            cache.ready.clear();
+            cache.failed.clear();
+            continue;
+        }
+        for path in &change.paths {
+            cache.forget(&root_of(path));
+        }
+    }
+}
+
+/// The root a building file belongs to: a group file's root, or the path.
+fn root_of(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    let Some(stem) = lower.strip_suffix(".wmo") else { return lower };
+    match stem.rsplit_once('_') {
+        Some((root, number)) if number.len() == 3 && number.bytes().all(|b| b.is_ascii_digit()) => format!("{root}.wmo"),
+        _ => lower,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +538,10 @@ struct Loader {
 }
 
 impl Loader {
-    fn start(gamedata_dir: String) -> Loader {
+    /// `overlay` is the host's source, read before the archives, as the
+    /// model loader reads it: set on the chain before every request, since a
+    /// host installs it after this thread starts.
+    fn start(gamedata_dir: String, overlay: std::sync::Arc<Mutex<Option<vale_assets::archive::Overlay>>>) -> Loader {
         let (request_tx, request_rx) = mpsc::channel::<String>();
         let (result_tx, result_rx) = mpsc::channel::<Loaded>();
         std::thread::Builder::new()
@@ -514,6 +557,10 @@ impl Loader {
                 // Every request gets an answer even with no archive, so the cache
                 // marks those failed rather than pending forever.
                 while let Ok(path) = request_rx.recv() {
+                    if let Some(chain) = archive.as_mut() {
+                        let current = overlay.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        chain.set_overlay(current);
+                    }
                     let model = archive.as_mut().and_then(|a| read_wmo(a, &path));
                     if model.is_none() {
                         warn!("wmo {path} will not read");
@@ -974,6 +1021,7 @@ pub(crate) fn spawn_wmos(
                     WmoPlacement {
                         unique_id: placement.unique_id,
                         path: placement.path.clone(),
+                        doodad_set: placement.doodad_set,
                     },
                     interior,
                     transform,
@@ -1075,6 +1123,35 @@ pub(crate) fn spawn_wmos(
             false
         });
     }
+}
+
+/// Spawn a held tile ([`crate::render::terrain::HeldTile`]) hosting
+/// `placements`: a [`TerrainTile`] at `coord`, which the streamer leaves
+/// alone, with the four components a streamed tile carries for its buildings
+/// and their doodads, and no ground. [`spawn_wmos`] places the buildings and
+/// the doodad pass their furniture, as on any tile, and despawning the host
+/// takes both and the hulls with it. Answers the entity, for the caller's
+/// own marker.
+///
+/// `coord` is a key off the 64x64 grid, unique to the host: the collision
+/// world files the buildings' hulls under it.
+pub fn spawn_held(commands: &mut Commands, coord: (u32, u32), placements: Vec<PlacedModel>) -> Entity {
+    commands
+        .spawn((
+            TerrainTile { coord },
+            crate::render::terrain::HeldTile,
+            PendingWmos(placements),
+            // Both doodad lists start empty and both are needed: the outdoor
+            // one is what an `MDDF` fills, and there is no ADT to fill it; the
+            // indoor one is what `spawn_wmos` appends a building's own `MODD`
+            // furniture to.
+            PendingDoodads::default(),
+            crate::render::doodads::TileDoodads::default(),
+            crate::render::doodads::ResidentDoodads::default(),
+            Transform::default(),
+            Visibility::default(),
+        ))
+        .id()
 }
 
 /// Drop the collision hulls of tiles that have walked out of range.

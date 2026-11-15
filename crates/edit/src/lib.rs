@@ -4,6 +4,8 @@
 //! adt/       one ADT terrain tile, parsed and written back byte for byte
 //! dbc/       one DBC table, parsed and written back byte for byte
 //! wdt.rs     the WDT map file, which lists the tiles a map has
+//! wmo.rs     a building's root and group files, with its doodad sets, spawns
+//!            and each group's spawn list editable
 //! shadow.rs  MCSH recomputed: the shadow cast across a chunk by the ground
 //!            and the objects standing on it
 //! minimap.rs a tile's minimap picture, drawn from the tile
@@ -59,6 +61,7 @@ pub mod project;
 pub mod shadow;
 pub mod sound;
 pub mod undo;
+pub mod wmo;
 pub mod wdt;
 pub mod worldmap;
 

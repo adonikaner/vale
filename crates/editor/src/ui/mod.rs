@@ -276,6 +276,17 @@ pub(crate) struct Editing<'w> {
     pub(crate) doodad_held: ResMut<'w, crate::tools::placements::doodads::Held>,
     pub(crate) wmos: ResMut<'w, crate::tools::placements::wmos::Selection>,
     pub(crate) wmo_held: ResMut<'w, crate::tools::placements::wmos::Held>,
+    /// The WMO tool's Areas mode. See
+    /// [`crate::tools::placements::wmoareas`].
+    pub(crate) wmo_areas: ResMut<'w, crate::tools::placements::wmoareas::Areas>,
+    /// The WMO tool's Doodad Sets mode. See
+    /// [`crate::tools::placements::wmodoodads`].
+    pub(crate) wmo_spawns: ResMut<'w, crate::tools::placements::wmodoodads::Spawns>,
+    /// The building editor. See [`crate::tools::placements::wmoview`].
+    pub(crate) wmo_view: ResMut<'w, crate::tools::placements::wmoview::WmoView>,
+    /// The building editor's Lights mode. See
+    /// [`crate::tools::placements::wmolights`].
+    pub(crate) wmo_lamps: ResMut<'w, crate::tools::placements::wmolights::Lamps>,
     pub(crate) gizmo: ResMut<'w, Gizmo>,
     pub(crate) holes: Res<'w, crate::tools::ground::holes::Holes>,
     pub(crate) areas: ResMut<'w, crate::tools::ground::areas::Areas>,
@@ -1114,6 +1125,17 @@ fn draw(
         }
         Tool::Water => {
             let bar = tools::ground::water::toolbar(&ctx, world_rect, corner, &mut editing.water);
+            viewport.floating.extend(bar);
+        }
+        Tool::Wmos if editing.wmo_view.open.is_some() => {
+            let bar = tools::placements::wmoview::toolbar(
+                &ctx,
+                world_rect,
+                corner,
+                &mut editing.placing,
+                &mut editing.gizmo.handles,
+                &mut editing.wmo_view,
+            );
             viewport.floating.extend(bar);
         }
         Tool::Doodads | Tool::Wmos => {

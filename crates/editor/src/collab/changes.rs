@@ -182,7 +182,13 @@ pub(crate) fn subject_of(group: &Group) -> Option<String> {
         Group::Table { name } | Group::Record { table: name, .. } => Some(table_key(name)),
         Group::Row { .. } => Some(ROWS.to_string()),
         Group::File { .. } => None,
+        Group::Building { path } => Some(building_key(path)),
     }
+}
+
+/// A building's subject key: `building world\wmo\inn.wmo`.
+pub(crate) fn building_key(path: &str) -> String {
+    format!("building {}", crate::session::buildings::building_key(path))
 }
 
 /// Whether a step's groups are a file step's: those include a
@@ -278,6 +284,7 @@ fn subject(group: &Group) -> (String, String) {
             Some(tile) => subject(&Group::Placements { tile }),
             None => (format!("file {path}"), path.clone()),
         },
+        Group::Building { path } => (building_key(path), path.rsplit('\\').next().unwrap_or(path).to_string()),
     }
 }
 
@@ -482,6 +489,11 @@ fn rebase(session: &mut EditSession, assets: &GameAssets, change: &Change, forwa
                     });
                 }
                 Entry::Record(table.clone(), record.clone())
+            }
+            // A building's part replaces bytes at an offset, which an edit
+            // made since may have moved.
+            Entry::Building(path, _) => {
+                return Err(format!("an edit to {path} cannot be reapplied over a change made since; make it again"))
             }
             Entry::Server(server) => {
                 let now = session.rows.current(server).ok_or_else(|| format!("{} {} is not a row this editor reads", server.table, server.key))?;
@@ -926,6 +938,7 @@ fn discard_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAs
         None => {
             session.unsaved.clear();
             session.unsaved_tables.clear();
+            session.unsaved_buildings.clear();
             mark_rows_saved(session);
             collab.changes.recovered.clear();
         }
@@ -934,6 +947,7 @@ fn discard_steps(collab: &mut Collab, session: &mut EditSession, assets: &GameAs
             let map = session.map.clone();
             session.unsaved.retain(|(x, y)| tile_key(&vale_edit::TileKey::new(&map, *x, *y)) != *key);
             session.unsaved_tables.retain(|name| table_key(name) != *key);
+            session.unsaved_buildings.retain(|path| building_key(path) != *key);
         }
     }
     // The edits and their inverses change nothing now. See *Edits that
@@ -1070,6 +1084,9 @@ pub(crate) fn mark_unsaved(session: &mut EditSession, groups: &[Group]) {
             }
             Group::Row { .. } => session.rows.edits_unsaved = true,
             Group::File { .. } => {}
+            Group::Building { path } => {
+                session.unsaved_buildings.insert(crate::session::buildings::building_key(path));
+            }
         }
     }
 }
@@ -1096,6 +1113,9 @@ pub(crate) fn unmark_theirs(collab: &Collab, session: &mut EditSession, groups: 
                 }
             }
             Group::File { .. } => {}
+            Group::Building { path } => {
+                session.unsaved_buildings.remove(&crate::session::buildings::building_key(path));
+            }
         }
     }
 }
@@ -1268,6 +1288,33 @@ fn nets_to_nothing(session: &mut EditSession, assets: &GameAssets, changes: &[(C
             return false;
         }
     }
+    let mut buildings: Vec<String> = Vec::new();
+    for (change, _) in changes {
+        for path in change.building_files() {
+            if !buildings.contains(&path) {
+                buildings.push(path);
+            }
+        }
+    }
+    for path in &buildings {
+        let groups = changes.iter().any(|(change, _)| {
+            change.building_steps(path, true).iter().any(|step| !matches!(step, vale_edit::wmo::BuildingChange::Root { .. }))
+        });
+        if session.open_building(assets, path).is_err() || (groups && session.read_building_groups(assets, path).is_err()) {
+            return false;
+        }
+        let Some(now) = session.building(path) else { return false };
+        let mut copy = now.building.clone();
+        for (change, forward) in &ordered {
+            let direction = *forward != applied;
+            for step in change.building_steps(path, direction) {
+                copy.apply(step, direction);
+            }
+        }
+        if copy != now.building {
+            return false;
+        }
+    }
     // A server row ends as it started when the first value each entry found
     // is the last one written.
     let mut rows: Vec<(String, Option<String>, Option<String>)> = Vec::new();
@@ -1297,7 +1344,8 @@ pub(crate) fn is_locks(groups: &[Group]) -> bool {
 /// A whole edit, a first part with the parts that continue it, is withdrawn
 /// or kept as one. Lock steps are always withdrawn. The rest are withdrawn
 /// only when `settled`, and then only those whose every group is a tile of
-/// the open map, a client table or a server row, and that share no subject
+/// the open map, a client table, a server row or a building's files, and
+/// that share no subject
 /// with an edit that is kept: an edit that also touches a file or another
 /// map's tile cannot be checked, and an edit beside it on the same subject
 /// may be what it nets to nothing with.
@@ -1316,7 +1364,7 @@ fn withdrawable(open: &[(Seq, bool, &[Group])], map: &str, settled: bool) -> Vec
     let locks = |groups: &[&Group]| !groups.is_empty() && groups.iter().all(|group| is_locks(std::slice::from_ref(*group)));
     let checked = |group: &Group| match group {
         Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => tile.map.eq_ignore_ascii_case(map),
-        Group::Table { .. } | Group::Row { .. } | Group::Record { .. } => true,
+        Group::Table { .. } | Group::Row { .. } | Group::Record { .. } | Group::Building { .. } => true,
         Group::File { .. } => false,
     };
     let subjects = |groups: &[&Group]| -> Vec<String> { groups.iter().filter_map(|group| subject_of(group)).collect() };
@@ -1358,6 +1406,7 @@ pub(crate) fn withdraw_undone(collab: &mut Collab, session: &mut EditSession, as
     }
     let settled = session.unsaved.is_empty()
         && session.unsaved_tables.is_empty()
+        && session.unsaved_buildings.is_empty()
         && !session.rows.unsaved()
         && collab.changes.recovered.is_empty();
     let open: Vec<(Seq, bool, &[Group])> = log
@@ -1460,6 +1509,12 @@ pub(crate) fn unsaved_subjects(session: &EditSession) -> Vec<(String, String)> {
         .map(|(x, y)| (tile_key(&vale_edit::TileKey::new(&session.map, x, y)), format!("{} {x}_{y}", session.map)))
         .collect();
     out.extend(tables.into_iter().map(|name| (table_key(&name), format!("{name}.dbc"))));
+    let mut buildings: Vec<String> = session.unsaved_buildings.iter().cloned().collect();
+    buildings.sort();
+    out.extend(buildings.into_iter().map(|path| {
+        let leaf = path.rsplit('\\').next().unwrap_or(&path).to_string();
+        (building_key(&path), leaf)
+    }));
     if session.rows.unsaved() {
         out.push((ROWS.to_string(), "Server rows".to_string()));
     }
@@ -1625,6 +1680,22 @@ fn describe_change(change: &Change, forward: bool, out: &mut Vec<String>) {
                     false => "removed",
                 }
             )),
+            Entry::Building(path, change) => others.push(match change {
+                vale_edit::wmo::BuildingChange::Root { magic, before, after, .. } => format!(
+                    "    {path} {}: {} bytes \u{2192} {}",
+                    String::from_utf8_lossy(magic),
+                    match forward {
+                        true => before.len(),
+                        false => after.len(),
+                    },
+                    match forward {
+                        true => after.len(),
+                        false => before.len(),
+                    }
+                ),
+                vale_edit::wmo::BuildingChange::Group { group, .. } => format!("    {path} group {group}: its spawn list"),
+                vale_edit::wmo::BuildingChange::GroupLights { group, .. } => format!("    {path} group {group}: its light list"),
+            }),
             Entry::Server(server) => {
                 let what = match &server.shape {
                     vale_edit::undo::Shape::Column(column) => column.clone(),
@@ -2044,6 +2115,63 @@ mod tests {
         assert_eq!(collab.open_edits(), 0);
         let log = collab.log.as_ref().unwrap();
         assert_eq!((log.last(), log.changelists().len()), (2, 0), "both are in the log, in no changelist");
+        let _ = std::fs::remove_dir_all(&install);
+    }
+
+    /// An edit to a building undone again leaves its files as the folder
+    /// holds them: the building is not unsaved, and the edit and its undo are
+    /// withdrawn, as they are for a tile.
+    #[test]
+    fn a_building_edit_undone_again_is_no_change() {
+        let install = std::env::temp_dir().join(format!("vale-collab-building-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&install);
+        let mut session = EditSession::for_tests(vale_edit::project::Project::open(&install, "Building").unwrap());
+        let mut assets = GameAssets::new(install.join("Data").to_string_lossy().into_owned());
+        assets.root = install.to_string_lossy().into_owned();
+        let mut bytes = Vec::new();
+        for (magic, data) in [(*b"MVER", 17u32.to_le_bytes().to_vec()), (*b"MOHD", vec![0u8; 64])] {
+            bytes.extend([magic[3], magic[2], magic[1], magic[0]]);
+            bytes.extend((data.len() as u32).to_le_bytes());
+            bytes.extend(data);
+        }
+        let mut root = vale_edit::wmo::RootFile::parse(&bytes).unwrap();
+        let sets = [vale_edit::wmo::DoodadSet { name: "Set_$DefaultGlobal".into(), start: 0, count: 1, pad: 0 }];
+        let doodad = vale_edit::wmo::Doodad {
+            name: r"World\Generic\Chair.mdx".into(),
+            name_at: None,
+            flags: 0,
+            position: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: 1.0,
+            colour: 0,
+        };
+        root.set_doodads(&sets, &[doodad]).unwrap();
+        let path = r"World\wmo\Test\Test.wmo";
+        session.project.write(path, &root.write()).unwrap();
+        let key = crate::session::buildings::building_key(path);
+        session.buildings.insert(key.clone(), crate::session::buildings::OpenBuilding::new(path, root));
+        let mut collab = Collab::default();
+        collab.author(&assets.root);
+        super::super::keep_the_log(&mut collab, &mut session, &assets);
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+
+        session
+            .edit_building(&assets, path, "Scale building doodad", "test", 0.0, false, |building| {
+                let mut doodads = building.root.doodads();
+                doodads[0].scale = 2.0;
+                building.root.set_doodads(&building.root.doodad_sets(), &doodads).map_err(|e| e.to_string())
+            })
+            .unwrap();
+        super::super::log_own_steps(&mut collab, &mut session, &assets);
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+        assert!(session.unsaved_buildings.contains(&key));
+        assert_eq!(collab.open_edits(), 1);
+
+        session.undo(&assets);
+        assert!(session.unsaved_buildings.is_empty(), "the building is as the folder holds it");
+        super::super::log_own_steps(&mut collab, &mut session, &assets);
+        super::super::after_the_steps(&mut collab, &mut session, &assets);
+        assert_eq!(collab.open_edits(), 0);
         let _ = std::fs::remove_dir_all(&install);
     }
 

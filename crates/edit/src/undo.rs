@@ -189,6 +189,11 @@ pub enum Entry {
     /// or [`Field`] is sent and logged as ([`Change::with_texts`]). Never on
     /// the undo stack, whose string edits are offsets.
     Text(String, Text),
+    /// A part of an edit to a building's files, and the building, named by
+    /// its root's path in lower case. See [`crate::wmo::Building::diff`].
+    /// After every other variant, so a change stored before it existed still
+    /// reads.
+    Building(String, crate::wmo::BuildingChange),
 }
 
 /// Where an entry falls in the order a change is applied in. See
@@ -439,6 +444,43 @@ impl Change {
         found
     }
 
+    /// The buildings this change touched, by their roots' paths in lower
+    /// case, in the order they were first touched.
+    pub fn building_files(&self) -> Vec<String> {
+        let mut found: Vec<String> = Vec::new();
+        for entry in &self.entries {
+            if let Entry::Building(path, _) = entry {
+                if !found.contains(path) {
+                    found.push(path.clone());
+                }
+            }
+        }
+        found
+    }
+
+    /// One building's parts in the order they are made going `forward`, or
+    /// taken back going back. Each is applied with
+    /// [`crate::wmo::Building::apply`] and the same `forward`.
+    pub fn building_steps<'a>(&'a self, path: &'a str, forward: bool) -> Vec<&'a crate::wmo::BuildingChange> {
+        let mut out: Vec<&crate::wmo::BuildingChange> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Building(had, change) if had == path => Some(change),
+                _ => None,
+            })
+            .collect();
+        if !forward {
+            out.reverse();
+        }
+        out
+    }
+
+    /// Record a part of an edit to a building.
+    pub fn push_building(&mut self, path: &str, change: crate::wmo::BuildingChange) {
+        self.entries.push(Entry::Building(path.to_ascii_lowercase(), change));
+    }
+
     /// The server entries in [`Self::in_order`]'s order, each as the edit the
     /// caller's store makes: as recorded going forward, reversed going back.
     pub fn server_steps(&self, forward: bool) -> impl Iterator<Item = ServerEntry> + '_ {
@@ -574,7 +616,9 @@ impl Change {
                         None => self.entries.push(entry.clone()),
                     }
                 }
-                Entry::Record(..) => self.entries.push(entry.clone()),
+                // A building's parts apply in order and revert in reverse,
+                // so the later ones are kept after the earlier.
+                Entry::Record(..) | Entry::Building(..) => self.entries.push(entry.clone()),
                 Entry::Text(table, text) => {
                     let same = self.entries.iter_mut().find_map(|had| match had {
                         Entry::Text(had_table, had)
@@ -1223,6 +1267,18 @@ impl History {
             segment.absorb_row(table, row.clone());
         }
         self.take(label, |change| change.absorb_row(table, row));
+        self.close_segment_unless_open();
+    }
+
+    /// Record a part of an edit to a building's files; `path` is its root's
+    /// path. Inside a stroke it joins the stroke, as [`Self::record_row`]
+    /// does.
+    pub fn record_building(&mut self, path: &str, change: crate::wmo::BuildingChange) {
+        let label = "Edit building";
+        if let Some(segment) = self.fold_segment(label) {
+            segment.push_building(path, change.clone());
+        }
+        self.take(label, |had| had.push_building(path, change));
         self.close_segment_unless_open();
     }
 
@@ -2339,6 +2395,7 @@ mod tests {
                     Shape::Row => "server row",
                     Shape::Path => "server path",
                 },
+                Entry::Building(..) => "building",
             }
         }
 

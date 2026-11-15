@@ -50,14 +50,18 @@ pub enum Claim {
 }
 
 impl Claim {
-    /// The claim a group is in. A file is in none; see the module comment.
+    /// The claim a group is in. A file and a building are in none; see the
+    /// module comment.
     pub fn of(group: &Group) -> Option<Claim> {
         match group {
             Group::Chunk { tile, .. } | Group::Textures { tile } | Group::Placements { tile } => Some(Claim::Tile(tile.clone())),
             Group::Table { name } => Some(Claim::Table(name.clone())),
             Group::Row { table, key } => Some(Claim::Row { table: table.clone(), key: key.clone() }),
             Group::Record { table, id } => Some(Claim::Record { table: table.clone(), id: *id }),
-            Group::File { .. } => None,
+            // A file, and a building's files, are in none. Two editors'
+            // edits to one building are kept in order by the host, and the
+            // later one is made over the earlier.
+            Group::File { .. } | Group::Building { .. } => None,
         }
     }
 

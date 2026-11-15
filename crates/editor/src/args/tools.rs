@@ -111,6 +111,23 @@ pub(crate) struct Tools {
     /// `--pick-hull`: with `--transport`, the model picker open on that
     /// transport's hull.
     pub(crate) pick_hull: bool,
+    /// `--wmo-areas [<group>]`: the WMO tool in Areas mode, with a group of
+    /// the building chosen: its number in the root file, or the whole
+    /// building without one. On a map that is one building that building is
+    /// chosen; elsewhere the WMO a click would choose is needed, so the flag
+    /// is for such a map. See `crate::tools::placements::wmoareas`.
+    pub(crate) wmo_areas: Option<Option<usize>>,
+    /// `--wmo-doodads [<index>]`: the WMO tool in Doodad Sets mode, with the
+    /// building's doodad of that `MODD` index chosen. The building is chosen
+    /// as for `--wmo-areas`. See `crate::tools::placements::wmodoodads`.
+    pub(crate) wmo_doodads: Option<Option<u16>>,
+    /// `--wmo-lights [<index>]`: the building editor in Lights mode, with
+    /// that light chosen. The building is chosen as for `--wmo-areas`. See
+    /// `crate::tools::placements::wmolights`.
+    pub(crate) wmo_lights: Option<Option<u16>>,
+    /// `--wmo-copy`: with `--wmo-doodads` or `--wmo-lights`, Copy for This
+    /// Placement once the building is drawn.
+    pub(crate) wmo_copy: bool,
 }
 
 pub(super) const FLAGS: &[Flag] = &[
@@ -174,6 +191,11 @@ pub(super) const FLAGS: &[Flag] = &[
     }),
     Flag::new("--pick-mount", Switch, |a, _| a.tools.pick_mount = true),
     Flag::new("--pick-hull", Switch, |a, _| a.tools.pick_hull = true),
+    // The group is optional, so a following flag is not eaten.
+    Flag::new("--wmo-areas", Optional, |a, v| a.tools.wmo_areas = Some(first(v).and_then(|text| text.trim().parse().ok()))),
+    Flag::new("--wmo-doodads", Optional, |a, v| a.tools.wmo_doodads = Some(first(v).and_then(|text| text.trim().parse().ok()))),
+    Flag::new("--wmo-lights", Optional, |a, v| a.tools.wmo_lights = Some(first(v).and_then(|text| text.trim().parse().ok()))),
+    Flag::new("--wmo-copy", Switch, |a, _| a.tools.wmo_copy = true),
     Flag::new("--flight-map", Switch, |a, _| {
         a.tools.flight_map = true;
         a.view.tool = Some(Tool::Flightpaths);

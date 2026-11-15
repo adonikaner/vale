@@ -63,6 +63,8 @@ pub(crate) fn toolbar(
                             "Choose models in the inspector, then click the ground to place several \
                              of them over a circle."
                         }
+                        // The building editor's, on a bar of its own.
+                        Switch::Areas | Switch::Doodads | Switch::Lights => "",
                     };
                     if bar_segment(ui, was == *to, name).on_hover_text(hover).clicked() && was != *to {
                         // Select puts down the model on the cursor and
@@ -79,6 +81,7 @@ pub(crate) fn toolbar(
                 (Switch::Place, Kind::Doodad) => &PLACE_DOODAD_KEYS,
                 (Switch::Place, Kind::Wmo) => &PLACE_WMO_KEYS,
                 (Switch::Cluster, _) => &CLUSTER_KEYS,
+                (Switch::Areas | Switch::Doodads | Switch::Lights, _) => &[],
             });
         });
         if placing.switch() == Switch::Select {
@@ -122,7 +125,7 @@ pub(super) fn placing(
     favourites: &mut crate::prefs::favourites::Favourites,
 ) -> bool {
     match placing.switch() {
-        Switch::Select => return false,
+        Switch::Select | Switch::Areas | Switch::Doodads | Switch::Lights => return false,
         Switch::Place => model(ui, placing, kind, portraits, favourites),
         Switch::Cluster => cluster(ui, placing, portraits, favourites),
     }
@@ -616,7 +619,7 @@ pub(super) fn replacing(
 /// cluster's list, or the replace list's choice.
 /// The folder shown is the placer's in both, so the replace list opens where
 /// the placer was last browsing.
-fn browse(
+pub(super) fn browse(
     ui: &mut egui::Ui,
     placing: &mut Placing,
     kind: Kind,

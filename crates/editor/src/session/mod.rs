@@ -3,6 +3,8 @@
 //!
 //! ```text
 //! locks.rs      locked vertices and locked placements
+//! buildings.rs  buildings open for editing: a WMO's root and groups, their
+//!               undo entries, the overlay and the project
 //! tiles.rs      the open tiles, map switches, and the sets a tool feeds
 //! project.rs    switching and clearing the project the session writes to
 //! tables.rs     the open client tables, in the overlay and in the project
@@ -81,6 +83,7 @@ use bevy::prelude::*;
 use bevy::tasks::Task;
 use std::sync::{Arc, RwLock};
 
+pub(crate) mod buildings;
 pub(crate) mod locks;
 pub(crate) mod tiles;
 pub(crate) mod project;
@@ -204,6 +207,14 @@ pub(crate) struct EditSession {
     pub(crate) unsaved: HashSet<(u32, u32)>,
     /// Tables whose bytes are ahead of the project folder, by name.
     pub(crate) unsaved_tables: HashSet<String>,
+    /// Buildings open for editing, by their roots' paths in lower case. See
+    /// [`buildings`].
+    pub(crate) buildings: std::collections::HashMap<String, buildings::OpenBuilding>,
+    /// …and those whose files are ahead of the project folder.
+    pub(crate) unsaved_buildings: HashSet<String>,
+    /// Buildings published and not yet rebuilt by the renderer. See
+    /// [`buildings::redraw_buildings`].
+    pub(crate) building_redraw: buildings::Redraw,
     /// How many field edits have landed, for anything that caches a reading
     /// of a table rather than the table itself.
     ///
@@ -513,6 +524,9 @@ impl EditSession {
             stale: HashSet::default(),
             unsaved: HashSet::default(),
             unsaved_tables: HashSet::default(),
+            buildings: Default::default(),
+            unsaved_buildings: HashSet::default(),
+            building_redraw: Default::default(),
             table_revision: 0,
             restream: HashSet::default(),
             republished: Vec::new(),
@@ -604,7 +618,7 @@ impl Plugin for SessionPlugin {
             // and the hang, and the stage is shown the edit after they have.
             .add_systems(
                 Update,
-                (publish_for_the_preview, forget_what_changed)
+                (publish_for_the_preview, buildings::redraw_buildings, forget_what_changed)
                     .chain()
                     .before(vale_client::assets::ForgetChanged),
             )

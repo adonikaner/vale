@@ -4,6 +4,14 @@
 //! ```text
 //! doodads.rs     the placed models (MDDF): select, move, turn, scale, remove
 //! wmos.rs        the placed buildings, which are MODF and a different list
+//! wmoview.rs     the building editor: one building drawn on its own, opened
+//!                from the WMO tool, with the two modes below
+//! wmoareas.rs    the building editor's Areas mode: a group chosen in the
+//!                viewport, and its WMOAreaTable row
+//! wmodoodads.rs  the building editor's Doodads mode: the building's own
+//!                doodads and sets, edited in its files
+//! wmolights.rs   the building editor's Lights mode: the building's lights
+//!                and the groups' lists of them
 //! place.rs       putting a new doodad or building in the world
 //! cluster.rs     several doodads placed with one click, spread round the pointer
 //! swap.rs        replacing the model of the selected doodads or buildings
@@ -21,4 +29,8 @@ pub(crate) mod group;
 pub(crate) mod place;
 pub(crate) mod rehome;
 pub(crate) mod swap;
+pub(crate) mod wmoareas;
+pub(crate) mod wmodoodads;
+pub(crate) mod wmolights;
+pub(crate) mod wmoview;
 pub(crate) mod wmos;

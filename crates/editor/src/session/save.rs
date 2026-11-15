@@ -85,7 +85,7 @@ impl EditSession {
 
     /// Whether `bytes` are what the folder holds for `vpath`: the project's
     /// file, or the archives' bytes when the project has none.
-    fn matches_folder(&self, vpath: &str, bytes: &[u8]) -> bool {
+    pub(super) fn matches_folder(&self, vpath: &str, bytes: &[u8]) -> bool {
         match self.project.read(vpath) {
             Some(file) => super::originals::changes_nothing(vpath, bytes, &file),
             None => self.changes_nothing(vpath, bytes),
@@ -209,6 +209,7 @@ impl EditSession {
         }
         self.save_all();
         self.save_all_tables();
+        self.save_buildings();
         let taken_back = self.take_back_excluded_rows();
         rows(self);
         if taken_back {

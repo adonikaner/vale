@@ -1273,7 +1273,10 @@ fn after_a_save(collab: &mut Collab, session: &mut EditSession, assets: &GameAss
         changes::mark_unsaved(session, &groups);
         return;
     }
-    let everything = session.unsaved.is_empty() && session.unsaved_tables.is_empty() && !session.rows.unsaved();
+    let everything = session.unsaved.is_empty()
+        && session.unsaved_tables.is_empty()
+        && session.unsaved_buildings.is_empty()
+        && !session.rows.unsaved();
     if everything && collab.link.is_none() && !collab.is_joined() {
         changes::close_on_save(collab, session, assets);
         // The files hold every submitted changelist now. See `offline`'s

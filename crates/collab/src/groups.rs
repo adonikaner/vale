@@ -45,6 +45,10 @@ pub enum Group {
     /// One record of a client table whose ids are unique, by its id. After
     /// every other variant, so a group stored before it existed still reads.
     Record { table: String, id: u32 },
+    /// A building's files, by its root's path in lower case. One group for
+    /// the root and its groups, since adding a spawn changes the lists of
+    /// groups other than the one it stands in. After every other variant.
+    Building { path: String },
 }
 
 impl Group {
@@ -60,6 +64,7 @@ impl Group {
             Group::Row { table, key } => format!("{table} {key}"),
             Group::File { path } => path.clone(),
             Group::Record { table, id } => format!("{table}.dbc record {id}"),
+            Group::Building { path } => format!("the building {path}"),
         }
     }
 
@@ -143,6 +148,7 @@ pub fn entry_groups(entry: &Entry, out: &mut Vec<Group>) {
         Entry::Server(server) => {
             out.push(Group::Row { table: server.table.clone(), key: server.key.clone() });
         }
+        Entry::Building(path, _) => out.push(Group::Building { path: path.clone() }),
     }
 }
 
