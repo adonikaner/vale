@@ -50,6 +50,7 @@ use crate::session::EditSession;
 use crate::subjects::displays::{DisplayPick, Table as DisplayTable};
 use crate::subjects::quests::{ColumnTarget, Holder};
 use crate::tools::spawns::gameobjects::{GameObjectSubject, GameObjects, Known, Spawn};
+use crate::tools::spawns::spawn::Facet;
 use crate::ui::widgets::theme::{self, property};
 use vale_assets::tables::lock::{KeyKind, Locks};
 use vale_client::assets::GameAssets;
@@ -98,6 +99,8 @@ impl<'a> Subject<'a> {
             asks: &mut editing.asks,
             fly: &mut editing.fly,
             others: &mut editing.others,
+            drawer: Some(&mut editing.drawer),
+            favourites: &mut editing.favourites,
             own: GameObjectPanel {
                 pools: &mut editing.pools,
                 game_events: &mut editing.game_events,
@@ -146,9 +149,6 @@ impl SpawnView for GameObjectSubject {
                       shows the chosen object.",
         edit_selected: "Opens the 34 gameobject_template columns in a separate window. The 24 \
                         data columns are labelled with the field names of this object's type.",
-        search: "Search by name or entry, or choose a type, then click the ground to place the \
-                 chosen object.",
-        too_short: "Type two letters of a name, or an entry, or choose a type.",
         no_model: Some(
             "displayId is 0 or has no GameObjectDisplayInfo.dbc row. The object is placed and \
              drawn as a marker with no model. Traps and spell focus objects usually have no \
@@ -230,21 +230,6 @@ impl SpawnView for GameObjectSubject {
         }
     }
 
-    /// The type filter. With a type chosen, the list fills without any search
-    /// text.
-    fn search_filters(ui: &mut egui::Ui, subject: &mut Subject<'_>) {
-        let mut options: Vec<(&str, Option<u32>)> = vec![("Any", None)];
-        options.extend(gameobject::TYPES.iter().map(|named| (named.name, Some(named.value))));
-        property(ui, "Type", "", |ui| {
-            theme::choice(ui, "object-type-filter", &mut subject.tool.new_spawn.of_type, &options, |a, b| a == b)
-                .on_hover_text(
-                    "Filters the matches by gameobject_template.type. With a type chosen, the \
-                     list shows matches without search text. Mining veins, herbs and treasure \
-                     chests are all type Chest.",
-                );
-        });
-    }
-
     /// The sections in the order the module comment lists them, in the
     /// inspector's one scroll. The title's second line is the profession a
     /// gathering node needs, or the type.
@@ -284,6 +269,24 @@ impl SpawnView for GameObjectSubject {
         own: &'s Self::Panel<'_>,
     ) -> (&'s crate::subjects::pools::Pools, &'s crate::subjects::game_events::GameEvents) {
         (&*own.pools, &*own.game_events)
+    }
+
+    const FACETS: &'static [(Facet, &'static str)] =
+        &[(Facet::Type, "Type"), (Facet::Gathering, "Gathering"), (Facet::Model, "Model")];
+    const FAVOURITES: crate::prefs::favourites::Kind = crate::prefs::favourites::Kind::GameObject;
+
+    fn model_path(subject: &mut Subject<'_>, display_id: u32) -> Option<String> {
+        subject.tool.model_of(subject.assets, display_id)
+    }
+
+    /// The object's type, and for a gathering node the profession its lock
+    /// asks for, without the skill rank.
+    fn sorts(subject: &mut Subject<'_>, known: &Known) -> Vec<(Facet, String)> {
+        let mut sorts = vec![(Facet::Type, known.type_word())];
+        if let Some(skill) = gathering_skill(locks(&mut subject.tool.own.locks, subject.assets), known) {
+            sorts.push((Facet::Gathering, skill));
+        }
+        sorts
     }
 
     fn renumber_reaches() -> String {
@@ -393,6 +396,24 @@ pub(in crate::ui) fn lock_words(locks: &Locks, lock_id: u32) -> String {
 /// (`vale_assets::tables::lock::lock_type`). The answer is the skill's name
 /// and the rank the lock asks for.
 pub(in crate::ui) fn gathered_by(locks: &Locks, known: &Known) -> Option<String> {
+    let (name, rank) = gathering_lock(locks, known)?;
+    // Copper and Peacebloom ask for skill 0, which is every miner and every
+    // herbalist, so the number is left off.
+    Some(match rank {
+        0 => format!("{name} node"),
+        rank => format!("{name} node, skill {rank}"),
+    })
+}
+
+/// The profession a gathering node needs, without the rank: `Mining`,
+/// `Herbalism`. The drawer's Gathering group is by this.
+fn gathering_skill(locks: &Locks, known: &Known) -> Option<String> {
+    gathering_lock(locks, known).map(|(name, _)| name.to_string())
+}
+
+/// A chest's gathering skill and the rank its lock asks for, or `None` for
+/// anything that is not a gathering node.
+fn gathering_lock<'l>(locks: &'l Locks, known: &Known) -> Option<(&'l str, u32)> {
     if known.kind != gameobject::TYPE_CHEST {
         return None;
     }
@@ -404,13 +425,7 @@ pub(in crate::ui) fn gathered_by(locks: &Locks, known: &Known) -> Option<String>
     if !gathering.contains(&lock_type) {
         return None;
     }
-    let name = locks.lock_type_name(lock_type).unwrap_or("gathering");
-    // Copper and Peacebloom ask for skill 0, which is every miner and every
-    // herbalist, so the number is left off.
-    Some(match rank {
-        0 => format!("{name} node"),
-        rank => format!("{name} node, skill {rank}"),
-    })
+    Some((locks.lock_type_name(lock_type).unwrap_or("gathering"), rank))
 }
 
 /// The spawn's own rows: the rows of other tables that name it, and then

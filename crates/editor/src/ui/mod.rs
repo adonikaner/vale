@@ -301,7 +301,8 @@ pub(crate) struct Editing<'w> {
     pub(crate) portraits: ResMut<'w, crate::preview::portraits::Portraits>,
     pub(crate) favourites: ResMut<'w, crate::prefs::favourites::Favourites>,
     /// The asset drawer under the viewport, which the texture, road, chunk,
-    /// doodad and WMO panels open. See [`shell::drawer`].
+    /// doodad, WMO, creature and game object panels open. See
+    /// [`shell::drawer`].
     pub(crate) drawer: ResMut<'w, shell::drawer::Drawer>,
     /// The camera's named places, for the go-to popover.
     pub(crate) bookmarks: ResMut<'w, crate::prefs::bookmarks::Bookmarks>,
@@ -887,6 +888,26 @@ fn draw(
         &mut editing.portraits,
         &mut editing.favourites,
     );
+    // The spawn tools' Place mode lists templates rather than files, and its
+    // drawer is drawn by the spawn tools' own code inside the same frame.
+    // `shell::drawer::draw` leaves that offer for it. See
+    // [`tools::spawns::drawer`].
+    if let Some((kind, chosen)) = editing.drawer.take_spawn_offer() {
+        let now = time.elapsed_secs_f64();
+        let server = workspace::server(&mut playing, &mut popovers);
+        match kind {
+            crate::tools::spawns::spawn::SpawnKind::Creature => {
+                use crate::tools::spawns::creatures::CreatureSubject as S;
+                let subject = <S as tools::spawns::spawn::SpawnView>::subject(session, &mut editing, server, &assets, now, false);
+                tools::spawns::drawer::draw::<S>(&mut root, subject, &chosen);
+            }
+            crate::tools::spawns::spawn::SpawnKind::GameObject => {
+                use crate::tools::spawns::gameobjects::GameObjectSubject as S;
+                let subject = <S as tools::spawns::spawn::SpawnView>::subject(session, &mut editing, server, &assets, now, false);
+                tools::spawns::drawer::draw::<S>(&mut root, subject, &chosen);
+            }
+        }
+    }
 
     // The top edge of the bottom bars and the asset drawer, where the sync
     // toast sits. Read here, after every docked panel has taken its space and

@@ -5,6 +5,9 @@
 //!               the panel's frame and switches, the edits block, the picker
 //!               with its template buttons, the claim, the template window
 //!               and its entry box
+//! drawer.rs     the asset drawer of the Place mode: every template of the
+//!               subject, grouped by its columns and its model's folder, as
+//!               pictures under the viewport
 //! creatures.rs  the form for the server's creature rows: one spawn, the
 //!               creature_template behind it, and which of the two an edit
 //!               changes. It is separate from the table browser
@@ -22,6 +25,7 @@
 //! ```
 
 pub(crate) mod creatures;
+pub(crate) mod drawer;
 pub(crate) mod gameobjects;
 pub(crate) mod spawn;
 pub(crate) mod waypoints;

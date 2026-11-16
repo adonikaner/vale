@@ -36,7 +36,7 @@
 
 use super::{
     Drag, MapRead, OtherSpawns, Role, SpawnHover, SpawnRow, SpawnSubject, SpawnTool, Spawned, Tag, TagsFor, Template,
-    TemplateRow, MATCHES,
+    TemplateRow,
 };
 use crate::marks::{Look, Marks};
 use crate::subjects::listing::Listed;
@@ -326,78 +326,6 @@ pub(super) fn learn_the_created<S: SpawnSubject>(
         let Some(sql) = S::templates_query(&missing, patch) else {
             return Ok(Vec::new());
         };
-        Ok(db.rows(&sql)?.iter().filter_map(S::read_known).collect())
-    }));
-}
-
-/// Run the picker's search when what is typed or the type filter no longer
-/// matches what was last asked.
-///
-/// One query per change of the box rather than per frame: `ran` holds what
-/// was sent, so a frame that redraws the same text sends nothing. A term of
-/// fewer than two characters is sent only when a type is chosen: `%a%` over
-/// every template is thousands of rows and fifty arbitrary ones, while every
-/// template of one type, such as every chest, is a list somebody asked for.
-pub(super) fn search<S: SpawnSubject>(
-    mut tool: ResMut<SpawnTool<S>>,
-    settings: Res<crate::server::settings::ServerSettings>,
-    chosen: Res<Tool>,
-    state: Res<crate::playtest::Playtest>,
-    session: Option<Res<EditSession>>,
-) {
-    // The matches were read from the database as it stood at the counter; an
-    // apply or a put back empties them, drops a search still running, and
-    // sends the typed text again.
-    let writes = session.as_ref().map_or(0, |session| session.database_writes);
-    if tool.new_spawn.searched_at != Some(writes) {
-        tool.new_spawn.searched_at = Some(writes);
-        tool.new_spawn.task = None;
-        tool.new_spawn.forget();
-    }
-    if let Some(task) = tool.new_spawn.task.as_mut() {
-        if let Some(done) = block_on(future::poll_once(task)) {
-            tool.new_spawn.task = None;
-            match done {
-                Ok(rows) => {
-                    for known in &rows {
-                        tool.known.insert(known.entry(), known.clone());
-                    }
-                    tool.new_spawn.matches = rows;
-                    tool.new_spawn.trouble = None;
-                    // The matches are read at the entries the database has,
-                    // and a template this project moves is listed at its new
-                    // one; see `fold_template_moves`.
-                    tool.created_for = None;
-                }
-                Err(e) => {
-                    tool.new_spawn.matches.clear();
-                    tool.new_spawn.trouble = Some(e);
-                }
-            }
-        }
-        return;
-    }
-    if !state.editing() || *chosen != S::TOOL || tool.mode != crate::tools::placements::place::Mode::Place {
-        return;
-    }
-    let asked = (tool.new_spawn.search.trim().to_string(), tool.new_spawn.of_type);
-    if tool.new_spawn.ran.as_ref() == Some(&asked) {
-        return;
-    }
-    tool.new_spawn.ran = Some(asked.clone());
-    let (term, of_type) = asked;
-    if term.len() < 2 && of_type.is_none() {
-        tool.new_spawn.matches.clear();
-        return;
-    }
-    let Some((at, _)) = settings.resolve() else {
-        tool.new_spawn.trouble = Some(vale_mangos::conn::Where::absent());
-        return;
-    };
-    let patch = crate::server::settings::server_patch(&settings);
-    tool.new_spawn.task = Some(crate::server::queue::read(async move {
-        let mut db = vale_mangos::conn::Db::open(&at)?;
-        let sql = S::search_query(&term, of_type, patch, MATCHES);
         Ok(db.rows(&sql)?.iter().filter_map(S::read_known).collect())
     }));
 }

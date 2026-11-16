@@ -275,9 +275,8 @@ pub(crate) trait SpawnSubject: std::fmt::Debug + Send + Sync + Sized + 'static {
     fn template_query(entry: u32, patch: u32) -> String;
     fn spawn_query(guid: u64) -> String;
     fn templates_query(entries: &[u32], patch: u32) -> Option<String>;
-    /// The picker's search. `of_type` narrows it where the subject has types.
-    fn search_query(term: &str, of_type: Option<u32>, patch: u32, limit: usize) -> String;
-    /// Every template row the server would load, for the workspace's list.
+    /// Every template row the server would load, for the workspace's list
+    /// and the Place mode's drawer.
     fn all_templates_query(patch: u32) -> String;
     /// Every column of a new spawn.
     fn new_spawn(entry: u32, map: u32, at: (f32, f32, f32), orientation: f32) -> Vec<Assignment>;
@@ -464,12 +463,14 @@ pub(crate) struct SpawnRow {
     pub(crate) row: vale_mangos::schema::Row,
 }
 
-/// The picker behind Place, and the template a click on the ground will
-/// place.
+/// The Place mode's state: the drawer's search and group, and the template a
+/// click on the ground will place.
 ///
-/// A spawn's first column is a template entry. The template is chosen by
-/// name, and the search also matches the entry, because `vale spawns` and the
-/// template window both print entries and a user who has one can type it.
+/// A spawn's first column is a template entry. The template is chosen in the
+/// asset drawer, from [`SpawnTool::listed`], the whole template table the
+/// workspace also lists. The search matches the name and the entry, because
+/// `vale spawns` and the template window both print entries and a user who
+/// has one can type it.
 ///
 /// The mode decides what a click does, as in the placement tools: in Place, a
 /// chosen template stands under the pointer and the next click on the ground
@@ -477,30 +478,150 @@ pub(crate) struct SpawnRow {
 /// [`SpawnTool::mode`].
 #[derive(Debug)]
 pub(crate) struct NewSpawn<K> {
-    /// What has been typed.
+    /// What is typed in the drawer's search box.
     pub(crate) search: String,
-    /// Which type the matches are narrowed to, or `None` for every type. Only
-    /// the game object picker sets it.
-    pub(crate) of_type: Option<u32>,
-    /// The search and type last sent, so a redraw does not re-query every
-    /// frame.
-    pub(crate) ran: Option<(String, Option<u32>)>,
-    pub(crate) matches: Vec<K>,
-    task: Option<Task<Result<Vec<K>, String>>>,
+    /// Which templates the drawer's grid shows while nothing is typed.
+    pub(crate) group: Group,
+    /// The headings of the drawer's left pane that are open.
+    pub(crate) open: Vec<Facet>,
     /// The template a click will place. The ghost on the cursor and the
     /// preview pane both show it. `None` means nothing is chosen, which is the
     /// state `Escape` leaves. A switch to Select keeps it, so a return to
     /// Place has it on the pointer again; in Select it places nothing, by
     /// [`SpawnTool::placing`].
     pub(crate) chosen: Option<K>,
-    /// Why the search found nothing, when it is not that nothing matched.
-    pub(crate) trouble: Option<String>,
-    /// The `EditSession::database_writes` the matches were read at.
-    searched_at: Option<u64>,
     /// The pool and game event a placed spawn joins. Kept until cleared,
     /// through Escape and a change of template, so a run of placements all
     /// join.
     pub(crate) into: PlaceInto,
+}
+
+/// Which templates the drawer's grid shows. See
+/// `crate::ui::tools::spawns::drawer`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum Group {
+    /// Every template the server would load, and the ones this project
+    /// creates.
+    #[default]
+    All,
+    /// The templates starred in the drawer.
+    Starred,
+    /// The templates last chosen in the drawer, newest first.
+    Recent,
+    /// The templates this project creates.
+    Project,
+    /// The templates of the spawns on the open map.
+    OnMap,
+    /// The templates whose [`Facet`] has a value. For [`Facet::Model`] the
+    /// value is a folder, and a template is in it when its model is in the
+    /// folder or under it.
+    Facet(Facet, String),
+}
+
+/// A way the drawer groups templates, by a column of the row or by what the
+/// row's display resolves to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Facet {
+    /// `creature_template.type` or `gameobject_template.type`.
+    Type,
+    /// `creature_template.rank`.
+    Rank,
+    /// The profession a game object's lock asks for: a mining vein, a herb.
+    Gathering,
+    /// The folder of the model the display id resolves to, such as
+    /// `creature\wolf\`. A folder path in lower case with `\` after each
+    /// name.
+    Model,
+}
+
+/// The template table as the drawer groups and searches it, rebuilt from
+/// [`SpawnTool::listed`] when the list, the project's edits or the map's
+/// spawns change.
+#[derive(Debug)]
+pub(crate) struct Catalogue<K> {
+    /// The list lengths, the store revision, the map read and the spawn count
+    /// the rows were built for.
+    pub(crate) built: Option<(usize, usize, u64, Option<(u32, u64)>, usize)>,
+    /// Every template with the project's edits over it, ordered by name.
+    pub(crate) rows: Vec<Catalogued<K>>,
+    /// The entries of the spawns on the open map.
+    pub(crate) on_map: std::collections::HashSet<u32>,
+    /// The model folder of each display id, so a rebuild does not resolve a
+    /// display again. `None` for a display that resolves to no model.
+    pub(crate) folders: HashMap<u32, Option<String>>,
+}
+
+impl<K> Default for Catalogue<K> {
+    fn default() -> Catalogue<K> {
+        Catalogue { built: None, rows: Vec::new(), on_map: Default::default(), folders: HashMap::new() }
+    }
+}
+
+/// One template of the [`Catalogue`].
+#[derive(Debug, Clone)]
+pub(crate) struct Catalogued<K> {
+    pub(crate) known: K,
+    /// The name and the subname in lower case, which the search matches.
+    pub(crate) haystack: String,
+    /// The template's value for each facet it has.
+    pub(crate) facets: Vec<(Facet, String)>,
+}
+
+impl<K: Template> Catalogue<K> {
+    /// The rows a search shows: a number matches the entry, and any text
+    /// matches the name and the subname. Answers indices into
+    /// [`Self::rows`].
+    pub(crate) fn search(&self, typed: &str) -> Vec<usize> {
+        let needle = typed.trim().to_lowercase();
+        let entry: Option<u32> = needle.parse().ok();
+        (0..self.rows.len())
+            .filter(|&at| {
+                let row = &self.rows[at];
+                entry == Some(row.known.entry()) || row.haystack.contains(&needle)
+            })
+            .collect()
+    }
+
+    /// The rows in a group, other than Starred and Recent, which are lists
+    /// of entries the caller holds. Answers indices into [`Self::rows`].
+    pub(crate) fn in_group(&self, group: &Group) -> Vec<usize> {
+        (0..self.rows.len()).filter(|&at| self.holds(at, group)).collect()
+    }
+
+    /// Whether the row at `at` is in a group.
+    pub(crate) fn holds(&self, at: usize, group: &Group) -> bool {
+        let row = &self.rows[at];
+        match group {
+            Group::All => true,
+            Group::Starred | Group::Recent => false,
+            Group::Project => row.known.is_new(),
+            Group::OnMap => self.on_map.contains(&row.known.entry()),
+            Group::Facet(Facet::Model, folder) => row
+                .facets
+                .iter()
+                .any(|(facet, value)| *facet == Facet::Model && value.starts_with(folder.as_str())),
+            Group::Facet(facet, value) => row.facets.iter().any(|(had, is)| had == facet && is == value),
+        }
+    }
+
+    /// Every value one facet takes, with how many rows have it, in the order
+    /// the values sort.
+    pub(crate) fn values(&self, facet: Facet) -> Vec<(String, usize)> {
+        let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for row in &self.rows {
+            for (had, value) in &row.facets {
+                if *had == facet {
+                    *counts.entry(value.as_str()).or_default() += 1;
+                }
+            }
+        }
+        counts.into_iter().map(|(value, count)| (value.to_string(), count)).collect()
+    }
+
+    /// The row of an entry.
+    pub(crate) fn by_entry(&self, entry: u32) -> Option<&Catalogued<K>> {
+        self.rows.iter().find(|row| row.known.entry() == entry)
+    }
 }
 
 /// The pool and the game event every spawn the tool places is put in, chosen
@@ -519,37 +640,13 @@ impl<K> Default for NewSpawn<K> {
     fn default() -> NewSpawn<K> {
         NewSpawn {
             search: String::new(),
-            of_type: None,
-            ran: None,
-            matches: Vec::new(),
-            task: None,
+            group: Group::default(),
+            open: Vec::new(),
             chosen: None,
-            trouble: None,
-            searched_at: None,
             into: PlaceInto::default(),
         }
     }
 }
-
-impl<K> NewSpawn<K> {
-    /// Whether a search is in flight, for the panel.
-    pub(crate) fn searching(&self) -> bool {
-        self.task.is_some()
-    }
-
-    /// Forget the matches, which a map change or an apply makes stale.
-    pub(crate) fn forget(&mut self) {
-        self.ran = None;
-        self.matches.clear();
-    }
-}
-
-/// How many entries the picker lists at once: fifty.
-///
-/// A `LIKE '%a%'` over ten thousand templates matches thousands. A longer list
-/// is not scrolled through; the user narrows it by typing more letters into
-/// the search box.
-const MATCHES: usize = 50;
 
 /// What a held left button is moving, once it has moved far enough to be a
 /// drag.
@@ -822,8 +919,8 @@ pub(crate) struct SpawnTool<S: SpawnSubject> {
     /// What an entry is, for the spawns of it this project creates.
     ///
     /// Filled from the map query, which already carries these columns for
-    /// every spawn on the map; from the picker's matches; and, for an entry
-    /// neither knows, from a read of its own.
+    /// every spawn on the map, and, for an entry it does not know, from a
+    /// read of its own.
     pub(crate) known: Fresh<HashMap<u32, S::Known>>,
     /// The read of [`Self::known`]'s own, while it is running.
     known_task: Option<Task<Result<Vec<S::Known>, String>>>,
@@ -927,9 +1024,11 @@ pub(crate) struct SpawnTool<S: SpawnSubject> {
     /// flag the apply ran against an empty store and reported "nothing to
     /// apply", and the edit arrived afterwards.
     pub(crate) scripted_done: bool,
-    /// Every template row, for the subject's workspace. See
-    /// [`crate::subjects::templates`].
+    /// Every template row, for the subject's workspace and the Place mode's
+    /// drawer. See [`crate::subjects::templates`].
     pub(crate) listed: Listing<S::Known>,
+    /// [`Self::listed`] as the drawer groups and searches it.
+    pub(crate) catalogue: Catalogue<S::Known>,
     /// What only this subject's tool keeps.
     pub(crate) own: S::Own,
     /// A spawn to select and frame once its map is read; see [`GoTo`].
@@ -1028,6 +1127,7 @@ impl<S: SpawnSubject> Default for SpawnTool<S> {
             drag: None,
             scripted_done: false,
             listed: Listing::default(),
+            catalogue: Catalogue::default(),
             own: S::Own::default(),
             go_to: None,
             tags: HashMap::new(),
@@ -1726,14 +1826,12 @@ impl<S: SpawnSubject> SpawnTool<S> {
     /// Ask for the map to be read again on the next frame.
     ///
     /// The two whole rows the form draws go with it, so after an apply or a
-    /// revert the form and the markers show the same reading, and the
-    /// picker's matches, which an apply can change.
+    /// revert the form and the markers show the same reading.
     pub(crate) fn forget(&mut self) {
         self.loaded = None;
         self.built_at = None;
         self.template = None;
         self.spawn_row = None;
-        self.new_spawn.forget();
     }
 
     /// The entry a new template gets.
@@ -1917,20 +2015,20 @@ impl<S: SpawnSubject> SpawnTool<S> {
     }
 
     /// Whether an entry is already a template, as far as this tool can see:
-    /// the templates behind the map's spawns, the picker's matches, the
-    /// templates read for created spawns, the ones this project creates, and
-    /// the whole table once the workspace has read it. Asked by the entry the
+    /// the templates behind the map's spawns, the templates read for created
+    /// spawns, the ones this project creates, and the whole table once the
+    /// workspace or the Place mode's drawer has read it. Asked by the entry the
     /// project gives each row and by the entry the database has it at,
     /// because the database is where an apply runs.
     ///
-    /// An entry with no spawn on this map and never searched for is not seen
-    /// here and is caught at the apply, which asks the database itself.
+    /// Before the whole table is read, an entry with no spawn on this map is
+    /// not seen here and is caught at the apply, which asks the database
+    /// itself.
     pub(crate) fn entry_taken(&self, entry: u32) -> bool {
         self.spawns.iter().any(|spawn| spawn.entry() == entry || spawn.read_entry() == entry)
             || self
                 .known
                 .values()
-                .chain(self.new_spawn.matches.iter())
                 .chain(self.templates.iter())
                 .any(|known| known.entry() == entry || known.read_entry() == entry)
             || self.listed.holds(entry)
@@ -2070,9 +2168,6 @@ impl<S: SpawnSubject> SpawnTool<S> {
             // over with.
             self.overlay.at = None;
         }
-        for known in self.new_spawn.matches.iter_mut() {
-            known.set_entry(moved(known.read_entry(), known.patch()));
-        }
         if let Some(chosen) = self.new_spawn.chosen.as_mut() {
             chosen.set_entry(moved(chosen.read_entry(), chosen.patch()));
         }
@@ -2120,6 +2215,13 @@ impl<S: SpawnSubject> SpawnTool<S> {
         self.task.is_some()
     }
 
+    /// The map and the database write counter the spawns were read at, or
+    /// `None` before the first read. The drawer's catalogue keys its On this
+    /// map group on it.
+    pub(crate) fn map_read(&self) -> Option<(u32, u64)> {
+        self.loaded
+    }
+
     /// Whether a click in the world would place a spawn: the panel is on its
     /// Place half and a template has been chosen.
     ///
@@ -2164,7 +2266,7 @@ impl<S: SpawnSubject> Plugin for SpawnToolPlugin<S> {
         use script::{display_on_the_command_line, on_the_command_line, placed_on_the_command_line, template_on_the_command_line};
         use systems::{
             aim, collect_the_near, drag, draw, enclose, ghost, go_to, learn_the_created, press_across, read_the_map,
-            rebuild_created, search, stand_them_up, tag_the_near,
+            rebuild_created, stand_them_up, tag_the_near,
         };
         app.init_resource::<SpawnTool<S>>()
             .init_resource::<OtherSpawns>()
@@ -2180,7 +2282,6 @@ impl<S: SpawnSubject> Plugin for SpawnToolPlugin<S> {
                     // in it rather than one frame late.
                     rebuild_created::<S>,
                     learn_the_created::<S>,
-                    search::<S>,
                     collect_the_near::<S>,
                     // Before the aim, which picks only what the event filter
                     // leaves in the world.

@@ -1,5 +1,11 @@
-//! The asset drawer: the panel under the viewport that lists the tilesets or
-//! the models for the inspector section that asked for it this frame.
+//! The asset drawer: the panel under the viewport that lists the tilesets,
+//! the models, or a spawn tool's templates for the inspector section that
+//! asked for it this frame.
+//!
+//! This file draws the tilesets and the models, which are files in folders.
+//! The templates are rows of a server table, and
+//! `crate::ui::tools::spawns::drawer` draws them inside the same [`frame`]
+//! with the same tiles; see [`Purpose::Spawn`].
 //!
 //! ```text
 //! header  the list's name, what a click does, the search box, the picture
@@ -43,6 +49,7 @@ use crate::preview::portraits::{self, Portraits};
 use crate::session::files::Spellings;
 use crate::tools::ground::textures::Textures;
 use crate::tools::placements::place::{Kind, Placing, SEP};
+use crate::tools::spawns::spawn::SpawnKind;
 use crate::ui::tools::placements::place::list_of;
 use crate::ui::widgets::folders::{breadcrumb, folder_row, split, split_folder};
 use crate::ui::widgets::theme;
@@ -63,10 +70,10 @@ const TREE_WIDTH: f32 = 210.0;
 const TILE: std::ops::RangeInclusive<f32> = 48.0..=128.0;
 
 /// The space between two tiles of the grid, in points.
-const GAP: f32 = 6.0;
+pub(crate) const GAP: f32 = 6.0;
 
 /// The height of one line of a tile's label, in points.
-const LINE: f32 = 14.0;
+pub(crate) const LINE: f32 = 14.0;
 
 /// What a click in the drawer is for. Each is one inspector section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,13 +90,18 @@ pub(crate) enum Purpose {
     Replace(Kind),
     /// A doodad added inside the building editor's building.
     BuildingDoodad,
+    /// The creature or game object template the spawn tool's Place mode puts
+    /// on the cursor. The list is the template table, not a folder of files,
+    /// and `crate::ui::tools::spawns::drawer` draws it inside [`frame`].
+    Spawn(SpawnKind),
 }
 
 impl Purpose {
-    /// The model kind the drawer lists, or `None` for the tilesets.
+    /// The model kind the drawer lists, or `None` for the tilesets and the
+    /// templates.
     fn models(self) -> Option<Kind> {
         match self {
-            Purpose::Brush | Purpose::Road => None,
+            Purpose::Brush | Purpose::Road | Purpose::Spawn(_) => None,
             Purpose::Place(kind) | Purpose::Replace(kind) => Some(kind),
             Purpose::Cluster | Purpose::BuildingDoodad => Some(Kind::Doodad),
         }
@@ -97,10 +109,12 @@ impl Purpose {
 
     /// The drawer's heading.
     fn title(self) -> &'static str {
-        match self.models() {
-            None => "Tilesets",
-            Some(Kind::Doodad) => "Doodads",
-            Some(Kind::Wmo) => "WMOs",
+        match (self, self.models()) {
+            (Purpose::Spawn(SpawnKind::Creature), _) => "Creatures",
+            (Purpose::Spawn(SpawnKind::GameObject), _) => "Game Objects",
+            (_, None) => "Tilesets",
+            (_, Some(Kind::Doodad)) => "Doodads",
+            (_, Some(Kind::Wmo)) => "WMOs",
         }
     }
 
@@ -113,6 +127,18 @@ impl Purpose {
             Purpose::Cluster => "Click a model to add it to the cluster, or a highlighted one to take it out.",
             Purpose::Replace(_) => "Click a model to choose it for Replace Model.",
             Purpose::BuildingDoodad => "Click a model to put it on the cursor inside the building.",
+            Purpose::Spawn(SpawnKind::Creature) => "Click a creature to put it on the cursor.",
+            Purpose::Spawn(SpawnKind::GameObject) => "Click a game object to put it on the cursor.",
+        }
+    }
+
+    /// The search box's hint.
+    fn search_hint(self) -> &'static str {
+        match (self, self.models()) {
+            (Purpose::Spawn(SpawnKind::Creature), _) => "Search names, subnames and entries",
+            (Purpose::Spawn(SpawnKind::GameObject), _) => "Search names and entries",
+            (_, None) => "Search the tilesets",
+            (_, Some(_)) => "Search the models",
         }
     }
 }
@@ -181,6 +207,30 @@ impl Drawer {
     pub(crate) fn show_folder(&mut self, kind: Kind) {
         self.showing[kind as usize] = Showing::Folder;
     }
+
+    /// This frame's offer when it is for a spawn tool's templates, with the
+    /// entries the section marks as chosen. [`draw`] leaves such an offer in
+    /// place for `crate::ui::tools::spawns::drawer`, which takes it here.
+    pub(crate) fn take_spawn_offer(&mut self) -> Option<(SpawnKind, Vec<String>)> {
+        match self.offered.take() {
+            Some(Offer { purpose: Purpose::Spawn(kind), chosen }) => Some((kind, chosen)),
+            other => {
+                self.offered = other;
+                None
+            }
+        }
+    }
+
+    /// Keep a click on a template for the section that offered the drawer.
+    /// The section receives it from the next frame's [`Self::offer`].
+    pub(crate) fn pick(&mut self, purpose: Purpose, key: String) {
+        self.picked = Some((purpose, key));
+    }
+
+    /// The side of a tile's picture, in points.
+    pub(crate) fn tile_side(&self) -> f32 {
+        self.tile
+    }
 }
 
 /// One tile of the grid.
@@ -221,6 +271,12 @@ pub(crate) fn draw(
     if !room {
         return;
     }
+    // A spawn tool's templates are drawn by the spawn tools' own code, which
+    // takes the offer after this; see [`Drawer::take_spawn_offer`].
+    if matches!(offer.purpose, Purpose::Spawn(_)) {
+        drawer.offered = Some(offer);
+        return;
+    }
     let purpose = offer.purpose;
     let kind = purpose.models();
     let (catalogue, spell, mut folder, mut search) = match kind {
@@ -240,23 +296,7 @@ pub(crate) fn draw(
     let was_search = search.clone();
     let mut go: Option<Go> = None;
 
-    let panel = match drawer.hidden {
-        // A separate id, because a bottom panel keeps the height its content
-        // had in the last frame, and the header alone would become the height
-        // the drawer opens at.
-        true => egui::Panel::bottom("editor-drawer-hidden").resizable(false),
-        false => egui::Panel::bottom("editor-drawer")
-            .resizable(true)
-            .default_size(HEIGHT)
-            .min_size(MIN_HEIGHT)
-            .max_size((root.available_height() * 0.7).max(MIN_HEIGHT)),
-    };
-    panel.frame(crate::ui::side(theme::PANEL)).show(root, |ui| {
-        header(ui, drawer, purpose, &mut search);
-        if drawer.hidden {
-            return;
-        }
-        let body = ui.available_rect_before_wrap();
+    frame(root, drawer, purpose, &mut search, |ui, drawer, body, search| {
         if !catalogue.iter().any(|path| !path.is_empty()) {
             theme::note(
                 ui,
@@ -265,13 +305,9 @@ pub(crate) fn draw(
                     Some(_) => "Reading the model list\u{2026}",
                 },
             );
-            ui.advance_cursor_after_rect(body);
             return;
         }
-        let split_at = body.left() + TREE_WIDTH.min(body.width() * 0.4);
-        let tree_rect = egui::Rect::from_min_max(body.min, egui::pos2(split_at, body.max.y));
-        let grid_rect = egui::Rect::from_min_max(egui::pos2(split_at + 9.0, body.min.y), body.max);
-        ui.painter().vline(split_at + 4.0, body.y_range(), egui::Stroke::new(1.0, theme::LINE));
+        let (tree_rect, grid_rect) = halves(ui, body);
 
         let showing = match kind {
             Some(kind) if search.is_empty() => drawer.showing[kind as usize],
@@ -286,7 +322,7 @@ pub(crate) fn draw(
                 ui,
                 catalogue,
                 &folder,
-                &search,
+                search,
                 showing,
                 &offer,
                 drawer,
@@ -297,7 +333,6 @@ pub(crate) fn draw(
             );
             go = asked.or(go.take());
         });
-        ui.advance_cursor_after_rect(body);
     });
 
     // A folder chosen in the tree or the grid ends the search, since the
@@ -341,6 +376,49 @@ pub(crate) fn draw(
     }
 }
 
+/// The drawer's panel, docked at the bottom of `root`, with its header row.
+/// `body` draws the rest into the rectangle under the header, unless the
+/// drawer is hidden, and is given the search text as the header left it. Both drawers use it: the files in [`draw`] and the
+/// spawn tools' templates in `crate::ui::tools::spawns::drawer`.
+pub(crate) fn frame(
+    root: &mut egui::Ui,
+    drawer: &mut Drawer,
+    purpose: Purpose,
+    search: &mut String,
+    body: impl FnOnce(&mut egui::Ui, &mut Drawer, egui::Rect, &str),
+) {
+    let panel = match drawer.hidden {
+        // A separate id, because a bottom panel keeps the height its content
+        // had in the last frame, and the header alone would become the height
+        // the drawer opens at.
+        true => egui::Panel::bottom("editor-drawer-hidden").resizable(false),
+        false => egui::Panel::bottom("editor-drawer")
+            .resizable(true)
+            .default_size(HEIGHT)
+            .min_size(MIN_HEIGHT)
+            .max_size((root.available_height() * 0.7).max(MIN_HEIGHT)),
+    };
+    panel.frame(crate::ui::side(theme::PANEL)).show(root, |ui| {
+        header(ui, drawer, purpose, search);
+        if drawer.hidden {
+            return;
+        }
+        let rect = ui.available_rect_before_wrap();
+        body(ui, drawer, rect, search);
+        ui.advance_cursor_after_rect(rect);
+    });
+}
+
+/// Split the body into the list on the left and the grid on the right, with
+/// a line between them. Answers the two rectangles.
+pub(crate) fn halves(ui: &egui::Ui, body: egui::Rect) -> (egui::Rect, egui::Rect) {
+    let split_at = body.left() + TREE_WIDTH.min(body.width() * 0.4);
+    let tree_rect = egui::Rect::from_min_max(body.min, egui::pos2(split_at, body.max.y));
+    let grid_rect = egui::Rect::from_min_max(egui::pos2(split_at + 9.0, body.min.y), body.max);
+    ui.painter().vline(split_at + 4.0, body.y_range(), egui::Stroke::new(1.0, theme::LINE));
+    (tree_rect, grid_rect)
+}
+
 /// The header row: the heading and what a click does, then at the right the
 /// Hide or Show button, the picture size and the search box.
 fn header(ui: &mut egui::Ui, drawer: &mut Drawer, purpose: Purpose, search: &mut String) {
@@ -365,10 +443,7 @@ fn header(ui: &mut egui::Ui, drawer: &mut Drawer, purpose: Purpose, search: &mut
                 .on_hover_text("The size of the pictures.");
             ui.add(
                 egui::TextEdit::singleline(search)
-                    .hint_text(match purpose.models() {
-                        None => "Search the tilesets",
-                        Some(_) => "Search the models",
-                    })
+                    .hint_text(purpose.search_hint())
                     .desired_width(220.0),
             );
             ui.add(
@@ -405,7 +480,11 @@ fn tree_pane(
                     ("Starred", Showing::Starred, favourites.starred(list).len()),
                     ("Recent", Showing::Recent, favourites.recent(list).len()),
                 ] {
-                    if list_row(ui, name, which, count, showing == which, row).clicked() {
+                    let mark = match which {
+                        Showing::Starred => Mark::Star,
+                        _ => Mark::Clock,
+                    };
+                    if list_row(ui, name, mark, count, showing == which, row, 0.0).clicked() {
                         go = Some(Go::Show(which));
                     }
                 }
@@ -465,9 +544,28 @@ fn tree(
     go
 }
 
-/// The Starred or Recent row of the left pane: a painted mark, the name and
-/// how many models the list holds.
-fn list_row(ui: &mut egui::Ui, name: &str, which: Showing, count: usize, on: bool, row: f32) -> egui::Response {
+/// What a row of the left pane is marked with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mark {
+    /// No mark: a group of the spawn drawer.
+    None,
+    /// Starred.
+    Star,
+    /// Recent.
+    Clock,
+}
+
+/// A list row of the left pane, such as Starred or Recent: its mark, the
+/// name and how many entries the list holds, `indent` points in.
+pub(crate) fn list_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    mark: Mark,
+    count: usize,
+    on: bool,
+    row: f32,
+    indent: f32,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row - 2.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -478,19 +576,20 @@ fn list_row(ui: &mut egui::Ui, name: &str, which: Showing, count: usize, on: boo
             };
             painter.rect_filled(rect, egui::CornerRadius::same(3), fill);
         }
-        let mark = egui::pos2(rect.left() + 12.0, rect.center().y);
-        match which {
-            Showing::Starred => theme::star(painter, mark, 6.0, true),
-            _ => {
+        let at = egui::pos2(rect.left() + indent + 12.0, rect.center().y);
+        match mark {
+            Mark::None => {}
+            Mark::Star => theme::star(painter, at, 6.0, true),
+            Mark::Clock => {
                 let stroke = egui::Stroke::new(1.2, theme::INK_DIM);
-                painter.circle_stroke(mark, 5.5, stroke);
-                painter.line_segment([mark, mark + egui::vec2(0.0, -3.5)], stroke);
-                painter.line_segment([mark, mark + egui::vec2(2.5, 0.0)], stroke);
+                painter.circle_stroke(at, 5.5, stroke);
+                painter.line_segment([at, at + egui::vec2(0.0, -3.5)], stroke);
+                painter.line_segment([at, at + egui::vec2(2.5, 0.0)], stroke);
             }
         }
         let text = painter.with_clip_rect(rect);
         text.text(
-            egui::pos2(rect.left() + 24.0, rect.center().y),
+            egui::pos2(rect.left() + indent + 24.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             name,
             egui::FontId::proportional(theme::LIST_TITLE),
@@ -688,7 +787,7 @@ fn file_tile(
 
 /// Allocate one tile, `side` wide and `height` tall, and paint its background:
 /// the accent when `on`, a raised fill under the pointer.
-fn tile(ui: &mut egui::Ui, side: f32, height: f32, on: bool) -> egui::Response {
+pub(crate) fn tile(ui: &mut egui::Ui, side: f32, height: f32, on: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(side, height), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -713,7 +812,7 @@ fn tile(ui: &mut egui::Ui, side: f32, height: f32, on: bool) -> egui::Response {
 
 /// The square a tile's picture is drawn in: the top of the tile, inset 3
 /// points.
-fn picture_rect(tile: egui::Rect, side: f32) -> egui::Rect {
+pub(crate) fn picture_rect(tile: egui::Rect, side: f32) -> egui::Rect {
     egui::Rect::from_min_size(tile.min + egui::vec2(3.0, 3.0), egui::Vec2::splat(side - 6.0))
 }
 
@@ -762,7 +861,7 @@ fn folder_picture(painter: &egui::Painter, square: egui::Rect, count: usize) {
 
 /// A tile's label under its picture: the name, and the folder under it when
 /// given. Each line is cut with an ellipsis at the picture's width.
-fn label(ui: &egui::Ui, square: egui::Rect, name: &str, folder: Option<&str>, on: bool) {
+pub(crate) fn label(ui: &egui::Ui, square: egui::Rect, name: &str, folder: Option<&str>, on: bool) {
     let colour = match on {
         true => theme::INK,
         false => theme::INK_DIM,
@@ -803,6 +902,19 @@ mod tests {
             Some("world\\tree.m2".to_string())
         );
         assert_eq!(drawer.offer(Purpose::Place(Kind::Doodad), &[]), None);
+    }
+
+    /// A spawn tool's offer is taken by the spawn drawer, once, and a file
+    /// offer is not.
+    #[test]
+    fn a_spawn_offer_is_taken_only_by_the_spawn_drawer() {
+        let mut drawer = Drawer::default();
+        assert_eq!(drawer.offer(Purpose::Spawn(SpawnKind::Creature), &["68".to_string()]), None);
+        assert_eq!(drawer.take_spawn_offer(), Some((SpawnKind::Creature, vec!["68".to_string()])));
+        assert_eq!(drawer.take_spawn_offer(), None);
+        drawer.offer(Purpose::Brush, &[]);
+        assert_eq!(drawer.take_spawn_offer(), None, "a file offer stays for the file drawer");
+        assert!(drawer.offered.is_some());
     }
 
     /// A tile names the file without its folder or extension.

@@ -78,18 +78,19 @@ pub(super) fn on_the_command_line<S: SpawnSubject>(
 
 /// `--spawn-add <entry>`, `--spawn-delete <guid>` and `--pick <entry>`, or the
 /// `--object-` spellings: add a spawn to the map, remove one, or choose an
-/// entry in the picker and place nothing.
+/// entry in the Place mode and place nothing.
 ///
-/// The placement goes through the picker rather than around it, so the same
-/// run checks the search: the entry is typed into the box, the match is taken
-/// from the results, and the placement is the ordinary one.
+/// The placement goes through the Place mode rather than around it: the mode
+/// is entered, the entry is typed into the drawer's search, the template is
+/// taken from the table the drawer lists, and the placement is the ordinary
+/// one.
 ///
 /// It waits for three things; without any one of them the placement fails or
 /// lands in the wrong place:
 ///
 /// * the map read, because the guid comes from the highest the table holds;
-/// * the search, because the template has to be known before it can be drawn
-///   or placed;
+/// * the template table, because the template has to be known before it can
+///   be drawn or placed;
 /// * the tile under the camera, because a placement takes the ground's height
 ///   and a tile that is not open returns none, which leaves the spawn buried
 ///   in the slope it was meant to stand on.
@@ -126,7 +127,7 @@ pub(super) fn placed_on_the_command_line<S: SpawnSubject>(
     let Some(session) = session.as_mut() else { return };
     let now = time.elapsed_secs_f64();
 
-    // Once: the system runs again on each frame it waits for the search, and
+    // Once: the system runs again on each frame it waits for the table, and
     // the removal leaves the spawn selected.
     if let Some(guid) = script.delete {
         if tool.selected != Some(guid) {
@@ -150,19 +151,24 @@ pub(super) fn placed_on_the_command_line<S: SpawnSubject>(
         tool.scripted_done = true;
         return;
     };
-    // Through the picker, so the search is checked by the same run.
-    if tool.new_spawn.search.is_empty() {
+    // Through the Place mode, whose drawer reads the template table, and with
+    // the entry typed into the drawer's search so a screenshot shows the row.
+    if tool.mode != crate::tools::placements::place::Mode::Place || tool.new_spawn.search.is_empty() {
         tool.mode = crate::tools::placements::place::Mode::Place;
         tool.new_spawn.search = entry.to_string();
         return;
     }
-    if tool.new_spawn.searching() || tool.new_spawn.ran.is_none() {
+    if !tool.listed.is_read() {
         return;
     }
-    let Some(known) = tool.new_spawn.matches.iter().find(|known| known.entry() == entry).cloned() else {
+    let found = tool.listed.by_entry(entry).map(|known| crate::subjects::listing::Listed::with_edits(known, &session.rows.edits));
+    let Some(known) = found else {
         *done = true;
         tool.scripted_done = true;
-        warn!("{}: no {} template with entry {entry}", flags.add, S::WORDS.noun);
+        match tool.listed.trouble.clone() {
+            Some(trouble) => warn!("{}: the template table did not read: {trouble}", flags.add),
+            None => warn!("{}: no {} template with entry {entry}", flags.add, S::WORDS.noun),
+        }
         return;
     };
     tool.new_spawn.chosen = Some(known.clone());

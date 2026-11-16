@@ -9,15 +9,15 @@ use crate::scripted::Screenshots;
 use crate::window::{WindowScript, RESIZE_FRACTION};
 use crate::world::camera;
 
-/// The command line: who to log in as, and whether this run is a scripted look
-/// at the screen rather than someone sitting in front of it.
+/// The command line: the character to log in as, and whether this run is a
+/// scripted check that runs without a person at the keyboard.
 ///
 /// ```text
 /// vale-client <Character>
 /// vale-client <Character> --shot <path> [--after <seconds>] [--view <distance,pitch°,yaw°>]
 ///                            [--tune none|nomsaa,novsync,shadows]
 ///                            [--without doodads,buildings,entities,water,particles,interface,...]
-///                            [--night off|0..1] [--hour <hh:mm>] [--weather <kind>[,<grade>]]
+///                            [--night off|on|0..1] [--hour <hh:mm>] [--weather <kind>[,<grade>]]
 ///                            [--script <lua>] [--overlay wireframe,collision,…]
 ///                            [--panel <tab>] [--relogin <seconds>[,<gap>]]
 /// ```
@@ -37,19 +37,16 @@ pub(crate) struct Args {
     /// [`render::tuning::WorldTuning::without`]. `--tune` measures the cost of
     /// a setting; `--without` measures the cost of a pass.
     pub(crate) world: Option<render::tuning::WorldTuning>,
-    /// `--night <off|0..1>`: the strength of the deep night, or `off`. `None`
-    /// keeps the default, which is on.
+    /// `--night <off|on|0..1>`: the strength of the deep night, `on` for full
+    /// strength, or `off`. `None` keeps the default, which is off.
     ///
     /// `--tune` trades CPU against GPU against image quality on this machine,
     /// and `--without` removes a layer so the cost of a pass can be measured.
     /// This flag adds something the game does not have, which is why it is
     /// separate from both. It lets a shot be compared with a shot of the same
     /// framing under `--night off`, which shows whether the deep night is too
-    /// dark.
-    ///
-    /// See [`render::night`], which owns it and says why the default is on:
-    /// the grade is exactly the identity in daylight, so an unflagged run at
-    /// noon renders the same image every earlier measurement was taken against.
+    /// dark. The grade is the identity in daylight either way. See
+    /// [`render::night`], which owns it.
     pub(crate) night: Option<render::night::NightTuning>,
     /// `--hour <hh:mm>`: sets the world's clock by hand for the whole run.
     ///
@@ -132,11 +129,11 @@ pub(crate) struct Args {
     #[cfg(feature = "diagnostics")]
     pub(crate) spin: usize,
     /// `--party <n>`, with `--audit`: how many people the double is grouped
-    /// with, 0..4. A report attributed a cost to the party size, the one
-    /// dimension of the harness's world it named, so this flag is a
-    /// subtraction: two runs that differ only in it measure the cost of the
-    /// party frames, as `--without` does for a render pass. Defaults to 2,
-    /// which every earlier measurement was taken against.
+    /// with, 0..4. Two runs that differ only in this flag measure the cost of
+    /// the party frames, as `--without` does for a render pass. The flag exists
+    /// because a report attributed a cost to the party size, the only dimension
+    /// of the harness's world that the report named. Defaults to 2, the value
+    /// every earlier measurement used.
     #[cfg(feature = "diagnostics")]
     pub(crate) party: Option<usize>,
     /// `--raid <n>`, with `--audit`: how many people are in the double's raid,
@@ -154,7 +151,7 @@ pub(crate) struct Args {
     pub(crate) events: bool,
     /// `--type <line>`, with `--audit`: open the chat line, type that into it
     /// and press Enter, then say what would have gone on the wire. This checks
-    /// the path a person drives without a person; see
+    /// the chat input path without a person at the keyboard; see
     /// [`crate::lua::audit::type_a_line`].
     #[cfg(feature = "diagnostics")]
     pub(crate) typed: Option<String>,
@@ -232,9 +229,9 @@ pub(crate) struct Args {
     /// never sent, to measure the cost of the entity pass.
     ///
     /// `--without` does this for a render layer and `--party` for the
-    /// interface; neither changes the entity population. The only other way to
-    /// get forty players into one frame is forty people, so without this flag
-    /// the entity pass is the one cost in this renderer that cannot be measured
+    /// interface; neither changes the entity population. Forty players in one
+    /// frame otherwise need forty connected players, so without this flag the
+    /// entity pass is the one cost in this renderer that cannot be measured
     /// from a script.
     /// See [`world::crowd`].
     #[cfg(feature = "diagnostics")]

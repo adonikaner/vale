@@ -84,6 +84,13 @@ pub(crate) struct Subject<'a, S: SpawnView> {
     /// Whether the other spawn tool's spawns are drawn too. See
     /// [`crate::tools::spawns::spawn::OtherSpawns`].
     pub(crate) others: &'a mut crate::tools::spawns::spawn::OtherSpawns,
+    /// The asset drawer under the viewport, which the Place mode opens on
+    /// the template list. See [`crate::ui::tools::spawns::drawer`], which
+    /// takes it out of the subject so the subject can be lent to the
+    /// pictures while the drawer is drawn.
+    pub(crate) drawer: Option<&'a mut crate::ui::shell::drawer::Drawer>,
+    /// The starred and recently placed templates the drawer lists.
+    pub(crate) favourites: &'a mut crate::prefs::favourites::Favourites,
     /// What only this subject's panel reaches.
     pub(crate) own: S::Panel<'a>,
 }
@@ -115,10 +122,6 @@ pub(crate) struct Text {
     pub(crate) edit: &'static str,
     pub(crate) edit_chosen: &'static str,
     pub(crate) edit_selected: &'static str,
-    /// The hover of the picker's Search heading: what the search covers.
-    pub(crate) search: &'static str,
-    /// The picker's note while the search is too short to send.
-    pub(crate) too_short: &'static str,
     /// The note under a chosen template with no model, if the subject says
     /// one.
     pub(crate) no_model: Option<&'static str>,
@@ -158,14 +161,12 @@ pub(crate) trait SpawnView: SpawnSubject {
     /// Draw the large preview of a display id, `side` points wide, or the
     /// preview pane's own width. Answers whether the display resolved.
     fn preview(ui: &mut egui::Ui, subject: &mut Subject<'_, Self>, display_id: u32, side: Option<f32>) -> bool;
-    /// The line under a template's name in the picker.
+    /// The line under a template's name in the drawer.
     fn row_line(subject: &mut Subject<'_, Self>, known: &Self::Known) -> String;
     /// The line under a template's name in the workspace's list.
     fn list_line(subject: &mut Subject<'_, Self>, known: &Self::Known) -> String;
     /// What the picker says about the chosen template under its name.
     fn chosen_detail(ui: &mut egui::Ui, subject: &mut Subject<'_, Self>, chosen: &Self::Known);
-    /// The picker's filters under the search box.
-    fn search_filters(_ui: &mut egui::Ui, _subject: &mut Subject<'_, Self>) {}
     /// What switching to Place does beside arming the picker.
     fn on_place(_subject: &mut Subject<'_, Self>) {}
     /// What Reload forgets beside the map.
@@ -195,6 +196,17 @@ pub(crate) trait SpawnView: SpawnSubject {
     fn holders<'s>(
         own: &'s Self::Panel<'_>,
     ) -> (&'s crate::subjects::pools::Pools, &'s crate::subjects::game_events::GameEvents);
+    /// The drawer's facet headings, in the order they are listed, with the
+    /// name each is shown under. See [`crate::ui::tools::spawns::drawer`].
+    const FACETS: &'static [(crate::tools::spawns::spawn::Facet, &'static str)];
+    /// The kept list the drawer stars this subject's templates in and counts
+    /// them as recent in.
+    const FAVOURITES: crate::prefs::favourites::Kind;
+    /// The model a display id resolves to, for the drawer's Model group.
+    fn model_path(subject: &mut Subject<'_, Self>, display_id: u32) -> Option<String>;
+    /// A template's values for the drawer's facets other than
+    /// [`Facet::Model`](crate::tools::spawns::spawn::Facet::Model).
+    fn sorts(subject: &mut Subject<'_, Self>, known: &Self::Known) -> Vec<(crate::tools::spawns::spawn::Facet, String)>;
 }
 
 /// Draw a subject's panel, and the two dialogs its forms open.
@@ -747,24 +759,34 @@ const PLACE_KEYS: [(&str, &str); 7] = [
 ///
 /// It has the same shape as the placement tools; see
 /// [`crate::tools::placements::place`] for why this is a mode rather than a
-/// second rail entry. Only what is chosen differs: a doodad is a path in the
-/// archives and a spawn's template is a row of the template table, so the list
-/// comes from a query rather than from a listing, and the search covers names
-/// as well as entries.
+/// second rail entry. The templates are listed in the asset drawer under the
+/// viewport, as the doodads and WMOs are. Only the list differs: a doodad is a
+/// path in the archives and a spawn's template is a row of the template
+/// table, grouped by its columns rather than by folders. See
+/// [`crate::ui::tools::spawns::drawer`].
 ///
 /// There is no Place button. The mode arms the pointer with the chosen
-/// template, so clicking a row is the last step before clicking the ground. A
-/// separate button press would add a step to every placement and give two
-/// ways to reach the same state.
+/// template, so clicking a template in the drawer is the last step before
+/// clicking the ground. A separate button press would add a step to every
+/// placement and give two ways to reach the same state.
 ///
-/// The panel has no line saying how to place: the toolbar's Place segment
-/// says it when hovered, and the Keys button lists the keys.
-///
-/// The sections are Place Into, the template section and Search. The
-/// template section holds the chosen template with its preview, then the
-/// buttons that make, copy and discard a template and the list of the
-/// templates this project created.
+/// The sections are Place Into and the template section. The template
+/// section holds the chosen template with its preview, then the buttons that
+/// make, copy and discard a template. While nothing is chosen, one line says
+/// where the templates are.
 fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
+    // The drawer is offered first, so a template clicked there in the last
+    // frame is the chosen one in this frame's section.
+    let chosen: Vec<String> = subject.tool.new_spawn.chosen.iter().map(|known| known.entry().to_string()).collect();
+    let picked = subject
+        .drawer
+        .as_deref_mut()
+        .and_then(|drawer| drawer.offer(crate::ui::shell::drawer::Purpose::Spawn(S::KIND), &chosen));
+    if let Some(entry) = picked.and_then(|text| text.parse::<u32>().ok()) {
+        if let Some(row) = subject.tool.catalogue.by_entry(entry) {
+            subject.tool.new_spawn.chosen = Some(row.known.clone());
+        }
+    }
     place_into(ui, subject);
     theme::heading(ui, S::TEXT.heading);
     match subject.tool.new_spawn.chosen.clone() {
@@ -800,55 +822,16 @@ fn picker<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
             property(ui, "Chosen", "", |ui| {
                 value_in(ui, "None", theme::INK_DIM);
             });
+            theme::note(
+                ui,
+                format!(
+                    "Choose a {} in the drawer under the viewport, then click the ground to place it.",
+                    S::WORDS.noun
+                ),
+            );
         }
     }
     template_actions(ui, subject);
-    created_templates(ui, subject);
-
-    theme::heading_about(
-        ui,
-        "Search",
-        &format!("{} The list shows at most 50 matches: type more of the name to narrow it.", S::TEXT.search),
-    );
-    ui.add(
-        egui::TextEdit::singleline(&mut subject.tool.new_spawn.search)
-            .hint_text("Name or entry")
-            .desired_width(f32::INFINITY),
-    );
-    S::search_filters(ui, subject);
-    if let Some(trouble) = subject.tool.new_spawn.trouble.clone() {
-        ui.label(egui::RichText::new(trouble).size(theme::SMALL).color(theme::BAD));
-    }
-    if subject.tool.new_spawn.searching() {
-        theme::waiting(ui, "Searching\u{2026}");
-        return;
-    }
-    // The search is sent with two letters, or with none once a type is
-    // chosen; see `crate::tools::spawns::spawn::systems::search`.
-    if subject.tool.new_spawn.search.trim().len() < 2 && subject.tool.new_spawn.of_type.is_none() {
-        theme::note(ui, S::TEXT.too_short);
-        return;
-    }
-    let matches = subject.tool.new_spawn.matches.clone();
-    if matches.is_empty() {
-        theme::note(ui, format!("No matching {}.", S::WORDS.nouns));
-        return;
-    }
-    egui::ScrollArea::vertical()
-        .id_salt((S::TEMPLATE, "new-spawn-matches"))
-        .max_height(MATCH_LIST_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for known in &matches {
-                let on = subject.tool.new_spawn.chosen.as_ref().is_some_and(|had| had.entry() == known.entry());
-                if template_row(ui, subject, known, on) {
-                    subject.tool.new_spawn.chosen = Some(known.clone());
-                }
-            }
-        });
-    if matches.len() >= 50 {
-        theme::note(ui, "Showing the first 50 matches.");
-    }
 }
 
 /// The picker's Place Into section: the pool and game event every placed
@@ -964,10 +947,6 @@ fn place_into<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
     }
 }
 
-/// The height the picker's match list may take, so the preview pane above it
-/// keeps its room.
-const MATCH_LIST_HEIGHT: f32 = 260.0;
-
 /// The three buttons of the picker's template section: a new template, a copy
 /// of the one the window is about, and giving up a created one. The
 /// workspace's list has the same row.
@@ -1023,60 +1002,6 @@ fn template_actions<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S
             }
         }
     });
-}
-
-/// The templates this project creates, listed above the search because no
-/// query returns them. Clicking one chooses it, as a search match does.
-fn created_templates<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>) {
-    let templates = subject.tool.templates.clone();
-    if templates.is_empty() {
-        return;
-    }
-    ui.add_space(4.0);
-    theme::note(ui, format!("Created by this project ({})", templates.len()));
-    egui::ScrollArea::vertical()
-        .id_salt((S::TEMPLATE, "created-templates"))
-        .max_height(CREATED_LIST_HEIGHT)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for known in &templates {
-                let on = subject.tool.new_spawn.chosen.as_ref().is_some_and(|had| had.entry() == known.entry());
-                if template_row(ui, subject, known, on) {
-                    subject.tool.new_spawn.chosen = Some(known.clone());
-                }
-            }
-        });
-}
-
-/// The height the created list may take before it scrolls.
-const CREATED_LIST_HEIGHT: f32 = 160.0;
-
-/// One row of the picker: a picture of the model, the name, the subject's
-/// line and the entry. Answers whether it was clicked.
-///
-/// The row is [`theme::list_row`], as it is for the spell and item lists, so
-/// the lists share one set of text sizes. The picture is a rendered model
-/// rather than a decoded icon, requested on every frame the row is drawn, so
-/// only the rows on screen pay for one. See [`crate::preview::portraits`].
-fn template_row<S: SpawnView>(ui: &mut egui::Ui, subject: &mut Subject<'_, S>, known: &S::Known, on: bool) -> bool {
-    let sub = S::row_line(subject, known);
-    let shape = theme::list_row(
-        ui,
-        theme::ListRow {
-            title: known.name(),
-            sub: &sub,
-            trailing: &known.entry().to_string(),
-            tint: theme::INK,
-            picture: true,
-        },
-        on,
-    );
-    // A display id the tables do not resolve: the row still lists the
-    // template, because the server loads a spawn of it.
-    if !S::picture(ui, subject, known.display_id(), shape.picture) {
-        ui.painter().rect_filled(shape.picture, 3.0, theme::LINE);
-    }
-    shape.response.clicked()
 }
 
 /// The selected spawn's Spawn and Location sections, which both subjects

@@ -150,7 +150,7 @@ pub fn has_npc_flag(npc_flags: u32, name: &str) -> bool {
 
 /// `CreatureType`, from `CreatureDefines.h:41`. The same values as
 /// `CreatureType.dbc`.
-pub(crate) const CREATURE_TYPES: [Value; 11] = [
+pub const CREATURE_TYPES: [Value; 11] = [
     Value { value: 1, name: "Beast" },
     Value { value: 2, name: "Dragonkin" },
     Value { value: 3, name: "Demon" },
@@ -540,7 +540,7 @@ pub fn spawns_on_map_query(map: u32, wow_patch: u32) -> String {
         "SELECT c.`guid`, c.`id`, c.`map`, c.`position_x`, c.`position_y`, c.`position_z`, \
          c.`orientation`, c.`spawn_flags`, c.`wander_distance`, c.`movement_type`, \
          t.`name`, t.`subname`, t.`display_id1`, t.`display_scale1`, t.`level_min`, \
-         t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`, t.`patch`, t.`equipment_id`, \
+         t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`, t.`type`, t.`patch`, t.`equipment_id`, \
          a.`patch` AS `addon_patch`, a.`equipment_id` AS `addon_equipment_id`, \
          a.`sheath_state` AS `addon_sheath_state` \
          FROM `creature` c \
@@ -880,7 +880,7 @@ pub const MAX_SPAWN_GUID_QUERY: &str = "SELECT MAX(`guid`) AS `guid` FROM `creat
 /// same fields.
 const BRIEF: &str = "t.`entry`, t.`patch`, t.`name`, t.`subname`, t.`display_id1`, \
      t.`display_scale1`, t.`level_min`, t.`level_max`, t.`faction`, t.`npc_flags`, t.`rank`, \
-     t.`equipment_id`";
+     t.`type`, t.`equipment_id`";
 
 /// The join that picks the row the server would load, shared by both queries.
 fn winning_join(wow_patch: u32) -> String {

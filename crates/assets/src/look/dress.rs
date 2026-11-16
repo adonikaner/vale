@@ -229,12 +229,17 @@ pub fn dress(tables: &DisplayTables, display: &DisplayModel, wearer: &Wearer) ->
     // A helmet hides what it covers, and which of the wearer's own geosets that
     // is depends on the item and the race together: a tauren's mane and a
     // night elf's ears stay visible under a helm that hides a human's hair.
+    // What a hidden piece becomes is the 1.12.1 client's: the hair is replaced
+    // by the bald scalp and each facial-hair group by its `x01` variant, so
+    // the head under the helmet stays closed.
     let hides = helmet_hides(tables, appearance.race, appearance.gender, &worn);
     if hides.hair {
-        geosets.hair = 0;
+        geosets.hair = crate::world::m2::BALD_GEOSET;
     }
     for (variant, hidden) in geosets.facial.iter_mut().zip(hides.facial) {
-        *variant = if hidden { 0 } else { *variant };
+        if hidden {
+            *variant = 1;
+        }
     }
     geosets.hide_ears = hides.ears;
 
@@ -259,9 +264,9 @@ pub fn dress(tables: &DisplayTables, display: &DisplayModel, wearer: &Wearer) ->
         }),
         // Set unconditionally, unlike `look`; see the field's doc. The hair
         // mesh is geometry and its texture is never in a bake, so an NPC needs
-        // it as much as a player does. When `geosets.hair == 0` (bald, or under
-        // a helmet) nothing asks for it, and the renderer leaves the slot
-        // unread.
+        // it as much as a player does. When the hair is the bald scalp (bald,
+        // or under a helmet) nothing asks for it, since the scalp is textured
+        // from the body, and the renderer leaves the slot unread.
         hair: Some(appearance),
         worn,
     }
@@ -750,11 +755,10 @@ mod tests {
         assert_eq!(dressed.hair, None);
     }
 
-    /// A helmet removes the hair geoset without removing the appearance,
+    /// A helmet replaces the hair geoset without removing the appearance,
     /// because the renderer leaves the slot unread rather than filled with
-    /// nothing. This is a test because the
-    /// alternative, clearing `hair` when `geosets.hair` is 0, would make the
-    /// field mean two things.
+    /// nothing. Clearing `hair` when the hair geoset is the bald scalp would
+    /// make the field mean two things.
     #[test]
     fn a_hidden_hairstyle_keeps_the_appearance_it_was_hidden_from() {
         let dressed = dress(

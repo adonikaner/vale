@@ -444,6 +444,14 @@ fn a_composed_skin_key_round_trips_through_the_loader() {
     // but the same hair, which equipment does not affect, so the hair
     // texture is shared and is not recomposed when the boots change.
     assert_eq!(character_hair_key(&changed), character_hair_key(&look));
+    // The type-8 texture key parses back to the appearance and is not the
+    // hair key, since the two are separate images in separate slots.
+    let extra = extra_key(&look.appearance);
+    assert_eq!(
+        parse_character_key(&extra).map(|parsed| parsed.appearance),
+        Some(look.appearance)
+    );
+    assert_ne!(extra, character_hair_key(&look));
 
     // An archive path is never mistaken for a key: MPQ paths cannot hold
     // a NUL, so the two namespaces cannot collide.
@@ -471,6 +479,9 @@ fn the_body_slot_takes_both_of_its_texture_types() {
     // a pauldron's own texture, and the cloak that dresses the wearer's
     // cape geoset. Left unfilled it also draws magenta.
     assert_eq!(skin_slot(2), Some(4));
+    // Type 8 is the skin row's second texture, which both tauren models ask
+    // for instead of a hair texture. Left unfilled their mane draws magenta.
+    assert_eq!(skin_slot(8), Some(5));
     // Type 0 is the one the model names itself, and the client fills nothing.
     assert_eq!(skin_slot(0), None);
     assert_eq!(skin_slot(3), None);

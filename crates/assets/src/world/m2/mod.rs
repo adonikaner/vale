@@ -8,10 +8,10 @@
 //!            models
 //! ```
 //!
-//! This is a port of an earlier JavaScript implementation, which is known to
-//! render this game's models correctly. As with `blp.rs`, the working
-//! implementation is transcribed rather than rewritten from a wiki page,
-//! because the format's layout is simple and its corner cases are not.
+//! This is a port of an earlier JavaScript implementation that renders this
+//! game's models correctly. As with `blp.rs`, the working implementation is
+//! ported rather than rewritten from a wiki page: the layout is simple, but
+//! the implementation already handles the many corner cases.
 //!
 //! Vanilla M2 (version 256..264) is not chunked. It is a flat header of
 //! `M2Array { u32 count, u32 offset }` pairs at fixed offsets, with everything
@@ -270,9 +270,8 @@ pub mod layout {
 const EVENT_SIZE: usize = 44;
 
 /// An animation event: something the client does at a moment of a
-/// sequence, named by a four-character identifier the client switches on
-/// (`$SND`, `$CSD`, `$CSL`, `$CAH`, `$WGG`, `$TRD`, `$DSL`,
-/// `$DSO`, `$SHK` are the ones it knows).
+/// sequence, named by a four-character identifier. The 1.12.1 client acts on
+/// `$SND`, `$CSD`, `$CSL`, `$CAH`, `$WGG`, `$TRD`, `$DSL`, `$DSO` and `$SHK`.
 ///
 /// `$SND` is a sound: `data` is a `SoundEntries` id. Character emote voices
 /// come from these events. `HumanMale.m2`'s `EmoteLaugh` carries the human
@@ -296,12 +295,12 @@ impl M2Event {
         String::from_utf8_lossy(&self.id).into_owned()
     }
 
-    /// The sound this cue plays, when it is one: `$CSD` — the character
-    /// sound, which is what every emote voice on a character model is
-    /// (measured: `HumanMale.m2`'s six `$CSD` are `ClapSounds`,
-    /// `HumanMaleEmoteChicken`, `…Cry`, `…Kiss`, `…Laugh` and one dead id)
-    /// — and `$SND`, the plain one, on the same terms. A zero data word is
-    /// no sound.
+    /// The `SoundEntries` id this event plays, for a `$CSD` (character sound)
+    /// or a `$SND` (plain sound) event. A zero data word is no sound.
+    ///
+    /// Every emote voice on a character model is a `$CSD`. Measured:
+    /// `HumanMale.m2`'s six `$CSD` are `ClapSounds`, `HumanMaleEmoteChicken`,
+    /// `…Cry`, `…Kiss`, `…Laugh` and one dead id.
     pub fn sound(&self) -> Option<u32> {
         ((&self.id == b"$CSD" || &self.id == b"$SND") && self.data != 0).then_some(self.data)
     }
@@ -391,9 +390,9 @@ impl M2 {
 /// the transform the bind-pose point recorded here needs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct M2Attachment {
-    /// The slot this point is, from the client's own attachment enum — see
-    /// [`attach`]. Not an index: a model carries only the points it has, so the
-    /// list is searched by id rather than indexed by it.
+    /// The attachment slot this point is — see [`attach`]. Not an index: a
+    /// model carries only the points it has, so the list is searched by id
+    /// rather than indexed by it.
     pub id: u32,
     /// Index into [`M2Skeleton::bones`]. A model can name a bone it does not
     /// have; the caller bounds-checks, because a wrong index reads another
@@ -404,8 +403,8 @@ pub struct M2Attachment {
 
 /// The attachment ids this client asks for by name.
 ///
-/// The enum is the client's, not the file's, so these are the well-known
-/// numbers. They are checked against the models: every character model in the
+/// The file does not define these ids, so these are the well-known numbers.
+/// They are checked against the models: every character model in the
 /// game carries 5, 6 and 11, and `vale attach` measures the position of the
 /// point named right-shoulder and asserts that it is on the model's right
 /// (WoW model space is +Y left, so the right shoulder is the one with
@@ -417,13 +416,11 @@ pub mod attach {
     /// point, so hanging one from [`HAND_LEFT`] puts the boss through the
     /// wrist and the rim through the body.
     ///
-    /// The client's weapon attacher takes the equipment slot and
-    /// an `isShield` flag and is unambiguous about it: the off-hand slot (16)
-    /// takes attachment 2 and the string `Item\ObjectComponents\Weapon\`, and
-    /// the `isShield` branch immediately overwrites *both* with attachment 0
-    /// and `Item\ObjectComponents\Shield\`. Same branch, same two lines — which
-    /// is also why this client already had the directory right and the point
-    /// wrong.
+    /// The 1.12.1 client hangs an off-hand weapon (slot 16) from attachment 2
+    /// with its model from `Item\ObjectComponents\Weapon\`, and a shield from
+    /// attachment 0 with its model from `Item\ObjectComponents\Shield\`. The
+    /// directory and the point change together. This client once used the
+    /// shield directory with attachment 2, which drew the shield at the hand.
     pub const SHIELD: u32 = 0;
     /// The same numeric id on a mount is the saddle. That is the third
     /// meaning of point 0, beside the shield forearm above and the glue
@@ -473,10 +470,9 @@ pub mod attach {
     ///
     /// Which of them one uses depends on the item's `Sheath` field and on which
     /// hand it came out of, a client-side rule that never crosses the wire and that
-    /// no DBC states — see [`crate::tables::item::sheath_point`], which is transcribed
-    /// from the client's own five-value table rather than from vmangos'
-    /// seven-value enum, because the two disagree and the enum is the one that
-    /// is wrong.
+    /// no DBC states — see [`crate::tables::item::sheath_point`]. It follows the
+    /// 1.12.1 client's five values rather than vmangos' seven-value enum,
+    /// because the two disagree and the vmangos enum is wrong.
     pub(crate) const SHEATH_MAIN: u32 = 26;
     pub(crate) const SHEATH_OFF: u32 = 27;
     pub(crate) const SHEATH_SHIELD: u32 = 28;
@@ -535,16 +531,20 @@ pub struct M2Texture {
 /// and not a field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Dress {
-    /// Scenery and creatures: the lowest variant present in each group.
+    /// Scenery, creatures, game objects and attached models: every geoset.
     ///
-    /// They reuse the numbering without the `x01`-is-default convention —
-    /// Banshee's only group-4 geoset is 402, and it is 1008 of her 1626
-    /// triangles. Doodads are all geoset 0, so this is a no-op on scenery.
+    /// The 1.12.1 client creates a model with all of its geosets visible, and
+    /// only a character's appearance and equipment hide any. Of the 392
+    /// creature models `CreatureModelData` names, 63 carry more than one
+    /// geoset in a group, nearly all of them humanoid NPC models with their
+    /// hair in group 0 beside the body: `SpiritHealer.m2` is geoset 0 and its
+    /// hair geoset 3. Keeping only the lowest geoset of each group drew those
+    /// heads open. Creatures also do not follow the `x01`-is-default
+    /// convention (Banshee's only group-4 geoset is 402, 1008 of her 1626
+    /// triangles), which drawing everything does not depend on.
     ///
     /// This is the default because it applies to anything this client has not
-    /// established is a character. It is also a no-op on models that number
-    /// their geosets some other way, where the character rule would drop most
-    /// of the mesh.
+    /// established is a character.
     #[default]
     Creature,
     /// A character model wearing nothing: the body, `x01` in every equipment
@@ -560,11 +560,14 @@ pub enum Dress {
 /// one model, so the batch list cannot be baked per file.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CharacterGeosets {
-    /// The group-0 geoset for the hairstyle. 0 is bald, and it is a valid
-    /// value: `CharHairGeosets` gives human male style 0 exactly that.
+    /// The group-0 geoset for the hairstyle. [`BALD_GEOSET`] for a bald style
+    /// and under a helmet that hides hair. 0 draws nothing beside the body,
+    /// which leaves the top of the head open on the models that carry the
+    /// scalp geoset.
     pub hair: u16,
-    /// The variants for groups 1, 2 and 3 — the three facial-hair pieces. 0
-    /// draws nothing for that group, which is most characters.
+    /// The variants for groups 1, 2 and 3, the three facial-hair pieces. 0
+    /// draws nothing for that group, which is most characters. A helmet that
+    /// hides a group sets its variant to 1.
     pub facial: [u16; 3],
     /// Whole geoset ids the wearer's equipment asks for, zero-padded.
     ///
@@ -577,15 +580,25 @@ pub struct CharacterGeosets {
     /// Twelve is what the slots can produce at once: a shirt, a robe's three,
     /// two for legs, and one each for boots, gloves, bracers, cloak and tabard.
     pub equipment: [u16; 12],
-    /// Draw the hidden ears rather than the ears — group 7's other variant.
+    /// Draw the hidden ears rather than the ears: group 7's other variant.
     ///
     /// Set by a helmet, through `HelmetGeosetVisData`, and only for the races
     /// that row hides them on: a night elf's and a troll's stick out of a helm
-    /// and the table says so. The hair and beard are hidden by zeroing the
-    /// fields above, which have "none" as a legal value; the ears do not, since
-    /// 701 is the hidden variant.
+    /// and the table says so. The hair and beard are hidden by setting the
+    /// fields above to their `x01` variants; the ears need a flag because 701
+    /// is the hidden variant and 702 the shown one.
     pub hide_ears: bool,
 }
+
+/// The group-0 geoset that closes the top of a bald head.
+///
+/// Eight of the eighteen character models carry it (the human, gnome and
+/// goblin males, the human, dwarf and gnome females, and the tauren and troll
+/// males), and it is textured from the body atlas. The 1.12.1 client draws it
+/// for a hairstyle whose `CharHairGeosets` row names geoset 0 or is missing,
+/// and in place of the hair under a helmet whose `HelmetGeosetVisData` row
+/// hides it.
+pub const BALD_GEOSET: u16 = 1;
 
 impl CharacterGeosets {
     /// Add one equipment geoset, replacing whatever was already in its
@@ -653,19 +666,8 @@ pub fn visible_geosets(all: &[u16], dress: Dress) -> Vec<u16> {
 
     match dress {
         Dress::Creature => {
-            // The lowest variant present in each group, in one pass over the
-            // groups the model actually has.
-            let mut groups: Vec<u16> = all.iter().map(|g| g / 100).collect();
-            groups.sort_unstable();
-            groups.dedup();
-            for group in groups {
-                if let Some(&lowest) = all
-                    .iter()
-                    .filter(|g| *g / 100 == group)
-                    .min()
-                {
-                    keep(lowest);
-                }
+            for &geoset in all {
+                keep(geoset);
             }
         }
         Dress::Character(look) => {
@@ -1068,8 +1070,8 @@ pub struct M2TextureAnims {
 /// so `u' = a*u + b*v + tx` and `v' = c*u + d*v + ty`.
 ///
 /// Two rows rather than a `Mat3` because that is what a 2D sampler needs and
-/// what the renderer sends to the GPU. The third row of the 4x4 the client
-/// sets is `0 0 1` and carries nothing.
+/// what the renderer sends to the GPU. The third row of a full 4x4 texture
+/// matrix is `0 0 1` and carries nothing.
 pub type UvMatrix = [f32; 6];
 
 /// `u' = u`, `v' = v`: what a batch with no transform gets, and what every
@@ -1288,8 +1290,9 @@ pub mod bone_flags {
     /// sheet on a bone flagged this way, standing upright and turning about its
     /// own vertical to face the camera.
     pub const BILLBOARD_LOCK_Z: u32 = 0x40;
-    /// Every billboard bit. The client's own switch matches this masked value
-    /// **exactly** — see [`super::Billboard::of`].
+    /// Every billboard bit. The 1.12.1 client compares the flags masked with
+    /// this value for equality against each single bit — see
+    /// [`super::Billboard::of`].
     pub const BILLBOARD_ANY: u32 = 0x78;
     /// The bone has an animated transform of its own. Set on 3,702 of the
     /// spell population's bones, which is most of them.
@@ -1298,13 +1301,12 @@ pub mod bone_flags {
 
 /// Which of the client's four billboard rules a bone's flags name.
 ///
-/// **The bit test is an equality, not a mask test**, and that is the client's
-/// own shape rather than a simplification: it masks the flags with
-/// `0x78` and switches on the result. Only the four
-/// values 0x8, 0x10, 0x20 and 0x40 reach a case; **a bone carrying two of them
-/// falls to the default and is not billboarded at all**, which a `flags & 0x8
-/// != 0` test would get wrong. (No 5875 bone carries two, so this is
-/// faithfulness rather than a fix.)
+/// The bit test is an equality, not a mask test. The 1.12.1 client masks the
+/// flags with `0x78` and billboards a bone only when the result is one of the
+/// four values 0x8, 0x10, 0x20 and 0x40. A bone carrying two of them is not
+/// billboarded at all, which a `flags & 0x8 != 0` test would get wrong. No
+/// 5875 bone carries two, so the equality matches the client and changes no
+/// shipped model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Billboard {
     /// Flag 0x8.
@@ -1319,7 +1321,7 @@ pub enum Billboard {
 
 impl Billboard {
     /// The rule a bone's flags name, or `None` for the great majority of bones
-    /// and for any combination the client's own switch has no case for.
+    /// and for any combination of bits the client does not billboard.
     pub fn of(flags: u32) -> Option<Self> {
         match flags & bone_flags::BILLBOARD_ANY {
             bone_flags::BILLBOARD_SPHERICAL => Some(Self::Spherical),
@@ -1486,15 +1488,14 @@ struct PosePlan {
 
 /// One particle emitter — the vanilla `M2ParticleOld`, 0x1F8 bytes.
 ///
-/// The byte layout here is **measurement, not transcription from a wiki**: it
-/// is the 5875 client's own record, checked against real files — and it
-/// corrects the wiki layout the
-/// earlier JavaScript parser carries in three places: the blend mode is a **u8** at +0x28, +0x2C is one
-/// **u16** head/tail selector (not two bytes), and +0x190 is `inheritScale`
+/// The byte layout here is measured against real files, not copied from a
+/// wiki. It corrects the wiki layout, which the earlier JavaScript parser
+/// carries, in three places: the blend mode is a `u8` at +0x28, +0x2C is one
+/// `u16` head/tail selector (not two bytes), and +0x190 is `inheritScale`
 /// (the wiki's `burstMultiplier`). The wiki's `windVector`/`windTime` at
-/// +0x1B4 are not read at all, because the client's own integrator
-/// (age, follow, `pos += v*dt`, gravity, drag, kill-outbound) has
-/// no wind term to feed them into.
+/// +0x1B4 are not read at all: the 1.12.1 client moves a particle by age,
+/// follow, `pos += v*dt`, gravity, drag and kill-outbound, with no wind
+/// term.
 ///
 /// The ten animated properties share the model's single flat timeline — the
 /// same convention as a bone track, global sequences included. The client
@@ -1547,13 +1548,13 @@ pub struct M2Particle {
     /// blend, 3 additive, 4 add-alpha, 5 modulate, 6 modulate2x. A `u8` in
     /// the file, widened here to match the material's field.
     pub blend: u16,
-    /// 1 = plane, 2 = sphere, 3 = spline. The shape kernels are the client's
-    /// own:
+    /// 1 = plane, 2 = sphere, 3 = spline. The 1.12.1 client places and aims a
+    /// new particle by shape:
     ///
     /// * **plane**: position uniform in the ±half rectangle at z 0 —
     ///   [`Self::area_length`] on local X, [`Self::area_width`] on local Y
-    ///   (the kernel's first random number feeds the length into
-    ///   x); direction a symmetric cone — polar `±vertical_range`, azimuth
+    ///   (the first random number drawn sets x from the length); direction a
+    ///   symmetric cone — polar `±vertical_range`, azimuth
     ///   `±horizontal_range` about +Z.
     /// * **sphere**: radius uniform in `[area_length, area_width]`
     ///   (inner..outer), latitude `±vertical_range`, longitude
@@ -1563,9 +1564,9 @@ pub struct M2Particle {
     ///   four range fields are repurposed (arc window, tangent spin,
     ///   scatter).
     ///
-    /// Every kernel result is then turned **+90° about local Z** before use
-    /// — dropping that rotation misplaces every rectangular
-    /// emitter in the world by a quarter turn.
+    /// Every position and direction is then turned +90° about local Z before
+    /// use. Without that rotation every rectangular emitter in the world is a
+    /// quarter turn out.
     pub emitter_type: u16,
     /// 0 = head (a camera-facing quad), 1 = tail (a quad stretched along the
     /// particle's own travel, length `speed x tail_time`), 2 = both. One u16
@@ -1647,21 +1648,18 @@ pub struct M2Particle {
     pub enabled: Option<M2Track>,
 }
 
-/// The `M2Particle::flags` bits this client acts on — the **file's** bit
-/// positions (the 5875 loader remaps them to different runtime bits, which
-/// is its business, not the file's).
+/// The `M2Particle::flags` bits this client acts on, at their bit positions
+/// in the file.
 ///
-/// All of these follow the client's own particle code (loader, integrator,
-/// quad writer), not wiki lore; the ones this renderer does not implement yet are still named
-/// so the survey can count them.
+/// Each meaning follows the 1.12.1 client's behaviour, not the wiki. The bits
+/// this renderer does not implement yet are still named so the survey can
+/// count them.
 pub mod particle_flags {
-    /// Fog applies to this emitter; clear — the default — draws it
-    /// unfogged. This follows the 5875 client and is inverted from
-    /// the wiki's reading: the client's emitter creation builds
-    /// the emitter's material flags as `UNFOGGED = NOT(file 0x8)`, so the
-    /// 2,376 emitters carrying this bit are the ones that fog. They are the
-    /// majority; the wiki's reading drew 90% of the world's particles
-    /// without fog.
+    /// Fog applies to this emitter; clear, the default, draws it unfogged.
+    /// This follows the 5875 client and inverts the wiki's reading: the
+    /// client fogs an emitter exactly when this bit is set, so the 2,376
+    /// emitters carrying it are the ones that fog. They are the majority; the
+    /// wiki's reading drew 90% of the world's particles without fog.
     pub const FOGGED: u32 = 0x8;
     /// The cloud renders through the emitter's live bone matrix every
     /// frame — model space. Clear (the common case) bakes the emitter's
@@ -1720,8 +1718,8 @@ pub mod particle_flags {
 /// +0xa4 texSlotTrack M2Track<u16>   +0xc0 visibilityTrack M2Track<u8>
 /// ```
 ///
-/// The layout is the 5875 client's own record — the same provenance as the
-/// particle record beside it, and for the same reason: a wrongly strided ribbon does not fail, it produces
+/// The layout is measured against real files, as the particle record is, and
+/// for the same reason: a wrongly strided ribbon does not fail, it produces
 /// plausible widths and lifetimes.
 ///
 /// The appearance tracks are keyed and must be sampled, not baked.
@@ -1894,8 +1892,8 @@ pub struct M2Camera {
 /// first value here. See [`Self::keys`], which makes the count checkable.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct M2Light {
-    /// `1` is a point light and `0` is a directional one. The distinction
-    /// changes the whole picture.
+    /// `1` is a point light and `0` is a directional one. Reading one kind as
+    /// the other lights the whole scene wrongly.
     ///
     /// The files show this without reference to the client: `UI_Human`'s
     /// two lights are 92 and 127 yards from the plinth its character stands
@@ -2015,8 +2013,8 @@ pub mod anim {
     pub const DEAD: u16 = 6;
     /// The cower. No unit state selects it. Nothing on the
     /// wire says "play Stun": `UNIT_FLAG_STUNNED` says a unit may not act and
-    /// `MOVEFLAG_ROOT` says it may not move, and the client's own idle cascade
-    /// mentions neither. The spell selects it — the state
+    /// `MOVEFLAG_ROOT` says it may not move, and the 1.12.1 client chooses no
+    /// idle animation from either. The spell selects it — the state
     /// kit's `animID`, held for as long as the aura is on its bearer, which is
     /// 257 of the 308 spells that state a pose there at all. See
     /// [`crate::tables::spell::SpellVisuals::aura_pose`]; `HumanMale.m2` carries it as
@@ -2106,8 +2104,8 @@ pub mod anim {
     /// `Fly` — the gait of anything on a flying spline. A player sees this
     /// clip only on a taxi.
     ///
-    /// The rule is the client's animation cascade, the same one the swim ids
-    /// below come out of, and it is a spline test rather than a unit-state one:
+    /// The 1.12.1 client chooses it from the unit's movement spline, not from
+    /// unit state, in the same animation choice that yields the swim ids below:
     ///
     /// ```text
     /// the unit's movement spline, if it has one
@@ -2184,10 +2182,9 @@ pub mod anim {
     /// which is `Walk`'s own declared speed, so a creeping character's feet
     /// do not slide.
     ///
-    /// There is no `StealthRun`. The table has none and the client's own
-    /// cascade does not look for one: it picks 119 for a moving
-    /// stealthed unit whatever its speed, above the Sprint/Run/Walk split
-    /// entirely. Stealth halves the movement rate anyway, so the case never
+    /// There is no `StealthRun`. The table has none, and the 1.12.1 client
+    /// plays 119 for a moving stealthed unit at any speed, ahead of its choice
+    /// between Sprint, Run and Walk. Stealth halves the movement rate anyway, so the case never
     /// arises in play.
     ///
     /// Both are reached from `UNIT_FIELD_BYTES_1`'s `UNIT_VIS_FLAGS_CREEP`
@@ -2203,8 +2200,8 @@ pub mod anim {
     /// a warrior's Charge, a rogue's Sprint and any other haste that takes a
     /// unit past the threshold
     /// all reach it the same way, and none of the three states a pose anywhere
-    /// in `Spell.dbc` (`vale spell 2983`: no aura pose at all). The client's
-    /// own test is
+    /// in `Spell.dbc` (`vale spell 2983`: no aura pose at all). The 1.12.1
+    /// client chooses by speed:
     ///
     /// ```text
     /// the live speed, against 11.0
@@ -2219,7 +2216,7 @@ pub mod anim {
     /// see [`M2Skeleton::playback_rate`].
     pub const SPRINT: u16 = 143;
     /// The speed at or above which [`SPRINT`] is the gait, in yards a second —
-    /// the client's own constant, used only by the comparison above.
+    /// the 1.12.1 client's threshold, used only by the comparison above.
     pub const SPRINT_SPEED: f32 = 11.0;
     /// The casting sequences the character models carry. The directed
     /// pair is a spell aimed at a target and the omni pair one cast on the
@@ -2944,14 +2941,13 @@ impl M2Skeleton {
     /// because only the caller knows whether what it is drawing is a gait or a
     /// corpse.
     ///
-    /// This function used to wrap, which broke the corpse. A corpse asks for
+    /// Wrapping here breaks a corpse. A corpse asks for
     /// `min(elapsed, duration)` so that it stops at the end of Death, and
     /// `duration % duration` is 0, which is frame zero of Death: the creature
-    /// standing upright, as it was before it fell. The death animation played
-    /// and then the body stood back up and stayed there for the rest of the
-    /// session. The caller's clamp was correct; this function reinterpreted
-    /// the value. The test checked the clamped value and not what this
-    /// function did with it, so none of the 261 tests at the time caught it.
+    /// standing upright. An earlier version of this function wrapped, so a
+    /// body stood back up after its death animation and stayed upright. Its
+    /// test checked the caller's clamped value, not this function's result,
+    /// so none of the 261 tests of that time caught it.
     ///
     /// `now_ms` is wall-clock and drives global-sequence tracks only.
     ///
@@ -3032,9 +3028,9 @@ impl M2Skeleton {
         // The second track, on the `SpineLow` subtree only. The
         // torso plays its own sequence — a swing, an emote, a moving caster's
         // wind-up — while the legs below keep whatever the base is doing. It
-        // replaces rather than blends, which is what the client's own
-        // key-bone-rooted play does: the base clip animates the whole skeleton
-        // and the mask decides which sequence owns each bone.
+        // replaces rather than blends, as the 1.12.1 client does when it
+        // plays a sequence on a key bone's subtree: the base clip animates the
+        // whole skeleton and the mask decides which sequence owns each bone.
         //
         // A model with no `SpineLow` has nothing to mask and takes no overlay;
         // the caller is expected to have routed the play full-body instead —
@@ -3097,11 +3093,10 @@ impl M2Skeleton {
                 p if p < 0 => local,
                 p => mat3x4_mul(&world[p as usize], &local),
             };
-            // **Before the children, not after them.** The client turns a
-            // billboarded bone inside this same walk (between the
-            // parent multiply and the next iteration), so a bone hung under
-            // one inherits the turn — and the plan's order puts every child
-            // after its parent, so the child composes against the turned one.
+            // The billboard turn is applied before the children are composed,
+            // not after. In the 1.12.1 client a bone hung under a billboarded
+            // bone inherits the turn. The plan's order puts every child after
+            // its parent, so the child composes against the turned matrix.
             if let (Some((right, up)), Some(kind)) = (camera, Billboard::of(bone.flags)) {
                 billboard(&mut world[i], bone.pivot, right, up, kind);
             }
@@ -3215,9 +3210,8 @@ pub struct PoseLayers {
     /// of how a strafe is drawn. Applied to the two key bones' locals, so
     /// each one's whole subtree comes with it.
     ///
-    /// **A model with neither key bone takes no twist and that is the client's
-    /// own gate**, not a shortcut: a wolf has no `SpineLow`, cannot strafe, and
-    /// has nothing to twist.
+    /// A model with neither key bone takes no twist, as in the 1.12.1 client:
+    /// a wolf has no `SpineLow`, cannot strafe, and has nothing to twist.
     pub twist: Option<BodyTwist>,
     /// The second track: a sequence played over the first on the `SpineLow`
     /// subtree only, which is how the game swings, casts and emotes without
@@ -3236,13 +3230,13 @@ pub struct PoseLayers {
 /// which stops a running character mid-stride. This client did that before
 /// the overlay existed.
 ///
-/// Which of the two a given play lands on is decided **per play, by live
-/// state** and not by the animation id — see `entities::route_oneshot`, where
-/// the client's own test is transcribed.
+/// Which of the two a given play lands on is decided per play, by live
+/// state, and not by the animation id — see `entities::route_oneshot`, which
+/// implements the 1.12.1 client's rule.
 ///
-/// It **replaces** on that subtree rather than blending into it. The client
-/// plays a masked clip on a key-bone-rooted node and the mask decides which
-/// bones it owns. An animation graph that cannot take the base out of the
+/// It replaces the base on that subtree rather than blending into it. The
+/// 1.12.1 client plays the masked clip on the key bone's subtree, and the
+/// mask decides which bones it owns. An animation graph that cannot take the base out of the
 /// subtree has to weight the overlay over it instead (8:1, for example); that
 /// is an approximation, not a rule of this game.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3497,15 +3491,15 @@ fn mat3x4_mul(a: &[f32; 12], b: &[f32; 12]) -> [f32; 12] {
     out
 }
 
-/// The client's own normalise: below `2^-22` in length the vector is **left
-/// alone** rather than scaled up or zeroed.
+/// The length, `2^-22`, below which `normalised` leaves a vector unchanged
+/// rather than scaling it up or zeroing it. The 1.12.1 client uses the same
+/// threshold.
 ///
-/// The constant is the client's, and the guard is not a nicety.
-/// It is what a cylindrical billboard does when it is looked at straight down
-/// its own axle: the companion axis comes out of a cross product of two
-/// parallel vectors, stays at ~zero here, and the basis collapses — so the
-/// sheet vanishes for the one viewing angle at which it has no answer, which is
-/// the reference's behaviour and not a failure.
+/// The guard decides what a cylindrical billboard does when it is looked at
+/// straight down its own axle: the companion axis comes out of a cross
+/// product of two parallel vectors, stays near zero here, and the basis
+/// collapses. The sheet vanishes at that one viewing angle, as it does in the
+/// 1.12.1 client.
 const NORMALISE_EPSILON: f32 = 2.384_185_8e-7;
 
 fn normalised(v: [f32; 3]) -> [f32; 3] {
@@ -3525,30 +3519,29 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 }
 
 /// Turn a composed bone matrix to face the viewer, keeping its pivot where the
-/// hierarchy put it — [`Billboard`]'s four rules, as the client applies them.
+/// hierarchy put it — [`Billboard`]'s four rules, as the 1.12.1 client
+/// applies them.
 ///
-/// **The client does this in view space and this does it in model space**,
-/// which is the one translation in here and is what the arguments are for. In
-/// the client the bone matrices are composed against a root parent that already
-/// carries the model-view transform, so a *spherical* billboard is the constant
-/// basis local X ↦ `(0,0,-1)`, Y ↦ `(1,0,0)`, Z ↦ `(0,1,0)` —
-/// and that constant is what pins the mapping the other three cases are read
-/// through: view `x̂` is the camera's `right` here, view `ŷ` its `up`, and view
-/// `ẑ` the `back` below. That basis is orthonormal with determinant +1, so the
-/// cross products carry over unchanged.
+/// The client billboards in view space; this function does it in model
+/// space, and the `right` and `up` arguments carry the conversion. In view
+/// space a spherical billboard is the constant basis local X ↦ `(0,0,-1)`,
+/// Y ↦ `(1,0,0)`, Z ↦ `(0,1,0)`. That constant fixes the mapping used for the
+/// other three cases: view `x̂` is the camera's `right` here, view `ŷ` its
+/// `up`, and view `ẑ` the `back` below. That basis is orthonormal with
+/// determinant +1, so the cross products carry over unchanged.
 ///
-/// Two consequences worth stating because they look like bugs:
+/// Two results look like bugs and are not:
 ///
-/// * **the spherical case gives the local X axis `-back`, and the three
-///   cylindrical cases do not mirror to match.** In the client the spherical
-///   basis has determinant −1 and the other three have +1 — they are genuinely
-///   different handednesses, so a lock-Z sheet is drawn mirrored relative to a
-///   spherical one. That is the client's own arithmetic, not a sign lost here.
-/// * **each axis keeps its own length**, taken before the basis is rebuilt and
-///   re-applied after, exactly as the client does. The previous
-///   implementation measured the local-X column alone and applied it to all
-///   three, which agrees for the uniform scale every effect model uses and
-///   disagrees for anything else.
+/// * The spherical case gives the local X axis `-back`, and the three
+///   cylindrical cases do not mirror to match. The spherical basis has
+///   determinant −1 and the other three have +1, so a lock-Z sheet is drawn
+///   mirrored relative to a spherical one. The 1.12.1 client draws them the
+///   same way.
+/// * Each axis keeps its own length, measured before the basis is rebuilt
+///   and re-applied after, as in the 1.12.1 client. An earlier version
+///   measured the local-X column alone and applied it to all three, which
+///   agrees for the uniform scale every effect model uses and disagrees for
+///   any other scale.
 fn billboard(m: &mut [f32; 12], pivot: [f32; 3], right: [f32; 3], up: [f32; 3], kind: Billboard) {
     let [px, py, pz] = pivot;
     // The camera's third axis in model space, pointing away from the eye:
@@ -3641,9 +3634,9 @@ fn parse_skeleton(buf: &[u8], vertex_bones: &[[u8; 4]]) -> Option<M2Skeleton> {
                 // every shipped value is positive and a negative one is not a
                 // weight; a row that states 0 is one the client never picks.
                 probability: u16_at(buf, o + 0x14),
-                // `+0x24` box, `+0x3C` sphere — the two fields the reference's
-                // own mouse pick reads (`seq_index * 0x44 + 0x24`,
-                // which is what pins the 68-byte stride from the other end).
+                // `+0x24` box, `+0x3C` sphere — the two fields the mouse pick
+                // uses; see [`M2Sequence::bounds`]. Both sit inside the
+                // 68-byte (0x44) record.
                 bounds: [
                     [
                         f32_at(buf, o + 0x24),
@@ -4202,8 +4195,8 @@ fn parse_ribbons_checked(buf: &[u8], textures: usize) -> Option<Vec<M2Ribbon>> {
             height_above: parse_track(buf, o + 0x5C, 1)?,
             height_below: parse_track(buf, o + 0x78, 1)?,
             edges_per_second,
-            // The client's own load-time clamp, so a file asking for a tenth
-            // of a second still gets a quarter.
+            // The 1.12.1 client clamps the lifetime at load, so a file asking
+            // for a tenth of a second still gets a quarter.
             edge_lifetime: edge_lifetime.max(0.25),
             gravity,
             tile_rows: u16_at(buf, o + 0xA0).max(1),
@@ -4330,26 +4323,6 @@ fn parse_collision(buf: &[u8]) -> crate::world::collision::CollisionMesh {
     }
 }
 
-/// The attachment table, validated like every other optional block.
-///
-/// A wrong offset here does not read as garbage — it reads as a plausible id and
-/// a plausible position, and an item would then hang off a bone chosen at
-/// random. So the reference implementation's guards are kept: a small count, a
-/// block that fits, ids inside the client's enum and finite positions inside a
-/// scene. A table that fails any of them is dropped, which loses the
-/// pauldrons and keeps the character.
-///
-/// The position bound was 100. That holds for every character and creature in
-/// the game — a model is a couple of yards tall and its own origin is at its
-/// feet — and fails for a model that is a place:
-/// `Interface\Glues\Models\UI_Human\UI_Human.m2` is the human
-/// character-select backdrop, authored where it stands on the map, and both of
-/// its attachment points are at about (-225, -80). The guard dropped the whole
-/// table, so the human plinth had no position and only the human character
-/// screen showed an empty scene. Nothing was logged, because dropping an
-/// optional block is the documented handling for five other reasons. The
-/// bound is now 10,000, which is [`parse_cameras`]' own bound and the one
-/// `UI_Human`'s camera is read through.
 /// The events array — see [`M2Event`]. Refused whole on the first entry that
 /// does not look like one: an identifier that is not `$` and three letters,
 /// or a timestamps array that does not fit.
@@ -4380,6 +4353,26 @@ fn parse_events(buf: &[u8]) -> Vec<M2Event> {
     out
 }
 
+/// The attachment table, validated like every other optional block.
+///
+/// A wrong offset here does not read as garbage — it reads as a plausible id and
+/// a plausible position, and an item would then hang off a bone chosen at
+/// random. So the reference implementation's guards are kept: a small count, a
+/// block that fits, ids no greater than 200 and finite positions inside a
+/// scene. A table that fails any of them is dropped, which loses the
+/// pauldrons and keeps the character.
+///
+/// The position bound was 100. That holds for every character and creature in
+/// the game — a model is a couple of yards tall and its own origin is at its
+/// feet — and fails for a model that is a place:
+/// `Interface\Glues\Models\UI_Human\UI_Human.m2` is the human
+/// character-select backdrop, authored where it stands on the map, and both of
+/// its attachment points are at about (-225, -80). The bound of 100 dropped the
+/// whole table, so the human plinth had no position and only the human
+/// character screen showed an empty scene. Nothing was logged, because dropping an
+/// optional block is the documented handling for five other reasons. The
+/// bound is now 10,000, which is [`parse_cameras`]' own bound and the one
+/// `UI_Human`'s camera is read through.
 fn parse_attachments(buf: &[u8]) -> Vec<M2Attachment> {
     /// How far from its own origin a point in a model may be. A scene is a
     /// place and may be anywhere on a 17,000-yard map; garbage from a wrong
@@ -4590,7 +4583,7 @@ fn parse_textures(buf: &[u8]) -> Vec<M2Texture> {
     for i in 0..arr.count {
         let o = arr.offset + i * layout::TEXTURE_SIZE;
         let kind = u32_at(buf, o);
-        // A type outside the client's own enum means the offset is wrong, and
+        // A type above 20 means the offset is wrong, and
         // a wrong offset here yields garbage file names, so drop the whole
         // table rather than keep part of it.
         if kind > 20 {

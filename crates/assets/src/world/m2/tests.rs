@@ -1,6 +1,6 @@
 use super::*;
 
-/// A minimal but *valid* vanilla M2: three vertices, one triangle, one
+/// A minimal valid vanilla M2: three vertices, one triangle, one
 /// texture, one submesh, one batch.
 ///
 /// Built rather than loaded from `Data/` so the test runs without the
@@ -63,8 +63,8 @@ fn build_model() -> Vec<u8> {
     buf.resize(lookup_at + 2, 0);
     put_arr(&mut buf, offsets::TEXTURE_LOOKUP, 1, lookup_at as u32);
 
-    // view 0: vertex lookup [2, 1, 0], triangles [0, 1, 2] — so the
-    // indirection is observable, the resolved indices come out reversed.
+    // View 0: vertex lookup [2, 1, 0] and triangles [0, 1, 2]. The resolved
+    // indices come out reversed, which makes the lookup observable.
     let vlookup_at = buf.len();
     for v in [2u16, 1, 0] {
         buf.extend_from_slice(&v.to_le_bytes());
@@ -95,8 +95,8 @@ fn build_model() -> Vec<u8> {
     buf
 }
 
-/// [`build_model`] with a collision hull bolted on: four vertices and two
-/// triangles, so `nBoundingTriangles` is **6** and not 2.
+/// [`build_model`] with a collision hull added: four vertices and two
+/// triangles. `nBoundingTriangles` is 6, the index count, and not 2.
 fn build_solid_model() -> Vec<u8> {
     let mut buf = build_model();
     let put_arr = |buf: &mut Vec<u8>, at: usize, count: u32, offset: u32| {
@@ -124,13 +124,13 @@ fn build_solid_model() -> Vec<u8> {
     buf
 }
 
-/// [`build_model`] with the colour and transparency blocks bolted on: one
-/// `M2Color` whose RGB goes white -> red and whose alpha goes 1 -> 0 over a
-/// second, and one texture weight that stays at half. The batch names both.
+/// [`build_model`] with the colour and transparency blocks added: one
+/// `M2Color` whose RGB goes white -> red and whose alpha goes 1 -> 0 over one
+/// second, and one texture weight that stays at 0.5. The batch names both.
 ///
-/// The two are deliberately different shapes: the alpha and the weight are
-/// separate answers that **multiply**, so a reader that takes one and stops
-/// comes out at 0.5 or at 0.0 where the file says neither.
+/// The two tracks have different shapes because the alpha and the weight
+/// multiply. A reader that takes only one of them returns 0.5 or 0.0, and the
+/// file means neither.
 fn build_fading_model() -> Vec<u8> {
     let mut buf = build_model();
     let put_u16 = |buf: &mut Vec<u8>, at: usize, v: u16| {
@@ -159,12 +159,12 @@ fn build_fading_model() -> Vec<u8> {
     for v in [1.0f32, 1.0, 1.0, 1.0, 0.0, 0.0] {
         buf.extend_from_slice(&v.to_le_bytes());
     }
-    // Alpha, **fixed 16**: opaque -> gone.
+    // Alpha, as fixed16: opaque -> fully transparent.
     let alpha_at = buf.len();
     for v in [32767i16, 0] {
         buf.extend_from_slice(&v.to_le_bytes());
     }
-    // The texture weight: flat half, so it can only be read as a multiplier.
+    // The texture weight: a constant 0.5, so it can only act as a multiplier.
     let weight_at = buf.len();
     for v in [16384i16, 16384] {
         buf.extend_from_slice(&v.to_le_bytes());
@@ -187,8 +187,8 @@ fn build_fading_model() -> Vec<u8> {
     track(&mut buf, weights_at, 2, times_at as u32, weight_at as u32);
     put_arr(&mut buf, offsets::TEXTURE_WEIGHTS, 1, weights_at as u32);
 
-    // The lookup: slot 1 -> weight 0, so a reader that skips the
-    // indirection lands on slot 1 and finds nothing.
+    // The lookup maps slot 1 to weight 0. A reader that skips the lookup
+    // reads weight 1, which does not exist.
     let wlookup_at = buf.len();
     for slot in [0xFFFFu16, 0] {
         buf.extend_from_slice(&slot.to_le_bytes());
@@ -208,10 +208,10 @@ fn build_fading_model() -> Vec<u8> {
     buf
 }
 
-/// **An effect fades because two blocks say so, and neither is a float
-/// array.** The alpha and the texture weight are `fixed16` — read as `f32`s
+/// A batch's opacity is the product of two blocks, the colour alpha and the
+/// texture weight, and both store `fixed16` values, not floats. Read as `f32`,
 /// they decode to denormals and every effect in the game draws at zero
-/// opacity, which is indistinguishable from the block not being read.
+/// opacity, which looks the same as not reading the blocks at all.
 #[test]
 fn a_batch_fades_on_its_colour_and_its_transparency_together() {
     let m2 = M2::parse(&build_fading_model()).expect("parses");
@@ -229,29 +229,28 @@ fn a_batch_fades_on_its_colour_and_its_transparency_together() {
     assert_eq!([start[0], start[1], start[2]], [1.0, 1.0, 1.0]);
     assert!((start[3] - 0.5).abs() < 1e-3, "alpha {} at t=0", start[3]);
 
-    // Halfway: half red, and half of the half.
+    // Halfway: halfway from white to red, and alpha 0.5 x 0.5 = 0.25.
     let mid = at(500);
     assert!((mid[1] - 0.5).abs() < 1e-3, "green {} at t=500", mid[1]);
     assert!((mid[3] - 0.25).abs() < 1e-3, "alpha {} at t=500", mid[3]);
 
-    // The end: red and gone.
+    // The end: red and fully transparent.
     let end = at(1000);
     assert_eq!([end[0], end[1], end[2]], [1.0, 0.0, 0.0]);
     assert!(end[3] < 1e-3, "alpha {} at t=1000", end[3]);
 }
 
-/// The overwhelming majority of the world names no colour block at all, and
-/// it has to come back as `None` rather than as an index into an empty
-/// array — a batch that "has a tint" is a batch the renderer gives a
-/// per-instance tag and a second material variant to.
+/// Most batches in the world name no colour block, and they must parse as
+/// `None`, not as an index into an empty array. The renderer gives a batch
+/// with a tint a per-instance tag and a second material variant.
 #[test]
 fn a_batch_that_names_no_tint_has_none() {
     let m2 = M2::parse(&build_model()).expect("parses");
     assert_eq!(m2.batches[0].tint, None);
     assert!(m2.tints.is_empty());
 
-    // …and so does one whose colour slot exists but carries no keys, which
-    // is the same answer drawn the same way.
+    // A batch whose colour slot exists but carries no keys also has `None`,
+    // because it draws the same way.
     let mut buf = build_fading_model();
     let at = array(&buf, offsets::COLORS).offset;
     for track in [at, at + TRACK_SIZE] {
@@ -262,22 +261,19 @@ fn a_batch_that_names_no_tint_has_none() {
     assert_eq!(M2::parse(&buf).expect("parses").batches[0].tint, None);
 }
 
-/// **A slot whose keys never leave white and opaque is the same answer as no
-/// slot**, and this is the case that was costing the whole character
-/// population.
+/// A tint slot whose keys stay white and opaque is treated as no slot.
 ///
 /// Every batch of every character model and every item model in the game names
-/// transparency track 0 — `HumanMale.m2` reads `1 keys 0..0 ms, 1.000..1.000`
-/// across all 56 of its batches, and so do a plate helm and a pauldron. Read as
-/// "tinted", the batch's material sets `is_tint`, which the renderer's
-/// `material_for` uses to drop `vertex_lit` — so no character and no worn item
-/// could ever be lit by the room it was standing in — and the batch then spends
-/// the one per-instance word there is on a constant that `animate` rewrites
-/// sixty times a second.
+/// transparency track 0. `HumanMale.m2` reads `1 keys 0..0 ms, 1.000..1.000`
+/// across all 56 of its batches, and a plate helm and a pauldron read the same.
+/// If such a batch is read as tinted, its material sets `is_tint`, and the
+/// renderer's `material_for` then drops `vertex_lit`: no character and no worn
+/// item is lit by the room it stands in. The batch also spends the only
+/// per-instance word on a constant that `animate` rewrites sixty times a
+/// second.
 ///
-/// The discrimination is the point and is measured: over the 453 readable
-/// spell-effect models this drops **57 of 1,008 batches** and keeps 951,
-/// including all six of `ArcaneExplosion_Base`'s.
+/// Measured over the 453 readable spell-effect models, this rule drops 57 of
+/// 1,008 batches and keeps 951, including all six of `ArcaneExplosion_Base`'s.
 #[test]
 fn a_tint_that_never_leaves_white_is_not_a_tint() {
     let mut buf = build_fading_model();
@@ -306,12 +302,12 @@ fn a_tint_that_never_leaves_white_is_not_a_tint() {
         m2.batches[0].tint, None,
         "a batch whose colour and opacity never move is not tinted",
     );
-    // The tracks themselves are still parsed and still there — what changed is
-    // only whether the batch claims them.
+    // The tracks are still parsed. Only the batch's reference to them is
+    // dropped.
     assert!(!m2.tints.is_empty(), "the blocks are still read");
 
-    // …and a *constant but not white* tint is kept, because it changes the
-    // picture even though it never moves: half opacity is half opacity.
+    // A tint that is constant but not white and opaque is kept, because it
+    // changes the drawn result even though it never moves: here, opacity 0.5.
     for i in 0..2 {
         let at = weight + i * 2;
         buf[at..at + 2].copy_from_slice(&16384i16.to_le_bytes());
@@ -323,11 +319,12 @@ fn a_tint_that_never_leaves_white_is_not_a_tint() {
     assert_eq!(tint.transparency, Some(0));
 }
 
-/// The hull is a different block from the drawn geometry, and the count in
-/// it is **`u16`s, not triangles** — vmangos' extractor says so in a comment
-/// beside the field. Reading it as triangles asks for three times as many
-/// indices as exist, which this parser then validates away to an empty hull:
-/// a world of trees you walk straight through, with nothing said anywhere.
+/// The collision hull is a separate block from the drawn geometry, and its
+/// count is a number of `u16` indices, not triangles; vmangos' extractor says
+/// so in a comment beside the field. Read as triangles, the count asks for
+/// three times as many indices as exist, and this parser's validation then
+/// returns an empty hull. The player then walks through every tree, and no
+/// error is reported.
 #[test]
 fn the_collision_block_is_read_as_indices_and_not_as_triangles() {
     let m2 = M2::parse(&build_solid_model()).expect("parses");
@@ -337,25 +334,25 @@ fn the_collision_block_is_read_as_indices_and_not_as_triangles() {
     // every triangle in it is solid and the two numbers are equal by
     // construction. A WMO's hull is a fraction of its declared geometry.
     assert_eq!(m2.collision.declared_triangles, 2);
-    // And it is genuinely a *different* set from what is drawn: three
-    // vertices and one triangle.
+    // The drawn geometry is a separate set: three vertices and one
+    // triangle.
     assert_eq!(m2.triangle_count(), 1);
     assert_eq!(m2.positions.len(), 3);
 }
 
-/// Most of the world has no hull at all, and that is an answer rather than a
-/// failure: it is how the game says *walk through me*. vmangos' `Model::open`
-/// drops exactly these before they reach a vmap.
+/// Most models have no hull. That is valid data, not a failure: the player
+/// walks through a model without a hull. vmangos' `Model::open` drops these
+/// models before they reach a vmap.
 #[test]
 fn a_model_with_no_hull_parses_and_is_walked_through() {
     let m2 = M2::parse(&build_model()).expect("parses");
     assert!(m2.collision.is_empty());
 }
 
-/// A wrong offset in this block does not read as garbage — it reads as
-/// plausible coordinates — so an index past the vertices drops the hull
-/// whole. Two thirds of a hull is a shape the file never described, and it
-/// stops a stride from one direction and not another.
+/// A wrong offset in this block reads as plausible coordinates, not as
+/// obvious garbage, so one index past the vertices drops the whole hull. Part
+/// of a hull, such as two thirds of it, is a shape the file never described,
+/// and it blocks movement from one direction and not from another.
 #[test]
 fn a_hull_indexing_past_its_own_vertices_is_dropped_whole() {
     let mut buf = build_solid_model();
@@ -363,14 +360,14 @@ fn a_hull_indexing_past_its_own_vertices_is_dropped_whole() {
     buf[at..at + 2].copy_from_slice(&9u16.to_le_bytes());
     assert!(M2::parse(&buf).expect("parses").collision.is_empty());
 
-    // …and so is one whose index count is not a whole number of triangles.
+    // A hull whose index count is not a multiple of three is also dropped.
     let mut buf = build_solid_model();
     buf[offsets::COLLISION_INDICES..offsets::COLLISION_INDICES + 4]
         .copy_from_slice(&5u32.to_le_bytes());
     assert!(M2::parse(&buf).expect("parses").collision.is_empty());
 }
 
-/// [`build_model`] with one particle emitter bolted on: a plane emitter
+/// [`build_model`] with one particle emitter added: a plane emitter
 /// with an animated emission rate, an atlas texture and a colour ramp, so
 /// every part of the record layout is observable.
 fn build_particle_model() -> Vec<u8> {
@@ -398,7 +395,7 @@ fn build_particle_model() -> Vec<u8> {
     buf.extend_from_slice(&0u32.to_le_bytes());
     let life_values = buf.len();
     buf.extend_from_slice(&1.5f32.to_le_bytes());
-    // The enable gate: a *byte* track, off at 0 ms and on at 500.
+    // The enable gate is a byte track: off at 0 ms, on at 500 ms.
     let en_times = buf.len();
     for t in [0u32, 500] {
         buf.extend_from_slice(&t.to_le_bytes());
@@ -432,7 +429,7 @@ fn build_particle_model() -> Vec<u8> {
     put_f32(&mut buf, p, 0.5);
     buf[p + 4..p + 8].copy_from_slice(&[0, 0, 255, 255]); // birth: red
     buf[p + 8..p + 12].copy_from_slice(&[0, 128, 255, 128]); // mid: orange
-    buf[p + 12..p + 16].copy_from_slice(&[0, 0, 0, 0]); // death: gone
+    buf[p + 12..p + 16].copy_from_slice(&[0, 0, 0, 0]); // death: transparent
     put_f32(&mut buf, p + 16, 1.0);
     put_f32(&mut buf, p + 20, 2.0);
     put_f32(&mut buf, p + 24, 0.5);
@@ -453,16 +450,16 @@ fn build_particle_model() -> Vec<u8> {
     buf
 }
 
-/// [`build_particle_model`] with a **geometry model** named at +0x18 and the
-/// lone `\0` at +0x20 every emitter carries in the empty case.
+/// [`build_particle_model`] with a geometry model named at +0x18, and at
+/// +0x20 the single `\0` that every emitter carries for an empty name.
 fn build_model_particle_model() -> Vec<u8> {
     let mut buf = build_particle_model();
     let at = array(&buf, offsets::PARTICLE_EMITTERS).offset;
     let name = b"Spells\\ConeofCold_Geo.mdx\0";
     let name_at = buf.len();
     buf.extend_from_slice(name);
-    // The empty array is not absent: it is one terminator, which is why the
-    // parse tests the *count* rather than the string.
+    // An empty name is not a missing array: it is one terminator byte, so the
+    // parser tests the count, not the string.
     let empty_at = buf.len();
     buf.push(0);
     let put_arr = |buf: &mut Vec<u8>, at: usize, count: u32, offset: u32| {
@@ -474,18 +471,19 @@ fn build_model_particle_model() -> Vec<u8> {
     buf
 }
 
-/// **An emitter's geometry model is read, and `.mdx` means `.m2`.**
+/// An emitter's geometry model is read, and its `.mdx` extension is replaced
+/// with `.m2`.
 ///
 /// The field decides whether a particle is a camera-facing quad or a
-/// three-dimensional instance of another file, and it was unread for the
-/// whole life of the particle system — which is what drew Cone of Cold and
-/// Evocation as slabs of `SPELLS\CLOUDS.BLP`, a texture the client never puts
-/// on screen for those emitters at all. 55 emitters over 13 files carry one.
+/// three-dimensional instance of another file. While the field was unread,
+/// Cone of Cold and Evocation drew as slabs of `SPELLS\CLOUDS.BLP`, a texture
+/// the client never shows for those emitters. 55 emitters in 13 files name a
+/// geometry model.
 ///
-/// The empty case is the other half: every emitter in the game holds *both*
-/// arrays and the unused ones are a single `\0`, so an absence is a count of
-/// one rather than a missing array — reading it as a name gives every emitter
-/// in the world a one-character model.
+/// Every emitter in the game holds both name arrays, and an unused one is a
+/// single `\0`. An absent name is therefore a count of one, not a missing
+/// array. Reading that byte as a name gives every emitter in the world a
+/// one-character model.
 #[test]
 fn an_emitter_names_the_model_its_particles_are() {
     let m2 = M2::parse(&build_model_particle_model()).expect("parses");
@@ -502,7 +500,7 @@ fn an_emitter_names_the_model_its_particles_are() {
         "and the tumble band beside it, which is what turns the body"
     );
 
-    // The ordinary emitter is a quad and says so.
+    // An emitter with no geometry model draws quads and reads as `None`.
     let plain = M2::parse(&build_particle_model()).expect("parses");
     assert_eq!(plain.particles[0].geometry_model, None);
 }
@@ -534,8 +532,9 @@ fn a_particle_emitter_reads_every_field_it_carries() {
     assert_eq!(en.values, vec![0.0, 1.0]);
 }
 
-/// One bad record condemns the table, not the model: a blend mode past the
-/// table means the offset is wrong, and every other field is then noise.
+/// One bad record drops the emitter table and keeps the model. A blend mode
+/// past the end of the blend table means the offset is wrong, so every other
+/// field read from it is invalid.
 #[test]
 fn a_bad_particle_record_drops_the_table_and_keeps_the_model() {
     let mut buf = build_particle_model();
@@ -546,11 +545,11 @@ fn a_bad_particle_record_drops_the_table_and_keeps_the_model() {
     assert_eq!(m2.triangle_count(), 1);
 }
 
-/// [`build_model`] with two bones, two animations and three tracks bolted
-/// on: bone 0 is the root and moves, bone 1 hangs off it and moves as well,
-/// so a pose has something to compose. The keys deliberately straddle both
-/// animations, because a vanilla track is one flat timeline and the window
-/// logic is the part that is easy to get wrong.
+/// [`build_model`] with two bones, two animations and three tracks added.
+/// Bone 0 is the root and moves; bone 1 is its child and also moves, so a
+/// pose has a hierarchy to compose. The keys span both animations because a
+/// vanilla track is one timeline shared by every sequence, and the
+/// per-sequence window logic is the part most likely to be wrong.
 fn build_animated_model() -> Vec<u8> {
     let mut buf = build_model();
     let put_u16 = |buf: &mut Vec<u8>, at: usize, v: u16| {
@@ -629,11 +628,11 @@ fn build_animated_model() -> Vec<u8> {
     buf
 }
 
-/// The attachment table, and the guard that drops it whole.
+/// Reading the attachment table, and the check that drops the whole table.
 ///
 /// A wrong offset here reads as a plausible id at a plausible position and
-/// hangs a pauldron off a bone chosen at random — there is no error to
-/// notice, so the validation is what stands in for one.
+/// attaches a pauldron to an arbitrary bone. Nothing else reports the error,
+/// so the validation must catch it.
 #[test]
 fn reads_the_points_other_models_hang_from() {
     let mut buf = build_model();
@@ -660,19 +659,20 @@ fn reads_the_points_other_models_hang_from() {
     assert!(right.position[1] < 0.0, "the right shoulder is on the right");
     assert!(m2.attachment(attach::HELM).is_none(), "a point it does not have");
 
-    // A position no model could hold means the offset is not a table, and
-    // the whole thing is dropped rather than half-trusted.
+    // A position no model could hold means the offset does not point at an
+    // attachment table, so the whole table is dropped.
     let mut broken = buf.clone();
     broken[at + 8..at + 12].copy_from_slice(&1.0e6f32.to_le_bytes());
     assert!(M2::parse(&broken).expect("still a model").attachments.is_empty());
 
-    // **…but a model that is a *place* keeps its points.** The guard was 100
-    // yards, which is true of every character and creature and false of the
-    // character-select backdrops: `UI_Human.m2` is authored where its scene
-    // stands on the map, and both of its attachments — one of which is the
-    // plinth the character stands on — are at about (-225, -80). It cost that
-    // one screen its character, silently, because a dropped optional block is
-    // the documented degradation for five other reasons.
+    // A scene model keeps attachments at large coordinates. A limit of 100
+    // yards holds for every character and creature but not for the
+    // character-select backdrops: `UI_Human.m2` is authored at its scene's map
+    // position, and both of its attachments, one of them the plinth the
+    // character stands on, are at about (-225, -80). With the 100-yard limit
+    // the character-select screen drew no character and reported nothing,
+    // because dropping an optional block is the documented fallback for five
+    // other faults.
     let mut distant = buf;
     distant[at + 8..at + 12].copy_from_slice(&(-225.18f32).to_le_bytes());
     distant[at + 12..at + 16].copy_from_slice(&(-80.84f32).to_le_bytes());
@@ -705,8 +705,8 @@ fn reads_bones_sequences_and_the_tracks_that_join_them() {
     // Walk is missing, so "walk, else run, else anything" lands on Run.
     assert_eq!(sk.best_sequence(&[anim::WALK, anim::RUN]), Some(1));
 
-    // The vertex block's other half, skipped until there were bones to
-    // point it at.
+    // The vertex block's bone weights and bone indices, which the parser
+    // skipped before it read bones.
     assert_eq!(m2.bone_weights[1], [255, 0, 0, 0]);
     assert_eq!(m2.bone_indices[1], [1, 0, 0, 0]);
 }
@@ -717,16 +717,16 @@ fn a_pose_composes_a_child_onto_its_parent() {
     let sk = m2.skeleton.as_ref().expect("a skeleton");
 
     // Half way through Run (t = 1500 on the shared timeline). Bone 0's only
-    // keys are at 0 and 2000: the one at 0 belongs to Stand, so the sample
-    // holds the *next* key rather than interpolating across the boundary —
-    // which would have given 3.75 instead of 5.
+    // keys are at 0 and 2000. The key at 0 belongs to Stand, so the sample
+    // holds the next key and does not interpolate across the boundary, which
+    // would give 3.75 instead of 5.
     let pose = sk.pose(1, 500, 0, None, PoseLayers::default());
     assert_eq!(pose.len(), 2);
     assert!((pose[0][3] - 5.0).abs() < 1e-5, "root x: {}", pose[0][3]);
 
-    // Bone 1's keys straddle Run exactly, so it does interpolate: half way
-    // between 10 and 20 is 15 — and its parent's 5 yards along X carry
-    // through, which is the composition being checked.
+    // Bone 1 has keys at both ends of Run, so it interpolates: halfway
+    // between 10 and 20 is 15. Its parent's 5 yards along X carry through to
+    // it, which checks the composition.
     assert!((pose[1][3] - 5.0).abs() < 1e-5, "child x: {}", pose[1][3]);
     assert!((pose[1][11] - 15.0).abs() < 1e-5, "child z: {}", pose[1][11]);
 
@@ -735,13 +735,13 @@ fn a_pose_composes_a_child_onto_its_parent() {
     assert!(rest[1][3].abs() < 1e-5 && rest[1][11].abs() < 1e-5);
 }
 
-/// A skeleton of two bones — a root carrying `flags` and a child of it, both
-/// with no tracks at all, so the pose is the identity plus whatever the
-/// billboard does to it. One sequence, so `pose` does not bail.
+/// A skeleton of two bones: a root carrying `flags` and its child, both with
+/// no tracks, so the pose is the identity plus the billboard's rotation. It
+/// has one sequence, so `pose` does not return early.
 ///
-/// Built by hand rather than through the byte builder because the subject is
-/// the *rule*, and a flags field threaded through 0x6c bytes of file layout
-/// would test the parser instead.
+/// Built directly rather than through the byte builder because these tests
+/// check the billboard rule, and a flags field written through 0x6c bytes of
+/// file layout would test the parser instead.
 fn billboard_skeleton(flags: u32, pivot: [f32; 3]) -> M2Skeleton {
     let bone = |flags: u32, parent: i16, pivot: [f32; 3]| M2Bone {
         key_bone: -1,
@@ -770,11 +770,11 @@ fn billboard_skeleton(flags: u32, pivot: [f32; 3]) -> M2Skeleton {
     }
 }
 
-/// **A child stored before its parent still composes onto it.** Nothing in the
-/// format promises parent-first order ([`M2Bone::parent`]'s own doc), and the
-/// pose plan freezes a visit order at first use — so this pins that the order
-/// is derived from the hierarchy and not from the file: bone 0's parent is
-/// bone 1, and bone 0 must still inherit bone 1's translation.
+/// A child stored before its parent still composes onto it. The format does
+/// not guarantee parent-first order (see the doc of [`M2Bone::parent`]), and
+/// the pose plan fixes a visit order at first use. This test checks that the
+/// order comes from the hierarchy, not from the file: bone 0's parent is
+/// bone 1, and bone 0 must inherit bone 1's translation.
 #[test]
 fn a_child_listed_before_its_parent_still_rides_it() {
     let track = M2Track {
@@ -794,7 +794,7 @@ fn a_child_listed_before_its_parent_still_rides_it() {
         scale: None,
     };
     let sk = M2Skeleton {
-        // Bone 0 is the *child*; its parent, bone 1, carries the movement.
+        // Bone 0 is the child; its parent, bone 1, carries the movement.
         bones: vec![bone(1, None), bone(-1, Some(track))],
         sequences: vec![M2Sequence {
             id: 0,
@@ -819,8 +819,8 @@ fn a_child_listed_before_its_parent_still_rides_it() {
     );
 }
 
-/// The columns of a row-major 3x4 — the images of the local axes, which is what
-/// every billboard rule is written in terms of.
+/// The columns of a row-major 3x4 matrix: the images of the local axes, in
+/// which every billboard rule is stated.
 fn columns(m: &[f32; 12]) -> [[f32; 3]; 3] {
     [
         [m[0], m[4], m[8]],
@@ -833,12 +833,13 @@ fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
-/// **Which rule a bone's flags name, and that a combination names none.**
+/// Which billboard rule a bone's flags select, and that a combination of
+/// billboard bits selects none.
 ///
-/// The client's switch masks with 0x78 and matches the result
-/// *exactly* against four values through a case table, so `0x8 | 0x40` falls to
-/// the default and is not billboarded at all. A `flags & 0x8 != 0` test — which
-/// is what this client used to do — would spherically billboard it.
+/// The 1.12.1 client masks the flags with 0x78 and matches the masked value
+/// exactly against four values, so `0x8 | 0x40` matches none of them and is
+/// not billboarded. A `flags & 0x8 != 0` test, which this project used before,
+/// billboards it spherically.
 #[test]
 fn a_bone_carrying_two_billboard_bits_names_no_rule() {
     use crate::world::m2::bone_flags::*;
@@ -847,8 +848,9 @@ fn a_bone_carrying_two_billboard_bits_names_no_rule() {
     assert_eq!(Billboard::of(BILLBOARD_SPHERICAL), Some(Billboard::Spherical));
     assert_eq!(Billboard::of(BILLBOARD_LOCK_X), Some(Billboard::LockX));
     assert_eq!(Billboard::of(BILLBOARD_LOCK_Y), Some(Billboard::LockY));
-    // The one the archives use, and it comes with `TRANSFORMED` on every bone
-    // that carries it — 0x240, which must not stop it resolving.
+    // Lock-Z is the rule the archives use, and every bone that carries it
+    // also carries `TRANSFORMED` (0x240 together), which must not stop it
+    // resolving.
     assert_eq!(Billboard::of(BILLBOARD_LOCK_Z), Some(Billboard::LockZ));
     assert_eq!(
         Billboard::of(BILLBOARD_LOCK_Z | TRANSFORMED),
@@ -858,9 +860,10 @@ fn a_bone_carrying_two_billboard_bits_names_no_rule() {
     assert_eq!(Billboard::of(BILLBOARD_LOCK_X | BILLBOARD_LOCK_Y), None);
 }
 
-/// **A spherical billboard is the camera's whole basis**, which is the rule
-/// that already worked and is here as the guard on the other three: local X
-/// away from the eye, local Y the camera's right, local Z its up.
+/// A spherical billboard takes the camera's full basis: local X points away
+/// from the eye, local Y along the camera's right, local Z along its up. This
+/// rule already worked; the test guards it against changes made for the other
+/// three.
 #[test]
 fn a_spherical_billboard_takes_the_camera_basis_whole() {
     let sk = billboard_skeleton(crate::world::m2::bone_flags::BILLBOARD_SPHERICAL, [0.0, 0.0, 0.0]);
@@ -874,16 +877,16 @@ fn a_spherical_billboard_takes_the_camera_basis_whole() {
     assert!((z[2] - 1.0).abs() < 1e-5, "local Z: {z:?}");
 }
 
-/// **A lock-Z billboard keeps the bone's own vertical and turns the other two
-/// axes toward the eye** — the client's rule, and the whole of why every
-/// worn aura in the game is a flat sheet that faces you.
+/// A lock-Z billboard keeps the bone's own vertical axis and turns the other
+/// two axes toward the eye. This is the 1.12.1 client's rule, and it is why
+/// every worn aura in the game is a flat sheet facing the camera.
 ///
-/// The check is what the construction *means* rather than the numbers it
-/// happens to produce: the locked axis is untouched, the companion axis is
-/// square to both the locked axis and the view direction (which is what puts
-/// the sheet's width across the screen), and the basis stays orthonormal.
-/// A sheet whose plane is unturned — this client's behaviour until now — fails
-/// the second of those from every angle but one.
+/// The test checks properties of the construction, not particular numbers:
+/// the locked axis is unchanged, the companion axis is perpendicular to both
+/// the locked axis and the view direction (which puts the sheet's width
+/// across the screen), and the basis stays orthonormal. A sheet whose plane
+/// does not turn, which this project drew before, fails the second check from
+/// every angle but one.
 #[test]
 fn a_lock_z_billboard_keeps_its_axle_and_turns_about_it() {
     let sk = billboard_skeleton(
@@ -908,20 +911,19 @@ fn a_lock_z_billboard_keeps_its_axle_and_turns_about_it() {
         // The width of the sheet lies across the screen: square to the view.
         assert!(dot(y, back).abs() < 1e-5, "local Y is not in the screen plane: {y:?}");
         assert!(dot(y, z).abs() < 1e-5, "local Y is not square to the axle: {y:?}");
-        // …and it is a basis, not a collapse.
+        // The result is an orthonormal basis, not a degenerate one.
         assert!((dot(y, y) - 1.0).abs() < 1e-5 && (dot(x, x) - 1.0).abs() < 1e-5);
         assert!(dot(x, y).abs() < 1e-5 && dot(x, z).abs() < 1e-5);
     }
 }
 
-/// **The turn reaches the bones hung under it.**
+/// A billboard's rotation carries the bones under it.
 ///
-/// The client billboards inside the same walk that composes the hierarchy
-/// (between the parent multiply and the next bone), so a child of a
-/// billboarded bone is composed against the *turned* parent. This client used
-/// to do it as a pass over the finished pose, which leaves every such child
-/// behind — and `Spells\ManaShield_State_Base.m2` is exactly that shape: bone 0
-/// is the lock-Z root and three bones hang under it.
+/// In the 1.12.1 client a child of a billboarded bone is composed against the
+/// turned parent. This project used to billboard in a separate pass over the
+/// finished pose, which left every such child unturned.
+/// `Spells\ManaShield_State_Base.m2` has this shape: bone 0 is the lock-Z root
+/// and three bones hang under it.
 #[test]
 fn a_child_of_a_billboarded_bone_is_carried_by_the_turn() {
     let sk = billboard_skeleton(crate::world::m2::bone_flags::BILLBOARD_LOCK_Z, [0.0, 0.0, 0.0]);
@@ -938,10 +940,10 @@ fn a_child_of_a_billboarded_bone_is_carried_by_the_turn() {
     }
 }
 
-/// **A billboard turns the bone and does not move it**, which is what the pivot
-/// term is for: the point the hierarchy put the bone's origin at has to survive
-/// the basis being replaced, or every aura in the game jumps as the camera
-/// swings.
+/// A billboard rotates the bone and does not move it; the pivot term ensures
+/// this. The position the hierarchy gave the bone's origin must stay fixed
+/// when the basis is replaced, or every aura in the game jumps as the camera
+/// turns.
 #[test]
 fn a_billboard_leaves_its_pivot_where_the_hierarchy_put_it() {
     let pivot = [0.0, 0.0, 2.0];
@@ -965,19 +967,19 @@ fn a_billboard_leaves_its_pivot_where_the_hierarchy_put_it() {
     }
 }
 
-/// **The counter-twist: how far each key bone turns, and that it carries its
-/// subtree with it.**
+/// The counter-twist: how far each key bone turns, and that it carries its
+/// subtree.
 ///
-/// The split is the client's and the arithmetic closes on its own — half the
-/// gap on the spine capped at 45°, the remainder on the head capped at 45°, so
-/// a pure 90° strafe puts the hips on the strafe heading, the shoulders half
-/// way back and the head exactly on the aim.
+/// The split matches the 1.12.1 client: half the gap on the spine, capped at
+/// 45°, and the remainder on the head, capped at 45°. The two parts sum to
+/// the gap, so a pure 90° strafe puts the hips on the strafe heading, the
+/// shoulders halfway back and the head exactly on the aim.
 #[test]
 fn the_body_twist_splits_the_gap_between_the_spine_and_the_head() {
     use crate::world::m2::BodyTwist;
     use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
-    // A quarter turn is the pure strafe, and it closes exactly: 45 + 45.
+    // A quarter turn is the pure strafe, and the parts sum to it: 45 + 45.
     let (spine, head) = BodyTwist { gap: FRAC_PI_2 }.split();
     assert!((spine - FRAC_PI_4).abs() < 1e-6, "{spine}");
     assert!((head - FRAC_PI_4).abs() < 1e-6, "{head}");
@@ -987,20 +989,20 @@ fn the_body_twist_splits_the_gap_between_the_spine_and_the_head() {
     let (spine, head) = BodyTwist { gap: FRAC_PI_4 }.split();
     assert!((spine - FRAC_PI_4 / 2.0).abs() < 1e-6 && (head - FRAC_PI_4 / 2.0).abs() < 1e-6);
 
-    // Mirrored, and capped: nothing twists past 45° whatever it is handed.
+    // A negative gap mirrors the split, and the cap holds: neither bone
+    // twists past 45° for any input.
     let (spine, head) = BodyTwist { gap: -3.0 }.split();
     assert!(spine >= -FRAC_PI_4 - 1e-6 && head >= -FRAC_PI_4 - 1e-6, "{spine} {head}");
     assert!(spine < 0.0 && head < 0.0);
 
-    // Nothing to twist, nothing twisted — the case every walking character in
-    // the world is in.
+    // A zero gap twists nothing. Every walking character in the world has a
+    // zero gap.
     assert_eq!(BodyTwist::default().split(), (0.0, 0.0));
 }
 
-/// The twist is applied to the bone's **local**, so everything under it comes
-/// along — which is the whole point: turning the spine has to take the arms,
-/// the shoulders and the head with it, and turning the head must not move the
-/// spine.
+/// The twist is applied to the bone's local transform, so every bone under it
+/// follows. Turning the spine must turn the arms, the shoulders and the head,
+/// and turning the head must not move the spine.
 #[test]
 fn a_twisted_bone_takes_its_children_with_it() {
     use crate::world::m2::{key_bone, BodyTwist};
@@ -1016,8 +1018,8 @@ fn a_twisted_bone_takes_its_children_with_it() {
     let plain = sk.pose(0, 0, 0, None, PoseLayers::default());
     let twisted = sk.pose(0, 0, 0, None, PoseLayers { twist: Some(BodyTwist { gap: FRAC_PI_2 }), ..PoseLayers::default() });
 
-    // Where the child bone's own pivot ends up — a matrix is not a position,
-    // and the point is what the vertices under it ride on.
+    // Where the child bone's pivot ends up. The test compares this point,
+    // not the matrix, because the vertices under the bone follow the point.
     let at = |m: &[f32; 12], p: [f32; 3]| {
         [
             m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
@@ -1028,8 +1030,8 @@ fn a_twisted_bone_takes_its_children_with_it() {
     let [px, py] = at(&plain[1], pivot);
     let [dx, dy] = at(&twisted[1], pivot);
     assert!(px > 0.5 && py.abs() < 1e-5, "the fixture moved: {px} {py}");
-    // 45° on the spine swings the child a yard out along X round toward Y, and
-    // its distance from the twist's own pivot is unchanged.
+    // 45° on the spine turns the child, one yard out along X, toward Y, and
+    // its distance from the twist's pivot is unchanged.
     assert!(dy > 0.1, "the child did not come round with its parent: {dx} {dy}");
     assert!(
         ((dx * dx + dy * dy).sqrt() - (px * px + py * py).sqrt()).abs() < 1e-4,
@@ -1041,8 +1043,8 @@ fn a_twisted_bone_takes_its_children_with_it() {
         dy.atan2(dx)
     );
 
-    // And a model with neither key bone is untouched, which is the client's own
-    // gate: a wolf has no SpineLow and nothing to twist.
+    // A model with neither key bone is not twisted, as in the 1.12.1 client:
+    // a wolf has no SpineLow and nothing to twist.
     let bare = M2::parse(&build_animated_model()).expect("valid model");
     let bare = bare.skeleton.as_ref().expect("a skeleton");
     assert_eq!(
@@ -1051,21 +1053,22 @@ fn a_twisted_bone_takes_its_children_with_it() {
     );
 }
 
-/// **The second track: the torso plays one sequence while the legs play
-/// another.**
+/// The second animation track: the torso plays one sequence while the legs
+/// play another.
 ///
-/// This is how 1.12 swings, emotes and casts on the move, and the thing being
-/// pinned is that the mask is a *subtree* — the bone named `SpineLow` and
-/// everything under it takes the overlay, and nothing else moves at all. A
-/// client with one track plays the swing over the whole body and stops a
-/// running character dead in its stride, which is what this one did.
+/// 1.12 uses this to swing, emote and cast while moving. The test checks that
+/// the mask is a subtree: the bone named `SpineLow` and every bone under it
+/// take the overlay, and no other bone moves. With one track, a swing plays
+/// over the whole body and stops a running character mid-stride, which this
+/// project did before.
 #[test]
 fn a_masked_overlay_takes_the_spine_subtree_and_leaves_the_rest_on_the_base() {
     use crate::world::m2::{key_bone, Overlay};
 
     let mut m2 = M2::parse(&build_animated_model()).expect("valid model");
-    // Bone 1 hangs off bone 0, so naming *it* `SpineLow` makes bone 0 the legs
-    // and bone 1 the torso — the shape of a real skeleton, one level down.
+    // Bone 1 is the child of bone 0, so naming bone 1 `SpineLow` makes bone 0
+    // the legs and bone 1 the torso: the shape of a real skeleton, one level
+    // down.
     m2.skeleton.as_mut().expect("a skeleton").bones[1].key_bone = key_bone::SPINE_LOW;
     let sk = m2.skeleton.as_ref().expect("a skeleton");
 
@@ -1073,15 +1076,15 @@ fn a_masked_overlay_takes_the_spine_subtree_and_leaves_the_rest_on_the_base() {
     let posed = sk.pose(0, 0, 0, None, PoseLayers { overlay: Some(run), ..PoseLayers::default() });
 
     // The legs are still at the start of Stand, where nothing has moved: the
-    // root did *not* take Run's 5 yards along X.
+    // root did not take Run's 5 yards along X.
     assert!(posed[0][3].abs() < 1e-5, "the base track moved: {}", posed[0][3]);
-    // …and the torso is half way through Run, 15 up, which is the whole point.
+    // The torso is halfway through Run, 15 up.
     assert!((posed[1][11] - 15.0).abs() < 1e-5, "the overlay did not play: {}", posed[1][11]);
     assert!(posed[1][3].abs() < 1e-5, "the torso took the base's travel: {}", posed[1][3]);
 
-    // Rooted at bone 0 the mask covers everything, so a masked play there is
-    // the same thing as a full-body one — which is the client's own degenerate
-    // case and a check that `subtree` reaches children at all.
+    // Rooted at bone 0, the mask covers every bone, so a masked play there
+    // equals a full-body play. The 1.12.1 client gives the same result, and
+    // the case checks that `subtree` reaches children at all.
     let mut whole = M2::parse(&build_animated_model()).expect("valid model");
     whole.skeleton.as_mut().expect("a skeleton").bones[0].key_bone = key_bone::SPINE_LOW;
     let whole = whole.skeleton.as_ref().expect("a skeleton");
@@ -1091,13 +1094,13 @@ fn a_masked_overlay_takes_the_spine_subtree_and_leaves_the_rest_on_the_base() {
     );
 }
 
-/// **A gait is played at the speed the unit is actually going**, not at the
-/// speed it was authored for — and the id is what decides, not the declared
-/// number.
+/// A gait plays at a rate set by the unit's actual speed over the speed it
+/// was authored for. The sequence id decides whether a sequence is scaled,
+/// not its declared speed.
 ///
-/// The fixture declares 2.5 y/s on *both* its sequences, which is what makes it
-/// worth checking: Stand is id 0 and outside the rate-scaled set, so it plays
-/// at 1× however fast the character is moving, where Run at id 5 does not.
+/// The fixture declares 2.5 y/s on both its sequences. Stand is id 0 and
+/// outside the rate-scaled set, so it plays at 1× at any movement speed; Run,
+/// id 5, is scaled.
 #[test]
 fn a_locomotion_clip_is_played_at_speed_over_its_authored_speed() {
     let m2 = M2::parse(&build_animated_model()).expect("valid model");
@@ -1105,7 +1108,7 @@ fn a_locomotion_clip_is_played_at_speed_over_its_authored_speed() {
 
     // Run (index 1, id 5) authored at 2.5, travelled at 5.0: twice as fast.
     assert!((sk.playback_rate(1, 5.0) - 2.0).abs() < 1e-6);
-    // …and the 10% the real case is: 7.6 against `HumanMale`'s 6.9-ish.
+    // The real case is about 10%: 7.6 against `HumanMale`'s roughly 6.9.
     assert!((sk.playback_rate(1, 2.75) - 1.1).abs() < 1e-6);
 
     // Stand declares the same speed and is not a gait, so it is never scaled.
@@ -1115,9 +1118,9 @@ fn a_locomotion_clip_is_played_at_speed_over_its_authored_speed() {
     assert_eq!(sk.playback_rate(99, 5.0), 1.0);
 }
 
-/// Two ways an overlay is **no** overlay, and both are ordinary: a model with
-/// no `SpineLow` has nothing to mask at — a wolf has a `Head` and no spine —
-/// and a sequence the model does not carry is nothing to play.
+/// Two ordinary cases where an overlay has no effect: a model with no
+/// `SpineLow` has no bone to mask at (a wolf has a `Head` and no spine), and a
+/// sequence the model does not carry has nothing to play.
 #[test]
 fn an_overlay_with_nowhere_to_go_leaves_the_pose_alone() {
     use crate::world::m2::Overlay;
@@ -1132,8 +1135,8 @@ fn an_overlay_with_nowhere_to_go_leaves_the_pose_alone() {
         plain
     );
 
-    // …and a sequence index the model does not have, on a model that *could*
-    // mask.
+    // A sequence index the model does not have, on a model that has a
+    // `SpineLow` to mask at.
     let mut spined = M2::parse(&build_animated_model()).expect("valid model");
     spined.skeleton.as_mut().expect("a skeleton").bones[1].key_bone = crate::world::m2::key_bone::SPINE_LOW;
     let spined = spined.skeleton.as_ref().expect("a skeleton");
@@ -1143,30 +1146,15 @@ fn an_overlay_with_nowhere_to_go_leaves_the_pose_alone() {
     );
 }
 
-/// **A clock run past the end of its window holds the last frame; it does
-/// not come back round to the first.** Looping is [`M2Skeleton::phase`]'s
-/// job, i.e. the caller's, because only the caller knows whether it is
-/// drawing a gait or a corpse.
+/// A batch's texture matrix from end to end: the texture-transform block, its
+/// lookup, the batch's own field, and the resulting matrix.
 ///
-/// This is the bug that made every corpse in the world stand back up. The
-/// renderer asked for `min(elapsed, duration)` precisely so that Death would
-/// stop at its end — and this function wrapped it, `duration % duration`
-/// being 0, which is frame zero of Death: the creature upright, exactly as
-/// it was before it fell over. So the death animation played through and the
-/// body then stood up and froze there for the rest of the session, with
-/// nothing failing and no count moving anywhere.
-///
-/// Run's window is 1000..2000 and bone 1's keys are 10 at 1000 and 20 at
-/// 2000, so the two readings are 10 and 20 — the first frame against the
-/// last, which is the whole difference between standing and lying down.
-/// **A batch's texture matrix, end to end** — the block, its lookup, the
-/// batch's own field, and the matrix that comes out.
-///
-/// The failure this pins is not a crash. The vanilla header carries a
+/// The failure this test catches is not a crash. The vanilla header carries a
 /// `texture_flipbooks` array at `0x6C` that every later version drops, so a
-/// layout copied forward reads the *flipbooks* as transforms: the record
-/// parses, the lookup resolves, and every scroll in the game stands still —
-/// which looks exactly like a client that never read the block at all.
+/// header layout taken from a later version reads the flipbooks as the
+/// transforms: the record parses, the lookup resolves, and every texture
+/// scroll in the game stands still. That looks the same as a client that
+/// never read the block.
 #[test]
 fn a_batch_scrolls_its_texture_on_its_own_matrix() {
     let mut buf = build_model();
@@ -1178,8 +1166,8 @@ fn a_batch_scrolls_its_texture_on_its_own_matrix() {
         buf[at..at + 2].copy_from_slice(&v.to_le_bytes());
     };
 
-    // Two keys a second apart, sliding the texture a whole tile along u —
-    // `ArcaneExplosion_Base`'s own shape, at a thousandth of its duration.
+    // Two keys one second apart, moving the texture a whole tile along u: the
+    // shape of `ArcaneExplosion_Base`'s track, at a thousandth of its duration.
     let times_at = buf.len();
     for t in [0u32, 1000] {
         buf.extend_from_slice(&t.to_le_bytes());
@@ -1199,7 +1187,8 @@ fn a_batch_scrolls_its_texture_on_its_own_matrix() {
     put_arr(&mut buf, translation + 0x14, 2, values_at as u32);
     put_arr(&mut buf, offsets::TEXTURE_TRANSFORMS, 2, transforms_at as u32);
 
-    // The lookup: slot 0 -> record 1, slot 1 -> the file's own "none".
+    // The lookup: slot 0 -> record 1, slot 1 -> 0xFFFF, the file's value for
+    // none.
     let uv_lookup_at = buf.len();
     for slot in [1u16, u16::MAX] {
         buf.extend_from_slice(&slot.to_le_bytes());
@@ -1234,20 +1223,36 @@ fn a_batch_scrolls_its_texture_on_its_own_matrix() {
     );
     let uv = m2.batches[0].uv.expect("a matrix");
 
-    // Half way along, half a tile — and the *rest* of the matrix untouched,
-    // which is what says the pivot round trip cancels when nothing rotates.
+    // Halfway through, the offset is half a tile and the rest of the matrix
+    // is unchanged, which shows the pivot translations cancel when nothing
+    // rotates.
     let half = m2.uv_anims.matrix(uv, 500, 0, 1000, 0);
     assert!((half[2] - 0.5).abs() < 1e-5, "u offset {half:?}");
     assert_eq!([half[0], half[1], half[3], half[4], half[5]], [1.0, 0.0, 0.0, 1.0, 0.0]);
 
-    // Record 0 has no keys at all, and an empty scale track sampled as a
-    // value would collapse the texture to a point rather than leaving it
-    // alone — which is why each track is taken only when it has keys.
+    // Record 0 has no keys. An empty scale track sampled as a value would
+    // collapse the texture to a point, so each track is used only when it
+    // has keys.
     assert_eq!(m2.uv_anims.matrix(0, 500, 0, 1000, 0), UV_IDENTITY);
     assert_eq!(m2.uv_anims.matrix(99, 500, 0, 1000, 0), UV_IDENTITY);
     assert!(!m2.uv_anims.is_global(uv), "the scroll named no global sequence");
 }
 
+/// A clock past the end of its window holds the last frame and does not wrap
+/// to the first. Looping is done by [`M2Skeleton::phase`], which the caller
+/// applies, because only the caller knows whether it is drawing a gait or a
+/// corpse.
+///
+/// The renderer passes `min(elapsed, duration)` so that Death stops at its
+/// last frame. When `pose` wrapped the clock, `duration % duration` was 0,
+/// which is frame zero of Death, with the creature upright as before it fell.
+/// Every corpse in the world played its death animation, then stood up and
+/// stayed standing for the rest of the session, with no error and no counter
+/// changing.
+///
+/// Run's window is 1000..2000 and bone 1's keys are 10 at 1000 and 20 at
+/// 2000, so a wrapped clock reads 10 and a held clock reads 20: the first
+/// frame against the last, the difference between standing and lying down.
 #[test]
 fn a_clock_past_the_end_holds_the_last_frame_rather_than_wrapping() {
     let m2 = M2::parse(&build_animated_model()).expect("valid model");
@@ -1255,7 +1260,7 @@ fn a_clock_past_the_end_holds_the_last_frame_rather_than_wrapping() {
 
     let held = sk.pose(1, 1000, 0, None, PoseLayers::default());
     assert!((held[1][11] - 20.0).abs() < 1e-5, "held z: {}", held[1][11]);
-    // …and still there much later, rather than playing again.
+    // It still holds much later and does not play again.
     let later = sk.pose(1, 60_000, 0, None, PoseLayers::default());
     assert!((later[1][11] - 20.0).abs() < 1e-5, "later z: {}", later[1][11]);
 
@@ -1299,9 +1304,9 @@ fn a_cross_fade_walks_from_one_pose_to_the_other() {
         assert!((fade(1.0)[1][e] - run[1][e]).abs() < 1e-5, "element {e}");
     }
 
-    // And half way is half way. Worth asserting on the *translation*
-    // specifically: the child's z is 0 in one pose and 15 in the other, so a
-    // fade that silently did nothing would still pass the two ends above.
+    // Weight 0.5 gives the midpoint. The check uses the translation because
+    // the child's z is 0 in one pose and 15 in the other, and a fade that did
+    // nothing would still pass the two end checks above.
     assert!((fade(0.5)[1][11] - 7.5).abs() < 1e-5, "{}", fade(0.5)[1][11]);
 }
 
@@ -1311,7 +1316,7 @@ fn a_fade_out_of_the_animation_already_playing_is_not_a_fade() {
     // a model with no Run resolves both Run and Stand to the same sequence,
     // and a fade that has run its course is still passed one more frame.
     // Both must leave the pose exactly as the unblended one, or every such
-    // entity is quietly posed through a no-op blend for ever.
+    // entity is posed through a blend with no effect on every frame.
     let m2 = M2::parse(&build_animated_model()).expect("valid model");
     let sk = m2.skeleton.as_ref().expect("a skeleton");
     let plain = sk.pose(1, 500, 0, None, PoseLayers::default());
@@ -1335,9 +1340,9 @@ fn a_fade_out_of_the_animation_already_playing_is_not_a_fade() {
 #[test]
 fn a_wrong_sequence_size_costs_the_skeleton_not_the_geometry() {
     let mut buf = build_animated_model();
-    // Vanilla's M2Sequence is 68 bytes and later versions' are not. Reading
-    // it at the wrong stride puts the *next* record's fields in this one's
-    // start and end, which comes out backwards — the check that catches it.
+    // Vanilla's M2Sequence is 68 bytes and later versions' are not. Read at
+    // the wrong stride, the next record's fields land in this record's start
+    // and end, so start comes after end, which is the check that catches it.
     let seq = array(&buf, offsets::SEQUENCES).offset;
     buf[seq + 4..seq + 8].copy_from_slice(&9000u32.to_le_bytes());
 
@@ -1404,8 +1409,8 @@ fn reads_geometry_textures_and_one_batch() {
 #[test]
 fn triangles_are_resolved_through_the_views_vertex_lookup() {
     // The view lists triangle indices 0,1,2 against a lookup of [2,1,0],
-    // so a renderer must receive 2,1,0. Skipping the indirection draws the
-    // wrong vertices, and on a real model it draws a shredded mess.
+    // so a renderer must receive 2,1,0. Skipping the lookup draws the wrong
+    // vertices, and on a real model the triangles come out scrambled.
     let m2 = M2::parse(&build_model()).expect("valid model");
     assert_eq!(m2.indices, vec![2, 1, 0]);
 }
@@ -1443,12 +1448,12 @@ fn an_emitter_only_model_parses_to_no_geometry() {
     assert!(m2.positions.is_empty() && m2.indices.is_empty());
 }
 
-/// …but it keeps its **skeleton**: an emitter-only model's bones are what
-/// carry its emitters — `Spells\ConeofCold_Hand.m2` is eleven emitters on
-/// eleven animated bones and not one vertex, and the sweep of those bones *is*
-/// the cone. Dropping the skeleton with the mesh anchored every such effect to
-/// its attachment root, unrotated and unswept, which drew Cone of Cold as a
-/// pile of clouds fired into the ground.
+/// An emitter-only model keeps its skeleton, because its bones carry its
+/// emitters. `Spells\ConeofCold_Hand.m2` has eleven emitters on eleven
+/// animated bones and no vertices, and the sweep of those bones forms the
+/// cone. Dropping the skeleton with the mesh anchored every such effect to its
+/// attachment root, unrotated and unswept, and drew Cone of Cold as a pile of
+/// clouds fired into the ground.
 #[test]
 fn an_emitter_only_model_keeps_its_skeleton() {
     let mut buf = build_animated_model();
@@ -1461,7 +1466,7 @@ fn an_emitter_only_model_keeps_its_skeleton() {
 }
 
 #[test]
-fn creature_geosets_keep_the_lowest_variant_in_each_group() {
+fn creature_geosets_are_all_drawn() {
     let batch = |geoset| M2Batch {
         geoset,
         index_start: 0,
@@ -1488,14 +1493,16 @@ fn creature_geosets_keep_the_lowest_variant_in_each_group() {
         batch(1301),
     ];
 
-    // Creature: body, plus the lowest variant of every other group. The
-    // hairstyles (geosets 1 and 2) are dropped.
+    // Creature: every geoset, as the 1.12.1 client draws a model no
+    // appearance has been applied to. A creature's own hair is a group-0
+    // geoset beside the body (the spirit healer's is 3), so dropping all but
+    // the lowest of a group opened its head.
     let creature: Vec<u16> = m2
         .visible_batches(Dress::Creature)
         .iter()
         .map(|b| b.geoset)
         .collect();
-    assert_eq!(creature, vec![0, 101, 402, 701, 1301]);
+    assert_eq!(creature, vec![0, 1, 2, 101, 102, 402, 403, 701, 702, 1301]);
 
     // Character: body, the hairstyle *asked for* rather than the first one,
     // the beard the facial-hair table named, ears, and the x01 "nothing
@@ -1514,9 +1521,9 @@ fn creature_geosets_keep_the_lowest_variant_in_each_group() {
         .collect();
     assert_eq!(character, vec![0, 2, 102, 702, 1301]);
 
-    // **Bald is a real answer**, not a missing lookup: `CharHairGeosets`
-    // gives human male style 0 exactly geoset 0, and asking for it must not
-    // fall back to some other hairstyle.
+    // A hair geoset of 0 adds nothing to the body and does not fall back to
+    // another hairstyle. `CharGeosets::geosets` turns a bald style into the
+    // scalp geoset 1 before it gets here.
     let bald: Vec<u16> = m2
         .visible_batches(Dress::Character(CharacterGeosets::default()))
         .iter()
@@ -1528,8 +1535,9 @@ fn creature_geosets_keep_the_lowest_variant_in_each_group() {
 #[test]
 fn a_model_with_one_geoset_is_drawn_whole() {
     let m2 = M2::parse(&build_model()).expect("valid");
-    // Every batch is geoset 401 and there is no 400, so "lowest in group"
-    // keeps it. A doodad (all geoset 0) is likewise untouched.
+    // Every batch is geoset 401. A creature keeps every geoset and a
+    // character falls back to the whole model when nothing it asks for is
+    // there. A doodad (all geoset 0) is likewise untouched.
     assert_eq!(m2.visible_batches(Dress::Creature).len(), 1);
     assert_eq!(
         m2.visible_batches(Dress::Character(CharacterGeosets::default()))
@@ -1548,14 +1556,14 @@ fn dbc_model_paths_become_archive_paths() {
     assert_eq!(model_path("x\\y"), "x\\y.m2");
 }
 
-/// **The ground-quad shape, and the things that are not it.**
+/// The ground-quad shape, and shapes that are not ground quads.
 ///
-/// The detection decides which *pass* a batch is drawn by (see
-/// `M2::ground_quad` and `crate::render::decals` on the client side), and it is
-/// deliberately strict — a near-miss stretched through a projector is worse than
-/// a flat quad. So the negatives matter as much as the positive: 12 of the
-/// spell-effect population's 132 flat batches are rejected by this and stay on
-/// the ordinary path.
+/// The detection decides which pass draws a batch (see `M2::ground_quad`, and
+/// `crate::render::decals` in the client crate). It is strict because a
+/// near-miss stretched through a projector looks worse than a flat quad, so
+/// the negative cases matter as much as the positive one: of the 132 flat
+/// batches in the spell-effect models, 12 are rejected and stay on the
+/// ordinary path.
 #[test]
 fn a_flat_axis_aligned_rectangle_is_a_ground_quad_and_nothing_else_is() {
     // The corners in the file's own order, deliberately shuffled: the detection
@@ -1669,16 +1677,16 @@ fn empty_model() -> M2 {
     }
 }
 
-/// **The texture matrix translates first and rotates second**, which is the
-/// order the cooldown clock measures — see [`M2TextureAnims::matrix`].
+/// The texture matrix translates first and rotates second, which is the order
+/// the cooldown clock shows; see [`M2TextureAnims::matrix`].
 ///
-/// Built here rather than read out of the archive so the arithmetic is pinned
-/// with no file: a 90° turn and a translation of a whole tile along v, which is
-/// exactly the state each of `UI-Cooldown-Indicator`'s four quadrants ends its
-/// own quarter in. Under `R · T` the `v` translation comes out along **u**,
-/// which is what takes the sampled square off the dark half of the sheet and
-/// clears the quadrant; under `T · R` it stays along v and the quadrant is dark
-/// for ever.
+/// The values are built here, not read from the archive, so the arithmetic is
+/// tested without a file: a 90° turn and a translation of a whole tile along
+/// v, which is the state each of `UI-Cooldown-Indicator`'s four quadrants
+/// reaches at the end of its quarter. Under `R · T` the `v` translation comes
+/// out along u, which moves the sampled square off the dark half of the
+/// texture and clears the quadrant. Under `T · R` it stays along v and the
+/// quadrant stays dark.
 #[test]
 fn the_texture_matrix_translates_before_it_rotates() {
     let track = |dim: usize, values: Vec<f32>| M2Track {
@@ -1704,25 +1712,25 @@ fn the_texture_matrix_translates_before_it_rotates() {
     };
 
     let m = anims.matrix(0, 0, 0, 1000, 0);
-    // `u' = a*u + b*v + tx`: a 90° turn sends v into u, and the *translation*
-    // has to arrive turned as well.
+    // `u' = a*u + b*v + tx`: a 90° turn sends v into u, and the translation
+    // must be turned as well.
     let map = |u: f32, v: f32| (m[0] * u + m[1] * v + m[2], m[3] * u + m[4] * v + m[5]);
     let (u, _) = map(0.5, 0.5);
     assert!(
         (u - (0.5 - 0.91)).abs() < 1e-4,
         "the middle of the tile should land at v - 0.91 along u, not at {u}"
     );
-    // …and the whole of the cooldown's own quad, which must end up left of the
-    // texture's transparency edge at u = 0.125.
+    // Every corner of the cooldown's quad must end up left of the texture's
+    // transparency edge at u = 0.125.
     for (u, v) in [(0.146, 0.095), (0.146, 1.003), (1.054, 0.095), (1.054, 1.003)] {
         let (u, _) = map(u, v);
         assert!(u < 0.125, "a finished quadrant still samples the dark half at u = {u}");
     }
 }
 
-/// A batch that plots the same triangles as an earlier opaque one, does not
-/// write depth and blends, is a **layer of it** — see [`overlay_layers`]. This
-/// is the shape nearly every worn item in the game is authored in.
+/// A batch that draws the same triangles as an earlier opaque batch, does not
+/// write depth and blends is a layer of that batch; see [`overlay_layers`].
+/// Nearly every worn item in the game is authored this way.
 #[test]
 fn an_env_map_layer_folds_into_the_batch_under_it() {
     let base = M2Batch {
@@ -1737,7 +1745,8 @@ fn an_env_map_layer_folds_into_the_batch_under_it() {
         tint: None,
         uv: None,
     };
-    // opaque base, modulate2x sheen, alpha glow — the helm's own shape.
+    // Opaque base, modulate2x sheen and alpha glow: the batch layout of a
+    // helm.
     let batches = vec![
         base.clone(),
         M2Batch { blend: 6, no_depth_write: true, texture: Some(1), ..base.clone() },
@@ -1745,16 +1754,16 @@ fn an_env_map_layer_folds_into_the_batch_under_it() {
     ];
     assert_eq!(overlay_layers(&batches), vec![None, Some(0), Some(0)]);
 
-    // …and a third layer is left to draw for itself, because a material has
-    // two slots — see [`MAX_OVERLAYS`].
+    // A third layer is drawn as its own batch, because a material has two
+    // slots; see [`MAX_OVERLAYS`].
     let mut four = batches.clone();
     four.push(M2Batch { blend: 4, no_depth_write: true, texture: Some(1), ..base.clone() });
     assert_eq!(overlay_layers(&four), vec![None, Some(0), Some(0), None]);
 }
 
-/// **Every one of the conditions is a way the fold would change the picture**,
-/// so each is checked on its own — a fold that quietly took one of these would
-/// be a wrong pixel nothing warns about.
+/// Each condition below is a case where folding would change the drawn
+/// result, so each is checked separately. A fold that accepted one of these
+/// cases would draw wrong pixels with no warning.
 #[test]
 fn a_layer_that_would_change_the_picture_is_not_folded() {
     let base = M2Batch {
@@ -1789,19 +1798,18 @@ fn a_layer_that_would_change_the_picture_is_not_folded() {
     let tinted = Some(BatchTint { color: Some(0), transparency: None });
     refused(base.clone(), M2Batch { tint: tinted, ..over.clone() });
     refused(M2Batch { tint: tinted, ..base.clone() }, over.clone());
-    // …and the pattern still holds when nothing is wrong with it.
+    // With none of these differences, the layer is folded.
     assert_eq!(overlay_layers(&[base, over])[1], Some(0));
 }
 
-/// **A batch authored invisible for its whole timeline is told apart from one
-/// that fades in from nothing**, which is the whole of
-/// [`M2Tints::never_visible`]'s job.
+/// [`M2Tints::never_visible`] tells a batch that is invisible for its whole
+/// timeline apart from one that fades in from zero opacity.
 ///
-/// The first is Ironforge's `lavasteam.m2`, whose one blend-0 batch carries a
-/// single transparency key of 0.000 and exists only to hold eight particle
-/// emitters. Drawn, it is a 60-yard slab standing in the Great Forge. The
-/// second is every fade-in in the game, and dropping one of those would take a
-/// spell effect off the screen.
+/// The first case is Ironforge's `lavasteam.m2`, whose one blend-0 batch
+/// carries a single transparency key of 0.000 and exists only to hold eight
+/// particle emitters. Drawn, it is a 60-yard slab standing in the Great Forge.
+/// The second case is every fade-in in the game, and dropping one removes a
+/// spell effect from the screen.
 #[test]
 fn a_batch_that_is_never_visible_is_told_apart_from_one_that_fades_in() {
     let track = |values: Vec<f32>| M2Track {
@@ -1830,25 +1838,25 @@ fn a_batch_that_is_never_visible_is_told_apart_from_one_that_fades_in() {
     // zero is enough — `sample` multiplies them.
     assert!(tints.never_visible(BatchTint { color: Some(0), transparency: Some(2) }));
 
-    // **A batch naming no track at all is opaque, not invisible.** The identity
-    // an absent track answers is white and 1.0, and this is the great majority
-    // of every model in the game.
+    // A batch naming no track is opaque, not invisible. An absent track gives
+    // the identity, white and 1.0, and most batches of every model in the game
+    // are in this case.
     assert!(!tints.never_visible(BatchTint { color: None, transparency: None }));
 
     // A track index the file does not have is not a reason to drop geometry.
     assert!(!tints.never_visible(weight(99)));
 }
 
-/// **A bone with no track poses exactly as one with constant identity keys.**
+/// A bone with no track poses exactly as one with constant identity keys.
 ///
-/// `pose` skips the sampling for a trackless bone and copies its parent's
-/// matrix — see the still-bone shortcut in [`M2Skeleton::pose`] — on the
-/// argument that its local is the identity bit for bit. This is that argument
-/// checked against the long path: two skeletons, one whose child carries no
+/// `pose` skips sampling for a trackless bone and copies its parent's matrix
+/// (the still-bone shortcut in [`M2Skeleton::pose`]), because that bone's
+/// local transform is the identity bit for bit. This test compares the
+/// shortcut with the full path: two skeletons, one whose child carries no
 /// tracks and one whose child carries a single key of zero translation, the
 /// unit quaternion and unit scale, posed under an animated parent, under a
 /// cross-fade, under the overlay and under a billboard, must agree exactly.
-/// The twist bones stay on the long path and are checked to.
+/// The twist bones stay on the full path and are checked too.
 #[test]
 fn a_trackless_bone_is_its_parent_bit_for_bit() {
     use crate::world::m2::{key_bone, M2Bone, M2Track, Blend, BodyTwist, Overlay};
@@ -1906,8 +1914,8 @@ fn a_trackless_bone_is_its_parent_bit_for_bit() {
             vec![
                 moving_root([2.0, 3.0, 4.0]),
                 M2Bone { key_bone: key, flags, parent: 0, pivot: [0.5, 0.25, 0.125], translation, rotation, scale },
-                // …and a grandchild under the still one, which composes onto
-                // whatever the shortcut left there.
+                // A grandchild under the trackless bone, which composes onto
+                // the matrix the shortcut produced.
                 M2Bone { key_bone: -1, flags: 0, parent: 1, pivot: [0.0, 0.0, 0.0], translation: constant(3, &[0.1, 0.2, 0.3]), rotation: None, scale: None },
             ],
             sequences.clone(),
@@ -1940,9 +1948,9 @@ fn a_trackless_bone_is_its_parent_bit_for_bit() {
     }
 }
 
-/// **A cue fires once, in the frame that crosses it**, and the first frame
-/// of a sequence takes its very first millisecond; a loop that wrapped takes
-/// the tail and the head both.
+/// A sound cue fires once, in the frame that crosses it. The first frame of a
+/// sequence includes millisecond 0, and a frame in which the loop wrapped
+/// includes both the end and the start of the sequence.
 #[test]
 fn a_sound_cue_lands_in_its_sequence_and_fires_in_the_frame_that_crosses_it() {
     use crate::world::m2::{M2Event, SoundCues};

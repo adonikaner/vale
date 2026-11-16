@@ -128,6 +128,8 @@ pub(crate) struct Spawn {
     pub(crate) faction: u32,
     pub(crate) npc_flags: u32,
     pub(crate) rank: u32,
+    /// `type`: beast, humanoid and the others of `creature::CREATURE_TYPES`.
+    pub(crate) kind: u32,
     /// Which content patch of the template the server would load. It is the
     /// other half of the key an edit to the template is written under.
     pub(crate) patch: u32,
@@ -373,10 +375,9 @@ impl Spawned for Spawn {
 /// need.
 ///
 /// The map query already carries these columns for every spawn on the map, so
-/// most entries need no extra read. Two sources do: the picker's matches,
-/// which may be creatures with no spawn on this map, and the entries a project
-/// creates a spawn of after the map was read. All three fill the same table;
-/// see [`SpawnTool::known`].
+/// most entries need no extra read. The entries a project creates a spawn of
+/// after the map was read do, and both fill the same table; see
+/// [`SpawnTool::known`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Known {
     /// The entry the project says the template has, which the list shows and
@@ -397,6 +398,8 @@ pub(crate) struct Known {
     pub(crate) faction: u32,
     pub(crate) npc_flags: u32,
     pub(crate) rank: u32,
+    /// `type`: beast, humanoid and the others of `creature::CREATURE_TYPES`.
+    pub(crate) kind: u32,
     /// The `creature_equip_template` set it holds.
     pub(crate) equipment_id: u32,
     /// [`Life::Insert`] for a template this project creates, which is in no
@@ -450,6 +453,7 @@ impl Known {
             faction: number("faction"),
             npc_flags: number("npc_flags"),
             rank: number("rank"),
+            kind: number("type"),
             equipment_id: number("equipment_id"),
             claim: Life::Insert,
         })
@@ -528,6 +532,9 @@ impl Listed for Known {
         if let Some(rank) = number("rank") {
             out.rank = rank as u32;
         }
+        if let Some(kind) = number("type") {
+            out.kind = kind as u32;
+        }
         if let Some(set) = number("equipment_id") {
             out.equipment_id = set as u32;
         }
@@ -577,6 +584,7 @@ pub(crate) fn read_known(row: &creature::Row) -> Option<Known> {
         faction: integer("faction"),
         npc_flags: integer("npc_flags"),
         rank: integer("rank"),
+        kind: integer("type"),
         equipment_id: integer("equipment_id"),
     })
 }
@@ -597,6 +605,7 @@ pub(crate) fn known_from(spawn: &Spawn) -> Option<Known> {
         faction: spawn.faction,
         npc_flags: spawn.npc_flags,
         rank: spawn.rank,
+        kind: spawn.kind,
         equipment_id: spawn.equipment_id,
     })
 }
@@ -621,6 +630,7 @@ fn read_spawn(row: &creature::Row) -> Spawn {
         faction: integer("faction"),
         npc_flags: integer("npc_flags"),
         rank: integer("rank"),
+        kind: integer("type"),
         patch: integer("patch"),
         equipment_id: integer("equipment_id"),
         addon: row.integer("addon_patch").map(|patch| SpawnAddon {
@@ -729,10 +739,6 @@ impl SpawnSubject for CreatureSubject {
     }
 
     /// A creature has no type the picker narrows by.
-    fn search_query(term: &str, _of_type: Option<u32>, patch: u32, limit: usize) -> String {
-        creature::search_query(term, patch, limit)
-    }
-
     fn all_templates_query(patch: u32) -> String {
         creature::all_templates_query(patch)
     }
@@ -774,6 +780,7 @@ impl SpawnSubject for CreatureSubject {
             faction: 0,
             npc_flags: 0,
             rank: 0,
+            kind: 0,
             equipment_id: 0,
         }
     }
@@ -803,6 +810,7 @@ impl SpawnSubject for CreatureSubject {
             faction: known.map(|known| known.faction).unwrap_or(0),
             npc_flags: known.map(|known| known.npc_flags).unwrap_or(0),
             rank: known.map(|known| known.rank).unwrap_or(0),
+            kind: known.map(|known| known.kind).unwrap_or(0),
             patch: known.map(|known| known.patch).unwrap_or(0),
             equipment_id: known.map(|known| known.equipment_id).unwrap_or(0),
             addon: None,
@@ -1349,6 +1357,7 @@ mod tests {
             faction: 11,
             npc_flags: 1,
             rank: 0,
+            kind: 0,
             patch: 0,
             equipment_id: 0,
             addon: None,
@@ -1553,7 +1562,7 @@ mod tests {
     }
 
     /// A template whose entry the project changes is shown at the new entry
-    /// on every spawn of it, on the picker's matches and in the known table,
+    /// on every spawn of it, on the chosen template and in the known table,
     /// and reset when the move is taken back.
     #[test]
     fn a_moved_template_is_folded_into_what_is_drawn() {
@@ -1561,7 +1570,6 @@ mod tests {
         creatures.spawns = vec![a_spawn()];
         let known = known_from(&a_spawn()).expect("named");
         creatures.known.insert(68, known.clone());
-        creatures.new_spawn.matches = vec![known.clone()];
         creatures.new_spawn.chosen = Some(known);
         let mut edits = Edits::default();
         edits.set(
@@ -1583,7 +1591,6 @@ mod tests {
             creatures.spawns[0].template_key(),
             creature::template_key(2_000_068, 0)
         );
-        assert_eq!(creatures.new_spawn.matches[0].entry, 2_000_068);
         assert_eq!(
             creatures.new_spawn.chosen.as_ref().map(|known| known.entry),
             Some(2_000_068)
@@ -1697,5 +1704,67 @@ mod tests {
         assert_eq!(spawn.label(), "Stormwind City Guard (68)");
         spawn.name = None;
         assert_eq!(spawn.label(), "entry 68 — no template row");
+    }
+
+    /// The Place mode's drawer finds a template by name, subname or entry,
+    /// and groups by facet value, by model folder (the folder and every
+    /// folder under it), by the map's spawns and by what the project
+    /// creates.
+    #[test]
+    fn the_drawer_catalogue_searches_and_groups_templates() {
+        use super::super::spawn::{Catalogue, Catalogued, Facet, Group};
+        let known = |entry: u32, name: &str, subname: Option<&str>, claim: Life| Known {
+            entry,
+            read_entry: entry,
+            patch: 0,
+            name: name.to_string(),
+            subname: subname.map(str::to_string),
+            display_id: 0,
+            display_scale: 0.0,
+            level: (1, 1),
+            faction: 0,
+            npc_flags: 0,
+            rank: 0,
+            kind: 0,
+            equipment_id: 0,
+            claim,
+        };
+        let row = |known: Known, facets: Vec<(Facet, &str)>| Catalogued {
+            haystack: known.haystack(),
+            known,
+            facets: facets.into_iter().map(|(facet, value)| (facet, value.to_string())).collect(),
+        };
+        let mut catalogue: Catalogue<Known> = Catalogue::default();
+        catalogue.rows = vec![
+            row(
+                known(68, "Stormwind City Guard", None, Life::Update),
+                vec![(Facet::Type, "Humanoid"), (Facet::Model, "creature\\humanmaleguard\\")],
+            ),
+            row(
+                known(299, "Young Wolf", None, Life::Update),
+                vec![(Facet::Type, "Beast"), (Facet::Model, "creature\\wolf\\")],
+            ),
+            row(
+                known(2_000_001, "Grey Wolf", Some("Pack Leader"), Life::Insert),
+                vec![(Facet::Type, "Beast"), (Facet::Model, "creature\\wolf\\alpha\\")],
+            ),
+        ];
+        catalogue.on_map.insert(68);
+
+        assert_eq!(catalogue.search("wolf"), vec![1, 2]);
+        assert_eq!(catalogue.search("pack"), vec![2], "the subname is searched");
+        assert_eq!(catalogue.search("68"), vec![0], "a number is an entry");
+        assert_eq!(catalogue.in_group(&Group::Facet(Facet::Type, "Beast".into())), vec![1, 2]);
+        assert_eq!(
+            catalogue.in_group(&Group::Facet(Facet::Model, "creature\\wolf\\".into())),
+            vec![1, 2],
+            "a model folder holds the folders under it"
+        );
+        assert_eq!(catalogue.in_group(&Group::Project), vec![2]);
+        assert_eq!(catalogue.in_group(&Group::OnMap), vec![0]);
+        assert_eq!(
+            catalogue.values(Facet::Type),
+            vec![("Beast".to_string(), 2), ("Humanoid".to_string(), 1)]
+        );
     }
 }

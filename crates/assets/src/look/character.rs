@@ -1,32 +1,32 @@
-//! Composing a player's skin, which the game does not ship and cannot.
+//! Composition of a player's body texture, which the game does not ship.
 //!
-//! An NPC wearing a character model has its body texture **baked** — one file
-//! per `CreatureDisplayInfoExtra` row, computed offline from a race, a face, a
-//! hairstyle and ten equipped items — and [`crate::tables::dbc::DisplayTables`] simply
-//! names it. A *player* has no such row: display ids 49..57 are the bare race
-//! models, and the client composes the same texture at runtime from the
-//! player's own appearance fields. That is why other players draw magenta
-//! against a client that only knows how to look a name up.
+//! An NPC wearing a character model has a **baked** body texture: one file per
+//! `CreatureDisplayInfoExtra` row, computed offline from a race, a face, a
+//! hairstyle and ten equipped items, which
+//! [`crate::tables::dbc::DisplayTables`] names. A player has no such row.
+//! Display ids 49..57 are the bare race models, and the client composes the
+//! same texture at runtime from the player's own appearance fields. A client
+//! that can only look a texture name up draws other players magenta.
 //!
-//! This module is the composition. It is two halves, deliberately separable:
+//! The module has two parts that work independently:
 //!
-//! * [`CharSections`] turns an [`Appearance`] into a **recipe** — a list of
-//!   archive paths and where each lands in the composite. Pure table lookup,
-//!   no pixels, so it is unit-testable and the CLI can check every combination
-//!   in the game against the archive without decoding anything.
-//! * [`Composite`] does the pixels: alpha-blend each decoded layer into its
+//! * [`CharSections`] turns an [`Appearance`] into a **recipe**: a list of
+//!   archive paths and where each lands in the composite. It is table lookup
+//!   with no pixels, so unit tests and the CLI can check every combination in
+//!   the game against the archive without decoding a texture.
+//! * [`Composite`] does the pixels: it alpha-blends each decoded layer into its
 //!   region, in order.
 //!
 //! ## The composite is a 256x256 atlas of body parts
 //!
 //! A character M2's UVs address one texture for the whole body, and the pieces
-//! are laid into fixed rectangles of it — the layout below, which is
-//! WoWModelViewer's `regions[]` and is what the vanilla client hardcodes (the
-//! `CharComponentTextureSections.dbc` that would state it arrives in
-//! Cataclysm). **It is checked against the files rather than trusted**: every
-//! source texture in the game must be exactly the size of the region it is
-//! declared to fill, and `vale char` asserts that over the whole table. A
-//! wrong rectangle does not fail — it puts a face on a thigh.
+//! are laid into fixed rectangles of it. The layout below is WoWModelViewer's
+//! `regions[]`, and the 1.12.1 client uses the same fixed layout; the
+//! `CharComponentTextureSections.dbc` that states it as data first ships in
+//! Cataclysm. The layout is checked against the files: every source texture in
+//! the game must be exactly the size of the region it is declared to fill, and
+//! `vale char` asserts that over the whole table. A wrong rectangle raises no
+//! error; it paints a part onto the wrong place, such as a face on a thigh.
 //!
 //! ```text
 //!   0,0                    128,0                  256,0
@@ -51,27 +51,28 @@
 //! ## `CharSections.dbc`
 //!
 //! `id, race, gender, baseSection, variationIndex, colorIndex, texture[3],
-//! flags` — **not** the layout most references give, which puts the three
-//! textures at 4..6; here they are at 6..8. The measurement is self-checking,
-//! because the filenames encode the two indices: record 413 is race 1 gender 1
-//! section 1 variation 4 colour 9 and reads `HumanFemaleFaceLower04_09.blp` +
+//! flags`. Most references put the three textures at 4..6; in this table they
+//! are at 6..8. The filenames encode the variation and colour indices, which
+//! confirms the layout: record 413 is race 1 gender 1 section 1 variation 4
+//! colour 9 and reads `HumanFemaleFaceLower04_09.blp` +
 //! `HumanFemaleFaceUpper04_09.blp`.
 //!
-//! `baseSection` is 0 skin, 1 face, 2 facial hair, 3 hair, 4 underwear. Which
-//! of the three texture columns means what depends on the section, and the
-//! names say so: a face row's two are lower and upper, a hair row's first is
-//! the *hair mesh's* own texture (the M2 asks for it as texture type 6, so it
-//! is not composited at all) and its other two are the scalp, which is.
+//! `baseSection` is 0 skin, 1 face, 2 facial hair, 3 hair, 4 underwear. The
+//! meaning of each of the three texture columns depends on the section, and
+//! the filenames show it: a face row's two are lower and upper; a hair row's
+//! first is the hair mesh's own texture (the M2 asks for it as texture type 6,
+//! so it is not composited) and its other two are the scalp, which is
+//! composited.
 //!
-//! Note that the variation digit in a filename is *not* always
-//! `variationIndex`: facial-hair record 1283 is variation 4 but reads
-//! `FacialLowerHair00_08`, because the style there is geometry — a geoset — and
-//! only the colour is in the texture.
+//! The variation digit in a filename is not always `variationIndex`:
+//! facial-hair record 1283 is variation 4 but reads `FacialLowerHair00_08`,
+//! because the facial-hair style is geometry (a geoset) and only the colour is
+//! in the texture.
 
 use crate::{AssetError, Dbc};
 
 /// Side of the composed body texture. The character models' UVs are addressed
-/// against this, so it is not a quality knob.
+/// against this size, so it is fixed and is not a quality setting.
 pub const COMPOSITE_SIDE: u32 = 256;
 
 /// A rectangle of the composite.
@@ -95,7 +96,7 @@ impl Region {
 }
 
 /// Where each body part lives in the composite. See the module docs for the
-/// picture and for why these are checked against the files rather than trusted.
+/// layout diagram and for how `vale char` checks it against the files.
 pub mod regions {
     use super::Region;
 
@@ -147,11 +148,12 @@ pub struct Appearance {
 impl Appearance {
     /// Unpack the three update fields vmangos packs these into.
     ///
-    /// `Unit::GetRace` and friends are `GetByteValue(field, offset)`, which is
-    /// `((uint8*)&value)[offset]` — so offset 0 is the *least* significant byte
-    /// and this is a plain little-endian split. Getting the order backwards
-    /// gives a human male orc, which is a texture path that does not exist
-    /// rather than a wrong-looking one, and would read as a missing file.
+    /// vmangos `Unit::GetRace` and the other byte getters are
+    /// `GetByteValue(field, offset)`, which is `((uint8*)&value)[offset]`, so
+    /// offset 0 is the least significant byte and the split is little-endian.
+    /// Reversing the order gives a human male orc, a combination whose texture
+    /// path does not exist, so the error reads as a missing file rather than as
+    /// a wrong-looking character.
     pub fn from_fields(bytes_0: u32, player_bytes: u32, player_bytes_2: u32) -> Appearance {
         Appearance {
             race: bytes_0 as u8,
@@ -173,26 +175,35 @@ pub struct SkinLayer {
 }
 
 /// What to draw a character with: the body composite's ingredients, and the
-/// separate texture the hair *mesh* wears.
+/// two separate textures that dress geometry of their own.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharacterSkin {
-    /// In paint order — the base skin first, everything else over it.
+    /// In paint order: the base skin first, everything else over it.
     pub layers: Vec<SkinLayer>,
-    /// The hair mesh's own texture, which the M2 asks for as type 6 and which
-    /// is **not** part of the composite: it dresses separate geometry.
+    /// The hair mesh's own texture, which the M2 asks for as type 6. It is not
+    /// part of the composite, because it dresses separate geometry.
     pub hair: Option<String>,
+    /// The skin row's second texture, which the M2 asks for as type 8 and
+    /// which is not part of the composite either.
+    ///
+    /// Only the tauren have one: 30 skin rows name a
+    /// `Tauren<Gender>Skin00_<nn>_Extra.blp`, the fur. Both tauren models
+    /// declare type 8 and no type 6, and dress their mane, the fur fringes
+    /// and the female's facial-hair pieces with it, so without it those draw
+    /// magenta.
+    pub extra: Option<String>,
 }
 
-/// Field indices in the two geoset tables. Measured the same way as the rest —
-/// `vale dbc <Table>` and read the columns.
+/// Field indices in the two geoset tables, measured the same way as the other
+/// tables: `vale dbc <Table>` prints the columns.
 mod geoset_fields {
     /// `CharHairGeosets.dbc`: id, race, gender, variation, geoset, showScalp.
     ///
-    /// Record 0 is race 1 gender 0 variation 0 -> geoset **0**, showScalp 1, and
+    /// Record 0 is race 1 gender 0 variation 0 -> geoset 0, showScalp 1, and
     /// record 1 is variation 1 -> geoset 2. So the hairstyle index the server
-    /// sends is this table's `variation`, the geoset is a group-0 id, and zero
-    /// is a real answer rather than a missing row: human male style 0 is bald,
-    /// and the scalp the composite paints is what is seen instead.
+    /// sends is this table's `variation` and the geoset is a group-0 id. Geoset
+    /// 0 means bald: human male style 0 draws the scalp geoset 1, painted with
+    /// the scalp textures of the composite.
     pub mod hair {
         pub const RACE: usize = 1;
         pub(crate) const GENDER: usize = 2;
@@ -204,20 +215,19 @@ mod geoset_fields {
     /// `CharacterFacialHairStyles.dbc`: race, gender, variation, three fields
     /// that are not geosets, then the three that are.
     ///
-    /// **There is no id column** — the key is the first three fields — and
-    /// fields 3..5 hold the same three numbers (80190984, 0, 1960) in every one
-    /// of the 136 rows, which is what says they are not per-style data. The
-    /// three at 6..8 vary with the variation and are the geoset *variants* for
-    /// groups 1, 3 and 2 in that order (WoWModelViewer's `geoset100`,
-    /// `geoset300`, `geoset200`).
+    /// The table has no id column; the key is the first three fields. Fields
+    /// 3..5 hold the same three numbers (80190984, 0, 1960) in all 136 rows, so
+    /// they are not per-style data. The three at 6..8 vary with the variation
+    /// and are the geoset variants for groups 1, 3 and 2 in that order
+    /// (WoWModelViewer's `geoset100`, `geoset300`, `geoset200`).
     ///
-    /// **That order is measured, not taken on authority.** `vale char`
-    /// checks every style's geosets against the geosets the race's own model
-    /// carries, and of the six ways the three columns could map onto the three
-    /// groups this one is the only one that fits: 27 of 408 name a geoset the
-    /// model lacks, where the next best is 71 and the worst 115. The 27 are
-    /// rows shipped without the geometry to draw them, the same kind of gap as
-    /// the 44 `CharSections` textures that are not in the archive.
+    /// The order is measured. `vale char` checks every style's geosets against
+    /// the geosets the race's own model carries. Of the six ways the three
+    /// columns could map onto the three groups, this is the only one that fits:
+    /// 27 of 408 name a geoset the model lacks, where the next best is 71 and
+    /// the worst 115. The 27 are rows shipped without the geometry to draw
+    /// them, the same kind of gap as the 44 `CharSections` textures that are
+    /// not in the archive.
     pub mod facial {
         pub const RACE: usize = 0;
         pub(crate) const GENDER: usize = 1;
@@ -228,7 +238,7 @@ mod geoset_fields {
     }
 }
 
-/// The two DBCs that say which *geometry* a character's own appearance selects.
+/// The two DBCs that say which geometry a character's own appearance selects.
 ///
 /// The skin is a texture and is composed ([`CharSections`]); the hair and the
 /// beard are geosets, and this is where they come from. Both tables are keyed by
@@ -260,15 +270,15 @@ struct FacialRow {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Hair {
     pub geoset: u16,
-    /// `showScalp`. A style that covers the head sets this to 0 — the composite
-    /// paints the scalp textures regardless today, which is invisible under
-    /// hair and correct without it.
+    /// `showScalp`. A style that covers the head sets this to 0. The composite
+    /// paints the scalp textures regardless: under hair they are hidden, and
+    /// without hair they are correct.
     pub(crate) show_scalp: bool,
 }
 
 impl CharGeosets {
-    /// Both tables. Either may be missing: the cost is bald characters or
-    /// beardless ones, and neither is worth failing an entity over.
+    /// Parses both tables. Either may be missing: the cost is bald or beardless
+    /// characters, and neither is a reason to fail to load an entity.
     pub fn parse(hair: &[u8], facial: &[u8]) -> CharGeosets {
         use geoset_fields::{facial as ff, hair as hf};
 
@@ -335,7 +345,8 @@ impl CharGeosets {
             .collect()
     }
 
-    /// The hairstyle row for one appearance.
+    /// The hairstyle row for one appearance, as the table states it: geoset 0
+    /// for a bald style. [`Self::geosets`] turns that into the geoset to draw.
     pub fn hair(&self, look: &Appearance) -> Option<Hair> {
         self.hair
             .iter()
@@ -351,9 +362,12 @@ impl CharGeosets {
     /// Everything a character's appearance chooses, in the form the model
     /// filter wants.
     ///
-    /// A row this table does not have costs that piece and nothing else — no
-    /// hair row means bald, which is what the client did for every character
-    /// before these tables were read at all.
+    /// A hairstyle with no row, or whose row names geoset 0, draws
+    /// [`crate::world::m2::BALD_GEOSET`], the scalp that closes the top of the
+    /// head; the 1.12.1 client does the same. Geoset 0 is the body, so drawing
+    /// nothing else in group 0 leaves the skull open on the models that carry
+    /// the scalp: 170 bald human males and 35 gnome males among the NPCs. A
+    /// missing facial-hair row costs that piece and nothing else.
     pub fn geosets(&self, look: &Appearance) -> crate::world::m2::CharacterGeosets {
         let facial = self
             .facial
@@ -364,7 +378,11 @@ impl CharGeosets {
             .map(|r| r.geosets)
             .unwrap_or_default();
         crate::world::m2::CharacterGeosets {
-            hair: self.hair(look).map(|h| h.geoset).unwrap_or(0),
+            hair: self
+                .hair(look)
+                .map(|h| h.geoset)
+                .filter(|&geoset| geoset != 0)
+                .unwrap_or(crate::world::m2::BALD_GEOSET),
             facial,
             // Both filled by the caller from the wearer's equipment, which is a
             // server answer rather than a DBC one.
@@ -433,10 +451,10 @@ impl CharSections {
     ///
     /// Every part is optional and a missing one costs only itself: a face
     /// variation the table does not have leaves the base skin showing through,
-    /// which is a featureless but correctly *coloured* character rather than a
-    /// magenta one. That is the whole point of building this bottom-up — the
-    /// base skin alone is already a large improvement, and each further layer
-    /// is independent of the rest.
+    /// which draws a featureless character in the correct colour rather than a
+    /// magenta one. The recipe is built up from the base skin for this reason:
+    /// the base skin alone replaces the magenta body, and each further layer is
+    /// independent of the others.
     pub fn skin(&self, look: &Appearance) -> CharacterSkin {
         let (race, gender) = (look.race, look.gender);
         let mut layers = Vec::new();
@@ -449,8 +467,9 @@ impl CharSections {
             }
         };
 
-        // The base skin covers the whole texture; its *variation* is always 0
-        // and the colour index is the skin tone.
+        // The base skin covers the whole texture; its variation is always 0
+        // and the colour index is the skin tone. Its second texture is the
+        // type-8 one, [`Self::extra`], which is not painted.
         if let Some(row) = self.find(race, gender, section::SKIN, 0, look.skin) {
             push(&row.textures[0], regions::BASE);
         }
@@ -462,15 +481,15 @@ impl CharSections {
             push(&row.textures[1], regions::TORSO_UPPER);
         }
 
-        // The face is keyed by the face id *and* the skin tone, which is why
-        // there are (faces x skins) rows of it and not just faces.
+        // The face is keyed by the face id and the skin tone, so there are
+        // (faces x skins) face rows, not one per face.
         if let Some(row) = self.find(race, gender, section::FACE, look.face, look.skin) {
             push(&row.textures[0], regions::FACE_LOWER);
             push(&row.textures[1], regions::FACE_UPPER);
         }
 
         // The scalp goes on before facial hair, so a beard is drawn over it.
-        // A hair row's first texture is the hair *mesh's*, and is not painted
+        // A hair row's first texture is the hair mesh's, and is not painted
         // into the composite at all.
         let hair = self
             .find(race, gender, section::HAIR, look.hair_style, look.hair_colour)
@@ -480,7 +499,7 @@ impl CharSections {
                 (!row.textures[0].is_empty()).then(|| row.textures[0].clone())
             });
 
-        // Facial hair is coloured by the *hair* colour, not the skin's.
+        // Facial hair is coloured by the hair colour, not the skin's.
         if let Some(row) = self.find(
             race,
             gender,
@@ -492,7 +511,21 @@ impl CharSections {
             push(&row.textures[1], regions::FACE_UPPER);
         }
 
-        CharacterSkin { layers, hair }
+        CharacterSkin {
+            layers,
+            hair,
+            extra: self.extra(look),
+        }
+    }
+
+    /// The type-8 texture for one appearance: the skin row's second texture,
+    /// keyed by race, gender and skin colour. `None` for every race but the
+    /// tauren. An NPC's bake does not hold it, so the NPC's own skin colour
+    /// from `CreatureDisplayInfoExtra` selects it as a player's does.
+    pub fn extra(&self, look: &Appearance) -> Option<String> {
+        self.find(look.race, look.gender, section::SKIN, 0, look.skin)
+            .map(|row| row.textures[1].clone())
+            .filter(|path| !path.is_empty())
     }
 
     /// Every row's `(section, texture path, the region it is declared to fill)`,
@@ -528,15 +561,15 @@ impl CharSections {
         out
     }
 
-    /// **Every hair-mesh texture the table names**, which is the one file per
-    /// row that [`Self::declared_regions`] deliberately leaves out.
+    /// Every hair-mesh texture the table names: the one file per row that
+    /// [`Self::declared_regions`] leaves out.
     ///
-    /// A hair row's texture 0 dresses *geometry* — the M2 asks for it as
-    /// replaceable texture type 6 — so it has no region in the composite and the
-    /// region survey has nothing to say about it. That is exactly why it needed
-    /// its own accessor: it was the only file in this table that nothing
-    /// checked against the archive, and a hair mesh with no texture bound draws
-    /// **magenta** rather than drawing nothing.
+    /// A hair row's texture 0 dresses geometry (the M2 asks for it as
+    /// replaceable texture type 6), so it has no region in the composite and the
+    /// region survey does not check it. This accessor exists so that a survey
+    /// can check these files against the archive. Without it they were the only
+    /// files in this table that nothing checked, and a hair mesh with no
+    /// texture bound draws magenta rather than drawing nothing.
     pub fn hair_meshes(&self) -> Vec<&str> {
         self.rows
             .iter()
@@ -644,10 +677,9 @@ impl Composite {
                 let d = ((dy * COMPOSITE_SIDE + dx) * 4) as usize;
 
                 // Straight source-over. The layers above the base are mostly
-                // transparent — a face is a patch on a 128x64 rectangle — so
+                // transparent (a face is a patch on a 128x64 rectangle), so
                 // ignoring alpha would paint rectangles of blank texture over
-                // the skin, which is what "the face is a floating box" looks
-                // like.
+                // the skin and draw the face as a box.
                 let a = rgba[s + 3] as u32;
                 if a == 0 {
                     continue;
@@ -677,8 +709,9 @@ impl Composite {
 ///
 /// `read` answers a layer's file, or `None` where there is none. A layer that
 /// is missing or will not decode costs that layer and nothing else, for the
-/// reason [`crate::look::dress::skin_recipe`] gives. The one compositor: the
-/// client paints a player's skin with it and the editor an NPC's bake.
+/// reason [`crate::look::dress::skin_recipe`] gives. This is the only
+/// compositor: the client paints a player's skin with it, and a host paints
+/// an NPC's bake with it.
 pub fn paint_skin(recipe: &CharacterSkin, mut read: impl FnMut(&str) -> Option<Vec<u8>>) -> Option<Vec<u8>> {
     let mut composite = Composite::new();
     let mut painted = 0;
@@ -694,16 +727,16 @@ pub fn paint_skin(recipe: &CharacterSkin, mut read: impl FnMut(&str) -> Option<V
 
 /// A box-filtered mip chain for a texture this client generated.
 ///
-/// The BLPs in the archive carry Blizzard's own mips and nothing here has to
-/// invent any — but a *composed* skin has no file to take them from, and a
-/// character with one mip level shimmers exactly the way the ground did.
+/// The BLPs in the archive carry Blizzard's own mips. A composed skin has no
+/// file to take them from, and a character with one mip level shimmers in the
+/// same way the terrain did without mips.
 ///
-/// Each level averages a 2x2 block of the one above **weighted by alpha**, so a
-/// transparent texel's colour cannot bleed into its neighbours; a straight
-/// average darkens every edge towards whatever the unused colour under the
-/// transparency happens to be.
+/// Each level averages a 2x2 block of the one above, weighted by alpha, so a
+/// transparent texel's colour cannot bleed into its neighbours. A straight
+/// average darkens every edge towards the unused colour under the
+/// transparency.
 ///
-/// That weighting is only right for a texture whose alpha *is* transparency. See
+/// That weighting is only right for a texture whose alpha is transparency. See
 /// [`box_mips`] for the other kind.
 pub fn generate_mips(width: u32, height: u32, top: &[u8]) -> Vec<Vec<u8>> {
     mips(width, height, top, true)
@@ -711,11 +744,12 @@ pub fn generate_mips(width: u32, height: u32, top: &[u8]) -> Vec<Vec<u8>> {
 
 /// The same chain with every tap weighted equally.
 ///
-/// **For a four-channel texture that is four independent maps rather than a
-/// colour and its transparency.** The terrain's alpha atlas is the one this
-/// client has: three blend weights and, since shadows, `MCSH` in the alpha — and
-/// [`generate_mips`]' weighting would fade a chunk's *blend* out wherever its
-/// **shadow** does, which is a plausible-looking ground rather than a failure.
+/// It is for a four-channel texture that holds four independent maps rather
+/// than a colour and its transparency. The terrain's alpha atlas is the one
+/// such texture in this client: three blend weights, and `MCSH` in the alpha.
+/// [`generate_mips`]' weighting would fade a chunk's blend out wherever its
+/// shadow does, and the result looks like plausible ground rather than a
+/// visible failure.
 pub(crate) fn box_mips(width: u32, height: u32, top: &[u8]) -> Vec<Vec<u8>> {
     mips(width, height, top, false)
 }
@@ -858,12 +892,12 @@ mod tests {
             &[
                 // Base skin: variation is always 0, colour is the tone.
                 row(1, 1, 0, section::SKIN, 0, 3, [skin, 0, 0]),
-                // A face for the *same* tone, and a decoy for another one.
+                // A face for the same tone, and a decoy for another one.
                 row(2, 1, 0, section::FACE, 2, 3, [facelo, faceup, 0]),
                 row(3, 1, 0, section::FACE, 2, 9, [at(b"skin.blp"), 0, 0]),
                 // Hair: the first column dresses the mesh, the rest is scalp.
                 row(4, 1, 0, section::HAIR, 5, 7, [hair, scalplo, 0]),
-                // Facial hair takes the *hair* colour, not the skin's.
+                // Facial hair takes the hair colour, not the skin's.
                 row(5, 1, 0, section::FACIAL_HAIR, 4, 7, [beardlo, 0, 0]),
                 row(6, 1, 0, section::UNDERWEAR, 0, 3, [pelvis, 0, 0]),
             ],
@@ -906,9 +940,8 @@ mod tests {
         );
     }
 
-    /// The failure mode that matters: a face the table does not have must leave
-    /// a correctly coloured body, not a magenta one. Every layer is optional and
-    /// independent.
+    /// A face the table does not have must leave a correctly coloured body, not
+    /// a magenta one. Every layer is optional and independent.
     #[test]
     fn a_missing_part_costs_only_itself() {
         let strings = b"\0skin.blp\0";
@@ -928,6 +961,65 @@ mod tests {
         assert_eq!(composed.layers.len(), 1, "the base skin still resolves");
         assert_eq!(composed.layers[0].region, regions::BASE);
         assert_eq!(composed.hair, None);
+        assert_eq!(composed.extra, None, "only a tauren skin row names a second texture");
+    }
+
+    /// A tauren skin row's second texture is the type-8 fur. It is returned
+    /// beside the composite and not painted into it, and it follows the skin
+    /// colour.
+    #[test]
+    fn a_tauren_skin_names_its_fur_apart_from_the_composite() {
+        let strings = b"\0skin.blp\0fur.blp\0";
+        let table = CharSections::parse(&build(
+            &[row(1, 6, 1, section::SKIN, 0, 3, [1, 10, 0])],
+            strings,
+        ))
+        .expect("parsed");
+        let tauren = Appearance {
+            race: 6,
+            gender: 1,
+            skin: 3,
+            ..Default::default()
+        };
+        let composed = table.skin(&tauren);
+        assert_eq!(composed.layers.len(), 1, "the fur is not a layer");
+        assert_eq!(composed.extra.as_deref(), Some("fur.blp"));
+        assert_eq!(table.extra(&tauren).as_deref(), Some("fur.blp"));
+        assert_eq!(table.extra(&Appearance { skin: 4, ..tauren }), None);
+    }
+
+    /// A `CharHairGeosets.dbc` from `(race, gender, variation, geoset)` rows.
+    fn hair_table(rows: &[(u32, u32, u32, u32)]) -> Vec<u8> {
+        let fields = 6usize;
+        let mut v = Vec::new();
+        v.extend_from_slice(DBC_MAGIC);
+        v.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+        v.extend_from_slice(&(fields as u32).to_le_bytes());
+        v.extend_from_slice(&((fields * 4) as u32).to_le_bytes());
+        v.extend_from_slice(&1u32.to_le_bytes());
+        for (id, &(race, gender, variation, geoset)) in rows.iter().enumerate() {
+            for value in [id as u32, race, gender, variation, geoset, 0] {
+                v.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        v.push(0);
+        v
+    }
+
+    /// A bald style, and a style the table has no row for, both draw the scalp
+    /// geoset rather than nothing, so the top of the head is closed.
+    #[test]
+    fn a_bald_or_unknown_hairstyle_draws_the_scalp() {
+        let geosets = CharGeosets::parse(&hair_table(&[(1, 0, 0, 0), (1, 0, 1, 2)]), &[]);
+        let human = |hair_style| Appearance {
+            race: 1,
+            hair_style,
+            ..Default::default()
+        };
+        assert_eq!(geosets.hair(&human(0)).map(|h| h.geoset), Some(0), "the row as stated");
+        assert_eq!(geosets.geosets(&human(0)).hair, crate::world::m2::BALD_GEOSET);
+        assert_eq!(geosets.geosets(&human(1)).hair, 2);
+        assert_eq!(geosets.geosets(&human(7)).hair, crate::world::m2::BALD_GEOSET);
     }
 
     /// A race the table says nothing about yields nothing, rather than the
@@ -980,8 +1072,8 @@ mod tests {
     }
 
     /// A transparent layer must not paint. Half the area of a face texture is
-    /// blank, and ignoring alpha covers the skin with rectangles of nothing —
-    /// which is what "the face is a floating box" looks like.
+    /// blank, and ignoring alpha covers the skin with blank rectangles, which
+    /// draws the face as a box.
     #[test]
     fn a_transparent_texel_leaves_what_is_under_it() {
         let mut composite = Composite::new();

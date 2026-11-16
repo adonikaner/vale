@@ -50,8 +50,9 @@ impl<S: SpawnSubject> Plugin for TemplatesPlugin<S> {
     }
 }
 
-/// Read the template table whole, on a task, while the workspace is open and
-/// the database has been written since the last read.
+/// Read the template table whole, on a task, while the workspace or the spawn
+/// tool's Place mode is open and the database has been written since the
+/// last read. The Place mode's drawer lists the same rows.
 fn read_the_list<S: SpawnSubject>(
     mut tool: ResMut<SpawnTool<S>>,
     session: Option<Res<EditSession>>,
@@ -65,7 +66,8 @@ fn read_the_list<S: SpawnSubject>(
     if let Some(highest) = tool.listed.collect() {
         tool.max_entry = tool.max_entry.max(highest);
     }
-    if !state.editing() || !popout.shows(*chosen, S::WORKSPACE) {
+    let placing = *chosen == S::TOOL && tool.mode == crate::tools::placements::place::Mode::Place;
+    if !state.editing() || !(popout.shows(*chosen, S::WORKSPACE) || placing) {
         return;
     }
     let Some(session) = session else { return };
@@ -128,6 +130,7 @@ mod tests {
                 faction: 11,
                 npc_flags: 0,
                 rank: 0,
+                kind: 7,
                 equipment_id: 68,
                 claim: Life::Update,
             }

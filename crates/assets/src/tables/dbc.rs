@@ -102,7 +102,7 @@ impl Dbc {
     }
 }
 
-/// A client table read by record and field: the questions a rule in this
+/// A DBC table read by record and field: the questions a rule in this
 /// crate asks of a table. [`Dbc`] answers them, and so can any container
 /// that holds the same bytes, so a rule written against this trait reads an
 /// edited table without writing it out first.
@@ -1456,15 +1456,22 @@ impl DisplayTables {
             })
             .collect();
 
-        // An NPC wearing a character model has no texture variations. Its skin
-        // was baked offline from a race, a face, a hairstyle and ten equipped
-        // items, and the result ships as one texture named only in
-        // `CreatureDisplayInfoExtra`. It fills slot 0, because the character
-        // M2 requests it as texture type 1 where a creature requests type 11.
-        if skins[0].is_empty() {
-            if let Some(baked) = self.baked_skin(display) {
-                skins[0] = baked;
-            }
+        // An NPC wearing a character model has its skin baked offline from a
+        // race, a face, a hairstyle and ten equipped items, and the result
+        // ships as one texture named only in `CreatureDisplayInfoExtra`. It
+        // fills slot 0, because the character M2 requests it as texture type 1
+        // where a creature requests type 11.
+        //
+        // The bake replaces a texture variation in slot 0. The 1.12.1 client
+        // builds the body of a display with a `CreatureDisplayInfoExtra` row
+        // from the bake and does not read the variations for it. 147 such rows
+        // also name a variation, and none of those files is in the archives:
+        // 94 rows hold string offset 1, which is `HumanMaleCitizenLow`, the
+        // first string in the block, and the rest name leftovers such as
+        // `OrcNPCSkin`. Taking the variation drew those NPCs magenta, the
+        // Theramore guards among them.
+        if let Some(baked) = self.baked_skin(display) {
+            skins[0] = baked;
         }
 
         let display_scale = self
@@ -2156,15 +2163,16 @@ mod tests {
         assert_eq!(resolved.skins[1], "", "the other slots stay empty");
     }
 
-    /// The bake must not replace a texture variation that already fills slot
-    /// 0. The two texture types share the slot, so the wrong precedence would
-    /// draw a wolf with a character's baked skin.
+    /// The bake replaces a texture variation in slot 0. Display 4859, a human
+    /// female in Theramore, has a `CreatureDisplayInfoExtra` row and also names
+    /// the variation `HumanMaleCitizenLow`, which is in no archive; taking the
+    /// variation drew her magenta.
     #[test]
-    fn a_texture_variation_outranks_a_bake_for_the_same_slot() {
-        let strings = b"\0Creature\\Wolf\\Wolf.mdx\0WolfSkinGrey\0baked.blp\0";
-        let skin_at = 24u32;
-        let bake_at = 37u32;
-        assert_eq!(&strings[skin_at as usize..skin_at as usize + 4], b"Wolf");
+    fn a_bake_outranks_a_texture_variation_for_the_same_slot() {
+        let strings = b"\0Character\\Human\\Female\\HumanFemale.mdx\0HumanMaleCitizenLow\0baked.blp\0";
+        let skin_at = 40u32;
+        let bake_at = 60u32;
+        assert_eq!(&strings[skin_at as usize..skin_at as usize + 5], b"Human");
         assert_eq!(&strings[bake_at as usize..bake_at as usize + 5], b"baked");
 
         let mut display = vec![0u32; 12];
@@ -2197,7 +2205,7 @@ mod tests {
 
         assert_eq!(
             tables.creature(7).unwrap().skins[0],
-            "Creature\\Wolf\\WolfSkinGrey.blp"
+            "Textures\\BakedNpcTextures\\baked.blp"
         );
     }
 

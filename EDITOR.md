@@ -279,13 +279,15 @@ listed.
   then "Keys", whose hover text lists the tool's keys. A second row holds
   what the chosen mode alone has, such as "Handles" in Select. A tool with no
   mode and no switch has "Keys" alone. Values and pickers are in the
-  inspector. The tileset and model lists are in the asset drawer.
+  inspector. The tileset, model and spawn template lists are in the asset
+  drawer.
 - Inspector, on the right: the current tool's name, "Undo" and "Redo" for a
   tool that edits, then the tool's settings or the selection's form. A
   workspace's name has "Pop Out" beside it.
-- Asset drawer, under the viewport: the tilesets or the models, by folder, as
-  a grid of pictures. It is shown while an inspector section that chooses a
-  tileset or a model is shown. See [Asset drawer](#asset-drawer).
+- Asset drawer, under the viewport: the tilesets or the models by folder, or
+  the creature or game object templates by group, as a grid of pictures. It
+  is shown while an inspector section that chooses one of them is shown. See
+  [Asset drawer](#asset-drawer).
 - View bar, above the status line. Each switch is a button with an icon. The
   hover text names the switch and says whether it is on and what its default
   is. A switch that is off is drawn dim, with a line through it when it is on
@@ -338,9 +340,10 @@ main window closes them all. "Pop Out" is unavailable during a playtest.
 
 ### Asset drawer
 
-The asset drawer is the panel under the viewport that lists the tilesets or
-the models. It is shown while one of these inspector sections is shown, and a
-click on a file in the drawer goes to that section:
+The asset drawer is the panel under the viewport that lists the tilesets,
+the models, or the creature or game object templates. It is shown while one of
+these inspector sections is shown, and a click in the drawer goes to that
+section:
 
 | Section | List | A click on a file |
 |---|---|---|
@@ -350,6 +353,7 @@ click on a file in the drawer goes to that section:
 | Doodads in Cluster, "Models" | Doodads | Adds the model to the cluster, or takes out a highlighted one. |
 | "Replace Model" | Doodads or WMOs | Chooses the model "Replace N" writes. |
 | Building editor in Doodads mode, "Add" | Doodads | Puts the model on the cursor inside the building. |
+| Creatures or Objects in Place | Creature or game object templates | Puts the template on the cursor. See [Placing spawns](#placing-spawns). |
 
 The drawer is not shown while a workspace replaces the viewport or during a
 playtest. Its top edge is dragged to change its height.
@@ -377,6 +381,28 @@ The tilesets keep one folder and one search. The models keep one folder per
 kind, doodads and WMOs, and one search for both. All of them are kept when the
 tool is switched. "Show Folder" under "Model" in Place opens the chosen
 model's folder.
+
+The creature and game object templates are rows of the server's database
+rather than files, so the drawer groups them instead of listing folders:
+
+- The left side lists "All", "Starred", "Recent", "This project" (the
+  templates the project makes) and "On this map" (the templates of the open
+  map's spawns), each with its count. Under them are headings that open on a
+  click: "Type", then "Rank" (Creatures) or "Gathering" (Objects: the
+  profession a mining vein or herb needs), then "Model". "Model" opens as a
+  tree of the folders the templates' models are in, such as `creature\wolf`;
+  a folder holds the templates in it and in the folders under it.
+- A tile shows the model, the name, and the subname (Creatures) or the type
+  or gathering profession (Objects); with no subname, the entry. Its hover
+  text is the name with the entry, and the levels or the type.
+- The search box ("Search names, subnames and entries" or "Search names and
+  entries") lists every template whose name or subname contains the text, or
+  whose entry is the number typed. Choosing a group clears the search.
+- The star and "Recent" work as for models and are kept by entry. A template
+  the project moves to another entry is no longer starred.
+- The list is read from the database when Place is first opened, and again
+  after an apply. The project's unapplied edits to a template are shown in
+  its tile.
 
 ## Camera
 
@@ -1751,12 +1777,11 @@ The top of the inspector counts the spawns "on this map", "near" and "new", with
 
 #### Placing spawns
 
-In Place, choose a template in the inspector, then click the ground. Every click places one spawn. Escape clears the chosen template. A switch to Select keeps the chosen template, and a return to Place has it on the pointer again.
+In Place, choose a template in the [asset drawer](#asset-drawer) under the viewport, then click the ground. Every click places one spawn. Escape clears the chosen template. A switch to Select keeps the chosen template, and a return to Place has it on the pointer again.
 
 - "Place Into": "Pool" and "Game Event", each with "Choose…" and "Clear". "New" beside the pool makes a pool that spawns one member at a time, named after the chosen template. Every spawn placed joins the chosen pool and game event, on the same undo entry.
 - "Creature Template" or "Game Object Template": the chosen template's name, a summary of it, "Edit Template…", "Open in Workspace" and a preview of its model. With no template chosen, "Chosen" reads "None".
-- In the same section, "New" makes a template, "Copy" copies the chosen one to an unused entry with every column as shown, and "Discard" drops a template the project made. A template already in the database cannot be removed. The templates the project makes are listed under "Created by this project (N)".
-- "Search": a name or an entry, at least two letters. On Objects, "Type" filters by `gameobject_template.type`; with a type chosen, the list fills without search text. The list shows the first 50 matches.
+- In the same section, "New" makes a template, "Copy" copies the chosen one to an unused entry with every column as shown, and "Discard" drops a template the project made. A template already in the database cannot be removed. The templates the project makes are listed under "This project" in the drawer.
 
 #### Selecting spawns
 

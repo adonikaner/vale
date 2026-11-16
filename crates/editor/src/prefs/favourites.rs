@@ -1,20 +1,20 @@
-//! The models a person keeps coming back to: the ones they starred, and the
-//! ones they placed last.
+//! The models and templates a person keeps coming back to: the ones they
+//! starred, and the ones they placed last.
 //!
-//! ## Scattering a copse is the same three models over and over
+//! ## Why the pickers keep two short lists
 //!
-//! Every placement was a search: type the name, find the row, click. The
-//! second tree of a copse is the first tree again, and the fourth is one of
-//! the first three. So the picker keeps two short lists beside its folders —
-//! what was **starred**, which a person chooses, and what was **used**, which
-//! the tool notes — and either is one click.
+//! Placing the same few models or templates again is the common case: the
+//! second tree of a copse is usually the first tree again, and a town's
+//! guards are one creature. So each picker keeps two lists beside its
+//! folders: what was starred, which a person chooses, and what was used,
+//! which the tool records. Either is one click.
 //!
 //! ## Per kind, in one file
 //!
-//! A doodad, a building and a spell effect's model are three pickers over
-//! three catalogues, and a favourite of one is noise in the others: a starred
-//! `Spells\Fire_Bolt.m2` has no place in a list of trees. Each line carries
-//! its kind, and a picker asks for its own.
+//! A doodad, a building, a spell effect's model, a creature and a game object
+//! are five pickers over five catalogues, and a favourite of one is noise in
+//! the others: a starred `Spells\Fire_Bolt.m2` has no place in a list of
+//! trees. Each line carries its kind, and a picker asks for its own.
 //!
 //! ## Where it is written, and that it is invented
 //!
@@ -37,11 +37,18 @@ pub(crate) const FILE: &str = "favourites.txt";
 pub(crate) const RECENT_MAX: usize = 12;
 
 /// Which picker a line belongs to.
+///
+/// The three model kinds keep archive paths. `Creature` and `GameObject` keep
+/// template entries as decimal text, so a star stays on the entry: a template
+/// this project moves to another entry loses its star and its place in
+/// Recent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Doodad,
     Wmo,
     Effect,
+    Creature,
+    GameObject,
 }
 
 impl Kind {
@@ -51,6 +58,8 @@ impl Kind {
             Kind::Doodad => "doodad",
             Kind::Wmo => "wmo",
             Kind::Effect => "effect",
+            Kind::Creature => "creature",
+            Kind::GameObject => "gameobject",
         }
     }
 
@@ -59,6 +68,8 @@ impl Kind {
             "doodad" => Some(Kind::Doodad),
             "wmo" => Some(Kind::Wmo),
             "effect" => Some(Kind::Effect),
+            "creature" => Some(Kind::Creature),
+            "gameobject" => Some(Kind::GameObject),
             _ => None,
         }
     }

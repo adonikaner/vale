@@ -649,10 +649,6 @@ impl SpawnSubject for GameObjectSubject {
         gameobject::templates_query(entries, patch)
     }
 
-    fn search_query(term: &str, of_type: Option<u32>, patch: u32, limit: usize) -> String {
-        gameobject::search_query(term, of_type, patch, limit)
-    }
-
     fn all_templates_query(patch: u32) -> String {
         gameobject::all_templates_query(patch)
     }
@@ -1002,14 +998,13 @@ mod tests {
     }
 
     /// A template whose entry the project changes is shown at the new entry
-    /// on every spawn of it, on the picker's matches and in the known table,
+    /// on every spawn of it, on the chosen template and in the known table,
     /// and reset when the move is taken back.
     #[test]
     fn a_moved_template_is_folded_into_what_is_drawn() {
         let mut objects = GameObjects::default();
         objects.spawns = vec![a_spawn()];
         objects.known.insert(1731, a_vein());
-        objects.new_spawn.matches = vec![a_vein()];
         objects.new_spawn.chosen = Some(a_vein());
         let mut edits = Edits::default();
         let from = gameobject::template_key(1731, 0);
@@ -1021,7 +1016,6 @@ mod tests {
         assert_eq!(objects.spawns[0].read_entry, 1731);
         assert_eq!(objects.spawns[0].template_key(), to);
         assert_eq!(objects.spawns[0].known.as_ref().map(|known| known.entry), Some(2_001_731));
-        assert_eq!(objects.new_spawn.matches[0].entry, 2_001_731);
         assert_eq!(objects.new_spawn.chosen.as_ref().map(|known| known.entry), Some(2_001_731));
         assert!(objects.known.contains_key(&2_001_731));
         assert!(!objects.known.contains_key(&1731));

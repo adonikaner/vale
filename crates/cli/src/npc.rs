@@ -5,13 +5,13 @@ use vale_config::Config;
 
 /// Resolve display ids the way the renderer does, and check the result exists.
 ///
-/// With an id, it traces one: the two DBC hops, the M2's texture table, and
+/// With an id, it prints one: the two DBC hops, the M2's texture table, and
 /// which archive file each slot the client has to supply resolves to. Without
-/// one, it surveys every row of `CreatureDisplayInfo` — which is the check that
-/// matters, because the failure mode here is silent. A model that asks for
-/// texture type 1 and gets nothing is drawn *grey*, not missing, so a wrong
-/// field index in `CreatureDisplayInfoExtra` looks exactly like the bug it was
-/// meant to fix.
+/// one, it surveys every row of `CreatureDisplayInfo`. The survey is the main
+/// check, because the failure is silent: a model that asks for texture type 1
+/// and gets nothing is drawn grey, not missing, so a wrong field index in
+/// `CreatureDisplayInfoExtra` draws the same grey NPCs that reading the table
+/// was meant to fix.
 pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
     use vale_assets::tables::dbc::dbc_path;
     use vale_assets::world::m2::M2;
@@ -27,9 +27,9 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
         println!("display {id}:");
         println!("  model  {}  scale {:.2}", resolved.path, resolved.scale);
         for (slot, skin) in resolved.skins.iter().enumerate() {
-            // Decoded, not merely present: a bake is a *generated* texture, and
-            // one in a BLP variant `blp.rs` does not handle would fall back to
-            // the same grey placeholder as no texture at all.
+            // Decoded, not only checked for presence: a bake is a generated
+            // texture, and one in a BLP variant `blp.rs` does not handle falls
+            // back to the same grey placeholder as a missing texture.
             let state = if skin.is_empty() {
                 "(none)".to_string()
             } else {
@@ -49,11 +49,11 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
             println!("  skin {slot}  {state}");
         }
 
-        // **The geometry half of an NPC's gear**, which the bake cannot hold: a
+        // The geometry part of an NPC's gear, which the bake cannot hold: a
         // pauldron is its own model and a bootleg is a geoset. Printed beside
-        // the bake so the two halves can be compared — a row with six item
-        // columns filled and no attachments here is an NPC wearing all of its
-        // textures and none of its shapes.
+        // the bake so the two parts can be compared. A row with six item
+        // columns filled and no attachments here is an NPC drawn with all of
+        // its garment textures and none of its garment geometry.
         if !resolved.equipment.is_empty() {
             println!("  equipped ({} of ten columns filled):", resolved.equipment.len());
             for worn in &resolved.equipment {
@@ -101,8 +101,8 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
                 0 => format!("in the model: {}", t.file_name),
                 1 => "type 1 - character body, from the bake -> skin 0".to_string(),
                 2 => "type 2 - cape, NOT SUPPLIED".to_string(),
-                6 => "type 6 - hair, NOT SUPPLIED".to_string(),
-                8 => "type 8 - skin extra, NOT SUPPLIED".to_string(),
+                6 => "type 6 - hair, from CharSections by style and colour".to_string(),
+                8 => "type 8 - skin extra, from CharSections by skin colour".to_string(),
                 11..=13 => format!("type {} - creature skin -> slot {}", t.kind, t.kind - 11),
                 k => format!("type {k} - NOT SUPPLIED"),
             };
@@ -125,6 +125,7 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
     let mut from_variation = 0usize;
     let mut from_bake = 0usize;
     let mut bake_missing: Vec<String> = Vec::new();
+    let mut variation_missing: Vec<String> = Vec::new();
     let mut no_skin_at_all: BTreeMap<String, usize> = BTreeMap::new();
     let mut unresolved = 0usize;
     // Cache the answer per texture path — the read and decode are the slow part
@@ -173,10 +174,23 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
             }
         } else {
             from_variation += 1;
+            if !present {
+                variation_missing.push(format!("{id}: {skin}"));
+            }
         }
     }
 
-    println!("  {from_variation} take slot 0 from a CreatureDisplayInfo texture variation");
+    // A variation that will not read draws magenta as a missing bake does.
+    // Checked because 147 rows with a bake also name a variation, none of
+    // which is in the archives, and while the variation won the slot those
+    // NPCs drew magenta with this survey reporting the bakes clean.
+    println!(
+        "  {from_variation} take slot 0 from a CreatureDisplayInfo texture variation, {} of which will not decode",
+        variation_missing.len()
+    );
+    for m in variation_missing.iter().take(5) {
+        println!("    !! {m}");
+    }
     println!(
         "  {from_bake} take it from a CreatureDisplayInfoExtra bake, {} of which will not decode",
         bake_missing.len()
@@ -204,26 +218,27 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
         println!("    !! {n:>4} x {path}");
     }
 
-    // The other side of the same coin: how much of the directory is reachable.
+    // The number of files in the bake directory, for comparison with the bake
+    // counts above.
     let on_disk = assets.list_prefix("Textures\\BakedNpcTextures\\").len();
     println!("  Textures\\BakedNpcTextures\\ holds {on_disk} files in the archive chain");
 
     check_npc_hair(&mut assets, &tables, &dbc);
 
-    // **What an NPC in a character model is wearing, and which column says so.**
+    // What an NPC in a character model wears, and which column names each item.
     //
     // `CreatureDisplayInfoExtra`'s ten item columns are usually described as the
-    // record of what the bake was computed from. True of the *texture* half of a
-    // garment and false of the geometry half: a pauldron is a separate model and
-    // a bootleg is a geoset, and neither can be painted into a body atlas. So
-    // the columns have to be read, and which slot each one dresses has to be
-    // right — a shoulder id read out of the shirt column hangs a shirt off a
-    // bone.
+    // record of what the bake was computed from. That holds for the texture
+    // part of a garment and not for the geometry part: a pauldron is a separate
+    // model and a bootleg is a geoset, and neither can be painted into a body
+    // atlas. The columns therefore have to be read, and each has to be mapped
+    // to the right slot: with the shirt column read as the shoulder column, a
+    // shirt is attached to a shoulder bone.
     //
-    // Measured the same way `Slot::components` was: a component texture is named
+    // Measured the same way as `Slot::components`: a component texture is named
     // `<family>_<piece>_<column>`, so resolving every column of every row through
     // `ItemDisplayInfo` and counting the piece names prints the slot order
-    // directly. Rows where the column is 0 say nothing and are skipped.
+    // directly. A column that holds 0 names no item and is skipped.
     let mut by_column: BTreeMap<usize, BTreeMap<String, u64>> = BTreeMap::new();
     let mut with_models = 0u64;
     for record in 0..dbc.record_count {
@@ -237,8 +252,8 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
             let piece = (0..8)
                 .find_map(|c| items.texture_name(item, c))
                 .and_then(|n| n.rsplit('_').nth(1).map(str::to_ascii_lowercase));
-            // A row with a model rather than a texture is a pauldron or a helm —
-            // the geometry this whole section exists for.
+            // A row with a model rather than a texture is a pauldron or a helm:
+            // the geometry this survey counts.
             if let Some(look) = items.appearance(item, 0) {
                 if look.models.iter().any(|m| !m.is_empty()) {
                     with_models += 1;
@@ -273,20 +288,19 @@ pub fn cmd_npc(cfg: &Config, display_id: Option<u32>) -> Result<(), String> {
     Ok(())
 }
 
-/// **Every NPC in a character model, and whether its hair resolves.**
+/// Every NPC in a character model, and whether its hair resolves.
 ///
-/// This is the check that was missing, and its absence was a false all-clear:
-/// `vale npc` verified the **bake** — slot 0, the body atlas —
-/// over all 10,534 display ids and reported clean, while the hair on a character
-/// model is not in the bake at all. The hairstyle is *geometry* dressed by its
-/// own texture (the M2 asks for it as type 6), and geometry with no texture
-/// bound draws **magenta**, which is the reported bug.
+/// The bake survey checks slot 0, the body atlas, over all 10,534 display ids.
+/// The hair on a character model is not in the bake: the hairstyle is geometry
+/// dressed by its own texture (the M2 asks for it as type 6), and geometry with
+/// no texture bound draws magenta. The bake survey reported clean while NPC
+/// hair drew magenta, so this check covers the hair separately.
 ///
-/// The two tables that have to agree are keyed differently, which is the whole
-/// mechanism: `CharHairGeosets` is `(race, gender, style)` and `CharSections` is
+/// The two tables that have to agree are keyed differently: `CharHairGeosets`
+/// is `(race, gender, style)` and `CharSections` is
 /// `(race, gender, style, colour)`. A `CreatureDisplayInfoExtra` row states both
 /// numbers and nothing checks them against each other, so a colour index with no
-/// row for that style still gets a geoset — hair with nothing on it.
+/// row for that style still gets a geoset: a hair mesh with no texture.
 fn check_npc_hair(
     assets: &mut vale_assets::Assets,
     tables: &vale_assets::tables::dbc::DisplayTables,
@@ -311,11 +325,11 @@ fn check_npc_hair(
     let mut bald = 0u32;
     let mut hairless = 0u32;
     let mut magenta: BTreeMap<(u8, u8, u8, u8), Vec<u32>> = BTreeMap::new();
-    // **Does this model have a hair slot at all?** Cached per path, because the
-    // 6,984 rows share eighteen models. A model with no type-6 texture cannot
-    // draw one however the tables answer — `GoblinMale.m2` declares two
-    // textures, both body — so counting those as magenta would be a check
-    // reporting a bug that cannot happen.
+    // Whether each model has a hair slot. Cached per path, because the 6,984
+    // rows share eighteen models. A model with no type-6 texture cannot draw a
+    // hair texture whatever the tables answer (`GoblinMale.m2` declares two
+    // textures, both body), so counting those rows as magenta would report a
+    // fault that cannot occur.
     let mut has_hair_slot: BTreeMap<String, bool> = BTreeMap::new();
     for record in 0..dbc.record_count {
         let Some(id) = dbc.u32_at(record, 0) else {
@@ -377,21 +391,20 @@ fn check_npc_hair(
     }
 }
 
-/// **The shadow every unit in the world stands on**, measured rather than
-/// assumed.
+/// Measures the shadow texture every unit in the world stands on.
 ///
-/// 1.12 casts no runtime shadow from a character: the client pairs
-/// `Textures\ShadowBlob.blp` with two CVars — `shadowBias` ("Unit shadow depth
-/// bias") and `shadowLOD` ("Unit shadow LOD") — and the *map* shadows are a
-/// separate switch (`mapShadows`, which is this client's `MCSH`). One texture,
-/// one bias, one distance: a blob decal under each unit, and nothing that
-/// projects geometry.
+/// The 1.12.1 client casts no runtime shadow from a character. It pairs
+/// `Textures\ShadowBlob.blp` with two CVars, `shadowBias` ("Unit shadow depth
+/// bias") and `shadowLOD` ("Unit shadow LOD"), and the map shadows are a
+/// separate switch (`mapShadows`, which corresponds to `MCSH` in this client).
+/// One texture, one bias and one distance give a blob decal under each unit,
+/// and nothing projects geometry.
 ///
-/// So the only open question is **how to draw it**, and that is a property of
-/// the file: a black image with an alpha ramp blends, and a white-on-black one
-/// modulates. It is the same question `lake_a` answered wrongly for two rounds
-/// by nobody measuring the texture's own colour, so it is measured here — the
-/// peak channel and the alpha coverage, which between them name the blend mode.
+/// The remaining question is the blend mode, which the file decides: a black
+/// image with an alpha ramp blends, and a white-on-black one modulates. The
+/// same question was answered wrongly twice for `lake_a` because the
+/// texture's colour was not measured, so this function measures the peak
+/// channel and the alpha coverage, which together determine the blend mode.
 fn shadow_blob(assets: &mut vale_assets::Assets) {
     const BLOB: &str = "Textures\\ShadowBlob.blp";
     println!("\n  the shadow a unit stands on ({BLOB}):");
@@ -430,11 +443,12 @@ fn shadow_blob(assets: &mut vale_assets::Assets) {
         at(blob.width / 2, blob.height / 2),
         opaque_total / opaque.max(1),
     );
-    // **And what the file puts under the alpha, which a modulate blend cannot
-    // ignore.** Multiplying is not blending: the corners of the square are cut
-    // out by a one-bit alpha that no blend factor here reads, so whatever colour
-    // the palette left there is what the ground gets multiplied by. Black
-    // corners would print a black square around every character.
+    // The colour the file stores under the cut-out alpha, which a modulate
+    // blend cannot ignore. A modulate blend multiplies and does not read alpha:
+    // the corners of the square are cut out by a one-bit alpha that no blend
+    // factor here reads, so the ground is multiplied by the colour the palette
+    // left there. Black corners would print a black square around every
+    // character.
     let cut: Vec<u8> = blob
         .rgba
         .chunks_exact(4)
@@ -446,10 +460,10 @@ fn shadow_blob(assets: &mut vale_assets::Assets) {
         "    under the cut-out alpha: {} texels, mean {cut_mean}/255",
         cut.len(),
     );
-    // **The shape, as eight rows of one digit** — because "a dark blob with an
+    // The shape, printed as eight rows of digits, because "a dark blob with an
     // alpha ramp" and "a light ring in a dark square" produce the same three
-    // numbers above and want opposite blend modes. Luminance 0..9, a dot where
-    // the texel is transparent.
+    // numbers above and need opposite blend modes. Each digit is luminance
+    // 0..9, and a dot marks a transparent texel.
     let step = (blob.width.max(blob.height) / 8).max(1);
     for y in (0..blob.height).step_by(step as usize) {
         let row: String = (0..blob.width)
@@ -464,8 +478,8 @@ fn shadow_blob(assets: &mut vale_assets::Assets) {
             .collect();
         println!("      {row}");
     }
-    // The verdict, stated rather than left to the reader: this is what the
-    // renderer's blend mode is chosen from.
+    // The blend mode the measurements select, printed as a conclusion. The
+    // renderer's blend mode is chosen from this result.
     let verdict = if peak < 32 {
         "dark throughout -> blend mode 2, the darkness being the texel's own colour"
     } else if cut_mean > 250 {

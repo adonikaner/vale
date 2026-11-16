@@ -30,6 +30,10 @@ pub(super) enum Request {
     /// textures beside it. Keyed by appearance, as the composite is, so two
     /// characters with the same hairstyle and colour share it.
     CharacterHair { key: String, look: CharacterLook },
+    /// The type-8 texture, which the composite does not hold either:
+    /// `CharSections` section 0 column 1, keyed by the skin colour. Only the
+    /// tauren have one; see `CharacterSkin::extra`.
+    CharacterExtra { key: String, look: CharacterLook },
 }
 
 /// Something decoded off the main thread. The meshes and images inside are
@@ -576,6 +580,34 @@ impl Loader {
                             if texture.is_none() && look.appearance.hair_style != 0 {
                                 warn!("no hair texture for {look:?}");
                             }
+                            Loaded::Texture {
+                                path: key,
+                                texture: texture.map(RawTexture::into_image),
+                            }
+                        }
+                        // The type-8 texture, resolved here for the same
+                        // reason as the hair's. Every race but the tauren
+                        // names none, and no model of theirs asks for one, so
+                        // only a named file that will not read is logged.
+                        Request::CharacterExtra { key, look } => {
+                            let table = sections.get_or_insert_with(|| {
+                                let table = archive.as_mut().and_then(read_char_sections);
+                                if table.is_none() {
+                                    warn!("CharSections.dbc will not read; players stay magenta");
+                                }
+                                table
+                            });
+                            let path = table.as_ref().and_then(|t| t.extra(&look.appearance));
+                            let texture = match (archive.as_mut(), path.as_deref()) {
+                                (Some(a), Some(path)) => {
+                                    let texture = read_texture(a, path);
+                                    if texture.is_none() {
+                                        warn!("texture {path} will not read");
+                                    }
+                                    texture
+                                }
+                                _ => None,
+                            };
                             Loaded::Texture {
                                 path: key,
                                 texture: texture.map(RawTexture::into_image),

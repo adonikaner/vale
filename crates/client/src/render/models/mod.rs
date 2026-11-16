@@ -1044,12 +1044,13 @@ impl ModelCache {
     /// Needs the material store because a dressing is only materials; the
     /// meshes already exist.
     ///
-    /// `hair` is the one slot a DBC cannot name, and is why this takes an
+    /// `hair` fills the two slots a DBC cannot name, and is why this takes an
     /// appearance. An NPC in a character model has its body baked, so it comes
     /// through here rather than through [`Self::dressed_as_character`], but its
     /// hairstyle is a separate mesh with a separate texture. No bake can hold
     /// it, and `CreatureDisplayInfoExtra` states it as a style and a colour, as
-    /// for a player. Left empty, the hair slot draws magenta; see
+    /// for a player. The tauren's type-8 fur is the same case, selected by the
+    /// row's skin colour. Left empty, either slot draws magenta; see
     /// [`vale_assets::look::dress::Dressing::hair`].
     ///
     /// [`DisplayModel::skins`]: vale_assets::tables::dbc::DisplayModel::skins
@@ -1089,12 +1090,14 @@ impl ModelCache {
         meshes: &mut Assets<Mesh>,
         materials: &mut Materials,
     ) -> Lookup {
-        // Slot 3 is the hair mesh's, whatever filled slot 0. The positions are
-        // the texture types, so the array has to be long enough to reach it.
+        // Slot 3 is the hair mesh's and slot 5 the type-8 texture's, whatever
+        // filled slot 0; neither is in a bake. The positions are the texture
+        // types, so the array has to be long enough to reach them.
         let mut skins = skins.to_vec();
         if let Some(appearance) = hair {
             skins.resize(SKIN_SLOTS.max(skins.len()), String::new());
             skins[3] = hair_key(appearance);
+            skins[5] = extra_key(appearance);
         }
         self.dress(
             path,
@@ -1398,7 +1401,11 @@ impl ModelCache {
         // files it is painted from, which are under these two folders; a
         // change to one of them drops every composed skin.
         let lower = path.to_ascii_lowercase();
-        let composed = |key: &str| key.starts_with(CHARACTER_PREFIX) || key.starts_with(CHARACTER_HAIR_PREFIX);
+        let composed = |key: &str| {
+            key.starts_with(CHARACTER_PREFIX)
+                || key.starts_with(CHARACTER_HAIR_PREFIX)
+                || key.starts_with(CHARACTER_EXTRA_PREFIX)
+        };
         let paints = lower.starts_with("character\\") || lower.starts_with("item\\texturecomponents\\");
         let worn = |skin: &str| same(skin) || (paints && composed(skin));
         // Every dressing over one of those builds, or wearing the texture.
@@ -1472,10 +1479,10 @@ impl ModelCache {
     /// The key is the appearance, so two humans who look alike share one
     /// composite and one dressing, and one who has changed clothes does not.
     ///
-    /// Slot 3 is the hair mesh's own texture. It is the one piece of a
-    /// character that is not in the composite: the hairstyle is geometry, so
-    /// its texture dresses a separate geoset and the M2 asks for it under its
-    /// own type. Without it the hair draws magenta.
+    /// Slot 3 is the hair mesh's own texture and slot 5 the type-8 texture.
+    /// Neither is in the composite: each dresses separate geometry (the
+    /// hairstyle, and on a tauren the mane and fur), and the M2 asks for each
+    /// under its own type. Without them those pieces draw magenta.
     pub(crate) fn dressed_as_character(
         &mut self,
         path: &str,
@@ -1545,6 +1552,7 @@ impl ModelCache {
             // the cape is the wearer's own group-15 geoset and the item names
             // only the texture for it.
             cloak.unwrap_or_default().to_string(),
+            extra_key(&look.appearance),
         ];
         self.dress(
             path, skinned, &skins, dress, room, false, scene, meshes, materials,
@@ -1611,6 +1619,10 @@ impl ModelCache {
         }
         let request = match parse_character_key(path) {
             Some(look) if path.starts_with(CHARACTER_HAIR_PREFIX) => Request::CharacterHair {
+                key: path.to_string(),
+                look,
+            },
+            Some(look) if path.starts_with(CHARACTER_EXTRA_PREFIX) => Request::CharacterExtra {
                 key: path.to_string(),
                 look,
             },
@@ -1866,6 +1878,9 @@ const CHARACTER_PREFIX: &str = "\u{0}character:";
 /// must not reuse the body composite.
 const CHARACTER_HAIR_PREFIX: &str = "\u{0}characterhair:";
 
+/// The same, for the type-8 texture of the skin row; see [`extra_key`].
+const CHARACTER_EXTRA_PREFIX: &str = "\u{0}characterextra:";
+
 /// The cache key for one player's composed body texture.
 ///
 /// The appearance and the equipment, so two players who look alike and are
@@ -1907,11 +1922,24 @@ fn hair_key(appearance: &Appearance) -> String {
     .replace(CHARACTER_PREFIX, CHARACTER_HAIR_PREFIX)
 }
 
+/// The type-8 texture key from the appearance alone. It depends only on the
+/// race, gender and skin colour, but takes the whole appearance so that the
+/// three keys of one character parse alike. Players and character-model NPCs
+/// both use it, as [`hair_key`].
+fn extra_key(appearance: &Appearance) -> String {
+    character_key(&CharacterLook {
+        appearance: *appearance,
+        equipment: Vec::new(),
+    })
+    .replace(CHARACTER_PREFIX, CHARACTER_EXTRA_PREFIX)
+}
+
 /// The inverse, so the loader needs no second channel to be told what to build.
 fn parse_character_key(key: &str) -> Option<CharacterLook> {
     let body = key
         .strip_prefix(CHARACTER_PREFIX)
-        .or_else(|| key.strip_prefix(CHARACTER_HAIR_PREFIX))?;
+        .or_else(|| key.strip_prefix(CHARACTER_HAIR_PREFIX))
+        .or_else(|| key.strip_prefix(CHARACTER_EXTRA_PREFIX))?;
     let mut parts = body.split(';');
     let n: Vec<u8> = parts
         .next()?
@@ -2168,12 +2196,15 @@ pub(crate) fn skin_slot(kind: u32) -> Option<usize> {
         // wearer's own cape geoset asks for it too: a cloak is geometry the
         // character already has and a texture the item supplies.
         2 => Some(4),
+        // Type 8 is the skin's second texture, the tauren's fur, which both
+        // tauren models ask for in place of a hair texture.
+        8 => Some(5),
         _ => None,
     }
 }
 
 /// How many client-supplied skin slots there are; see [`skin_slot`].
-pub(crate) const SKIN_SLOTS: usize = 5;
+pub(crate) const SKIN_SLOTS: usize = 6;
 
 pub(crate) struct ModelPlugin;
 

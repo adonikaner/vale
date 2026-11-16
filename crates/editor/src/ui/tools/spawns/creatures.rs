@@ -91,6 +91,7 @@ use crate::session::EditSession;
 use crate::subjects::displays::{DisplayPick, Table as DisplayTable};
 use crate::subjects::quests::ColumnTarget;
 use crate::tools::spawns::creatures::{CreatureSubject, Creatures, Known, Spawn};
+use crate::tools::spawns::spawn::Facet;
 use crate::ui::widgets::theme::{self, property};
 use crate::ui::Editing;
 use vale_client::assets::GameAssets;
@@ -168,6 +169,8 @@ impl<'a> Subject<'a> {
             asks: &mut editing.asks,
             fly: &mut editing.fly,
             others: &mut editing.others,
+            drawer: Some(&mut editing.drawer),
+            favourites: &mut editing.favourites,
             own: CreaturePanel {
                 waypoints: &mut editing.waypoints,
                 behaviour: &mut editing.behaviour,
@@ -215,8 +218,6 @@ impl SpawnView for CreatureSubject {
                       follows the chosen creature.",
         edit_selected: "Open creature_template's 78 columns in a separate window. The window can \
                         be moved off the panel and stays open while the viewport is in use.",
-        search: "Search by name or entry, then click the ground to place the chosen creature.",
-        too_short: "Type at least two letters of a name, or an entry.",
         no_model: None,
         list_search: "name, subname or entry",
         no_display: "display_id1 is 0 or has no CreatureDisplayInfo.dbc row. The editor draws a \
@@ -347,6 +348,27 @@ impl SpawnView for CreatureSubject {
         own: &'s Self::Panel<'_>,
     ) -> (&'s crate::subjects::pools::Pools, &'s crate::subjects::game_events::GameEvents) {
         (&*own.pools, &*own.game_events)
+    }
+
+    const FACETS: &'static [(Facet, &'static str)] = &[(Facet::Type, "Type"), (Facet::Rank, "Rank"), (Facet::Model, "Model")];
+    const FAVOURITES: crate::prefs::favourites::Kind = crate::prefs::favourites::Kind::Creature;
+
+    /// The model alone, from the display tables, without dressing it: the
+    /// drawer asks once for every display id the templates name.
+    fn model_path(subject: &mut Subject<'_>, display_id: u32) -> Option<String> {
+        match display_id {
+            0 => None,
+            id => subject.assets.display_tables().ok()?.creature(id).map(|display| display.path),
+        }
+    }
+
+    /// The creature's type and rank, in the words of `creature_template`'s
+    /// two columns.
+    fn sorts(_subject: &mut Subject<'_>, known: &Known) -> Vec<(Facet, String)> {
+        vec![
+            (Facet::Type, vale_mangos::schema::value_word(&creature::CREATURE_TYPES, known.kind)),
+            (Facet::Rank, vale_mangos::schema::value_word(&creature::RANKS, known.rank)),
+        ]
     }
 
     fn renumber_reaches() -> String {

@@ -181,9 +181,12 @@ pub(crate) struct GlueScene {
 /// down and rebuilt as a unit, every time the highlight moves to a row with a
 /// different appearance.
 ///
-/// `Default` is hand-written for one field: [`Self::scale`] is a multiplier and
-/// its derived default would be zero, which would collapse the character to a
-/// point.
+/// The body stands at scale 1. `CreatureDisplayInfo` gives the tauren bodies
+/// 1.35 (male) and 1.25 (female), and in the world the server sends that in
+/// `OBJECT_FIELD_SCALE_X`, but the 1.12.1 client places the character on both
+/// glue screens with a scale of 1. Applying the display scale here drew the
+/// tauren too large.
+#[derive(Default)]
 struct Standing {
     /// What this was built from, compared each frame to detect a change: the
     /// appearance and wardrobe `glue::glue` derived from the highlighted row.
@@ -201,11 +204,6 @@ struct Standing {
     /// The character's own `Stand`, resolved once at the spawn.
     sequence: usize,
     since: f32,
-    /// `CreatureDisplayInfo`'s scale for this body: 1.00 for twelve of the
-    /// sixteen player models, and 1.35 and 1.25 for the male and female
-    /// tauren. Applied here as in the world; without it a tauren stands a
-    /// quarter too short.
-    scale: f32,
     /// Attachments whose M2 has not loaded yet, such as a helm or a pair of
     /// pauldrons. Drained by [`dress_the_character`] as each one arrives, the
     /// same way `world::entities::worn` drains a wearer's: the character is
@@ -216,25 +214,6 @@ struct Standing {
     /// The character's own attachment points (not the backdrop's), which
     /// place each arriving attachment. Empty while nobody is standing there.
     points: Arc<Vec<vale_assets::world::m2::M2Attachment>>,
-}
-
-impl Default for Standing {
-    fn default() -> Standing {
-        Standing {
-            built: None,
-            root: None,
-            joints: Vec::new(),
-            skeleton: None,
-            tinted: Vec::new(),
-            tints: None,
-            sequence: 0,
-            since: 0.0,
-            scale: 1.0,
-            wanted: Vec::new(),
-            attached: Vec::new(),
-            points: Arc::default(),
-        }
-    }
 }
 
 impl GlueScene {
@@ -351,13 +330,13 @@ fn stand_the_world_down(
             // frame, including the frames after a world entry, where it
             // overwrote the `DistanceFog` `render::sky::apply` had just written
             // (the two systems are not ordered, and this one ran later).
-            // Nothing re-applied the world's fog until the next sky
-            // re-resolve, at the player's first 4-yard cell crossing. Until
-            // then every login showed character select's pink fog, with
-            // `NightAir` zeroed and so every lamp pool dark despite 24 lit
-            // point lights. Logged at the time: `light: resolved … night 1.00`,
-            // `sky: applied … air.x 1.000 to 1 camera(s)`, `lamps: 24 lit`,
-            // and a pale screenshot 20 seconds later.
+            // Without this restore, nothing re-applied the world's fog until
+            // the next sky re-resolve, at the player's first 4-yard cell
+            // crossing. Until then every login showed character select's pink
+            // fog, with `NightAir` zeroed, so every lamp pool was dark although
+            // 24 point lights were lit. The log read `light: resolved … night
+            // 1.00`, `sky: applied … air.x 1.000 to 1 camera(s)` and `lamps: 24
+            // lit`, and the screen was still pale 20 seconds after login.
             //
             // The restore is one line because the fog has one owner: marking
             // `Sky` changed makes `apply` re-run on the next frame and rewrite
@@ -703,7 +682,6 @@ fn follow_character(
         .and_then(|s| s.best_sequence(&[vale_assets::world::m2::anim::STAND]))
         .unwrap_or(0);
     scene.standing.since = time.elapsed_secs();
-    scene.standing.scale = display.scale;
     // Only attachments this body has a point for, filtered as a wearer in the
     // world is: a model with no shoulder attachment cannot wear pauldrons, and
     // loading the pauldron model anyway would leave it with nowhere to hang.
@@ -1069,10 +1047,7 @@ fn pose_scene(
                 // +Y, so the feet stay on the plinth.
                 * Mat4::from_quat(axes::facing(
                     scene.showing.as_ref().map_or(0.0, |s| s.character_facing),
-                ))
-                // The body's DBC scale, innermost so it does not move the
-                // feet off the point. See [`Standing::scale`].
-                * Mat4::from_scale(Vec3::splat(scene.standing.scale)),
+                )),
         );
     pose_character(
         &scene.standing,
