@@ -1,16 +1,15 @@
-//! **The boats and the zeppelins** — the one thing in the world whose position
-//! nobody ever states, not even once.
+//! The boats and the zeppelins: where a continent transport is, computed from
+//! its template, its route and a clock, because no packet states it.
 //!
 //! ```text
 //! wire     SMSG_GAMEOBJECT_QUERY_RESPONSE  type 15, data[0..2]
 //!            data[0] taxiPathId   data[1] moveSpeed   data[2] accelRate
 //!   +      UPDATEFLAG_TRANSPORT's trailing word -> ms into the route
 //!   + file TaxiPathNode.dbc rows for that path: a map, a point, a flag, a wait
-//!   = here …a place on a continent, and which way the bow is pointing
+//!   = here a place on a continent, and the heading
 //! ```
 //!
-//! ## The position on the wire is **zero**, and that is stated rather than
-//! inferred
+//! ## The position on the wire is zero
 //!
 //! `GameObject::GetStationaryX` (and `Y`, and `Z`) is
 //!
@@ -19,39 +18,38 @@
 //! return 0.f;
 //! ```
 //!
-//! and `UPDATEFLAG_TRANSPORT` is what makes `BuildMovementUpdate` write the
-//! stationary position rather than the live one. So a client is told that every
-//! ship in the game sits at the map's origin, and the whole of where it really
-//! is has to be computed from the three numbers above. Nothing else on the wire
-//! ever mentions it again — `ShipTransport::Update` calls `Relocate` and
-//! broadcasts nothing.
+//! and `UPDATEFLAG_TRANSPORT` makes `BuildMovementUpdate` write the stationary
+//! position in place of the live one. A client is therefore told that every
+//! ship in the game is at the map's origin, and has to compute where it is
+//! from the three numbers above. Nothing else on the wire mentions the
+//! position again: `ShipTransport::Update` calls `Relocate` and broadcasts
+//! nothing.
 //!
-//! That is not an oversight in the server; it is the arrangement. Both ends run
-//! the same arithmetic over the same shipped table, and the one word that
-//! crosses the wire is there to agree about *when* rather than *where*.
+//! Both ends run the same arithmetic over the same shipped table. The one word
+//! that crosses the wire states how far into the route the ship is, in
+//! milliseconds, and not where it is.
 //!
-//! ## The route is a schedule, and the client is the only authority for it
+//! ## The route is a schedule, and the client's schedule is the authority
 //!
-//! A ship does not travel its curve at a constant rate: it accelerates out of
-//! each dock at `accelRate`, cruises at `moveSpeed`, brakes into the next one
-//! and then **waits** there for the stop node's own `delay`. So the route has
-//! to be turned into a schedule, and the schedule's total — the **period** — is
-//! the number both ends have to agree about, because the word on the wire is
-//! read modulo it.
+//! A ship does not travel its curve at a constant rate. It accelerates out of
+//! each dock at `accelRate`, cruises at `moveSpeed`, brakes into the next dock
+//! and waits there for the stop node's `delay`. The route is therefore turned
+//! into a schedule. The schedule's total is the *period*, and both ends have
+//! to agree about it, because the word on the wire is read modulo it.
 //!
-//! **A period 1 ms out is a boat in a random place.** The counter is
-//! `GetTimeSinceCreation() + m_startProgress`, free-running since the server
-//! started, so after `n` cycles two periods differing by `d` put the two ends
-//! `n · d` apart. A week of uptime is two thousand cycles.
+//! A period that is 1 ms out puts the boat in an unrelated place. The counter
+//! is `GetTimeSinceCreation() + m_startProgress`, which runs from the moment
+//! the server started, so after `n` cycles two periods that differ by `d` put
+//! the two ends `n * d` apart. A week of uptime is two thousand cycles.
 //!
-//! `TransportMgr::GenerateWaypoints` is **not** the authority, and vmangos says
-//! so itself: `LoadTransportTemplates` ends by reading a `period` column out of
-//! the world database's `transports` table, under the comment *"load period
-//! override from db since our algorithm is not perfect"*. Those numbers were
-//! measured off the reference client. A port of `GenerateWaypoints` reproduces
-//! its error, is overridden on the server and is not overridden here.
+//! `TransportMgr::GenerateWaypoints` is not the authority. vmangos'
+//! `LoadTransportTemplates` ends by reading a `period` column from the world
+//! database's `transports` table, under the comment *"load period override
+//! from db since our algorithm is not perfect"*. Those numbers were measured
+//! from the 1.12.1 client. A port of `GenerateWaypoints` reproduces its error,
+//! which the server overrides and this client would not.
 //!
-//! So this follows the client's own ship path, which has three steps:
+//! This file follows the 1.12.1 client's ship path, which has three steps:
 //!
 //! ```text
 //! build        walk the path, cut legs, stamp the clock
@@ -59,48 +57,50 @@
 //! at           progress -> a place and a heading
 //! ```
 //!
-//! Six shapes in it, and every one differs from the server's reconstruction:
+//! It differs from the server's reconstruction in six ways:
 //!
-//! * **No node is dropped**, at either end of the path or at a teleport. The
+//! * No node is dropped, at either end of the path or at a teleport. The
 //!   client walks every `TaxiPathNode` row; `GenerateWaypoints` loops
 //!   `for (i = 1; i < size - 1; ++i)` and skips the node after a teleport as
 //!   well.
-//! * **The end points are tangent handles rather than places.** A leg of `n`
-//!   control points has `n - 3` measured segments, and the travelled path is
-//!   node 1 to node `n - 2`. See [`Spline`].
-//! * **A leg is cut at a teleport and keeps both sides.** The node carrying
-//!   `actionFlag & 1` is the last control point of the leg it ends and the next
-//!   node is the first control point of the new one.
-//! * **The arc length is twenty chords**, not three. See [`ARC_STEPS`].
-//! * **A leg's stop list carries one more entry than it has waits** — the
-//!   terminator, delay zero, distance the whole curve.
-//! * **The cycle adds the last leg's waits once per leg.** See
+//! * The end points are tangent handles and not places. A leg of `n` control
+//!   points has `n - 3` measured segments, and the travelled path is node 1 to
+//!   node `n - 2`. See [`Spline`].
+//! * A leg is cut at a teleport and keeps both sides. The node carrying
+//!   `actionFlag & 1` is the last control point of the leg it ends, and the
+//!   next node is the first control point of the new one.
+//! * The arc length is twenty chords, not three. See [`ARC_STEPS`].
+//! * A leg's stop list carries one more entry than it has waits: the
+//!   terminator, with delay zero and the whole curve as its distance.
+//! * The cycle adds the last leg's waits once per leg. See
 //!   [`Route::stamp_the_clock`].
 //!
-//! `vale ships` checks the nine periods that come out against the nine the
-//! server holds, and they are exact.
+//! `vale ships` checks the nine periods this produces against the nine the
+//! server holds, and they are equal.
 //!
-//! ## What is deliberately not here
+//! ## The heading
 //!
-//! **The rotation is the direction of travel and nothing else** — no pitch, no
-//! roll, and no reading of anything the file says about the model's own
-//! orientation. A boat on a slope is level. It is the current segment's own
-//! chord almost everywhere, with the curve's derivative taking over only where
-//! the chord is more than 60° from it; see [`Spline::direction`], which is the
-//! transcription with the addresses.
+//! The heading is the direction of travel and nothing else: no pitch, no roll,
+//! and nothing read from the file about the model's own orientation. A boat on
+//! a slope is level.
+//!
+//! The direction is the curve's tangent, so the hull turns continuously
+//! through a corner and does not jump where one segment ends and the next
+//! begins. The segment's chord replaces the tangent only where the tangent is
+//! more than 60 degrees from the chord. See [`Spline::direction`].
 //!
 use crate::tables::taxi::TaxiWaypoint;
 
-/// **What `gameobject_template`'s `moTransport` union says**, read out of the
+/// What `gameobject_template`'s `moTransport` union says, read from the
 /// twenty-four words `SMSG_GAMEOBJECT_QUERY_RESPONSE` carries.
 ///
-/// Three of the twenty-four, and every shipped transport but one uses the same
-/// two values for the last pair: `moveSpeed` 30 and `accelRate` 1. The
-/// exception is Naxxramas, which is a platform that never moves and states a
-/// speed of 1.
+/// Three of the twenty-four are read. Every shipped transport but one has the
+/// same two values for the last pair: `moveSpeed` 30 and `accelRate` 1. The
+/// exception is Naxxramas, a platform that never moves, which states a speed
+/// of 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MoTransport {
-    /// `data[0]` — the `TaxiPath.dbc` id whose nodes are the route.
+    /// `data[0]`: the `TaxiPath.dbc` id whose nodes are the route.
     pub taxi_path: u32,
     /// `data[1]`, yards per second at cruise.
     pub move_speed: u32,
@@ -109,17 +109,17 @@ pub struct MoTransport {
 }
 
 impl MoTransport {
-    /// `GAMEOBJECT_TYPE_MO_TRANSPORT`, which is the only type these three words
-    /// mean anything for.
+    /// `GAMEOBJECT_TYPE_MO_TRANSPORT`, the only type these three words have a
+    /// meaning for.
     pub const TYPE: u32 = 15;
 
     /// Read the union, or `None` for a template of any other type.
     ///
-    /// **Zero is refused rather than carried.** A speed or an acceleration of
-    /// zero divides by nothing in [`Route::build`] and produces a schedule of
-    /// infinities; a path id of zero names no route. All three are non-zero in
-    /// every shipped row, so a zero here is a template that did not arrive
-    /// rather than a ship that stands still.
+    /// A zero in any of the three is refused. A speed or an acceleration of
+    /// zero is a division by zero in [`Route::build`] and gives a schedule of
+    /// infinities, and a path id of zero names no route. All three are
+    /// non-zero in every shipped row, so a zero here is a template that did
+    /// not arrive and not a ship that stands still.
     pub fn read(object_type: u32, data: &[u32]) -> Option<MoTransport> {
         if object_type != Self::TYPE || data.len() < 3 {
             return None;
@@ -138,34 +138,32 @@ impl MoTransport {
 // ---------------------------------------------------------------------------
 
 /// How many chords a segment's arc length is measured over, and the step in `t`
-/// between them — the client steps `t` by 0.05, twenty times.
+/// between them. The client steps `t` by 0.05, twenty times.
 ///
-/// **The number is load-bearing rather than a quality setting.** The schedule
-/// below is arithmetic over these lengths and the *server* runs the same
-/// arithmetic, so a finer or coarser measurement here is a disagreement about
-/// where the boat is, not a better answer. Twenty chords is what the reference
-/// takes; vmangos' own `SplineBase::STEPS_PER_SEGMENT` is 3, which is why its
-/// computed periods are wrong by a tenth of a percent and why it overrides them
-/// from a database table.
+/// The number cannot be changed for accuracy. The schedule below is arithmetic
+/// over these lengths and the server runs the same arithmetic, so a finer or
+/// coarser measurement here is a disagreement about where the boat is. Twenty
+/// chords is what the 1.12.1 client takes. vmangos' own
+/// `SplineBase::STEPS_PER_SEGMENT` is 3, which is why its computed periods are
+/// wrong by a tenth of a percent and why it overrides them from a database
+/// table.
 const ARC_STEPS: usize = 20;
 const ARC_STEP: f64 = 0.05;
 
-/// **Where the schedule is single precision and where it is not.**
+/// Round a value to single precision, at the points where the 1.12.1 client's
+/// schedule holds one.
 ///
-/// The reference does this arithmetic on the x87 stack, which computes at 80
-/// bits and rounds only where it stores, and there are exactly four
-/// stores: each sampled point of an arc-length walk, the running total of
-/// that walk, each segment's
-/// length and the curve's total, plus the distance
-/// carried between one wait and the next. Everything between those
-/// is extended.
+/// The client computes the schedule at 80 bits and rounds to single precision
+/// at five points: each sampled point of an arc-length walk, the running total
+/// of that walk, each segment's length, the curve's total, and the distance
+/// carried from one wait to the next. Everything between those points is at
+/// the wider precision.
 ///
-/// It is worth a line because it is worth **1 ms on four of the nine routes**,
-/// and a millisecond is not a rounding difference here: the phase the wire
+/// The difference is 1 ms on four of the nine routes. The phase the wire
 /// carries is a free-running counter taken modulo the period, so after a few
-/// thousand cycles a period 1 ms out puts the boat anywhere in its route. This
+/// thousand cycles a period 1 ms out puts the boat anywhere on its route. This
 /// file therefore computes in `f64` and stores `f32` at those five points, and
-/// `vale ships` checks the nine periods that come out.
+/// `vale ships` checks the nine periods that result.
 fn f32_store(x: f64) -> f64 {
     x as f32 as f64
 }
@@ -173,15 +171,15 @@ fn f32_store(x: f64) -> f64 {
 /// A Catmull-Rom curve through a run of control points, with each travelled
 /// segment's arc length measured.
 ///
-/// **The end points are tangent handles, not places the ship goes.** The client
-/// copies the points it is given verbatim (no padding of any kind)
-/// and then measures `count - 3` segment lengths, where segment `i`
-/// is evaluated from `points[i .. i + 3]` and runs from `points[i + 1]` to
-/// `points[i + 2]`. So a leg of `n` nodes is travelled
-/// from node 1 to node `n - 2`, and nodes 0 and `n - 1` only shape the curve.
+/// The end points are tangent handles, not places the ship goes. The client
+/// copies the points it is given with no padding and measures `count - 3`
+/// segment lengths, where segment `i` is evaluated from `points[i .. i + 3]`
+/// and runs from `points[i + 1]` to `points[i + 2]`. A leg of `n` nodes is
+/// therefore travelled from node 1 to node `n - 2`, and nodes 0 and `n - 1`
+/// only shape the curve.
 ///
 /// The basis is the standard Catmull-Rom one, evaluated as four weights times
-/// four points (four coefficient rows):
+/// four points:
 ///
 /// ```text
 /// w0 = 0.5(-t³ + 2t² - t)     w1 = 0.5(3t³ - 5t² + 2)
@@ -192,9 +190,9 @@ pub struct Spline {
     points: Vec<[f32; 3]>,
     /// `lengths[i]` is the arc length of the segment from `points[i + 1]` to
     /// `points[i + 2]`. Empty for a curve of three points or fewer, which
-    /// the client refuses to measure at all.
+    /// the client does not measure.
     ///
-    /// Held at the width the reference stores them at — see [`f32_store`].
+    /// Held at single precision; see [`f32_store`].
     lengths: Vec<f32>,
     total: f32,
 }
@@ -207,8 +205,9 @@ impl Spline {
             lengths: Vec::new(),
             total: 0.0,
         };
-        // The client guards on `count > 3`: a curve with no travelled segment
-        // keeps a total length of zero, and the leg that holds it takes no time.
+        // The client measures only when `count > 3`: a curve with no travelled
+        // segment keeps a total length of zero, and the leg that holds it
+        // takes no time.
         if points.len() > 3 {
             spline.lengths = (0..points.len() - 3)
                 .map(|i| spline.segment_length(i) as f32)
@@ -229,7 +228,8 @@ impl Spline {
         self.total
     }
 
-    /// …as the schedule reads it, which is at the width it was stored.
+    /// The total as the schedule reads it: at the single precision it was
+    /// stored at.
     fn total64(&self) -> f64 {
         f64::from(self.total)
     }
@@ -238,7 +238,8 @@ impl Spline {
         &self.points
     }
 
-    /// **The distance travelled to reach control point `n`** — the sum of `lengths[0 ..= n - 2]`, i.e. `n - 1` of them.
+    /// The distance travelled to reach control point `n`: the sum of
+    /// `lengths[0 ..= n - 2]`, which is `n - 1` of them.
     ///
     /// Zero for `n` of 0 or 1, because the travelled path starts at
     /// `points[1]`.
@@ -249,8 +250,8 @@ impl Spline {
 
     /// A point on segment `index` at `t` in `0..1`.
     ///
-    /// Computed at extended precision and handed back at the width the
-    /// reference writes it — single precision per axis.
+    /// Computed in `f64` and answered at single precision per axis, as the
+    /// client stores it.
     pub fn at(&self, index: usize, t: f64) -> [f32; 3] {
         let w = weights(t);
         let mut out = [0.0f64; 3];
@@ -265,11 +266,8 @@ impl Spline {
         [out[0] as f32, out[1] as f32, out[2] as f32]
     }
 
-    /// **The heading on segment `index`, which is the segment's own chord** —
-    /// the client takes `points[index + 2] - points[index + 1]` and normalises
-    /// it rather than differentiating the curve, and the caller then negates
-    /// `x` and `y`, which is the `+ PI` the server's own
-    /// `atan2(dir.y, dir.x) + M_PI` writes.
+    /// The chord of segment `index`: `points[index + 2] - points[index + 1]`,
+    /// not normalised. It is the heading's fallback; see [`Self::direction`].
     pub fn chord(&self, index: usize) -> [f32; 3] {
         let (Some(a), Some(b)) = (self.points.get(index + 1), self.points.get(index + 2)) else {
             return [1.0, 0.0, 0.0];
@@ -277,8 +275,8 @@ impl Spline {
         [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
     }
 
-    /// **The curve's own tangent at `(index, t)`** — the four points evaluated
-    /// against the Catmull-Rom *derivative* weights:
+    /// The curve's tangent at `(index, t)`, not normalised: the four points
+    /// evaluated against the Catmull-Rom derivative weights.
     ///
     /// ```text
     /// w0' = -1.5t² + 2t - 0.5     w1' = 4.5t² - 5t
@@ -304,41 +302,46 @@ impl Spline {
         [out[0] as f32, out[1] as f32, out[2] as f32]
     }
 
-    /// **The direction of travel at `(index, t)`** — the whole of the client's
-    /// direction rule, fallback included:
+    /// The direction of travel at `(index, t)`, as the 1.12.1 client computes
+    /// it:
     ///
     /// ```text
     /// chord   = normalize(points[index+2] - points[index+1])
     /// tangent = normalize(dC/dt at (index, t))
-    /// dir     = chord, unless dot(chord, tangent) < 0.5
-    ///           in which case tangent
+    /// dir     = tangent, unless dot(chord, tangent) < 0.5
+    ///           in which case chord
     /// ```
     ///
-    /// So the heading is the chord almost everywhere — piecewise constant, and
-    /// it genuinely snaps at a node, docks included; the probe run that pinned
-    /// this measured 10–36° of yaw in one step as a zeppelin creeps its last
-    /// yard into a tower — and the tangent takes over only where the chord is
-    /// more than 60° from the curve's own direction, which is the sharpest
-    /// corners and any degenerate segment.
+    /// The heading is the tangent almost everywhere. A Catmull-Rom curve has
+    /// one tangent at a node, so the heading is continuous where one segment
+    /// ends and the next begins, and a ship turns through a corner at the rate
+    /// the curve bends. The chord is answered only where the tangent is more
+    /// than 60 degrees from it, which is the sharpest corners.
+    ///
+    /// An earlier version of this function answered the chord first and the
+    /// tangent as the fallback. The heading was then constant along each
+    /// segment and jumped at each node, by up to 76 degrees on the shipped
+    /// routes, and the hull turned at the node and not along the bend.
+    ///
+    /// A tangent shorter than [`TANGENT_MIN`] has no direction, and the client
+    /// then answers `+x`. A chord shorter than [`CHORD_MIN`] is compared and
+    /// answered without being normalised.
     pub fn direction(&self, index: usize, t: f64) -> [f32; 3] {
         let chord = self.chord(index);
-        let Some(chord_unit) = normalize(chord) else {
-            return chord;
+        let chord = normalize(chord, CHORD_MIN).unwrap_or(chord);
+        let Some(tangent) = normalize(self.tangent(index, t), TANGENT_MIN) else {
+            return [1.0, 0.0, 0.0];
         };
-        let Some(tangent) = normalize(self.tangent(index, t)) else {
-            return chord;
-        };
-        let dot = chord_unit[0] * tangent[0] + chord_unit[1] * tangent[1] + chord_unit[2] * tangent[2];
-        if dot < 0.5 {
+        let dot = chord[0] * tangent[0] + chord[1] * tangent[1] + chord[2] * tangent[2];
+        if dot >= 0.5 {
             tangent
         } else {
             chord
         }
     }
 
-    /// **A point at a distance along the travelled path**, which is what a
-    /// reader that has a distance rather than a time wants — `vale ships`
-    /// listing a leg's own stops.
+    /// A point at a distance along the travelled path, for a reader that has
+    /// a distance and not a time: `vale ships` listing a leg's stops.
     pub fn along(&self, dist: f64) -> [f32; 3] {
         let (index, t) = self.seek(dist.clamp(0.0, self.total64()));
         self.at(index, t)
@@ -346,8 +349,8 @@ impl Spline {
 
     /// The client's arc length: twenty chords at `t = 0.05k`.
     ///
-    /// The sampled points and the running total are both `f32` stores; the
-    /// chord itself is extended. See [`f32_store`].
+    /// The sampled points and the running total are both stored at single
+    /// precision; the chord itself is not. See [`f32_store`].
     fn segment_length(&self, index: usize) -> f64 {
         let mut previous = self.at(index, 0.0);
         let mut total = 0.0f64;
@@ -361,14 +364,15 @@ impl Spline {
         total
     }
 
-    /// **Where a distance along the travelled path falls**, as a segment and a
+    /// Where a distance along the travelled path falls, as a segment and a
     /// parameter in `0..1`.
     ///
-    /// The one step of this file taken from the shape of the data rather than
-    /// from the client, whose mapping from an arc-length fraction to a
-    /// `(segment, t)` pair is not known. Walking the measured
-    /// lengths and interpolating inside the segment they land in is the only
-    /// mapping consistent with those lengths, and it is exact at every node.
+    /// This is the 1.12.1 client's mapping: walk the measured lengths until
+    /// the distance falls inside one, and answer the remaining distance
+    /// divided by that segment's length. The parameter is therefore linear in
+    /// distance inside a segment, although the curve's speed in `t` is not
+    /// constant. A distance at or past the end of the last segment is
+    /// answered on the last segment.
     fn seek(&self, distance: f64) -> (usize, f64) {
         if self.lengths.is_empty() {
             return (0, 0.0);
@@ -386,6 +390,14 @@ impl Spline {
     }
 }
 
+/// The shortest chord the client normalises: 2^-22 yards. A shorter one is
+/// used as it is.
+const CHORD_MIN: f64 = 1.0 / 4_194_304.0;
+
+/// The shortest tangent the client normalises. A curve whose derivative is
+/// shorter than this has no direction of its own; see [`Spline::direction`].
+const TANGENT_MIN: f64 = 0.01;
+
 /// The Catmull-Rom weights: the four coefficient rows.
 fn weights(t: f64) -> [f64; 4] {
     let (t3, t2) = (t * t * t, t * t);
@@ -402,10 +414,10 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f64 {
     (d(0) * d(0) + d(1) * d(1) + d(2) * d(2)).sqrt()
 }
 
-/// Add or subtract 0.5, then truncate — round half
-/// away from zero. Every leg time in the schedule is a whole
-/// number of milliseconds produced this way, and the rounding is what makes the
-/// period an exact integer both ends agree on.
+/// Seconds as whole milliseconds, rounded half away from zero: add or
+/// subtract 0.5, then truncate. Every leg time in the schedule is a whole
+/// number of milliseconds produced this way, and the rounding is what makes
+/// the period an exact integer both ends agree on.
 fn round_ms(seconds: f64) -> u32 {
     let ms = seconds * 1000.0;
     let rounded = if ms >= 0.0 { ms + 0.5 } else { ms - 0.5 };
@@ -422,18 +434,16 @@ fn round_ms(seconds: f64) -> u32 {
 
 /// One place the ship waits, and where it is when it gets there.
 ///
-/// The client's own stop record: the moment it arrives, the
-/// distance along the leg's curve it arrives at, and how long it waits.
+/// This is the client's stop record: the moment the ship arrives, the distance
+/// along the leg's curve it arrives at, and how long it waits.
 ///
-/// **A leg always has one more of these than it has waits.** The last entry is
-/// the end of the leg — the moment the curve runs out — and its delay is zero
-/// That is what makes the lookup one loop rather than a loop and
-/// a special case.
+/// A leg always has one more of these than it has waits. The last entry is
+/// the end of the leg, the moment the curve runs out, and its delay is zero.
+/// With it the lookup is one loop with no special case for the last segment.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stop {
-    /// Milliseconds into the **cycle** by the time the caller has finished with
-    /// it: finishing the leg writes it relative to the leg and the build adds the
-    /// leg's own start.
+    /// Milliseconds into the cycle once the route is built: finishing the leg
+    /// writes it relative to the leg, and the build adds the leg's start.
     pub time_ms: u32,
     /// How far along the leg's curve that is.
     pub dist: f64,
@@ -443,9 +453,9 @@ pub struct Stop {
 
 /// One run of the route between teleports.
 ///
-/// A leg is a map, a curve and a schedule. The client cuts a new one whenever a
-/// node's `actionFlag` bit 0 is set on the node *before* it, or the map changes
-/// — and unlike vmangos it drops no node doing so: the node carrying the
+/// A leg is a map, a curve and a schedule. The client cuts a new one whenever
+/// the node before a node has bit 0 of its `actionFlag` set, or the map
+/// changes. Unlike vmangos it drops no node doing so: the node carrying the
 /// teleport flag is the last control point of the leg it ends, and the node
 /// after it is the first control point of the next.
 #[derive(Debug, Clone)]
@@ -469,7 +479,7 @@ impl Leg {
     pub fn start_ms(&self) -> u32 {
         self.start_ms
     }
-    /// …and ends, waits included.
+    /// Milliseconds into the cycle at which this leg ends, waits included.
     pub fn end_ms(&self) -> u32 {
         self.end_ms
     }
@@ -477,7 +487,7 @@ impl Leg {
     pub fn travel_ms(&self) -> u32 {
         self.travel_ms
     }
-    /// Every wait, plus the terminator — see [`Stop`].
+    /// Every wait, and the terminator; see [`Stop`].
     pub fn stops(&self) -> &[Stop] {
         &self.stops
     }
@@ -488,11 +498,11 @@ impl Leg {
 pub struct Placement {
     pub map: u32,
     pub pos: [f32; 3],
-    /// Radians, the server's own convention: `atan2(dy, dx) + PI`.
+    /// Radians, in the server's convention: `atan2(dy, dx) + PI`.
     pub facing: f32,
 }
 
-/// A boat or zeppelin's whole route, as the reference client builds it.
+/// A boat or zeppelin's whole route, as the 1.12.1 client builds it.
 #[derive(Debug, Clone, Default)]
 pub struct Route {
     legs: Vec<Leg>,
@@ -502,7 +512,7 @@ pub struct Route {
 }
 
 impl Route {
-    /// **Build the schedule** — the client's build step.
+    /// Build the schedule: the client's build step.
     ///
     /// `None` when the path names no nodes at all.
     pub fn build(path: &[TaxiWaypoint], template: MoTransport) -> Option<Route> {
@@ -516,9 +526,8 @@ impl Route {
         let mut points: Vec<[f32; 3]> = Vec::new();
         let mut waits: Vec<(usize, u32)> = Vec::new();
         let mut previous_teleport = false;
-        // **The last leg's waits, kept because the caller reads them again.**
-        // See [`Route::stamp_the_clock`], which is where the reference's own
-        // quirk is written down.
+        // The last leg's waits are kept because the clock reads them once per
+        // leg. See [`Route::stamp_the_clock`].
         let mut last_waits: Vec<(usize, u32)> = Vec::new();
 
         for node in path {
@@ -541,9 +550,8 @@ impl Route {
                 points.clear();
                 waits.clear();
             }
-            // **A wait at the first node of a leg is not recorded**, which is
-            // the client's own guard: there is no segment before
-            // it to have arrived along.
+            // A wait at the first node of a leg is not recorded, as in the
+            // client: there is no segment before it to have arrived along.
             if node.action_flag & 2 != 0 && !points.is_empty() {
                 waits.push((points.len(), node.delay * 1000));
             }
@@ -565,17 +573,14 @@ impl Route {
         Some(route)
     }
 
-    /// **When each leg starts and ends, and how long the whole cycle is**.
+    /// Set when each leg starts and ends, and how long the whole cycle is.
     ///
-    /// The waits are added to the running total from the **last leg's** list
-    /// rather than from each leg's own. That is what the reference does: the
-    /// two scratch arrays the build loop fills are cleared when a leg opens and
-    /// are still holding the final leg's contents when this loop runs, and it
-    /// reads them once per leg. It is transcribed rather than corrected because
-    /// the server runs the same schedule and the whole value of the number is
-    /// that both ends agree: `vale ships` checks all nine periods against
-    /// the ones vmangos ships in its own `transports` table, and every one of
-    /// them is exact only with this.
+    /// The waits are added to the running total from the last leg's list and
+    /// not from each leg's own, once per leg. That is what the 1.12.1 client
+    /// computes, and it is kept because the server's periods were measured
+    /// from that client and both ends have to agree: `vale ships` checks all
+    /// nine periods against the ones vmangos ships in its `transports` table,
+    /// and each is equal only with this.
     fn stamp_the_clock(&mut self, last_waits: &[(usize, u32)]) {
         let waits: u32 = last_waits.iter().map(|(_, delay)| delay).sum();
         let mut total: u32 = 0;
@@ -599,10 +604,10 @@ impl Route {
         &self.legs
     }
 
-    /// **Where the transport is at `progress` milliseconds into its route** —
-    /// the reference's own lookup.
+    /// Where the transport is at `progress` milliseconds into its route, as
+    /// the 1.12.1 client places it.
     ///
-    /// `None` for a route with no period, which cannot be indexed at all.
+    /// `None` for a route with no period, which cannot be indexed.
     pub fn at(&self, progress: u32) -> Option<Placement> {
         if self.period == 0 || self.legs.is_empty() {
             return None;
@@ -634,23 +639,24 @@ impl Route {
         let stop = leg.stops[index];
         let duration = f64::from(stop.time_ms.saturating_sub(segment_start_ms)) / 1000.0;
         let elapsed = f64::from(now.saturating_sub(segment_start_ms)) / 1000.0;
-        // **Which ends of this segment the ship is at rest at.** The first
-        // segment of a leg begins where the last one teleported from, at speed;
-        // the last ends the same way. Everything between runs dock to dock.
+        // Which ends of this segment the ship is at rest at. The first
+        // segment of a leg begins where the last one teleported from, at
+        // speed, and the last ends the same way. Every segment between runs
+        // dock to dock.
         let from_rest = index != 0;
         let to_rest = index + 1 != leg.stops.len();
         let covered = self.covered(elapsed, duration, from_rest, to_rest);
         Some(self.place(leg, segment_start_dist + covered))
     }
 
-    /// **How far into a segment the ship has got** — written as the
-    /// three phases it is rather than as its four branches.
+    /// How far into a segment the ship has got, as three phases: accelerate,
+    /// cruise, brake.
     ///
     /// `from_rest` and `to_rest` say whether the segment begins and ends at a
     /// dock. A phase that is not taken contributes nothing, and the cruise is
-    /// whatever distance the two ramps leave over — so a segment too short to
-    /// reach `speed` splits its time evenly between the ramps it does have,
-    /// which is the same case analysis the schedule was timed by.
+    /// the time the two ramps leave over. A segment too short to reach `speed`
+    /// splits its time evenly between the ramps it has, which is the case
+    /// analysis the schedule was timed by.
     fn covered(&self, elapsed: f64, duration: f64, from_rest: bool, to_rest: bool) -> f64 {
         if duration <= 0.0 {
             return 0.0;
@@ -664,11 +670,10 @@ impl Route {
             (true, false) | (false, true) => full.min(duration),
             (false, false) => 0.0,
         };
-        // **The speed the ramp actually reaches**, which is `speed` only when
-        // the segment is long enough for a full one. A segment shorter than
-        // that ramps for its whole half and cruises at whatever that got to —
-        // which is the same case analysis the schedule was timed by, and is
-        // what makes a segment cover exactly its own distance in exactly its
+        // The speed the ramp reaches, which is `speed` only when the segment
+        // is long enough for a full ramp. A shorter segment ramps for its
+        // whole half and has no cruise. This is the case analysis the
+        // schedule was timed by, so a segment covers its own distance in its
         // own time.
         let level = if from_rest || to_rest { self.accel * ramp } else { self.speed };
         let up = if from_rest { ramp } else { 0.0 };
@@ -709,11 +714,11 @@ impl Route {
     }
 }
 
-/// **One leg's curve and schedule** — the client's finish-leg step.
+/// One leg's curve and schedule: the client's finish-leg step.
 ///
 /// Each segment of the leg runs from one wait to the next, and its time is a
-/// closed form of the accelerate/cruise/brake shape with the ramps the segment
-/// actually has:
+/// closed form of the accelerate, cruise and brake shape with the ramps the
+/// segment has:
 ///
 /// ```text
 /// no ramps        d / speed                     a leg with no waits at all
@@ -722,7 +727,7 @@ impl Route {
 /// ```
 ///
 /// The first segment of a leg has no ramp at its start and the last has none at
-/// its end, because a leg begins and ends at a teleport rather than at a dock.
+/// its end, because a leg begins and ends at a teleport and not at a dock.
 fn finish_leg(leg: &mut Leg, points: &[[f32; 3]], waits: &[(usize, u32)], speed: f64, accel: f64) {
     leg.spline = Spline::new(points);
     leg.travel_ms = 0;
@@ -736,7 +741,7 @@ fn finish_leg(leg: &mut Leg, points: &[[f32; 3]], waits: &[(usize, u32)], speed:
 
     for (n, (point, delay)) in waits.iter().enumerate() {
         // A wait on the last control point is past the end of the travelled
-        // path, and the reference stops reading the list there.
+        // path, and the client stops reading the list there.
         if *point + 1 >= points.len() {
             break;
         }
@@ -754,7 +759,8 @@ fn finish_leg(leg: &mut Leg, points: &[[f32; 3]], waits: &[(usize, u32)], speed:
             delay_ms: *delay,
         });
         waited = waited.saturating_add(*delay);
-        // `fst dword [ebp+0x10]` — the only place the schedule narrows.
+        // The distance carried to the next wait is held at single precision.
+        // It is the only place the schedule narrows. See [`f32_store`].
         previous = f32_store(reached);
         taken = n + 1;
     }
@@ -775,7 +781,8 @@ fn finish_leg(leg: &mut Leg, points: &[[f32; 3]], waits: &[(usize, u32)], speed:
     });
 }
 
-/// One acceleration and then cruise, or a ramp that never reaches speed.
+/// The time of a segment with one ramp: one acceleration and then cruise, or
+/// a ramp that never reaches speed.
 fn one_ramp(d: f64, speed: f64, accel: f64, accel_time: f64, accel_dist: f64) -> f64 {
     if accel_dist < d {
         accel_time + (d - accel_dist) / speed
@@ -784,7 +791,7 @@ fn one_ramp(d: f64, speed: f64, accel: f64, accel_time: f64, accel_dist: f64) ->
     }
 }
 
-/// …and dock to dock, which ramps at both ends.
+/// The time of a segment from dock to dock, which ramps at both ends.
 fn two_ramps(d: f64, speed: f64, accel: f64, accel_time: f64, accel_dist: f64) -> f64 {
     if accel_dist < d / 2.0 {
         2.0 * accel_time + (d - 2.0 * accel_dist) / speed
@@ -793,11 +800,11 @@ fn two_ramps(d: f64, speed: f64, accel: f64, accel_time: f64, accel_dist: f64) -
     }
 }
 
-/// A unit vector, or `None` for one too short to have a direction — the same
-/// degenerate guard the client makes before each of its two normalises.
-fn normalize(v: [f32; 3]) -> Option<[f32; 3]> {
+/// A unit vector, or `None` for one shorter than `shortest`, which the client
+/// does not normalise.
+fn normalize(v: [f32; 3], shortest: f64) -> Option<[f32; 3]> {
     let len = (f64::from(v[0]).powi(2) + f64::from(v[1]).powi(2) + f64::from(v[2]).powi(2)).sqrt();
-    if len < 1.0e-6 {
+    if len < shortest {
         return None;
     }
     Some([
@@ -807,8 +814,8 @@ fn normalize(v: [f32; 3]) -> Option<[f32; 3]> {
     ])
 }
 
-/// `Geometry::NormalizeOrientation` — a modulo into `[0, 2pi)`, the same one
-/// the movement code uses.
+/// `Geometry::NormalizeOrientation`: a modulo into `[0, 2pi)`, the one the
+/// movement code uses.
 fn normalize_orientation(o: f32) -> f32 {
     let tau = std::f32::consts::TAU;
     let wrapped = o % tau;
@@ -825,7 +832,7 @@ mod tests {
 
     /// A straight run of waypoints along `+x`, with a wait near each end.
     ///
-    /// The first and last node of a leg are **tangent handles**, not places the
+    /// The first and last node of a leg are tangent handles, not places the
     /// ship goes, so a run of `n` nodes is travelled from node 1 to node
     /// `n - 2`.
     fn straight(count: usize, spacing: f32) -> Vec<TaxiWaypoint> {
@@ -844,12 +851,12 @@ mod tests {
         MoTransport { taxi_path: 1, move_speed: 30, accel_rate: 1 }
     }
 
-    /// **A Catmull-Rom segment runs between its two middle control points.**
+    /// A Catmull-Rom segment runs between its two middle control points.
     ///
-    /// The property that catches a basis matrix transcribed a row out, and the
-    /// one every other number here is built on: the schedule measures arc
-    /// lengths off this curve, so a curve that does not touch its waypoints
-    /// produces a route that is wrong everywhere and fails nothing.
+    /// This fails when the basis matrix is written a row out. The schedule
+    /// measures arc lengths on this curve, so a curve that does not touch its
+    /// waypoints gives a route that is wrong everywhere and fails no other
+    /// test.
     #[test]
     fn a_segment_runs_between_the_middle_two_of_its_four_points() {
         let controls = [
@@ -868,8 +875,9 @@ mod tests {
         }
     }
 
-    /// **A straight line measures its own spacing.** The twenty-chord sample is
-    /// exact on a straight run, so this pins the sampling as well as the curve.
+    /// A straight line measures its own spacing. The twenty-chord sample is
+    /// exact on a straight run, so this checks the sampling as well as the
+    /// curve.
     #[test]
     fn a_straight_run_measures_its_own_spacing() {
         let controls: Vec<[f32; 3]> = (0..6).map(|i| [i as f32 * 12.0, 0.0, 0.0]).collect();
@@ -882,7 +890,7 @@ mod tests {
         assert!((spline.total() - 36.0).abs() < 1e-2, "{}", spline.total());
     }
 
-    /// **`length_to` is the distance from the first travelled point**, which is
+    /// `length_to` is the distance from the first travelled point, which is
     /// `points[1]` and not `points[0]`.
     #[test]
     fn the_distance_to_a_node_is_measured_from_the_first_travelled_one() {
@@ -894,7 +902,7 @@ mod tests {
         assert!((spline.length_to(4) - 36.0).abs() < 1e-2);
     }
 
-    /// **The template is only read for type 15, and a zero refuses.**
+    /// The template is read only for type 15, and a zero in it is refused.
     #[test]
     fn only_a_transport_template_reads_as_one() {
         let data = [302u32, 30, 1, 0];
@@ -908,7 +916,7 @@ mod tests {
         assert_eq!(MoTransport::read(15, &[302, 30]), None);
     }
 
-    /// **The route walks its whole length and comes back**: at no point in the
+    /// The route walks its whole length and comes back: at no point in the
     /// cycle is the ship off its own waypoints, and it visits both ends.
     #[test]
     fn a_route_walks_its_own_waypoints_and_returns() {
@@ -936,8 +944,8 @@ mod tests {
         assert!(highest > 950.0, "never reached the last node: {highest}");
     }
 
-    /// **A ship waits at a dock**, which is the whole reason the schedule is a
-    /// schedule rather than a constant-rate walk along the curve.
+    /// A ship waits at a dock for the stop's delay and does not move while it
+    /// waits.
     #[test]
     fn a_stop_holds_the_ship_still_for_its_delay() {
         let path = straight(12, 100.0);
@@ -957,10 +965,9 @@ mod tests {
         }
     }
 
-    /// **Each segment's timing and its distance agree**, which is the property
-    /// the whole schedule rests on: the ship must reach the next dock at
-    /// exactly the moment the schedule says it arrives, or every subsequent
-    /// wait is taken in the wrong place.
+    /// Each segment's timing and its distance agree. The ship has to reach
+    /// the next dock at the moment the schedule says it arrives, or every
+    /// later wait is taken in the wrong place.
     #[test]
     fn a_segment_covers_its_own_distance_in_its_own_time() {
         let path = straight(14, 120.0);
@@ -986,10 +993,10 @@ mod tests {
         }
     }
 
-    /// **A route that changes map is cut into separate legs**, and no node is
-    /// dropped doing it — the reference marks the leg boundary and keeps both
-    /// sides, where vmangos discards the node carrying the flag and the one
-    /// after it.
+    /// A route that changes map is cut into separate legs, and no node is
+    /// dropped doing it. The client marks the leg boundary and keeps both
+    /// sides; vmangos discards the node carrying the flag and the one after
+    /// it.
     #[test]
     fn a_map_change_cuts_the_route_without_losing_a_node() {
         let mut path = straight(14, 100.0);
@@ -1013,18 +1020,19 @@ mod tests {
         }
     }
 
-    /// **A path with nothing in it makes no route**, rather than one that
-    /// answers the origin for ever.
+    /// A path with no nodes makes no route. It does not make one that answers
+    /// the origin.
     #[test]
     fn a_path_with_nothing_in_it_makes_no_route() {
         assert!(Route::build(&[], template()).is_none());
     }
 
-    /// **The heading is the chord until the chord leaves the curve by more than
-    /// 60°, and the tangent after** — the client's two halves, threshold 0.5.
+    /// The heading is the curve's tangent while the tangent is within 60
+    /// degrees of the segment's chord, and the chord past that.
     #[test]
-    fn the_direction_is_the_chord_until_it_disagrees_with_the_tangent() {
-        // A gentle bend: chord and tangent agree everywhere, so the chord wins.
+    fn the_direction_is_the_tangent_until_it_leaves_the_chord() {
+        // A gentle bend: the tangent is within 60 degrees of the chord
+        // everywhere, so the tangent is answered.
         let gentle = Spline::new(&[
             [0.0, 0.0, 0.0],
             [10.0, 0.0, 0.0],
@@ -1033,15 +1041,19 @@ mod tests {
             [40.0, 12.0, 0.0],
         ]);
         for t in [0.0, 0.5, 1.0] {
-            let dir = gentle.direction(0, t);
-            let chord = gentle.chord(0);
-            let angle = (dir[1] / dir[0]).atan() - (chord[1] / chord[0]).atan();
-            assert!(angle.abs() < 1e-6, "t {t}: {dir:?} against the chord {chord:?}");
+            let tangent = normalize(gentle.tangent(0, t), TANGENT_MIN).expect("a real tangent");
+            assert_eq!(gentle.direction(0, t), tangent, "t {t}");
         }
+        // At the start of the segment the tangent is half the vector from the
+        // point before it to the point after it, which is not the chord.
+        let start = gentle.direction(0, 0.0);
+        let chord = normalize(gentle.chord(0), CHORD_MIN).expect("a real chord");
+        assert!((start[1] / start[0] - 0.1).abs() < 1e-4, "{start:?}");
+        assert!((chord[1] / chord[0] - 0.2).abs() < 1e-4, "{chord:?}");
 
-        // A hairpin: the middle segment doubles back, so at its ends the
-        // chord is more than 60° from the local tangent and the tangent wins —
-        // the direction turns with the curve rather than snapping half a turn.
+        // A hairpin. Segment 1 is the short cross-piece of the turn: its
+        // chord runs +y, and the tangent entering it still points mostly +x.
+        // The two are more than 60 degrees apart, so the chord is answered.
         let hairpin = Spline::new(&[
             [0.0, 0.0, 0.0],
             [30.0, 0.0, 0.0],
@@ -1050,21 +1062,52 @@ mod tests {
             [30.0, 4.0, 0.0],
             [0.0, 4.0, 0.0],
         ]);
-        // Segment 1 is the short cross-piece of the turn: its chord runs +y,
-        // while the tangent entering it still points broadly +x with the
-        // straight it came off — more than 60° apart, so the tangent is
-        // answered.
-        let entering = hairpin.direction(1, 0.0);
-        let chord = normalize(hairpin.chord(1)).expect("a real chord");
-        let tangent = normalize(hairpin.tangent(1, 0.0)).expect("a real tangent");
+        let chord = normalize(hairpin.chord(1), CHORD_MIN).expect("a real chord");
+        let tangent = normalize(hairpin.tangent(1, 0.0), TANGENT_MIN).expect("a real tangent");
         let dot = chord[0] * tangent[0] + chord[1] * tangent[1] + chord[2] * tangent[2];
-        assert!(dot < 0.5, "the hairpin is not sharp enough to test the fallback: {dot}");
-        assert_eq!(entering, tangent, "the tangent takes over past 60°");
+        assert!(dot < 0.5, "the hairpin is not sharp enough to reach the chord: {dot}");
+        assert_eq!(hairpin.direction(1, 0.0), chord);
     }
 
-    /// **The time an empty curve takes is zero**, not a division by a length
-    /// that was never measured: the client refuses to measure a curve of three
-    /// points or fewer, so its total length stays zero.
+    /// The heading does not jump where one segment ends and the next begins:
+    /// a Catmull-Rom curve has one tangent at a node, and the heading is that
+    /// tangent.
+    #[test]
+    fn the_heading_is_continuous_through_a_node() {
+        let bend = Spline::new(&[
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [200.0, 30.0, 0.0],
+            [300.0, 90.0, 0.0],
+            [400.0, 180.0, 0.0],
+            [500.0, 300.0, 0.0],
+        ]);
+        for node in 0..bend.segments() - 1 {
+            let before = bend.direction(node, 1.0);
+            let after = bend.direction(node + 1, 0.0);
+            for axis in 0..3 {
+                assert!(
+                    (before[axis] - after[axis]).abs() < 1e-4,
+                    "the heading jumps at the end of segment {node}: {before:?} -> {after:?}"
+                );
+            }
+            // The two chords that meet there differ, which is the jump a
+            // heading taken from the chord would make.
+            let (a, b) = (bend.chord(node), bend.chord(node + 1));
+            assert!((a[1] / a[0] - b[1] / b[0]).abs() > 0.1);
+        }
+    }
+
+    /// A curve whose derivative is too short to have a direction answers +x.
+    #[test]
+    fn a_curve_with_no_tangent_answers_the_x_axis() {
+        let still = Spline::new(&[[5.0, 5.0, 0.0]; 4]);
+        assert_eq!(still.direction(0, 0.5), [1.0, 0.0, 0.0]);
+    }
+
+    /// An empty curve takes no time. The client does not measure a curve of
+    /// three points or fewer, so its total length stays zero and nothing
+    /// divides by a length that was never measured.
     #[test]
     fn a_leg_too_short_to_curve_measures_nothing() {
         let spline = Spline::new(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);

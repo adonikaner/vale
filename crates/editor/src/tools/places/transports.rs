@@ -91,6 +91,7 @@ use std::collections::HashMap;
 use vale_assets::tables::shiptransport::{MoTransport, Route as Schedule, Spline};
 use vale_assets::tables::taxi::TaxiWaypoint;
 use vale_client::render::axes;
+use vale_client::world::entity::{ObjectType, WorldEntity};
 use vale_edit::dbc::taxi::{self, Point};
 use vale_mangos::gameobject;
 use vale_mangos::row::{Assignment, Edits, Key, Life, RowEdit};
@@ -189,7 +190,7 @@ impl Ship {
     }
 }
 
-/// The clock the panel's schedule and the viewport's ship markers share.
+/// The clock the panel's schedule and the viewport's ships share.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Preview {
     /// Milliseconds since the start of a round.
@@ -197,11 +198,14 @@ pub(crate) struct Preview {
     pub(crate) playing: bool,
     /// How many times faster than the game the clock runs.
     pub(crate) rate: f32,
+    /// Whether each ship is drawn as its hull's model ([`hulls`]) or as a
+    /// cone ([`draw`]). The toolbar's Show Hulls.
+    pub(crate) hulls: bool,
 }
 
 impl Default for Preview {
     fn default() -> Preview {
-        Preview { ms: 0.0, playing: false, rate: 10.0 }
+        Preview { ms: 0.0, playing: false, rate: 10.0, hulls: false }
     }
 }
 
@@ -1499,18 +1503,115 @@ fn draw_draft(
 /// hulls.
 const MARKER_LENGTH: f32 = 40.0;
 
+/// Marks the body that draws a ship's hull in the preview: the template's
+/// entry, and the display id the body was built from.
+#[derive(Component)]
+pub(crate) struct Hull {
+    entry: u32,
+    display: u32,
+}
+
+/// The guids the hull bodies are given, with the template's entry in the low
+/// bits. The range is clear of the spawn tools' preview bodies (`0x70..` and
+/// `0x71..`) and of anything a session puts in the world.
+const HULL_GUID_BASE: u64 = 0x7200_0000_0000_0000;
+
+/// Keep one body per ship of the open map, at the place the preview clock
+/// puts it and drawn as the hull's model, while Show Hulls is on.
+///
+/// The body is a synthetic `WorldEntity`, as the spawn tools' previews are,
+/// so the model is the one the game draws. A hull that is a `.wmo`, which
+/// both shipped hulls are, is drawn by the client's `render::ships`: it takes
+/// a game object of type 15, and the body carries no `Sheath`, so
+/// `spawn_models` does not also mark it `NoModel` and give it the fallback
+/// box. Any other hull is an M2 and goes through `spawn_models`, which needs
+/// the `Sheath`. The rotation is `axes::body(facing, 0)` with no half-turn,
+/// which is how `render::ships` places a transport the server sent.
+///
+/// A body whose display id has changed is despawned and spawned again,
+/// because the client resolves an entity's model once. A ship whose display
+/// id names no model has no body and keeps its cone.
+fn hulls(
+    mut commands: Commands,
+    mut transports: ResMut<Transports>,
+    flights: Res<Flightpaths>,
+    assets: Res<vale_client::assets::GameAssets>,
+    tool: Res<Tool>,
+    state: Res<crate::playtest::Playtest>,
+    mut standing: Query<(Entity, &Hull, &mut Transform)>,
+) {
+    let mut wanted: HashMap<u32, (u32, Transform)> = HashMap::new();
+    if active(&tool, &state) && flights.transports && transports.preview.hulls {
+        let ms = transports.preview.ms;
+        let placed: Vec<(u32, u32, vale_assets::tables::shiptransport::Placement)> = transports
+            .ships
+            .iter()
+            .filter(|ship| ship.template.display != 0)
+            .filter_map(|ship| {
+                let placed = ship.placement(ms).filter(|placed| placed.map == flights.map)?;
+                Some((ship.template.entry, ship.template.display, placed))
+            })
+            .collect();
+        for (entry, display, placed) in placed {
+            if transports.hull_model(&assets, display).is_none() {
+                continue;
+            }
+            let stand = Transform {
+                translation: axes::to_bevy(placed.pos),
+                rotation: axes::body(placed.facing, 0.0),
+                scale: Vec3::ONE,
+            };
+            wanted.insert(entry, (display, stand));
+        }
+    }
+    for (entity, hull, mut transform) in &mut standing {
+        match wanted.get(&hull.entry) {
+            Some((display, stand)) if *display == hull.display => {
+                // Written only when it moved, so a paused ship's hierarchy is
+                // not propagated again on every frame.
+                if *transform != *stand {
+                    *transform = *stand;
+                }
+                wanted.remove(&hull.entry);
+            }
+            _ => commands.entity(entity).despawn(),
+        }
+    }
+    for (entry, (display, stand)) in wanted {
+        let wmo = transports.hull_model(&assets, display).is_some_and(|path| path.to_ascii_lowercase().ends_with(".wmo"));
+        let body = WorldEntity {
+            guid: HULL_GUID_BASE | u64::from(entry),
+            kind: ObjectType::GameObject,
+            name: transports.ship(entry).map(|ship| ship.template.name.clone()).unwrap_or_default(),
+            display_id: Some(display),
+            scale: Some(1.0),
+            object_kind: match wmo {
+                true => MoTransport::TYPE,
+                false => 0,
+            },
+            object_state: Some(1),
+            ..WorldEntity::default()
+        };
+        let mut spawned = commands.spawn((body, stand, Visibility::default(), Hull { entry, display }));
+        if !wmo {
+            spawned.insert(vale_client::world::entities::Sheath::seeded(0));
+        }
+    }
+}
+
 /// Draw each ship of the open map where the preview clock puts it, and the
 /// selected path's stops.
 ///
-/// A ship is a cone pointing the way it travels. The ships of the selected
-/// path are always drawn; the others are drawn with the transport routes,
-/// when Show Transports is on.
+/// A ship is a cone pointing the way it travels, with a line standing up from
+/// its middle, unless [`hulls`] draws it as its model. Every ship on the open
+/// map is drawn; the selected route's are drawn in the selection colour.
 fn draw(
     mut marks: ResMut<Marks>,
     transports: Res<Transports>,
     flights: Res<Flightpaths>,
     tool: Res<Tool>,
     state: Res<crate::playtest::Playtest>,
+    hulls: Query<&Hull>,
 ) {
     if !active(&tool, &state) {
         return;
@@ -1519,7 +1620,14 @@ fn draw(
         return;
     }
     let bevy = |p: [f32; 3]| axes::to_bevy(p);
+    let modelled: std::collections::HashSet<u32> = match transports.preview.hulls {
+        true => hulls.iter().map(|hull| hull.entry).collect(),
+        false => Default::default(),
+    };
     for ship in &transports.ships {
+        if modelled.contains(&ship.template.entry) {
+            continue;
+        }
         let selected = transports.route == Some(ship.template.path);
         let Some(placed) = ship.placement(transports.preview.ms).filter(|placed| placed.map == flights.map) else {
             continue;
@@ -1546,7 +1654,7 @@ impl Plugin for TransportPlugin {
         app.init_resource::<Transports>()
             .add_systems(
                 Update,
-                (read_the_rows, collect, scripted, travel, sync, press, keys, advance, draw, draw_draft)
+                (read_the_rows, collect, scripted, travel, sync, press, keys, advance, hulls, draw, draw_draft)
                     .chain()
                     .after(crate::pick::aim),
             );

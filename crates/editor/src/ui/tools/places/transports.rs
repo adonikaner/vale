@@ -3,13 +3,13 @@
 //!
 //! ```text
 //! toolbar     [Flights | Transports]  [Select | Add Points | New Transport]
-//!             Show Unselected  Keys; while a leg is being drawn, its height
+//!             Show Unselected  Show Hulls  Keys; while a leg is being drawn, its height
 //!             and Finish and Cancel, and a line naming the next click
 //! inspector   every transport and every route with none, as a list; then
 //!             the selected one: the ship (name, hull, speed, acceleration,
 //!             how long a round takes and whether the server has that
 //!             number), the route as one leg per map with a Go To for each,
-//!             the stops, a clock that moves the ship's marker, and the
+//!             the stops, a clock that moves the ship in the viewport, and the
 //!             selected point
 //! ```
 //!
@@ -84,7 +84,7 @@ fn route_name(transports: &Transports, path: u32) -> String {
 /// The toolbar while the transports half is shown:
 ///
 /// ```text
-/// [Flights | Transports]  [Select | Add Points | New Transport]  Show Unselected  Keys
+/// [Flights | Transports]  [Select | Add Points | New Transport]  Show Unselected  Show Hulls  Keys
 /// Height  Finish  Cancel
 /// Click each place the ship sails through, in order.
 /// ```
@@ -141,6 +141,15 @@ pub(super) fn toolbar(ui: &mut egui::Ui, flights: &mut Flightpaths, transports: 
             .clicked()
         {
             flights.unselected = !flights.unselected;
+        }
+        if bar_switch(ui, transports.preview.hulls, "Show Hulls")
+            .on_hover_text(
+                "Draw each transport in the preview as its hull's model, the one the game draws, where the \
+                 preview clock puts it. Off, each is a cone pointing the way it travels.",
+            )
+            .clicked()
+        {
+            transports.preview.hulls = !transports.preview.hulls;
         }
         bar_keys(ui, match (drawing.is_some(), adding) {
             (true, _) => &DRAW_KEYS,
@@ -773,8 +782,9 @@ fn preview(ui: &mut egui::Ui, session: &EditSession, transports: &mut Transports
     theme::heading_about(
         ui,
         "Preview",
-        "One round of the route. The clock moves the ship's marker in the viewport. It is the editor's own \
-         clock: it does not show where the ship is on a running server.",
+        "One round of the route. The clock moves the ship in the viewport: a cone, or the hull's model with \
+         Show Hulls on the toolbar. It is the editor's own clock: it does not show where the ship is on a \
+         running server.",
     );
     let preview = &mut transports.preview;
     let mut at = preview.ms.rem_euclid(f64::from(period));

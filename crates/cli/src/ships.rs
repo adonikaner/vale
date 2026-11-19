@@ -1,65 +1,67 @@
-//! `vale ships` — **the boats and the zeppelins, checked with no session.**
+//! `vale ships`: the boats and the zeppelins, checked with no session.
 //!
 //! ```text
 //! vale ships        every shipped route: its schedule, its curve, and the
-//!                      five shape checks over all of them
+//!                      shape checks over all of them
 //! vale ships 302    trace one: every key frame, and the route walked
 //!                      minute by minute across whichever maps it touches
 //! ```
 //!
-//! ## Why this needs a check at all, and a strong one
+//! ## Why the routes are checked here
 //!
-//! A continent transport is the only thing in the world whose position is
-//! **never stated by anybody**. `GameObject::GetStationaryX` returns a literal
-//! `0.f` for `GAMEOBJECT_TYPE_MO_TRANSPORT`, and that zero is what
-//! `UPDATEFLAG_TRANSPORT` puts on the wire — so a client that gets the schedule
-//! wrong does not draw a boat in slightly the wrong place, it draws one at the
-//! map's origin, or halfway up a mountain, or nowhere at all. There is no packet
-//! to compare against and no error to raise.
+//! A continent transport's position is stated by no packet.
+//! `GameObject::GetStationaryX` returns a literal `0.f` for
+//! `GAMEOBJECT_TYPE_MO_TRANSPORT`, and that zero is what
+//! `UPDATEFLAG_TRANSPORT` puts on the wire. A client with the wrong schedule
+//! therefore draws the boat at the map's origin, or far from its route, or not
+//! at all, and there is no packet to compare against and no error raised.
 //!
-//! So the checks here are all *shape* checks against things this project did not
-//! produce, in the same spirit as `vale taxi`:
+//! The checks are shape checks against things this project did not produce,
+//! as in `vale taxi`:
 //!
-//! * **Every route resolves** — a `taxiPathId` with waypoints, enough of them to
+//! * Every route resolves: a `taxiPathId` with waypoints, enough of them to
 //!   make a curve, and a non-zero period.
-//! * **Every key frame stands on a map `Map.dbc` ships**, and the set of maps a
+//! * Every key frame stands on a map `Map.dbc` ships, and the set of maps a
 //!   route touches is the set its waypoints name.
-//! * **The route is walked end to end and never leaves its own waypoints.** Every
+//! * The route is walked end to end and stays on its own waypoints. Every
 //!   sample must be within a few yards of the polyline through the frames it
-//!   sits between — which is what catches a spline evaluated at the wrong index,
-//!   a schedule that runs backwards, and a segment fraction that is not a
-//!   fraction. A Catmull-Rom curve bulges away from its polyline on a corner and
-//!   nowhere else, so the bound is generous and still tight enough to fail on
-//!   any of those.
-//! * **The clock is monotonic** across the frames and ends at the period.
-//! * **The model exists** in the archives, which is the one thing that decides
-//!   whether anything is drawn at all.
-//! * **The bow leads.** The one rule here that no file states and that draws
-//!   *plausibly* wrong when it is broken — a boat sailing smoothly backwards.
-//!   See [`front_of`].
+//!   lies between. This fails for a spline evaluated at the wrong index, a
+//!   schedule that runs backwards, and a segment fraction outside `0..1`. A
+//!   Catmull-Rom curve leaves its polyline only on a corner, so the bound is
+//!   generous and still fails on each of those.
+//! * The clock is monotonic across the frames and ends at the period.
+//! * The hull turns with the curve. The heading is sampled every
+//!   [`TURN_MS`], and a step that turns the hull more than [`SNAP_DEGREES`]
+//!   is counted. A heading taken from each segment's chord jumps at every
+//!   node, by up to 76 degrees on the shipped routes; the curve's tangent
+//!   does not. See [`turns`].
+//! * The model exists in the archives, which decides whether anything is
+//!   drawn.
+//! * The bow leads. No file states this rule, and a ship that breaks it
+//!   sails backwards and fails nothing else. See [`front_of`].
 //!
-//! And the routes are not read out of a config: they are the nine
-//! `gameobject_template` rows the server ships, which this client only ever
-//! learns from `SMSG_GAMEOBJECT_QUERY_RESPONSE`. They are transcribed in
-//! [`SHIPPED`] with their template words, so this command is checkable with no
-//! server as well as no session — see its own note.
+//! The routes are not read from a config. They are the nine
+//! `gameobject_template` rows the server ships, which this client learns only
+//! from `SMSG_GAMEOBJECT_QUERY_RESPONSE`. They are written out in [`SHIPPED`]
+//! with their template words, so this command runs with no server and no
+//! session.
 
 use crate::common::*;
 use vale_assets::tables::shiptransport::{MoTransport, Route};
 use vale_assets::tables::taxi::TaxiTables;
 use vale_config::Config;
 
-/// **The nine transports 1.12 ships, with the three template words each.**
+/// The nine transports 1.12 ships, with the three template words and the
+/// period of each.
 ///
-/// Not a table this client owns and not one it reads at run time: a live session
-/// learns all of it from `SMSG_GAMEOBJECT_QUERY_RESPONSE`, whose `data[0..2]`
-/// for a type-15 template are exactly these three numbers. It is here so that
-/// the arithmetic can be checked against the shipped DBCs with nothing running,
-/// which is the whole point of a `crates/assets` rule.
+/// The client does not read this table at run time. A live session learns
+/// the three words from `SMSG_GAMEOBJECT_QUERY_RESPONSE`, whose `data[0..2]`
+/// for a type 15 template are these numbers. They are here so the arithmetic
+/// can be checked against the shipped DBCs with nothing running.
 ///
-/// Taken from the world database's own `transports` joined to
-/// `gameobject_template`; every one of the nine states `moveSpeed` 30 and
-/// `accelRate` 1 except Naxxramas, which is a platform that never departs.
+/// Taken from the world database's `transports` joined to
+/// `gameobject_template`. Each of the nine states `moveSpeed` 30 and
+/// `accelRate` 1 except Naxxramas, a platform that never departs.
 const SHIPPED: &[(u32, &str, MoTransport, u32)] = &[
     (20808, "TEST Ship", tmpl(241, 30, 1), 350_818),
     (164871, "Zeppelin - Orgrimmar to Undercity", tmpl(302, 30, 1), 356_284),
@@ -79,15 +81,24 @@ const fn tmpl(taxi_path: u32, move_speed: u32, accel_rate: u32) -> MoTransport {
 /// How far a sample may sit from the polyline through its own key frames, in
 /// yards.
 ///
-/// A Catmull-Rom curve leaves its control polygon on a corner and the routes
-/// have some sharp ones, so this is generous on purpose: what it is testing is
-/// that the ship is *on its route at all*, which is what every way of getting
-/// the schedule wrong breaks by hundreds of yards or more.
+/// A Catmull-Rom curve leaves its control polygon on a corner, and the routes
+/// have some sharp ones, so the bound is generous. It tests that the ship is
+/// on its route at all: every wrong schedule found so far misses by hundreds
+/// of yards or more.
 const ON_ROUTE: f32 = 40.0;
 
 /// How often the route is sampled, in milliseconds. Fine enough that a 30 y/s
 /// ship moves 15 yards between samples.
 const SAMPLE_MS: u32 = 500;
+
+/// How often the heading is sampled, in milliseconds: 3 yards of travel at
+/// cruise.
+const TURN_MS: u32 = 100;
+
+/// Degrees of yaw in one [`TURN_MS`] step above which the step is counted as
+/// a snap. A ship at cruise on the sharpest shipped corner turns less than
+/// this in 3 yards.
+const SNAP_DEGREES: f32 = 10.0;
 
 pub fn cmd_ships(cfg: &Config, which: Option<u32>) -> Result<(), String> {
     let mut assets = open_assets(cfg)?;
@@ -127,6 +138,7 @@ fn survey(
     let (mut resolved, mut off_route, mut bad_map, mut not_monotonic) = (0, 0, 0, 0);
     let mut wrong_period = 0;
     let mut worst_off = 0.0f32;
+    let (mut snaps, mut worst_turn) = (0usize, 0.0f32);
     for (entry, name, template, period) in SHIPPED {
         let Some(path) = tables.waypoints(template.taxi_path) else {
             println!("  {entry:>6} {name:<38} !! TaxiPath {} has no waypoints", template.taxi_path);
@@ -187,10 +199,13 @@ fn survey(
             not_monotonic += 1;
         }
 
-        // …and the route walked, against the polyline through its own nodes.
+        // The route walked, against the polyline through its own nodes.
         let (missed, worst) = walk(&route);
         off_route += missed;
         worst_off = worst_off.max(worst);
+        let (snapped, sharpest) = turns(&route);
+        snaps += snapped;
+        worst_turn = worst_turn.max(sharpest);
     }
 
     println!();
@@ -201,8 +216,11 @@ fn survey(
     println!(
         "  {off_route} samples further than {ON_ROUTE:.0}y from the polyline through their own nodes, worst {worst_off:.1}y"
     );
+    println!(
+        "  {snaps} steps of {TURN_MS} ms that turn the hull more than {SNAP_DEGREES:.0} degrees, sharpest {worst_turn:.1}"
+    );
 
-    // The art, which is what decides whether anything is drawn.
+    // The models, which decide whether anything is drawn.
     println!();
     println!("  the models, against the archives:");
     let mut backwards = 0;
@@ -215,12 +233,11 @@ fn survey(
         match vale_assets::world::wmo::load(assets, path) {
             Ok((model, _)) => {
                 let hull: usize = model.collision.indices.len() / 3;
-                // **What it costs to move that hull**, which is the number that
-                // decides how a moving building is collided with at all: a ship
-                // travels 30 y/s, so its hull is somewhere new every frame, and
-                // `Collider::place` transforms and re-indexes every triangle.
-                // Ten placements timed, because one is dominated by whatever the
-                // allocator was doing.
+                // What it costs to move the hull, which decides how a moving
+                // building is collided with: a ship travels 30 y/s, so its
+                // hull is somewhere new every frame, and `Collider::place`
+                // transforms and re-indexes every triangle. Ten placements
+                // are timed, because the allocator dominates the time of one.
                 let matrix = vale_assets::world::collision::object_matrix(
                     [0.0, 0.0, 0.0],
                     0.7,
@@ -238,8 +255,8 @@ fn survey(
                     "    {short:<30} {:>6} draw batches, {hull:>6} solid triangles, {each:>5.2} ms to place",
                     model.draws.len()
                 );
-                // …and which way it is pointing, which is the half of the
-                // placement no measurement of the route can reach.
+                // Which way the model points, which no measurement of the
+                // route shows.
                 match front_of(&model.positions) {
                     Some((front, taper)) => {
                         let leads = front < 0.0;
@@ -252,9 +269,9 @@ fn survey(
                             if leads { "bow leads" } else { "!! SAILING BACKWARDS" },
                         );
                     }
-                    // Naxxramas, which is a platform rather than a vessel: its
-                    // route has one stop and never departs it, so which way it
-                    // is pointing is not a question the world asks.
+                    // Naxxramas is a platform and not a vessel. Its route has
+                    // one stop and it never departs, so it has no heading to
+                    // lead with.
                     None => println!("      both ends alike: no bow to lead, and it never departs"),
                 }
             }
@@ -266,30 +283,29 @@ fn survey(
     Ok(())
 }
 
-/// **Which end of a transport model is its front**, as a local x, with the
-/// evidence for the answer.
+/// Which end of a transport model is its front, as a local x, with what was
+/// compared to decide it.
 ///
-/// This is the one rule in the whole subject that nothing states and that a
-/// mistake in draws plausibly rather than failing, so it is measured rather
-/// than asserted. Two facts have to meet:
+/// No file states this rule, and a model placed the wrong way round sails
+/// backwards and fails nothing else, so it is measured. Two facts decide it:
 ///
 /// * the server's stored orientation for a ship is `atan2(dir.y, dir.x) + M_PI`
-///   (`ShipTransport::Update`), a half-turn *from* the direction of travel;
+///   (`ShipTransport::Update`), a half-turn from the direction of travel;
 /// * the client places it with `Rz(o)` and nothing else
-///   (`collision::object_matrix` — the `Rz(pi)` in `adt::placement_matrix` is an
-///   `MDDF`/`MODF` row's own encoding and a server-placed object never went
-///   through that frame).
+///   (`collision::object_matrix`). The `Rz(pi)` in `adt::placement_matrix`
+///   is an `MDDF`/`MODF` row's own encoding, and a server-placed object does
+///   not go through that frame.
 ///
-/// So `Rz(o)` sends local **−x** along the heading, and the model's front has to
-/// be there. Both shipped hulls are: a ship's bowsprit and a zeppelin's nose are
-/// each a thin spike off the negative end, where the other end is the broad
-/// transom or the tail fins. The measurement is that asymmetry — the width of
-/// the outermost tenth at each end — because it is the one thing about a hull
-/// that cannot be read off a bounding box.
+/// `Rz(o)` therefore sends local `-x` along the heading, and the model's front
+/// has to be there. Both shipped hulls have it there: a ship's bowsprit and a
+/// zeppelin's nose are each a thin spike off the negative end, and the other
+/// end is the broad transom or the tail fins. The measurement is that
+/// asymmetry, the width of the outermost tenth at each end, because a
+/// bounding box does not show it.
 ///
 /// Answers `(the front's local x, what was compared)`, or `None` for a hull
-/// whose two ends are alike — which is Naxxramas, a platform that never departs
-/// its one stop and therefore has no heading to be wrong about.
+/// whose two ends are alike. That is Naxxramas, a platform that never departs
+/// its one stop and has no heading.
 fn front_of(positions: &[[f32; 3]]) -> Option<(f32, String)> {
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
     for v in positions {
@@ -313,10 +329,10 @@ fn front_of(positions: &[[f32; 3]]) -> Option<(f32, String)> {
     } else {
         (hi, back_width, front_width)
     };
-    // **Twice as narrow or it is not a bow.** The two vessels are 34x and
-    // wider-than-measurable; Naxxramas is 165.1 against 166.8, which is the
-    // same end twice and would otherwise be reported as a decisive answer off
-    // 1% of noise.
+    // An end is a bow only when it is at least twice as narrow as the other.
+    // The ship's is 34 times narrower and the zeppelin's has no width.
+    // Naxxramas is 165.1 against 166.8, a 1% difference that would otherwise
+    // be reported as a front.
     if narrow * 2.0 > broad {
         return None;
     }
@@ -354,15 +370,45 @@ fn walk(route: &Route) -> (usize, f32) {
     (missed, worst)
 }
 
+/// Walk a route at [`TURN_MS`] and measure how far the heading turns in each
+/// step.
+///
+/// A step that changes map, or moves the ship further than it can travel in
+/// the step, is a teleport between legs and is not a turn. Answers `(steps
+/// that turn more than [`SNAP_DEGREES`], the largest turn in degrees)`.
+fn turns(route: &Route) -> (usize, f32) {
+    let (mut snaps, mut worst) = (0usize, 0.0f32);
+    let mut previous: Option<vale_assets::tables::shiptransport::Placement> = None;
+    let mut progress = 0;
+    while progress < route.period() {
+        let at = route.at(progress);
+        if let (Some(was), Some(now)) = (previous, at) {
+            let moved = (0..3).map(|n| (now.pos[n] - was.pos[n]).powi(2)).sum::<f32>().sqrt();
+            if was.map == now.map && moved < 50.0 {
+                let tau = std::f32::consts::TAU;
+                let turn = (now.facing - was.facing).rem_euclid(tau);
+                let turn = turn.min(tau - turn).to_degrees();
+                worst = worst.max(turn);
+                if turn > SNAP_DEGREES {
+                    snaps += 1;
+                }
+            }
+        }
+        previous = at;
+        progress += TURN_MS;
+    }
+    (snaps, worst)
+}
+
 /// One route in full.
 fn trace(
     tables: &TaxiTables,
     maps: &std::collections::HashMap<u32, String>,
     which: u32,
 ) -> Result<(), String> {
-    // By entry or by taxi path, whichever the number matches — the entry is what
-    // the wire carries and the path id is what the table is keyed by, and both
-    // are printed by the survey.
+    // By entry or by taxi path, whichever the number matches. The entry is
+    // what the wire carries and the path id is what the table is keyed by, and
+    // the survey prints both.
     let (entry, name, template, period) = SHIPPED
         .iter()
         .find(|(entry, _, t, _)| *entry == which || t.taxi_path == which)
@@ -403,8 +449,8 @@ fn trace(
             "arrive", "distance", "wait", "x", "y", "z"
         );
         for stop in leg.stops() {
-            // Off the leg's own curve rather than through `Route::at`: a leg's
-            // last stop is timed at the moment the *next* leg begins, so asking
+            // Read from the leg's own curve and not through `Route::at`: a
+            // leg's last stop is timed at the moment the next leg begins, so
             // the route would answer with the far continent.
             let at = leg.spline().along(stop.dist);
             println!(
@@ -444,6 +490,10 @@ fn trace(
     println!();
     println!(
         "  {missed} samples further than {ON_ROUTE:.0}y from its own polyline, worst {worst:.1}y"
+    );
+    let (snaps, sharpest) = turns(&route);
+    println!(
+        "  {snaps} steps of {TURN_MS} ms that turn the hull more than {SNAP_DEGREES:.0} degrees, sharpest {sharpest:.1}"
     );
     Ok(())
 }
