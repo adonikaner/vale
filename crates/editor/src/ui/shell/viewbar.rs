@@ -149,7 +149,7 @@ const PICTURE: f32 = 24.0;
 /// has no icon.
 ///
 /// A label absent from this table is drawn from [`initials`].
-pub(crate) const ART: [(&str, &str); 32] = [
+pub(crate) const ART: [(&str, &str); 35] = [
     // --- the world, in the order the frame is built ---
     ("fog", "FOG"),
     ("sky dome", "SKY"),
@@ -179,6 +179,9 @@ pub(crate) const ART: [(&str, &str); 32] = [
     ("skinned bounds", "SKN"),
     ("collision", "COL"),
     ("unit facing", "FAC"),
+    ("taxi paths", "TAX"),
+    ("aggro radius", "AGR"),
+    ("unit paths", "PTH"),
     // --- the editor camera's own view ---
     ("map view", "MAP"),
     ("free flight", "FLY"),

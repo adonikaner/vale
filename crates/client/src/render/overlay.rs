@@ -4,7 +4,7 @@
 //! [`crate::render::tuning`] is this module's counterpart, and the two divide
 //! the debug panel's picture between them. That module is a set of
 //! subtractions: fifteen layers of the world, each of which can be taken
-//! away. This module is a set of additions: six things that are not in the
+//! away. This module is a set of additions: things that are not in the
 //! world at all and are drawn over it to answer a question the finished frame
 //! cannot.
 //!
@@ -45,6 +45,22 @@
 //!   (`world::facing`), a mount's landing is chosen off its gait, and in both
 //!   the drawn model and the number driving it can disagree silently. One
 //!   line out of each unit's nose makes the disagreement visible.
+//!
+//! Three more draw data the game holds but never shows:
+//!
+//! * The taxi paths. A flight path edited in the IDE, or a ship route, is
+//!   otherwise seen only by flying it. Each is drawn along the Catmull-Rom curve
+//!   a flight takes, from the client's own `TaxiPathNode` rows, so a path that
+//!   clips a hill shows it from the ground.
+//! * The aggro rings, at the distance the server's level rule gives. The
+//!   creature's detection range is server data, so the ring assumes the
+//!   default; see [`aggro_radius`].
+//! * The unit paths: the spline `SMSG_MONSTER_MOVE` last gave each unit, which
+//!   is where a wandering, chasing or patrolling creature is going.
+//!
+//! None of the three reads the world database. A creature's spawn point,
+//! wander distance and stored waypoints are rows the client never receives,
+//! so they are not here.
 //!
 //! ## The collision overlay is bounded
 //!
@@ -156,6 +172,15 @@ pub struct DebugOverlay {
     /// A spike out of every unit's nose, up its own facing, plus a stalk at its
     /// origin.
     pub facing: bool,
+    /// Every flight path and ship route on the open map, along the curve a
+    /// flight takes, with a post at each node. See [`draw_taxi`].
+    pub taxi_paths: bool,
+    /// A ring round every hostile creature near the character, at the
+    /// distance the server's level rule puts its aggro. See [`aggro_radius`].
+    pub aggro: bool,
+    /// The path the server last sent each moving unit, from where it set out
+    /// to where it will stop. See [`draw_unit_paths`].
+    pub unit_paths: bool,
 }
 
 impl Default for DebugOverlay {
@@ -171,6 +196,9 @@ impl Default for DebugOverlay {
             collision_radius: 25.0,
             collision_triangles: MAX_COLLISION_TRIANGLES,
             facing: false,
+            taxi_paths: false,
+            aggro: false,
+            unit_paths: false,
         }
     }
 }
@@ -187,7 +215,7 @@ pub type Overlay = (&'static str, &'static str, fn(&mut DebugOverlay) -> &mut bo
 /// `render::tuning::SWITCHES` is one: an overlay added here and not
 /// to the panel is an overlay nobody can reach, and the test below stops two
 /// entries sharing one field.
-pub const OVERLAYS: [Overlay; 7] = [
+pub const OVERLAYS: [Overlay; 10] = [
     (
         "error boxes",
         "what each grey box should have been, and why it is not drawn",
@@ -223,6 +251,25 @@ pub const OVERLAYS: [Overlay; 7] = [
         "a spike along each unit's heading, which strafing turns away from its aim",
         |o| &mut o.facing,
     ),
+    (
+        "taxi paths",
+        "every flight path on this map along the curve a flight takes: cyan flights, \
+         orange ships and zeppelins; node posts blue Alliance, red Horde, green both, grey docks",
+        |o| &mut o.taxi_paths,
+    ),
+    (
+        "aggro radius",
+        "a ring round each hostile creature at the server's level-difference aggro distance, \
+         red while the character is inside it. Assumes the default 20-yard detection range \
+         and no detect-range auras",
+        |o| &mut o.aggro,
+    ),
+    (
+        "unit paths",
+        "the path the server sent each moving unit: yellow to its stop, purple for a patrol \
+         that loops",
+        |o| &mut o.unit_paths,
+    ),
 ];
 
 impl DebugOverlay {
@@ -251,7 +298,7 @@ impl DebugOverlay {
             match OVERLAYS.iter().find(|(label, _, _)| key(label) == key(name)) {
                 Some((_, _, field)) => *field(&mut overlay) = true,
                 None => warn!(
-                    "--overlay: no overlay called {name:?}; the six are {}",
+                    "--overlay: no overlay called {name:?}; the overlays are {}",
                     OVERLAYS.map(|(label, _, _)| label).join(", ")
                 ),
             }
@@ -343,6 +390,9 @@ impl Plugin for OverlayPlugin {
                     // line.
                     draw_collision.run_if(|o: Res<DebugOverlay>| o.collision),
                     draw_facing.run_if(|o: Res<DebugOverlay>| o.facing),
+                    draw_taxi.run_if(|o: Res<DebugOverlay>| o.taxi_paths),
+                    draw_aggro.run_if(|o: Res<DebugOverlay>| o.aggro),
+                    draw_unit_paths.run_if(|o: Res<DebugOverlay>| o.unit_paths),
                 ),
             );
         // Nothing is asked of the adapter for this. See the module note:
@@ -507,6 +557,323 @@ fn draw_facing(mut gizmos: Gizmos, units: Query<(&Transform, &WorldEntity)>) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Taxi paths
+// ---------------------------------------------------------------------------
+
+/// A flight path's colour.
+const FLIGHT: Color = Color::srgb(0.3, 0.85, 1.0);
+/// A ship's or zeppelin's route: a path that stops at a dock, or one whose
+/// first node offers no mount to either side.
+const SHIP: Color = Color::srgb(1.0, 0.6, 0.2);
+
+/// How many line segments each leg of a path is drawn with.
+///
+/// The curve is Catmull-Rom between waypoints that are 20 to 150 yards apart,
+/// and six segments is the fewest at which a turn over a mountain reads as a
+/// curve rather than a corner. A continent's paths are a few thousand legs, so
+/// this is the overlay's whole cost and is spent once per map, not per frame.
+const LEG_STEPS: usize = 6;
+
+/// The open map's paths as polylines, and its nodes, built once per map.
+///
+/// Sampling the curve is cheap, but doing it for every path on a continent
+/// every frame is the kind of cost an instrument must not have. The cache is
+/// rebuilt when the focus moves to another map, and retried each frame until
+/// the archives have opened.
+#[derive(Default)]
+struct TaxiLines {
+    map: Option<u32>,
+    lines: Vec<(Vec<Vec3>, Color)>,
+    nodes: Vec<(Vec3, Color)>,
+}
+
+/// Every flight path and ship route on the open map, and a post at every node.
+///
+/// The paths are drawn along the curve a flight takes rather than straight
+/// between waypoints: the server sends a taxi flight as a flying spline, and
+/// the client runs Catmull-Rom through it ([`vale_protocol::state::movement::curve`]).
+/// A path is split where the map changes or a waypoint teleports, so a ship
+/// route that crosses to another continent draws only its legs on this one.
+fn draw_taxi(
+    mut gizmos: Gizmos,
+    focus: Res<WorldFocus>,
+    assets: Res<crate::assets::GameAssets>,
+    mut cache: Local<TaxiLines>,
+) {
+    if !focus.present {
+        return;
+    }
+    if cache.map != Some(focus.map_id) {
+        let Ok(tables) = assets.display_tables() else {
+            return;
+        };
+        let Some(taxi) = tables.taxi() else {
+            return;
+        };
+        *cache = taxi_lines(taxi, focus.map_id);
+    }
+    for (points, colour) in &cache.lines {
+        for pair in points.windows(2) {
+            gizmos.line(pair[0], pair[1], *colour);
+        }
+    }
+    for (at, colour) in &cache.nodes {
+        gizmos.line(*at, *at + Vec3::Y * 12.0, *colour);
+        ring(&mut gizmos, *at + Vec3::Y * 0.3, 3.0, *colour);
+    }
+}
+
+/// Build [`TaxiLines`] for one map.
+fn taxi_lines(taxi: &vale_assets::tables::taxi::TaxiTables, map: u32) -> TaxiLines {
+    use vale_assets::tables::taxi::{serves, Team};
+
+    let mut out = TaxiLines { map: Some(map), ..Default::default() };
+    for path in taxi.paths() {
+        let Some(waypoints) = taxi.waypoints(path.id) else {
+            continue;
+        };
+        let dock = taxi.node(path.from).is_some_and(|node| node.mounts == [0, 0]);
+        let stops = waypoints.iter().any(|w| w.action_flag == 2);
+        let colour = if dock || stops { SHIP } else { FLIGHT };
+        for run in runs(waypoints, map) {
+            out.lines.push((sample(&run), colour));
+        }
+    }
+    for node in taxi.nodes().filter(|node| node.map == map) {
+        let colour = if node.mounts == [0, 0] {
+            Color::srgb(0.6, 0.6, 0.6)
+        } else {
+            match (serves(node, Some(Team::Alliance)), serves(node, Some(Team::Horde))) {
+                (true, false) => Color::srgb(0.35, 0.55, 1.0),
+                (false, true) => Color::srgb(1.0, 0.3, 0.3),
+                _ => Color::srgb(0.4, 0.9, 0.4),
+            }
+        };
+        out.nodes.push((axes::to_bevy(node.pos), colour));
+    }
+    out
+}
+
+/// The stretches of a path that lie on `map`, in the server's axes.
+///
+/// A run ends at a waypoint on another map, and after a waypoint with the
+/// teleport bit, which the flight jumps from rather than flies across. A run of
+/// one point draws nothing and is dropped.
+fn runs(waypoints: &[vale_assets::tables::taxi::TaxiWaypoint], map: u32) -> Vec<Vec<[f32; 3]>> {
+    let mut out = Vec::new();
+    let mut run: Vec<[f32; 3]> = Vec::new();
+    for waypoint in waypoints {
+        if waypoint.map != map {
+            if run.len() > 1 {
+                out.push(std::mem::take(&mut run));
+            }
+            run.clear();
+            continue;
+        }
+        run.push(waypoint.pos);
+        if waypoint.action_flag & 1 != 0 {
+            if run.len() > 1 {
+                out.push(std::mem::take(&mut run));
+            }
+            run.clear();
+        }
+    }
+    if run.len() > 1 {
+        out.push(run);
+    }
+    out
+}
+
+/// The Catmull-Rom curve through `path`, as points in Bevy's axes.
+fn sample(path: &[[f32; 3]]) -> Vec<Vec3> {
+    use vale_protocol::state::movement::curve;
+
+    let controls = curve::controls(path);
+    let mut out = Vec::with_capacity(path.len() * LEG_STEPS + 1);
+    for leg in 0..path.len().saturating_sub(1) {
+        for step in 0..LEG_STEPS {
+            let t = step as f32 / LEG_STEPS as f32;
+            if let Some(p) = curve::position(&controls, leg, t) {
+                out.push(axes::to_bevy(p));
+            }
+        }
+    }
+    if let Some(last) = path.last() {
+        out.push(axes::to_bevy(*last));
+    }
+    out
+}
+
+/// A level circle, as line segments. Bevy's gizmo circles are oriented by an
+/// isometry, and the world here is Y-up, so a ring on the ground is the
+/// simplest thing to draw by hand and the one that cannot come out standing on
+/// its edge.
+fn ring(gizmos: &mut Gizmos, centre: Vec3, radius: f32, colour: Color) {
+    const SEGMENTS: usize = 40;
+    let at = |i: usize| {
+        let angle = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+        centre + Vec3::new(angle.cos() * radius, 0.0, angle.sin() * radius)
+    };
+    for i in 0..SEGMENTS {
+        gizmos.line(at(i), at(i + 1), colour);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Aggro radius
+// ---------------------------------------------------------------------------
+
+/// How far from the character the aggro rings are drawn, in yards.
+///
+/// The widest ring is 45 yards (a creature 25 levels above the character), so
+/// this shows every creature that could pull within the next few steps and
+/// leaves out the rest of a crowded zone.
+const AGGRO_REACH: f32 = 90.0;
+
+/// `MAX_LEVEL_DIFF_FOR_AGGRO_RANGE`: the most the level difference widens a
+/// ring. A level 30 character draws the same ring round a level 60 creature as
+/// a level 5 one.
+const AGGRO_LEVEL_CAP: i32 = 25;
+
+/// The radius vmangos' `Creature::GetAttackDistance` gives, in yards.
+///
+/// It starts from the creature's detection range, takes the level difference
+/// off it (a character above the creature's level shrinks the ring, one below
+/// widens it, capped at [`AGGRO_LEVEL_CAP`] levels below), and never goes
+/// under 5 yards. No bounding radius is added.
+///
+/// The detection range is a column of `creature_template` that no packet
+/// carries, so the overlay passes the default, 20. The aggro rate is the
+/// server's `Rate.Creature.Aggro`, taken as 1, and `SPELL_AURA_MOD_DETECT_RANGE`
+/// and `SPELL_AURA_MOD_DETECTED_RANGE` are not counted. All three are server
+/// state; the overlay says so in its hover text rather than guessing.
+pub(crate) fn aggro_radius(detection: f32, character_level: u32, creature_level: u32) -> f32 {
+    let difference = (character_level as i32 - creature_level as i32).max(-AGGRO_LEVEL_CAP);
+    (detection - difference as f32).max(detection.min(5.0))
+}
+
+/// `UNIT_FLAG_NON_ATTACKABLE`: a creature the server will not let anything
+/// fight, which therefore aggroes nothing.
+const NON_ATTACKABLE: u32 = 0x2;
+/// `UNIT_FLAG_NOT_SELECTABLE`, set on a corpse and on scenery creatures.
+const NOT_SELECTABLE: u32 = 1 << 25;
+
+/// A ring round every hostile creature near the character.
+///
+/// Hostile is the creature's faction template against the character's, the
+/// same reaction the nameplate colour comes from. Neutral creatures do not
+/// pull on sight and are left out, as are pets and summons, which follow their
+/// owner, and anything dead or unattackable. The ring is red while the
+/// character stands inside it and orange otherwise.
+fn draw_aggro(
+    mut gizmos: Gizmos,
+    assets: Res<crate::assets::GameAssets>,
+    units: Query<(&Transform, &WorldEntity)>,
+) {
+    use crate::world::entity::ObjectType;
+    use vale_assets::tables::faction::Reaction;
+
+    let Some((me, my)) = units.iter().find(|(_, unit)| unit.is_self) else {
+        return;
+    };
+    let (Some(my_level), Some(my_faction)) = (my.level, my.faction) else {
+        return;
+    };
+    let Ok(tables) = assets.display_tables() else {
+        return;
+    };
+    let here = me.translation;
+    for (at, unit) in &units {
+        if unit.kind != ObjectType::Unit
+            || unit.dead
+            || unit.summoned_by.is_some()
+            || unit.charmed_by.is_some()
+            || unit.unit_flags & (NON_ATTACKABLE | NOT_SELECTABLE) != 0
+        {
+            continue;
+        }
+        let (Some(level), Some(faction)) = (unit.level, unit.faction) else {
+            continue;
+        };
+        let apart = (at.translation - here).with_y(0.0).length();
+        if apart > AGGRO_REACH {
+            continue;
+        }
+        if tables.reaction(Some(faction), Some(my_faction)) != Reaction::Hostile {
+            continue;
+        }
+        let radius = aggro_radius(20.0, my_level, level);
+        let colour = if apart <= radius {
+            Color::srgb(1.0, 0.2, 0.2)
+        } else {
+            Color::srgb(1.0, 0.65, 0.2)
+        };
+        ring(&mut gizmos, at.translation + Vec3::Y * 0.3, radius, colour);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit paths
+// ---------------------------------------------------------------------------
+
+/// A path to a stop.
+const WALK: Color = Color::srgb(1.0, 0.9, 0.3);
+/// A cyclic path, which the server sends once and the unit loops.
+const PATROL: Color = Color::srgb(0.8, 0.45, 1.0);
+
+/// The path the server last sent each moving unit.
+///
+/// This is `SMSG_MONSTER_MOVE`'s own path, the one the client dead-reckons
+/// along ([`vale_protocol::state::movement::Spline`]), so it shows where a
+/// creature is going and how it will get there: a wander's single hop, a
+/// chase's string of points, a patrol's loop. A walked path is drawn as
+/// straight legs and a flying one as the curve, which is the same rule the
+/// client moves the unit by. A finished path that is not cyclic is not drawn,
+/// and neither is a path on a transport, whose points are relative to a deck
+/// that is itself moving.
+///
+/// The world is the session thread's, so the paths are copied out under one
+/// lock and drawn after it is released.
+fn draw_unit_paths(
+    mut gizmos: Gizmos,
+    session: Res<crate::world::session::Session>,
+    units: Query<&WorldEntity>,
+) {
+    let Some(active) = session.active.as_ref() else {
+        return;
+    };
+    let paths: Vec<(Vec<[f32; 3]>, bool, bool)> = {
+        let world = active.live.read();
+        units
+            .iter()
+            .filter(|unit| !unit.is_self)
+            .filter_map(|unit| {
+                let spline = world.get(unit.guid)?.spline.as_ref()?;
+                let live = spline.cyclic || spline.progress() < 1.0;
+                (live && spline.on_transport().is_none() && spline.path.len() > 1)
+                    .then(|| (spline.path.clone(), spline.cyclic, spline.flying))
+            })
+            .collect()
+    };
+    for (path, cyclic, flying) in paths {
+        let colour = if cyclic { PATROL } else { WALK };
+        let points: Vec<Vec3> = if flying {
+            sample(&path)
+        } else {
+            path.iter().copied().map(axes::to_bevy).collect()
+        };
+        // Lifted half a yard so a path on flat ground is not hidden in it.
+        let lift = Vec3::Y * 0.5;
+        for pair in points.windows(2) {
+            gizmos.line(pair[0] + lift, pair[1] + lift, colour);
+        }
+        if let Some(end) = points.last() {
+            gizmos.line(*end, *end + Vec3::Y * 2.5, colour);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,5 +992,66 @@ mod tests {
         let overhead = [[1.0, 1.0, 90.0], [2.0, 1.0, 90.0], [2.0, 2.0, 90.0]];
         assert!(!near(overhead, centre, 5.0), "a roof is not underfoot");
     }
-}
+    /// The aggro rule's three regions: the 20-yard ring at an even level, one
+    /// yard per level either way, the 25-level cap below and the 5-yard floor
+    /// above.
+    #[test]
+    fn the_aggro_radius_follows_the_servers_level_rule() {
+        assert_eq!(aggro_radius(20.0, 30, 30), 20.0);
+        assert_eq!(aggro_radius(20.0, 30, 33), 23.0, "three levels below widens it");
+        assert_eq!(aggro_radius(20.0, 33, 30), 17.0, "three levels above shrinks it");
+        assert_eq!(aggro_radius(20.0, 30, 60), 45.0, "capped at 25 levels below");
+        assert_eq!(aggro_radius(20.0, 5, 60), 45.0, "the cap, not the difference");
+        assert_eq!(aggro_radius(20.0, 60, 10), 5.0, "never under five yards");
+        // A detection range under five yards is its own floor.
+        assert_eq!(aggro_radius(3.0, 60, 10), 3.0);
+    }
 
+    /// A path is cut where it leaves the map and after a teleport, and a
+    /// stretch of one point is dropped, which is how a ship route crossing to
+    /// another continent draws only its legs on this one.
+    #[test]
+    fn a_taxi_path_is_cut_at_map_changes_and_teleports() {
+        use vale_assets::tables::taxi::TaxiWaypoint;
+        let at = |index, map, x, flag| TaxiWaypoint {
+            index,
+            map,
+            pos: [x, 0.0, 0.0],
+            action_flag: flag,
+            delay: 0,
+        };
+        let path = [
+            at(0, 0, 0.0, 0),
+            at(1, 0, 1.0, 0),
+            at(2, 0, 2.0, 1), // teleports from here
+            at(3, 0, 3.0, 0),
+            at(4, 1, 4.0, 0), // another map
+            at(5, 0, 5.0, 0), // alone on this map: dropped
+            at(6, 1, 6.0, 0),
+            at(7, 0, 7.0, 0),
+            at(8, 0, 8.0, 0),
+        ];
+        let xs: Vec<Vec<f32>> = runs(&path, 0)
+            .into_iter()
+            .map(|run| run.iter().map(|p| p[0]).collect())
+            .collect();
+        assert_eq!(xs, vec![vec![0.0, 1.0, 2.0], vec![7.0, 8.0]]);
+    }
+
+    /// The sampled curve passes through every waypoint and ends on the last,
+    /// so the drawn line meets the node posts.
+    #[test]
+    fn the_sampled_curve_passes_through_its_waypoints() {
+        let path = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 5.0]];
+        let points = sample(&path);
+        assert_eq!(points.len(), (path.len() - 1) * LEG_STEPS + 1);
+        for waypoint in path {
+            let wanted = axes::to_bevy(waypoint);
+            assert!(
+                points.iter().any(|p| p.distance(wanted) < 1e-3),
+                "{waypoint:?} is on the curve"
+            );
+        }
+        assert!(points.last().unwrap().distance(axes::to_bevy(path[2])) < 1e-6);
+    }
+}

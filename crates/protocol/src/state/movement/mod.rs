@@ -3046,6 +3046,13 @@ pub struct RideCurve {
 const VELOCITY_PROBE_MS: u32 = 20;
 
 impl Spline {
+    /// The transport this spline's points are relative to, if any. See
+    /// [`Self::in_world`]: a path on a deck cannot be drawn in world space
+    /// without the deck's position at the same moment.
+    pub fn on_transport(&self) -> Option<u64> {
+        self.on_transport
+    }
+
     /// Fraction complete, 0..=1.
     pub fn progress(&self) -> f32 {
         self.progress_at(self.elapsed_ms)

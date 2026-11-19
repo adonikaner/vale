@@ -34,6 +34,9 @@
 //! skinned bounds    a bone inside an oval
 //! collision         a brick wall
 //! unit facing       a disc with an arrow leaving it
+//! taxi paths        a curved route between two posts
+//! aggro radius      a dot inside a ring, and a second dot on its edge
+//! unit paths        a trail of dots bending to a post
 //! navmesh           two polygons sharing an edge, a dot at each corner
 //! map view          a folded map
 //! free flight       a paper plane
@@ -76,6 +79,9 @@ pub(super) enum ViewIcon {
     SkinnedBounds,
     Collision,
     UnitFacing,
+    TaxiPaths,
+    AggroRadius,
+    UnitPaths,
     Navmesh,
     MapView,
     FreeFlight,
@@ -86,7 +92,7 @@ pub(super) enum ViewIcon {
 
 /// Which switch each icon belongs to: `(label, icon)`. The label is the
 /// client's own name for the switch, as in [`super::viewbar::ART`].
-pub(super) const ICONS: [(&str, ViewIcon); 33] = [
+pub(super) const ICONS: [(&str, ViewIcon); 36] = [
     ("fog", ViewIcon::Fog),
     ("sky dome", ViewIcon::SkyDome),
     ("stars", ViewIcon::Stars),
@@ -114,6 +120,9 @@ pub(super) const ICONS: [(&str, ViewIcon); 33] = [
     ("skinned bounds", ViewIcon::SkinnedBounds),
     ("collision", ViewIcon::Collision),
     ("unit facing", ViewIcon::UnitFacing),
+    ("taxi paths", ViewIcon::TaxiPaths),
+    ("aggro radius", ViewIcon::AggroRadius),
+    ("unit paths", ViewIcon::UnitPaths),
     ("navmesh", ViewIcon::Navmesh),
     ("map view", ViewIcon::MapView),
     ("free flight", ViewIcon::FreeFlight),
@@ -330,6 +339,26 @@ impl ViewIcon {
                 dot(-0.45, 0.45, 0.4, ink);
                 polyline(&[(-0.1, 0.1), (0.8, -0.8)], line);
                 polyline(&[(0.2, -0.82), (0.82, -0.82), (0.82, -0.2)], line);
+            }
+            ViewIcon::TaxiPaths => {
+                // Two node posts, and the flight bowing up between them.
+                polyline(&[(-0.75, 0.85), (-0.75, 0.2)], thin);
+                polyline(&[(0.75, 0.85), (0.75, 0.2)], thin);
+                let mut route = arc(0.0, 0.55, 0.9, PI * 1.08, TAU * 0.96);
+                route.retain(|&(_, y)| y < 0.25);
+                polyline(&route, line);
+            }
+            ViewIcon::AggroRadius => {
+                closed(&arc(0.0, 0.0, 0.85, 0.0, TAU), thin);
+                dot(0.0, 0.0, 0.22, ink);
+                dot(0.6, -0.6, 0.16, faint(0.7));
+            }
+            ViewIcon::UnitPaths => {
+                for (x, y) in [(-0.85, 0.7), (-0.45, 0.45), (-0.1, 0.1), (0.15, -0.3)] {
+                    dot(x, y, 0.13, ink);
+                }
+                polyline(&[(0.55, -0.85), (0.55, -0.1)], line);
+                fill(&[(0.55, -0.85), (0.95, -0.7), (0.55, -0.55)], ink);
             }
             ViewIcon::Navmesh => {
                 let corners = [(-0.9, -0.2), (-0.2, -0.82), (0.72, -0.6), (0.9, 0.3), (0.1, 0.82), (-0.7, 0.6)];

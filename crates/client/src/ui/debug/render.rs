@@ -2,7 +2,7 @@
 //!
 //! The tab has two sets of switches. The first three are [`RenderTuning`]:
 //! MSAA, vsync and sun shadows. Each trades CPU, GPU and image quality in the
-//! finished frame. The seven under them are [`DebugOverlay`], which are not
+//! finished frame. The ones under them are [`DebugOverlay`], which are not
 //! part of the finished frame: they are instruments drawn on top of it.
 //!
 //! The world's own eighteen switches are a third kind and are on their own
