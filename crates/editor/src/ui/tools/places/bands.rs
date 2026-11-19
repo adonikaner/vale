@@ -4,7 +4,7 @@
 //! `LightIntBand` is 7,668 rows of 34 columns and `LightFloatBand` is 2,556
 //! more. A row holds a count, sixteen times and sixteen values, and says
 //! nothing about which of the eighteen bands it is or which light it belongs
-//! to — that is its position: band `b` of `LightParams` row `p` is row
+//! to. Its position says both: band `b` of `LightParams` row `p` is row
 //! `(p - 1) * 18 + b + 1`. So the tables cannot be browsed usefully and no
 //! reference column points into them; the only way to reach a band is to
 //! compute it from the params row, which is what this does.
@@ -22,6 +22,22 @@
 //! midnight, because a band is a cycle and a time past the last key belongs
 //! between it and the first. [`sample`] is that rule, and it is the only copy
 //! of it here.
+//!
+//! ## A band's day is also the viewport's clock
+//!
+//! The line across each strip is the hour the viewport is drawn at. A press
+//! or a drag on a strip asks for that hour to be the time under the pointer,
+//! and near a key it is the key's own time, so the world behind the panel
+//! shows the colour being edited. Add Key puts the new key at that hour. The
+//! request is answered by [`blocks`] and applied by the light panel, which
+//! has the clock.
+//!
+//! ## The bands are listed by what they colour
+//!
+//! The eighteen colour bands and the six float bands are listed under the
+//! headings of [`COLOUR_GROUPS`] and [`FLOAT_GROUPS`], in the file's order
+//! within each, so the sun, the sky, the clouds and the water are each found
+//! in one place.
 //!
 //! ## What is edited and what is not
 //!
@@ -47,11 +63,30 @@ const STRIP_HEIGHT: f32 = 22.0;
 /// which is finer than the strip has pixels at any width this panel reaches.
 const STRIP_STEPS: usize = 120;
 
+/// How near a key's tick the pointer has to be, in points, for a press on the
+/// strip to ask for that key's time and not the time under the pointer.
+const SNAP: f32 = 4.0;
+
+/// The colour bands in the order the panel lists them, each under the heading
+/// of what the group colours. The numbers are band indices.
+const COLOUR_GROUPS: [(&str, &[usize]); 6] = [
+    ("Light", &[0, 1]),
+    ("Sky", &[2, 3, 4, 5, 6, 7]),
+    ("Sun", &[8, 9]),
+    ("Clouds", &[10, 11, 12]),
+    ("Water", &[13, 14, 15, 16]),
+    ("Unidentified", &[17]),
+];
+
+/// The float bands on the same terms. The last group is the three the client
+/// does not read.
+const FLOAT_GROUPS: [(&str, &[usize]); 3] = [("Fog", &[0, 1]), ("Clouds", &[3]), ("Not Read", &[2, 4, 5])];
+
 /// A band's keys, as they are in the file.
 ///
-/// `times` and `values` are the live ones — the first `count` of the sixteen —
+/// `times` and `values` are the live ones, the first `count` of the sixteen,
 /// so `times.len()` is the count and the slots past it are not represented
-/// here at all. See the module note on why they are left alone.
+/// here. See the module comment on why they are left alone.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Band {
     pub(crate) row: usize,
@@ -138,7 +173,7 @@ fn swatch(packed: u32) -> egui::Color32 {
     )
 }
 
-/// `14:30` — a band time, which is half-minutes past midnight.
+/// A band time, which is half-minutes past midnight, as a clock: `14:30`.
 pub(crate) fn clock(time: u32) -> String {
     let minutes = (time % DAY) / 2;
     format!("{:02}:{:02}", minutes / 60, minutes % 60)
@@ -174,9 +209,15 @@ pub(crate) fn minutes_of_day(text: &str) -> Option<u32> {
 }
 
 /// Read one band's live keys out of the open table.
-fn read(work: &Workspace<'_>, table: &str, row: u32) -> Option<Band> {
+///
+/// The row is found through the browser's index of the table
+/// (`Browser::record_of`), which is built once per table revision. The
+/// table's own `row_of` is a scan, and the panel reads twenty-four bands on
+/// every frame: over `LightIntBand`'s 7,668 rows that was about 138,000
+/// comparisons a frame.
+fn read(work: &mut Workspace<'_>, table: &str, row: u32) -> Option<Band> {
+    let record = work.browser.record_of(work.session, table, row)?;
     let open = work.session.table(table)?;
-    let record = open.row_of(row)?;
     let count = open.u32_at(record, 1).unwrap_or(0).min(BAND_KEYS as u32) as usize;
     Some(Band {
         row: record,
@@ -192,8 +233,8 @@ fn read(work: &Workspace<'_>, table: &str, row: u32) -> Option<Band> {
 /// Write a band's keys back: the count, then the sixteen slots it fills.
 ///
 /// One gesture per band, so adding a key, dragging its time and recolouring it
-/// inside the undo window are one entry — the same rule every other drag in
-/// this editor follows.
+/// inside the undo window are one entry, as every other drag in this editor
+/// is.
 fn write(work: &mut Workspace<'_>, table: &'static str, band: &Band, label: &str) {
     let mut fields: Vec<(usize, u32)> = vec![(1, band.times.len() as u32)];
     for n in 0..band.times.len().min(BAND_KEYS) {
@@ -213,42 +254,39 @@ fn write(work: &mut Workspace<'_>, table: &'static str, band: &Band, label: &str
 
 /// Draw every band a `LightParams` row owns, each as a strip across the day,
 /// under two headings that fold: the colours, open at first, and the float
-/// values, folded at first.
+/// values, folded at first. Within each the bands are grouped by what they
+/// colour ([`COLOUR_GROUPS`], [`FLOAT_GROUPS`]).
 ///
 /// This is the only route into the two band tables: they are reached by
 /// arithmetic on this row's id, and nothing points at them.
 ///
-/// The headings are `egui::CollapsingHeader`s in the table form's size and
-/// weight, because they are drawn under that form's own sections.
-pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour: u32) {
-    for (table, count, names, notes) in [
-        (
-            "LightIntBand",
-            INT_BAND_NAMES.len(),
-            &INT_BAND_NAMES[..],
-            &INT_BAND_NOTES[..],
-        ),
-        (
-            "LightFloatBand",
-            FLOAT_BAND_NAMES.len(),
-            &FLOAT_BAND_NAMES[..],
-            &FLOAT_BAND_NOTES[..],
-        ),
-    ] {
+/// Answers the time a strip was pressed at, in half-minutes, which is a
+/// request for the viewport's hour; see the module comment.
+pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32, hour: u32) -> Option<u32> {
+    let mut asked = None;
+    let sets: [(&'static str, &str, &[(&str, &[usize])], &[&str], &[&str]); 2] = [
+        ("LightIntBand", "Colours", &COLOUR_GROUPS, &INT_BAND_NAMES, &INT_BAND_NOTES),
+        ("LightFloatBand", "Float Values", &FLOAT_GROUPS, &FLOAT_BAND_NAMES, &FLOAT_BAND_NOTES),
+    ];
+    for (table, title, groups, names, notes) in sets {
         if !work.session.open_table(work.assets, table) {
             theme::note(ui, format!("Opening {table}.dbc\u{2026}"));
             continue;
         }
         let colours = table == "LightIntBand";
-        let title = match colours {
-            true => format!("Colours ({count} bands)"),
-            false => format!("Float values ({count} bands)"),
-        };
-        egui::CollapsingHeader::new(egui::RichText::new(title).size(14.0).strong())
-            .default_open(colours)
-            .id_salt((table, params_id))
-            .show(ui, |ui| {
-                for index in 0..count {
+        let body = |ui: &mut egui::Ui| {
+            if colours {
+                theme::note(
+                    ui,
+                    format!(
+                        "The line on each band is the viewport's hour, {}. Press or drag on a band to move it.",
+                        clock(hour)
+                    ),
+                );
+            }
+            for (group, bands) in groups {
+                theme::subheading(ui, group, "");
+                for &index in *bands {
                     let row = match colours {
                         true => int_band_row(params_id, index as u32),
                         false => float_band_row(params_id, index as u32),
@@ -257,23 +295,25 @@ pub(crate) fn blocks(ui: &mut egui::Ui, work: &mut Workspace<'_>, params_id: u32
                     let Some(band) = read(work, table, row) else {
                         continue;
                     };
-                    one(
-                        ui,
-                        work,
-                        table,
-                        index,
-                        names[index],
-                        notes[index],
-                        band,
-                        hour,
-                    );
+                    if let Some(time) = one(ui, work, table, index, names[index], notes[index], band, hour) {
+                        asked = Some(time);
+                    }
                 }
-            });
+            }
+        };
+        // Folded per panel and not per row, so the next condition's bands
+        // open as this one's were left.
+        match colours {
+            true => theme::fold(ui, "light-band-colours", title, body),
+            false => theme::fold_closed(ui, "light-band-floats", title, body),
+        }
     }
+    asked
 }
 
 /// One band: a triangle that opens it, then a property row of its name and
-/// its day, and under them its keys while it is open.
+/// its day, and under them its keys while it is open. Answers the time its
+/// day was pressed at.
 #[allow(clippy::too_many_arguments)]
 fn one(
     ui: &mut egui::Ui,
@@ -284,11 +324,14 @@ fn one(
     note: &str,
     band: Band,
     hour: u32,
-) {
+) -> Option<u32> {
     let colours = table == "LightIntBand";
-    let id = ui.make_persistent_id((table, band.row));
+    // Keyed by the band's index and not by its row, so a band opened under
+    // one condition is open under the next.
+    let id = ui.make_persistent_id((table, "band", index));
     let mut open =
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+    let mut asked = None;
 
     ui.horizontal(|ui| {
         // egui's own painted triangle, not a text arrow: the marker
@@ -299,7 +342,7 @@ fn one(
             tip.push_str("\n\n");
             tip.push_str(note);
         }
-        property(ui, name, &tip, |ui| match colours {
+        asked = property(ui, name, &tip, |ui| match colours {
             true => strip(ui, &band, hour),
             false => numbers(ui, &band, hour),
         });
@@ -310,10 +353,11 @@ fn one(
     // row is a strip and a name, laid out above.
     if open.is_open() {
         ui.indent((table, band.row), |ui| {
-            keys(ui, work, table, band, colours);
+            keys(ui, work, table, band, colours, hour);
         });
     }
     open.store(ui.ctx());
+    asked
 }
 
 /// Draw the band across a whole day, with its keys marked and the world's
@@ -322,11 +366,11 @@ fn one(
 /// The strip shows the colour at every time of the day, in order. The keys
 /// are the ticks under it. The hour is the line across it and comes from the
 /// world, so the colour under that line is the one on screen behind the
-/// panel.
-fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
+/// panel. Answers the time the strip is pressed at; see [`scrub`].
+fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) -> Option<u32> {
     let width = ui.available_width().max(60.0);
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, STRIP_HEIGHT), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(width, STRIP_HEIGHT), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     if band.times.is_empty() {
         painter.rect_filled(rect, 2.0, theme::PANEL);
@@ -337,7 +381,7 @@ fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
             egui::FontId::proportional(theme::SMALL),
             theme::INK_FAINT,
         );
-        return;
+        return None;
     }
     let step = rect.width() / STRIP_STEPS as f32;
     for n in 0..STRIP_STEPS {
@@ -358,30 +402,60 @@ fn strip(ui: &mut egui::Ui, band: &Band, hour: u32) {
         );
     }
     marks(&painter, rect, band, hour);
-    if let Some(at) = response.hover_pos() {
-        let t = ((at.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-        let time = (t * DAY as f32) as u32;
-        if let Some(packed) = band.at(time) {
-            response.on_hover_text(format!(
-                "{}  {} {} {}",
-                clock(time),
-                (packed >> 16) & 0xff,
-                (packed >> 8) & 0xff,
-                packed & 0xff
-            ));
-        }
-    }
+    scrub(response, rect, band, |time| {
+        band.at(time)
+            .map(|packed| format!("{} {} {}", (packed >> 16) & 0xff, (packed >> 8) & 0xff, packed & 0xff))
+    })
 }
 
-/// Draw a float band: a line across the day rather than a colour wash.
-fn numbers(ui: &mut egui::Ui, band: &Band, hour: u32) {
+/// The time under the pointer on a band's day: the time of a key whose tick
+/// is within [`SNAP`] points, or else the time at `x`, to the whole minute.
+fn time_at(rect: egui::Rect, x: f32, keys: &[u32]) -> u32 {
+    let across = |time: u32| rect.left() + (time % DAY) as f32 / DAY as f32 * rect.width();
+    let near = keys
+        .iter()
+        .copied()
+        .map(|key| ((across(key) - x).abs(), key))
+        .filter(|&(off, _)| off <= SNAP)
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    if let Some((_, key)) = near {
+        return key % DAY;
+    }
+    let t = ((x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+    let time = ((t * DAY as f32) as u32).min(DAY - 1);
+    time - time % 2
+}
+
+/// What a press on a band's day does: while the left button is held on it,
+/// the time under the pointer is asked for as the viewport's hour. The hover
+/// text names the time under the pointer and, from `say`, the band's value
+/// there.
+fn scrub(response: egui::Response, rect: egui::Rect, band: &Band, say: impl Fn(u32) -> Option<String>) -> Option<u32> {
+    let asked = match response.is_pointer_button_down_on() {
+        true => response.interact_pointer_pos().map(|at| time_at(rect, at.x, &band.times)),
+        false => None,
+    };
+    if let Some(at) = response.hover_pos() {
+        let time = time_at(rect, at.x, &band.times);
+        let value = say(time).map(|value| format!("  {value}")).unwrap_or_default();
+        response.on_hover_text(format!(
+            "{}{value}\n\nPress or drag to set the viewport's hour. Near a key, its time.",
+            clock(time)
+        ));
+    }
+    asked
+}
+
+/// Draw a float band: a line across the day in place of a colour wash.
+/// Answers the time it is pressed at, as [`strip`] does.
+fn numbers(ui: &mut egui::Ui, band: &Band, hour: u32) -> Option<u32> {
     let width = ui.available_width().max(60.0);
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, STRIP_HEIGHT), egui::Sense::hover());
+        ui.allocate_exact_size(egui::vec2(width, STRIP_HEIGHT), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 2.0, theme::PANEL);
+    painter.rect_filled(rect, 2.0, theme::SUNK);
     if band.times.is_empty() {
-        return;
+        return None;
     }
     // Scaled to the band's own range, because the six of them run from a
     // fraction to eighteen thousand and one scale for all would flatten five.
@@ -403,22 +477,17 @@ fn numbers(ui: &mut egui::Ui, band: &Band, hour: u32) {
         last = Some(here);
     }
     marks(&painter, rect, band, hour);
-    if let Some(value) = band.value_at(hour) {
-        response.on_hover_text(format!("{} now {value:.2}", clock(hour)));
-    }
+    scrub(response, rect, band, |time| band.value_at(time).map(|value| format!("{value:.2}")))
 }
 
-/// The keys as ticks, and the world's hour as a line.
+/// The keys as ticks, and the world's hour as a line. A tick is a light line
+/// on a dark one, so it shows on a bright band and on a dark one.
 fn marks(painter: &egui::Painter, rect: egui::Rect, band: &Band, hour: u32) {
     for &time in &band.times {
         let x = rect.left() + (time % DAY) as f32 / DAY as f32 * rect.width();
-        painter.line_segment(
-            [
-                egui::pos2(x, rect.bottom() - 4.0),
-                egui::pos2(x, rect.bottom()),
-            ],
-            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(160)),
-        );
+        let tick = [egui::pos2(x, rect.bottom() - 6.0), egui::pos2(x, rect.bottom())];
+        painter.line_segment(tick, egui::Stroke::new(3.0, egui::Color32::from_black_alpha(170)));
+        painter.line_segment(tick, egui::Stroke::new(1.0, egui::Color32::from_white_alpha(220)));
     }
     let x = rect.left() + (hour % DAY) as f32 / DAY as f32 * rect.width();
     painter.line_segment(
@@ -428,12 +497,14 @@ fn marks(painter: &egui::Painter, rect: egui::Rect, band: &Band, hour: u32) {
 }
 
 /// The band's keys, opened: a time and a value each, and the two buttons.
+/// `hour` is the viewport's, where Add Key puts a new key.
 fn keys(
     ui: &mut egui::Ui,
     work: &mut Workspace<'_>,
     table: &'static str,
     band: Band,
     colours: bool,
+    hour: u32,
 ) {
     let mut edited = band.clone();
     let mut remove: Option<usize> = None;
@@ -508,11 +579,15 @@ fn keys(
         let full = edited.times.len() >= BAND_KEYS;
         if ui
             .add_enabled(!full, egui::Button::new("Add Key").small())
-            .on_hover_text("Add a key in the middle of the longest gap between keys")
+            .on_hover_text(format!(
+                "Add a key at the viewport's hour, {}, with the value the band has there. When a \
+                 key is already at that time, the key is added in the middle of the longest gap.",
+                clock(hour)
+            ))
             .on_disabled_hover_text(format!("A band holds at most {BAND_KEYS} keys"))
             .clicked()
         {
-            add(&mut edited);
+            add(&mut edited, Some(hour));
         }
         if edited.times.is_empty() {
             theme::note(ui, "This band has no keys and defines no value.");
@@ -547,25 +622,38 @@ fn keys(
     write(work, table, &edited, what);
 }
 
-/// Put a key in the middle of the longest gap.
+/// How near an existing key a new key may not be placed, in half-minutes:
+/// a minute either side.
+const KEY_CLEARANCE: u32 = 2;
+
+/// Add a key at `at`, or in the middle of the longest gap when `at` is `None`
+/// or within [`KEY_CLEARANCE`] of a key the band already has.
 ///
-/// The end of the list is the wrong place for a new key: a band is a cycle,
-/// so the widest gap is the one a person most likely wants to shape. The new
-/// key's value is what the band already reads there, so adding a key changes
-/// nothing until it is moved. That makes it safe to add one to see what
-/// happens.
-fn add(band: &mut Band) {
-    let Some(at) = widest_gap(&band.times) else {
-        // An empty band gets a key at midnight; a band of one gets its
-        // opposite, since a single key is a constant and needs a second before
-        // anything can change over the day.
+/// The new key's value is what the band already reads at its time, so adding
+/// a key changes nothing until the key is edited. The asked time is the
+/// viewport's hour, so the key is the one that colours what is on screen.
+/// The longest gap is the fallback because a band is a cycle, and the end of
+/// the list is not where a new key is wanted.
+fn add(band: &mut Band, at: Option<u32>) {
+    let clear = |time: u32| {
+        band.times.iter().all(|&key| {
+            let apart = (key % DAY).abs_diff(time);
+            apart.min(DAY - apart) > KEY_CLEARANCE
+        })
+    };
+    let at = at.map(|time| time % DAY).filter(|&time| clear(time)).or_else(|| widest_gap(&band.times));
+    let Some(at) = at else {
+        // No time was asked for and there is no gap. An empty band gets a
+        // key at midnight; a band of one gets its opposite, since a single
+        // key is a constant and needs a second before anything can change
+        // over the day.
         let time = band.times.first().map_or(0, |&t| (t + DAY / 2) % DAY);
         let value = band.values.first().copied().unwrap_or(0);
         band.times.push(time);
         band.values.push(value);
         return;
     };
-    let value = band.at(at).unwrap_or(0);
+    let value = band.at(at).or_else(|| band.values.first().copied()).unwrap_or(0);
     band.times.push(at);
     band.values.push(value);
 }
@@ -656,7 +744,7 @@ mod tests {
     fn a_new_key_lands_in_the_widest_gap_and_leaves_the_band_where_it_was() {
         let mut b = band(&[0, 1440], &[0x000000, 0xFFFFFF]);
         let before: Vec<Option<u32>> = (0..24).map(|h| b.at(h * 120)).collect();
-        add(&mut b);
+        add(&mut b, None);
         assert_eq!(b.times.len(), 3);
         // Two equal gaps of 1440; the first found wins, at 720.
         assert!(b.times.contains(&720));
@@ -707,12 +795,54 @@ mod tests {
     #[test]
     fn a_band_with_nothing_in_it_can_be_started() {
         let mut empty = band(&[], &[]);
-        add(&mut empty);
+        add(&mut empty, None);
         assert_eq!(empty.times, vec![0]);
         let mut one = band(&[600], &[0x112233]);
-        add(&mut one);
+        add(&mut one, None);
         assert_eq!(one.times, vec![600, 600 + DAY / 2]);
         assert_eq!(one.values[1], 0x112233, "the new key reads as the old one");
+    }
+
+    /// A key asked for at a time is put there with the value the band reads
+    /// there, and one asked for on top of a key goes to the widest gap.
+    #[test]
+    fn a_new_key_is_put_at_the_asked_time_unless_a_key_is_there() {
+        let mut b = band(&[0, 1440], &[0x000000, 0x3C7814]);
+        add(&mut b, Some(360));
+        assert_eq!(b.times, vec![0, 1440, 360]);
+        assert_eq!(b.values[2], 0x0F1E05, "a quarter of the way, each channel on its own");
+        // 361 is within a minute of the key at 360, so the widest gap is
+        // taken: 1440 round to 0, whose middle is 2160.
+        add(&mut b, Some(361));
+        assert_eq!(b.times.len(), 4);
+        assert!(!b.times.contains(&361));
+        // A time just before midnight is beside the key at 0.
+        let mut wrapped = band(&[0, 1440], &[0x000000, 0xFFFFFF]);
+        add(&mut wrapped, Some(DAY - 1));
+        assert!(!wrapped.times.contains(&(DAY - 1)));
+        // An empty band takes the asked time.
+        let mut empty = band(&[], &[]);
+        add(&mut empty, Some(1000));
+        assert_eq!(empty.times, vec![1000]);
+    }
+
+    /// A press on a band's day asks for the time under the pointer to the
+    /// whole minute, or for a key's own time when its tick is near.
+    #[test]
+    fn a_press_on_the_day_is_a_time_and_snaps_to_a_key() {
+        let rect = egui::Rect::from_min_size(egui::pos2(100.0, 0.0), egui::vec2(288.0, 22.0));
+        // 288 points across 2880 half-minutes: ten half-minutes a point.
+        assert_eq!(time_at(rect, 100.0, &[]), 0);
+        assert_eq!(time_at(rect, 244.0, &[]), 1440);
+        assert_eq!(time_at(rect, 244.5, &[]) % 2, 0, "whole minutes");
+        // Past either end is clamped to the day.
+        assert_eq!(time_at(rect, 50.0, &[]), 0);
+        assert!(time_at(rect, 900.0, &[]) < DAY);
+        // A key at 06:07, which is half-minute 734 and a tick at 173.4: a
+        // press three points off is that key, and one six points off is the
+        // time under the pointer.
+        assert_eq!(time_at(rect, 176.0, &[734]), 734);
+        assert_eq!(time_at(rect, 179.0, &[734]), 790);
     }
 
     /// A time is shown as a clock, which is what a person is thinking in.

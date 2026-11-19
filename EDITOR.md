@@ -1036,18 +1036,25 @@ A light that is moved stays in the group lists it was in.
 
 ### Lights
 
-Edits `Light.dbc` and the tables it references. Every light near the camera is marked. Click a light to select it. Drag its centre to move it across the plane at its own height, or drag its inner or outer ring to change "FalloffStart" or "FalloffEnd". The height is set in the form only.
+Edits `Light.dbc` and the tables it references. Every light near the camera is marked. Click a light to select it. Drag its centre to move it across the plane at its own height, or drag its inner or outer ring to change "FalloffStart" or "FalloffEnd". The height is set in the inspector only. "Show Falloff" on the toolbar over the viewport draws or hides the selected light's two spheres.
 
-The inspector shows the light's position and falloff with "Fly To". "Show Falloff" on the toolbar over the viewport draws or hides the selected light's two spheres. "Sphere" edits "X", "Y", "Z", "FalloffStart" and "FalloffEnd" in yards. A "FalloffEnd" of zero makes the row the map's default light, shown as "Default light, whole map". "Conditions" lists the five `LightParams` rows the light uses.
+With no light selected, the inspector lists "Lights on This Map": the default light first, then the others nearest the camera first, each with its two radii, its distance, and its weight at the camera when it has one. Click a light to select it; double-click to move the camera to it as well. "Browse All N Lights…" lists every row of `Light.dbc` on every map and moves the camera to the one chosen. "New Default Light" appears on a map that has none.
 
-A `LightParams` field has two buttons:
+A selected light is one page:
 
-- "Copy" copies the row with its 18 colour bands and 6 float bands and points the field at the copy. Other lights that use the original keep it.
-- "New", on an empty field, creates a row copied from this light's clear `LightParams`, or the Eastern Kingdoms default light's, with its bands.
+- "All Lights" deselects it and returns to the list; Escape does the same. "Fly To" moves the camera to it; F does the same.
+- "Place" has "X", "Y", "Z", "FalloffStart" and "FalloffEnd" in yards, and "At the Camera": how strongly the light applies where the camera is, from 100% within "FalloffStart" to 0% at "FalloffEnd". At 0% an edit to the light's colours changes nothing in the viewport. The default light shows "Reach: Whole map" in place of these.
+- "Conditions" lists the five `LightParams` rows the light names: "Clear", "Clear Underwater", "Storm", "Storm Underwater" and "Death". Each line has the row's id and, when other lights use the same row, how many lights do. A condition with no row reads "None" and names the condition the client uses in its place. Click a condition to edit its row under the list.
 
-Following a `LightParams` link opens that row in the inspector, with "Back" to return. A `LightParams` row shows its bands under "Colours (N bands)" and "Float values (N bands)": each band is a strip of its colour or value over the day, with its keys marked and the world's current hour across it. Open a band to edit its keys; "Add Key" adds one in the longest gap and "×" removes one. The `Skybox` field names a `LightSkybox` row, a model path, which the viewport draws.
+The chosen condition's `LightParams` row is edited on the same page, under a heading that names the condition and the row:
 
-"New Light", the mode beside "Select" on the toolbar, arms a click on the ground. The light it makes is at full strength to 50 yards and fades out at 120 yards, with the `LightParams` of the selected light or the map's default light. Escape or "Select" disarms it. "Keys" on the toolbar lists the chosen mode's controls in its hover text. "New Default Light" appears on a map that has none. "Browse All N Lights…" lists every row of `Light.dbc`, including lights not on screen, and moves the camera to the one chosen.
+- "Choose…" picks another row for the condition. "Copy Row" copies the row with its 18 colour bands and 6 float bands and points the condition at the copy; every other use of the original keeps it. On a condition with no row, "New Row" creates one copied from this light's Clear row, or the Eastern Kingdoms default light's.
+- A line in the warning colour names the other lights that use the row, because an edit changes all of them. Each is a link that selects that light.
+- "Storm", "Storm Underwater" and "Death" carry a note that the editor's viewport does not draw them. "Death" is read on a map's default light only.
+- "Sky" has "HighlightSky", "Skybox" and "Glow". "Skybox" lists the rows of `LightSkybox.dbc` as the project has them, by model file name and id, so a row added for an imported model is in the list; the viewport draws the chosen model. "Skybox Model" is the chosen row's model path, with the `.mdx` extension, and a line in the warning colour says when no such file is in the archives or the project. "New Skybox Row" adds a blank row to `LightSkybox.dbc` and points the `LightParams` row at it. "Water Opacity" has the four water alphas.
+- "Colours" and "Float Values" hold the bands, grouped by what they colour: "Light", "Sky", "Sun", "Clouds", "Water"; and "Fog", "Clouds", "Not Read". Each band is a strip of its colour or value over the day, with its keys as ticks and the viewport's hour as a line. Press or drag on a strip to set the viewport's hour to the time under the pointer, or to a key's time near its tick. Open a band to edit its keys: "Add Key" adds one at the viewport's hour with the value the band has there, or in the longest gap when a key is already at that time, and "×" removes one.
+
+"New Light", the mode beside "Select" on the toolbar, arms a click on the ground. The light it makes is at full strength to 50 yards and fades out at 120 yards, with the `LightParams` of the selected light or the map's default light. Escape or "Select" disarms it. "Keys" on the toolbar lists the chosen mode's controls in its hover text.
 
 ### Taxi
 

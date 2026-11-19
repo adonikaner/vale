@@ -1,56 +1,56 @@
-//! **Where a light is, drawn on the map and picked with the pointer.**
+//! Draws the open map's lights in the viewport and picks them with the pointer.
 //!
-//! [`tables`](crate::tables) edits the light chain's *rows*; this file is the
-//! other half of the same subject, and it is the half that makes it editable.
-//! A `Light` row is a sphere at a position on a map — an origin, an inner
-//! radius it applies at full strength inside, and an outer one it fades to
-//! nothing at — and none of those five numbers means anything read as a number.
-//! `612096, 0, 998400, 19200, 25861` is Duskwood's light; nothing on a form says
-//! so.
+//! [`tables`](crate::tables) edits the rows of the light chain. This file
+//! handles the same rows in the viewport, where their positions can be seen and
+//! moved. A `Light` row is a sphere at a position on a map: an origin, an inner
+//! radius within which it applies at full strength, and an outer radius at
+//! which it has faded to nothing. Those five numbers do not identify a place
+//! when read on a form: `612096, 0, 998400, 19200, 25861` is Duskwood's light,
+//! and the form does not say so.
 //!
-//! So each light is marked where it stands, its falloff is drawn as two rings
-//! on the ground it covers, the pointer picks one and the camera goes to it.
-//! What is on the form then has a place attached to it.
+//! Each light is therefore marked at its position, and its falloff is drawn as
+//! two rings over the ground it covers. The pointer picks a light and the
+//! camera goes to it. The row on the form is then shown together with its place
+//! on the map.
 //!
-//! ## The band that was not this file's
+//! ## The band across the window came from the present camera
 //!
-//! A straight line across the whole window appeared with some lights selected,
-//! and it cost four rounds of culling here before it was measured to the
-//! segment: one ordinary `gizmos.line` between two ordinary points, drawn as a
-//! two-pixel band at the window's centre row, unmoved by any rule about
-//! distance, depth or angle. It was the client's present camera — a `Camera2d`
-//! with a 1x1 orthographic view and no render layer — drawing every gizmo a
-//! second time. `render::present::PRESENT_LAYER` is the fix, and the lesson is
-//! the project's own: a picture settles what a count cannot, and a count of
-//! green pixels per row is what finally settled this one.
+//! With some lights selected, a straight line appeared across the whole window.
+//! Four rounds of culling were tried in this file before the line was measured
+//! down to its segment: one `gizmos.line` between two points, drawn as a
+//! two-pixel band at the window's centre row, and unchanged by any rule about
+//! distance, depth or angle. The cause was the client's present camera, a
+//! `Camera2d` with a 1x1 orthographic view and no render layer, which drew
+//! every gizmo a second time. `render::present::PRESENT_LAYER` is the fix. A
+//! count of green pixels per row is what identified the segment.
 //!
 //! ## Why this tool keeps the viewport
 //!
-//! The other subject edited through a table covers it — see
-//! [`Tool::covers_viewport`](crate::tools::Tool::covers_viewport). A spell has no
-//! position, so there is nothing behind the form worth seeing. A light's
-//! position *is* half the row, and the other half is a set of colours whose
-//! only honest preview is the world drawn in them, which this editor already
-//! has: the viewport is the client's own renderer reading the client's own
-//! light chain.
+//! The other subject edited through a table covers the viewport; see
+//! [`Tool::covers_viewport`](crate::tools::Tool::covers_viewport). A spell has
+//! no position, so the viewport behind its form would show nothing about it. A
+//! light's position is half of its row. The other half is a set of colours, and
+//! the accurate preview of those colours is the world drawn in them. The editor
+//! already has that preview: the viewport is the client's own renderer reading
+//! the client's own light chain.
 //!
-//! ## The positions are converted, not read
+//! ## Positions are converted with `placement_to_world`
 //!
-//! `Light.dbc` stores its three coordinates in the internal representation
-//! every `MDDF` and `MODF` placement is in, scaled by 36 —
+//! `Light.dbc` stores its three coordinates in the internal representation that
+//! every `MDDF` and `MODF` placement is in, scaled by 36.
 //! `vale_assets::tables::light` has the measurement and
-//! [`vale_assets::world::adt::placement_to_world`] is the conversion. This
-//! file calls that rather than restating it: a second reading of those columns
-//! is the bug this chain keeps producing, and it produces a light in a
-//! plausible wrong place rather than an error.
+//! [`vale_assets::world::adt::placement_to_world`] is the conversion. This file
+//! calls that function and does not restate it. A second reading of those
+//! columns is a bug the light chain has produced repeatedly, and it puts a
+//! light in a plausible wrong place without raising an error.
 //!
 //! ## A default light has no position
 //!
-//! A row whose `FalloffEnd` is zero is the map's default — it applies
-//! everywhere and its coordinates are not read. Drawing one would be drawing a
-//! sphere at the corner of the map that means nothing, so [`Mark::everywhere`]
-//! marks it and [`draw`] leaves it out. The list still carries it, because it
-//! is the row most worth editing: it is what the whole map is lit by.
+//! A row whose `FalloffEnd` is zero is the map's default light. It applies
+//! everywhere and its coordinates are not read. Drawn, it would be a sphere at
+//! the corner of the map that has no meaning, so [`Mark::everywhere`] marks it
+//! and [`draw`] leaves it out. The list still carries it, because it lights the
+//! whole map and is therefore the row most worth editing.
 
 use crate::tools::Tool;
 use crate::marks::{Look, Marks};
@@ -69,44 +69,265 @@ pub(crate) struct Mark {
     pub(crate) record: usize,
     /// The centre, in the world's own axes.
     pub(crate) at: Vec3,
-    /// Yards it applies at full strength within.
+    /// The distance in yards within which it applies at full strength.
     pub(crate) start: f32,
-    /// …and yards it has faded to nothing by.
+    /// The distance in yards at which it has faded to nothing.
     pub(crate) end: f32,
-    /// **The map's default light**, which applies everywhere and whose position
-    /// is not read. Kept in the list and left out of the drawing.
+    /// True for the map's default light, which applies everywhere and whose
+    /// position is not read. Kept in the list and left out of the drawing.
     pub(crate) everywhere: bool,
 }
 
 /// What the pointer is doing with the lights on the open map.
 #[derive(Resource, Debug, Default)]
 pub(crate) struct Lights {
-    /// Every light on the open map. Rebuilt when the table or the map moves,
-    /// not per frame — see [`collect`].
+    /// Every light on the open map. Rebuilt when the table or the map changes,
+    /// not per frame; see [`collect`].
     pub(crate) marks: Vec<Mark>,
     /// What [`marks`](Self::marks) was built from: the session's table revision
     /// and the map it was read for.
     built: Option<(u64, u32)>,
-    /// The handle under the pointer: which light, and which of its three.
+    /// The handle under the pointer: which light, and which of its three
+    /// handles.
     ///
-    /// A handle rather than a light, because a light has three things that can
-    /// be taken hold of and they are dragged to different ends. Drawn as the
-    /// lit one by [`draw`].
+    /// A handle and not a light, because a light has three handles and dragging
+    /// each one changes a different part of the row. [`draw`] draws the hovered
+    /// handle highlighted.
     pub(crate) hovered: Option<(u32, Dragging)>,
-    /// …and the one that is chosen, which is the row the panel has open.
+    /// The id of the chosen light, whose row the panel has open.
     pub(crate) selected: Option<u32>,
-    /// **Draw the chosen light's falloff, or only its marker.** On by default.
+    /// Whether the chosen light's falloff is drawn, or only its marker. On by
+    /// default.
     ///
-    /// It was "draw every light's falloff" and that is what put a bar across
-    /// the window: 80 lights on map 0, two of their outer radii 2,005 and
-    /// 2,648 yards, 38 of them lying flat at height zero. Every light is
-    /// marked now whatever this says; this is only the two spheres of the one
-    /// being edited, which is worth turning off while dragging it somewhere.
+    /// This setting used to mean "draw every light's falloff", and that drew a
+    /// bar across the window: map 0 has 80 lights, two of their outer radii are
+    /// 2,005 and 2,648 yards, and 38 of them lie flat at height zero. Every
+    /// light is now marked whatever this is set to. The setting covers only the
+    /// falloff of the light being edited, and turning it off is useful while
+    /// dragging that light.
     pub(crate) show_falloff: bool,
-    /// What the left button is moving, if anything — see [`Drag`].
+    /// What the left button is moving, if anything; see [`Drag`].
     pub(crate) drag: Option<Drag>,
     /// Whether a click on the ground makes a light there. See [`new_light`].
     pub(crate) armed: bool,
+    /// Which of the chosen light's five conditions the panel shows the
+    /// `LightParams` row of.
+    pub(crate) condition: Condition,
+    /// Where the camera is, in the world's axes. The panel reads it for a
+    /// light's weight at the camera and for the distances in its list. `None`
+    /// until [`aim`] has run with the tool chosen.
+    pub(crate) eye: Option<Vec3>,
+    /// What the panel reads out of the tables; see [`PanelData`].
+    panel: PanelData,
+}
+
+/// What the light panel derives from the open tables and would otherwise
+/// compute on every frame it is drawn: who uses each `LightParams` row, and
+/// the rows of `LightSkybox`.
+///
+/// It is built again when [`Self::key`] moves, which is on every table edit,
+/// undo, discard and project switch, and when a table is opened. Nothing is
+/// rebuilt on a frame where no table changed, and nothing is stale after one
+/// that did: a skybox row added by the project is in the list on the next
+/// frame.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PanelData {
+    /// The session's table revision and how many tables it has open, when
+    /// this was built. Opening a table does not move the revision.
+    key: Option<(u64, usize)>,
+    /// For each `LightParams` id a light names, the lights that name it, in
+    /// `Light.dbc`'s order, over every map.
+    pub(crate) users: std::sync::Arc<std::collections::HashMap<u32, Vec<Use>>>,
+    /// The rows of `LightSkybox.dbc` as the project has them, in the table's
+    /// order. Empty while the table is not open.
+    pub(crate) skyboxes: std::sync::Arc<[Skybox]>,
+}
+
+/// One light's use of a `LightParams` row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Use {
+    pub(crate) light: u32,
+    /// Which conditions the light names the row under, as bit `n` for
+    /// `Condition::ALL[n]`.
+    under: u8,
+}
+
+impl Use {
+    /// The conditions the light names the row under, in column order.
+    pub(crate) fn conditions(self) -> impl Iterator<Item = Condition> {
+        Condition::ALL.into_iter().filter(move |condition| self.under & (1 << *condition as u8) != 0)
+    }
+
+    /// This use without one condition, or `None` when that was the only one.
+    pub(crate) fn without(self, condition: Condition) -> Option<Use> {
+        let under = self.under & !(1 << condition as u8);
+        (under != 0).then_some(Use { light: self.light, under })
+    }
+}
+
+/// One row of `LightSkybox.dbc`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Skybox {
+    pub(crate) id: u32,
+    pub(crate) record: usize,
+    /// The model as the row states it, with the `.mdx` extension.
+    pub(crate) model: String,
+    /// The archive path the client reads for it, or empty for no model.
+    pub(crate) path: String,
+    /// What a list calls the row: the model's file name and the id.
+    pub(crate) label: String,
+}
+
+impl Lights {
+    /// The panel's derived data, built again when a table has changed or
+    /// been opened since it was built. The answer is two shared pointers, so
+    /// taking it costs no copy of the lists.
+    pub(crate) fn panel_data(&mut self, session: &EditSession) -> PanelData {
+        let key = (session.table_revision, session.tables.len());
+        if self.panel.key != Some(key) {
+            let mut users: std::collections::HashMap<u32, Vec<Use>> = std::collections::HashMap::new();
+            if let Some(table) = session.table("Light") {
+                for record in 0..table.record_count() {
+                    let light = table.u32_at(record, 0).unwrap_or(0);
+                    for condition in Condition::ALL {
+                        let Some(params) = table.u32_at(record, condition.field()).filter(|&id| id != 0) else {
+                            continue;
+                        };
+                        let bit = 1 << condition as u8;
+                        let uses = users.entry(params).or_default();
+                        match uses.last_mut().filter(|last| last.light == light) {
+                            Some(last) => last.under |= bit,
+                            None => uses.push(Use { light, under: bit }),
+                        }
+                    }
+                }
+            }
+            let mut skyboxes = Vec::new();
+            if let Some(table) = session.table("LightSkybox") {
+                for record in 0..table.record_count() {
+                    let id = table.u32_at(record, 0).unwrap_or(0);
+                    let model = table.string_at(record, 1).unwrap_or_default();
+                    let label = match model.is_empty() {
+                        true => format!("LightSkybox {id}, no model"),
+                        false => format!("{} ({id})", model.rsplit('\\').next().unwrap_or(&model)),
+                    };
+                    let path = match model.is_empty() {
+                        true => String::new(),
+                        false => vale_assets::world::m2::model_path(&model),
+                    };
+                    skyboxes.push(Skybox { id, record, model, path, label });
+                }
+            }
+            self.panel = PanelData { key: Some(key), users: users.into(), skyboxes: skyboxes.into() };
+        }
+        self.panel.clone()
+    }
+}
+
+/// One of the five `LightParams` columns of a `Light` row. The client lights
+/// by the row a column names while that column's condition holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum Condition {
+    #[default]
+    Clear,
+    ClearUnderwater,
+    Storm,
+    StormUnderwater,
+    Death,
+}
+
+impl Condition {
+    /// The five, in the order of `Light.dbc`'s columns.
+    pub(crate) const ALL: [Condition; 5] = [
+        Condition::Clear,
+        Condition::ClearUnderwater,
+        Condition::Storm,
+        Condition::StormUnderwater,
+        Condition::Death,
+    ];
+
+    /// The field of `Light.dbc` that holds this condition's `LightParams` id.
+    /// The five are consecutive from `ParamsClear`.
+    pub(crate) fn field(self) -> usize {
+        lf::PARAMS_CLEAR + self as usize
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Condition::Clear => "Clear",
+            Condition::ClearUnderwater => "Clear Underwater",
+            Condition::Storm => "Storm",
+            Condition::StormUnderwater => "Storm Underwater",
+            Condition::Death => "Death",
+        }
+    }
+
+    /// The column's name in `Light.dbc`.
+    pub(crate) fn column(self) -> &'static str {
+        match self {
+            Condition::Clear => "ParamsClear",
+            Condition::ClearUnderwater => "ParamsClearUnderwater",
+            Condition::Storm => "ParamsStorm",
+            Condition::StormUnderwater => "ParamsStormUnderwater",
+            Condition::Death => "ParamsDeath",
+        }
+    }
+
+    /// When the client lights by this column's row.
+    pub(crate) fn when(self) -> &'static str {
+        match self {
+            Condition::Clear => "Fair weather, with the camera above the water.",
+            Condition::ClearUnderwater => "Fair weather, with the camera under the water.",
+            Condition::Storm => {
+                "While the server reports rain, snow or a sandstorm. The light is blended from \
+                 Clear toward this row by how hard it falls."
+            }
+            Condition::StormUnderwater => "The storm's light, with the camera under the water.",
+            Condition::Death => {
+                "While the player is a ghost. The client lights the whole map by the default \
+                 light's Death row and lays no other light over it, so this column is read \
+                 on the map's default light only."
+            }
+        }
+    }
+
+    /// The condition whose row the client lights by when this one's column
+    /// holds 0. `None` for Clear, which has nothing behind it, and for Death,
+    /// where a default light with no Death row lights the ghost world as the
+    /// living one.
+    pub(crate) fn falls_back_to(self) -> Option<Condition> {
+        match self {
+            Condition::Clear | Condition::Death => None,
+            Condition::ClearUnderwater | Condition::Storm => Some(Condition::Clear),
+            Condition::StormUnderwater => Some(Condition::ClearUnderwater),
+        }
+    }
+
+    /// Whether the editor's viewport can draw this condition. It has no
+    /// weather and no ghost world, so it draws Clear, and Clear Underwater
+    /// while the camera is under the water.
+    pub(crate) fn drawn_in_the_editor(self) -> bool {
+        matches!(self, Condition::Clear | Condition::ClearUnderwater)
+    }
+}
+
+impl Mark {
+    /// How strongly this light applies at `at`: 1 within `start`, falling
+    /// linearly to 0 at `end`, by three-dimensional distance. This is
+    /// `vale_assets::tables::light::PositionalLight::weight`'s rule. The
+    /// default light has no weight of its own: it is what the others are
+    /// laid over.
+    pub(crate) fn weight(&self, at: Vec3) -> f32 {
+        let distance = self.at.distance(at);
+        if self.everywhere || distance >= self.end {
+            return 0.0;
+        }
+        let span = self.end - self.start;
+        if distance <= self.start || span <= 0.0 {
+            return 1.0;
+        }
+        (self.end - distance) / span
+    }
 }
 
 /// The radii a new light is made with, in yards: full strength within the
@@ -160,30 +381,31 @@ pub(crate) fn new_light(
     }
 }
 
-/// **What a held left button is moving.**
+/// What a held left button is moving.
 ///
-/// A drag belongs to where it began, which is this crate's own rule: once the
-/// button is down on a handle, the pointer wandering off it — or over a panel —
-/// goes on moving that handle rather than picking a new one.
+/// A drag belongs to the handle it began on, which is a rule of this crate.
+/// Once the button is down on a handle, the drag goes on moving that handle
+/// when the pointer leaves it or moves over a panel, and does not pick a new
+/// one.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Drag {
-    /// The light being moved, by id. Not by index: [`collect`] rebuilds and
-    /// reorders the list on every edit, and a drag *is* an edit, so an index
+    /// The light being moved, by id and not by index. [`collect`] rebuilds and
+    /// reorders the list on every edit, and a drag is an edit, so an index
     /// taken when the button went down names a different light by the next
     /// frame.
     pub(crate) id: u32,
     pub(crate) what: Dragging,
-    /// **How far the light is from the pointer**, in the world's own axes, so
-    /// a press near the edge of a handle does not snap the light under the
+    /// The offset from the pointer to the light, in the world's own axes. With
+    /// it, a press near the edge of a handle does not move the light under the
     /// cursor on the first frame.
     ///
-    /// `None` until the first frame of the drag, which is where it is measured:
-    /// the press is handled by a system with no ray to hand, and the offset is
-    /// the difference between two things only the ray knows. A drag writes
-    /// nothing on that frame, which is right — the pointer has not moved yet.
+    /// `None` until the first frame of the drag, where it is measured. The
+    /// press is handled by a system that has no ray, and the offset cannot be
+    /// computed without the ray. A drag writes nothing on that frame, which is
+    /// correct because the pointer has not moved yet.
     pub(crate) grab: Option<Vec3>,
     /// The label the undo entry gets, and the gesture key every frame of this
-    /// drag writes under — see [`crate::tables::fields::set_fields`].
+    /// drag writes under; see [`crate::tables::fields::set_fields`].
     pub(crate) subject: &'static str,
 }
 
@@ -192,14 +414,14 @@ pub(crate) struct Drag {
 pub(crate) enum Dragging {
     /// The centre, across the horizontal plane at the light's own height.
     ///
-    /// **The height is not dragged.** Two of the three coordinates can be
-    /// aimed at with a pointer and the third cannot, and a drag that guessed
-    /// at it from the ground would move a light that sits 200 yards up down
-    /// onto the terrain. The form's `InternalY` is where the height is edited.
+    /// The height is not dragged. A pointer can aim at two of the three
+    /// coordinates and not at the third. A drag that took the height from the
+    /// ground would move a light that sits 200 yards up down onto the terrain.
+    /// The height is edited in the form's `InternalY`.
     Centre,
     /// The inner radius: where the light stops applying at full strength.
     Start,
-    /// …and the outer: where it has faded to nothing.
+    /// The outer radius: where the light has faded to nothing.
     End,
 }
 
@@ -212,9 +434,9 @@ impl Lights {
 
     /// The camera request that looks at a light, at the row's stored height.
     ///
-    /// A request rather than a write, because the camera is driven by
-    /// [`crate::camera`] and a second writer would fight it on the frames a
-    /// drag is also moving it.
+    /// A request and not a write, because [`crate::camera`] drives the camera
+    /// and a second writer would conflict with it on the frames where a drag is
+    /// also moving the camera.
     pub(crate) fn fly_to(mark: &Mark) -> crate::camera::FlyTo {
         crate::camera::FlyTo::at(mark.at)
     }
@@ -230,51 +452,52 @@ impl Plugin for LightToolPlugin {
         })
         .add_systems(
             Update,
-            // **After the pick, like every tool here**: reading the pointer
-            // before this frame's ray is built aims at where the pointer was.
+            // After the pick, like every tool here. Reading the pointer before
+            // this frame's ray is built aims at where the pointer was.
             (collect, aim, press, drag, disarm).chain().after(crate::pick::aim),
         )
-        // …and the drawing after the picking, so the ring that lights up under
-        // the pointer does so on the frame the pointer reached it.
+        // The drawing runs after the picking, so the ring under the pointer is
+        // highlighted on the frame the pointer reached it.
         .add_systems(Update, draw.after(drag));
     }
 }
 
-/// How wide a light's centre handle is to the pointer, in **pixels**.
+/// How wide a light's centre handle is to the pointer, in pixels.
 ///
-/// A light is a point, and a point cannot be clicked. In yards a handle is
-/// unclickable from far away and swallows the screen close up, which is the
-/// same error the doodad tool's first draft made; in pixels it is the same
-/// target at every distance. Twelve is about a finger's width at the framings
-/// this tool is used at.
+/// A light is a point, and a point cannot be clicked. A handle sized in yards
+/// cannot be clicked from far away and covers the screen close up; the doodad
+/// tool's first draft had the same fault. A handle sized in pixels is the same
+/// target at every distance. Twelve pixels is about a finger's width at the
+/// framings this tool is used at.
 const HANDLE_PIXELS: f32 = 12.0;
 
-/// How many segments a circle is drawn with. Enough that a 700-yard one does
-/// not read as a polygon.
+/// How many segments a circle is drawn with. Enough that a 700-yard circle does
+/// not look like a polygon.
 const RING_SEGMENTS: usize = 48;
 
-/// **How far a light's marker is drawn from, in yards.**
+/// How far away a light's marker is still drawn, in yards.
 ///
 /// Map 0 has 80 positional lights spread over a continent. Drawing all of them
-/// whatever their distance put a marker in the sky for a light forty tiles
-/// away, which says nothing about anywhere you can see. This is a little past
-/// the block the editor streams, so a marker appears as its ground does.
+/// at any distance put a marker in the sky for a light forty tiles away, which
+/// shows nothing about the area in view. The range is a little past the block
+/// the editor streams, so a marker appears when its ground does.
 const MARKER_RANGE: f32 = 2200.0;
 
 /// Yards the drop line under a marker falls.
 ///
-/// **This is what makes a light read as being in the air rather than painted
-/// on the picture.** A point drawn by itself has no height: 38 of map 0's
-/// lights sit at z = 0 and several sit 150 to 436 yards up, and without a line
-/// running down from it there is nothing on screen that tells the two apart.
+/// The drop line shows that a light is in the air. A point drawn alone has no
+/// visible height: 38 of map 0's lights sit at z = 0 and several sit 150 to 436
+/// yards up, and without a line running down from the marker nothing on screen
+/// tells the two apart.
 const DROP: f32 = 120.0;
 
-/// **Read the open map's lights out of the session, when they have moved.**
+/// Reads the open map's lights out of the session when the table or the map has
+/// changed.
 ///
-/// Not per frame: `Light.dbc` is 374 rows and this walks all of them, converts
+/// Not per frame: `Light.dbc` is 374 rows, and this walks all of them, converts
 /// five floats each and allocates. The key is the session's table revision and
-/// the focused map, which between them move on every edit, every discard, every
-/// project switch and every jump to another map.
+/// the focused map. Between them they change on every edit, every discard,
+/// every project switch and every jump to another map.
 fn collect(
     mut lights: ResMut<Lights>,
     session: Option<Res<EditSession>>,
@@ -291,7 +514,7 @@ fn collect(
         return;
     }
     let Some(table) = session.table("Light") else {
-        // The table is opened a frame or two after the tool is chosen — see
+        // The table is opened a frame or two after the tool is chosen; see
         // `tables::open::open_tables`. Leave the key unset so this runs again.
         return;
     };
@@ -316,12 +539,12 @@ fn collect(
             everywhere: end <= 0.0,
         });
     }
-    // **Widest first, so a press inside two spheres takes the smaller one.**
-    // `aim` walks this list and keeps the last match at an equal distance, and
-    // the nested case is the one that matters: Orgrimmar's light sits inside
-    // Durotar's, and a click on Orgrimmar that selected Durotar would be a
-    // click that cannot reach the row it is pointing at. `LightTables::parse`
-    // sorts the same way for the same reason.
+    // Widest first, so that a press inside two spheres takes the smaller one.
+    // `aim` walks this list and keeps the last match at an equal distance. The
+    // nested case is the one that matters: Orgrimmar's light sits inside
+    // Durotar's, and if a click on Orgrimmar selected Durotar, the click could
+    // not reach the row it points at. `LightTables::parse` sorts the same way
+    // for the same reason.
     lights.marks.sort_by(|a, b| {
         b.end
             .partial_cmp(&a.end)
@@ -329,13 +552,13 @@ fn collect(
     });
 }
 
-/// **Which light's centre the pointer is over.**
+/// Which light's centre the pointer is over.
 ///
-/// Against the centre handle rather than against the sphere: a sphere is 700
-/// yards wide and overlaps half the zone, so picking against the volume would
-/// mean every pointer position is inside several lights and none of them is
-/// what was aimed at. The handle is where the light *is*, which is the thing
-/// being moved.
+/// The pick tests the centre handle and not the sphere. A sphere is 700 yards
+/// wide and overlaps half the zone, so with a pick against the volume every
+/// pointer position would be inside several lights, none of them the one aimed
+/// at. The handle is at the light's position, and the position is what a drag
+/// moves.
 fn aim(
     mut lights: ResMut<Lights>,
     tool: Res<Tool>,
@@ -349,16 +572,20 @@ fn aim(
         lights.hovered = None;
         return;
     }
-    // **A held drag keeps what it grabbed.** Without this the hover moves off
-    // the handle the moment the light does, and the ring the pointer is
-    // dragging stops being the ring that is lit.
+    // The camera's place, for the panel. Read before the returns below, which
+    // are about the pointer and not about the camera.
+    lights.eye = camera.single().ok().map(|(_, at)| Vec3::from(axes::to_wow(at.translation())));
+    // A held drag keeps the handle it grabbed. Without this return the hover
+    // moves off the handle as soon as the light moves, and the ring being
+    // dragged is no longer the ring drawn highlighted.
     if lights.drag.is_some() {
         return;
     }
-    // **The panel has the pointer wherever the viewport does not**, which is
-    // the shell's own question and not one to re-derive — it is what keeps a
-    // drag inside the form from also aiming here, and it covers the menus and
-    // tooltips egui opens over the world as well as the four docked panels.
+    // Where the viewport does not have the pointer, a panel has it. The shell
+    // answers that question and this file does not re-derive it. The check
+    // keeps a drag inside the form from also aiming here, and it covers the
+    // menus and tooltips egui opens over the world as well as the four docked
+    // panels.
     if !crate::ui::over_the_world(&viewport, &wants, &windows) {
         lights.hovered = None;
         return;
@@ -367,27 +594,26 @@ fn aim(
         lights.hovered = None;
         return;
     };
-    // **The handle's radius in yards at the light's own distance**, so the
-    // target is `HANDLE_PIXELS` wide on screen wherever it is. Derived from the
-    // camera's vertical field of view and the window's height rather than
-    // written down, since both change with the window.
+    // The handle's radius in yards at the light's own distance, so the target
+    // is `HANDLE_PIXELS` wide on screen wherever the light is. It is derived
+    // from the camera's vertical field of view and the window's height and is
+    // not written as a constant, because both change with the window.
     let Ok(window) = windows.single() else { return };
     let Ok((camera, _)) = camera.single() else {
         return;
     };
     let height = window.height().max(1.0);
     let fov = match camera.clip_from_view().to_cols_array()[5] {
-        // The projection's [1][1] is `1 / tan(fov / 2)`, which is what turns a
-        // pixel height into an angle without asking the projection what kind it
-        // is.
+        // The projection's [1][1] is `1 / tan(fov / 2)`. It turns a pixel
+        // height into an angle without a check of the projection's type.
         y if y.abs() > f32::EPSILON => y,
         _ => return,
     };
-    // **The centre first, over every light, and only then the rings.** A ring
-    // is a 700-yard circle and a centre is a point, so a centre that happened
-    // to sit on another light's ring would be unreachable if the two competed
-    // on distance alone. Ranking the centres ahead of the rings makes the
-    // thing that is harder to hit the one that wins.
+    // The centres are tested first, over every light, and the rings only after.
+    // A ring is a 700-yard circle and a centre is a point, so a centre that sat
+    // on another light's ring could not be reached if the two competed on
+    // distance alone. Ranking the centres ahead of the rings gives the pick to
+    // the target that is harder to hit.
     let mut best: Option<(f32, u32)> = None;
     for mark in &lights.marks {
         if mark.everywhere {
@@ -403,7 +629,7 @@ fn aim(
             continue;
         }
         // The nearest to the eye wins, and an equal distance keeps the later
-        // one — which after `collect`'s sort is the smaller sphere.
+        // one, which after `collect`'s sort is the smaller sphere.
         if best.is_none_or(|(best, _)| along <= best) {
             best = Some((along, mark.id));
         }
@@ -413,16 +639,16 @@ fn aim(
         return;
     }
 
-    // **A ring is picked where the pointer's ray meets the light's own
-    // plane**, not against the circle in three dimensions. The ring is drawn
-    // flat at the light's height, so the plane is where it is; comparing the
-    // distance from the centre against the radius is then the whole test, and
-    // it behaves the same at every camera pitch.
+    // A ring is picked where the pointer's ray meets the light's own plane, not
+    // against the circle in three dimensions. The ring is drawn flat at the
+    // light's height, so it lies in that plane. The test is then the distance
+    // from the centre compared against the radius, and it behaves the same at
+    // every camera pitch.
     //
-    // Only the chosen light's rings are grabbable. Map 0 has eighty lights and
-    // their rings cross everywhere; a pointer moved across the map would
-    // otherwise pass through a dozen of them and each one would offer to be
-    // resized. The one whose row is open is the one being edited.
+    // Only the chosen light's rings can be grabbed. Map 0 has eighty lights and
+    // their rings cross everywhere. Without this rule a pointer moved across
+    // the map would pass through a dozen of them, and each one would offer to
+    // be resized. The light whose row is open is the one being edited.
     let chosen = lights.chosen().copied();
     let Some(mark) = chosen.filter(|mark| !mark.everywhere) else {
         lights.hovered = None;
@@ -447,22 +673,29 @@ fn aim(
         .map(|(_, what)| (mark.id, what));
 }
 
-/// Escape disarms New light.
+/// Escape disarms New Light. With Select chosen it deselects the light, and
+/// the panel then lists the map's lights. Not while a text box has the
+/// keyboard or a dialog is open, where Escape closes that.
 fn disarm(
     mut lights: ResMut<Lights>,
     keys: Res<ButtonInput<KeyCode>>,
     wants: Res<bevy_egui::input::EguiWantsInput>,
     tool: Res<Tool>,
 ) {
-    if *tool != Tool::Lights || wants.wants_keyboard_input() {
+    if *tool != Tool::Lights || wants.wants_keyboard_input() || wants.is_popup_open() {
         return;
     }
-    if lights.armed && keys.just_pressed(KeyCode::Escape) {
-        lights.armed = false;
+    if !keys.just_pressed(KeyCode::Escape) {
+        return;
+    }
+    match lights.armed {
+        true => lights.armed = false,
+        false if lights.drag.is_none() => lights.selected = None,
+        false => {}
     }
 }
 
-/// **Choose the light under the pointer, and open its row.**
+/// Chooses the light under the pointer and opens its row.
 fn press(
     mut lights: ResMut<Lights>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -498,34 +731,34 @@ fn press(
     let session = session.as_deref();
     let already = lights.selected == Some(id);
     lights.selected = Some(id);
-    // **The press that selects is also the press that starts a move.** One
-    // gesture rather than select-then-drag, which is what every other
-    // placement tool here does and what a person expects of a handle.
+    // The press that selects a light also starts the move: one gesture, not
+    // select-then-drag. Every other placement tool here does the same, and a
+    // user expects it of a handle.
     lights.drag = Some(Drag {
         id,
         what,
         grab: None,
         subject: match what {
             Dragging::Centre => "Light position",
-            // **One key for both rings**, so a drag that takes the inner
-            // radius past the outer and carries on is still one entry rather
-            // than two — see `tables::fields::set_fields`.
+            // One key for both rings, so a drag that takes the inner radius
+            // past the outer and carries on is still one entry and not two; see
+            // `tables::fields::set_fields`.
             Dragging::Start | Dragging::End => "Light falloff",
         },
     });
-    // **The row is opened when the selection changes, or when the panel is
-    // somewhere else.**
+    // The row is opened when the selection changes, or when the panel is
+    // showing something else.
     //
     // Not on every press: pointing the browser at `Light` each time would
-    // throw away a followed reference, and re-grabbing the same light to drag
-    // it again is the common case. But "the same light" is not enough on its
-    // own — after following one of its `ParamsClear` links the panel is on
-    // `LightParams`, and a press on the light you are already holding should
-    // bring its own row back rather than leave you looking at something else.
-    // **The press opens the row, which is the whole point of the pick.** The
-    // browser is pointed at `Light` first: a press in the world while the
-    // panel is looking at `LightParams` would otherwise select a light whose
-    // row nothing shows.
+    // discard a followed reference, and re-grabbing the same light to drag it
+    // again is the common case. The light already being selected is not a
+    // sufficient test, though. After following one of its `ParamsClear` links
+    // the panel is on `LightParams`, and a press on the light that is already
+    // selected must bring its own row back.
+    //
+    // Opening the row is the purpose of the pick. The browser is pointed at
+    // `Light` first: a press in the world while the panel is looking at
+    // `LightParams` would otherwise select a light whose row nothing shows.
     let (Some(session), Some(browser)) = (session, browser.as_mut()) else {
         return;
     };
@@ -541,16 +774,16 @@ fn press(
     browser.follow(&session, "Light", id);
 }
 
-/// **Draw the lights on the open map.**
+/// Draws the lights on the open map.
 ///
-/// Two rings per light, at the radii the row states: the inner one is where it
-/// stops applying at full strength and the outer is where it has faded out, and
-/// the pair is what a falloff *is*. Flat rings rather than spheres — a sphere
-/// at 700 yards surrounds the camera with the ground hidden inside it, and the
-/// question being asked is how far across the map the light reaches.
+/// The falloff is two rings, at the radii the row states: the inner ring is
+/// where the light stops applying at full strength and the outer ring is where
+/// it has faded out. The rings are flat and are not spheres. A sphere at 700
+/// yards surrounds the camera and hides the ground inside it, and the drawing
+/// has to show how far across the map the light reaches.
 ///
-/// Everything here is [`Look::Ghosted`]: a light is a thing to aim at, and a
-/// ring behind a hill is still part of the falloff.
+/// Everything here is [`Look::Ghosted`]: a light is a target for the pointer,
+/// and a ring behind a hill is still part of the falloff.
 fn draw(
     mut marks: ResMut<Marks>,
     lights: Res<Lights>,
@@ -570,18 +803,18 @@ fn draw(
         }
         let chosen = lights.selected == Some(mark.id);
         let under = lights.hovered.is_some_and(|(id, _)| id == mark.id);
-        // **Everything near is marked; only what is chosen is drawn in full.**
-        // The chosen light is exempt from the range, because flying to it is
-        // what the panel's button does and arriving to nothing would be worse
-        // than the marker being far away.
+        // Every light within range gets a marker; only the chosen light is
+        // drawn in full. The chosen light is exempt from the range, because the
+        // panel's button flies to it, and arriving at a light with no marker
+        // would be worse than drawing a marker that is far away.
         if !chosen && (mark.at - eye).length() > MARKER_RANGE {
             continue;
         }
-        // **Opaque, and warm rather than blue.** A light marker competes with
-        // terrain, water and sky, and the first draft was a translucent
-        // blue-grey against all three — visible in a screenshot and not at a
-        // glance. These are the colours a light is: warm when it is the one
-        // being edited, white under the pointer, and a dimmer amber otherwise.
+        // Opaque, and warm in colour, not blue. A light marker competes with
+        // terrain, water and sky. The first draft was a translucent blue-grey,
+        // which against all three was visible in a screenshot and not at a
+        // glance. The colours are warm for the light being edited, white under
+        // the pointer, and a dimmer amber otherwise.
         let colour = match (chosen, under) {
             (true, _) => Color::srgb(1.0, 0.82, 0.25),
             (false, true) => Color::srgb(1.0, 1.0, 1.0),
@@ -589,16 +822,16 @@ fn draw(
         };
         marker(&mut marks, mark.at, grab_radius(mark.at, eye), colour);
 
-        // **The falloff belongs to the light that is being edited, and to
-        // nothing else.** Drawn for all eighty it was a screen full of
-        // overlapping circles up to 2,648 yards across, one of which lay flat
-        // at z = 0 and projected to a straight line across the window at every
-        // camera position. That was the bar.
+        // The falloff is drawn for the light being edited and for no other.
+        // Drawn for all eighty, it was a screen full of overlapping circles up
+        // to 2,648 yards across. One of them lay flat at z = 0 and projected to
+        // a straight line across the window at every camera position, which was
+        // the bar across the window.
         if !chosen || !lights.show_falloff {
             continue;
         }
-        // **The ring under the pointer is drawn brighter than its own light's
-        // other one**, which is what says which of the two a press will take.
+        // The ring under the pointer is drawn brighter than the same light's
+        // other ring, which shows which of the two a press will take.
         let lit = Color::WHITE;
         let grabbing = |what: Dragging| {
             lights.hovered == Some((mark.id, what))
@@ -614,37 +847,37 @@ fn draw(
             true => lit,
             false => Color::srgba(1.0, 0.55, 0.15, 0.6),
         };
-        // **One ring per radius, flat on the ground, and nothing culled.**
+        // One ring per radius, flat on the ground, with nothing culled.
         //
-        // A falloff is a sphere, and it was drawn as one for a while; at 2,648
-        // yards the camera is usually inside the ball and it reads as arcs
-        // leaving the window. The footprint is the plane a drag moves in and
-        // the plane a zone is measured on, which is the question being asked.
+        // A falloff is a sphere, and it was once drawn as one. At 2,648 yards
+        // the camera is usually inside the sphere, and it showed as arcs
+        // leaving the window. The flat footprint lies in the plane a drag moves
+        // in and the plane a zone is measured on, and it shows how far the
+        // light reaches.
         //
-        // **Nothing here clips, caps or fades a ring, and that is deliberate.**
-        // A straight band across the whole window used to appear with certain
-        // lights selected, and four different culls were added here to remove
-        // it — by distance, by what was behind the camera, by the camera's
-        // height above the ring, by depression angle. None changed a pixel of
-        // it, and each one cut something real. The band was never this
-        // geometry: it was the present pass drawing every gizmo a second time,
-        // orthographically, at one world unit to the window — see
-        // `vale_client::render::present::PRESENT_LAYER`. A ring at world
-        // z = 0 is Bevy y = 0, which that camera put on the centre row.
+        // Nothing here clips, caps or fades a ring, on purpose. A straight band
+        // across the whole window used to appear with certain lights selected.
+        // Four culls were added here to remove it: by distance, by what was
+        // behind the camera, by the camera's height above the ring, and by
+        // depression angle. None changed a pixel of the band, and each one
+        // removed part of a ring that should have been drawn. The band did not
+        // come from this geometry. The present pass drew every gizmo a second
+        // time, orthographically, at one world unit to the window; see
+        // `vale_client::render::present::PRESENT_LAYER`. A ring at world z = 0
+        // is at Bevy y = 0, which that camera put on the centre row.
         circle(&mut marks, mark.at, mark.start, inner);
         circle(&mut marks, mark.at, mark.end, outer);
     }
 }
 
-/// **How wide a light's handle is in yards, at the distance it is being seen
-/// from.**
+/// How wide a light's handle is in yards, at the distance it is seen from.
 ///
 /// The pick uses [`HANDLE_PIXELS`] so that a light is the same size to the
-/// pointer wherever it is; the marker is drawn at the same width so that what
-/// you can click is what you can see. Approximated off the distance alone
-/// rather than through the projection, because a marker is a decoration and
-/// being a pixel or two out at the edge of the screen costs nothing — the pick
-/// itself does the exact version.
+/// pointer wherever it is. The marker is drawn at the same width, so the area
+/// that can be clicked is the area that is drawn. The width is approximated
+/// from the distance alone and does not go through the projection: the marker
+/// is only a visual aid, and an error of a pixel or two at the edge of the
+/// screen has no effect. The pick itself computes the exact width.
 fn grab_radius(at: Vec3, eye: Vec3) -> f32 {
     const AT_A_YARD: f32 = 0.020;
     ((at - eye).length() * AT_A_YARD).clamp(MARKER_SMALLEST, MARKER_LARGEST)
@@ -652,26 +885,26 @@ fn grab_radius(at: Vec3, eye: Vec3) -> f32 {
 
 /// How small and how large a marker may be drawn, in yards.
 ///
-/// **The upper bound is what the falloff rings did not have.** An apparent size
-/// that grows with distance and is not capped is a thing that fills the window
-/// once the camera is far enough away, which is the shape of the bar that used
-/// to run across it. Named so the test checking the clamp reads the same
+/// The falloff rings had no upper bound. An apparent size that grows with
+/// distance and is not capped fills the window once the camera is far enough
+/// away, and the bar that used to run across the window had that form. The
+/// bounds are named constants so that the test of the clamp reads the same
 /// numbers the drawing does.
 const MARKER_SMALLEST: f32 = 0.6;
 const MARKER_LARGEST: f32 = 22.0;
 
-/// **A light, as a thing standing in the world.**
+/// Draws a light's marker: a ball at the position with a line dropping under
+/// it.
 ///
-/// A ball at the position with a line dropping under it. The ball is the
-/// same size on screen wherever it is, like a doodad's handle; the drop is what
-/// gives it a height, and without it a light in the air and a light on the
-/// ground are the same two pixels.
+/// The ball is the same size on screen wherever it is, like a doodad's handle.
+/// The drop line shows the height: without it a light in the air and a light on
+/// the ground are drawn the same.
 fn marker(marks: &mut Marks, at: Vec3, radius: f32, colour: Color) {
     let head = Vec3::from(axes::to_bevy(at.to_array()));
     marks.sphere(head, radius, colour, Look::Ghosted);
     let foot = Vec3::from(axes::to_bevy([at.x, at.y, at.z - DROP]));
-    // Dimmer than the ball: the drop says where the light is *over*, and it
-    // should not compete with the thing it is pointing at.
+    // Dimmer than the ball: the drop line shows what the light is over, and it
+    // should not compete with the ball it points at.
     marks.line(foot, head, colour.with_alpha(0.55), Look::Ghosted);
 }
 
@@ -682,10 +915,10 @@ fn marker(marks: &mut Marks, at: Vec3, radius: f32, colour: Color) {
 /// yards across, and a thickness right for the near side is a thread or a bar
 /// on the far side.
 fn circle(marks: &mut Marks, at: Vec3, radius: f32, colour: Color) {
-    // **`is_finite` as well as positive.** A NaN fails every comparison, so
+    // `is_finite` as well as positive. A NaN fails every comparison, so
     // `radius <= 0.0` alone lets one through and every point of the circle
-    // becomes NaN — which is a line drawn somewhere undefined rather than no
-    // line at all.
+    // becomes NaN. That draws a line at an undefined position instead of
+    // drawing no line.
     if !(radius > 0.0) || !radius.is_finite() {
         return;
     }
@@ -697,18 +930,18 @@ fn circle(marks: &mut Marks, at: Vec3, radius: f32, colour: Color) {
     marks.line_strip((0..=RING_SEGMENTS).map(point), colour, Look::Ghosted);
 }
 
-/// **Move the light under a held button, and write it as one undo entry.**
+/// Moves the light under a held button and writes the move as one undo entry.
 ///
-/// The write goes through [`crate::tables::fields::set_fields`] so that a drag across
-/// the map is one entry rather than two per frame: the centre moves
-/// `InternalX` and `InternalZ` together, and taking back half a movement is not
-/// something anyone wants.
+/// The write goes through [`crate::tables::fields::set_fields`] so that a drag
+/// across the map is one entry and not two per frame. The centre moves
+/// `InternalX` and `InternalZ` together, and an undo that took back only one of
+/// the two would restore half a movement.
 ///
-/// The position is written into the file's own representation on the way, by
-/// [`vale_assets::world::adt::placement_from_world`]. That direction is the
-/// one loading the game's tiles never exercises, so it is called rather than
-/// restated — a second reading of the swap is a light written a hundred yards
-/// from where it was dropped.
+/// The position is converted to the file's own representation by
+/// [`vale_assets::world::adt::placement_from_world`]. Loading the game's tiles
+/// never exercises that direction, so this file calls the function and does not
+/// restate it. A second reading of the axis swap that got it wrong would write
+/// a light a hundred yards from where it was dropped.
 fn drag(
     mut lights: ResMut<Lights>,
     buttons: Res<ButtonInput<MouseButton>>,
@@ -729,24 +962,24 @@ fn drag(
     }
     let Some(held) = lights.drag else { return };
     let Some(mark) = lights.marks.iter().copied().find(|mark| mark.id == held.id) else {
-        // The light left the list — another map, or an undo that removed the
-        // row. Let go rather than writing into whatever is at that index now.
+        // The light left the list: another map, or an undo that removed the
+        // row. Let go and do not write into whatever is at that index now.
         lights.drag = None;
         return;
     };
     let Some(session) = session.as_mut() else {
         return;
     };
-    // **The plane at the light's own height**, not the ground: a light 200
-    // yards up is dragged around at 200 yards up, and one under the terrain
-    // stays under it. See [`Dragging::Centre`].
+    // The plane at the light's own height, not the ground: a light 200 yards up
+    // is dragged around at 200 yards up, and one under the terrain stays under
+    // it. See [`Dragging::Centre`].
     let Some(at) = crate::pick::on_plane(mark.at.z, &windows, &camera) else {
         return;
     };
-    // **The first frame measures the grab and writes nothing.** The pointer
-    // has not moved since the press, so there is nothing to write; what it is
-    // for is the frames after, where the light keeps the offset it was taken
-    // hold of at instead of snapping its centre under the cursor.
+    // The first frame measures the grab and writes nothing. The pointer has not
+    // moved since the press, so there is nothing to write. On the frames after,
+    // the light keeps the offset it was grabbed at and its centre does not snap
+    // under the cursor.
     let Some(grab) = held.grab else {
         lights.drag = Some(Drag {
             grab: Some(mark.at - at),
@@ -776,11 +1009,11 @@ fn drag(
             );
         }
         Dragging::Start | Dragging::End => {
-            // **The grab is not applied to a radius.** It is a vector between
-            // two points on the plane and a radius is a length; adding it
-            // would make a ring grabbed on its far side resize backwards. The
-            // press is within a handle's width of the ring by construction, so
-            // the jump it prevents is at most that.
+            // The grab is not applied to a radius. The grab is a vector between
+            // two points on the plane and a radius is a length; adding it would
+            // make a ring grabbed on its far side resize backwards. The press
+            // is within a handle's width of the ring by construction, so the
+            // jump the grab would prevent is at most that width.
             let radius = (at - mark.at).truncate().length();
             let field = match held.what {
                 Dragging::Start => lf::FALLOFF_START,
@@ -797,16 +1030,44 @@ fn drag(
             );
         }
     }
-    // **The list is rebuilt now rather than next frame.** `collect` keys on the
-    // session's table revision, which this write has just moved, so leaving it
-    // would draw the ring where the light was before this frame's drag — one
-    // frame of lag on the only thing the drag shows.
+    // The list is rebuilt now and not next frame. `collect` keys on the
+    // session's table revision, which this write has just changed. Leaving the
+    // list as it is would draw the ring where the light was before this frame's
+    // drag, which is one frame of lag on the ring the drag is moving.
     lights.built = None;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A use names its conditions in column order, and taking one away leaves
+    /// the others, or nothing when it was the only one.
+    #[test]
+    fn a_use_names_its_conditions_and_can_lose_one() {
+        let both = Use { light: 7, under: (1 << Condition::Clear as u8) | (1 << Condition::Storm as u8) };
+        assert_eq!(both.conditions().collect::<Vec<_>>(), vec![Condition::Clear, Condition::Storm]);
+        let left = both.without(Condition::Clear).expect("Storm is left");
+        assert_eq!(left.conditions().collect::<Vec<_>>(), vec![Condition::Storm]);
+        assert_eq!(left.without(Condition::Storm), None);
+        // Taking away a condition the use does not have changes nothing.
+        assert_eq!(both.without(Condition::Death), Some(both));
+    }
+
+    /// The five conditions are `Light.dbc`'s five consecutive columns, and a
+    /// light's weight is 1 inside its inner radius and 0 from its outer one.
+    #[test]
+    fn a_condition_is_a_column_and_a_weight_falls_between_the_radii() {
+        let fields: Vec<usize> = Condition::ALL.iter().map(|condition| condition.field()).collect();
+        assert_eq!(fields, vec![7, 8, 9, 10, 11]);
+        let light = Mark { id: 1, record: 0, at: Vec3::ZERO, start: 100.0, end: 200.0, everywhere: false };
+        assert_eq!(light.weight(Vec3::new(50.0, 0.0, 0.0)), 1.0);
+        assert!((light.weight(Vec3::new(150.0, 0.0, 0.0)) - 0.5).abs() < 1e-6);
+        assert_eq!(light.weight(Vec3::new(0.0, 0.0, 250.0)), 0.0);
+        // The default light is what the others are laid over.
+        let default = Mark { everywhere: true, end: 0.0, ..light };
+        assert_eq!(default.weight(Vec3::ZERO), 0.0);
+    }
 
     fn mark(id: u32, end: f32) -> Mark {
         Mark {
@@ -819,12 +1080,11 @@ mod tests {
         }
     }
 
-    /// **A row with no falloff is the map's default and has no place.**
+    /// A row with no falloff is the map's default light and has no position.
     ///
-    /// It stays in the list — it is the row the whole map is lit by, and the
-    /// most worth editing — and `draw` leaves it out, because its coordinates
-    /// are not read and a ring at the corner of the map would be a ring that
-    /// means nothing.
+    /// It stays in the list, because it lights the whole map and is the row
+    /// most worth editing. `draw` leaves it out, because its coordinates are
+    /// not read and a ring at the corner of the map would have no meaning.
     #[test]
     fn a_default_light_is_marked_as_having_no_position() {
         assert!(mark(1, 0.0).everywhere);
@@ -843,19 +1103,18 @@ mod tests {
         assert_eq!(lights.chosen().map(|mark| mark.id), Some(2));
         lights.marks.reverse();
         assert_eq!(lights.chosen().map(|mark| mark.id), Some(2));
-        // …and a light that is not on this map answers nothing rather than
-        // answering with whatever is at that position now.
+        // A light that is not on this map answers nothing, and does not answer
+        // with whatever is at that position now.
         lights.marks.retain(|mark| mark.id != 2);
         assert_eq!(lights.chosen(), None);
     }
 
-    /// **The grab offset is what keeps a light from snapping under the
-    /// pointer**, and it composes to the identity when the pointer has not
-    /// moved.
+    /// The grab offset keeps a light from snapping under the pointer, and it
+    /// composes to the identity when the pointer has not moved.
     ///
-    /// The arithmetic is two lines in `drag` and getting it backwards is a
-    /// light that jumps by the width of the handle on the first frame of every
-    /// drag, in the direction of whichever edge it was grabbed by.
+    /// The arithmetic is two lines in `drag`. With it backwards, a light jumps
+    /// by the width of the handle on the first frame of every drag, in the
+    /// direction of the edge it was grabbed by.
     #[test]
     fn a_grab_keeps_the_light_where_it_was_taken_hold_of() {
         let light = Vec3::new(100.0, 200.0, 50.0);
@@ -865,18 +1124,19 @@ mod tests {
         // The pointer has not moved: the light must not either.
         let moved = Vec3::new(pressed_at.x + grab.x, pressed_at.y + grab.y, light.z);
         assert_eq!(moved, light);
-        // …and a pointer moved by a vector moves the light by the same vector.
+        // A pointer moved by a vector moves the light by the same vector.
         let then = pressed_at + Vec3::new(30.0, -12.0, 0.0);
         let moved = Vec3::new(then.x + grab.x, then.y + grab.y, light.z);
         assert_eq!(moved, light + Vec3::new(30.0, -12.0, 0.0));
     }
 
-    /// **A drag writes the file's own representation, and it round trips.**
+    /// A drag writes the file's own representation, and the conversion round
+    /// trips.
     ///
-    /// The direction that loading the game's tiles never exercises is the one a
-    /// drag uses, so it is checked here: a position converted out and back is
-    /// the position it started at, and the scale is the chain's 1/36 of a yard
-    /// rather than yards.
+    /// A drag uses the direction that loading the game's tiles never exercises,
+    /// so it is checked here: a position converted out and back is the position
+    /// it started at, and the scale is the chain's 1/36 of a yard and not
+    /// yards.
     #[test]
     fn a_dragged_position_round_trips_through_the_files_own_axes() {
         use vale_assets::world::adt::{placement_from_world, placement_to_world};
@@ -891,8 +1151,8 @@ mod tests {
                 at[n]
             );
         }
-        // …and stored, the numbers are 36 times larger, which is what makes
-        // `Light.dbc`'s columns read as hundreds of thousands.
+        // Stored, the numbers are 36 times larger, which is why `Light.dbc`'s
+        // columns read as hundreds of thousands.
         let stored = placement[0] / YARDS_PER_UNIT;
         assert!((stored - placement[0] * 36.0).abs() < 0.5);
     }
@@ -900,9 +1160,9 @@ mod tests {
     /// The two rings share one gesture key and the centre has its own.
     ///
     /// A drag that carries the inner radius out past the outer one and keeps
-    /// going is one movement and should be one entry to undo; a move and a
-    /// resize are two different things and should not fold together just
-    /// because they happened within the gesture window.
+    /// going is one movement and should be one entry to undo. A move and a
+    /// resize are different edits and should not fold together because they
+    /// happened within the gesture window.
     #[test]
     fn the_two_rings_undo_as_one_movement_and_a_move_is_its_own() {
         let key = |what: Dragging| match what {
@@ -913,12 +1173,12 @@ mod tests {
         assert_ne!(key(Dragging::Centre), key(Dragging::Start));
     }
 
-    /// **A ring is picked by how far the pointer is from the radius**, and the
+    /// A ring is picked by how far the pointer is from the radius, and the
     /// nearer of the two wins.
     ///
-    /// The arithmetic `aim` runs, with the ray taken out of it. The case that
-    /// matters is a pointer between two close rings: it must take the one it is
-    /// nearer to, not the first one tested.
+    /// This is the arithmetic `aim` runs, without the ray. The case that
+    /// matters is a pointer between two close rings: it must take the ring it
+    /// is nearer to, not the first one tested.
     #[test]
     fn the_nearer_ring_is_the_one_grabbed() {
         let pick = |from_centre: f32, start: f32, end: f32, grabbable: f32| {
@@ -946,9 +1206,9 @@ mod tests {
     /// A drag names its light by id, so the rebuild an edit causes cannot make
     /// it write into a different row.
     ///
-    /// `collect` re-sorts by radius on every edit and a drag *is* an edit, so an
-    /// index taken at the press names something else by the next frame. This is
-    /// the property that makes that safe.
+    /// `collect` re-sorts by radius on every edit and a drag is an edit, so an
+    /// index taken at the press names a different light by the next frame. The
+    /// lookup by id is what makes the rebuild safe.
     #[test]
     fn a_drag_names_its_light_by_id() {
         let held = Drag {
@@ -971,11 +1231,11 @@ mod tests {
         assert_eq!(found(&marks), None);
     }
 
-    /// **A circle with a radius that is not a positive number is not drawn.**
+    /// A circle whose radius is not a positive number is not drawn.
     ///
     /// `radius <= 0.0` alone lets a NaN through, because every comparison
-    /// against NaN is false — and a NaN radius makes every point of the circle
-    /// NaN, which is a line drawn somewhere undefined rather than no line.
+    /// against NaN is false. A NaN radius makes every point of the circle NaN,
+    /// which draws a line at an undefined position instead of drawing no line.
     #[test]
     fn a_circle_needs_a_real_radius() {
         let drawable = |radius: f32| radius > 0.0 && radius.is_finite();
@@ -986,11 +1246,11 @@ mod tests {
         assert!(!drawable(f32::INFINITY));
     }
 
-    /// **A marker is the size the pointer can grab it at**, so what is on
-    /// screen is what can be clicked, and it never grows without bound.
+    /// A marker is the size at which the pointer can grab it, so what is on
+    /// screen is what can be clicked, and its size is bounded.
     ///
-    /// The clamp is what the bar taught: an unbounded size in yards is a thing
-    /// that fills the window when the camera is far from it.
+    /// The clamp exists because of the bar across the window: an unbounded size
+    /// in yards fills the window when the camera is far from the marker.
     #[test]
     fn a_marker_is_grabbable_at_every_distance() {
         let near = grab_radius(Vec3::ZERO, Vec3::new(0.0, 0.0, 10.0));
@@ -1001,7 +1261,7 @@ mod tests {
             "and never smaller than a clickable dot"
         );
         assert!(far <= MARKER_LARGEST, "…nor larger than a handle");
-        // Absurd distances stay clamped rather than filling the window, which
+        // Very large distances stay clamped and do not fill the window, which
         // is the failure the falloff rings had.
         assert_eq!(
             grab_radius(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0e6)),
@@ -1009,14 +1269,14 @@ mod tests {
         );
     }
 
-    /// **Only the chosen light's falloff is drawn**, which is the rule that
-    /// removed the bar.
+    /// Only the chosen light's falloff is drawn. This rule removed the bar
+    /// across the window.
     ///
     /// Map 0 has 80 positional lights; two of their outer radii are 2,005 and
     /// 2,648 yards and 38 of them lie flat at height zero, so a flat circle per
     /// light projected to a straight line across the whole window from most
-    /// camera positions. A marker per light is drawn either way — that is what
-    /// makes one clickable without the list.
+    /// camera positions. A marker per light is drawn either way, which makes a
+    /// light clickable without the list.
     #[test]
     fn the_falloff_belongs_to_the_chosen_light_alone() {
         let lights = Lights {
@@ -1031,7 +1291,7 @@ mod tests {
             "the 2,648-yard one is not drawn unless it is chosen"
         );
         assert!(drawn(2));
-        // …and the switch turns off even the chosen one's.
+        // The switch turns off the chosen light's falloff as well.
         let off = Lights {
             show_falloff: false,
             ..lights
@@ -1039,16 +1299,15 @@ mod tests {
         assert!(!(off.selected == Some(2) && off.show_falloff));
     }
 
-    /// **A press re-opens the light's row only when the panel is not already
-    /// showing it**, which is what lets a followed reference survive.
+    /// A press re-opens the light's row only when the panel is not already
+    /// showing it, which lets a followed reference survive.
     ///
-    /// The rule is `already && showing_it`, and both halves earn their place.
-    /// Without `showing_it`, a press on a light you are already holding leaves
-    /// the panel on whatever you followed to — you clicked the light and its
+    /// The rule is `already && showing_it`, and both halves are needed. Without
+    /// `showing_it`, a press on the light that is already selected leaves the
+    /// panel on the row that was followed to: the light was clicked and its
     /// numbers did not come back. Without `already`, every press re-points the
-    /// browser, which is the fault that made the five `ParamsClear` links
-    /// appear to do nothing: the follow landed and was undone on the next
-    /// frame.
+    /// browser. That fault made the five `ParamsClear` links appear to do
+    /// nothing: the follow landed and was undone on the next frame.
     #[test]
     fn a_press_keeps_a_followed_reference_but_can_get_back_from_it() {
         // (selected already, panel is showing this light) -> does it re-open?
