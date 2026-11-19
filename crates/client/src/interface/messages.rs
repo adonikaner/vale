@@ -342,10 +342,10 @@ impl Plugin for MessagesPlugin {
         Announce::register(app);
         app.init_resource::<UiStrings>()
             .add_message::<TableLine>()
-            .add_systems(Update, load_strings.in_set(super::GameSet))
+            .add_systems(Update, load_strings.in_set(super::InterfaceSet))
             // **After everything in the set that writes one**, so a line a
             // packet named is said on the frame it arrived rather than the next.
-            .add_systems(Update, say_table_lines.after(super::GameSet));
+            .add_systems(Update, say_table_lines.after(super::GameSet).run_if(super::interface_running));
     }
 }
 

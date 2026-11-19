@@ -155,7 +155,7 @@ impl Plugin for MerchantPlugin {
                 (announce, templates_landed, presses, act, price_repairs)
                     .chain()
                     .after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<MerchantWindow>(app);
         super::gossip::closes_on_walk_away::<MerchantWindow>(app);

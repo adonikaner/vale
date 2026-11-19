@@ -139,7 +139,7 @@ impl Plugin for WaterToolPlugin {
             // before the ray is this frame's paints where the pointer was.
             (aim, stroke).chain().after(crate::pick::aim),
         );
-        app.add_systems(Update, draw.after(aim));
+        app.add_systems(Update, draw.run_if(crate::tools::tool_is(Tool::Water)).after(aim));
     }
 }
 

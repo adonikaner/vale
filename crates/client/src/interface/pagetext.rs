@@ -213,7 +213,7 @@ impl Plugin for PageTextPlugin {
             .init_resource::<OpenBook>()
             .add_systems(
                 Update,
-                (clicked, announce, presses, act).chain().in_set(super::GameSet),
+                (clicked, announce, presses, act).chain().in_set(super::InterfaceSet),
             );
     }
 }

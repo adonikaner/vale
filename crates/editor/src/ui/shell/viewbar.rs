@@ -256,8 +256,10 @@ pub(crate) struct Bar<'a> {
     /// See [`crate::subjects::game_events::Phase`].
     pub(crate) phase: &'a mut crate::subjects::game_events::Phase,
     /// Every game event as its entry and description, for the filter's menu;
-    /// empty until a spawn tool has read the event tables.
-    pub(crate) events: &'a [(u32, String)],
+    /// empty until a spawn tool has read the event tables. A function, called
+    /// only while the menu is open: the list is built from every event row and
+    /// the project's edits, and the bar is drawn every frame.
+    pub(crate) events: &'a dyn Fn() -> Vec<(u32, String)>,
     /// Whether the top-down map view is on. A copy, written back by the caller
     /// when it changed. See [`crate::camera::TopDown`].
     pub(crate) map_view: &'a mut bool,
@@ -565,7 +567,7 @@ fn time_menu(ui: &mut Ui, hour: &mut Option<u32>, lit_at: u32, editing: bool, op
 /// tools draw, by the game events they answer. Every spawn, the world outside
 /// every event, or the world during one event. Lit while it is not every
 /// spawn. See [`crate::subjects::game_events::Phase`].
-fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, events: &[(u32, String)]) {
+fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, events: &dyn Fn() -> Vec<(u32, String)>) {
     use crate::subjects::game_events::Phase;
     let moved = *phase != Phase::All;
     let label = match *phase {
@@ -605,6 +607,7 @@ fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, eve
             ui.radio_value(phase, Phase::Outside, "Outside events")
                 .on_hover_text("The world while no event is on: spawns that exist only during an event are left out.");
             theme::heading(ui, "During One Event");
+            let events = events();
             if events.is_empty() {
                 theme::note(ui, "The events are read when a spawn tool or the Spawning workspace opens.");
             }
@@ -613,7 +616,7 @@ fn events_menu(ui: &mut Ui, phase: &mut crate::subjects::game_events::Phase, eve
             // were read, the menu would keep the empty list's height, so the
             // list asks for its own.
             egui::ScrollArea::vertical().max_height(320.0).min_scrolled_height(320.0).show(ui, |ui| {
-                for (entry, description) in events {
+                for (entry, description) in &events {
                     ui.radio_value(phase, Phase::During(*entry), format!("{entry} \u{b7} {description}"));
                 }
             });

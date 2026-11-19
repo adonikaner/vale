@@ -284,7 +284,7 @@ impl Plugin for AurasPlugin {
                 // looking at when it was clicked rather than a newer one.
                 cancel.after(track).after(crate::input::bindings::BindingSet),
             )
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

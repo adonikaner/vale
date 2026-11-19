@@ -454,11 +454,11 @@ impl Plugin for LightToolPlugin {
             Update,
             // After the pick, like every tool here. Reading the pointer before
             // this frame's ray is built aims at where the pointer was.
-            (collect, aim, press, drag, disarm).chain().after(crate::pick::aim),
+            (collect.run_if(crate::tools::tool_is(Tool::Lights)), aim, press.run_if(crate::tools::tool_is(Tool::Lights)), drag, disarm.run_if(crate::tools::tool_is(Tool::Lights))).chain().after(crate::pick::aim),
         )
         // The drawing runs after the picking, so the ring under the pointer is
         // highlighted on the frame the pointer reached it.
-        .add_systems(Update, draw.after(drag));
+        .add_systems(Update, draw.run_if(crate::tools::tool_is(Tool::Lights)).after(drag));
     }
 }
 

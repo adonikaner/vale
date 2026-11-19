@@ -141,6 +141,110 @@ pub(crate) struct ServerSettings {
     /// this machine. Not written to the file. See the section "Server writes"
     /// of `crate::collab`.
     pub(crate) shared: Option<Where>,
+    /// What was last read out of `mangosd.conf`. See [`Memo`].
+    memo: Memo,
+}
+
+/// How long an answer read out of `mangosd.conf` is kept before the file is
+/// read again.
+///
+/// The panels ask where the server is every frame: the rail, the top bar, the
+/// table workspaces, each pop-out window and the spawn tools. Each answer was a
+/// read of the whole conf, which is 120 KB in a vmangos install, so a frame
+/// read it from disk four to six times. A second is short enough that an edit
+/// to the conf made outside the editor is seen at once by a person, and long
+/// enough that the file is read about once a second.
+const MEMO_SECONDS: f32 = 1.0;
+
+/// The answers [`ServerSettings`] reads out of `mangosd.conf`, kept for
+/// [`MEMO_SECONDS`].
+///
+/// They are kept under the inputs that decide them: the two environment
+/// variables and the Settings window's field. A change to any of the three is
+/// a new key, so a typed path is read on the next frame and not a second later.
+/// Each answer is filled the first time it is asked for within the window.
+///
+/// A `Mutex`, because every reader holds `&ServerSettings` and the resource
+/// must be `Sync`. It is never held while a file is read: an answer is computed
+/// unlocked and stored after, so an answer that asks for another (the patch
+/// asks [`ServerSettings::resolve_own`]) cannot deadlock.
+#[derive(Default)]
+struct Memo(std::sync::Mutex<Option<Memoised>>);
+
+/// A copy of the settings starts with nothing read, rather than with another
+/// resource's answers.
+impl Clone for Memo {
+    fn clone(&self) -> Memo {
+        Memo::default()
+    }
+}
+
+impl std::fmt::Debug for Memo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Memo")
+    }
+}
+
+/// One window's answers. `None` in a field is "not asked yet".
+struct Memoised {
+    key: MemoKey,
+    read_at: std::time::Instant,
+    own: Option<Option<(Where, Source)>>,
+    conf_path: Option<Option<PathBuf>>,
+    patch: Option<u32>,
+    data_dir: Option<Result<PathBuf, String>>,
+}
+
+/// The inputs an answer depends on: `VALE_WORLDDB`, `VALE_MANGOSD`, and the
+/// conf field as typed.
+#[derive(PartialEq, Clone)]
+struct MemoKey(Option<String>, Option<String>, String);
+
+impl MemoKey {
+    fn now(settings: &ServerSettings) -> MemoKey {
+        MemoKey(
+            std::env::var("VALE_WORLDDB").ok(),
+            std::env::var("VALE_MANGOSD").ok(),
+            settings.conf.clone(),
+        )
+    }
+}
+
+impl Memo {
+    /// The answer in `slot`, or `read`'s, which is then kept.
+    fn get<T: Clone>(
+        &self,
+        settings: &ServerSettings,
+        slot: fn(&mut Memoised) -> &mut Option<T>,
+        read: impl FnOnce(&ServerSettings) -> T,
+    ) -> T {
+        let key = MemoKey::now(settings);
+        {
+            let mut held = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let fresh = held
+                .as_ref()
+                .is_some_and(|m| m.key == key && m.read_at.elapsed().as_secs_f32() < MEMO_SECONDS);
+            if !fresh {
+                *held = Some(Memoised {
+                    key: key.clone(),
+                    read_at: std::time::Instant::now(),
+                    own: None,
+                    conf_path: None,
+                    patch: None,
+                    data_dir: None,
+                });
+            }
+            if let Some(kept) = held.as_mut().and_then(|m| slot(m).clone()) {
+                return kept;
+            }
+        }
+        let answer = read(settings);
+        let mut held = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(m) = held.as_mut().filter(|m| m.key == key) {
+            *slot(m) = Some(answer.clone());
+        }
+        answer
+    }
 }
 
 impl Default for ServerSettings {
@@ -156,6 +260,7 @@ impl Default for ServerSettings {
             tools_status: None,
             project: None,
             shared: None,
+            memo: Memo::default(),
         }
     }
 }
@@ -304,8 +409,13 @@ impl ServerSettings {
     }
 
     /// [`Self::resolve`] without the session's: this machine's own world
-    /// database.
+    /// database. Kept for [`MEMO_SECONDS`]; see [`Memo`].
     pub(crate) fn resolve_own(&self) -> Option<(Where, Source)> {
+        self.memo.get(self, |m| &mut m.own, Self::read_own)
+    }
+
+    /// [`Self::resolve_own`], read from the environment and the conf.
+    fn read_own(&self) -> Option<(Where, Source)> {
         if let Some(found) = Where::find() {
             // `Where::find` reads `VALE_WORLDDB` then `VALE_MANGOSD`, so
             // which of the two it was is that one question further down.
@@ -338,7 +448,21 @@ impl ServerSettings {
     /// connection: `DataDir` and `WowPatch`. `VALE_MANGOSD` first, then the
     /// Settings window's field, where a folder means the conf inside it.
     /// `None` when neither names one; `VALE_WORLDDB` alone names no conf.
+    /// Kept for [`MEMO_SECONDS`], since it asks the file system whether the
+    /// path is a folder.
     pub(crate) fn conf_path(&self) -> Option<PathBuf> {
+        self.memo.get(self, |m| &mut m.conf_path, Self::read_conf_path)
+    }
+
+    /// The server's `DataDir`, kept for [`MEMO_SECONDS`] beside the conf's
+    /// other answers. `read` is `crate::server::datadir::data_dir`'s reading,
+    /// which lives with the rest of the `DataDir` code.
+    pub(crate) fn kept_data_dir(&self, read: impl FnOnce(&Self) -> Result<PathBuf, String>) -> Result<PathBuf, String> {
+        self.memo.get(self, |m| &mut m.data_dir, read)
+    }
+
+    /// [`Self::conf_path`], asked of the file system.
+    fn read_conf_path(&self) -> Option<PathBuf> {
         let named = std::env::var("VALE_MANGOSD")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -442,8 +566,13 @@ fn follow(
 /// from the wrong place produces an edit that applies cleanly to a row the
 /// running server does not use. It is read from the same `mangosd.conf` the
 /// connection is; with only `VALE_WORLDDB` set there is no conf and the
-/// default is used.
+/// default is used. Kept for [`MEMO_SECONDS`]; see [`Memo`].
 pub(crate) fn server_patch(settings: &ServerSettings) -> u32 {
+    settings.memo.get(settings, |m| &mut m.patch, read_patch)
+}
+
+/// [`server_patch`], read from the conf.
+fn read_patch(settings: &ServerSettings) -> u32 {
     use vale_mangos::conn;
     let conf = match settings.resolve() {
         Some((_, Source::Env("VALE_MANGOSD"))) => {

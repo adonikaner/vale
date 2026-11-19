@@ -213,7 +213,7 @@ impl Plugin for AreaToolPlugin {
         // frame rather than next. Without the ordering the wash lags the
         // stroke by a frame, and on a held stroke the brush appears to trail
         // the pointer.
-        app.add_systems(Update, (draw, wash).after(stroke));
+        app.add_systems(Update, (draw.run_if(crate::tools::tool_is(Tool::Areas)), wash).after(stroke));
     }
 }
 

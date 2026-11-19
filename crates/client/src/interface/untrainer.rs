@@ -83,7 +83,7 @@ impl Plugin for UntrainerPlugin {
                     // is sent this frame — the same edge [`super::binder`] and
                     // every other popup button is ordered by.
                     .after(crate::input::bindings::BindingSet)
-                    .in_set(crate::interface::GameSet),
+                    .in_set(crate::interface::InterfaceSet),
             );
     }
 }

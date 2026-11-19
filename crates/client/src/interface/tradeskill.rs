@@ -218,7 +218,7 @@ impl Plugin for TradeSkillPlugin {
                 (news, rebuild, poll)
                     .chain()
                     .after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

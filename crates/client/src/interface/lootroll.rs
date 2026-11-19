@@ -334,7 +334,7 @@ impl Plugin for LootRollPlugin {
                 // cached opens its frame on the frame it arrived.
                 (announce, presses, vote, clock)
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

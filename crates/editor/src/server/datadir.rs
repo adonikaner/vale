@@ -677,8 +677,14 @@ pub(crate) fn tools(server: &super::settings::ServerSettings) -> Result<Tools, S
 }
 
 /// Where the server's `DataDir` is, through the conf the panel or the
-/// environment names.
+/// environment names. Kept for a second (`ServerSettings::kept_data_dir`),
+/// because the Server panel and the navmesh switch ask every frame.
 pub(crate) fn data_dir(server: &super::settings::ServerSettings) -> Result<PathBuf, String> {
+    server.kept_data_dir(read_data_dir)
+}
+
+/// [`data_dir`], read from the conf.
+fn read_data_dir(server: &super::settings::ServerSettings) -> Result<PathBuf, String> {
     let conf = server
         .conf_path()
         .ok_or_else(|| "no mangosd.conf: set it in Project \u{2192} Settings\u{2026}, or set VALE_MANGOSD".to_string())?;

@@ -67,7 +67,7 @@ impl Plugin for ReceivedPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PendingPushes>()
             .add_message::<ItemReceived>()
-            .add_systems(Update, announce);
+            .add_systems(Update, announce.run_if(super::interface_running));
     }
 }
 

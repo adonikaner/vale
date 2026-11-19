@@ -91,7 +91,7 @@ impl Plugin for SocialPlugin {
                 send_verbs,
             )
                 .chain()
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

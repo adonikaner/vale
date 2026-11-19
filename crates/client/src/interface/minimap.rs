@@ -214,7 +214,7 @@ impl Plugin for MinimapPlugin {
         app.init_resource::<MinimapView>()
             .init_resource::<InteriorModels>()
             .add_message::<PingAnswer>()
-            .add_systems(Update, (track, collect).chain().in_set(super::GameSet))
+            .add_systems(Update, (track, collect).chain().in_set(super::InterfaceSet))
             // After the indoor flag is known, so that the interface's zoom
             // level and `MINIMAP_UPDATE_ZOOM` follow it on the same frame. The
             // pings follow, so a ping made on the frame the character steps
@@ -226,7 +226,8 @@ impl Plugin for MinimapPlugin {
                     crate::lua::widgets::minimap::follow_pings,
                 )
                     .chain()
-                    .after(super::GameSet),
+                    .after(super::GameSet)
+                    .run_if(super::interface_running),
             );
     }
 }

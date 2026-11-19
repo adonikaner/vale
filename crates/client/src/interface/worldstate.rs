@@ -110,7 +110,7 @@ impl Plugin for WorldStatePlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<WorldStateAnswer>()
             .init_resource::<WorldStates>()
-            .add_systems(Update, apply.in_set(super::GameSet));
+            .add_systems(Update, apply.in_set(super::InterfaceSet));
     }
 }
 

@@ -137,6 +137,47 @@ impl Plugin for PickPlugin {
     }
 }
 
+/// What [`aim`]'s answer depends on that can be compared cheaply. See
+/// [`AIM_REFRESH`] for what it cannot compare.
+#[derive(PartialEq)]
+pub(crate) struct AimKey {
+    pointer: Vec2,
+    camera: GlobalTransform,
+    projection: Mat4,
+    map_id: u32,
+    tiles: usize,
+    tuning: WorldTuning,
+}
+
+/// The longest [`aim`] keeps an answer while its [`AimKey`] is unchanged, in
+/// seconds.
+///
+/// The key holds the pointer, the camera, the open tiles and the view
+/// switches. It does not hold the ground's heights or the collision hulls:
+/// neither has a revision counter, and the hulls arrive from tasks. An answer
+/// is therefore also recomputed on any frame with a mouse button down or a key
+/// pressed or released, which covers a stroke, a drag and an undo, and at
+/// least this often, which covers a hull that arrived and an edit from a
+/// shared session under a still pointer.
+const AIM_REFRESH: f32 = 0.25;
+
+/// Whether this frame has input that can change the ground under a still
+/// pointer: a held or released mouse button, or a key pressed or released.
+fn input_moving(buttons: &ButtonInput<MouseButton>, keys: &ButtonInput<KeyCode>) -> bool {
+    buttons.get_pressed().next().is_some()
+        || buttons.get_just_released().next().is_some()
+        || keys.get_just_pressed().next().is_some()
+        || keys.get_just_released().next().is_some()
+}
+
+/// Cast the pointer's ray into the open ground and the collision world, and
+/// write the answer to [`Cursor`].
+///
+/// The march is about 500 height lookups and a query of the collision grid.
+/// It is skipped on a frame whose [`AimKey`] matches the last answer's, with
+/// no input that could move the ground and within [`AIM_REFRESH`] of it; the
+/// last answer then stays in [`Cursor`].
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn aim(
     mut cursor: ResMut<Cursor>,
     windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
@@ -145,7 +186,31 @@ pub(crate) fn aim(
     state: Res<crate::playtest::Playtest>,
     solids: Res<Solids>,
     tuning: Res<WorldTuning>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
+    mut last: Local<Option<(AimKey, f32)>>,
 ) {
+    let kept = std::mem::take(&mut *last);
+    let key = match (state.editing(), session.as_deref(), windows.single(), camera.single()) {
+        (true, Some(session), Ok(window), Ok((camera, transform))) => window.cursor_position().map(|pointer| AimKey {
+            pointer: pointer * window.scale_factor(),
+            camera: *transform,
+            projection: camera.clip_from_view(),
+            map_id: session.map_id,
+            tiles: session.tiles.len(),
+            tuning: tuning.clone(),
+        }),
+        _ => None,
+    };
+    let now = time.elapsed_secs();
+    if let (Some(key), Some((kept_key, at))) = (key.as_ref(), kept.as_ref()) {
+        if key == kept_key && now - at < AIM_REFRESH && !input_moving(&buttons, &keys) {
+            *last = kept;
+            return;
+        }
+    }
+    *last = key.map(|key| (key, now));
     cursor.ground = None;
     cursor.surface = None;
     cursor.tile = None;

@@ -224,7 +224,7 @@ impl Plugin for VitalsPlugin {
             // announces the *new* unit's vitals rather than last frame's.
             announce
                 .after(super::target::TargetSet)
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

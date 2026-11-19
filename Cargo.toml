@@ -133,6 +133,28 @@ serde = { version = "1", features = ["derive"] }
 [profile.release]
 opt-level = 3
 
+# Dependencies are compiled as one codegen unit each in a release build. Cargo's
+# default of 16 splits a crate into units that are optimised separately, which
+# prevents inlining across them. Bevy, wgpu and glam carry most of the frame's
+# CPU time, and their hot paths cross those boundaries. Bevy's own guidance for
+# CPU-bound applications is this setting.
+#
+# Dependencies only, because they are built once and kept: the cost is one
+# slower rebuild of them. The workspace's own crates keep 16 units, so a
+# `cargo run -p vale-ide --release` after an edit links as quickly as before.
+[profile.release.package."*"]
+codegen-units = 1
+
+# A release build with thin LTO across every crate and one codegen unit for the
+# workspace's own crates as well: `cargo build -p vale-ide --profile dist`. It
+# is what a measurement of the frame or a build given to someone else should
+# use. Each build after an edit takes minutes longer to link than `--release`,
+# which is why it is a profile of its own. It builds into `target\dist`.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+
 # Bevy pulls in ~500 crates, and a debug build with full DWARF over that many
 # produces a `target/debug` in the tens of gigabytes, enough to fill a disk and
 # fail the build with `no space on device`. Line tables keep panic backtraces

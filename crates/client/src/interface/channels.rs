@@ -95,7 +95,7 @@ impl Plugin for ChannelsPlugin {
                 .chain()
                 .after(crate::settings::channels::load)
                 .before(crate::settings::channels::save_on_logout)
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

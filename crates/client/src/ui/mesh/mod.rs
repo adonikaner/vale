@@ -168,7 +168,14 @@ impl Plugin for UiMeshPlugin {
             .add_systems(
                 PostUpdate,
                 (
-                    rebuild.after(crate::ui::framexml::walk),
+                    // Not run while the interface sleeps: it holds the mesh,
+                    // image and material assets mutably, which serialises
+                    // `PostUpdate` behind it. It despawns what it drew within
+                    // a frame of `Drawn` emptying, and the condition stays
+                    // true for some frames after.
+                    rebuild
+                        .after(crate::ui::framexml::walk)
+                        .run_if(crate::interface::interface_running),
                     floats::paint,
                     loading::paint,
                 )

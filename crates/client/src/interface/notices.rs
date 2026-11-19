@@ -68,7 +68,7 @@ impl Plugin for NoticesPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<NoticeAnswer>().add_systems(
             Update,
-            (say_not_found, say_lines).in_set(super::GameSet),
+            (say_not_found, say_lines).in_set(super::InterfaceSet),
         );
     }
 }

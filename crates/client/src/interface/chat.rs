@@ -72,7 +72,7 @@ impl Plugin for ChatPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<ChatArrived>().add_systems(
             Update,
-            (poll.after(crate::world::incoming::drain_queues), send).in_set(super::GameSet),
+            (poll.after(crate::world::incoming::drain_queues), send).in_set(super::InterfaceSet),
         );
     }
 }

@@ -638,7 +638,7 @@ fn draw(
                     auto: &mut playing.auto,
                     open: &mut playing.open,
                     queue: &mut playing.queue,
-                    server: &mut playing.server,
+                    server: &playing.server,
                     caches: &mut playing.caches,
                     step: &playing.step,
                 },
@@ -721,13 +721,16 @@ fn draw(
 
     let mut edited_guides = viewing.guides.clone();
     let mut phase = editing.event_view.phase;
-    let event_list: Vec<(u32, String)> = editing
-        .game_events
-        .all(&session.rows.edits)
-        .into_iter()
-        .filter(|shown| shown.kept())
-        .map(|shown| (shown.row.entry, shown.row.description))
-        .collect();
+    let game_events = &editing.game_events;
+    let edits = &session.rows.edits;
+    let event_list = || -> Vec<(u32, String)> {
+        game_events
+            .all(edits)
+            .into_iter()
+            .filter(|shown| shown.kept())
+            .map(|shown| (shown.row.entry, shown.row.description))
+            .collect()
+    };
     let mut map_view = viewing.top_down.on;
     let mut hour = editing.clock.override_half_minutes;
     let lit_at = editing.clock.half_minutes;
@@ -1052,7 +1055,7 @@ fn draw(
         session,
         &assets,
         &mut editing.bookmarks,
-        &mut playing.server,
+        playing.server.reborrow(),
         &mut playing.queue,
         &mut playing.standings,
         time.elapsed_secs_f64(),

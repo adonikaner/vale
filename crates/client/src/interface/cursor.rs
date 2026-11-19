@@ -302,7 +302,7 @@ impl Plugin for CursorPlugin {
             Update,
             (carry, drop_on_world, grid, locks, leave_world)
                 .chain()
-                .in_set(super::GameSet)
+                .in_set(super::InterfaceSet)
                 // **After the whole action chain**, because `PickupAction`
                 // writes `ActionBar::slots` and `rebuild_bar` is in it: a
                 // rebuild that ran afterwards in the same frame would restate

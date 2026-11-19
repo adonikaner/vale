@@ -184,7 +184,7 @@ impl Plugin for GluePlugin {
                     stand_on_plinth,
                 )
                     .chain()
-                    .in_set(crate::interface::GameSet),
+                    .in_set(crate::interface::InterfaceSet),
             );
     }
 }

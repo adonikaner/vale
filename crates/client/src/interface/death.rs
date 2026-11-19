@@ -204,7 +204,7 @@ impl Plugin for DeathPlugin {
                 // needs both this frame's ghost state and this frame's corpse.
                 (answers, watch, corpse_range, verbs)
                     .chain()
-                    .in_set(super::GameSet)
+                    .in_set(super::InterfaceSet)
                     .after(BindingSet),
             );
     }

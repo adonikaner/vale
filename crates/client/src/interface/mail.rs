@@ -426,7 +426,7 @@ impl Plugin for MailPlugin {
                     .chain()
                     .after(crate::world::incoming::drain_queues)
                     .before(super::gossip::NpcSet::Close)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::closes_on_walk_away::<Mailbox>(app);
     }

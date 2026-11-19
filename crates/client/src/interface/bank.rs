@@ -112,7 +112,7 @@ impl Plugin for BankPlugin {
             .init_resource::<BankWindow>()
             .add_systems(
                 Update,
-                (announce, presses, act).chain().in_set(super::GameSet),
+                (announce, presses, act).chain().in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<BankWindow>(app);
         super::gossip::closes_on_walk_away::<BankWindow>(app);

@@ -1399,6 +1399,22 @@ pub(crate) const ALL: [Tool; SPECS.len()] = {
     all
 };
 
+/// A run condition: the active tool is `tool`.
+///
+/// It goes on a system whose first statement returns unless that tool is
+/// active, and the statement stays in the body. A system that returns on its
+/// first line still has its parameters fetched and its run scheduled, every
+/// frame, for every tool that is not open. A system whose early return also
+/// clears state (a hover, a drag) must keep running, and takes no condition.
+pub(crate) fn tool_is(tool: Tool) -> impl FnMut(Res<Tool>) -> bool + Clone {
+    move |active: Res<Tool>| *active == tool
+}
+
+/// [`tool_is`] for a system that serves several tools.
+pub(crate) fn tool_in(tools: &'static [Tool]) -> impl FnMut(Res<Tool>) -> bool + Clone {
+    move |active: Res<Tool>| tools.contains(&active)
+}
+
 impl Tool {
     /// Where this tool sits in [`SPECS`] and [`ALL`].
     ///

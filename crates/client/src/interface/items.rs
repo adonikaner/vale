@@ -254,14 +254,14 @@ impl Plugin for ItemsPlugin {
                     // `use_item` reads directly are in the same order behind
                     // the same set.
                     .after(super::action::ActionSet)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             )
             .add_message::<TemplatesArrived>()
             .add_systems(
                 Update,
                 templates_landed
                     .after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

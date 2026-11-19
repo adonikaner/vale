@@ -54,7 +54,7 @@ impl Plugin for ChatCachePlugin {
             Update,
             (load, save_on_logout, save_on_exit)
                 .chain()
-                .in_set(crate::interface::GameSet),
+                .in_set(crate::interface::InterfaceSet),
         );
     }
 }

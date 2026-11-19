@@ -446,7 +446,8 @@ impl Plugin for UpdatePlugin {
                 // not due, the system does not run, so its parameters,
                 // including `LuaWorld`, are not fetched.
                 tick.after(super::events::dispatch)
-                    .run_if(|clock: Res<InterfaceClock>| clock.due()),
+                    .run_if(|clock: Res<InterfaceClock>| clock.due())
+                    .run_if(crate::interface::interface_running),
             )
                 .chain(),
         );

@@ -61,7 +61,7 @@ impl Plugin for SupersedePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Reconciled>().add_systems(
             Update,
-            (reconcile, leave_world).in_set(super::GameSet),
+            (reconcile, leave_world).in_set(super::InterfaceSet),
         );
     }
 }

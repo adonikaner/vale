@@ -177,7 +177,7 @@ impl Plugin for PetBarPlugin {
             // bar's arrival would otherwise send a word from the previous pet.
             (rebuild, verbs, rename, leave_world)
                 .chain()
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

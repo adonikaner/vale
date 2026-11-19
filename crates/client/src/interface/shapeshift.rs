@@ -101,7 +101,7 @@ impl Plugin for ShapeshiftPlugin {
             // the list the rebuild wrote.
             (rebuild, press, leave_world)
                 .chain()
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

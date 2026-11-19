@@ -51,7 +51,7 @@ impl Plugin for RandomRollPlugin {
             Update,
             (send_rolls, say_rolls)
                 .after(crate::input::bindings::BindingSet)
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

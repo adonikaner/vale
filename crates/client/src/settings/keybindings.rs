@@ -72,7 +72,7 @@ impl Plugin for KeybindingsPlugin {
             // In `GameSet`, and waiting for the interpreter, like the saved
             // variables: the binding sets are held by the interpreter, which a
             // system of its own builds.
-            .add_systems(Update, (load, announce).in_set(crate::interface::GameSet))
+            .add_systems(Update, (load, announce).in_set(crate::interface::InterfaceSet))
             // Before the interpreter holding the saved sets is replaced; see
             // [`save_on_logout`].
             .add_systems(

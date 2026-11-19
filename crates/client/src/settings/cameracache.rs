@@ -43,7 +43,7 @@ pub(crate) struct CameraCachePlugin;
 impl Plugin for CameraCachePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraCache>()
-            .add_systems(Update, load.in_set(crate::interface::GameSet))
+            .add_systems(Update, load.in_set(crate::interface::InterfaceSet))
             .add_systems(Update, save_on_logout)
             .add_systems(Last, save);
     }

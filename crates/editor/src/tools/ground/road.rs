@@ -588,7 +588,7 @@ pub(crate) struct RoadToolPlugin;
 impl Plugin for RoadToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RoadTool>()
-            .add_systems(Update, (aim, draw).chain().after(crate::pick::aim));
+            .add_systems(Update, (aim, draw.run_if(crate::tools::tool_is(crate::tools::Tool::Road))).chain().after(crate::pick::aim));
     }
 }
 

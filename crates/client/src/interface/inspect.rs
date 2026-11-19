@@ -100,7 +100,7 @@ impl Plugin for InspectPlugin {
         app.add_message::<InspectAnswer>()
             .add_message::<InspectPress>()
             .init_resource::<Inspect>()
-            .add_systems(Update, (answers, presses, act).chain().in_set(super::GameSet));
+            .add_systems(Update, (answers, presses, act).chain().in_set(super::InterfaceSet));
     }
 }
 

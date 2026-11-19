@@ -100,7 +100,7 @@ impl Plugin for TabardPlugin {
                     preview,
                 )
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<TabardWindow>(app);
         super::gossip::closes_on_walk_away::<TabardWindow>(app);

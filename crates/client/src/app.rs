@@ -289,6 +289,12 @@ pub fn executors(app: &mut App) {
         app.edit_schedule(bevy::app::FixedLast, |s| {
             s.set_executor(SingleThreadedExecutor::new());
         });
+        // The egui pass on the same executor. Every system in it takes the
+        // egui context mutably, so they run one after another under either
+        // executor, and the multithreaded one adds its task hand-off to each.
+        app.edit_schedule(bevy_egui::EguiPrimaryContextPass, |s| {
+            s.set_executor(SingleThreadedExecutor::new());
+        });
         // The main schedules keep the multithreaded executor. The A/B (same
         // binary, an env switch, alternating runs) found sequential
         // Update/PostUpdate no different on the mean, with wider variance:

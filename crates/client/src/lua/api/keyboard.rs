@@ -105,7 +105,30 @@ impl Plugin for KeyboardPlugin {
             // **Before `GameSet`**, so a key the interface takes is a key the
             // binding table declines in the *same* frame — see the module
             // comment, where the Enter edge is written out.
-            .add_systems(Update, poll.before(crate::interface::GameSet));
+            .add_systems(
+                Update,
+                (
+                    poll.run_if(crate::interface::interface_running),
+                    poll_asleep.run_if(not(crate::interface::interface_running)),
+                )
+                    .before(crate::interface::GameSet),
+            );
+    }
+}
+
+/// [`poll`] while the interface sleeps (`crate::interface::interface_running`):
+/// no edit box and no keyboard frame exist, so the focus is the external
+/// claim alone, which is what [`poll`] writes in that state.
+///
+/// A system of its own because [`poll`] takes [`LuaWorld`], whose fetch costs
+/// about 0.1 ms a frame (see `lua::load`), and the editor reads
+/// [`KeyboardFocus`] while it edits with the interface asleep: its shortcuts
+/// stand down while an egui field has the keyboard.
+pub(crate) fn poll_asleep(mut focus: ResMut<KeyboardFocus>, external: Res<ExternalKeyboard>) {
+    let name = external.0.then(|| "debug console".to_string());
+    if focus.active != external.0 || focus.name != name {
+        focus.active = external.0;
+        focus.name = name;
     }
 }
 

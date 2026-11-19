@@ -502,7 +502,7 @@ impl Plugin for GizmoToolPlugin {
         app.add_systems(Update, draw);
         // After the drag, so a held handle takes precedence: a grab and a held
         // `Alt` both turn the same placement, and only one may act in a frame.
-        app.add_systems(Update, spin.after(drag));
+        app.add_systems(Update, spin.run_if(crate::tools::tool_in(&[Tool::Doodads, Tool::Wmos, Tool::Creatures, Tool::GameObjects])).after(drag));
     }
 }
 

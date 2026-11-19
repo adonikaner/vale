@@ -192,7 +192,10 @@ pub(crate) fn draw(
     session: &mut crate::session::EditSession,
     assets: &vale_client::assets::GameAssets,
     bookmarks: &mut crate::prefs::bookmarks::Bookmarks,
-    server: &mut crate::server::settings::ServerSettings,
+    // A `Mut` rather than a `&mut`, so the settings are marked changed only
+    // when a window that edits them is open. Two systems re-read the conf on
+    // a change (`server::fresh::watch_the_database`, `navmesh`).
+    mut server: Mut<crate::server::settings::ServerSettings>,
     queue: &mut crate::server::queue::ServerQueue,
     standings: &mut crate::server::sync::Standings,
     now: f64,
@@ -237,7 +240,7 @@ pub(crate) fn draw(
     }
     if popovers.login.open {
         if let Some(response) = window(ctx, "playtest", popovers.login.under, |ui| {
-            who(ui, login, server, assets, collab);
+            who(ui, login, &mut server, assets, collab);
         }) {
             seen[1] = (true, response);
             rects.push(response);
@@ -259,7 +262,7 @@ pub(crate) fn draw(
                 assets,
                 &mut popovers.project.open,
                 &mut ask_server,
-                server,
+                &mut server,
                 collab.role(),
             );
         });
@@ -294,7 +297,7 @@ pub(crate) fn draw(
                 ui,
                 session,
                 assets,
-                server,
+                &mut server,
                 queue,
                 standings,
                 now,
@@ -322,13 +325,13 @@ pub(crate) fn draw(
     }
     if popovers.settings.open {
         if let Some(response) = window(ctx, "settings", popovers.settings.under, |ui| {
-            super::settings::panel(ui, assets, server, queue, tablet, pen);
+            super::settings::panel(ui, assets, &mut server, queue, tablet, pen);
         }) {
             seen[7] = (true, response);
             rects.push(response);
         }
     }
-    if let Some(whole) = super::tilefiles::draw(ctx, &mut popovers.tile_files, session, assets, server, queue, standings) {
+    if let Some(whole) = super::tilefiles::draw(ctx, &mut popovers.tile_files, session, assets, &server, queue, standings) {
         rects.push(whole);
     }
     if popovers.publish.open {
@@ -337,7 +340,7 @@ pub(crate) fn draw(
             let refused = collab.server_gate().release_refused();
             hosts_do_this(ui, refused);
             ui.add_enabled_ui(refused.is_none(), |ui| {
-                close = the_patch(ui, &mut popovers.patch_name, session, assets, server, queue, step, playing);
+                close = the_patch(ui, &mut popovers.patch_name, session, assets, &mut server, queue, step, playing);
             });
         }) {
             seen[4] = (true, response);
@@ -366,7 +369,7 @@ pub(crate) fn draw(
             if collab.changes.tab == crate::collab::changes::Tab::Targets
                 && collab.changes.targets.as_ref().is_none_or(|(at, _)| now - at > 2.0)
             {
-                collab.changes.targets = Some((now, crate::server::targets::Overview::read(session, server)));
+                collab.changes.targets = Some((now, crate::server::targets::Overview::read(session, &server)));
             }
             let mut asked = super::changes::Asked::Nothing;
             if let Some(response) = window(ctx, "changes", popovers.changes.under, |ui| {
@@ -377,7 +380,7 @@ pub(crate) fn draw(
             }
             match asked {
                 super::changes::Asked::Nothing => {}
-                super::changes::Asked::Save => crate::server::save_everything(session, assets, server, queue, playing),
+                super::changes::Asked::Save => crate::server::save_everything(session, assets, &server, queue, playing),
                 super::changes::Asked::Server => {
                     popovers.changes.open = false;
                     popovers.server.show();

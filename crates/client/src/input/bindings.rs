@@ -1117,7 +1117,12 @@ impl Plugin for BindingsPlugin {
         // be kept in step. See [`crate::lua::panels::keybindings`].
         app.add_message::<BindingPressed>().add_systems(
             Update,
-            dispatch.in_set(BindingSet).in_set(crate::interface::GameSet),
+            dispatch
+                .in_set(BindingSet)
+                .in_set(crate::interface::GameSet)
+                // No key table exists while the interface sleeps: the
+                // interpreter holds it. See `interface::interface_running`.
+                .run_if(crate::interface::interface_running),
         );
     }
 }

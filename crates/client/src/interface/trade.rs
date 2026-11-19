@@ -195,7 +195,7 @@ impl Plugin for TradePlugin {
                 Update,
                 (answers, presses, act)
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<TradeWindow>(app);
     }

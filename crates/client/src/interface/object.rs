@@ -254,7 +254,7 @@ impl Plugin for ObjectPlugin {
                 // `hover` alone, because the click below must not fire in the
                 // same frame a spell cursor is taking the click instead.
                 .after(super::target::TargetSet)
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

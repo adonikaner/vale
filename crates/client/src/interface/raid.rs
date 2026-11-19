@@ -185,7 +185,7 @@ impl Plugin for RaidPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (learn_member_classes, send_verbs).in_set(super::GameSet),
+            (learn_member_classes, send_verbs).in_set(super::InterfaceSet),
         );
     }
 }

@@ -80,7 +80,7 @@ pub(crate) struct StatsPlugin;
 
 impl Plugin for StatsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, announce.in_set(super::GameSet));
+        app.add_systems(Update, announce.in_set(super::InterfaceSet));
     }
 }
 

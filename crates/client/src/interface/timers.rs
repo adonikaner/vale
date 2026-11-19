@@ -50,7 +50,7 @@ pub(crate) struct TimersPlugin;
 impl Plugin for TimersPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<MirrorTimerAnswer>()
-            .add_systems(Update, announce.in_set(super::GameSet));
+            .add_systems(Update, announce.in_set(super::InterfaceSet));
     }
 }
 

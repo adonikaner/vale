@@ -131,8 +131,9 @@ pub(crate) struct Session<'a> {
     /// [`crate::server::queue`].
     pub(crate) queue: &'a mut crate::server::queue::ServerQueue,
     /// Where this machine's server is. The Save button's apply needs it and
-    /// the bar's Server… button opens it.
-    pub(crate) server: &'a mut crate::server::settings::ServerSettings,
+    /// the bar's Server… button opens it. Shared, because the bar only reads
+    /// it: a `&mut` here marked the settings changed on every frame.
+    pub(crate) server: &'a crate::server::settings::ServerSettings,
     /// Whether the session Playtest starts keeps the query answers the server
     /// gives it. See [`vale_client::world::session::QueryCaches`], and
     /// [`crate::server::settings::ServerSettings::disable_caching`], the

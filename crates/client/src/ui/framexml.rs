@@ -93,7 +93,10 @@ impl Plugin for FrameXmlPlugin {
         // tick) runs in `Update`, so the walk sees all of this frame's writes
         // with no edge of its own. The painter orders itself after it; see
         // `ui::mesh::UiMeshPlugin`.
-        app.add_systems(PostUpdate, walk);
+        // Not run while the interface sleeps (`interface::interface_running`).
+        // The walk empties `Drawn` within a frame of the interface going, and
+        // the condition stays true for some frames after.
+        app.add_systems(PostUpdate, walk.run_if(crate::interface::interface_running));
         #[cfg(feature = "diagnostics")]
         app.add_systems(
             PostUpdate,

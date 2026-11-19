@@ -111,8 +111,10 @@ impl bevy::app::Plugin for UiPlugins {
         app.add_systems(
             Update,
             claim_input
+                .before(crate::lua::api::mouse::claim_for_panels)
                 .before(crate::lua::api::mouse::poll)
-                .before(crate::lua::api::keyboard::poll),
+                .before(crate::lua::api::keyboard::poll)
+                .before(crate::lua::api::keyboard::poll_asleep),
         );
         #[cfg(feature = "diagnostics")]
         app.init_resource::<report::HudReport>().add_plugins((

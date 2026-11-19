@@ -197,7 +197,7 @@ impl Plugin for TextureToolPlugin {
             .add_systems(Update, super::foliage::show_edited_sets)
             .add_systems(
                 Update,
-                (read_catalogue, stroke, live_regroup, live_paint)
+                (read_catalogue.run_if(crate::tools::tool_in(&[Tool::Textures, Tool::Chunks, Tool::Road])), stroke.run_if(crate::tools::tool_is(Tool::Textures)), live_regroup, live_paint)
                     .chain()
                     // After the pick, for the same reason as the height brush:
                     // the stroke is aimed by where the pointer met the ground,
@@ -207,7 +207,7 @@ impl Plugin for TextureToolPlugin {
             )
             // After the stroke, so the cross over a full chunk is drawn on the
             // frame the stroke found it.
-            .add_systems(Update, (draw_brush.after(stroke), draw_pin))
+            .add_systems(Update, (draw_brush.run_if(crate::tools::tool_is(Tool::Textures)).after(stroke), draw_pin.run_if(crate::tools::tool_is(Tool::Textures))))
             .add_systems(Update, modes);
     }
 }

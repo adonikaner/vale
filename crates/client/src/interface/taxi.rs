@@ -151,7 +151,7 @@ impl Plugin for TaxiPlugin {
                 Update,
                 (ask_status, announce, relayout, presses, act)
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<TaxiWindow>(app);
         super::gossip::closes_on_walk_away::<TaxiWindow>(app);

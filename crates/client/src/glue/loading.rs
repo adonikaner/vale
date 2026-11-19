@@ -158,7 +158,7 @@ impl Plugin for LoadingPlugin {
             // frame *after* the one it went up on, which `MINIMUM_SECS` then
             // widens. And the set puts both after the world has been polled,
             // so `settle` reads this frame's map rather than last frame's.
-            .add_systems(Update, (raise, settle).chain().in_set(crate::interface::GameSet));
+            .add_systems(Update, (raise, settle).chain().in_set(crate::interface::InterfaceSet));
     }
 }
 

@@ -369,7 +369,7 @@ impl Plugin for WaypointToolPlugin {
                 // After the creature tool's own press, which is what moves the
                 // selection this follows, so that a click cannot be taken by
                 // both.
-                (follow_the_selection, read_the_path, press, drag, draw)
+                (follow_the_selection, read_the_path, press.run_if(crate::tools::tool_is(Tool::Creatures)), drag, draw.run_if(crate::tools::tool_is(Tool::Creatures)))
                     .chain()
                     .after(super::spawn::press::<super::creatures::CreatureSubject>),
             )

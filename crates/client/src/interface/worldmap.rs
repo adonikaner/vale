@@ -244,7 +244,7 @@ impl Plugin for WorldMapPlugin {
                 leave_world,
             )
                 .chain()
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

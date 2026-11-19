@@ -351,6 +351,11 @@ fn mark(
         add(slot, now - clock.0);
         clock.0 = now;
     });
+    // One system, so the multithreaded executor a new schedule gets by default
+    // would only add its task hand-off to every mark, five times a frame.
+    app.edit_schedule(label.clone(), |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
     app.world_mut()
         .resource_mut::<bevy::app::MainScheduleOrder>()
         .insert_after(after, label);

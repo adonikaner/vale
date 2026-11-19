@@ -103,7 +103,7 @@ impl Plugin for BinderPlugin {
                     // popup button in this client is ordered by. Stated rather
                     // than inherited.
                     .after(crate::input::bindings::BindingSet)
-                    .in_set(crate::interface::GameSet),
+                    .in_set(crate::interface::InterfaceSet),
             );
     }
 }

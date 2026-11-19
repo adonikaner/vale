@@ -42,7 +42,7 @@ impl Plugin for SkillsPlugin {
             // and for the same reason.
             (supply_tables, refresh, announce)
                 .chain()
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

@@ -75,7 +75,7 @@ impl Plugin for SummonPlugin {
                     // After the binding dispatch, so a press made this frame is
                     // sent this frame — the same edge the binder's popup uses.
                     .after(crate::input::bindings::BindingSet)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

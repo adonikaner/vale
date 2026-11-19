@@ -1070,9 +1070,9 @@ impl Plugin for ActionPlugin {
                     // message written later in the frame is read the next frame.
                     .after(BindingSet)
                     .in_set(ActionSet)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             )
-            .add_systems(Update, forget.in_set(super::GameSet));
+            .add_systems(Update, forget.in_set(super::InterfaceSet));
     }
 }
 

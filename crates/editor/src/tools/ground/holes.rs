@@ -110,7 +110,7 @@ impl Plugin for HoleToolPlugin {
             // is a stamp that lands where the pointer was.
             (aim, stamp).chain().after(crate::pick::aim),
         );
-        app.add_systems(Update, draw.after(aim));
+        app.add_systems(Update, draw.run_if(crate::tools::tool_is(Tool::Holes)).after(aim));
     }
 }
 

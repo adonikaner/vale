@@ -200,12 +200,58 @@ use bevy::prelude::*;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct GameSet;
 
+/// The systems of this directory, inside [`GameSet`], which run only while
+/// [`interface_running`] says there is an interface or a world to serve.
+///
+/// `target` is left out and stays in [`GameSet`] alone: its hover pick is
+/// also how a host picks along a ray of its own (`target::HoverRay`), with no
+/// session and no interface.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct InterfaceSet;
+
+/// How many frames [`interface_running`] stays true after both of its inputs
+/// have gone false.
+///
+/// A module resets its resources on [`events::PlayerLeavingWorld`], which
+/// [`leaving`] writes on the frame the session ends, and a message is kept for
+/// two frames. The interface is torn down on the frame after
+/// `InterfaceAwake` goes false (`crate::lua::load::sleep_the_interface`).
+/// Eight frames covers both, with the order of the two edges either way round.
+const QUIET_FRAMES: u32 = 8;
+
+/// Whether this directory's systems have anything to do: the interface is
+/// awake, or there is a session.
+///
+/// Always true in the client, where `InterfaceAwake` is never cleared. A host
+/// that shows the world without the interface (the editor, while it edits)
+/// clears it, and with no session either, every system here returns on its
+/// first line. Each still had its parameters fetched every frame, and the
+/// executor's bookkeeping for it paid: about 200 systems. A run condition reads
+/// two resources instead.
+///
+/// An app without either resource (a test that adds one plugin) counts as the
+/// client: awake, which is `InterfaceAwake`'s default.
+pub(crate) fn interface_running(
+    awake: Option<Res<crate::lua::load::InterfaceAwake>>,
+    session: Option<Res<crate::world::session::Session>>,
+    mut quiet: Local<u32>,
+) -> bool {
+    let awake = awake.is_none_or(|awake| awake.0);
+    if awake || session.is_some_and(|session| session.active.is_some()) {
+        *quiet = 0;
+        return true;
+    }
+    *quiet = quiet.saturating_add(1);
+    *quiet <= QUIET_FRAMES
+}
+
 /// Every plugin in this directory, as one group. See
 /// [`crate::render::RenderPlugins`] for why each directory registers its own.
 pub(crate) struct InterfacePlugins;
 
 impl Plugin for InterfacePlugins {
     fn build(&self, app: &mut App) {
+        app.configure_sets(Update, InterfaceSet.in_set(GameSet).run_if(interface_running));
         events::register(app);
         // `add_plugins` accepts tuples of at most sixteen, and the bound fails
         // on the whole call rather than on the seventeenth entry, so the list

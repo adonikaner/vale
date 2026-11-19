@@ -196,13 +196,13 @@ impl Plugin for LootPlugin {
                 Update,
                 (announce, hold, presses, take)
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             )
             .add_systems(
                 Update,
                 templates_landed
                     .after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

@@ -123,7 +123,7 @@ impl Plugin for GossipPlugin {
                     (announce, presses, act).chain().before(NpcSet::Claim),
                     point_the_token.after(NpcSet::Claim).before(NpcSet::Close),
                 )
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         claims_the_token::<GossipWindow>(app);
         closes_on_walk_away::<GossipWindow>(app);
@@ -338,7 +338,7 @@ pub(crate) fn claims_the_token<W: NpcToken>(app: &mut App) {
         Update,
         claim_the_token::<W>
             .in_set(NpcSet::Claim)
-            .in_set(super::GameSet),
+            .in_set(super::InterfaceSet),
     );
 }
 
@@ -348,7 +348,7 @@ pub(crate) fn closes_on_walk_away<W: NpcWindow>(app: &mut App) {
         Update,
         close_when_npc_gone::<W>
             .in_set(NpcSet::Close)
-            .in_set(super::GameSet),
+            .in_set(super::InterfaceSet),
     );
 }
 

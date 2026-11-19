@@ -137,7 +137,7 @@ impl Plugin for TrainerPlugin {
                 (announce, relayout, templates_landed, presses, act)
                     .chain()
                     .after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<TrainerWindow>(app);
         super::gossip::closes_on_walk_away::<TrainerWindow>(app);

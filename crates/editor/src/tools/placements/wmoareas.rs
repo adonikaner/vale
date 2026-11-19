@@ -534,7 +534,7 @@ pub(crate) struct WmoAreasPlugin;
 impl Plugin for WmoAreasPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Areas>()
-            .add_systems(Update, (scripted, follow_the_mode, aim, draw).chain().after(super::wmoview::follow));
+            .add_systems(Update, (scripted, follow_the_mode, aim, draw.run_if(crate::tools::tool_is(Tool::Wmos))).chain().after(super::wmoview::follow));
     }
 }
 

@@ -121,7 +121,7 @@ impl Plugin for RaidTargetPlugin {
                 (answers, press)
                     .chain()
                     .after(crate::input::bindings::BindingSet)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

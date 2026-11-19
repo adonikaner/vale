@@ -422,7 +422,7 @@ pub(crate) struct MeasureToolPlugin;
 impl Plugin for MeasureToolPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Measuring>()
-            .add_systems(Update, (scripted, aim, draw).chain().after(crate::pick::aim))
+            .add_systems(Update, (scripted, aim.run_if(crate::tools::tool_is(crate::tools::Tool::Measure)), draw.run_if(crate::tools::tool_is(crate::tools::Tool::Measure))).chain().after(crate::pick::aim))
             // After the camera has moved, so the labels are projected through
             // this frame's view. See `crate::labels`.
             .add_systems(

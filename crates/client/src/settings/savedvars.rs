@@ -123,7 +123,7 @@ impl Plugin for SavedVariablesPlugin {
         // is loaded by an `Update` system of its own and the globals do not
         // exist before that runs. After the addon list is filled, because the
         // addons whose files this reads are the ones on that list.
-        .add_systems(Update, apply.in_set(crate::interface::GameSet).after(super::addons::seed))
+        .add_systems(Update, apply.in_set(crate::interface::InterfaceSet).after(super::addons::seed))
         // Before the interpreter holding the registered globals is replaced;
         // see [`save_on_logout`], and `keybindings::save_on_logout`, which is
         // ordered against the same teardown for the same reason.

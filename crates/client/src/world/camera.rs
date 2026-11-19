@@ -1071,7 +1071,11 @@ pub fn place(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<WorldCa
     let toward = axes::to_bevy((rig.focus() - rig.at(1.0)).to_array());
     let target = eye + toward;
     // Bevy's up is +Y, which is WoW's +Z; `axes` does that conversion.
-    *transform = Transform::from_translation(eye).looking_at(target, view_up(&rig, eye, target));
+    //
+    // Written only when it differs. A still camera, which is most frames in the
+    // editor, then leaves `Transform` unchanged, and transform propagation and
+    // every reader filtered on `Changed<GlobalTransform>` skip it.
+    transform.set_if_neq(Transform::from_translation(eye).looking_at(target, view_up(&rig, eye, target)));
 }
 
 /// The up vector the view matrix is built with.

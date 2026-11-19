@@ -38,7 +38,7 @@ impl Plugin for UiOptionsPlugin {
             Update,
             press
                 .after(crate::input::bindings::BindingSet)
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

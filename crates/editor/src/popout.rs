@@ -350,6 +350,11 @@ impl Plugin for PopoutPlugin {
             );
         for slot in 0..SLOTS {
             app.init_schedule(PopoutPass(slot));
+            // One system per pass, which takes the window's egui context, so
+            // the multithreaded executor would only add its task hand-off.
+            app.edit_schedule(PopoutPass(slot), |schedule| {
+                schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+            });
         }
     }
 }

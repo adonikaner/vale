@@ -107,7 +107,7 @@ impl Plugin for TalentsPlugin {
             // would order them and the work would land a frame late.
             (points, rebuild, presses, leave_world)
                 .chain()
-                .in_set(super::GameSet),
+                .in_set(super::InterfaceSet),
         );
     }
 }

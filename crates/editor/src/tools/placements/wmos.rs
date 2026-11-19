@@ -145,7 +145,15 @@ impl Plugin for WmoToolPlugin {
             .add_systems(
                 Update,
                 (
-                    select, enclose, drag, nudge, remove, reconcile, publish, settle, resync,
+                    select.run_if(crate::tools::tool_is(Tool::Wmos)),
+                    enclose.run_if(crate::tools::tool_is(Tool::Wmos)),
+                    drag.run_if(crate::tools::tool_is(Tool::Wmos)),
+                    nudge.run_if(crate::tools::tool_is(Tool::Wmos)),
+                    remove.run_if(crate::tools::tool_is(Tool::Wmos)),
+                    reconcile,
+                    publish,
+                    settle,
+                    resync,
                 )
                     .chain()
                     .after(crate::pick::aim)
@@ -154,7 +162,7 @@ impl Plugin for WmoToolPlugin {
                     // without telling the panel holding a copy of the record.
                     .after(crate::tools::shortcuts::shortcuts),
             )
-            .add_systems(Update, (draw_marker, draw_locked));
+            .add_systems(Update, (draw_marker.run_if(crate::tools::tool_is(Tool::Wmos)), draw_locked.run_if(crate::tools::tool_is(Tool::Wmos))));
     }
 }
 

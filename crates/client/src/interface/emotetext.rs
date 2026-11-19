@@ -59,7 +59,7 @@ impl Plugin for EmoteTextPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<EmoteAnswer>().add_systems(
             Update,
-            (send_emotes, apply_answers).chain().in_set(super::GameSet),
+            (send_emotes, apply_answers).chain().in_set(super::InterfaceSet),
         );
     }
 }

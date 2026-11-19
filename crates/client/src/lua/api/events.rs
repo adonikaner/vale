@@ -39,7 +39,7 @@ pub(crate) struct EventsPlugin;
 
 impl Plugin for EventsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, dispatch.after(crate::interface::GameSet));
+        app.add_systems(Update, dispatch.after(crate::interface::GameSet).run_if(crate::interface::interface_running));
     }
 }
 

@@ -75,7 +75,7 @@ impl Plugin for SpellbookPlugin {
         app.init_resource::<Spellbook>().add_systems(
             Update,
             (rebuild, leave_world)
-                .in_set(super::GameSet)
+                .in_set(super::InterfaceSet)
                 // **Before the action chain**, which reads this book to resolve
                 // a `CastSpell` row. Two systems taking one resource, one of
                 // them mutably, *are* sequenced by Bevy — but by an

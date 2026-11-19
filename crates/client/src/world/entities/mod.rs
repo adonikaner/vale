@@ -1578,73 +1578,103 @@ impl Plugin for EntityPlugin {
             // the scene tab's hull count cannot show. See [`solid::HullWork`].
             .init_resource::<solid::HullWork>()
             .add_message::<SheathRequest>()
+            // The chain ignores the sync points Bevy would insert after each of
+            // its fifteen systems that take `Commands`, and states the seven it
+            // needs as `ApplyDeferred` steps. Each sync point is a barrier
+            // across the whole of `Update`: every system running anywhere in
+            // the schedule has to finish before the commands are applied. A
+            // step is kept where the next system reads what an earlier one
+            // spawned or inserted in the same frame, and each says which.
             .add_systems(
                 Update,
                 (
                     light_entities,
+                    // `rebuild_changed_models` reacts to the `SunScale` and
+                    // `UnitLamps` this inserts, in the same frame.
+                    ApplyDeferred,
                     // First, because both the rebuild below and the pose read
                     // the committed sheath state: a weapon drawn this frame must
                     // be in the hand this frame, on the key press that drew it.
                     sheath::commit,
                     rebuild_changed_models,
+                    // `spawn_models` builds the model the rebuild dropped.
+                    ApplyDeferred,
                     spawn_models,
-                    spawn_attachments,
-                    // Before `animate`, which poses the mount and reads the seat
-                    // it gives the rider. A mount spawned here is ridden in the
-                    // same frame, so a rider is never drawn standing inside
-                    // its horse.
-                    spawn_mounts,
-                    // Before `spell_effects`, which spawns and expires the effect
-                    // sets. This only requests one, so a glow requested here is
-                    // hung in the same frame rather than the next.
-                    effects::level_up,
-                    // Beside it for the same reason: it acts on an edge and only
-                    // requests, so a body that becomes lootable sparkles in that
-                    // frame rather than the next.
-                    effects::loot_art,
-                    spell_effects,
-                    persistent_areas,
-                    // After `persistent_areas`, which inserts the `AreaRain`
-                    // this reads, and before `animate_areas`, which poses what
-                    // it spawns. An impact unposed on its first frame is a
-                    // shard drawn in bind pose, thirty yards up, for one frame.
-                    effects::retire_impacts,
-                    effects::rain_impacts,
-                    fallback_shapes,
-                    // After `spawn_models`, which resolves display ids. This
-                    // reads that result and does not resolve its own, so a game
-                    // object becomes solid the frame after it is first drawn and
-                    // the two passes cannot disagree about the table. See
-                    // `solid`. The ordering it needs is against `DisplayCache`,
-                    // not any transform: it takes the position from `Motion`,
-                    // as `place_entities` does, and a game object does not move.
-                    solid::solidify_objects,
-                    animate,
-                    // Between the pose, which starts an animation, and the
-                    // reconcile, which takes the record that it did.
-                    procedural::start_trails,
-                    // Last, because its only input is the animation `animate`
-                    // chose. The weapon moves one frame after the play starts.
-                    // The 1.12.1 client has the same one-frame lag, because it
-                    // moves the weapons after the pose is already chosen.
-                    sheath::reconcile,
-                    animate_areas,
-                    // Last of all, because it rewrites materials that the rebuild
-                    // above would otherwise discard. `render::selection`'s
-                    // highlight is ordered after this whole set for the same
-                    // reason. It reads only the aura list and the model's current
-                    // tint, so nothing after it depends on it.
-                    tint::paint_models,
-                    // The fade, which changes the same models' materials in the
-                    // same way and is last for the same reason. It runs after the
-                    // tint, not in parallel, because they share the material
-                    // pool: `with_opacity` and `with_model_tint` each copy the
-                    // material as it currently is. A fixed order makes a
-                    // stone-formed rogue in stealth one material carrying both,
-                    // rather than two systems overwriting each other.
-                    tint::fade_models,
+                    // `spawn_attachments` hangs gear on the model just spawned.
+                    ApplyDeferred,
+                    (
+                        spawn_attachments,
+                        // Before `animate`, which poses the mount and reads the seat
+                        // it gives the rider. A mount spawned here is ridden in the
+                        // same frame, so a rider is never drawn standing inside
+                        // its horse.
+                        spawn_mounts,
+                        // The mount is ridden, and posed by `animate`, in the frame
+                        // it is spawned.
+                        ApplyDeferred,
+                        // Before `spell_effects`, which spawns and expires the effect
+                        // sets. This only requests one, so a glow requested here is
+                        // hung in the same frame rather than the next.
+                        effects::level_up,
+                        // Beside it for the same reason: it acts on an edge and only
+                        // requests, so a body that becomes lootable sparkles in that
+                        // frame rather than the next.
+                        effects::loot_art,
+                        spell_effects,
+                        persistent_areas,
+                    )
+                        .chain_ignore_deferred(),
+                    // `rain_impacts` reads the `AreaRain` this inserts.
+                    ApplyDeferred,
+                    (
+                        // After `persistent_areas`, which inserts the `AreaRain`
+                        // this reads, and before `animate_areas`, which poses what
+                        // it spawns. An impact unposed on its first frame is a
+                        // shard drawn in bind pose, thirty yards up, for one frame.
+                        effects::retire_impacts,
+                        effects::rain_impacts,
+                        fallback_shapes,
+                        // `animate` and `animate_areas` pose what the systems above
+                        // spawned: models, attachments, effect sets and impacts.
+                        ApplyDeferred,
+                        // After `spawn_models`, which resolves display ids. This
+                        // reads that result and does not resolve its own, so a game
+                        // object becomes solid the frame after it is first drawn and
+                        // the two passes cannot disagree about the table. See
+                        // `solid`. The ordering it needs is against `DisplayCache`,
+                        // not any transform: it takes the position from `Motion`,
+                        // as `place_entities` does, and a game object does not move.
+                        solid::solidify_objects,
+                        animate,
+                        // Between the pose, which starts an animation, and the
+                        // reconcile, which takes the record that it did.
+                        procedural::start_trails,
+                        // Last, because its only input is the animation `animate`
+                        // chose. The weapon moves one frame after the play starts.
+                        // The 1.12.1 client has the same one-frame lag, because it
+                        // moves the weapons after the pose is already chosen.
+                        sheath::reconcile,
+                        animate_areas,
+                        // Last of all, because it rewrites materials that the rebuild
+                        // above would otherwise discard. `render::selection`'s
+                        // highlight is ordered after this whole set for the same
+                        // reason. It reads only the aura list and the model's current
+                        // tint, so nothing after it depends on it.
+                        tint::paint_models,
+                        // The fade copies each part's material as the tint left it.
+                        ApplyDeferred,
+                        // The fade, which changes the same models' materials in the
+                        // same way and is last for the same reason. It runs after the
+                        // tint, not in parallel, because they share the material
+                        // pool: `with_opacity` and `with_model_tint` each copy the
+                        // material as it currently is. A fixed order makes a
+                        // stone-formed rogue in stealth one material carrying both,
+                        // rather than two systems overwriting each other.
+                        tint::fade_models,
+                    )
+                        .chain_ignore_deferred(),
                 )
-                    .chain()
+                    .chain_ignore_deferred()
                     // After the session has placed the entities: a joint is
                     // written as a world transform, so it must be composed
                     // against this frame's placement, not last frame's.

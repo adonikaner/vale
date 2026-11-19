@@ -264,7 +264,7 @@ pub(crate) struct MountPlugin;
 
 impl Plugin for MountPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Mounts>().add_systems(Update, read_the_mounts);
+        app.init_resource::<Mounts>().add_systems(Update, read_the_mounts.run_if(crate::tools::tool_is(Tool::Flightpaths)));
     }
 }
 

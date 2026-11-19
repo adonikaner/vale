@@ -961,7 +961,7 @@ impl Plugin for WmoDoodadsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Spawns>().add_systems(
             Update,
-            (scripted, follow_the_mode, aim, keys, ghost, draw)
+            (scripted, follow_the_mode, aim, keys.run_if(crate::tools::tool_is(Tool::Wmos)), ghost, draw)
                 .chain()
                 .in_set(WmoDoodadsSet)
                 .after(super::wmoview::follow)

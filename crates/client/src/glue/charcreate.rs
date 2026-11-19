@@ -58,7 +58,7 @@ impl Plugin for CharCreatePlugin {
             Update,
             (supply_tables, apply, stand_on_plinth)
                 .chain()
-                .in_set(crate::interface::GameSet),
+                .in_set(crate::interface::InterfaceSet),
         );
     }
 }

@@ -235,7 +235,15 @@ impl Plugin for DoodadToolPlugin {
             .add_systems(
                 Update,
                 (
-                    select, enclose, drag, nudge, remove, reconcile, publish, settle, resync,
+                    select.run_if(crate::tools::tool_is(Tool::Doodads)),
+                    enclose.run_if(crate::tools::tool_is(Tool::Doodads)),
+                    drag.run_if(crate::tools::tool_is(Tool::Doodads)),
+                    nudge.run_if(crate::tools::tool_is(Tool::Doodads)),
+                    remove.run_if(crate::tools::tool_is(Tool::Doodads)),
+                    reconcile,
+                    publish,
+                    settle,
+                    resync,
                 )
                     .chain()
                     // After the undo key, which is `crate::tools::shortcuts::shortcuts` and
@@ -251,7 +259,7 @@ impl Plugin for DoodadToolPlugin {
                     // a drag.
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (draw_marker, draw_locked));
+            .add_systems(Update, (draw_marker.run_if(crate::tools::tool_is(Tool::Doodads)), draw_locked.run_if(crate::tools::tool_is(Tool::Doodads))));
     }
 }
 

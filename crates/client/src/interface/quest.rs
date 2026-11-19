@@ -672,14 +672,14 @@ impl Plugin for QuestPlugin {
                     act,
                 )
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             )
             .add_message::<TemplatesArrived>()
             .add_systems(
                 Update,
                 templates_landed
                     .after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
         super::gossip::claims_the_token::<Quests>(app);
         super::gossip::closes_on_walk_away::<Quests>(app);

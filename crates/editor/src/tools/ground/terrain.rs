@@ -343,8 +343,8 @@ impl Plugin for TerrainToolPlugin {
                         .chain()
                         .after(crate::pick::aim),
                     modes,
-                    draw_brush,
-                    draw_vertices,
+                    draw_brush.run_if(crate::tools::tool_is(Tool::Terrain)),
+                    draw_vertices.run_if(crate::tools::tool_is(Tool::Terrain)),
                     vertices_on_the_command_line,
                 ),
             )

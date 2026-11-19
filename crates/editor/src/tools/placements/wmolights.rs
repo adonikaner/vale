@@ -485,7 +485,7 @@ impl Plugin for WmoLightsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Lamps>().add_systems(
             Update,
-            (scripted, follow_the_mode, aim, keys, draw)
+            (scripted, follow_the_mode, aim, keys.run_if(crate::tools::tool_is(Tool::Wmos)), draw)
                 .chain()
                 .after(super::wmoview::follow)
                 .after(super::wmodoodads::WmoDoodadsSet)

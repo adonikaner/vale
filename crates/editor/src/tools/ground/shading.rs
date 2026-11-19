@@ -135,14 +135,14 @@ impl Plugin for ShadingToolPlugin {
             .init_resource::<Held>()
             .add_systems(
                 Update,
-                stroke
+                stroke.run_if(crate::tools::tool_is(Tool::Shading))
                     // After the pick, as for every other brush: the stroke is
                     // aimed at where the pointer met the ground, and a pick
                     // from the previous frame makes the stroke trail the
                     // cursor.
                     .after(crate::pick::aim),
             )
-            .add_systems(Update, (modes, draw_brush));
+            .add_systems(Update, (modes, draw_brush.run_if(crate::tools::tool_is(Tool::Shading))));
     }
 }
 

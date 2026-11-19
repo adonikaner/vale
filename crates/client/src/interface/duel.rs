@@ -85,7 +85,7 @@ impl Plugin for DuelPlugin {
                 Update,
                 (answers, presses, act, count_down)
                     .chain()
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }

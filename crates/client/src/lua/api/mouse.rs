@@ -1309,7 +1309,46 @@ impl Plugin for MousePlugin {
             // Before `GameSet`, so that the world pick skips a click the
             // interface took in the same frame, not the next one. Otherwise
             // pressing an action button also clears the target.
-            .add_systems(Update, poll.before(crate::interface::GameSet));
+            .add_systems(
+                Update,
+                (claim_for_panels, poll.run_if(crate::interface::interface_running))
+                    .chain()
+                    .before(crate::interface::GameSet),
+            );
+    }
+}
+
+/// Give the pointer to a panel drawn over the world, and take it back on the
+/// frame the panel lets go. Runs every frame, before [`poll`].
+///
+/// A system of its own because it must run while the interface sleeps and
+/// [`poll`] need not: the editor draws its panels over the world with the
+/// interface asleep (`crate::interface::interface_running`), and the world's
+/// pick reads [`MouseFocus::over_interface`]. [`poll`] takes [`LuaWorld`],
+/// whose fetch costs about 0.1 ms a frame (see `lua::load`).
+///
+/// Setting `wheel_taken` as well as `over_interface` is what stops the zoom:
+/// `orbit` gates the wheel on a frame having taken it, not on the pointer
+/// being over anything. That is the 1.12.1 client's rule for the game's
+/// frames, and it does not cover a window drawn over them. See
+/// [`ExternalPointer`].
+///
+/// The falling edge resets the focus here rather than in the next walk. A
+/// panel closed under a still pointer, or closed with no interface to walk,
+/// would otherwise leave the world ignoring the mouse, because every early
+/// return in [`poll`] leaves `focus` as it was.
+pub(crate) fn claim_for_panels(
+    mut focus: ResMut<MouseFocus>,
+    external: Res<ExternalPointer>,
+    mut claimed: Local<bool>,
+) {
+    if external.0 {
+        focus.over_interface = true;
+        focus.wheel_taken = true;
+        focus.name = Some(PANEL.to_string());
+        *claimed = true;
+    } else if std::mem::take(&mut *claimed) {
+        *focus = MouseFocus::default();
     }
 }
 
@@ -1335,36 +1374,12 @@ pub(crate) fn poll(
     viewport: Res<crate::ui::scale::InterfaceViewport>,
     mut pressed: MessageWriter<BindingPressed>,
     mut last_at: Local<Option<(f64, f64)>>,
-    // Whether this system made the claim below, so it can drop the claim on
-    // the falling edge; see there.
-    mut claimed: Local<bool>,
 ) {
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Pick);
-    // The debug panel takes the pointer before the interface is consulted,
-    // and before every early return below. The next two returns are "no
-    // interpreter" and "no interface loaded", and the camera must ignore the
-    // pointer in both cases as well as in a live session.
-    //
-    // Setting `wheel_taken` as well as `over_interface` is what stops the
-    // zoom: `orbit` gates the wheel on a frame having taken it, not on the
-    // pointer being over anything. That is the 1.12.1 client's rule for the
-    // game's frames, and it does not cover a window drawn over them. See
-    // [`ExternalPointer`].
+    // A panel over the world has the pointer, and [`claim_for_panels`] has
+    // already said so this frame. The interface is not consulted.
     if external.0 {
-        focus.over_interface = true;
-        focus.wheel_taken = true;
-        focus.name = Some(PANEL.to_string());
-        *claimed = true;
         return;
-    }
-    // The falling edge is handled here, not left to the next walk. The early
-    // returns below (no interpreter, no interface, the idle path and the
-    // unchanged-pass return) all leave `focus` as it was, so a panel closed
-    // under a stationary pointer, or closed at the glue screen where there is
-    // no interface to walk, would otherwise leave the world ignoring the mouse
-    // for the rest of the session.
-    if std::mem::take(&mut *claimed) {
-        *focus = MouseFocus::default();
     }
     let Some(mut host) = host else { return };
     if host.interface().is_none() {
@@ -2238,7 +2253,8 @@ mod tests {
     ///
     /// No interface is loaded in this app, on purpose: `poll` returns early in
     /// that case, and a claim left behind there would make the world ignore
-    /// the mouse for the rest of the session.
+    /// the mouse for the rest of the session. The claim and its release are
+    /// [`claim_for_panels`], which runs before `poll`.
     #[test]
     fn the_panel_claims_the_pointer_and_releases_it_with_no_interface_at_all() {
         let mut app = App::new();
@@ -2251,7 +2267,7 @@ mod tests {
             .init_resource::<ButtonInput<KeyCode>>()
             .add_message::<BindingPressed>()
             .add_message::<bevy::input::mouse::MouseWheel>()
-            .add_systems(Update, poll);
+            .add_systems(Update, (claim_for_panels, poll).chain());
 
         // Nothing claimed: the world owns the mouse.
         app.update();

@@ -123,7 +123,8 @@ impl Plugin for TooltipPlugin {
             // leaving the colour one hover behind.
             show_world_tooltip
                 .after(crate::interface::GameSet)
-                .before(super::super::api::events::dispatch),
+                .before(super::super::api::events::dispatch)
+                .run_if(crate::interface::interface_running),
         );
     }
 }

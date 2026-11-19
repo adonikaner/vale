@@ -56,7 +56,7 @@ pub(crate) struct AddonsPlugin;
 impl Plugin for AddonsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AddonFiles>()
-            .add_systems(Update, (seed, save_requested).chain().in_set(crate::interface::GameSet))
+            .add_systems(Update, (seed, save_requested).chain().in_set(crate::interface::InterfaceSet))
             // Before the interpreter holding the list is replaced, as
             // `keybindings::save_on_logout` is ordered.
             .add_systems(

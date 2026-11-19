@@ -84,7 +84,7 @@ impl Plugin for CombatLogPlugin {
             .add_systems(
                 Update,
                 poll.after(crate::world::incoming::drain_queues)
-                    .in_set(super::GameSet),
+                    .in_set(super::InterfaceSet),
             );
     }
 }
