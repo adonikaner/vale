@@ -123,32 +123,8 @@ impl Overlays {
         &self.joined[&row.id].1
     }
 
-    /// `base` with every overlay of `rows` drawn over it, new art in place of
-    /// its row's.
-    pub(crate) fn composite(
-        &mut self,
-        base: &[u8],
-        rows: &[OverlayRow],
-        directory: &str,
-        session: &EditSession,
-        assets: &GameAssets,
-    ) -> Vec<u8> {
-        let mut out = base.to_vec();
-        for row in rows {
-            if let Some(art) = self.art.as_ref().filter(|art| art.target == Target::Row(row.id)) {
-                pieces::blend(&mut out, &art.rgba, art.width, art.height, row.offset.0, row.offset.1);
-                continue;
-            }
-            let rgba = self.art_of(row, directory, session, assets).to_vec();
-            pieces::blend(&mut out, &rgba, row.width, row.height, row.offset.0, row.offset.1);
-        }
-        if let Some(art) = self.art.as_ref().filter(|art| art.target == Target::New) {
-            pieces::blend(&mut out, &art.rgba, art.width, art.height, art.offset.0, art.offset.1);
-        }
-        out
-    }
-
-    /// A stamp for the composite: changed whenever the art held changes.
+    /// A stamp for the new art's pixels: changed when new art is read, and not
+    /// when it is moved.
     pub(crate) fn stamp(&self) -> u64 {
         self.stamps
     }
@@ -175,11 +151,7 @@ impl Overlays {
     /// Move the new overlay's art to `offset`.
     pub(crate) fn place_new(&mut self, offset: (u32, u32)) {
         if let Some(art) = self.art.as_mut().filter(|art| art.target == Target::New) {
-            let offset = (offset.0.min(pieces::WIDTH - 1), offset.1.min(pieces::HEIGHT - 1));
-            if art.offset != offset {
-                art.offset = offset;
-                self.stamps += 1;
-            }
+            art.offset = (offset.0.min(pieces::WIDTH - 1), offset.1.min(pieces::HEIGHT - 1));
         }
     }
 

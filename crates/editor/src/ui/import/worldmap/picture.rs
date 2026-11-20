@@ -36,29 +36,21 @@ pub(super) fn picture(ui: &mut egui::Ui, work: &mut Work<'_>, entry: &Entry, vie
         (View::Explored, Some(area)) => Overlays::rows(work.session, area.id),
         _ => Vec::new(),
     };
-    let handle = match view {
-        View::Picture | View::Places => texture(ui, &format!("world-map-{base_key}"), base_stamp, || base),
-        View::Explored => {
-            use std::hash::{Hash, Hasher};
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            (base_key, base_stamp, work.maps.overlays.stamp(), work.session.table_revision, work.session.files_revision)
-                .hash(&mut hasher);
-            let (maps, session, assets) = (&mut *work.maps, &*work.session, work.assets);
-            texture(ui, "world-map-explored", hasher.finish(), || {
-                maps.overlays.composite(&base, &overlays, &entry.directory, session, assets)
-            })
-        }
-    };
+    let handle = texture(ui, &format!("world-map-{base_key}"), base_stamp, [pieces::WIDTH, pieces::HEIGHT], || base);
     let width = ui.available_width().min(pieces::WIDTH as f32);
     let scale = width / pieces::WIDTH as f32;
     let size = egui::vec2(width, pieces::HEIGHT as f32 * scale);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::SUNK);
-    painter.image(handle.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+    let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    painter.image(handle.id(), rect, whole, egui::Color32::WHITE);
     // A point of the picture, in its own pixels, and back.
     let to_screen = |x: f32, y: f32| rect.min + egui::vec2(x * scale, y * scale);
     let box_on_screen = |l: f32, t: f32, r: f32, b: f32| egui::Rect::from_min_max(to_screen(l, t), to_screen(r, b));
+    if view == View::Explored {
+        overlay_art(ui, &painter, work, entry, &overlays, &box_on_screen);
+    }
     let at = response.hover_pos().or(response.interact_pointer_pos()).map(|pos| {
         let local = (pos - rect.min) / scale;
         (local.x.clamp(0.0, pieces::WIDTH as f32 - 1.0), local.y.clamp(0.0, pieces::HEIGHT as f32 - 1.0))
@@ -206,16 +198,66 @@ fn outlines(painter: &egui::Painter, work: &mut Work<'_>, entry: &Entry, on_scre
     }
 }
 
-/// The texture for a 1002x668 picture under `key`, made by `pixels` and
-/// uploaded again only when its stamp changes. One texture is kept per key.
-fn texture(ui: &egui::Ui, key: &str, stamp: u64, pixels: impl FnOnce() -> Vec<u8>) -> egui::TextureHandle {
+/// Every overlay's art drawn over the picture at its offset, new art in place
+/// of its row's, and the new overlay's art last.
+///
+/// Each piece of art is its own texture, uploaded when its files or the new
+/// art change and not when it moves. A drag therefore changes only where a
+/// texture is drawn. Composing the overlays into the picture made each frame
+/// of a drag upload a new 1002x668 texture, and a texture uploaded in a frame
+/// is not drawn in that frame, so the picture flickered while it moved.
+fn overlay_art(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    work: &mut Work<'_>,
+    entry: &Entry,
+    overlays: &[rows_of::OverlayRow],
+    on_screen: &dyn Fn(f32, f32, f32, f32) -> egui::Rect,
+) {
+    let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let draw = |handle: egui::TextureHandle, (left, top): (u32, u32), width: u32, height: u32| {
+        let (l, t) = (left as f32, top as f32);
+        painter.image(handle.id(), on_screen(l, t, l + width as f32, t + height as f32), whole, egui::Color32::WHITE);
+    };
+    let art_stamp = work.maps.overlays.stamp();
+    for row in overlays {
+        if row.width == 0 || row.height == 0 {
+            continue;
+        }
+        if let Some(art) = work.maps.overlays.art.as_ref().filter(|art| art.target == Target::Row(row.id)) {
+            let handle = texture(ui, "world-map-new-art", art_stamp, [art.width, art.height], || art.rgba.clone());
+            draw(handle, row.offset, art.width, art.height);
+            continue;
+        }
+        let stamp = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            (&row.texture, row.width, row.height, work.session.files_revision).hash(&mut hasher);
+            hasher.finish()
+        };
+        let (maps, session, assets) = (&mut *work.maps, &*work.session, work.assets);
+        let handle = texture(ui, &format!("world-map-overlay-{}", row.id), stamp, [row.width, row.height], || {
+            maps.overlays.art_of(row, &entry.directory, session, assets).to_vec()
+        });
+        draw(handle, row.offset, row.width, row.height);
+    }
+    if let Some(art) = work.maps.overlays.art.as_ref().filter(|art| art.target == Target::New) {
+        let handle = texture(ui, "world-map-new-art", art_stamp, [art.width, art.height], || art.rgba.clone());
+        draw(handle, art.offset, art.width, art.height);
+    }
+}
+
+/// The texture of a picture of `size` pixels under `key`, made by `pixels`
+/// and uploaded again only when its stamp changes. One texture is kept per
+/// key.
+fn texture(ui: &egui::Ui, key: &str, stamp: u64, size: [u32; 2], pixels: impl FnOnce() -> Vec<u8>) -> egui::TextureHandle {
     let id = egui::Id::new(key);
     if let Some((held, handle)) = ui.data(|data| data.get_temp::<(u64, egui::TextureHandle)>(id)) {
         if held == stamp {
             return handle;
         }
     }
-    let image = egui::ColorImage::from_rgba_unmultiplied([pieces::WIDTH as usize, pieces::HEIGHT as usize], &pixels());
+    let image = egui::ColorImage::from_rgba_unmultiplied([size[0] as usize, size[1] as usize], &pixels());
     let handle = ui.ctx().load_texture(key, image, egui::TextureOptions::LINEAR);
     ui.data_mut(|data| data.insert_temp(id, (stamp, handle.clone())));
     handle

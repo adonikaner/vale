@@ -235,6 +235,9 @@ pub struct PlacedDoodad {
     /// under the origin is set, otherwise 1.0. An interior prop has a room
     /// light and is not scaled. See [`crate::render::models::sun_scale`].
     pub(crate) sun_scale: f32,
+    /// The spawn's index in its building's `MODD` list, for a building's
+    /// furniture; `None` for an `MDDF` placement. See [`FurnitureSpawn`].
+    pub(crate) spawn: Option<u16>,
 }
 
 impl PlacedDoodad {
@@ -246,8 +249,48 @@ impl PlacedDoodad {
             placement,
             light: None,
             sun_scale: doodad_sun_scale(shadowed),
+            spawn: None,
         }
     }
+}
+
+/// Which `MODD` spawn of its building a piece of furniture is: on each batch
+/// of a still placement, and on the rig root of a posed one.
+///
+/// A `MODD` spawn carries its building's id and no id of its own, so this is
+/// the only way to find the entities of one spawn. The model's path is kept
+/// as a hash beside the index, because adding or removing a spawn renumbers
+/// the spawns after it, and a building drawn from the old file then has a
+/// different model at the same index.
+///
+/// Inserted only under [`crate::render::terrain::LiveEdits`]: an editor uses
+/// it to move one spawn's entities while the edited building is built again.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FurnitureSpawn {
+    pub index: u16,
+    model: u64,
+}
+
+impl FurnitureSpawn {
+    pub fn new(index: u16, path: &str) -> FurnitureSpawn {
+        FurnitureSpawn { index, model: path_hash(path) }
+    }
+
+    /// Whether this is spawn `index`, drawing the model at `path`.
+    pub fn is(&self, index: u16, path: &str) -> bool {
+        self.index == index && self.model == path_hash(path)
+    }
+}
+
+/// A model path's hash, the same for either slash and any case.
+fn path_hash(path: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for byte in path.bytes() {
+        let byte = if byte == b'/' { b'\\' } else { byte.to_ascii_lowercase() };
+        byte.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// The sun scale of a doodad lit by the sun: a terrain doodad or a WMO prop in
@@ -300,6 +343,9 @@ pub struct Resident {
     /// `VisibilityRange` cutoff, and now also the spawn distance.
     range: f32,
     unique_id: u32,
+    /// Which spawn of its building it is, for furniture. See
+    /// [`FurnitureSpawn`].
+    spawn: Option<FurnitureSpawn>,
     /// The batch entities while in range; empty while parked.
     spawned: Vec<Entity>,
     /// The animation rig for an animated placement; `None` for almost every
@@ -680,6 +726,7 @@ fn resolve_doodads(
                     tag: crate::render::models::instance_tag(doodad.light, doodad.sun_scale),
                     range: draw_range(radius),
                     unique_id: placement.unique_id,
+                    spawn: doodad.spawn.map(|index| FurnitureSpawn::new(index, &placement.path)),
                     spawned: Vec::new(),
                 });
                 if rig_resolved {
@@ -982,7 +1029,10 @@ pub(crate) fn stream_doodads(
     // joints are copied onto the `PosedDoodad` and the list is reused, so
     // spawning a whole city allocates once.
     mut rig_joints: Local<Vec<Entity>>,
+    // Whether furniture is tagged with its spawn; see [`FurnitureSpawn`].
+    live: Option<Res<crate::render::terrain::LiveEdits>>,
 ) {
+    let tag_furniture = live.is_some_and(|live| live.0);
     let _zone = crate::zone!(crate::ui::debug::spans::Slot::Doodads);
     if !focus.present {
         return;
@@ -1015,6 +1065,10 @@ pub(crate) fn stream_doodads(
                 let posed = resident.rig.clone().map(|rig| {
                     spawn_posed(&mut commands, tile, resident, &rig, &mut rig_joints, now)
                 });
+                let furniture = resident.spawn.filter(|_| tag_furniture);
+                if let (Some(root), Some(spawn)) = (posed, furniture) {
+                    commands.entity(root).insert(spawn);
+                }
                 let range = VisibilityRange::abrupt(0.0, resident.range);
                 // A posed placement parents its batches to its own rig root; a
                 // static one parents them to the tile. Their transforms differ
@@ -1088,6 +1142,9 @@ pub(crate) fn stream_doodads(
                     // despawns its children; listing both would despawn each
                     // batch twice.
                     if posed.is_none() {
+                        if let Some(spawn) = furniture {
+                            batch.insert(spawn);
+                        }
                         resident.spawned.push(batch.id());
                     }
                 }
@@ -1147,6 +1204,16 @@ pub(crate) fn stream_doodads(
 mod tests {
     use super::*;
     use vale_assets::world::adt::{placement_matrix, placement_to_world};
+
+    /// A furniture tag matches its own index and model path, whatever the
+    /// slashes and case of the path, and no other index or model.
+    #[test]
+    fn a_furniture_spawn_is_its_index_and_its_model() {
+        let spawn = FurnitureSpawn::new(4, "World\\Generic\\Human\\Chair.m2");
+        assert!(spawn.is(4, "world/generic/human/chair.m2"));
+        assert!(!spawn.is(5, "World\\Generic\\Human\\Chair.m2"));
+        assert!(!spawn.is(4, "World\\Generic\\Human\\Table.m2"));
+    }
 
     /// A placement's matrix converts into Bevy's frame as a `Transform`
     /// without loss: it is a rotation and a uniform scale, so the

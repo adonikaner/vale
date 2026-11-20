@@ -34,7 +34,9 @@
 //! new host is shown, and the old one despawned, once its building is placed
 //! and its doodads resolved and spawned, and two frames more for the GPU to
 //! have the meshes. Despawning first and building after left the viewport
-//! empty for the frames a rebuild takes, which flashed on every edit.
+//! empty for the frames a rebuild takes, which flashed on every edit. Until
+//! the new host is shown, `super::wmodoodads` moves the drawn doodads to
+//! their places in the edited file.
 
 use bevy::prelude::*;
 use vale_assets::world::adt::PlacedModel;

@@ -54,7 +54,17 @@
 //! the pointer's ray meets first (`vale_assets::look::pick::hit_mesh`). The
 //! renderer gives every spawn of a building the building's id, so the pick
 //! is against the file's spawns and the model cache's triangles, not against
-//! the drawn entities.
+//! the drawn entities. The spawn under the pointer and the chosen spawn are
+//! boxed round those triangles.
+//!
+//! ## An edit is drawn at once
+//!
+//! The building is built again from the edited file only once edits stop.
+//! Until the new building is shown, [`pose_furniture`] moves each drawn
+//! spawn to its place in the open file, which it finds by the
+//! `vale_client::render::doodads::FurnitureSpawn` tag on its entities. A
+//! move, a turn or a scale is therefore seen while it is made, and the new
+//! building replaces the old one with nothing moving.
 //!
 //! ## Spawn rotations and `MDDF` angles
 //!
@@ -78,6 +88,7 @@ use crate::session::EditSession;
 use crate::tools::Tool;
 use vale_client::assets::GameAssets;
 use vale_client::render::axes;
+use vale_client::render::doodads::FurnitureSpawn;
 use vale_client::render::models::{Lookup, Materials, ModelCache};
 use vale_client::render::wmos::{Interior, WmoPlacement};
 use vale_client::world::camera::WorldCamera;
@@ -559,27 +570,31 @@ fn ray(
     (direction != Vec3::ZERO).then_some((origin, direction))
 }
 
-/// A model's pick mesh, and the radius about its origin that holds it, read
-/// once per path.
+/// A model's pick mesh, the radius about its origin that holds it, and its
+/// box, read once per path.
 fn shape<'a>(shapes: &'a mut HashMap<String, Option<Shape>>, models: &mut ModelCache, path: &str) -> Option<&'a Shape> {
     if !shapes.contains_key(path) {
         let Lookup::Ready(model) = models.lookup(path) else { return None };
         let positions = &model.pick.positions;
         let found = (!positions.is_empty()).then(|| {
             let radius = positions.iter().map(|&at| Vec3::from(at).length()).fold(0.0, f32::max);
-            Shape { pick: model.pick.clone(), radius }
+            let low = positions.iter().fold(Vec3::MAX, |low, &at| low.min(Vec3::from(at)));
+            let high = positions.iter().fold(Vec3::MIN, |high, &at| high.max(Vec3::from(at)));
+            Shape { pick: model.pick.clone(), radius, low, high }
         });
         shapes.insert(path.to_string(), found);
     }
     shapes.get(path).and_then(Option::as_ref)
 }
 
-/// A model's triangles for the pick, and how far the furthest is from the
-/// origin, in the model's own axes.
+/// A model's triangles for the pick, how far the furthest is from the
+/// origin, and the box that holds them, in the model's own axes.
 #[derive(Clone)]
 pub(crate) struct Shape {
     pick: std::sync::Arc<vale_assets::look::pick::PickMesh>,
     radius: f32,
+    low: Vec3,
+    high: Vec3,
 }
 
 /// The drawn spawn whose triangles the ray meets first. A spawn whose model
@@ -918,35 +933,82 @@ fn ghost(
     }
 }
 
-/// The colour of the chosen spawn's mark, and of the one under the pointer.
+/// Put each drawn spawn of the building where the open file says it stands.
+///
+/// An edit reaches the drawn building only when the building is built again
+/// (`crate::session::buildings`, `super::wmoview`). That waits until edits
+/// stop and then takes several frames. Until then this system moves each
+/// spawn's entities to its place in the file, so a drag, a turn with the
+/// handles, a nudge, a scale and an undo are drawn in the frame they are
+/// made. The building built again stands the same way, so the swap to it
+/// changes nothing on screen. The building being built hidden is posed too,
+/// because the file can change after its build starts.
+///
+/// An entity is moved only when its `FurnitureSpawn` names the model the file
+/// has at that index. After a spawn is added or removed, the drawn building
+/// is numbered as the old file was, and its entities wait for the new
+/// building. A spawn's particles and its collision hull also wait.
+fn pose_furniture(
+    spawns: Res<Spawns>,
+    session: Option<Res<EditSession>>,
+    hosts: Query<(), With<super::wmoview::Host>>,
+    mut furniture: Query<(&ChildOf, &FurnitureSpawn, &mut Transform)>,
+) {
+    let (Some(placed), Some(session)) = (&spawns.building, session) else { return };
+    let Some(open) = session.building(&placed.path) else { return };
+    let doodads = open.building.root.doodads();
+    for (parent, spawn, mut transform) in &mut furniture {
+        if !hosts.contains(parent.parent()) {
+            continue;
+        }
+        let Some(doodad) = doodads.get(usize::from(spawn.index)) else { continue };
+        if !spawn.is(spawn.index, &vale_assets::world::m2::model_path(&doodad.name)) {
+            continue;
+        }
+        let wanted = Transform::from_matrix(axes::to_bevy_affine(matrix_of(placed, doodad)));
+        let close = transform.translation.abs_diff_eq(wanted.translation, 1.0e-4)
+            && transform.rotation.abs_diff_eq(wanted.rotation, 1.0e-5)
+            && transform.scale.abs_diff_eq(wanted.scale, 1.0e-5);
+        if !close {
+            *transform = wanted;
+        }
+    }
+}
+
+/// The colour of the chosen spawn's box, and of the one under the pointer.
 const CHOSEN: Color = Color::srgb(0.31, 0.64, 0.89);
 const HOVERED: Color = Color::srgba(0.89, 0.90, 0.93, 0.8);
 
-/// Mark the chosen spawn and the one under the pointer: a ball at the
-/// spawn's origin and a stem up from it. The handles stand on the chosen one
-/// as well.
+/// The side, in yards, of the box drawn round a spawn whose model has no
+/// triangles to measure.
+const NO_SHAPE: f32 = 1.0;
+
+/// Box the spawn under the pointer, and the chosen spawn in the accent
+/// colour, as the doodad tool boxes a doodad. The handles stand on the chosen
+/// one as well.
 ///
-/// The mark is not a box round the model, as the doodad tool draws. A box of
-/// marks, of lines or of tubes, drawn round a building's doodad stopped that
-/// doodad being drawn; the same box eight yards to the side did not. The
-/// cause is not known; see the editor's notes on the building editor.
-fn draw(spawns: Res<Spawns>, session: Option<Res<EditSession>>, mut marks: ResMut<Marks>) {
+/// The box holds the model's drawn triangles and is placed from the open
+/// file, so it moves with the spawn during an edit.
+fn draw(mut spawns: ResMut<Spawns>, mut models: ResMut<ModelCache>, session: Option<Res<EditSession>>, mut marks: ResMut<Marks>) {
     if !spawns.active {
         return;
     }
-    let (Some(placed), Some(session)) = (&spawns.building, session) else { return };
+    let Some(session) = session else { return };
+    let Some(placed) = spawns.building.clone() else { return };
     let Some(open) = session.building(&placed.path) else { return };
     let doodads = open.building.root.doodads();
     let hovered = spawns.hovered.filter(|index| Some(*index) != spawns.chosen);
     for (index, colour) in [(hovered, HOVERED), (spawns.chosen, CHOSEN)] {
         let Some(doodad) = index.and_then(|index| doodads.get(usize::from(index))) else { continue };
-        let at = world_of(placed, doodad);
-        let bevy = axes::to_bevy(at.to_array());
-        let radius = marks.visible_radius(bevy, 0.3);
-        marks.sphere(bevy, radius, colour, Look::Ghosted);
-        let top = axes::to_bevy((at + Vec3::Z * 2.5).to_array());
-        let width = marks.line_radius((bevy + top) * 0.5);
-        marks.tube(bevy, top, width, colour, Look::Ghosted);
+        let path = vale_assets::world::m2::model_path(&doodad.name);
+        let (low, high) = shape(&mut spawns.shapes, &mut models, &path)
+            .map_or((Vec3::splat(-NO_SHAPE / 2.0), Vec3::splat(NO_SHAPE / 2.0)), |shape| (shape.low, shape.high));
+        // A unit cube about the origin, stretched over the model's box and
+        // placed as the spawn is.
+        let pose = matrix_of(&placed, doodad)
+            * Mat4::from_translation((low + high) / 2.0)
+            * Mat4::from_scale((high - low).max(Vec3::splat(0.05)));
+        marks.box_edges(Transform::from_matrix(axes::to_bevy_affine(pose)), colour, Look::Ghosted);
     }
 }
 
@@ -961,7 +1023,7 @@ impl Plugin for WmoDoodadsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Spawns>().add_systems(
             Update,
-            (scripted, follow_the_mode, aim, keys.run_if(crate::tools::tool_is(Tool::Wmos)), ghost, draw)
+            (scripted, follow_the_mode, aim, keys.run_if(crate::tools::tool_is(Tool::Wmos)), pose_furniture, ghost, draw)
                 .chain()
                 .in_set(WmoDoodadsSet)
                 .after(super::wmoview::follow)

@@ -31,7 +31,9 @@
 //! number edits it on every frame. So the renderer is told once edits to
 //! buildings have stopped for [`REDRAW_SETTLE`] ([`redraw_buildings`]). The
 //! overlay holds the new bytes at once, and the tools draw their marks from
-//! the open files, so only the building's picture waits.
+//! the open files, so only the building's picture waits. The building
+//! editor moves the drawn doodads itself while it waits
+//! (`crate::tools::placements::wmodoodads`).
 //!
 //! ## Save
 //!

@@ -164,6 +164,12 @@ impl RootFile {
         self.chunks.iter().find(|chunk| &chunk.magic == magic).map(|chunk| chunk.data.as_slice())
     }
 
+    /// The building's id, `MOHD`'s word at `0x20`: the first key of its
+    /// `WMOAreaTable` rows. `None` for a `MOHD` too short to hold it.
+    pub fn wmo_id(&self) -> Option<u32> {
+        self.chunk(b"MOHD").filter(|data| data.len() >= 0x24).map(|data| u32_at(data, 0x20))
+    }
+
     /// The doodad sets, in file order.
     pub fn doodad_sets(&self) -> Vec<DoodadSet> {
         let Some(data) = self.chunk(b"MODS") else { return Vec::new() };
@@ -801,6 +807,20 @@ mod tests {
 
     fn doodad(name: &str, x: f32) -> Doodad {
         Doodad { name: name.into(), name_at: None, flags: 0, position: [x, 0.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0], scale: 1.0, colour: 0xFF80_8080 }
+    }
+
+    /// The building's id is `MOHD`'s word at `0x20`, and a short `MOHD` has
+    /// none.
+    #[test]
+    fn the_wmo_id_is_read_from_the_header() {
+        let mut header = vec![0u8; 64];
+        header[0x20..0x24].copy_from_slice(&208u32.to_le_bytes());
+        let mut file = chunk(b"MVER", &17u32.to_le_bytes());
+        file.extend(chunk(b"MOHD", &header));
+        assert_eq!(RootFile::parse(&file).unwrap().wmo_id(), Some(208));
+        let mut short = chunk(b"MVER", &17u32.to_le_bytes());
+        short.extend(chunk(b"MOHD", &[0u8; 16]));
+        assert_eq!(RootFile::parse(&short).unwrap().wmo_id(), None);
     }
 
     /// A root with two sets: the always-drawn global set of one chair and a

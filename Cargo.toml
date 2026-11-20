@@ -205,6 +205,13 @@ opt-level = 2
 [profile.dev.package.vale-protocol]
 opt-level = 2
 
+# `vale-edit` answers the editor's height lookups (`adt::heights::height_at`),
+# which the pointer's ray march, the brush rings and the road preview make
+# thousands of times a frame. Measured over 178,161 points on each of five
+# tiles: 7.4 us a lookup at 0, 0.4 us at 2.
+[profile.dev.package.vale-edit]
+opt-level = 2
+
 # `vale-client` at opt-level 2. It was at 0 so that a debugger could step
 # through it, on the grounds that it had no inner loops; it now has some (the
 # HUD's scan of every mesh in the world, the screenshot dump's), and the frame

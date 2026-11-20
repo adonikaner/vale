@@ -806,6 +806,51 @@ fn the_whole_tile_answers_a_height() {
     );
 }
 
+/// The chunk found from the first chunk's origin is the chunk the search over
+/// all 256 finds, for points across every tile, on the boundaries between
+/// squares, in the bands between them and past the tile's edges.
+#[test]
+fn the_chunk_under_a_point_is_the_one_the_search_finds() {
+    for (path, bytes) in real_tiles() {
+        let tile = AdtFile::parse(&bytes).expect("a shipped tile parses");
+        let origin = tile.chunk(0).unwrap().head().position();
+        let (size, chunk) = (vale_assets::world::adt::TILE_SIZE, vale_assets::world::adt::CHUNK_SIZE);
+        let mut points = Vec::new();
+        for i in -4..=404 {
+            for j in -4..=404 {
+                points.push((origin[0] - i as f32 * size / 400.0, origin[1] - j as f32 * size / 400.0));
+            }
+        }
+        // Every boundary between squares, and just either side of it.
+        for k in 0..=16 {
+            for d in [-0.001f32, -0.0003, 0.0, 0.0003, 0.001] {
+                for t in 0..64 {
+                    let along = t as f32 / 64.0 * size;
+                    let edge = k as f32 * chunk + d;
+                    points.push((origin[0] - edge, origin[1] - along));
+                    points.push((origin[0] - along, origin[1] - edge));
+                }
+            }
+        }
+        let started = std::time::Instant::now();
+        let fast: Vec<Option<usize>> = points.iter().map(|&(x, y)| heights::chunk_at(&tile, x, y)).collect();
+        let fast_took = started.elapsed();
+        let started = std::time::Instant::now();
+        let searched: Vec<Option<usize>> = points.iter().map(|&(x, y)| heights::chunk_by_search(&tile, x, y)).collect();
+        let search_took = started.elapsed();
+        for ((point, a), b) in points.iter().zip(&fast).zip(&searched) {
+            assert_eq!(a, b, "{path}: at {point:?}");
+        }
+        let started = std::time::Instant::now();
+        let answered = points.iter().filter(|&&(x, y)| heights::height_at(&tile, x, y).is_some()).count();
+        let heights_took = started.elapsed();
+        eprintln!(
+            "{path}: {} points, {fast_took:?} against {search_took:?} for the search; height_at {heights_took:?} ({answered} answered)",
+            points.len()
+        );
+    }
+}
+
 /// One placement reads the same as its row in the whole list, which is what
 /// lets the two things that ask about a single record every frame — a panel
 /// checking it is still in step, and every edit reading the value it replaces —

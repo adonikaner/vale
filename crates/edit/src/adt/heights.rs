@@ -344,16 +344,89 @@ pub fn solid_height_at(tile: &AdtFile, x: f32, y: f32) -> Option<f32> {
 /// is over none of them.
 ///
 /// A tool wants the chunk itself: what it is painted with, which zone it is
-/// in, where its holes are. It is a search and not arithmetic: `MCNK`'s
-/// stored origins step by 33.332032 where `CHUNK_SIZE` is 33.333332, so the
-/// squares do not tile exactly and a position computed from the tile corner
-/// lands in the wrong one near a boundary. Asking each chunk's own origin is
-/// 256 comparisons and is the only answer that agrees with the file.
+/// in, where its holes are. The answer is the chunk whose own stored origin
+/// holds the position: `MCNK`'s origins step by 33.332032 where `CHUNK_SIZE`
+/// is 33.333332, so the squares do not tile exactly and a position computed
+/// from the tile corner alone lands in the wrong one near a boundary.
+///
+/// The square is found in two steps. The position's offset from the first
+/// chunk's origin names a chunk, and that chunk and the eight around it are
+/// asked whether their own origins hold the position ([`chunk_near_guess`]).
+/// Where two squares overlap, the first in file order is the answer, as for
+/// the search. Only a position no square holds is answered by asking all 256.
 ///
 /// A position in the 0.65-millimetre band between two squares, or in the last
 /// two centimetres of the tile, is answered by the nearest chunk within
 /// [`REACH`] rather than refused, which is the allowance `height_at` makes.
+///
+/// `height_at` calls this for every height a tool reads: the pointer's ray
+/// march and each one-yard sample of a road preview. Asking all 256 chunks for
+/// each of those, a road of a few hundred yards held the frame for tens of
+/// milliseconds.
 pub fn chunk_at(tile: &AdtFile, x: f32, y: f32) -> Option<usize> {
+    if let Some(found) = chunk_near_guess(tile, x, y) {
+        return Some(found);
+    }
+    chunk_by_search(tile, x, y)
+}
+
+/// The chunk whose square holds `(x, y)`, among the one its offset from the
+/// first chunk's origin names and the eight around it. `None` when none of
+/// them holds it. See [`chunk_at`].
+///
+/// Which world axis the file's columns run along is read from the second
+/// chunk's origin, and the other order is tried when the first finds nothing,
+/// so the answer does not depend on it; the containment test decides.
+fn chunk_near_guess(tile: &AdtFile, x: f32, y: f32) -> Option<usize> {
+    use vale_assets::world::adt::{CHUNKS_PER_SIDE, CHUNK_SIZE};
+    let first = tile.chunks.first()?.head().position();
+    let steps = |origin: f32, at: f32| ((origin - at) / CHUNK_SIZE).floor();
+    let (along_x, along_y) = (steps(first[0], x), steps(first[1], y));
+    if !along_x.is_finite() || !along_y.is_finite() {
+        return None;
+    }
+    let (along_x, along_y) = (along_x as i64, along_y as i64);
+    // Chunk 1 is the next one along a row: the axis its origin moved along
+    // is the column's.
+    let columns_along_x = tile.chunks.get(1).is_some_and(|next| {
+        let next = next.head().position();
+        (next[0] - first[0]).abs() > (next[1] - first[1]).abs()
+    });
+    let orders = match columns_along_x {
+        true => [(along_y, along_x), (along_x, along_y)],
+        false => [(along_x, along_y), (along_y, along_x)],
+    };
+    let side = CHUNKS_PER_SIDE as i64;
+    // Two neighbouring squares overlap by about a millimetre, because the
+    // origins step by less than `CHUNK_SIZE`. A point there is in both, and
+    // the search answers the first in file order, so the lowest index of the
+    // nine that hold it is taken. Every square that can hold the point is
+    // within one of the guess.
+    let mut found: Option<usize> = None;
+    for (row, column) in orders {
+        for dr in -1..=1 {
+            for dc in -1..=1 {
+                let (r, c) = (row + dr, column + dc);
+                if !(0..side).contains(&r) || !(0..side).contains(&c) {
+                    continue;
+                }
+                let index = (r * side + c) as usize;
+                let Some(chunk) = tile.chunks.get(index) else { continue };
+                if found.is_none_or(|had| index < had) && contains(chunk.head().position(), x, y) {
+                    found = Some(index);
+                }
+            }
+        }
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// [`chunk_at`] by asking every chunk: the first whose square holds the
+/// position, else the nearest within [`REACH`].
+pub(crate) fn chunk_by_search(tile: &AdtFile, x: f32, y: f32) -> Option<usize> {
     use vale_assets::world::adt::CHUNK_SIZE;
     // How far outside this chunk's square the position is, in the worse of the
     // two axes. Zero when it is inside.

@@ -269,11 +269,18 @@ impl WmoReady {
         let Some(s) = self.doodad_sets.get(set as usize) else {
             return &[];
         };
-        let start = (s.start as usize).min(self.doodads.len());
+        let start = self.set_start(set);
         let end = start
             .saturating_add(s.count as usize)
             .min(self.doodads.len());
         &self.doodads[start..end]
+    }
+
+    /// The `MODD` index of the first spawn [`Self::doodads_in_set`] answers.
+    fn set_start(&self, set: u16) -> usize {
+        self.doodad_sets
+            .get(set as usize)
+            .map_or(0, |s| (s.start as usize).min(self.doodads.len()))
     }
 }
 
@@ -1084,12 +1091,15 @@ pub(crate) fn spawn_wmos(
             // The furniture, folded into world space and handed to the doodad
             // pass; see the module doc. This is the earliest it can happen:
             // the set of doodads is not known until the model has arrived.
+            // Each spawn keeps its `MODD` index; see `FurnitureSpawn`.
+            let first = ready.set_start(placement.doodad_set);
             tile_doodads.indoor.extend(
                 ready
                     .doodads_in_set(placement.doodad_set)
                     .iter()
-                    .filter(|d| d.drawable())
-                    .map(|d| {
+                    .enumerate()
+                    .filter(|(_, d)| d.drawable())
+                    .map(|(at, d)| {
                         let placed = interior_placement(
                             placement,
                             &wmo::mul4(&placement.matrix, &d.matrix),
@@ -1117,6 +1127,7 @@ pub(crate) fn spawn_wmos(
                             placement: placed,
                             light,
                             sun_scale,
+                            spawn: u16::try_from(first + at).ok(),
                         }
                     }),
             );
@@ -1562,5 +1573,10 @@ mod tests {
         assert_eq!(names(1), ["a1.m2", "a2.m2"]);
         assert_eq!(names(2), ["a2.m2"], "an overhanging run is clamped");
         assert!(names(9).is_empty(), "a set that does not exist is empty");
+        // The `MODD` index of each set's first spawn, which each furniture
+        // batch is tagged with.
+        assert_eq!(ready.set_start(1), 1);
+        assert_eq!(ready.set_start(2), 2);
+        assert_eq!(ready.set_start(9), 0);
     }
 }

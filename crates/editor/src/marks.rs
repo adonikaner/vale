@@ -1436,6 +1436,37 @@ mod tests {
         assert_eq!(draws, 2);
     }
 
+    /// A frame whose only changed line is one colour's rebuilds that colour's
+    /// meshes and no other: a long path that stands still is not built again
+    /// because a line to the pointer moved.
+    #[test]
+    fn only_the_changed_colours_lines_are_built_again() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<MarkMaterial>()
+            .init_resource::<Marks>()
+            .init_resource::<Pool>()
+            .init_resource::<crate::playtest::Playtest>()
+            .add_systems(Update, show);
+        let path = Color::srgb(0.95, 0.85, 0.35);
+        let pointer = Color::srgba(0.9, 0.9, 0.9, 0.5);
+        let mut modified = Vec::new();
+        for frame in 0..6 {
+            {
+                let mut marks = app.world_mut().resource_mut::<Marks>();
+                marks.line_strip((0..500).map(|i| Vec3::new(i as f32, 0.0, 0.0)), path, Look::Ghosted);
+                marks.line(Vec3::ZERO, Vec3::new(0.0, 1.0 + frame as f32, 0.0), pointer, Look::Ghosted);
+            }
+            app.update();
+            let events = app.world_mut().resource_mut::<Messages<bevy::asset::AssetEvent<Mesh>>>().drain().collect::<Vec<_>>();
+            modified.push(events.iter().filter(|event| matches!(event, bevy::asset::AssetEvent::Modified { .. })).count());
+        }
+        // After the first frames, the pointer's two meshes (solid and ghost)
+        // are the only ones built.
+        assert!(modified[3..].iter().all(|&n| n <= 2), "{modified:?}");
+    }
+
     /// The change test ignores the order the marks arrived in and notices a
     /// moved, widened, raised or re-reached line, and a moved pose.
     #[test]

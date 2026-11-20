@@ -158,6 +158,42 @@ pub(crate) fn row_words(table: &DbcFile, record: usize, areas: Option<&DbcFile>)
         .unwrap_or_else(|| format!("Area {area}"))
 }
 
+/// One name set of a building, as the WMO tool lists it: the set's number,
+/// what its rows call the building, and how many rows it has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NameSet {
+    pub(crate) id: u16,
+    pub(crate) name: String,
+    pub(crate) rows: usize,
+}
+
+/// The name sets `table` has rows for under building `wmo_id`, in number
+/// order. A set is named by its whole-building row, else by the first of its
+/// rows that names anything, else not at all. `areas` is `AreaTable`, when it
+/// is open.
+pub(crate) fn name_sets(table: &DbcFile, wmo_id: u32, areas: Option<&DbcFile>) -> Vec<NameSet> {
+    let mut sets: Vec<NameSet> = Vec::new();
+    for record in 0..table.record_count() {
+        if table.u32_at(record, fields::WMO_ID) != Some(wmo_id) {
+            continue;
+        }
+        let Some(id) = table.u32_at(record, fields::NAME_SET).and_then(|id| u16::try_from(id).ok()) else { continue };
+        let words = row_words(table, record, areas);
+        let whole = table.u32_at(record, fields::GROUP) == Some(WHOLE_BUILDING);
+        match sets.iter_mut().find(|set| set.id == id) {
+            Some(set) => {
+                set.rows += 1;
+                if !words.is_empty() && (whole || set.name.is_empty()) {
+                    set.name = words;
+                }
+            }
+            None => sets.push(NameSet { id, name: words, rows: 1 }),
+        }
+    }
+    sets.sort_by_key(|set| set.id);
+    sets
+}
+
 /// A new row's number fields and text fields, each as `(field, value)`.
 pub(crate) type NewRow = (Vec<(usize, u32)>, Vec<(usize, String)>);
 
@@ -612,6 +648,29 @@ mod tests {
         assert_eq!(row_of(&table, 7, 0, 32), None);
         assert_eq!(row_of(&table, 7, 1, 33), None, "another name set");
         assert_eq!(row_words(&table, 1, None), "Cellar");
+    }
+
+    /// A building's name sets are listed once each, named by the
+    /// whole-building row, and another building's rows are left out.
+    #[test]
+    fn a_name_set_is_named_by_its_whole_building_row() {
+        let mut table = table();
+        for (id, wmo_id, name_set, group, name) in [(3u32, 7u32, 2u32, 40u32, "Vault"), (4, 8, 1, WHOLE_BUILDING, "Elsewhere")] {
+            let bytes = table.blank_record(id);
+            let at = table.push_record(&bytes).unwrap();
+            for (field, value) in [(fields::WMO_ID, wmo_id), (fields::NAME_SET, name_set), (fields::GROUP, group)] {
+                vale_edit::dbc::cell::Cell::new(&table, at, field, value).unwrap().apply(&mut table);
+            }
+            vale_edit::dbc::cell::set_text(&mut table, at, fields::NAME, name);
+        }
+        assert_eq!(
+            name_sets(&table, 7, None),
+            vec![
+                NameSet { id: 0, name: "The Inn".into(), rows: 2 },
+                NameSet { id: 2, name: "Vault".into(), rows: 1 },
+            ]
+        );
+        assert!(name_sets(&table, 9, None).is_empty());
     }
 
     /// A new group row starts as the whole building's row, so making it does

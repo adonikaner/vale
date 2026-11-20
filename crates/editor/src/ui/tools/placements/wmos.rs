@@ -13,7 +13,12 @@
 //!                            id and tile, with Edit Building; with nothing
 //!                            selected on a map that is one building, Edit
 //!                            for that building
-//! Position, Rotation, Sets   the primary's numbers
+//! Position, Rotation         the primary's numbers
+//! Sets                       the primary's doodad set and name set, each a
+//!                            field that opens a window to choose one: the
+//!                            building's doodad sets by name, and the name
+//!                            sets its WMOAreaTable rows use, by the name
+//!                            they give the building
 //! Bounds                     the size of the primary's box, read and not edited
 //! Duplicate                  for one WMO
 //! ```
@@ -27,6 +32,7 @@ use crate::ui::tools::placements::group::{group, locked_placements, Group};
 use crate::tools::placements::swap::Swap;
 use crate::ui::tools::placements::place::{number_row, placing, replacing};
 use crate::ui::widgets::theme::{self, property};
+use vale_client::assets::GameAssets;
 
 /// Select mode's mouse and keyboard controls, for the toolbar's Keys button.
 /// The last entry is the control a doodad has and a WMO lacks.
@@ -65,6 +71,7 @@ const EDIT_BUILDING: &str = "Opens the building editor: the building alone in th
 pub(in crate::ui::tools) fn wmo(
     ui: &mut egui::Ui,
     session: &mut EditSession,
+    assets: &GameAssets,
     selection: &mut wmos::Selection,
     held: &mut wmos::Held,
     placer: &mut Placing,
@@ -181,9 +188,7 @@ pub(in crate::ui::tools) fn wmo(
     }
     at.record.rotation = vale_assets::world::adt::placement_euler_from_world(turns);
 
-    theme::heading_about(ui, "Sets", "Indices into the WMO's doodad sets and name sets.");
-    number_row(ui, "Doodad Set", "", egui::DragValue::new(&mut at.record.doodad_set).speed(0.1));
-    number_row(ui, "Name Set", "", egui::DragValue::new(&mut at.record.name_set).speed(0.1));
+    sets(ui, session, assets, &at.path, &mut at.record.doodad_set, &mut at.record.name_set);
 
     // Read-only: the box has to agree with the geometry, so it is not typed.
     // `wmos::publish` re-fits it from the drawn geometry when the button comes
@@ -251,6 +256,183 @@ pub(in crate::ui::tools) fn wmo(
     session.history.end();
 }
 
+/// One row of a list of sets: the set's number, its name and what it holds.
+struct SetRow {
+    id: u16,
+    title: String,
+    sub: String,
+}
+
+/// The placement's doodad set and name set, each a field that shows the
+/// set's name and number and opens a window to choose another.
+///
+/// The doodad sets are the building root file's `MODS` sets. A name set has
+/// no list in the file: it is the second key of the building's
+/// `WMOAreaTable` rows, so the name sets listed are the ones the table has
+/// rows for, named by what those rows call the building. Set 0 and the
+/// placement's own set are listed even when no row names them. When the
+/// building's file cannot be read, both are number fields.
+fn sets(
+    ui: &mut egui::Ui,
+    session: &mut EditSession,
+    assets: &GameAssets,
+    path: &str,
+    doodad_set: &mut u16,
+    name_set: &mut u16,
+) {
+    let root = session
+        .open_building(assets, path)
+        .ok()
+        .and_then(|()| session.building(path))
+        .map(|open| (open.building.root.doodad_sets(), open.building.root.wmo_id()));
+    let Some((doodad_sets, wmo_id)) = root else {
+        theme::heading_about(ui, "Sets", "The building's file could not be read, so its sets are shown as numbers.");
+        number_row(ui, "Doodad Set", "", egui::DragValue::new(doodad_set).speed(0.1));
+        number_row(ui, "Name Set", "", egui::DragValue::new(name_set).speed(0.1));
+        return;
+    };
+
+    theme::heading_about(ui, "Sets", "Which of the building's doodads this placement draws, and which rows name its places.");
+    let mut rows: Vec<SetRow> = doodad_sets
+        .iter()
+        .enumerate()
+        .filter_map(|(id, set)| {
+            let id = u16::try_from(id).ok()?;
+            let title = match set.name.is_empty() {
+                true => format!("Set {id}"),
+                false => set.name.clone(),
+            };
+            let sub = match set.count {
+                1 => "1 doodad".to_string(),
+                n => format!("{n} doodads"),
+            };
+            Some(SetRow { id, title, sub })
+        })
+        .collect();
+    if !rows.iter().any(|row| row.id == *doodad_set) {
+        rows.push(SetRow { id: *doodad_set, title: format!("Set {doodad_set}"), sub: "Not in the building's file".to_string() });
+    }
+    set_field(
+        ui,
+        "Doodad Set",
+        "The set of the building's doodads that this placement draws. Click to choose another.",
+        "Choose a doodad set",
+        "wmo-doodad-set",
+        &rows,
+        doodad_set,
+    );
+
+    let has_table = session.open_table(assets, crate::tools::placements::wmoareas::TABLE);
+    session.open_table(assets, "AreaTable");
+    let named = match (has_table, wmo_id, session.table(crate::tools::placements::wmoareas::TABLE)) {
+        (true, Some(wmo_id), Some(table)) => {
+            crate::tools::placements::wmoareas::name_sets(table, wmo_id, session.table("AreaTable"))
+        }
+        _ => Vec::new(),
+    };
+    let mut rows: Vec<SetRow> = named
+        .into_iter()
+        .map(|set| SetRow {
+            id: set.id,
+            title: match set.name.is_empty() {
+                true => format!("Name set {}", set.id),
+                false => set.name,
+            },
+            sub: match set.rows {
+                1 => "1 area row".to_string(),
+                n => format!("{n} area rows"),
+            },
+        })
+        .collect();
+    for id in [0, *name_set] {
+        if !rows.iter().any(|row| row.id == id) {
+            rows.push(SetRow { id, title: format!("Name set {id}"), sub: "No area rows".to_string() });
+        }
+    }
+    rows.sort_by_key(|row| row.id);
+    set_field(
+        ui,
+        "Name Set",
+        "Which WMOAreaTable rows name the places in this placement. Each set is shown by the name its rows give \
+         the building. Click to choose another.",
+        "Choose a name set",
+        "wmo-name-set",
+        &rows,
+        name_set,
+    );
+}
+
+/// A property row whose field shows the chosen set's name, with its number
+/// at the right. A click on the field opens a window that lists every set,
+/// searched by name or number; a click on a set chooses it and closes the
+/// window. `key` keeps the window's place and its search.
+fn set_field(ui: &mut egui::Ui, name: &str, about: &str, title: &str, key: &str, rows: &[SetRow], chosen: &mut u16) {
+    let open_id = egui::Id::new((key, "open"));
+    let search_id = egui::Id::new((key, "search"));
+    let shown = rows.iter().find(|row| row.id == *chosen).map_or_else(|| format!("Set {chosen}"), |row| row.title.clone());
+    let field = property(ui, name, about, |ui| {
+        let size = egui::vec2(theme::field_width(ui), ui.spacing().interact_size.y);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+        let stroke = match response.hovered() {
+            true => egui::Stroke::new(1.0, theme::ACCENT),
+            false => egui::Stroke::new(1.0, theme::LINE),
+        };
+        ui.painter().rect(rect, egui::CornerRadius::same(3), theme::SUNK, stroke, egui::StrokeKind::Inside);
+        let inner = rect.shrink2(egui::vec2(6.0, 0.0));
+        let number = ui.painter().layout_no_wrap(chosen.to_string(), egui::FontId::monospace(theme::SMALL), theme::INK_FAINT);
+        let number_at = egui::pos2(inner.right() - number.size().x, inner.center().y - number.size().y / 2.0);
+        let room = (inner.width() - number.size().x - 8.0).max(0.0);
+        let mut job = egui::text::LayoutJob::simple_singleline(shown, egui::FontId::proportional(theme::BODY), theme::INK);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+        let text = ui.painter().layout_job(job);
+        ui.painter().galley(egui::pos2(inner.left(), inner.center().y - text.size().y / 2.0), text, theme::INK);
+        ui.painter().galley(number_at, number, theme::INK_FAINT);
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    });
+    let mut open = ui.data(|data| data.get_temp::<bool>(open_id)).unwrap_or(false);
+    if field.clicked() {
+        open = true;
+    }
+    if !open {
+        return;
+    }
+    let mut search = ui.data(|data| data.get_temp::<String>(search_id)).unwrap_or_default();
+    let mut keep_open = true;
+    let mut picked = None;
+    theme::window(title, key)
+        .open(&mut keep_open)
+        .default_size([320.0, 360.0])
+        .default_pos(field.rect.left_bottom())
+        .show(ui.ctx(), |ui| {
+            ui.add(egui::TextEdit::singleline(&mut search).hint_text("Name or number").desired_width(f32::INFINITY));
+            let query = search.trim().to_lowercase();
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                for row in rows {
+                    let trailing = row.id.to_string();
+                    if !query.is_empty() && !row.title.to_lowercase().contains(&query) && !trailing.contains(&query) {
+                        continue;
+                    }
+                    let shape = theme::list_row(
+                        ui,
+                        theme::ListRow { title: &row.title, sub: &row.sub, trailing: &trailing, tint: theme::INK, picture: false },
+                        row.id == *chosen,
+                    );
+                    if shape.response.clicked() {
+                        picked = Some(row.id);
+                    }
+                }
+            });
+        });
+    if let Some(id) = picked {
+        *chosen = id;
+    }
+    let open = keep_open && picked.is_none();
+    ui.data_mut(|data| {
+        data.insert_temp(open_id, open);
+        data.insert_temp(search_id, search);
+    });
+}
+
 /// The WMO tool's inspector panel.
 pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>, editing: &mut crate::ui::Editing<'_>) {
     let crate::ui::tools::Subject { tool, session, assets, now, .. } = subject;
@@ -288,6 +470,7 @@ pub(crate) fn inspect(ui: &mut egui::Ui, subject: crate::ui::tools::Subject<'_>,
     wmo(
         ui,
         session,
+        assets,
         &mut editing.wmos,
         &mut editing.wmo_held,
         &mut editing.placing,
