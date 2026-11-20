@@ -172,7 +172,7 @@ fn bake_tile(
     let water_of = |kind: wmo::Liquid| -> Option<vale_assets::tables::light::LiquidLight> {
         tables
             .as_ref()?
-            .liquid_depth_light(map_id?, centre, kind, vale_assets::tables::light::NOON)
+            .liquid_light(map_id?, centre, kind, vale_assets::tables::light::NOON)
     };
     match (tables.is_some(), map_id) {
         (true, Some(id)) => {
@@ -185,12 +185,12 @@ fn bake_tile(
                             wmo::Liquid::Water => "water",
                             _ => "ocean",
                         },
-                        byte(light.close[0]),
-                        byte(light.close[1]),
-                        byte(light.close[2]),
-                        byte(light.far[0]),
-                        byte(light.far[1]),
-                        byte(light.far[2]),
+                        byte(light.shallow[0]),
+                        byte(light.shallow[1]),
+                        byte(light.shallow[2]),
+                        byte(light.deep[0]),
+                        byte(light.deep[1]),
+                        byte(light.deep[2]),
                         light.shallow_alpha,
                         light.deep_alpha,
                     );

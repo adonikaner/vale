@@ -183,21 +183,22 @@ pub struct M2Params {
     /// toward the sun (a WMO transition batch). See the note in `m2.wgsl` for
     /// why a room lit by the sun is lit through its own roof.
     pub(crate) vertex_lit: f32,
-    /// This batch is an `MLIQ` surface, so its colour and its alpha come from
-    /// the two fields below rather than from the texel. 1.0 or 0.0. It occupies
-    /// the slot the struct needs as padding for its 16-byte alignment.
+    /// This batch is a water or ocean surface, so its colour and its alpha come
+    /// from the two fields below rather than from the texel. 1.0 or 0.0. It
+    /// occupies the slot the struct needs as padding for its 16-byte alignment.
     pub liquid: f32,
-    /// The liquid's near colour with its shallow opacity in `w`, and its far
-    /// colour with the deep opacity in `w`, taken from
-    /// [`vale_assets::tables::light::LiquidLight`].
+    /// The two ends of the liquid's depth ramp: the shallow colour with the
+    /// shallow opacity in `w`, and the deep colour with the deep opacity in
+    /// `w`, taken from [`vale_assets::tables::light::LiquidLight`]. The
+    /// fragment mixes between them by the vertex alpha.
     ///
     /// Both are here because the texture has neither. `lake_a` peaks at
     /// channel 41 of 255 across the whole image and `ocean_h` at 82, greyscale;
-    /// they are foam masks. The colour of water is a property of the zone and
-    /// the hour, not of the liquid texture. Zero on every other batch, where
-    /// `liquid` is 0 and nothing reads them.
-    pub(crate) liquid_close: Vec4,
-    pub(crate) liquid_far: Vec4,
+    /// its alpha is the ripple pattern. The colour of water is a property of
+    /// the zone and the hour, not of the liquid texture. Zero on every other
+    /// batch, where `liquid` is 0 and nothing reads them.
+    pub(crate) liquid_shallow: Vec4,
+    pub(crate) liquid_deep: Vec4,
     /// The batch's texture matrix, as the 2x3 affine `M2TextureTransform`
     /// resolves to: `x`, `y`, `z` of the first are `a`, `b`, `tx` and of the
     /// second are `c`, `d`, `ty`, so `u' = a*u + b*v + tx`.
@@ -260,7 +261,10 @@ pub struct M2Params {
     /// been a ghost or stealthed drew its limbs through and behind each other.
     /// See [`Materials::with_opacity`] and [`M2Params::stashed_blend`].
     ///
-    /// `.zw` unused. `crate::world::entities::tint` is the only writer; it
+    /// `.z` is used only on a water or ocean surface, where it is the sun's
+    /// specular colour packed as `0xRRGGBB` in a float, zero for none;
+    /// `crate::render::water::dress` writes it. `.w` unused.
+    /// `crate::world::entities::tint` is the only writer of `.x` and `.y`; it
     /// states that the opacity rule is this client's own and that only the
     /// flag is measured.
     pub body: Vec4,
@@ -606,7 +610,7 @@ pub(super) struct MaterialKey {
     /// swaying one.
     wind: bool,
     /// `ambient` (4), `alpha_cutoff`, `unlit`, `vertex_lit`, `liquid`,
-    /// `liquid_close` (4), `liquid_far` (4), `uv_row0` (4), `uv_row1` (4),
+    /// `liquid_shallow` (4), `liquid_deep` (4), `uv_row0` (4), `uv_row1` (4),
     /// `particle` (4), `body` (4), `overlay` (4), `scene_ambient` (4) and
     /// `scene_lamps` (8 x 4).
     params: [u32; 72],
@@ -638,8 +642,8 @@ impl MaterialKey {
             unlit,
             vertex_lit,
             liquid,
-            liquid_close,
-            liquid_far,
+            liquid_shallow,
+            liquid_deep,
             uv_row0,
             uv_row1,
             particle,
@@ -664,14 +668,14 @@ impl MaterialKey {
                 unlit.to_bits(),
                 vertex_lit.to_bits(),
                 liquid.to_bits(),
-                liquid_close.x.to_bits(),
-                liquid_close.y.to_bits(),
-                liquid_close.z.to_bits(),
-                liquid_close.w.to_bits(),
-                liquid_far.x.to_bits(),
-                liquid_far.y.to_bits(),
-                liquid_far.z.to_bits(),
-                liquid_far.w.to_bits(),
+                liquid_shallow.x.to_bits(),
+                liquid_shallow.y.to_bits(),
+                liquid_shallow.z.to_bits(),
+                liquid_shallow.w.to_bits(),
+                liquid_deep.x.to_bits(),
+                liquid_deep.y.to_bits(),
+                liquid_deep.z.to_bits(),
+                liquid_deep.w.to_bits(),
                 uv_row0.x.to_bits(),
                 uv_row0.y.to_bits(),
                 uv_row0.z.to_bits(),

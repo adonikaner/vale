@@ -91,10 +91,13 @@ fn band_rows(count: u32) -> Vec<Vec<u32>> {
                 // The sky art: map 0's own disc and halo at noon.
                 (12, band::SUN_DISC) => 0x4D4D4D,
                 (12, band::SUN_HALO) => 0xFFF7DE,
-                (12, band::OCEAN_CLOSE) => 0x6182B7,
-                (12, band::OCEAN_FAR) => 0x114B59,
-                (12, band::RIVER_CLOSE) => 0x001D29,
-                (12, band::RIVER_FAR) => 0x4F5D14,
+                // Band 13 is not a water colour; a liquid that read it would
+                // come out this conspicuous blue.
+                (12, 13) => 0x6182B7,
+                (12, band::OCEAN_SHALLOW) => 0x114B59,
+                (12, band::OCEAN_DEEP) => 0x001D29,
+                (12, band::RIVER_SHALLOW) => 0x4F5D14,
+                (12, band::RIVER_DEEP) => 0x335255,
                 // Map 0's cloud colours at noon.
                 (12, band::CLOUD_HIGHLIGHT) => 0xFFC78A,
                 (12, band::CLOUD_SHADE) => 0x2B6984,
@@ -104,9 +107,9 @@ fn band_rows(count: u32) -> Vec<Vec<u32>> {
                 // rather than a shade of the same one. These values are not
                 // measured; they are only the two ends of a mix.
                 (14, band::DIFFUSE) => 0xFF0000,
-                (14, band::RIVER_CLOSE) => 0xFF0000,
+                (14, band::RIVER_SHALLOW) => 0xFF0000,
                 (16, band::DIFFUSE) => 0x00FF00,
-                (16, band::RIVER_CLOSE) => 0x00FF00,
+                (16, band::RIVER_SHALLOW) => 0x00FF00,
                 _ => 0,
             };
             // A row states a band or it does not, and the two positional
@@ -165,33 +168,38 @@ fn tables() -> LightTables {
     .expect("the light chain")
 }
 
-/// The colour is red-first, and the alphas come off `LightParams`.
+/// The bytes of a `0x00RRGGBB` band as the 0..1 colour the tables answer.
+fn rgb(packed: u32) -> [f32; 3] {
+    [
+        ((packed >> 16) & 0xFF) as f32 / 255.0,
+        ((packed >> 8) & 0xFF) as f32 / 255.0,
+        (packed & 0xFF) as f32 / 255.0,
+    ]
+}
+
+/// A river reads bands 16 and 17, red-first, and its alphas come off
+/// `LightParams`.
 #[test]
-fn a_river_takes_its_colour_from_band_15_and_its_alpha_from_the_params() {
+fn a_river_takes_its_colours_from_bands_16_and_17_and_its_alpha_from_the_params() {
     let light = tables().liquid(0, Liquid::Water, NOON).expect("a river is tinted");
-    let expect = |v: u32| (v & 0xFF) as f32 / 255.0;
-    // 0x001D29 is red in the high byte; the sun and sky bands confirm the
-    // same packing.
-    assert!((light.close[0] - expect(0x00)).abs() < 1e-4, "red first");
-    assert!((light.close[1] - expect(0x1D)).abs() < 1e-4);
-    assert!((light.close[2] - expect(0x29)).abs() < 1e-4);
+    // Band 16 holds 79/93/20 with red in the high byte; the sun and sky
+    // bands confirm the same packing.
+    assert_eq!(light.shallow, rgb(0x4F5D14), "band 16");
+    assert_eq!(light.deep, rgb(0x335255), "band 17");
     assert_eq!(light.shallow_alpha, 0.5, "waterShallowAlpha");
     assert_eq!(light.deep_alpha, 1.0, "waterDeepAlpha");
 }
 
-/// An ocean reads bands 13/14 and the ocean alphas. Swapped with the river's
-/// pair they would still look plausible, so the test checks them directly.
+/// An ocean reads bands 14 and 15 and the ocean alphas. Swapped with the
+/// river's pair they would still look plausible, so the test checks them
+/// directly.
 #[test]
 fn an_ocean_reads_its_own_bands_and_alphas() {
     let ocean = tables().liquid(0, Liquid::Ocean, NOON).expect("an ocean is tinted");
+    assert_eq!(ocean.shallow, rgb(0x114B59), "band 14");
+    assert_eq!(ocean.deep, rgb(0x001D29), "band 15");
     assert_eq!(ocean.shallow_alpha, 0.75, "oceanShallowAlpha");
     assert_eq!(ocean.deep_alpha, 1.0);
-    // 0x6182B7 against the river's 0x001D29: brighter in every channel, which
-    // separates the two pairs without depending on an exact float.
-    let river = tables().liquid(0, Liquid::Water, NOON).expect("a river");
-    for c in 0..3 {
-        assert!(ocean.close[c] > river.close[c], "the ocean is the brighter");
-    }
 }
 
 /// The four alphas have one invariant, and it checks that fields 5..8 are not
@@ -249,7 +257,7 @@ fn inside_the_inner_radius_a_positional_light_replaces_the_maps_own() {
     let at = [ROW_2_CENTRE[0] + 300.0, ROW_2_CENTRE[1], ROW_2_CENTRE[2]];
     assert_eq!(tables.atmosphere_at(0, at, NOON).diffuse, [1.0, 0.0, 0.0]);
     assert_eq!(
-        tables.liquid_at(0, at, Liquid::Water, NOON).expect("tinted").close,
+        tables.liquid_at(0, at, Liquid::Water, NOON).expect("tinted").shallow,
         [1.0, 0.0, 0.0],
     );
 }
@@ -461,8 +469,8 @@ fn the_storm_light_is_a_blend_that_starts_at_the_clear_one() {
 /// [`LightTables::band_colour`]'s conspicuous white put white water in
 /// Duskwood when positional rows were first laid over a default.
 ///
-/// The fixture's params 14 states a diffuse and a river-close and nothing
-/// else, which is the archive's own shape — its real row 14 leaves bands 14
+/// The fixture's params 14 states a diffuse and a river-shallow and nothing
+/// else, which is the archive's own shape: its real row 14 leaves bands 14
 /// and 15 empty.
 #[test]
 fn a_band_the_sphere_does_not_state_keeps_the_light_underneath() {
@@ -477,8 +485,8 @@ fn a_band_the_sphere_does_not_state_keeps_the_light_underneath() {
         .liquid_at(0, ROW_2_CENTRE, Liquid::Ocean, NOON)
         .expect("tinted");
     assert_eq!(
-        ocean.close,
-        tables.liquid(0, Liquid::Ocean, NOON).expect("tinted").close,
+        ocean.shallow,
+        tables.liquid(0, Liquid::Ocean, NOON).expect("tinted").shallow,
         "no sphere here states an ocean, so map 0's stands",
     );
 }
@@ -503,23 +511,23 @@ fn a_map_with_no_default_light_draws_white_rather_than_black() {
     );
 }
 
-/// The depth byte is the mix between the two ends. Earlier code used it as the
-/// opacity itself; this module replaced that.
+/// The ramp position mixes the colour and the opacity by the same amount,
+/// because the client reads both from one row of one ramp texture.
 #[test]
-fn the_depth_byte_interpolates_the_two_ends() {
+fn the_ramp_moves_colour_and_opacity_together() {
     let light = LiquidLight {
-        close: [0.1, 0.2, 0.3],
-        far: [0.9, 0.9, 0.9],
+        shallow: [0.1, 0.2, 0.3],
+        deep: [0.9, 0.9, 0.9],
         shallow_alpha: 0.5,
         deep_alpha: 1.0,
     };
-    assert_eq!(light.at_depth(0), [0.1, 0.2, 0.3, 0.5]);
-    assert_eq!(light.at_depth(255), [0.1, 0.2, 0.3, 1.0]);
-    let half = light.at_depth(128);
-    assert!((half[3] - 0.751).abs() < 0.01, "halfway between the alphas");
-    // The colour does not change with depth; the earlier model that changed
-    // it was wrong.
-    assert_eq!([half[0], half[1], half[2]], light.close);
+    assert_eq!(light.at(0.0), [0.1, 0.2, 0.3, 0.5]);
+    assert_eq!(light.at(1.0), [0.9, 0.9, 0.9, 1.0]);
+    let half = light.at(0.5);
+    assert!((half[0] - 0.5).abs() < 1e-6, "halfway between the colours");
+    assert!((half[3] - 0.75).abs() < 1e-6, "halfway between the alphas");
+    // Outside 0..1 the ends hold.
+    assert_eq!(light.at(2.0), light.at(1.0));
 }
 
 /// A band is a cycle: a time after the last entry interpolates back to the
@@ -528,7 +536,7 @@ fn the_depth_byte_interpolates_the_two_ends() {
 #[test]
 fn a_band_wraps_across_midnight() {
     let rows = vec![
-        // One params row, 18 bands, band 15 having two entries far apart.
+        // One params row, 18 bands, band 16 having two entries far apart.
         vec![1u32, 0, 3, 0, 0, f32::to_bits(1.0), f32::to_bits(1.0), 0, 0],
     ];
     let mut bands = Vec::new();
@@ -536,7 +544,7 @@ fn a_band_wraps_across_midnight() {
         let mut row = vec![band + 1, 2];
         row.extend([600, 1800]);
         row.extend(std::iter::repeat(0).take(14));
-        let (a, b) = if band == band::RIVER_CLOSE {
+        let (a, b) = if band == band::RIVER_SHALLOW {
             (0x000000, 0xFFFFFF)
         } else {
             (0, 0)
@@ -554,11 +562,11 @@ fn a_band_wraps_across_midnight() {
     .expect("tables");
 
     // Midway between 600 and 1800 is half of white.
-    let noon = tables.liquid(0, Liquid::Water, 1200).expect("tinted").close;
+    let noon = tables.liquid(0, Liquid::Water, 1200).expect("tinted").shallow;
     assert!((noon[0] - 0.5).abs() < 0.01, "{noon:?}");
     // Midnight sits inside the wrap from 1800 back to 600, which is 1680
     // long; 2880 - 1800 + 0 = 1080 of it has elapsed.
-    let midnight = tables.liquid(0, Liquid::Water, 0).expect("tinted").close;
+    let midnight = tables.liquid(0, Liquid::Water, 0).expect("tinted").shallow;
     let expected = 1.0 + (0.0 - 1.0) * (1080.0 / 1680.0);
     assert!((midnight[0] - expected).abs() < 0.01, "{midnight:?}");
 }

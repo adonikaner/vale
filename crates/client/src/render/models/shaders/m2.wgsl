@@ -56,7 +56,10 @@
 // body reads `params` and `texel` and is the same in both layouts.
 
 #import bevy_pbr::forward_io::VertexOutput
-#import vale::atmosphere::{daylight_scaled_lamplit, fogged, fogged_to_black, sun_lambert}
+#import vale::atmosphere::{
+    daylight_scaled_lamplit, daylight_srgb_lamplit, fogged, fogged_to_black, sun_lambert,
+    sun_sheen_power,
+}
 // The lamp term, which is this client's addition rather than the game's, from
 // the module that owns it rather than through `atmosphere`; see
 // `render/shaders/night.wgsl`.
@@ -95,6 +98,9 @@ fn detail_fade(depth: f32) -> f32 {
 }
 #endif
 
+// The specular power of a water surface's material, against the ground's 20.
+const WATER_SHEEN_POWER: f32 = 6.0;
+
 struct M2Params {
     // The building's `MOHD` ambient, added back to the vertex colours the parser
     // subtracted it from. Zero for an M2.
@@ -119,16 +125,16 @@ struct M2Params {
     // see `vale_assets::wmo::BatchLight`, and the room sum below for why the
     // alpha channel means two different things under two of them.
     vertex_lit: f32,
-    // This batch is an `MLIQ` surface: take both its colour and its alpha from
+    // This batch is a liquid surface: take both its colour and its alpha from
     // the two below rather than from the texel. 1.0 or 0.0, and nothing but
     // water, lava and slime sets it.
     liquid: f32,
-    // The liquid's near colour, with the shallow opacity in `w`; and its far
-    // colour, with the deep opacity in `w`. Both from `Light.dbc`; see
-    // `vale_assets::light`, and see the fragment below for why the texture
-    // cannot supply either.
-    liquid_close: vec4<f32>,
-    liquid_far: vec4<f32>,
+    // The two ends of the liquid's depth ramp: the shallow colour with the
+    // shallow opacity in `w`, and the deep colour with the deep opacity in
+    // `w`, as the file's bytes. Both from `Light.dbc`; see
+    // `vale_assets::tables::light::LiquidLight`, and the fragment below.
+    liquid_shallow: vec4<f32>,
+    liquid_deep: vec4<f32>,
     // The batch's texture matrix, rows `(a, b, tx, source)` and
     // `(c, d, ty, _)`: `u' = a*u + b*v + tx`. `source` says where the matrix is:
     // 0, no matrix, which is all but two dozen batches in the game; 1, the
@@ -178,8 +184,10 @@ struct M2Params {
     // cut-out. `.y`: what the blend mode was before it was forced to 2 to be
     // blendable at all, plus one, so that zero can mean "nothing was
     // forced"; mode 0 is `Opaque`, which is most of a body. Not read by this
-    // shader; it is CPU-side bookkeeping stored in the material.
-    // `.zw` unused. See `models::material::M2Params::body`.
+    // shader; it is CPU-side bookkeeping stored in the material. `.z`: on a
+    // water or ocean surface, the sun's specular colour as `0xRRGGBB` held in
+    // a float, zero for none; see the liquid fragment below. `.w` unused. See
+    // `models::material::M2Params::body`.
     body: vec4<f32>,
     // The two folded environment-map layers' blend modes, `.x` then `.y`,
     // in the file's own numbering (2 alpha, 3 additive, 4 add-alpha, 5
@@ -639,29 +647,61 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         params.unlit,
     );
 
-    // A liquid surface takes neither its colour nor its alpha from its
-    // texture, because its texture has neither. `lake_a` decodes to a peak
-    // channel of 41 of 255 over the whole image, greyscale, and `ocean_h` to 82:
-    // they are foam masks, and a canal drawn as `texel.rgb` is a black sheet.
-    // The colour is the light table's, already lit, so it is not multiplied by
-    // the sun, and the texture's own faint luminance is added on top, which
-    // gives the glints. The alpha runs from the shallow value at the bank to
-    // the deep one in the middle, `vertex_alpha` being `MLIQ`'s own per-vertex
-    // depth byte. `liquid_far` is carried for the distance blend the 1.12.1
-    // client does and this one does not yet; only its `w` is read here.
+    // A water or ocean surface is the 1.12.1 client's water pixel program,
+    // `Shaders\Pixel\ocean0_s.bls`, in full:
     //
-    // Added in the file's own space and decoded once, like every other sum
-    // the atmosphere takes. The band is sRGB bytes from `Light.dbc` and the
-    // texel is already linear, so adding them as they stand mixes two spaces
-    // and then treats the result as linear: for a river's `0/29/41` that draws
-    // the band at 0.37 of full where the file says 0.11, and the canals looked
-    // pale rather than like water.
-    let water = srgb_to_linear(clamp(
-        params.liquid_close.rgb + linear_to_srgb(texel.rgb),
-        vec3<f32>(0.0),
-        vec3<f32>(1.0),
-    ));
-    let water_alpha = mix(params.liquid_close.a, params.liquid_far.a, vertex_alpha);
+    //     PARAM c[1] = { { 0.25 } };
+    //     TEX R0, fragment.texcoord[0], texture[0], 2D;    // the depth ramp
+    //     TEX R1, fragment.texcoord[1], texture[1], 2D;    // the flipbook frame
+    //     MAD R1.xyz, fragment.color.primary, R0, R1;
+    //     ADD R0.xyz, fragment.color.secondary, c[0].x;
+    //     MAD result.color.xyz, R0, R1.w, R1;
+    //     MOV result.color.w, R0;
+    //
+    // That is `primary * ramp.rgb + frame.rgb + (secondary + 0.25) * frame.a`,
+    // with the ramp's alpha as the opacity. The ramp is a 64-row texture the
+    // client builds from the liquid's two `Light.dbc` ends, and the vertex's
+    // depth picks the row; here the vertex alpha carries that row as a
+    // fraction (`Liquid::depth_ramp`) and the two ends arrive in the material,
+    // so the row is one `mix`. Colour and opacity move together: a lake is
+    // half transparent at the bank and opaque in the deep colour from about
+    // five yards down.
+    //
+    // `primary` is the fixed-function vertex light, the sun on the up-facing
+    // surface plus the fill, the same sum the ground takes. `secondary` is the
+    // fixed-function specular term at the water material's power of 6, in the
+    // colour the ground's sheen takes, carried in `body.z`. The frame's colour
+    // is near black (`lake_a` peaks at 41 of 255) and its alpha is the ripple
+    // pattern, so the `0.25 * frame.a` term draws the ripples and the specular
+    // term brightens them toward the sun.
+    //
+    // All of it is summed in the file's own space and decoded once, like every
+    // other sum the atmosphere takes. Magma and slime have `liquid` 0 and do
+    // not take this branch: their frames carry their colour.
+    var water = vec3<f32>(0.0);
+    var water_alpha = 0.0;
+    if params.liquid > 0.5 {
+        let ramp = mix(params.liquid_shallow, params.liquid_deep, clamp(vertex_alpha, 0.0, 1.0));
+        let primary = daylight_srgb_lamplit(in.world_normal, 1.0, lamps);
+        let sheen_bytes = u32(params.body.z);
+        let sheen_colour = vec3<f32>(
+            f32((sheen_bytes >> 16u) & 0xFFu),
+            f32((sheen_bytes >> 8u) & 0xFFu),
+            f32(sheen_bytes & 0xFFu),
+        ) / 255.0;
+        let secondary = sun_sheen_power(
+            in.world_normal,
+            in.world_position.xyz,
+            sheen_colour,
+            WATER_SHEEN_POWER,
+        );
+        water = srgb_to_linear(clamp(
+            primary * ramp.rgb + linear_to_srgb(texel.rgb) + (secondary + vec3<f32>(0.25)) * texel.a,
+            vec3<f32>(0.0),
+            vec3<f32>(1.0),
+        ));
+        water_alpha = ramp.a;
+    }
 
     // The folded environment-map layers, evaluated here instead of as separate
     // draw calls.

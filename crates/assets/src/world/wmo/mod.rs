@@ -637,7 +637,29 @@ impl Liquid {
             Liquid::Water | Liquid::Ocean | Liquid::Magma | Liquid::Slime => 1.25,
         }
     }
+
+    /// Where a vertex with depth byte `depth` sits on the liquid's ramp from
+    /// its shallow colour and opacity to its deep ones, 0..1.
+    ///
+    /// Rivers and lakes reach the deep end at byte 42: the 1.12.1 client
+    /// scales the byte by 1/9 and then by 1/4.6667 and clamps at 1. Their bytes
+    /// rise about 8.5 per yard of depth, so water deeper than about five yards
+    /// is drawn at the deep colour and the deep opacity, which is 1.0 in every
+    /// default light. The ocean is spread over the whole byte, which is the
+    /// reading of the shipped minimaps (see `tables::light::band`). Magma and
+    /// slime have no ramp and answer 1.
+    pub fn depth_ramp(self, depth: u8) -> f32 {
+        match self {
+            Liquid::Water => (f32::from(depth) / RIVER_DEEP_BYTE).min(1.0),
+            Liquid::Ocean => f32::from(depth) / 255.0,
+            Liquid::Magma | Liquid::Slime => 1.0,
+        }
+    }
 }
+
+/// The river and lake depth byte at which [`Liquid::depth_ramp`] reaches the
+/// deep end: `9 * 4.6667`.
+const RIVER_DEEP_BYTE: f32 = 42.0;
 
 /// How many frames every liquid flipbook has: 30.
 ///
@@ -722,31 +744,30 @@ impl WmoLiquid {
             .is_some_and(|f| f & 0x0F != 15)
     }
 
-    /// The surface's opacity at one grid vertex, 0..255.
+    /// The vertex's place on the liquid's shallow-to-deep ramp
+    /// ([`Liquid::depth_ramp`]) as a byte, 0..255. The surface mesh carries it
+    /// as the vertex alpha, and the fragment mixes both the colour and the
+    /// opacity by it.
     ///
-    /// Only water and ocean have one. The 8-byte liquid vertex is a union selected
-    /// by the liquid type, and byte 0 is a depth for water but the low half of an
-    /// `s` texture coordinate for magma and slime. The data shows the union: over
-    /// Stormwind, which is entirely water, byte 0 is 0 at every one of the 1,014
-    /// dry vertices, 86 across 3,183 of the pool interior, and a scatter of 1..76
-    /// around the banks. Over Ironforge, which is mostly magma, the same byte is
-    /// spread evenly across all 256 values with no plateau: a coordinate, not a
-    /// depth. Reading it as depth there would give a lava pool an opacity that
-    /// moves with its texture.
+    /// Only water and ocean have a depth. The 8-byte liquid vertex is a union
+    /// selected by the liquid type, and byte 0 is a depth for water but the low
+    /// half of an `s` texture coordinate for magma and slime. The data shows the
+    /// union: over Stormwind, which is entirely water, byte 0 is 0 at every one
+    /// of the 1,014 dry vertices, 86 across 3,183 of the pool interior, and a
+    /// scatter of 1..76 around the banks. Over Ironforge, which is mostly magma,
+    /// the same byte is spread evenly across all 256 values with no plateau: a
+    /// coordinate, not a depth. Reading it as depth there would give a lava pool
+    /// an opacity that moves with its texture, so magma and slime answer 255.
     ///
-    /// Lava and slime are therefore opaque, which matches their textures
-    /// (`alphaDepth=0`), and water fades out as it gets shallower.
-    ///
-    /// The byte is used directly as an 8-bit alpha. The data supports that reading
-    /// and it needs no invented constant: the byte is zero where there is no water,
-    /// so a pool's edge fades to nothing, and it rises to a plateau over the
-    /// middle. The file does not settle how opaque the plateau should be; if the
-    /// canal reads too faint, the fix is a single multiply here.
-    pub fn opacity(&self, index: usize, kind: Liquid) -> u8 {
-        match kind {
+    /// The byte is zero where there is no water, so a pool's edge takes the
+    /// shallow colour and opacity, and Stormwind's plateau of 86 is past the
+    /// deep end of the river ramp.
+    pub fn ramp(&self, index: usize, kind: Liquid) -> u8 {
+        let depth = match kind {
             Liquid::Water | Liquid::Ocean => self.depths.get(index).copied().unwrap_or(u8::MAX),
             Liquid::Magma | Liquid::Slime => u8::MAX,
-        }
+        };
+        (kind.depth_ramp(depth) * 255.0).round() as u8
     }
 
     /// Whether any of the up to four tiles meeting at this vertex carries liquid.
@@ -1697,9 +1718,9 @@ impl WmoModel {
     /// not: Stormwind's canals are 2,885 wet tiles of 3,905, and emitting the dry
     /// ones would cover every room the grid overlaps with water.
     ///
-    /// Static for now: the client cycles thirty frames, and this draws frame 1.
-    /// A flipbook is a material swap per frame across every liquid draw in the
-    /// world, which is a batching question rather than a parsing one.
+    /// The texture named here is frame 1 of the flipbook. The renderer swaps
+    /// the frame on every liquid material as the clock runs; see
+    /// `render::water` in `vale-client`.
     fn add_liquid(&mut self, group: &WmoGroup, root: &WmoRoot, group_index: u32) {
         let Some(kind) = group.liquid_kind(root) else {
             return;
@@ -1737,11 +1758,11 @@ impl WmoModel {
                     self.uvs.push(uv);
                     // Black, so the additive light term the vertex colours
                     // otherwise carry is the identity: this surface is not lit
-                    // by `MOCV`. The alpha holds the surface's opacity, from
-                    // `MLIQ`'s per-vertex depth, and is the reason a liquid
-                    // draw carries vertex colours at all.
+                    // by `MOCV`. The alpha holds the vertex's place on the
+                    // depth ramp, from `MLIQ`'s per-vertex depth, and is the
+                    // reason a liquid draw carries vertex colours at all.
                     let index = corner.1 * (liquid.x_tiles + 1) + corner.0;
-                    self.colours.push([0, 0, 0, liquid.opacity(index, kind)]);
+                    self.colours.push([0, 0, 0, liquid.ramp(index, kind)]);
                 }
                 self.indices
                     .extend([base, base + 1, base + 2, base, base + 2, base + 3]);

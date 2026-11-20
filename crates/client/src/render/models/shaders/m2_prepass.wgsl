@@ -47,8 +47,8 @@ struct M2Params {
     unlit: f32,
     vertex_lit: f32,
     liquid: f32,
-    liquid_close: vec4<f32>,
-    liquid_far: vec4<f32>,
+    liquid_shallow: vec4<f32>,
+    liquid_deep: vec4<f32>,
     // The texture matrix, rows `(a, b, tx, source)` and `(c, d, ty, _)`, with
     // `source` 0 for no matrix, 1 for a matrix in these rows and 2 + n for row
     // n of the texture-matrix table; see `m2.wgsl`. Read here as well as in

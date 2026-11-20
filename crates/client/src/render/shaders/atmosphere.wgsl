@@ -357,6 +357,17 @@ const SHEEN_POWER: f32 = 20.0;
 // per-frame data with no other channel to the shader; see `terrain::sheen_tag`.
 // Black is off, which is what the switch writes.
 fn sun_sheen(world_normal: vec3<f32>, world_position: vec3<f32>, halo: vec3<f32>) -> vec3<f32> {
+    return sun_sheen_power(world_normal, world_position, halo, SHEEN_POWER);
+}
+
+// The same highlight at a caller's exponent. A liquid surface takes 6, a
+// broader highlight than the ground's 20; see `m2.wgsl`.
+fn sun_sheen_power(
+    world_normal: vec3<f32>,
+    world_position: vec3<f32>,
+    halo: vec3<f32>,
+    power: f32,
+) -> vec3<f32> {
     if lights.n_directional_lights == 0u {
         return vec3<f32>(0.0);
     }
@@ -377,7 +388,7 @@ fn sun_sheen(world_normal: vec3<f32>, world_position: vec3<f32>, halo: vec3<f32>
     }
     let half = normalize(to_light + to_eye);
     let facing = max(dot(normalize(world_normal), half), 0.0);
-    return halo * pow(facing, SHEEN_POWER);
+    return halo * pow(facing, power);
 }
 
 // Fade a fragment toward the fog colour with distance from the camera.

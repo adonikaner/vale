@@ -1207,9 +1207,11 @@ impl DisplayTables {
         self.light.as_ref()
     }
 
-    /// The colour and opacity of one liquid at position `at` on one map, at
-    /// `time` half-minutes past midnight. See [`crate::tables::light`] for why
-    /// this is not in the texture.
+    /// The shallow and deep colour and opacity of one liquid at position `at`
+    /// on one map, at `time` half-minutes past midnight. See
+    /// [`crate::tables::light`] for why this is not in the texture. The editor's
+    /// minimap bake reads the same answer, because the shipped minimaps were
+    /// rendered from the same four bands.
     ///
     /// `None` means the liquid is drawn from its own texture. That is always
     /// the case for magma and slime, whose flipbooks are the only two that
@@ -1240,30 +1242,6 @@ impl DisplayTables {
     ) -> Option<crate::tables::light::LiquidLight> {
         match &self.light {
             Some(tables) => tables.liquid_at(map, at, kind, time),
-            None => match kind {
-                crate::world::wmo::Liquid::Water | crate::world::wmo::Liquid::Ocean => {
-                    Some(crate::tables::light::LiquidLight::UNLIT)
-                }
-                _ => None,
-            },
-        }
-    }
-
-    /// The same liquid as a shallow and a deep colour, which is how the shipped
-    /// minimaps were rendered; see
-    /// [`crate::tables::light::LightTables::liquid_by_depth_at`] and the
-    /// measurement on `band::OCEAN_SHALLOW`. `close` is the colour at depth
-    /// byte 0 and `far` at 255. The same `None` and the same fallback as
-    /// [`Self::liquid_light`].
-    pub fn liquid_depth_light(
-        &self,
-        map: u32,
-        at: [f32; 3],
-        kind: crate::world::wmo::Liquid,
-        time: u32,
-    ) -> Option<crate::tables::light::LiquidLight> {
-        match &self.light {
-            Some(tables) => tables.liquid_by_depth_at(map, at, kind, time),
             None => match kind {
                 crate::world::wmo::Liquid::Water | crate::world::wmo::Liquid::Ocean => {
                     Some(crate::tables::light::LiquidLight::UNLIT)

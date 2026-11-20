@@ -1455,8 +1455,8 @@ pub(super) fn material_for(
                 BatchLight::Sun => 0.0,
             },
             liquid: if params.liquid.is_some() { 1.0 } else { 0.0 },
-            liquid_close: liquid_vec(params.liquid.map(|l| (l.close, l.shallow_alpha))),
-            liquid_far: liquid_vec(params.liquid.map(|l| (l.far, l.deep_alpha))),
+            liquid_shallow: liquid_vec(params.liquid.map(|l| (l.shallow, l.shallow_alpha))),
+            liquid_deep: liquid_vec(params.liquid.map(|l| (l.deep, l.deep_alpha))),
             // Still at build time whether or not this batch has a texture
             // matrix. For a batch that has one, `Materials::moving` gives the
             // material its own row of `UV_TABLE` (recorded in `uv_row0.w`), and

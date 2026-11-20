@@ -6,22 +6,22 @@ use vale_config::Config;
 
 /// The water, lava and slime standing inside a tile's buildings: `MLIQ`.
 ///
-/// Two things here are not stated in the file and had to be pinned against
-/// something else, which is what this command exists to report.
+/// The file does not state the two values below, so this command checks each
+/// against another source and reports the result.
 ///
-/// **The tile size.** `MLIQ` gives a corner and a tile count and no spacing at
-/// all, so the grid's extent depends entirely on a constant this project
-/// supplies. `LIQUID_TILE_SIZE` is the game's `CHUNKSIZE / 8`, and the check is
-/// that every grid then sits inside the bounding box of the group that owns it
-/// — a box Blizzard wrote. Double the constant and a font in a chapel spills
-/// through its walls; halve it and the moat is a puddle in one corner. Both look
-/// like plausible water.
+/// Tile size. `MLIQ` gives a corner and a tile count but no spacing, so the
+/// grid's extent depends on a constant this project supplies.
+/// `LIQUID_TILE_SIZE` is the game's `CHUNKSIZE / 8`. The check is that every
+/// grid then sits inside the bounding box of the group that owns it, a box
+/// stored in the file. With the constant doubled, a font in a chapel extends
+/// through its walls; with it halved, the moat covers one corner. Both results
+/// look like plausible water.
 ///
-/// **Which liquid it is.** The raw `MOGP` type is not the answer — it goes
-/// through a four-step fixup (see `WmoGroup::liquid_kind`) in which the
-/// water/ocean distinction is carried by a *group flag* and not by the type at
-/// all. Nothing in the file cross-checks that, so what is reported instead is
-/// the distribution and the textures it resolves to, against the archive.
+/// Liquid type. The raw `MOGP` type is not the final type: it goes through a
+/// four-step fixup (see `WmoGroup::liquid_kind`) in which the water/ocean
+/// distinction comes from a group flag, not from the type. Nothing in the file
+/// cross-checks that, so the command reports the distribution of types and the
+/// textures they resolve to, checked against the archive.
 pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> {
     use vale_assets::world::adt::{placement_matrix, placement_to_world};
     use vale_assets::world::collision::transform_point;
@@ -47,8 +47,8 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
     let mut wet = 0usize;
     let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut unresolved = 0usize;
-    // The measurement: how far a liquid grid sticks out of the box of the group
-    // that owns it, per axis, in yards.
+    // How far a liquid grid extends past the box of the group that owns it, per
+    // axis, in yards.
     let mut worst_overhang = f32::MIN;
     let mut worst_named = String::new();
     let mut inside = 0usize;
@@ -84,9 +84,9 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
                 None => unresolved += 1,
             }
 
-            // Containment. Only the wet vertices: an empty tile's height is
-            // whatever the tool left there, and a grid that covers a whole room
-            // is mostly empty (see the wet/total ratio above).
+            // Containment uses only the wet vertices: an empty tile's height is
+            // whatever the authoring tool left there, and a grid that covers a
+            // whole room is mostly empty (see the wet/total ratio above).
             let mut lo = [f32::MAX; 3];
             let mut hi = [f32::MIN; 3];
             let mut any = false;
@@ -147,20 +147,20 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
 
     println!("  {wet_groups} of {groups} groups carry MLIQ, {tiles} tiles of which {wet} are wet");
 
-    // The check the tile size lives or dies by.
+    // The tile-size check.
     //
-    // Containment in the owning group's box is the obvious one and it is *not*
-    // conclusive: a canal's water plane is authored to run under the wall of the
-    // room it flows into, so a small overhang is correct and a grid that falls
-    // short of the room is correct too. What is conclusive is that every grid's
-    // corner is an exact multiple of the tile size — the tool that wrote these
-    // files snapped the base to its own grid, so a wrong constant leaves a
-    // remainder on every single one. Nothing else in the file states the
-    // spacing, and this states it to five figures.
+    // Containment in the owning group's box is not conclusive: a canal's water
+    // plane is authored to run under the wall of the room it flows into, so a
+    // small overhang is correct, and so is a grid that falls short of the room.
+    // The conclusive check is that every grid's corner is an exact multiple of
+    // the tile size. The tool that wrote these files snapped the base to its own
+    // grid, so a wrong constant leaves a remainder on every corner. Nothing else
+    // in the file states the spacing, and this check fixes it to five figures.
     //
-    // **No early return when the buildings are dry**: a tile of open ocean has
-    // no wet WMO and everything below this section — the terrain's own `MCLQ`,
-    // the light ramp, the textures — is exactly what such a tile is asked about.
+    // The function does not return early when no building holds liquid: a tile
+    // of open ocean has no wet WMO, and the sections after this one (the
+    // terrain's own `MCLQ`, the light ramp, the textures) are what such a tile
+    // is inspected for.
     if wet_groups == 0 {
         println!("  (no building on this tile holds liquid)");
     } else {
@@ -184,20 +184,19 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
         println!("    (an overhang is not an error: water runs under the wall it flows through)");
     }
 
-    // And the textures the client's table names, against the archive.
-    // And what the renderer will actually be handed: the surface `assemble`
-    // generates for each of those grids, in the same buffers and the same draw
-    // list as the masonry. Reported here because the geometry is *generated*
-    // rather than read — nothing in the file can be compared against it — so the
-    // only checks available are that it exists, that it indexes inside the
-    // buffers it was appended to, and that its triangle count is two per wet
-    // tile and not two per tile.
+    // The surface `assemble` generates for each of those grids, which is what
+    // the renderer receives, in the same buffers and the same draw list as the
+    // masonry, together with the textures `Liquid::textures` names for it. The
+    // geometry is generated rather than read, so nothing in the file can be
+    // compared against it. The available checks are that it exists, that its
+    // indices stay inside the buffers it was appended to, and that its triangle
+    // count is two per wet tile, not two per tile.
     let mut liquid_draws = 0usize;
     let mut liquid_triangles = 0usize;
     let mut out_of_range = 0usize;
     let mut liquid_textures: BTreeSet<String> = BTreeSet::new();
-    // The opacity the surface actually carries, which is the number that decides
-    // whether the water is visible at all.
+    // The opacity the surface carries, which decides whether the water is
+    // visible at all.
     let mut opacity_total = 0u64;
     let mut opacity_count = 0usize;
     let mut opacity_min = u8::MAX;
@@ -256,14 +255,14 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
     );
     println!("    textures appended to the models: {liquid_textures:?}");
 
-    // **The opacity, and where it comes from.** Every other draw in a WMO takes
-    // its alpha from the texel. A liquid draw must not: `lake_a`'s alpha channel
-    // is a foam and highlight mask (reported below — mean 54 of 255, three
-    // quarters under 64), and a canal blended by it is invisible, which is
-    // exactly what Stormwind's were. The opacity is `MLIQ`'s own per-vertex
-    // depth byte instead, which is 0 at every dry vertex and rises into the
-    // pool. Nothing states the mapping, so what is checkable is that the surface
-    // carries a spread of real values rather than one flat number or none.
+    // The source of the liquid opacity. Every other draw in a WMO takes its
+    // alpha from the texel. A liquid draw cannot: `lake_a`'s alpha channel is a
+    // foam and highlight mask (reported below: mean 54 of 255, three quarters
+    // under 64), and a canal blended by it is invisible, as Stormwind's canals
+    // were when the texel alpha was used. The opacity is instead `MLIQ`'s own
+    // per-vertex depth byte, which is 0 at every dry vertex and rises into the
+    // pool. Nothing states the mapping, so the check is that the surface carries
+    // a spread of real values rather than one constant value or none.
     if opacity_count > 0 {
         println!(
             "    opacity from MLIQ depth, not the texture: {opacity_min}..{opacity_max} mean {} \
@@ -272,14 +271,14 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
         );
     }
 
-    // **The renderer's own admission test.** `client::wmos::batch_draw` drops any
-    // draw whose indices reach past the *shortest* of the four vertex buffers,
-    // silently, because a batch pointing outside its buffers is a damaged file
-    // rather than an error worth taking a building down for. That guard is only
-    // as good as the invariant it assumes: the liquid surface pushes a position,
-    // a normal, a uv and a colour per vertex, and if any one of the four fell
-    // behind, every draw appended after it — the water first — would vanish with
-    // no message anywhere. So the lengths are asserted here rather than trusted.
+    // The renderer's vertex-buffer guard. `client::wmos::batch_draw` silently
+    // drops any draw whose indices reach past the shortest of the four vertex
+    // buffers, because a batch pointing outside its buffers is a damaged file,
+    // not a reason to stop drawing the whole building. The guard relies on an
+    // invariant: the liquid surface pushes a position, a normal, a uv and a
+    // colour per vertex. If any one of the four fell behind, every draw appended
+    // after it, the water first, would disappear with no message. So the
+    // lengths are checked here.
     let ragged: Vec<String> = models
         .iter()
         .filter(|(_, m)| {
@@ -306,17 +305,17 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
         }
     }
 
-    // Where the surface actually ends up once its building is placed.
+    // Where the surface lands once its building is placed.
     //
-    // Every check above this line is in the *model's* own space, which is where
-    // a wrong tile size or a mis-read flag byte shows — and none of it says the
-    // water is at the height the canal wants it. This is the one number a person
-    // standing in the city can compare against: the HUD prints their z, and the
-    // canal water they are looking for is a few yards below the street.
+    // Every check above is in the model's own space, which is where a wrong tile
+    // size or a misread flag byte shows. None of them says whether the water is
+    // at the height the canal needs. This number can be compared in game: the
+    // HUD prints the player's z, and canal water is a few yards below the
+    // street.
     //
-    // The transform is the placement's own matrix — the same one the walls go
-    // through, which `vale wmos` already lands on the game's `MODF` box to
-    // 0.00 yards — so a disagreement here is about the *liquid*, not the
+    // The transform is the placement's own matrix, the same one the walls go
+    // through, which `vale wmos` matches to the game's `MODF` box to 0.00
+    // yards. A disagreement here is therefore about the liquid, not the
     // building.
     println!("  in world space, through each MODF placement:");
     let mut placements_with_water = 0usize;
@@ -375,23 +374,24 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
     }
 
     // ---------------------------------------------------------------------
-    // The terrain's own liquid: `MCLQ`, one per MCNK — the moat, the lakes and
-    // the ocean, which are not in any building and were invisible for as long
-    // as only `MLIQ` was read.
+    // The terrain's own liquid: `MCLQ`, one per MCNK. It holds the moat, the
+    // lakes and the ocean, which are in no building and do not render if only
+    // `MLIQ` is read.
     //
-    // Three things are checked here because nothing in the file states them:
+    // The file states none of the following three things, so each is checked
+    // here:
     //
-    // * **the flag bits are the declaration** — a block per set liquid bit, in
-    //   bit order, so blocks-parsed against bits-set is the truncation check;
-    // * **the vertex union is picked correctly** — water's byte 0 is a depth
-    //   with a shore-and-plateau shape, magma's is half a texture coordinate
-    //   spread flat, so the per-kind distribution below is what says a lava
-    //   chunk was not read as a lake;
-    // * **the frame turn is right** — the file's rows run in decreasing world
-    //   x/y and the grid's in increasing, and getting that 180° turn wrong
-    //   still draws a plausible lake. What it misplaces is the depths, so the
-    //   check is that the surface stands *above* the terrain under it, and by
-    //   more where the depth byte is larger.
+    // * the flag bits declare the blocks: one block per set liquid bit, in bit
+    //   order, so blocks parsed against bits set is the truncation check;
+    // * the vertex union is chosen correctly: water's byte 0 is a depth with a
+    //   shore-and-plateau shape, magma's is half a texture coordinate spread
+    //   flat, so the per-type distribution below shows whether a lava chunk was
+    //   read as a lake;
+    // * the frame turn is right: the file's rows run in decreasing world x/y
+    //   and the grid's in increasing. Getting that 180° turn wrong still draws a
+    //   plausible lake but misplaces the depths, so the check is that the
+    //   surface stands above the terrain under it, and higher where the depth
+    //   byte is larger.
     {
         use vale_assets::world::adt::mcnk_flags;
         use vale_protocol::state::movement;
@@ -400,11 +400,11 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
         let mut blocks_parsed = 0usize;
         let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
         let mut wet_tiles = 0usize;
-        // **The high nibble of each wet tile's flag**, censused, because
-        // nothing in the format states what it means. vmangos's extractor
-        // reads `flags & 0x80` as deep water — the fatigue that kills a
-        // swimmer — and reads no other bit; the count of each value over the
-        // wet tiles is what says whether 0x40 is used at all.
+        // The high nibble of each wet tile's flag, counted per value, because
+        // the format does not state what it means. vmangos's extractor reads
+        // `flags & 0x80` as deep water (the fatigue that kills a swimmer) and
+        // reads no other bit; the count of each value over the wet tiles shows
+        // whether 0x40 is used at all.
         let mut nibbles: BTreeMap<u8, usize> = BTreeMap::new();
         // Per kind: (byte0 sum, count, min, max) over wet vertices.
         let mut byte0: BTreeMap<&'static str, (u64, usize, u8, u8)> = BTreeMap::new();
@@ -511,9 +511,9 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
             );
 
             // The frame-turn check. A transposed or untranslated grid puts deep
-            // water over dry land, which shows here as a surface under its own
-            // ground — and the lift must *rise* with the depth byte, because
-            // that byte is how far down the bed is.
+            // water over dry land, which shows here as a surface below its own
+            // ground. The lift must also rise with the depth byte, because that
+            // byte is how far down the bed is.
             if ground_samples > 0 {
                 println!(
                     "    the surface stands clear of the ground under it: {} of {ground_samples} \
@@ -533,22 +533,21 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
                 );
             }
 
-            // **And what the *mover* asks of all this**, which is a different
-            // question from what the renderer asks: not "where do I draw a
-            // surface" but "how deep is the water over this point", answered by
-            // `Mcnk::liquid_at` at a world position rather than by walking the
-            // grid. Two things are checked and each has its own failure.
+            // The mover's query, which differs from the renderer's: not where
+            // to draw a surface but how deep the water is over a point,
+            // answered by `Mcnk::liquid_at` at a world position rather than by
+            // walking the grid. Two checks follow, each for a different failure.
             //
-            // The **round trip** is the indexing: every wet tile's centre must
+            // The round trip checks the indexing: every wet tile's centre must
             // come back wet and every dry one dry. `liquid_at` inverts the
-            // world-position-to-tile arithmetic `liquid_surface` walks forward,
-            // so a transposed or off-by-one inverse still answers a plausible
-            // height everywhere and would show up only as a character swimming
-            // one tile away from the water.
+            // world-position-to-tile arithmetic that `liquid_surface` runs
+            // forward, so a transposed or off-by-one inverse still returns a
+            // plausible height everywhere; its only symptom in game would be a
+            // character swimming one tile away from the water.
             //
-            // The **depth census** is the rule itself: `MIN_SWIM_DEPTH` against
-            // the ground under the same point, which is the one place the swim
-            // threshold and the real archives meet. A tile of open ocean should
+            // The depth census checks the swim rule: `MIN_SWIM_DEPTH` against
+            // the ground under the same point, the one place the swim threshold
+            // is tested against real archive data. A tile of open ocean should
             // be almost all swimmable and a river tile mostly bank.
             let mut probes = 0usize;
             let mut agreed = 0usize;
@@ -601,25 +600,24 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
         }
     }
 
-    // **What colour the water is, which is not in the water.** See the texture
-    // line below: `lake_a` and `ocean_h` carry no colour at all, so the ramp
-    // between a shallow and a deep colour comes out of `Light.dbc` ->
-    // `LightParams.dbc` -> `LightIntBand.dbc`, and `MLIQ`'s depth byte — which
-    // this command already reports as an opacity above — is the *mix* along it.
-    // Printed here because a missing light chain is a documented degradation
-    // (white water) rather than an error, and the only place it would otherwise
-    // show is the window.
+    // The water's colour, which the water textures do not carry. As the
+    // texture line below shows, `lake_a` and `ocean_h` have no colour, so the
+    // ramp between a shallow and a deep colour comes from `Light.dbc` ->
+    // `LightParams.dbc` -> `LightIntBand.dbc`, and `MLIQ`'s depth byte
+    // (reported as an opacity above) is the mix along it. It is printed here
+    // because a missing light chain is a documented degradation (white water),
+    // not an error, and would otherwise show only in the window.
     match map_id_for(&mut assets, map) {
         Some(map_id) => {
             let tables = crate::common::open_display_tables(&mut assets)?;
-            // **Which of the eighteen bands are the water bands, measured.**
-            // `LightIntBand` names nothing; the row arithmetic gives band *b* of
-            // every light, and picking the wrong *b* yields a plausible blue —
-            // the sky and the fog are blue too. What separates them is that the
-            // water bands come in **shallow/deep pairs where the deep one is
-            // darker, in every zone the game ships**, and no sky band is paired
-            // with the one after it that way. Printed across every default light
-            // so the pair is a count and not an eyeball.
+            // A survey of the eighteen bands, to identify the water bands.
+            // `LightIntBand` names nothing; the row arithmetic gives band b of
+            // every light, and the wrong b still yields a plausible blue,
+            // because the sky and the fog are blue too. The water bands come in
+            // shallow/deep pairs where the deep band is darker, in every zone
+            // the game ships, and no sky band pairs with the band after it that
+            // way. The survey covers every default light so the pairing is a
+            // count, not a visual judgement.
             if std::env::var("LIGHT_DEBUG").is_ok() {
                 if let Some(light) = tables.light() {
                     let ids = light.default_params();
@@ -679,35 +677,32 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
                 let byte = |v: f32| (v * 255.0).round() as u32;
                 let rgb =
                     |c: [f32; 3]| format!("{:3}/{:3}/{:3}", byte(c[0]), byte(c[1]), byte(c[2]));
-                // **The colours have no ordering and the alphas do.** A close/far
-                // pair may go either way — surveyed over the 19 default lights the
-                // far one is brighter in 15 — so the only thing checkable here is
-                // the alphas, and it is the check that says `LightParams` fields
-                // 5..8 are not transposed: a bank is never more opaque than the
-                // middle of the pool.
+                // The alphas have an ordering and the colours do not, so only
+                // the alphas are checked. The check confirms that `LightParams`
+                // fields 5..8 are not transposed: a bank is never more opaque
+                // than the middle of the pool.
                 let shape = if light.shallow_alpha <= light.deep_alpha {
                     "bank no more opaque than the middle"
                 } else {
                     "!! shallow alpha EXCEEDS deep — LightParams fields transposed?"
                 };
                 println!(
-                    "    {:<6} close {}  far {}  alpha {:.2}..{:.2}  <- {shape}",
+                    "    {:<6} shallow {}  deep {}  alpha {:.2}..{:.2}  <- {shape}",
                     kind_name(kind),
-                    rgb(light.close),
-                    rgb(light.far),
+                    rgb(light.shallow),
+                    rgb(light.deep),
                     light.shallow_alpha,
                     light.deep_alpha,
                 );
             }
-            // **…and what the world looks like from *under* that water**, which
-            // is `Light.dbc`'s second `LightParams` column and the whole of what
-            // the reference does about being submerged. It is checked here
-            // rather than in `vale light` because it is a fact about water:
-            // the number to look at is the fog, which should close to a few
-            // dozen yards where the surface light reaches hundreds, and the
-            // dome, which should be the colour of the water rather than of the
-            // sky. A column read one field out would answer the *storm* light,
-            // which is a plausible grey rather than an error.
+            // The lighting seen from under that water: `Light.dbc`'s second
+            // `LightParams` column, which is all the client changes when the
+            // camera is submerged. It is checked here rather than in
+            // `vale light` because it concerns water. The fog should close to a
+            // few dozen yards where the surface light reaches hundreds, and the
+            // dome should be the colour of the water rather than of the sky. A
+            // column read one field out would return the storm light, a
+            // plausible grey rather than an error.
             if let Some(light) = tables.light() {
                 use vale_assets::tables::light::Weather;
                 let byte = |v: f32| (v * 255.0).round() as u32;
@@ -736,23 +731,22 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
         None => println!("  (map {map:?} is not in Map.dbc, so no light chain to read)"),
     }
 
-    // The alpha depth is the load-bearing part: this renderer draws a WMO batch
-    // with the model shader, which returns the texel's own alpha — so whether
-    // water is translucent is a property of the file and not a setting.
+    // The alpha depth matters because this renderer draws a WMO batch with the
+    // model shader, which returns the texel's own alpha, so whether water is
+    // translucent is a property of the file, not a setting.
     //
-    // **And the depth is not the value.** `alphaDepth=8` says there are eight
-    // bits of alpha in the file; it does not say what is in them, and a surface
-    // blended by an alpha of zero is not translucent water, it is nothing at
-    // all. The decoded mean is printed for exactly that reason — it is the
-    // number the blend multiplies by, and the only one that says whether the
-    // surface is visible.
+    // The alpha depth does not give the alpha values. `alphaDepth=8` says the
+    // file has eight bits of alpha, not what they hold, and a surface blended by
+    // an alpha of zero is invisible, not translucent. The decoded mean is
+    // printed because it is the number the blend multiplies by, and the only one
+    // that says whether the surface is visible.
     for kind in Liquid::ALL {
-        // **Counted out of the archive rather than taken from the constant**,
-        // and then held against it: `LIQUID_FRAMES` is the client's own 30
+        // The frame count is read from the archive rather than taken from the
+        // constant, then compared with it: `LIQUID_FRAMES` is the client's 30,
         // and the renderer indexes the set with it, so a family that ships a
-        // different number would animate to a frame nobody has. Probed past 30
-        // for the same reason — a count that agreed because it was told to
-        // would check nothing.
+        // different number would animate to a frame that does not exist. The
+        // probe goes past 30 so the count is not capped at the value it is
+        // compared with.
         let frames = (1..=60).filter(|&f| assets.exists(&kind.texture(f))).count();
         let rate = if frames as u32 == vale_assets::world::wmo::LIQUID_FRAMES {
             format!(
@@ -777,22 +771,22 @@ pub fn cmd_water(cfg: &Config, map: &str, x: u32, y: u32) -> Result<(), String> 
             .map(|image| {
                 let alphas: Vec<u8> = image.rgba.chunks_exact(4).map(|p| p[3]).collect();
                 let total: u64 = alphas.iter().map(|&a| a as u64).sum();
-                // The share below a quarter is what says "mask" rather than
-                // "opacity map": an opacity map for water would sit around a
+                // The share below a quarter distinguishes a mask from an
+                // opacity map: an opacity map for water would sit around a
                 // middling value, and this one is three quarters dark with a
-                // saturated speckle — foam and glints.
+                // saturated speckle (foam and glints).
                 let faint = alphas.iter().filter(|&&a| a < 64).count();
-                // **And the alpha is only half of what the blend deposits — the
-                // other half is the colour, and for water there is none.** A
-                // surface drawn at alpha `a` moves a pixel by `a * (rgb - bed)`,
-                // so a black texture over a stone canal is a shadow whatever its
-                // alpha does, which is the failure one step milder than the one
-                // the depth byte fixed. `peak` is the number that settles it: the
-                // *brightest single texel* in the whole image. `lake_a` reaches
-                // 41 of 255 and `ocean_h` 82, greyscale; `lava` and `slime` reach
-                // 255 and 174 in colour. Two of these four are masks and two are
-                // pictures, and that is why the water's colour has to come from
-                // `Light.dbc` — see the ramp printed above.
+                // The alpha is half of what the blend deposits; the other half
+                // is the colour, and the water textures have none. A surface
+                // drawn at alpha `a` moves a pixel by `a * (rgb - bed)`, so a
+                // black texture over a stone canal darkens it like a shadow
+                // whatever its alpha, a milder form of the failure the depth
+                // byte fixed. `peak` measures this: it is the brightest single
+                // texel in the image. `lake_a` reaches 41 of 255 and `ocean_h`
+                // 82, greyscale; `lava` and `slime` reach 255 and 174 in colour.
+                // Two of the four are masks and two are pictures, which is why
+                // the water's colour comes from `Light.dbc` (see the ramp
+                // printed above).
                 let mut channel = [0u64; 3];
                 for p in image.rgba.chunks_exact(4) {
                     for c in 0..3 {

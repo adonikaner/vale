@@ -160,8 +160,8 @@ pub(crate) fn build_set(
                     unlit: 1.0,
                     vertex_lit: 0.0,
                     liquid: 0.0,
-                    liquid_close: Vec4::ZERO,
-                    liquid_far: Vec4::ZERO,
+                    liquid_shallow: Vec4::ZERO,
+                    liquid_deep: Vec4::ZERO,
                     uv_row0: Vec4::ZERO,
                     uv_row1: Vec4::ZERO,
                     // Unlit, so no scene lighting applies. See

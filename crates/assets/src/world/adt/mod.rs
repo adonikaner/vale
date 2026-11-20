@@ -1277,8 +1277,8 @@ impl Adt {
     ///
     /// The mesh is built exactly as [`crate::world::wmo::WmoModel`]'s
     /// `add_liquid` builds it (one quad per wet tile, the vertex colour black
-    /// with `MLIQ`/`MCLQ`'s depth byte as the alpha, one texture repeat per
-    /// tile), because it feeds the same material. Merging by type keeps a lake
+    /// with the depth byte's place on the depth ramp as the alpha, one texture
+    /// repeat per tile), because it feeds the same material. Merging by type keeps a lake
     /// from being 256 draws: a tile has at most four liquids, so it gets at
     /// most four draws.
     ///
@@ -1318,7 +1318,7 @@ impl Adt {
                             draw.positions.push(grid.vertex(x, y));
                             draw.uvs.push(uv);
                             let index = y * (grid.x_tiles + 1) + x;
-                            draw.colours.push([0, 0, 0, grid.opacity(index, *kind)]);
+                            draw.colours.push([0, 0, 0, grid.ramp(index, *kind)]);
                         }
                         draw.indices
                             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);

@@ -546,7 +546,7 @@ fn draw_picture(
     // the fallback blue rather than nothing.
     let centre = vale_assets::world::terrain::tile_centre(at.0, at.1);
     let water_of = |kind: vale_assets::world::wmo::Liquid| {
-        tables?.liquid_depth_light(
+        tables?.liquid_light(
             map_id,
             centre,
             kind,

@@ -1,85 +1,81 @@
-//! The little round map's picture, drawn from the tile it is of.
+//! Rendering of a tile's minimap picture from the tile's own data.
 //!
-//! ## Why an editor has to make one at all
+//! ## Why the editor renders minimap pictures
 //!
 //! The minimap is not derived from anything at run time. It is one 256x256 BLP
-//! per ADT that Blizzard's tools rendered once and shipped, keyed by an MD5 in
-//! `textures\Minimap\md5translate.trs` — see
-//! [`vale_assets::tables::minimap`], where that lookup is written up. So a
-//! tile somebody raises a hill on keeps the picture of the ground that used to
-//! be there, and a tile somebody *makes* has no picture at all and draws black.
-//! Neither reports anything.
+//! per ADT, rendered once by Blizzard's tools and shipped, keyed by an MD5 in
+//! `textures\Minimap\md5translate.trs`; [`vale_assets::tables::minimap`]
+//! documents that lookup. A tile whose terrain is edited (a hill raised) keeps
+//! the picture of the old ground, and a newly created tile has no picture and
+//! draws black. Neither case produces an error.
 //!
-//! ## What is drawn, and what is deliberately not
+//! ## What is drawn and what is left out
 //!
 //! At 256 pixels across a 533-yard tile, one pixel is 2.08 yards and one map
-//! chunk is exactly sixteen pixels. Nothing at that scale resolves a texture's
-//! own pattern — a ground texture repeats eight times across a chunk, so a
-//! repeat is two pixels — which is why this samples a **swatch** per texture
-//! rather than the texture: the average of a tileset over a few texels is what
-//! survives to this size, and sampling the real thing would be noise.
+//! chunk is exactly sixteen pixels. At that scale no texture's own pattern
+//! resolves: a ground texture repeats eight times across a chunk, so a repeat
+//! is two pixels. This module therefore samples a swatch per texture rather
+//! than the texture: the average of a tileset over a few texels is what
+//! survives at this size, and sampling the full texture would add only noise.
 //!
-//! What does survive, and what the picture is actually made of:
+//! The picture is made of:
 //!
-//! * **the blend**, layer over layer through `MCAL`, which is what puts a road
-//!   on a field;
-//! * **the light**, from `MCNR` against the baked sun, which is the whole of
-//!   why a minimap reads as terrain rather than as a colour chart — a hillside
-//!   is visible as a hillside. **Measured off the shipped pictures**, and it
-//!   is a plain ambient-plus-diffuse sun that saturates — see
-//!   [`Look::ambient`];
-//! * **the baked shadow**, `MCSH`, carried through the same reading — and
-//!   **measured at a multiplier of one**, so it changes nothing; see
-//!   [`Look::shadow`] for the numbers;
-//! * **the water**, from `MCLQ`'s own per-tile flags, in the colour
-//!   `Light.dbc` gives that liquid *at that place*, its shallow colour mixed
-//!   toward its deep one by the file's own depth byte — see
-//!   [`Sources::water_of`], where the measurement is;
-//! * **and what stands on it** — every `MDDF` doodad as a footprint, and every
-//!   `MODF` building **drawn from above**: its rendered triangles through the
+//! * the blend, layer over layer through `MCAL`, which puts a road on a field;
+//! * the light, from `MCNR` against the baked sun, which makes a minimap read
+//!   as terrain rather than as a colour chart: a hillside is visible as a
+//!   hillside. Measured against the shipped pictures, it is a plain
+//!   ambient-plus-diffuse sun that saturates; see [`Look::ambient`];
+//! * the baked shadow, `MCSH`, applied in the same pass and measured at a
+//!   multiplier of one, so it changes nothing; see [`Look::shadow`] for the
+//!   numbers;
+//! * the water, from `MCLQ`'s own per-tile flags, in the colour `Light.dbc`
+//!   gives that liquid at that place, its shallow colour mixed toward its deep
+//!   one by the file's own depth byte; [`Sources::water_of`] has the
+//!   measurement;
+//! * what stands on the ground: every `MDDF` doodad as a footprint, and every
+//!   `MODF` building drawn from above, as its rendered triangles through the
 //!   placement, the highest surface winning, each in the mean colour of its
-//!   texture. A disc was tried first and is what a harbour looked like before
-//!   this: one grey circle the width of the whole root box, over the piers, the
-//!   water and the houses alike.
+//!   texture. Drawing a building as a disc instead covered a harbour with one
+//!   grey circle the width of the whole root box, over the piers, the water
+//!   and the houses alike.
 //!
-//! **And from the neighbouring tiles as well as this one.** A placement is a
-//! record in the file of the tile its origin stands on, and a building's roof
-//! does not stop at the seam; drawn from one tile's own file, the half of
-//! Menethil that stands on the next tile was missing from the next tile's
-//! picture. [`render`] takes the neighbours and draws whatever of theirs lands
-//! inside the frame. See `vale_assets::world::collision::hulls_near`, which
-//! is the same rule for the shadow bake.
+//! Placements are taken from the neighbouring tiles as well as this one. A
+//! placement is a record in the file of the tile its origin stands on, and a
+//! building's roof does not stop at the seam; drawn from one tile's own file,
+//! the half of Menethil that stands on the next tile is missing from the next
+//! tile's picture. [`render`] takes the neighbours and draws whatever of theirs
+//! lands inside the frame. `vale_assets::world::collision::hulls_near` applies
+//! the same rule for the shadow bake.
 //!
-//! ## The last of those is most of what a minimap looks like
+//! ## Doodads and buildings make up most of the picture
 //!
-//! The first draft drew only the ground and came out as blurry olive mush that
-//! resembled the shipped picture beside it in colour and in nothing else.
-//! Reported from the window, twice. The reason is that a minimap's whole
-//! *texture* — the thing that makes Elwynn read as a forest with a road through
-//! it — is the **canopies**, not the tileset: at 2.08 yards a pixel a ground
-//! texture's eight repeats across a chunk are two pixels each and average to a
-//! flat wash, which is what it drew. A tree is four or five pixels of dark
-//! green, and a thousand of them are the picture.
+//! Drawing only the ground produces a blurred olive wash that matches the
+//! shipped picture in colour only. A minimap's visible texture (what makes
+//! Elwynn read as a forest with a road through it) comes from the canopies,
+//! not the tileset: at 2.08 yards a pixel, a ground texture's eight repeats
+//! across a chunk are two pixels each and average to a flat wash. A tree is
+//! four or five pixels of dark green, and a thousand of them make up the
+//! picture.
 //!
-//! **How dark those pixels are is measured, and it is not very**: a fully
-//! covered pixel reads 0.95 of the lit ground on Elwynn's forest tile and 1.00
-//! on the harbour's, so the tint is a few percent and the picture's texture is
-//! mostly the *shape* of the copses. See [`Look::canopy_mix`], and
-//! [`analyse`], which is the instrument every number in [`Look`] was set with.
+//! The canopy darkening is measured and small: a fully covered pixel reads 0.95
+//! of the lit ground on Elwynn's forest tile and 1.00 on the harbour's, so the
+//! tint is a few percent and the picture's texture comes mostly from the shape
+//! of the copses. See [`Look::canopy_mix`], and [`analyse`], which produced
+//! every number in [`Look`].
 //!
-//! So the placements are drawn, and their sizes come from the caller for the
-//! reason the swatches do: a model's extent is in its `M2`, which is in an
-//! archive this crate does not open. `vale_ide` measures it off
-//! `M2::positions` — the **drawn** vertices, not the declared bounding box,
-//! which includes animation swing and for a tree is about three times the
-//! canopy. That is the same measurement `vale sun` makes for the same reason.
+//! The placements' sizes come from the caller, for the same reason the swatches
+//! do: a model's extent is in its `M2`, which is in an archive this crate does
+//! not open. `vale_ide` measures it from `M2::positions`, the drawn vertices,
+//! not the declared bounding box, which includes animation swing and for a tree
+//! is about three times the canopy. `vale sun` makes the same measurement for
+//! the same reason.
 //!
-//! ## Where the pictures come from, and why not from here
+//! ## Why the caller supplies the texture swatches
 //!
-//! This crate opens no archives — see the crate root — so a texture's swatch is
-//! the caller's to supply, the same way [`crate::shadow`] takes its occluder.
-//! `vale_ide` builds them by decoding each tileset's smallest mip, which
-//! is the same thing its texture picker already does for thumbnails.
+//! This crate opens no archives (see the crate root), so the caller supplies a
+//! texture's swatch, the same way [`crate::shadow`] takes its occluder.
+//! `vale_ide` builds them by decoding each tileset's smallest mip, as its
+//! texture picker already does for thumbnails.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -95,7 +91,7 @@ use vale_assets::world::wmo::{mopy_flags, Liquid, WmoGroup, WmoRoot};
 /// 32, 48 is 256x256, DXT1, one level, no alpha.
 pub const SIDE: usize = 256;
 
-/// …so one map chunk is this many pixels.
+/// How many pixels one map chunk is on a side.
 pub(crate) const PIXELS_PER_CHUNK: usize = SIDE / CHUNKS_PER_SIDE;
 
 /// A texture, reduced to what survives at two yards a pixel.
@@ -170,11 +166,11 @@ impl Swatch {
 /// What the picture is made of beyond the textures themselves.
 #[derive(Debug, Clone, Copy)]
 pub struct Look {
-    /// **The light the shipped pictures were rendered under**, as the two
-    /// terms of a fixed-function sun: the ground is multiplied by
-    /// `ambient + diffuse * (normal . sun)`, clamped to one — see [`lit`].
+    /// The light the shipped pictures were rendered under, as the two terms
+    /// of a fixed-function sun: the ground is multiplied by
+    /// `ambient + diffuse * (normal . sun)`, clamped to one; see [`lit`].
     ///
-    /// **Measured, and the same on every tile tried.** `vale bake <Map>
+    /// Both terms are measured and are the same on every tile tried. `vale bake <Map>
     /// <x> <y> minimap` bins the dry, unshadowed, uncovered pixels by their
     /// `MCNR` normal's dot with the baked sun and divides the shipped
     /// picture's mean by the unlit blend's in each bin. Over seven tiles on
@@ -182,27 +178,28 @@ pub struct Look {
     /// the Burning Steppes — the ratio reads 0.54 at a dot of 0.1, 0.67 at
     /// 0.25, 0.75 at 0.35, 0.83 at 0.45, 0.90 at 0.55, 0.95 at 0.65 and 1.00
     /// from 0.75 up, within two hundredths on every tile. That is a line of
-    /// slope 0.78 through 0.46, saturating at one. The earlier term here ran
+    /// slope 0.78 through 0.46, saturating at one. A previous term ran
     /// linearly from 0.25 to 1.75 about a dot of 0.6, which drew every
-    /// sun-facing hillside at half again its texture and was reported as the
-    /// cliff tile drawing brighter than the flat one beside it.
+    /// sun-facing hillside at 1.5 times its texture's brightness, so a cliff
+    /// tile drew brighter than the flat tile beside it.
     ///
-    /// That the curve is tight in *this* dot is also the third confirmation
-    /// of [`SUN_TOWARD`]: a bake under another sun would smear it.
+    /// The curve is tight when binned by this sun's dot, which is a third
+    /// confirmation of [`SUN_TOWARD`]: binning by any other sun direction
+    /// would spread it.
     pub ambient: f32,
     pub diffuse: f32,
     /// What a texel in `MCSH` multiplies the colour by.
     ///
-    /// **Measured** the same way, as the residual after the slope term, and
-    /// it is **one**: where `MCSH` is set the shipped picture is 0.97 to 1.01
+    /// Measured the same way, as the residual after the slope term, the value
+    /// is one: where `MCSH` is set the shipped picture is 0.97 to 1.01
     /// of the lit ground on every tile that carries a shadow — Elwynn's
     /// 15,066 shadowed pixels, Duskwood's 16,387, the harbour's 2,670. Raw,
     /// the shadowed pixels read 0.88 of the unlit blend against 0.84 for the
     /// unshadowed, which is the forest floor being flatter than the hills
     /// and not the shadow doing anything. The shipped pictures were rendered
     /// without the baked shadow, or with the canopy that cast it drawn over
-    /// it, and either way this multiplies by one. It was 0.65 — the world's
-    /// `terrain1.bls` darkens the sun term by `shadow * 0.3 + 0.7` — and that
+    /// it; either way this multiplies by one. A previous value of 0.65 (the
+    /// world's `terrain1.bls` darkens the sun term by `shadow * 0.3 + 0.7`)
     /// drew every forest a third darker than shipped. The sweep agrees:
     /// `r` rises monotonically toward 1.0 on all three shadowed tiles.
     pub shadow: f32,
@@ -223,23 +220,23 @@ impl Default for Look {
             diffuse: 0.78,
             shadow: 1.0,
             canopy: [34, 48, 28],
-            // **Measured as a residual, like the shadow.** Pixels the canopy
+            // Measured as a residual, like the shadow. Pixels the canopy
             // buffer marks as fully covered read 0.95 of the lit ground on
             // Elwynn's forest tile, 1.00 on the harbour's and 1.01 on
             // Duskwood's, so a tree from above is a few percent darker than
-            // the ground and no more. At 0.30 this drew a copse at 0.76 of
-            // the ground — a quarter too dark — and was the larger half of
-            // why a forest tile came out darker than shipped. A tenth of the
-            // way toward the canopy colour is a 5% darkening on grass, which
-            // is the measured number; the sweep still prefers zero, for the
-            // reason it always did — the statistic cannot match a blob texel
-            // for texel — and zero is the flat wash this exists to fix.
+            // the ground and no more. A value of 0.30 drew a copse at 0.76 of
+            // the ground, a quarter too dark, and was the larger cause of a
+            // forest tile coming out darker than shipped. A tenth of the way
+            // toward the canopy colour is a 5% darkening on grass, which
+            // matches the measurement. The sweep still prefers zero, because
+            // the statistic cannot match a blob texel for texel, and zero is
+            // the flat wash the canopy term exists to fix.
             canopy_mix: 0.10,
         }
     }
 }
 
-/// **A building's drawn surface**, model-space, each triangle in the mean
+/// A building's drawn surface, model-space, each triangle in the mean
 /// colour of its texture. Built once per WMO path by [`wmo_shape`] and shared
 /// between every placement of it.
 #[derive(Debug, Clone, Default)]
@@ -253,19 +250,19 @@ pub struct Triangle {
     pub colour: [u8; 3],
 }
 
-/// **A WMO reduced to what a picture from above needs**: its rendered
-/// triangles and one colour each.
+/// A WMO reduced to what a picture from above needs: its rendered triangles
+/// and one colour each.
 ///
 /// `colour_of` answers a texture path with the texture's mean colour, which the
-/// caller has because the caller has the archives — the same arrangement as the
+/// caller has because the caller has the archives, the same arrangement as the
 /// swatches. A texture it cannot resolve draws mid grey, for the reason an
 /// unresolved tileset does: a hole is a wrong shape and a grey is only a wrong
 /// colour.
 ///
-/// **Only `RENDER` triangles**, which is the flag the client draws by. A
+/// Only triangles with `RENDER` set are kept, the flag the client draws by. A
 /// collision-only triangle (`mopy_flags::COLLISION` alone) is an invisible
-/// hull and would draw a wall nobody can see; a `DETAIL` one is trim laid over
-/// a rendered surface and is rendered too.
+/// hull and would draw a wall that is not visible in game; a `DETAIL` one is
+/// trim laid over a rendered surface and is rendered too.
 pub fn wmo_shape(
     root: &WmoRoot,
     groups: &[WmoGroup],
@@ -318,34 +315,31 @@ pub fn wmo_shape(
     Shape { triangles }
 }
 
-/// **Everything a picture needs that is not in the tile**, each supplied by
-/// the caller because each comes out of an archive this crate does not open.
+/// Everything a picture needs that is not in the tile, each supplied by the
+/// caller because each comes out of an archive this crate does not open.
 pub struct Sources<'a> {
     /// A ground texture, reduced to a swatch.
     pub swatch_of: &'a dyn Fn(&str) -> Option<Swatch>,
-    /// How wide a doodad's canopy is — measured off its drawn vertices, not its
-    /// declared box; see the module comment. `None` skips the placement.
+    /// How wide a doodad's canopy is, measured from its drawn vertices, not
+    /// its declared box; see the module comment. `None` skips the placement.
     pub radius_of: &'a dyn Fn(&str) -> Option<f32>,
     /// A building's drawn surface, from [`wmo_shape`]. `None` skips it.
     pub shape_of: &'a dyn Fn(&str) -> Option<Arc<Shape>>,
-    /// **What colour a liquid is here**, from `Light.dbc` at the tile's own
-    /// centre, at noon — `DisplayTables::liquid_depth_light`: the zone's
-    /// light, read as a **shallow** colour in `close` and a **deep** one in
-    /// `far`, with the float bands' two opacities.
+    /// The colour of a liquid here, from `Light.dbc` at the tile's own centre,
+    /// at noon, through `DisplayTables::liquid_light`: the zone's shallow and
+    /// deep colour with the float bands' two opacities.
     ///
-    /// **Measured, twice.** The shipped pictures were rendered through the
-    /// game's own light chain, and read back where each tile's `MCLQ` says
-    /// the water is, their water is the zone's colour and not a blue: a fixed
-    /// blue drew every lake in the game the same colour and the Wetlands'
-    /// green sea bright blue. The second measurement is *which* rows, binned
-    /// by the depth byte at each pixel: the ocean at Menethil reads band 14
-    /// of the Wetlands light over the sea floor, the open sea at byte 255
-    /// reads band 15 of the map's light exactly (`0/29/41`), and the bytes
-    /// between read the mix of the two; Elwynn's lake does the same one pair
-    /// up, bands 16 and 17. Those are one row above the four the world's
-    /// surfaces are drawn with — `vale_assets::tables::light::band` has
-    /// the numbers — and are read through the accessor named above so that
-    /// the minimap is right without deciding the client's water for it.
+    /// Two measurements against the shipped pictures, which were rendered
+    /// through the game's own light chain, read back where each tile's `MCLQ`
+    /// says the water is. First, their water is the zone's colour and not a
+    /// fixed blue: a fixed blue drew every lake in the game the same colour
+    /// and the Wetlands' green sea bright blue. Second, which rows, binned by
+    /// the depth byte at each pixel: the ocean at Menethil reads band 14 of the
+    /// Wetlands light over the sea floor, the open sea at byte 255 reads band
+    /// 15 of the map's light exactly (`0/29/41`), and the bytes between read
+    /// the mix of the two; Elwynn's lake does the same with bands 16 and 17.
+    /// `vale_assets::tables::light::band` has the numbers, and the world's
+    /// surfaces are drawn from the same four bands.
     ///
     /// `None` for a liquid the chain has no light for. Magma and slime are
     /// that by design (their own texture carries the colour) and draw in the
@@ -354,7 +348,7 @@ pub struct Sources<'a> {
     pub water_of: &'a dyn Fn(Liquid) -> Option<LiquidLight>,
 }
 
-/// What a liquid draws as when the caller has no light for it — see
+/// What a liquid draws as when the caller has no light for it; see
 /// [`Sources::water_of`]. The magma and slime numbers are the mean colour of
 /// `lava.1.blp` and `slime.1.blp`, which `vale water` prints.
 fn unlit(kind: Liquid) -> LiquidLight {
@@ -367,48 +361,48 @@ fn unlit(kind: Liquid) -> LiquidLight {
     };
     match kind {
         Liquid::Magma => LiquidLight {
-            close: rgb(175, 22, 0),
-            far: rgb(175, 22, 0),
+            shallow: rgb(175, 22, 0),
+            deep: rgb(175, 22, 0),
             shallow_alpha: 1.0,
             deep_alpha: 1.0,
         },
         Liquid::Slime => LiquidLight {
-            close: rgb(68, 132, 18),
-            far: rgb(68, 132, 18),
+            shallow: rgb(68, 132, 18),
+            deep: rgb(68, 132, 18),
             shallow_alpha: 1.0,
             deep_alpha: 1.0,
         },
         Liquid::Water | Liquid::Ocean => LiquidLight {
-            close: rgb(86, 132, 170),
-            far: rgb(26, 52, 92),
+            shallow: rgb(86, 132, 170),
+            deep: rgb(26, 52, 92),
             shallow_alpha: 0.55,
             deep_alpha: 1.0,
         },
     }
 }
 
-/// **Draw a tile.** Returns `SIDE * SIDE` RGBA, opaque throughout.
+/// Draws a tile. Returns `SIDE * SIDE` RGBA, opaque throughout.
 ///
 /// Takes a parsed [`Adt`] rather than this crate's own [`crate::adt::AdtFile`]
-/// on purpose: what a picture needs is every rule `vale-assets` already
-/// applies — the alpha maps decoded and stretched, the shadow unpacked, the
-/// normals decoded, the liquid re-ordered into its own frame — and a second
-/// reading of any of them here would be a second thing to keep true. An editor
+/// on purpose: a picture needs every rule `vale-assets` already applies (the
+/// alpha maps decoded and stretched, the shadow unpacked, the normals decoded,
+/// the liquid re-ordered into its own frame), and a second reading of any of
+/// them here would be a second implementation to keep correct. An editor
 /// holding an `AdtFile` writes it and parses it, which costs a couple of
 /// milliseconds against a hundred for the picture.
 ///
 /// `neighbours` are the tiles around it, for their placements only; the ground
 /// drawn is `adt`'s. Pass none and a building on the next tile ends at the seam.
 ///
-/// ## The orientation is the part that can be plausibly wrong
+/// ## Pixel orientation
 ///
-/// Pixel row runs along **decreasing world x** and pixel column along
-/// **decreasing world y**, from the tile's north-west corner — which is the
-/// same frame the chunk texels and the chunk indices use, and the one
-/// `vale minimap <Map>` votes for over twenty-five tiles by correlating each
-/// of the four readings of a shipped picture against that tile's own `MCLQ`. A
-/// picture written in any other reading is a map that is mirrored or turned,
-/// draws perfectly, and is wrong everywhere the coastline is not symmetric.
+/// Pixel row runs along decreasing world x and pixel column along decreasing
+/// world y, from the tile's north-west corner. This is the same frame the
+/// chunk texels and the chunk indices use, and the one `vale minimap <Map>`
+/// selects over twenty-five tiles by correlating each of the four readings of
+/// a shipped picture against that tile's own `MCLQ`. A picture written in any
+/// other reading is a mirrored or turned map, which draws without error and is
+/// wrong everywhere the coastline is not symmetric.
 pub fn render(adt: &Adt, neighbours: &[Adt], sources: &Sources, look: &Look) -> Vec<u8> {
     let swatches: Vec<Option<Swatch>> = adt
         .texture_names
@@ -417,7 +411,7 @@ pub fn render(adt: &Adt, neighbours: &[Adt], sources: &Sources, look: &Look) -> 
         .collect();
     // A texture the caller cannot resolve draws as mid grey rather than as
     // nothing: a hole in the picture reads as water, which is worse than a
-    // wrong colour because it is a wrong *shape*.
+    // wrong colour because it is a wrong shape.
     let unknown = Swatch::flat([110, 110, 110]);
     let sun = normalise(SUN_TOWARD);
     // The lights, resolved once each: a tile is one place.
@@ -426,9 +420,10 @@ pub fn render(adt: &Adt, neighbours: &[Adt], sources: &Sources, look: &Look) -> 
         .map(|&kind| (sources.water_of)(kind).unwrap_or_else(|| unlit(kind)))
         .collect();
 
-    // **What stands on the ground, rasterised once.** Per pixel this would be a
-    // thousand placements tested against 65,536 texels; as a coverage buffer it
-    // is one pass over the placements and one lookup a pixel.
+    // The placements are rasterised once, into coverage buffers. Tested per
+    // pixel this would be a thousand placements against 65,536 texels; as a
+    // coverage buffer it is one pass over the placements and one lookup a
+    // pixel.
     let canopy = canopies(adt, neighbours, sources.radius_of);
     let roof = roofs(adt, neighbours, sources.shape_of, sun, look);
 
@@ -452,8 +447,8 @@ pub fn render(adt: &Adt, neighbours: &[Adt], sources: &Sources, look: &Look) -> 
                     finish(&ground, &water, look)
                 }
             };
-            // …and the canopies over that, so a tree beside a house shades its
-            // eave the way it does on the ground.
+            // The canopies are applied over that, so a tree beside a house
+            // shades its eave the way it does on the ground.
             let cover = canopy[at_pixel];
             if cover > 0.0 {
                 let a = (cover * look.canopy_mix).clamp(0.0, 1.0);
@@ -469,16 +464,16 @@ pub fn render(adt: &Adt, neighbours: &[Adt], sources: &Sources, look: &Look) -> 
     out
 }
 
-/// **What every pixel of a tile is made of, before the look is applied.**
+/// What every pixel of a tile is made of, before the look is applied.
 ///
-/// The same reading [`render`] paints from — the same [`sample`] at the same
-/// texel, the same canopy and roof buffers — kept apart so that a picture can
-/// be measured against the shipped one *by what is under each pixel*: the
+/// The same reading [`render`] paints from (the same [`sample`] at the same
+/// texel, the same canopy and roof buffers), kept separate so that a picture
+/// can be measured against the shipped one by what is under each pixel: the
 /// slope, whether it is in the baked shadow, how much canopy covers it, which
-/// texture it is, how deep the water is. That is how every number in
-/// [`Look`] was set, and it is what `vale bake <Map> <x> <y> minimap`
-/// prints. A correlation over the whole picture says which of two looks is
-/// closer and nothing about what is wrong with either.
+/// texture it is, how deep the water is. Every number in [`Look`] was set this
+/// way, and it is what `vale bake <Map> <x> <y> minimap` prints. A correlation
+/// over the whole picture says which of two looks is closer and nothing about
+/// what is wrong with either.
 ///
 /// Every field is `SIDE * SIDE`, row-major, in the picture's own frame.
 #[derive(Debug, Clone)]
@@ -491,7 +486,7 @@ pub struct Analysis {
     pub facing: Vec<f32>,
     /// Whether `MCSH` shadows the texel.
     pub shadow: Vec<bool>,
-    /// Canopy coverage, 0 to 1 — see [`canopies`].
+    /// Canopy coverage, 0 to 1; see [`canopies`].
     pub canopy: Vec<f32>,
     /// Whether a building's surface is drawn over the pixel.
     pub roof: Vec<bool>,
@@ -500,7 +495,7 @@ pub struct Analysis {
     pub texture: Vec<u32>,
     /// Yards of liquid over the ground, zero where dry.
     pub depth: Vec<f32>,
-    /// …and the file's own depth byte there, zero where dry.
+    /// The file's own depth byte there, zero where dry.
     pub depth_byte: Vec<u8>,
 }
 
@@ -549,14 +544,15 @@ pub fn analyse(adt: &Adt, neighbours: &[Adt], sources: &Sources) -> Analysis {
     out
 }
 
-/// The tile's own maximum corner, which is chunk 0's — where pixel `(0, 0)`
-/// sits.
+/// The tile's own maximum corner, which is chunk 0's and is where pixel
+/// `(0, 0)` sits.
 fn picture_origin(adt: &Adt) -> Option<[f32; 2]> {
     let first = adt.chunks.first()?;
     Some([first.position[0], first.position[1]])
 }
 
-/// **Every placement of one kind by this tile or a neighbour, once each.**
+/// Every placement of one type recorded by this tile or a neighbour, once
+/// each.
 ///
 /// A model straddling a seam is recorded by both tiles with the same
 /// `unique_id`, which is the client's own rule for drawing it once; the same
@@ -578,10 +574,9 @@ fn placements(
     out
 }
 
-/// **Where the doodads are**, as a coverage buffer: discs, `SIDE * SIDE`,
-/// 0 to 1.
+/// Where the doodads are, as a coverage buffer: discs, `SIDE * SIDE`, 0 to 1.
 ///
-/// A placement whose model the caller cannot size is **skipped**, which is the
+/// A placement whose model the caller cannot size is skipped, which is the
 /// right failure: the alternative is a guessed radius, and a guess that is too
 /// large paints a forest over a field.
 fn canopies(adt: &Adt, neighbours: &[Adt], radius_of: &dyn Fn(&str) -> Option<f32>) -> Vec<f32> {
@@ -605,13 +600,13 @@ fn canopies(adt: &Adt, neighbours: &[Adt], radius_of: &dyn Fn(&str) -> Option<f3
     canopy
 }
 
-/// **The buildings, seen from above**: `SIDE * SIDE` colours, `None` where no
+/// The buildings, seen from above: `SIDE * SIDE` colours, `None` where no
 /// building stands over the ground.
 ///
-/// Every rendered triangle of every placed WMO, through its placement matrix,
-/// into a depth buffer that starts at the ground — so a cellar stays under the
-/// hill and a roof stands over it — with the highest surface at each pixel
-/// winning. Lit by its own facing against the baked sun, on the ground's own
+/// Every rendered triangle of every placed WMO goes through its placement
+/// matrix into a depth buffer that starts at the ground, so a cellar stays
+/// under the hill and a roof stands over it, with the highest surface at each
+/// pixel winning. Lit by its own facing against the baked sun, on the ground's own
 /// terms, so a pitched roof reads as pitched.
 ///
 /// A wall projects to nothing from above and is skipped by its area; what is
@@ -654,7 +649,7 @@ fn roofs(
         for triangle in &shape.triangles {
             let world = triangle.corners.map(|c| transform_point(&placed.matrix, c));
             // World to pixel: rows run along decreasing x, columns along
-            // decreasing y — the same frame [`disc`] uses.
+            // decreasing y, the same frame [`disc`] uses.
             let at = |v: [f32; 3]| {
                 [
                     (origin[1] - v[1]) / per_pixel,
@@ -678,9 +673,9 @@ fn roofs(
 }
 
 /// A triangle's lit term from its own normal, the ground's own rule: see
-/// [`pixel`]. Seen from above, so a normal pointing down is turned up first —
-/// a floor is drawn by the side that faces the sky whichever way the file
-/// wound it.
+/// [`pixel`]. The view is from above, so a normal pointing down is turned up
+/// first: a floor is drawn by the side that faces the sky whichever way the
+/// file wound it.
 fn facing(world: &[[f32; 3]; 3], sun: [f32; 3], look: &Look) -> f32 {
     let e1 = [
         world[1][0] - world[0][0],
@@ -704,19 +699,18 @@ fn facing(world: &[[f32; 3]; 3], sun: [f32; 3], look: &Look) -> f32 {
     lit(dot, look)
 }
 
-/// **The lit term for a surface facing the sun by `facing`** — the dot of its
-/// normal with [`SUN_TOWARD`] — under the look's light: ambient plus diffuse
-/// times the facing, clamped to one. See [`Look::ambient`], where the
-/// measurement is. A surface facing away takes the ambient alone.
+/// The lit term for a surface facing the sun by `facing` (the dot of its
+/// normal with [`SUN_TOWARD`]) under the look's light: ambient plus diffuse
+/// times the facing, clamped to one. [`Look::ambient`] has the measurement. A surface facing away takes the ambient alone.
 pub fn lit(facing: f32, look: &Look) -> f32 {
     (look.ambient + look.diffuse * facing.max(0.0)).clamp(0.0, 1.0)
 }
 
-/// **Fill a triangle's pixels**, calling `hit` with each pixel's index and the
+/// Fills a triangle's pixels, calling `hit` with each pixel's index and the
 /// surface's height there.
 ///
 /// Edge functions over the pixel centres inside the triangle's box, the height
-/// interpolated barycentrically. A triangle with no area from above — a wall —
+/// interpolated barycentrically. A triangle with no area from above (a wall)
 /// hits nothing.
 fn raster(p: &[[f32; 2]; 3], z: &[f32; 3], hit: &mut dyn FnMut(usize, f32)) {
     let area = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1])
@@ -761,9 +755,9 @@ fn raster(p: &[[f32; 2]; 3], z: &[f32; 3], hit: &mut dyn FnMut(usize, f32)) {
 
 /// Fill a disc of world radius into a coverage buffer.
 ///
-/// **Coverage adds and saturates**, so a copse of overlapping trees is one
-/// clump rather than a lattice of darker crossings — which is what a minimap of
-/// a forest looks like, and what averaging would not give.
+/// Coverage adds and saturates, so a copse of overlapping trees is one clump
+/// rather than a lattice of darker crossings. That matches a shipped minimap
+/// of a forest, and averaging would not.
 ///
 /// A doodad smaller than a pixel still marks the pixel it is in, at a coverage
 /// of its share of it. Most of the world is those: a tuft of grass is a tenth
@@ -788,13 +782,13 @@ fn disc(cover: &mut [f32], origin: [f32; 2], per_pixel: f32, at: [f32; 2], radiu
         return;
     }
 
-    // **The edge is a gradient, not a step.** A disc that filled every pixel
-    // whose *centre* it covered was measurably too heavy: sweeping the radius
-    // against two shipped tiles, halving it improved the match on both — which
-    // is not a statement that canopies are smaller than they are, but that a
-    // hard edge overstates a four-pixel blob by its whole rim. Coverage is the
-    // pixel's share of the disc, approximated by the distance to its centre
-    // over one pixel of falloff.
+    // The edge is a gradient, not a step. Filling every pixel whose centre the
+    // disc covers is measurably too heavy: in a radius sweep against two
+    // shipped tiles, halving the radius improved the match on both. That does
+    // not mean canopies are smaller than measured; a hard edge overstates a
+    // four-pixel blob by its whole rim. Coverage is the pixel's share of the
+    // disc, approximated by the distance to its centre over one pixel of
+    // falloff.
     let lo = |v: f32| (v - r - 1.0).floor().max(0.0) as usize;
     let hi = |v: f32| ((v + r + 1.0).ceil().min(SIDE as f32)) as usize;
     for py in lo(cy)..hi(cy) {
@@ -843,8 +837,8 @@ fn sample(
     let ty = ((fy * ALPHA_SIDE as f32) as usize).min(ALPHA_SIDE - 1);
     let texel = ty * ALPHA_SIDE + tx;
 
-    // The texture repeats eight times across a chunk, so the swatch does too —
-    // which at sixteen pixels a chunk is mostly an average, and is meant to be.
+    // The texture repeats eight times across a chunk, so the swatch does too.
+    // At sixteen pixels a chunk the result is mostly an average, by design.
     let (u, v) = (fx * 8.0, fy * 8.0);
 
     let mut colour = [0f32; 3];
@@ -913,7 +907,7 @@ fn sample(
 fn finish(ground: &Ground, water: &[LiquidLight], look: &Look) -> [u8; 3] {
     let mut colour = ground.colour;
 
-    // The light — see [`lit`], and [`Look::ambient`] for the measurement.
+    // The light; see [`lit`], and [`Look::ambient`] for the measurement.
     let lit = lit(ground.facing, look);
     for channel in &mut colour {
         *channel *= lit;
@@ -925,28 +919,24 @@ fn finish(ground: &Ground, water: &[LiquidLight], look: &Look) -> [u8; 3] {
         }
     }
 
-    // …and the water on top of all of it, since a lake hides what is under it.
+    // The water goes on top of everything, since a lake hides what is under it.
     if let Some((kind, _, byte)) = ground.water {
-        // **The file's own depth byte, through the client's own ramp.** The
-        // first draft tinted every texel of a liquid *tile* one flat dark
-        // blue, which drew the sea as a slab with a hard edge at the shore;
-        // the second graded the light's shallow opacity to its deep one over
-        // eight yards of measured depth, which drew the Wetlands' sea at 95%
-        // where the shipped picture shows a quarter of the sea floor through
-        // it at 24 yards down. `MCLQ` carries an opacity byte at every vertex,
-        // and it is not the depth: on `Azeroth_33_39` it tops out at 78 of
-        // 255 over water 45 yards deep. `LiquidLight::at_depth` is what the
-        // world's own surface does with it, and read that way the drawn sea
-        // lands within four units of the shipped one in every depth band.
-        // The colour is the light's own, and it is **two** colours, the
-        // shallow one at byte 0 and the deep one at 255 — see
-        // [`Sources::water_of`], where the measurement is.
+        // The file's own depth byte, as a ramp position of byte / 255. A flat
+        // dark blue per liquid tile drew the sea as a slab with a hard edge at
+        // the shore, and grading the opacity over eight yards of measured
+        // depth drew the Wetlands' sea at 95% where the shipped picture shows a
+        // quarter of the sea floor through it at 24 yards down. `MCLQ` carries
+        // a depth byte at every vertex, and it is not the depth in yards: on
+        // `Azeroth_33_39` it tops out at 78 of 255 over water 45 yards deep.
+        // Read as byte / 255 for both colour and opacity, the drawn sea lands
+        // within four units of the shipped one in every depth band. The world's
+        // rivers and lakes reach the deep end sooner (`Liquid::depth_ramp`);
+        // the shipped minimaps were not rendered that way. See
+        // [`Sources::water_of`] for the colour measurement.
         let light = &water[kind.index()];
-        let alpha = light.at_depth(byte)[3];
-        let t = f32::from(byte) / 255.0;
-        for (c, channel) in colour.iter_mut().enumerate() {
-            let tint = (light.close[c] + (light.far[c] - light.close[c]) * t) * 255.0;
-            *channel += (tint - *channel) * alpha.clamp(0.0, 1.0);
+        let [r, g, b, alpha] = light.at(f32::from(byte) / 255.0);
+        for (channel, tint) in colour.iter_mut().zip([r, g, b]) {
+            *channel += (tint * 255.0 - *channel) * alpha.clamp(0.0, 1.0);
         }
     }
 
@@ -960,12 +950,12 @@ fn finish(ground: &Ground, water: &[LiquidLight], look: &Look) -> [u8; 3] {
 /// The normal nearest a point in the chunk, off `MCNR`'s 9x9 outer grid.
 ///
 /// Nearest rather than interpolated: the grid is nine across and the picture is
-/// sixteen, so interpolation would smooth away exactly the ridge lines that make
-/// the picture readable.
+/// sixteen, so interpolation would smooth away the ridge lines that make the
+/// picture readable.
 fn nearest_normal(chunk: &Mcnk, fx: f32, fy: f32) -> [f32; 3] {
     let row = ((fy * 8.0).round() as usize).min(8);
     let col = ((fx * 8.0).round() as usize).min(8);
-    // The outer grid is rows of 9 with an inner row of 8 between each pair —
+    // The outer grid is rows of 9 with an inner row of 8 between each pair,
     // the 145-vertex layout. Outer vertex (row, col) is at `row * 17 + col`.
     chunk
         .normals
@@ -974,23 +964,23 @@ fn nearest_normal(chunk: &Mcnk, fx: f32, fy: f32) -> [f32; 3] {
         .unwrap_or([0.0, 0.0, 1.0])
 }
 
-/// **Which liquid this point is under, how far, and what the file says about
-/// it**, or `None` where it is dry.
+/// Which liquid this point is under, how deep, and the file's depth byte
+/// there, or `None` where it is dry.
 ///
-/// Two questions and both matter. `MCLQ`'s per-tile flags say which parts of the
-/// chunk hold liquid at all — that is what turns a rectangle into a pool — and
-/// the grid's own heights say where its surface is. Asking only the first tints
-/// a rock standing out of a lake as though it were under it, and at eight liquid
+/// Both of two tests are needed. `MCLQ`'s per-tile flags say which parts of
+/// the chunk hold liquid at all, which turns a rectangle into a pool, and the
+/// grid's own heights say where its surface is. Testing only the flags tints a
+/// rock standing out of a lake as though it were under it, and at eight liquid
 /// tiles across a chunk that rock is two pixels of flat blue in the middle of
 /// dry ground.
 ///
-/// The third answer is the **depth byte** the four vertices around the point
-/// carry, interpolated — the opacity's own parameter, which [`finish`] reads
+/// The third value is the depth byte the four vertices around the point
+/// carry, interpolated: the opacity's own parameter, which [`finish`] reads
 /// through the same ramp the world's surface does.
 ///
-/// The liquid grid runs **+X and +Y from the chunk's low corner** after
-/// `parse_mclq_block` has re-ordered it, where the texel grid runs the other way
-/// from the high corner — so `fx` and `fy` are flipped here and only here.
+/// The liquid grid runs +X and +Y from the chunk's low corner after
+/// `parse_mclq_block` has re-ordered it, where the texel grid runs the other
+/// way from the high corner, so `fx` and `fy` are flipped here and only here.
 fn under_water(chunk: &Mcnk, fx: f32, fy: f32) -> Option<(Liquid, f32, u8)> {
     let ground = ground_height(chunk, fx, fy)?;
     chunk
@@ -1045,12 +1035,12 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// **Where a tile's picture goes, and what it is called.**
+/// The path a tile's picture is written to.
 ///
 /// The archives key these by an MD5 through `md5translate.trs`, one flat file
 /// for the whole game. An edited picture is written under the name the index
-/// already gives it, so the index is untouched. A tile the index has never
-/// heard of needs an entry, which [`with_entries`] adds; the project then
+/// already gives it, so the index is untouched. A tile the index has no entry
+/// for needs one, which [`with_entries`] adds; the project then
 /// carries the whole 727 KB index.
 ///
 /// [`crate::project::Project`] shadows a virtual path, so writing this path is
@@ -1197,10 +1187,9 @@ mod tests {
         (py * SIDE + px) * 4
     }
 
-    /// **The picture is the right size and opaque.** The format it ends up in
-    /// has no alpha at all, so a renderer leaving any would be writing a
-    /// channel that is thrown away — and a half-filled buffer would encode as
-    /// black over half the tile.
+    /// The picture is the right size and opaque. The format it is encoded to
+    /// has no alpha, so any alpha the renderer wrote would be discarded, and a
+    /// half-filled buffer would encode as black over half the tile.
     #[test]
     fn a_tile_renders_to_an_opaque_square() {
         let picture = draw(&tile(100.0), &green, &nothing);
@@ -1222,7 +1211,7 @@ mod tests {
         for (i, p) in picture.chunks_exact(4).enumerate() {
             assert_eq!(&p[..3], &first, "pixel {i} differs");
         }
-        // …and it is recognisably the swatch rather than black or white.
+        // The colour is the swatch's, not black or white.
         assert!(first[1] > first[0] && first[1] > first[2], "{first:?} is not green");
     }
 
@@ -1234,15 +1223,15 @@ mod tests {
         use vale_assets::world::adt::CHUNK_SIZE;
         assert_eq!(PIXELS_PER_CHUNK, 16);
         assert_eq!(PIXELS_PER_CHUNK * CHUNKS_PER_SIDE, SIDE);
-        // …and the yards work out to the tile.
+        // The pixel size in yards adds up to the tile.
         let per_pixel = TILE_SIZE / SIDE as f32;
         assert!((per_pixel * SIDE as f32 - TILE_SIZE).abs() < 0.01);
         assert!((CHUNK_SIZE / per_pixel - PIXELS_PER_CHUNK as f32).abs() < 0.01);
     }
 
-    /// **A texture the caller cannot resolve draws as grey, not as nothing.**
-    /// A hole in a minimap reads as water, which is a wrong *shape* rather than
-    /// a wrong colour and is much harder to notice as a bug.
+    /// A texture the caller cannot resolve draws as grey, not as nothing. A
+    /// hole in a minimap reads as water, which is a wrong shape rather than a
+    /// wrong colour and is much harder to notice as a bug.
     #[test]
     fn an_unresolved_texture_is_grey_rather_than_a_hole() {
         let picture = draw(&tile(0.0), &|_| None, &nothing);
@@ -1268,7 +1257,7 @@ mod tests {
         assert_eq!(one.side, 1);
         assert_eq!(one.rgb[0], [100, 100, 100]);
 
-        // …and at two a side it keeps the two halves apart.
+        // At two a side it keeps the two halves apart.
         let two = Swatch::from_rgba(&rgba, 8, 8, 2).unwrap();
         assert_eq!(two.rgb[0], [0, 0, 0], "top left");
         assert_eq!(two.rgb[3], [200, 200, 200], "bottom right");
@@ -1292,8 +1281,8 @@ mod tests {
         assert!(Swatch::from_rgba(&[0; 4], 4, 4, 2).is_none(), "too few pixels");
     }
 
-    /// The picture encodes to the format the shipped tiles are in, which is the
-    /// end this whole module is a means to.
+    /// The picture encodes to the format the shipped tiles are in, which is
+    /// what this module produces the picture for.
     #[test]
     fn a_rendered_tile_encodes_as_a_minimap_blp() {
         let picture = draw(&tile(0.0), &green, &nothing);
@@ -1304,12 +1293,12 @@ mod tests {
         assert_eq!((back.width, back.height), (SIDE as u32, SIDE as u32));
     }
 
-    /// **A doodad darkens the ground under it and nothing else.**
+    /// A doodad darkens the ground under it and nothing else.
     ///
-    /// The whole of why the first draft looked wrong: a minimap's texture is
-    /// its canopies, and drawing none of them is a flat wash. This checks the
-    /// disc lands where the placement is rather than merely that something
-    /// changed — a footprint in the wrong axis is still a plausible picture.
+    /// A minimap's texture comes from its canopies, and drawing none of them
+    /// gives a flat wash. This checks that the disc lands where the placement
+    /// is, not only that something changed: a footprint on the wrong axis is
+    /// still a plausible picture.
     #[test]
     fn a_doodad_darkens_the_ground_it_stands_on() {
         // A tree at the centre of chunk 0, which is the picture's top-left
@@ -1332,8 +1321,8 @@ mod tests {
             "the canopy did not darken the ground"
         );
 
-        // …and the far corner of the tile is untouched, which is what says the
-        // disc is a disc and not a wash.
+        // The far corner of the tile is untouched, which shows the canopy is a
+        // disc and not a wash.
         let away = at(SIDE - 1, SIDE - 1);
         assert_eq!(&with[away..away + 3], &bare[away..away + 3], "the far corner moved");
     }
@@ -1348,10 +1337,10 @@ mod tests {
         assert_eq!(draw(&placed, &green, &nothing), draw(&bare, &green, &nothing));
     }
 
-    /// **A neighbour's placement is drawn where it lands on this tile.** The
-    /// tree is recorded by tile 33, 48 and stands on 32, 48 — which is what a
-    /// model straddling a seam is — and the picture of 32, 48 has it. Drawn
-    /// from 32, 48's own file alone, it would not.
+    /// A neighbour's placement is drawn where it lands on this tile. The tree
+    /// is recorded by tile 33, 48 and stands on 32, 48, as a model straddling a
+    /// seam does, and the picture of 32, 48 includes it. Drawn from 32, 48's
+    /// own file alone, it would not.
     #[test]
     fn a_neighbours_placement_lands_on_this_tile() {
         let origin = crate::adt::blank::chunk_origin(32, 48, 0);
@@ -1374,7 +1363,7 @@ mod tests {
             "the neighbour's tree is missing"
         );
 
-        // …and once only, however many tiles record it: the same unique id on
+        // It is drawn once however many tiles record it: the same unique id on
         // both files is one tree, not a darker one.
         let ours_too = tile_with_a_tree(32, 48, stood);
         let twice = render(&ours_too, &[theirs], &sources, &Look::default());
@@ -1382,10 +1371,10 @@ mod tests {
         assert_eq!(&twice[under..under + 3], &once[under..under + 3], "drawn twice");
     }
 
-    /// **A building is its roof, seen from above, in its texture's colour** —
+    /// A building draws as its roof, seen from above, in its texture's colour,
     /// and only where it stands above the ground. One red triangle over the
     /// top-left chunk at ten yards up draws red there; the same triangle ten
-    /// yards *down* is a cellar and draws nothing.
+    /// yards down is a cellar and draws nothing.
     #[test]
     fn a_building_draws_its_roof_above_the_ground_only() {
         let mut file = crate::adt::blank_tile(32, 48, GRASS, 0.0, 0);
@@ -1407,7 +1396,7 @@ mod tests {
 
         // The shape is in model space. With no rotation the placement is a
         // half-turn about Z and a translation (`placement_matrix`'s `Rz(pi)`
-        // term), so the model's +X/+Y run *against* the world's: a triangle
+        // term), so the model's +X/+Y run against the world's: a triangle
         // 30 yards along each model axis lands 30 yards in from the tile's
         // corner, over the first chunk.
         let roof = |z: f32| {
@@ -1448,9 +1437,9 @@ mod tests {
         assert_eq!(&up[away..away + 3], &bare[away..away + 3], "the far corner moved");
     }
 
-    /// **Water is the light's far colour**, at the light's opacity. A tile
-    /// under water with a light that says *red at full opacity* is red; with no
-    /// light it is the blue fallback rather than white.
+    /// Water at the deep end of the ramp is the light's deep colour, at the
+    /// light's opacity. A tile under water with a light of red at full opacity
+    /// is red; with no light it is the blue fallback rather than white.
     #[test]
     fn water_is_the_lights_own_colour() {
         // Ground at -20 with the ocean at 0: twenty yards deep everywhere.
@@ -1461,7 +1450,7 @@ mod tests {
                 for col in 0..8 {
                     pool.set_wet(row, col, true);
                     // Byte 255: the deep end of the ramp, where the colour
-                    // is `far` and nothing of `close`.
+                    // is all `deep` and none of `shallow`.
                     pool.fill_cell(row, col, 0.0, 255);
                 }
             }
@@ -1476,8 +1465,8 @@ mod tests {
 
         let red = |_: Liquid| {
             Some(LiquidLight {
-                close: [0.0, 0.0, 1.0],
-                far: [1.0, 0.0, 0.0],
+                shallow: [0.0, 0.0, 1.0],
+                deep: [1.0, 0.0, 0.0],
                 shallow_alpha: 1.0,
                 deep_alpha: 1.0,
             })

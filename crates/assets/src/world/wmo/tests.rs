@@ -90,7 +90,7 @@ fn build_mliq(liquid_type: u16, wet: [bool; 4]) -> Vec<u8> {
     assert_eq!(mliq.len(), LIQUID_HEADER_SIZE, "MLIQ's header is 30 bytes");
 
     for vertex in 0..9u32 {
-        // Byte 0 is the union's first field — the *depth* for water, the low
+        // Byte 0 is the union's first field — the depth for water, the low
         // half of an `s` coordinate for magma — and is the surface's
         // opacity. A recognisable multiple of ten, so a vertex that took
         // some other vertex's depth is obvious.
@@ -136,31 +136,32 @@ fn a_vertex_is_the_base_plus_whole_tiles() {
     );
 }
 
-/// **The liquid vertex is a union and the type picks the member.** Byte 0
-/// is a depth for water and ocean — and therefore the surface's opacity —
-/// but the low half of an `s` texture coordinate for magma and slime, which
-/// would be a meaningless opacity walking with the texture.
+/// The liquid vertex is a union and the type picks the member. Byte 0 is a
+/// depth for water and ocean, and therefore the vertex's place on the depth
+/// ramp, but the low half of an `s` texture coordinate for magma and slime,
+/// where it would be a ramp position walking with the texture.
 ///
-/// This is measured rather than assumed, and the measurement is in the
-/// files: over Stormwind, which is all water, byte 0 is 0 at every dry
-/// vertex and plateaus at 86 over the pool. Over Ironforge, which is mostly
-/// magma, it is spread flat over all 256 values with no plateau at all.
+/// The files show the union: over Stormwind, which is all water, byte 0 is 0
+/// at every dry vertex and plateaus at 86 over the pool. Over Ironforge, which
+/// is mostly magma, it is spread flat over all 256 values with no plateau.
 #[test]
-fn only_water_takes_its_opacity_from_the_vertex_depth() {
+fn only_water_takes_its_ramp_from_the_vertex_depth() {
     let liquid = WmoLiquid::parse(&build_mliq(0, [true; 4])).expect("MLIQ");
     assert_eq!(liquid.depths, (0..9).map(|v| (v * 10) as u8).collect::<Vec<_>>());
 
-    // Water and ocean: the depth itself, so a shallow bank fades out.
-    assert_eq!(liquid.opacity(0, Liquid::Water), 0);
-    assert_eq!(liquid.opacity(5, Liquid::Water), 50);
-    assert_eq!(liquid.opacity(5, Liquid::Ocean), 50);
-    // Magma and slime: opaque, because byte 0 there is a coordinate. Their
-    // textures agree — `lava` and `slime` carry no alpha channel at all.
-    assert_eq!(liquid.opacity(5, Liquid::Magma), 255);
-    assert_eq!(liquid.opacity(5, Liquid::Slime), 255);
-    // A vertex off the end is opaque rather than invisible: a damaged tail
-    // should cost the ripple, not the whole pool.
-    assert_eq!(liquid.opacity(99, Liquid::Water), 255);
+    // Water reaches the deep end at byte 42; byte 10 is 10/42 of the way.
+    assert_eq!(liquid.ramp(0, Liquid::Water), 0);
+    assert_eq!(liquid.ramp(1, Liquid::Water), 61);
+    assert_eq!(liquid.ramp(5, Liquid::Water), 255);
+    // The ocean spreads the ramp over the whole byte.
+    assert_eq!(liquid.ramp(5, Liquid::Ocean), 50);
+    // Magma and slime are at the end, because byte 0 there is a coordinate.
+    // Their textures agree: `lava` and `slime` carry no alpha channel at all.
+    assert_eq!(liquid.ramp(5, Liquid::Magma), 255);
+    assert_eq!(liquid.ramp(5, Liquid::Slime), 255);
+    // A vertex off the end is deep rather than shallow, so a damaged tail
+    // costs the bank's gradient and not the whole pool.
+    assert_eq!(liquid.ramp(99, Liquid::Water), 255);
 }
 
 /// A vertex belongs to no tile of its own, so "is there liquid here" is a
@@ -178,12 +179,11 @@ fn a_vertex_is_wet_when_any_tile_touching_it_is() {
     );
 }
 
-/// **The regression this exists to prevent.** The surface's opacity is the
-/// vertex colour's alpha, and it has to be `MLIQ`'s depth — the texture's
-/// own alpha is a foam mask (`lake_a` means 54 of 255) and blending a canal
-/// by it leaves it invisible, which is exactly what it did.
+/// The vertex colour's alpha is the vertex's place on the depth ramp, from
+/// `MLIQ`'s depth. The texture's own alpha is a ripple mask (`lake_a` means 54
+/// of 255), and a canal blended by it was drawn nearly invisible.
 #[test]
-fn a_liquid_surface_carries_its_depth_as_the_vertex_alpha() {
+fn a_liquid_surface_carries_its_depth_ramp_as_the_vertex_alpha() {
     let root = WmoRoot::parse(&build_root()).expect("root");
     let mut group = WmoGroup::parse(&build_group(0, 0)).expect("group");
     group.batches.clear();
@@ -203,18 +203,19 @@ fn a_liquid_surface_carries_its_depth_as_the_vertex_alpha() {
     assert_eq!(draw.blend, 2, "water blends");
 
     // Four vertices per wet tile, pushed anticlockwise from the tile's own
-    // corner. Tile (0,0) spans grid vertices (0,0), (1,0), (1,1), (0,1) —
-    // which in the 3x3 grid are rows 0 and 1, i.e. depths 0, 10, 40, 30.
-    // Getting the row stride wrong here reads a plausible neighbouring
-    // vertex's depth, which is why the expected values are spelled out.
+    // corner. Tile (0,0) spans grid vertices (0,0), (1,0), (1,1), (0,1),
+    // which in the 3x3 grid are rows 0 and 1: depths 0, 10, 40 and 30, and
+    // ramp positions 0, 10/42, 40/42 and 30/42 of 255. A wrong row stride
+    // reads a plausible neighbouring vertex's depth, so the expected values
+    // are spelled out.
     let indices = &model.indices
         [draw.index_start as usize..(draw.index_start + draw.index_count) as usize];
     let base = indices[0] as usize;
     let first: Vec<u8> = (0..4).map(|corner| model.colours[base + corner][3]).collect();
-    assert_eq!(first, [0, 10, 40, 30], "each corner takes its own depth");
+    assert_eq!(first, [0, 61, 243, 182], "each corner takes its own depth");
 
-    // And the RGB stays black — it is the identity for the additive light
-    // term, and water is not lit by `MOCV`.
+    // The RGB stays black: it is the identity for the additive light term,
+    // and water is not lit by `MOCV`.
     for &index in indices {
         assert_eq!(model.colours[index as usize][..3], [0, 0, 0]);
     }
@@ -240,14 +241,14 @@ fn the_liquid_type_is_not_the_number_in_the_group_header() {
     let root = WmoRoot::parse(&build_root()).expect("root");
     assert_eq!(group.liquid_kind(&root), None, "no MLIQ, no liquid");
 
-    // Without the root's DBC-id flag the group's number is one *less* than
+    // Without the root's DBC-id flag the group's number is one less than
     // the entry, so 0 is water.
     group.liquid = WmoLiquid::parse(&build_mliq(0, [true; 4]));
     group.liquid_type = 0;
     assert_eq!(group.liquid_kind(&root), Some(Liquid::Water));
 
     // The water/ocean split is carried by a group flag and by nothing in
-    // MLIQ at all — an ocean read as water is invisible to every number.
+    // MLIQ, so no MLIQ value shows that an ocean was read as water.
     group.flags = group_flags::LIQUID_IS_OCEAN;
     assert_eq!(group.liquid_kind(&root), Some(Liquid::Ocean));
     group.flags = 0;
@@ -278,7 +279,7 @@ fn a_group_with_only_liquid_still_produces_a_draw() {
     let model = WmoModel::assemble("t.wmo", &root, std::slice::from_ref(&group));
     assert_eq!(model.draws.len(), 1, "the liquid surface");
     let draw = &model.draws[0];
-    // Two triangles per *wet* tile, not per tile: the grid is a rectangle
+    // Two triangles per wet tile, not per tile: the grid is a rectangle
     // and the pool is not.
     assert_eq!(draw.index_count, 3 * 2 * 3);
     assert!(draw.two_sided, "a water surface is seen from underneath");
@@ -355,10 +356,10 @@ fn add_mocv(mut raw: Vec<u8>, colours: &[[u8; 4]], trans_batches: u16, vertex_en
     raw
 }
 
-/// **A `MODD` colour is BGRA like `MOCV` and not RGBA like the ambient**,
-/// which is the third place in this one format where the two structs
-/// disagree — and reading it the wrong way round produces a plausible light
-/// of the wrong hue rather than an error.
+/// A `MODD` colour is BGRA like `MOCV` and not RGBA like the ambient, the
+/// third place in this format where the two structs disagree. Reading it the
+/// wrong way round produces a plausible light of the wrong hue rather than an
+/// error.
 #[test]
 fn a_doodad_spawns_light_is_bgra_and_zero_means_none() {
     let spawn = |colour| WmoDoodad {
@@ -548,10 +549,9 @@ fn assembling_offsets_each_groups_indices_into_one_buffer() {
     assert!(model.radius > 2.4);
 }
 
-/// **Only the indoor groups are rooms**, which is the whole of the
-/// interiority test: a character standing next to an exterior wall is
-/// outdoors, and the exterior group's box covers exactly where they are
-/// standing.
+/// Only the indoor groups are rooms, and the interiority test checks nothing
+/// else: a character standing next to an exterior wall is outdoors, although
+/// the exterior group's box covers the point where they stand.
 #[test]
 fn only_the_indoor_groups_hand_back_a_box() {
     let root = WmoRoot::parse(&build_root()).expect("valid root");
@@ -574,9 +574,10 @@ fn only_the_indoor_groups_hand_back_a_box() {
     assert!(box_contains(&inside[0], [0.0, 0.0, 0.0]));
 }
 
-/// **…and every group is an area, room or not.** The two lists are different
-/// questions asked of the same boxes: a city's districts are `EXTERIOR` groups
-/// and a tavern's rooms are `INDOOR` ones, and both have a place name.
+/// Every group is an area, whether or not it is a room. The two lists answer
+/// different questions about the same boxes: a city's districts are
+/// `EXTERIOR` groups and a tavern's rooms are `INDOOR` ones, and both have a
+/// place name.
 ///
 /// The id is read at `MOGP` 0x38 and pinned here, because 0x34 beside it is the
 /// liquid type — a wrong offset there resolves to nothing in `WMOAreaTable` and
@@ -600,7 +601,7 @@ fn every_group_carries_its_own_id_and_a_box_to_find_it_by() {
     assert_eq!(areas[0].0, [[0.0, 0.0, 0.0], [2.0, 2.0, 4.0]]);
 }
 
-/// The room's light for an entity is the **mean** of what the file baked for
+/// The room's light for an entity is the mean of what the file baked for
 /// the things that do not move, and it is the named doodad set's — the same
 /// slice the furniture itself comes from, so a building standing furnished
 /// in one place and empty in another lights its visitors differently too.
@@ -632,9 +633,9 @@ fn a_rooms_light_is_the_mean_of_its_furnitures_own() {
     let b = model.room_light(1);
     assert!((b[0] - 1.0).abs() < 1e-3, "set 1 is its own slice: {b:?}");
 
-    // **And a building whose spawns name no light falls back to `MOHD`'s
-    // ambient**, which is the honest answer and is dark — see the note on
-    // `room_light`. The fixture's ambient is 0x10/0x20/0x30.
+    // A building whose spawns name no light falls back to `MOHD`'s ambient,
+    // which is dark; see the note on `room_light`. The fixture's ambient is
+    // 0x10/0x20/0x30.
     root.doodads = vec![spawn(0)];
     root.doodad_sets = vec![WmoDoodadSet { name: "a".into(), start: 0, count: 1 }];
     let model = WmoModel::assemble("Building.wmo", &root, &[]);
@@ -666,11 +667,11 @@ fn group_with_refs(flags: u32, refs: Vec<u16>) -> WmoGroup {
     }
 }
 
-/// **Which spawns the sun lights is `MODR` crossed with the group flags.**
-/// A spawn referenced only by an `EXTERIOR` group is street furniture; one
-/// any `INDOOR` group claims keeps its baked colour whichever order the
-/// groups are read in; one no group references keeps it too. This is the
-/// rule that stops Stormwind's lamp-posts drawing at dusk at noon.
+/// Which spawns the sun lights is decided by `MODR` crossed with the group
+/// flags. A spawn referenced only by an `EXTERIOR` group is street furniture;
+/// one any `INDOOR` group claims keeps its baked colour whichever order the
+/// groups are read in; one no group references keeps it too. This rule keeps
+/// Stormwind's lamp-posts from drawing with dusk lighting at noon.
 #[test]
 fn a_spawn_referenced_only_by_an_exterior_group_takes_the_sun() {
     let mut root = WmoRoot::parse(&build_root()).expect("valid root");
@@ -704,19 +705,21 @@ fn a_spawn_referenced_only_by_an_exterior_group_takes_the_sun() {
     }
 }
 
-/// **…and "a room" is the `0x48` pair being clear, not the `INDOOR` bit.**
+/// A group is a room when the `0x48` pair is clear, not when the `INDOOR` bit
+/// is set.
 ///
-/// The two answer different questions — `INDOOR` is the portal system's and
-/// `0x48` is the light's — and a group carrying *both* is most of a city:
-/// Stormwind's 115 building shells (`BH01`, `DW02`, `ClockTower`, and they name
-/// themselves in `MOGN`) are exactly that shape, and they carry no `MOCV`,
-/// which is the file saying the sun does their walls.
+/// The two answer different questions (`INDOOR` is the portal system's and
+/// `0x48` is the light's), and most of a city's groups carry both: Stormwind's
+/// 115 building shells (`BH01`, `DW02`, `ClockTower`, named in `MOGN`) have
+/// that combination, and they carry no `MOCV`, which means the sun lights
+/// their walls.
 ///
-/// Asked as `INDOOR`, every barrel, tree, planter and torch those shells list
-/// was drawn at a flat bake in the open air — dark at noon, bright at midnight,
-/// because a bake does not move with the sun. **1,711 of Stormwind's 6,158
-/// `MODD` spawns**, against the 42 the old rule found (`vale wmos`, which
-/// names them: 517 barrels, 159 mushrooms, 149 planters, 96 trees).
+/// Tested by `INDOOR`, every barrel, tree, planter and torch those shells list
+/// draws at a flat bake in the open air: dark at noon, bright at midnight,
+/// because a bake does not move with the sun. That covers 1,711 of
+/// Stormwind's 6,158 `MODD` spawns, against the 42 an `INDOOR`-only rule
+/// finds (`vale wmos` names them: 517 barrels, 159 mushrooms, 149 planters,
+/// 96 trees).
 #[test]
 fn a_group_that_is_indoor_and_exterior_lit_lights_its_spawns_by_the_sun() {
     let mut root = WmoRoot::parse(&build_root()).expect("valid root");
@@ -750,9 +753,9 @@ fn a_group_that_is_indoor_and_exterior_lit_lights_its_spawns_by_the_sun() {
         );
     }
 
-    // **And the same bit decides the *entity* test**, which is the other half
-    // of the report: a shell's box is the outside of a house, so a character
-    // walking past one was being handed the room light. Built through
+    // The same bit decides the entity test: a shell's box is the outside of a
+    // house, so counting it as a room would hand a character walking past it
+    // the room light. Built through
     // `build_group` rather than the ref helper above, because a group with no
     // batches is never assembled and the assertion would pass vacuously.
     let drawn = |flags: u32| {
@@ -801,12 +804,12 @@ fn the_colour_fixup_splits_at_the_transparency_batch_boundary() {
     assert_eq!(group.interior_start, 1);
 
     let shaded = group.shaded_colours(&root);
-    // Vertex 0 is in the transition batch. It loses the ambient — which the
-    // shader adds back — and **nothing else**: its alpha is the weight
+    // Vertex 0 is in the transition batch. It loses the ambient (which the
+    // shader adds back) and nothing else: its alpha is the weight
     // [`BatchLight::Blend`] fades it toward the daylight by, so folding
     // `(1 - a)` into the colour the way Noggit does takes a vertex the file
-    // marks *fully outdoors* to black. That fold is what put a step of
-    // darkness in the mouth of every building in the game.
+    // marks fully outdoors to black. That fold draws a dark step at the
+    // entrance of every building in the game.
     assert!(shaded[0][0] > 0.9, "{:?}", shaded[0]);
     assert_eq!(shaded[0][3], 1.0, "the fade weight survives the fixup");
     // Vertices 1 and 2 take the interior branch, which subtracts the same
@@ -830,16 +833,16 @@ fn the_colour_fixup_splits_at_the_transparency_batch_boundary() {
     );
 }
 
-/// **Every batch of a building is one of three lights, and the group alone
-/// cannot say which.** `MOGP` `+0x28`/`+0x2A` partition the `MOBA` list into
-/// transition, interior and exterior runs, and inside an indoor group those are
-/// the seam, the room and the daylight respectively. Before this was read, all
-/// three took the room — so the mouth of a building was drawn at the same flat
-/// bake as its cellar, which is the step of darkness the reports named.
+/// Every batch of a building takes one of three lights, and the group flags
+/// alone do not say which. `MOGP` `+0x28`/`+0x2A` partition the `MOBA` list
+/// into transition, interior and exterior runs, and inside an indoor group
+/// those are the seam, the room and the daylight respectively. Without these
+/// counts all three take the room light, so the entrance of a building draws
+/// at the same flat bake as its cellar, a visible step of darkness.
 ///
 /// Measured against real files by `vale wmos`, which crosses the sections
-/// with the group flags: over five Elwynn tiles **not one** transition or
-/// interior batch lands in a group the `0x48` mask calls outdoor.
+/// with the group flags: over five Elwynn tiles no transition or interior
+/// batch lands in a group the `0x48` mask calls outdoor.
 #[test]
 fn each_batch_takes_the_light_its_moba_section_names() {
     let root = WmoRoot::parse(&build_root()).expect("valid root");
@@ -875,13 +878,13 @@ fn each_batch_takes_the_light_its_moba_section_names() {
     );
 }
 
-/// …and the *group* half of that answer is the `0x48` pair, not `0x08` alone.
+/// The group's part of the light decision is the `0x48` pair, not `0x08`
+/// alone.
 ///
-/// The client tests `flags & 0x48` everywhere it asks. A group carrying only
-/// `0x40` is a
-/// street or a courtyard; read as indoor it is drawn at a bake authored to be
-/// multiplied by daylight, which is a city in permanent dusk. Stormwind's own
-/// tile carries **115** of them.
+/// The client classifies a group as outdoor by `flags & 0x48`. A group
+/// carrying only `0x40` is a street or a courtyard; read as indoor, it draws
+/// at a bake authored to be multiplied by daylight, which leaves a city in
+/// permanent dusk. Stormwind's own tile carries 115 of them.
 #[test]
 fn the_second_exterior_bit_is_exterior_too() {
     let lit = WmoGroup::parse(&build_group(group_flags::EXTERIOR_LIT, 0)).unwrap();
@@ -974,7 +977,7 @@ fn every_vertex_gets_a_colour_even_when_its_group_has_no_mocv() {
     // `build_group` writes no batch-section counts, so every batch reads
     // exterior — which inside an indoor group is `Sun`, and is the reason the
     // second group's draw is checked for `Bake` through its section below
-    // rather than here. What this pins is the *group's* half of the answer.
+    // rather than here. This checks the group's part of the decision.
     assert_eq!(model.draws[0].light, BatchLight::Sun);
     assert_eq!(model.ambient[0], 0x10 as f32 / 255.0);
 }
@@ -1032,13 +1035,12 @@ fn apply(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
     out
 }
 
-/// **A root claiming more groups than any building has is refused.**
+/// A root claiming more groups than any building has is refused.
 ///
-/// `MOHD`'s group count is the one field of a WMO header a caller *acts* on:
-/// `load` reads that many archive files, one per index. An unbounded one is an
-/// unbounded run of lookups and, before that, an allocation of whatever the
-/// damaged bytes said — which is the four-gigabyte spike and the stall that
-/// were reported from the window.
+/// `MOHD`'s group count is the one field of a WMO header a caller acts on:
+/// `load` reads that many archive files, one per index. An unbounded count
+/// means an unbounded run of lookups and, before that, an allocation sized by
+/// the damaged bytes, which shows as a four-gigabyte memory spike and a stall.
 ///
 /// The number is measured rather than chosen: over all 816 `.wmo` roots of a
 /// 1.12 install the largest is 306, `stormwind.wmo`.
@@ -1065,12 +1067,12 @@ fn a_root_claiming_impossible_groups_is_refused() {
     assert_eq!(root.group_count, 306);
 }
 
-/// **The server's outdoors rule, case by case** — `TerrainInfo::IsOutdoors`.
+/// The server's outdoors rule (`TerrainInfo::IsOutdoors`), case by case.
 ///
-/// The case that matters is the second: a street group carries `OUTDOOR` and a
-/// building's rooms do not, so Stormwind reads as open sky everywhere but
-/// indoors. Before this rule the client asked whether the point was inside
-/// *any* group's box, which is true of every street in the city.
+/// The second case is the important one: a street group carries `OUTDOOR` and
+/// a building's rooms do not, so Stormwind reads as open sky everywhere except
+/// indoors. A test of whether the point is inside any group's box would
+/// instead be true on every street in the city.
 #[test]
 fn outdoors_is_the_floor_group_bit_unless_the_ground_covers_it() {
     let street = group_flags::OUTDOOR | group_flags::EXTERIOR;

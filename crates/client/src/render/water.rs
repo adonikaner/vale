@@ -1,77 +1,58 @@
-//! **Every drop of water in the frame, kept current** — the flipbook it is
-//! drawn with and the colour it is drawn in.
+//! Keeps every liquid surface's material current: the flipbook frame it is
+//! drawn with, the colour it is drawn in, and the sun's specular colour on it.
 //!
-//! The surfaces themselves are spawned by two other passes:
-//! [`crate::render::terrain`] hands over a tile's `MCLQ` lakes and rivers and
-//! [`crate::render::wmos`] a building's `MLIQ` pools, both through the model
-//! material, both tagged [`crate::render::terrain::TerrainWater`]. What neither
-//! of them can do is keep a surface up to date, because both are hand-off
-//! passes that run once per tile: a surface they build is a surface frozen at
-//! the moment its tile arrived. This module is the other half.
+//! The surfaces are spawned by two other passes: [`crate::render::terrain`]
+//! hands over a tile's `MCLQ` lakes and rivers and [`crate::render::wmos`] a
+//! building's `MLIQ` pools, both through the model material, both tagged
+//! [`crate::render::terrain::TerrainWater`]. Both run once per tile, so a
+//! surface they build is fixed at the moment its tile arrived. This module
+//! updates the three things about a liquid surface that change while nothing
+//! is loading.
 //!
-//! Two things about a liquid surface change while nobody is loading anything,
-//! and until this existed neither did.
+//! ## The flipbook
 //!
-//! ## It moves
+//! Every liquid in 1.12 is a thirty-frame flipbook played over 1.25 seconds,
+//! 24 frames a second, the same for all four types; see [`Liquid::frame_at`].
+//! The client loads the whole set per type on first use and indexes it off the
+//! wall clock, and so does this module. [`Liquid::textures`] names the files
+//! and lives in `vale-assets` with the other game rules; this module decodes
+//! them, holds the handles and swaps the frame.
 //!
-//! Every liquid in 1.12 is a **thirty-frame flipbook**, and the rule is four
-//! constants in the 1.12.1 client — see [`Liquid::frame_at`]. Thirty frames over 1.25 seconds is 24 a second, the same for all
-//! four kinds. The client loads the whole set per kind on first use and indexes
-//! it off the wall clock; so does this.
+//! ## The colour, resolved where the camera is
 //!
-//! Nothing here decides *which* file: [`Liquid::textures`] is the game rule and
-//! lives in `vale-assets` with the rest of them. What lives here is the
-//! decode, the handles and the swap.
+//! A liquid's shallow and deep colours are two bands of a `LightParams` row,
+//! the same row the fog, the sky gradient and the sun come from.
+//! [`crate::render::sky`] resolves that row once a frame at the character's
+//! position by blending every positional row whose falloff sphere reaches
+//! them, and the water takes the same position.
 //!
-//! ## Its colour is the light's, and the light is where the *camera* is
+//! Resolving per surface draws a seam. A `MCLQ` draw is per tile per type, so
+//! a lake spanning two ADT tiles is two draws whose centres are 533 yards
+//! apart, and two centres either side of a `Light.dbc` falloff sphere resolve
+//! to two colours: a straight line down the middle of the water on the tile
+//! seam. So [`LiquidPalette`] is one answer per map, place and hour, and every
+//! surface on screen takes it. It changes smoothly as the camera travels,
+//! because the falloff blend is a ramp.
 //!
-//! A liquid's near and far colours are two bands of a `LightParams` row — the
-//! same row the fog, the sky gradient and the sun come out of, which
-//! [`crate::render::sky`] already resolves once a frame at the character's
-//! position by blending every positional row whose falloff sphere reaches them.
-//! Water is one more band of that same answer and not a property of the water.
+//! ## Why this edits materials in place
 //!
-//! It used to be resolved **per surface**, at each draw's own mean position and
-//! at a hard-coded noon, with a comment arguing that a lake tinted by where it
-//! is looked at from changes colour as you walk around it. The argument is
-//! reasonable and the consequence is not: a `MCLQ` draw is *per tile per kind*,
-//! so a lake spanning two ADT tiles is two draws whose centres are 533 yards
-//! apart, and two centres either side of a `Light.dbc` falloff sphere resolve to
-//! two different colours. What that draws is a hard straight line down the
-//! middle of the water, on the tile seam — which is the reported "weird, jarring
-//! tint change at certain boundaries", and it cannot be anything else, because
-//! nothing else in the frame changes on a 533-yard grid.
+//! A liquid material is interned in the model pass's pool like every other.
+//! [`crate::render::models::Materials::with_highlight`] changes a material by
+//! copying, editing and re-interning it, which suits a per-entity change. Here
+//! the change is the same for every liquid surface in the world at once, and
+//! re-interning would build a new material per type 24 times a second and
+//! leave the pool holding the old ones until they were dropped.
 //!
-//! The hour was the other half of it: `light::NOON` was passed literally, so the
-//! sea at midnight was the sea at midday.
-//!
-//! So there is one palette per map per place per hour, [`LiquidPalette`], and
-//! every surface on screen takes it. That is one colour for one body of water
-//! however many draws it is cut into, and it changes as you travel — smoothly,
-//! because the falloff blend is a ramp and not a boundary.
-//!
-//! ## Why this writes materials rather than making them
-//!
-//! A liquid material is interned in the model pass's pool like every other, and
-//! [`crate::render::models::Materials::with_highlight`] is the pattern for
-//! *changing* one: copy, edit, re-intern. That is right for a per-entity change
-//! and wrong here, where the change is the same for every liquid surface in the
-//! world at once — re-interning would build a fresh material per kind twenty-four
-//! times a second and leave the pool holding the dead ones until they were
-//! dropped.
-//!
-//! So it edits in place, which is the same thing
-//! `material::follow_uv_animations` does to the two dozen materials it drives
-//! and for the same reason. What that costs is the pool's key going stale on a
-//! liquid material: a later `intern` of the original bits answers this handle,
-//! whose contents are now the current frame and the current colour. For a liquid
-//! surface that is not a fault, it is the answer wanted — every liquid of a kind
-//! is meant to look identical.
+//! So this module edits in place, as `material::follow_uv_animations` does for
+//! the materials it drives. The pool's key then goes stale on a liquid
+//! material: a later `intern` of the original contents answers this handle,
+//! whose contents are the current frame and colour. Every liquid surface of a
+//! type is meant to look identical, so that answer is the one wanted.
 
 use vale_assets::tables::light::LiquidLight;
 use vale_assets::world::wmo::Liquid;
-// Renamed on the way in: `Assets` is Bevy's asset store everywhere else in this
-// crate, and the archive chain is a different thing with the same name.
+// Renamed: `Assets` is Bevy's asset store everywhere else in this crate, and
+// the archive chain is a different thing with the same name.
 use vale_assets::{world::blp, Assets as Archives};
 use bevy::prelude::*;
 use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
@@ -79,7 +60,7 @@ use bevy::tasks::{block_on, futures_lite::future, AsyncComputeTaskPool, Task};
 use crate::render::models::{liquid_vec, M2Material};
 use crate::render::terrain::TerrainWater;
 
-/// The flipbook, the palette and the three systems that keep them current.
+/// The flipbook, the palette and the four systems that keep them current.
 pub(crate) struct WaterPlugin;
 
 impl Plugin for WaterPlugin {
@@ -92,24 +73,21 @@ impl Plugin for WaterPlugin {
 
 /// Every frame of every liquid flipbook, decoded once per session.
 ///
-/// **All four kinds together, on one task.** The client loads them per kind on
-/// first use; this asks for the lot at once
-/// because the alternative is a decode landing in the middle of a session the
-/// first time somebody walks past a lava pool. It is 120 files of 256x256 —
-/// about forty megabytes of texture once mipped, which is the price of water
-/// that moves and is what the reference pays for the kinds it has seen.
+/// All four types are read together on one task. The client loads them per
+/// type on first use; reading all of them at once keeps a decode from landing
+/// in the middle of a session the first time the camera passes a lava pool.
+/// The set is 120 files of 256x256, about forty megabytes of texture once
+/// mipped.
 ///
-/// **The handles are reserved before the pixels exist**, which is the same
-/// device `terrain::receive_tiles` uses for a tile's ground textures and it is
-/// load-bearing for two different reasons. A material naming an image that has
-/// not arrived fails `AsBindGroup` with `RetryNextUpdate` and is simply not
-/// drawn until it has — so a surface can be built the moment its tile lands
-/// without waiting for this. And because the handle is the same one for every
-/// surface of a kind, **all of them intern to one material**: without that, each
-/// tile's water carried its own decode of `lake_a.1` under its own `AssetId`, so
-/// a dozen identical lakes were a dozen materials — and [`dress`] would have had
-/// to rewrite, and the render world re-upload, every one of them twenty-four
-/// times a second.
+/// The handles are reserved before the pixels exist, as
+/// `terrain::receive_tiles` does for a tile's ground textures, for two
+/// reasons. A material naming an image that has not arrived fails
+/// `AsBindGroup` with `RetryNextUpdate` and is not drawn until it has, so a
+/// surface can be built the moment its tile lands. And because every surface
+/// of a type names the same handle, all of them intern to one material.
+/// Without that, each tile's water carried its own decode of `lake_a.1` under
+/// its own `AssetId`, a dozen identical lakes were a dozen materials, and
+/// [`dress`] would rewrite each of them 24 times a second.
 #[derive(Resource, Default)]
 pub(crate) struct LiquidFlipbook {
     /// Indexed by [`Liquid::index`], each inner run [`LIQUID_FRAMES`] long in
@@ -128,63 +106,60 @@ enum Flipbook {
     /// decodes and the main thread is drawing.
     Reading(Task<Result<Vec<Vec<Image>>, String>>),
     Ready,
-    /// **A degradation and not an error**, on the same terms as a missing
-    /// `Light.dbc`: the reserved handles stay empty, so every liquid surface
-    /// fails `AsBindGroup` and is not drawn — which is loud, where a still
-    /// picture of water would be a bug nobody could see.
+    /// The read failed. The reserved handles stay empty, so every liquid
+    /// surface fails `AsBindGroup` and is not drawn. Missing water is a fault
+    /// a viewer reports; a still picture of water would not be.
     Failed,
 }
 
 impl LiquidFlipbook {
-    /// One frame of one kind, or `None` before the handles have been reserved.
-    ///
-    /// **Public because the two hand-off passes ask it at spawn.** They take
-    /// whatever frame is showing at that instant, so a surface joins the
-    /// animation already in progress rather than starting it again.
+    /// One frame of one type, or `None` before the handles have been reserved.
     pub fn frame(&self, kind: Liquid, frame: u32) -> Option<Handle<Image>> {
         let frames = self.frames.get(kind.index())?;
         frames.get(frame as usize % frames.len().max(1)).cloned()
     }
 
-    /// **The frame a surface is *interned* against**, which is deliberately not
-    /// the one showing.
+    /// The frame a spawning surface's material is interned against: always
+    /// frame 0, not the frame showing.
     ///
     /// A material's pool key is its contents, and its contents include this
-    /// texture — so handing a spawning surface the frame showing at that
-    /// instant keys it on the wall clock. Surfaces of one kind then share a
-    /// material only if they were handed over inside the same 42 ms, and a
-    /// block of tiles that streams in over half a minute comes out as **one
-    /// material per spawn instant**: measured at 60 distinct water materials
-    /// for one 7x7 block where the kinds present are four.
+    /// texture. Handing a spawning surface the frame showing at that instant
+    /// keyed it on the wall clock, so surfaces of one type shared a material
+    /// only if they were handed over inside the same 42 ms. A 7x7 block of
+    /// tiles that streamed in over half a minute was measured at 60 distinct
+    /// water materials where four types were present.
     ///
-    /// That is not merely wasteful. [`dress`] rewrites every one of them on
-    /// every flipbook step, and in bevy 0.19 a material re-upload whose
-    /// textures are shared with another material in the same bindless slab
-    /// **permanently adds a slab resource**: the free drops a refcount without
-    /// releasing the slot, and the re-allocation lands in a fresh slab. The
-    /// measured cost was 15 new slabs and 30,000 unreleased slab resources
-    /// every 30 seconds, which is where "4 GB after a few hours, idle" came
-    /// from.
+    /// [`dress`] rewrites every one of those on every flipbook step, and in
+    /// bevy 0.19 a material re-upload whose textures are shared with another
+    /// material in the same bindless slab adds a slab resource permanently:
+    /// the free drops a refcount without releasing the slot, and the
+    /// re-allocation lands in a new slab. That was measured at 15 new slabs and
+    /// 30,000 unreleased slab resources every 30 seconds, which grew an idle
+    /// session to 4 GB over a few hours.
     ///
-    /// Anchoring the key to frame 0 makes it one material per kind, which is
-    /// what the module doc above always claimed. The animation is unaffected:
-    /// [`dress`] runs on `Added<TerrainWater>` as well as on the clock, so the
-    /// one material is already showing the current frame.
+    /// Anchored to frame 0 there is one material per type. The animation is
+    /// unaffected: [`dress`] runs on `Added<TerrainWater>` as well as on the
+    /// clock, so the material is showing the current frame on the first frame
+    /// it is drawn.
     pub fn anchor(&self, kind: Liquid) -> Option<Handle<Image>> {
         self.frame(kind, 0)
     }
 }
 
-/// **What colour every liquid on screen is**, and which frame of its flipbook is
-/// showing.
+/// The colour of every liquid on screen, the sun's specular colour on it, and
+/// which frame of its flipbook is showing.
 ///
-/// One answer for the whole world rather than one per surface — see the module
-/// doc, where the seam that costs is.
+/// One answer for the whole world rather than one per surface; see the module
+/// doc for the seam that per-surface answers draw.
 #[derive(Resource)]
 pub(crate) struct LiquidPalette {
-    /// Indexed by [`Liquid::index`]. `None` is "draw it from its own texture",
-    /// which is what magma and slime always answer.
+    /// Indexed by [`Liquid::index`]. `None` means the surface is drawn from its
+    /// own texture, which is what magma and slime always answer.
     tints: [Option<LiquidLight>; 4],
+    /// The colour of the sun's highlight on water and ocean, as the file's
+    /// bytes: `Light.dbc`'s band 9, the colour the ground's sheen takes. Black
+    /// when the world's specular switch is off.
+    sheen: [f32; 3],
     /// Which frame of the flipbook the wall clock says it is.
     frame: u32,
     /// The map, the hour and the quantised place the tints were resolved for.
@@ -192,15 +167,15 @@ pub(crate) struct LiquidPalette {
 }
 
 impl Default for LiquidPalette {
-    /// **The no-tables answer, not an empty one**, and the difference is what a
-    /// surface handed over before the first resolve is drawn as.
+    /// The answer with no light tables, which is what a surface handed over
+    /// before the first resolve is drawn as.
     ///
-    /// `Some`/`None` here is not only a colour: it is what decides whether the
-    /// fragment takes the water branch at all, and a surface that spawns with
-    /// `None` is drawn from its own texture — which for `lake_a`, whose peak
-    /// channel is 41 of 255, is a black sheet. So the default is exactly what
-    /// `LightTables::liquid` answers with no tables: conspicuous white for water
-    /// and ocean, nothing for the two flipbooks that carry their own colour.
+    /// `Some` or `None` decides whether the fragment takes the water branch at
+    /// all, and a surface that spawns with `None` is drawn from its own
+    /// texture, which for `lake_a`, whose peak channel is 41 of 255, is a black
+    /// sheet. So the default is what `LightTables::liquid` answers with no
+    /// tables: conspicuous white for water and ocean, and nothing for the two
+    /// flipbooks that carry their own colour.
     fn default() -> Self {
         LiquidPalette {
             tints: [
@@ -209,6 +184,7 @@ impl Default for LiquidPalette {
                 None,
                 None,
             ],
+            sheen: [0.0; 3],
             frame: 0,
             resolved_for: None,
         }
@@ -216,32 +192,30 @@ impl Default for LiquidPalette {
 }
 
 impl LiquidPalette {
-    /// The colour and depth ramp this liquid takes, where the character is
-    /// standing and at the hour the world says.
+    /// The two ends of the colour and opacity ramp this liquid takes, where
+    /// the character is standing and at the hour the world says.
     ///
-    /// **Public because the two hand-off passes ask it at spawn**, so a surface
-    /// is the right colour on the frame it appears rather than on the one after.
-    /// They also need the `Option` itself: it is what decides whether the
-    /// fragment takes the water branch at all, which magma and slime must not.
+    /// Public because the two hand-off passes ask for it at spawn, so a surface
+    /// is the right colour on the frame it appears. They also need the
+    /// `Option` itself: it decides whether the fragment takes the water branch
+    /// at all, which magma and slime must not.
     pub fn tint(&self, kind: Liquid) -> Option<LiquidLight> {
         self.tints[kind.index()]
     }
 
-    // **There is deliberately no public reader for [`Self::frame`].** The two
-    // hand-off passes used to ask for it and hand the showing frame to a
-    // spawning surface, which keyed that surface's material on the wall clock —
-    // see [`LiquidFlipbook::anchor`], which is what they ask instead. Nothing
-    // outside this file has any business knowing which frame is showing:
-    // [`dress`] is the one place that puts it on a material.
+    // There is no public reader for `frame`. The hand-off passes once asked
+    // for it and gave the showing frame to a spawning surface, which keyed the
+    // surface's material on the wall clock; see [`LiquidFlipbook::anchor`],
+    // which is what they ask for instead. [`dress`] is the one place that puts
+    // the showing frame on a material.
 }
 
 /// Ask for the flipbook once, and take it when it lands.
 ///
-/// **The settled states are answered through the shared borrow**, and that is
-/// not tidiness: `ResMut`'s `DerefMut` marks the resource changed whether or not
-/// anything in it moved, and [`dress`] is keyed on exactly that. Reaching for
-/// `&mut book.state` unconditionally would mark it every frame for ever and
-/// walk every liquid material in the world sixty times a second.
+/// The settled states are answered through the shared borrow. `ResMut`'s
+/// `DerefMut` marks the resource changed whether or not anything in it moved,
+/// and [`dress`] is keyed on that change, so taking `&mut book.state` every
+/// frame would walk every liquid material in the world every frame.
 fn load(
     mut book: ResMut<LiquidFlipbook>,
     assets: Res<crate::assets::GameAssets>,
@@ -252,9 +226,9 @@ fn load(
     }
     match &mut book.state {
         Flipbook::Unasked => {
-            // The handles first and the pixels afterwards — see the type's own
-            // note. Reserving costs an index apiece and is what lets every
-            // surface of a kind name one image before any of them exists.
+            // The handles first and the pixels afterwards; see the type's own
+            // note. Reserving costs an index each and lets every surface of a
+            // type name one image before any of them exists.
             book.frames = Liquid::ALL
                 .iter()
                 .map(|_| {
@@ -292,12 +266,12 @@ fn load(
     }
 }
 
-/// The whole set, off the loader thread: thirty frames for each of the four
-/// kinds, in order.
+/// The whole set, off the main thread: thirty frames for each of the four
+/// types, in order.
 ///
-/// **Its own archive chain**, exactly as `terrain::read_tile` opens one: the
-/// resource's is behind a `Mutex` a tile load may be holding, and the point of
-/// being on the pool is not to wait for it.
+/// It opens its own archive chain, as `terrain::read_tile` does. The
+/// resource's chain is behind a `Mutex` a tile load may be holding, and the
+/// task is on the pool so as not to wait for it.
 fn read_flipbooks(gamedata_dir: &str) -> Result<Vec<Vec<Image>>, String> {
     let mut archive = Archives::open(gamedata_dir).map_err(|e| e.to_string())?;
     let mut kinds = Vec::with_capacity(Liquid::ALL.len());
@@ -313,22 +287,36 @@ fn read_flipbooks(gamedata_dir: &str) -> Result<Vec<Vec<Image>>, String> {
     Ok(kinds)
 }
 
-/// What colour the water is here, this hour.
+/// The colour of the water here at this hour, and the sun's highlight on it.
 ///
-/// The same shape as [`crate::render::sky`]'s own resolve and deliberately: the
-/// fog, the sky and the water are three bands of one `LightParams` row, and two
-/// passes disagreeing about *where the camera is* would draw a lake lit for one
-/// zone under a sky lit for the next.
+/// The colour is resolved the way [`crate::render::sky`] resolves its row, on
+/// purpose: the fog, the sky and the water are three bands of one
+/// `LightParams` row, and two passes that disagreed about where the camera is
+/// would draw a lake lit for one zone under a sky lit for the next.
+///
+/// The highlight is the sky's band 9, as the ground's sheen is (see
+/// `terrain::light_sheen`), and it is checked every frame because the sky
+/// resolves on its own schedule. It is written only when it moves, because
+/// [`dress`] is keyed on the palette changing.
 fn resolve(
     mut palette: ResMut<LiquidPalette>,
     clock: Res<crate::render::sky::WorldClock>,
     focus: Res<crate::render::focus::WorldFocus>,
     assets: Res<crate::assets::GameAssets>,
+    sky: Option<Res<crate::render::sky::Sky>>,
+    tuning: Option<Res<crate::render::tuning::WorldTuning>>,
 ) {
+    let sheen = match (&sky, &tuning) {
+        (Some(sky), Some(tuning)) if tuning.specular => sky.current.sun_halo,
+        _ => [0.0; 3],
+    };
+    if palette.sheen != sheen {
+        palette.sheen = sheen;
+    }
     if !focus.present {
         return;
     }
-    // The world's own axes, which is what the light table is in — see
+    // The world's own axes, which is what the light table is in; see
     // `sky::resolve`, which takes the same position from the same field.
     let at = [focus.position.x, focus.position.y, focus.position.z];
     let cell = at.map(|c| (c / crate::render::sky::RESOLVE_CELL) as i32);
@@ -348,35 +336,42 @@ fn resolve(
 
 /// Which frame of the flipbook is showing.
 ///
-/// **The wall clock and not the world's**, which is [`Liquid::frame_at`]'s own
-/// note: the game's hour advances in half-minutes and would step this once every
-/// thirty seconds. Written only when it moves, because [`dress`] is keyed on the
-/// change.
+/// Read off the wall clock and not the world's, as [`Liquid::frame_at`] notes:
+/// the game's hour advances in half-minutes and would step the flipbook once
+/// every thirty seconds. Written only when it moves, because [`dress`] is
+/// keyed on the change.
 fn advance(mut palette: ResMut<LiquidPalette>, time: Res<Time>) {
-    // All four kinds share a period (1.25 seconds, four times over), so
-    // one frame number covers the set; asked through `Water` rather than
-    // hard-coded, since the table is per type in the client.
+    // All four types share a period of 1.25 seconds, so one frame number
+    // covers the set. It is asked of `Water` rather than written here because
+    // the period is stated per type.
     let frame = Liquid::Water.frame_at(time.elapsed_secs());
     if palette.frame != frame {
         palette.frame = frame;
     }
 }
 
-/// Put this instant's frame and this place's colour on every liquid surface.
+/// The specular colour as `body.z` carries it: `0xRRGGBB` as a float, which
+/// holds every 24-bit integer exactly. Zero is no highlight.
+fn sheen_word(colour: [f32; 3]) -> f32 {
+    let byte = |c: f32| u32::from((c.clamp(0.0, 1.0) * 255.0).round() as u8);
+    (byte(colour[0]) << 16 | byte(colour[1]) << 8 | byte(colour[2])) as f32
+}
+
+/// Put the current frame, this place's colour and the sun's highlight on
+/// every liquid surface.
 ///
-/// Gated on something having moved — the flipbook advances 24 times a second and
-/// the palette only when the character crosses a cell or the hour ticks, where
-/// this runs at the frame rate. `Added` is in the gate because a surface handed
-/// over between two frame changes would otherwise hold the frame it was spawned
-/// with for up to 42 ms.
+/// Gated on something having moved: the flipbook advances 24 times a second
+/// and the palette when the camera crosses a cell or the hour ticks, while
+/// this runs at the frame rate. `Added` is in the gate because a surface
+/// handed over between two frame changes would otherwise hold the frame it was
+/// spawned with for up to 42 ms.
 ///
-/// **Deduplicated by material, not by entity**, which is the whole cost of this
-/// pass. `get_mut` on a material is a bind-group rebuild in the render world
-/// whether or not the write changed anything, and every surface of a kind shares
-/// one material now (see [`LiquidFlipbook`]) — so a nine-tile block of lakes is
-/// one write and not a dozen. The `seen` set is over the *distinct* handles
-/// rather than a `changed` flag, because terrain water and a building's canal
-/// differ in their ambient and are genuinely two materials.
+/// Deduplicated by material, not by entity. `get_mut` on a material rebuilds
+/// its bind group in the render world whether or not the write changed
+/// anything, and every surface of a type shares one material (see
+/// [`LiquidFlipbook`]), so a nine-tile block of lakes is one write. The `seen`
+/// set is over the distinct handles because terrain water and a building's
+/// canal differ in their ambient and are two materials.
 fn dress(
     palette: Res<LiquidPalette>,
     book: Res<LiquidFlipbook>,
@@ -387,6 +382,7 @@ fn dress(
     if !palette.is_changed() && !book.is_changed() && fresh.is_empty() {
         return;
     }
+    let sheen = sheen_word(palette.sheen);
     let mut seen = bevy::platform::collections::HashSet::new();
     for (water, material) in &surfaces {
         if !seen.insert(material.0.id()) {
@@ -397,26 +393,32 @@ fn dress(
         let Some(current) = materials.get(&material.0) else {
             continue;
         };
-        // **Read before the write**, because `get_mut` is the re-upload: it
-        // marks the asset changed whether or not anything in it moved, and the
-        // render world rebuilds that material's bind group for it. Most of these
-        // are already right.
+        // Read before writing, because `get_mut` is the re-upload: it marks
+        // the asset changed whether or not anything in it moved, and the render
+        // world rebuilds that material's bind group. Most of these are already
+        // right.
         let wanted_texture = frame.unwrap_or_else(|| current.texture.clone());
-        // …and the colour is only this pass's business where the fragment is
-        // taking the water branch at all. Magma and slime are drawn from their
-        // own flipbooks, which do carry colour, so their `liquid` is 0 and the
-        // two vectors below mean nothing.
-        let (close, far) = if current.params.liquid != 0.0 {
+        // The colour and the highlight apply only where the fragment takes the
+        // water branch. Magma and slime are drawn from their own flipbooks,
+        // which carry colour, so their `liquid` is 0 and these three values
+        // are not read.
+        let (shallow, deep, body_z) = if current.params.liquid != 0.0 {
             (
-                liquid_vec(tint.map(|l| (l.close, l.shallow_alpha))),
-                liquid_vec(tint.map(|l| (l.far, l.deep_alpha))),
+                liquid_vec(tint.map(|l| (l.shallow, l.shallow_alpha))),
+                liquid_vec(tint.map(|l| (l.deep, l.deep_alpha))),
+                sheen,
             )
         } else {
-            (current.params.liquid_close, current.params.liquid_far)
+            (
+                current.params.liquid_shallow,
+                current.params.liquid_deep,
+                current.params.body.z,
+            )
         };
         if current.texture == wanted_texture
-            && current.params.liquid_close == close
-            && current.params.liquid_far == far
+            && current.params.liquid_shallow == shallow
+            && current.params.liquid_deep == deep
+            && current.params.body.z == body_z
         {
             continue;
         }
@@ -424,8 +426,9 @@ fn dress(
             continue;
         };
         material.texture = wanted_texture;
-        material.params.liquid_close = close;
-        material.params.liquid_far = far;
+        material.params.liquid_shallow = shallow;
+        material.params.liquid_deep = deep;
+        material.params.body.z = body_z;
     }
 }
 
@@ -433,12 +436,12 @@ fn dress(
 mod tests {
     use super::*;
 
-    /// **The whole set is one lap of the flipbook and the lap is the client's.**
+    /// The whole set is one lap of the flipbook at the client's rate.
     ///
-    /// Thirty frames over 1.25 seconds, floored — so the first frame is showing
-    /// at t=0, the last just before the lap closes, and the lap repeats. A rule
-    /// that rounded instead of floored would show frame 30 for half a frame's
-    /// worth of every lap and index past the end of the set.
+    /// Thirty frames over 1.25 seconds, rounded down: the first frame shows at
+    /// t=0, the last just before the lap closes, and the lap repeats. Rounding
+    /// to nearest instead would show frame 30 for half a frame of every lap and
+    /// index past the end of the set.
     #[test]
     fn the_flipbook_runs_at_the_clients_own_rate() {
         let period = Liquid::Water.flipbook_period();
@@ -448,17 +451,16 @@ mod tests {
             Liquid::Water.frame_at(period * 0.999),
             vale_assets::world::wmo::LIQUID_FRAMES - 1
         );
-        // …and the lap wraps rather than running on.
+        // The lap wraps rather than running on.
         assert_eq!(Liquid::Water.frame_at(period), 0);
         assert_eq!(Liquid::Water.frame_at(period * 4.0 + 0.05), Liquid::Water.frame_at(0.05));
-        // Twenty-four a second, which is what 30 over 1.25 comes to: the frame
-        // has moved on by one after a twenty-fourth of a second and by no more.
+        // 30 frames over 1.25 seconds is 24 a second: the frame has moved on
+        // by one after a twenty-fourth of a second and by no more.
         assert_eq!(Liquid::Water.frame_at(1.0 / 24.0 + 1e-4), 1);
     }
 
-    /// **Every frame the flipbook can name is a frame it has**, which is the
-    /// one thing a modulo could get wrong quietly: an off-by-one here draws the
-    /// same frame twice a lap, which is a stutter nobody would attribute.
+    /// Every frame the flipbook can name is a frame it has. An off-by-one here
+    /// draws the same frame twice a lap, which shows only as a stutter.
     #[test]
     fn every_frame_of_a_lap_indexes_a_distinct_picture() {
         let frames = vale_assets::world::wmo::LIQUID_FRAMES;
@@ -472,20 +474,18 @@ mod tests {
         assert!(seen.iter().all(|f| *f < frames));
     }
 
-    /// **The frame a surface is interned against does not move**, which is the
-    /// whole of the material count and the whole of the leak behind it.
+    /// The frame a surface is interned against does not move.
     ///
     /// A material's pool key is its contents and its contents include this
-    /// texture, so an anchor that followed the clock keyed water on the instant
-    /// a tile happened to arrive: 60 materials for a 7x7 block where the kinds
-    /// present are four, every one of them rewritten 24 times a second, and a
-    /// bindless slab resource lost on each of those rewrites. See
-    /// [`LiquidFlipbook::anchor`].
+    /// texture, so an anchor that followed the clock keyed water on the
+    /// instant a tile arrived: 60 materials for a 7x7 block where four types
+    /// were present, each rewritten 24 times a second, and a bindless slab
+    /// resource lost on each rewrite. See [`LiquidFlipbook::anchor`].
     #[test]
     fn a_surface_is_interned_against_a_frame_that_does_not_move() {
         let frames = vale_assets::world::wmo::LIQUID_FRAMES as usize;
         // Real, distinct handles, because the assertion is that the anchor is
-        // one particular frame and not merely *a* frame.
+        // one particular frame.
         let mut images = Assets::<Image>::default();
         let book = LiquidFlipbook {
             frames: Liquid::ALL
@@ -497,10 +497,8 @@ mod tests {
         for kind in Liquid::ALL {
             let anchor = book.anchor(kind).expect("the book is loaded");
             assert_eq!(Some(&anchor), book.frame(kind, 0).as_ref());
-            // …and it is none of the other twenty-nine, at any point of the
-            // lap or of the one after it. An anchor that followed the clock
-            // would answer a different one of these every 42 ms, which is what
-            // keyed a water material on the instant its tile arrived.
+            // The anchor is none of the other twenty-nine, at any point of the
+            // lap or of the one after it.
             for step in 1..(frames as u32 * 2) {
                 if step as usize % frames == 0 {
                     continue;
@@ -514,33 +512,44 @@ mod tests {
         }
     }
 
-    /// The four kinds key four separate runs, and nothing crosses.
+    /// The four types key four separate runs, in the order the client's own
+    /// table holds them.
     #[test]
     fn each_kind_has_its_own_index() {
         let indices: Vec<usize> = Liquid::ALL.iter().map(|k| k.index()).collect();
         assert_eq!(indices, vec![0, 1, 2, 3]);
-        // …and the names go with them, which is what the client's own table
-        // holds in this order.
         assert!(Liquid::ALL[0].texture(1).contains("lake_a"));
         assert!(Liquid::ALL[1].texture(1).contains("ocean_h"));
         assert!(Liquid::ALL[2].texture(1).contains("lava"));
         assert!(Liquid::ALL[3].texture(1).contains("slime"));
     }
 
-    /// **A palette nobody has resolved yet still says water is water**, which
-    /// is the one thing about it that is not a colour.
+    /// A palette nobody has resolved yet still marks water as water.
     ///
-    /// `tint` deciding `None` takes the fragment off the water branch entirely
-    /// and draws the surface from its own texture, and `lake_a` peaks at channel
-    /// 41 of 255 — a black sheet, which is the invisible failure rather than the
-    /// loud one. So the default is `LightTables::liquid`'s own no-tables answer.
+    /// A `tint` of `None` takes the fragment off the water branch and draws
+    /// the surface from its own texture, and `lake_a` peaks at channel 41 of
+    /// 255: a black sheet, which is a quieter failure than white. So the
+    /// default is `LightTables::liquid`'s own no-tables answer.
     #[test]
     fn an_unresolved_palette_still_marks_water_as_water() {
         let palette = LiquidPalette::default();
         assert_eq!(palette.tint(Liquid::Water), Some(LiquidLight::UNLIT));
         assert_eq!(palette.tint(Liquid::Ocean), Some(LiquidLight::UNLIT));
-        // …and the two that are drawn from their own colour stay that way.
+        // The two drawn from their own colour stay that way.
         assert!(palette.tint(Liquid::Magma).is_none());
         assert!(palette.tint(Liquid::Slime).is_none());
+    }
+
+    /// The highlight colour is packed red-high, exactly, and black is the off
+    /// value the shader reads as no highlight.
+    #[test]
+    fn the_sheen_word_is_the_bands_own_bytes_red_high() {
+        // Map 0's band 9 at noon: 255/247/222.
+        assert_eq!(sheen_word([1.0, 247.0 / 255.0, 222.0 / 255.0]), 0x00FF_F7DE as f32);
+        assert_eq!(sheen_word([1.0, 0.0, 0.0]), 0x00FF_0000 as f32);
+        assert_eq!(sheen_word([0.0, 0.0, 1.0]), 0x0000_00FF as f32);
+        assert_eq!(sheen_word([0.0; 3]), 0.0);
+        // Out-of-range channels clamp rather than spill into a neighbour.
+        assert_eq!(sheen_word([2.0, -1.0, 2.0]), 0x00FF_00FF as f32);
     }
 }

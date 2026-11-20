@@ -1052,9 +1052,9 @@ fn mclq_reads_one_block_per_flag_bit_past_the_zero_size_field() {
     assert_eq!(chunk.liquids[0].1.height(4, 4), 30.0);
     assert_eq!(chunk.liquids[1].1.height(4, 4), 99.0, "the stride skipped the flow tail");
 
-    // Magma's byte 0 is a texture coordinate, so its opacity is a constant
-    // 255. The same rule applies to WMO liquid.
-    assert_eq!(chunk.liquids[1].1.opacity(40, Liquid::Magma), 255);
+    // Magma's byte 0 is a texture coordinate, so its ramp position is a
+    // constant 255. The same rule applies to WMO liquid.
+    assert_eq!(chunk.liquids[1].1.ramp(40, Liquid::Magma), 255);
 }
 
 /// The file's rows run in decreasing world x from the chunk origin and
@@ -1080,9 +1080,9 @@ fn mclq_lands_in_world_space_with_the_file_frame_turned_around() {
     assert_eq!(origin[2], 30.0, "MCLQ heights are absolute, not chunk-relative");
 
     // File vertex (0, 0) carried depth byte 0; it must land at grid (8, 8).
-    assert_eq!(grid.opacity(8 * 9 + 8, Liquid::Water), 0);
+    assert_eq!(grid.depths[8 * 9 + 8], 0);
     // File vertex (1, 0), one row down at index 9, lands at grid (7, 8).
-    assert_eq!(grid.opacity(8 * 9 + 7, Liquid::Water), 9);
+    assert_eq!(grid.depths[8 * 9 + 7], 9);
 
     // Only file tile (0, 0) is wet, which is grid tile (7, 7).
     let wet: Vec<(usize, usize)> = (0..8)
@@ -1209,8 +1209,8 @@ fn mclq_cell_of_type_zero_is_dry() {
 }
 
 /// The terrain liquid surface is built the same way as WMO liquid: two
-/// up-facing triangles per wet tile, the depth byte as the vertex alpha, and
-/// one draw per liquid type.
+/// up-facing triangles per wet tile, the depth byte's ramp position as the
+/// vertex alpha, and one draw per liquid type.
 #[test]
 fn terrain_liquid_surface_faces_up_and_carries_depth_as_alpha() {
     let grid = WmoLiquid {
@@ -1244,9 +1244,11 @@ fn terrain_liquid_surface_faces_up_and_carries_depth_as_alpha() {
     assert_eq!(draw.positions.len(), 4);
     assert_eq!(draw.colours.len(), draw.positions.len(), "buffers stay parallel");
 
-    // Wet tile (2, 3): its four corners' depth bytes, in emission order.
+    // Wet tile (2, 3): its four corners' depth bytes are 29, 30, 39 and 38
+    // in emission order, and each is that many 42nds of the way to the deep
+    // end of the river ramp.
     let alphas: Vec<u8> = draw.colours.iter().map(|c| c[3]).collect();
-    assert_eq!(alphas, [3 * 9 + 2, 3 * 9 + 3, 4 * 9 + 3, 4 * 9 + 2]);
+    assert_eq!(alphas, [176, 182, 237, 231]);
     assert!(draw.colours.iter().all(|c| c[0] == 0 && c[1] == 0 && c[2] == 0));
 
     // The winding faces +Z, as WMO liquid does.

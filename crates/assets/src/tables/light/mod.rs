@@ -47,27 +47,24 @@
 //! (band 2) comes out brown; read red-first they are gold `228/217/179` and
 //! blue `37/44/56`. Both bands are only plausible one way.
 //!
-//! Bands 13..16 are the water colours, and they are `close`/`far`, not
-//! `shallow`/`deep`. A shallow/deep pair would darken from the first colour to
-//! the second. Across every default light the game ships, the second of each
-//! pair is brighter in 15 of 19: the mean of
-//! band 15 is `79/85/91` and of band 16 `83/79/66`. They are the near and the
-//! far colour of the surface, and the far one tends toward the fog colour.
-//! Depth does not affect the colour:
+//! Bands 14..17 are the water colours, a shallow and a deep colour for the
+//! ocean and for rivers and lakes. Band 13 is not a water colour:
 //!
 //! ```text
-//! band 13  ocean close   map 0 at noon  (97,130,183)   mean over 19 lights  76/118/145
-//! band 14  ocean far                    (17, 75, 89)                       101/113/114
-//! band 15  river close                  ( 0, 29, 41)                        79/ 85/ 91
-//! band 16  river far                    (79, 93, 20)                        83/ 79/ 66
+//! band 14  ocean shallow  map 0 at noon  (17, 75, 89)
+//! band 15  ocean deep                    ( 0, 29, 41)
+//! band 16  river shallow                 (79, 93, 20)
+//! band 17  river deep                    (51, 82, 85)
 //! ```
 //!
-//! Depth drives only the alpha, between the two floats `LightParams` states
-//! for the liquid. Map 0's four are 0.5 / 1.0 / 0.75 / 1.0: a river bank is
-//! half transparent and the middle of a canal is opaque. Both numbers come
-//! from the table. An earlier version read `MLIQ`'s depth byte directly as an
-//! 8-bit alpha; the shore faded correctly, but a full canal was drawn at a
-//! third opacity over a colourless texture.
+//! A liquid vertex's depth byte places it on a ramp between the two ends
+//! (`Liquid::depth_ramp`), and the colour and the opacity both move along it.
+//! The opacities are two floats `LightParams` states per liquid; map 0's four
+//! are 0.5 / 1.0 / 0.75 / 1.0, so a river bank is half transparent and water
+//! deeper than about five yards is opaque. An earlier version read the depth
+//! byte directly as an 8-bit alpha, which drew a full canal at a third
+//! opacity; a later one drew bands 13..16 as a near and a far colour with the
+//! colour fixed over depth, which drew lakes too pale and too transparent.
 //!
 //! ## Clouds and sky models
 //!
@@ -99,10 +96,9 @@ pub const BANDS_PER_PARAMS: u32 = 18;
 /// 18; using the int count here would read one light's fog as another's.
 pub const FLOAT_BANDS_PER_PARAMS: u32 = 6;
 
-/// The eighteen int bands. This client reads all of them: 0..7 for the light
-/// and the sky, 8 and 9 for the sun's disc and halo, 10..12 for the clouds,
-/// 13..16 for the drawn water and 14..17 for the minimap bake's water. See
-/// [`band::SHADOW`] on what 17 may be.
+/// The eighteen int bands. This client reads all but band 13: 0..7 for the
+/// light and the sky, 8 and 9 for the sun's disc and halo, 10..12 for the
+/// clouds, and 14..17 for the water.
 ///
 /// `LightIntBand` has no name column; a band is identified by its row's
 /// position. Each index below was identified by measurement, printed by
@@ -142,21 +138,16 @@ mod band {
     /// same colour the sky is drawn with at the horizon behind it; any other
     /// value leaves a visible line where the ground ends.
     pub(crate) const SKY_FOG: u32 = 7;
-    pub(crate) const OCEAN_CLOSE: u32 = 13;
-    pub(crate) const OCEAN_FAR: u32 = 14;
-    pub(crate) const RIVER_CLOSE: u32 = 15;
-    pub(crate) const RIVER_FAR: u32 = 16;
-    /// The four water bands the shipped minimaps were rendered with. They are
-    /// one row above the four bands above, and are read as a shallow and a
-    /// deep colour mixed by `MCLQ`'s depth byte.
+    /// The four water bands: the shallow and the deep colour of the ocean and
+    /// of rivers and lakes. A liquid surface is drawn with a colour mixed
+    /// between its two by depth; see `LiquidLight`.
     ///
     /// Measured against the shipped minimap images, which are the retail
-    /// renderer's output and so the comparison the note on
-    /// [`SHADOW`](Self::SHADOW) asks for. `vale bake <Map> <x> <y> minimap`
-    /// reads the shipped image where the tile's `MCLQ` places water, binned by
-    /// the depth byte at each pixel. The mix that fits every band on every
-    /// tile tried is `mix(band[shallow], band[deep], byte / 255)` over the
-    /// ground at the float bands' opacity ramp:
+    /// renderer's output. `vale bake <Map> <x> <y> minimap` reads the shipped
+    /// image where the tile's `MCLQ` places water, binned by the depth byte at
+    /// each pixel. The mix that fits every band on every tile tried is
+    /// `mix(band[shallow], band[deep], byte / 255)` over the ground at the float
+    /// bands' opacity ramp:
     ///
     /// * Menethil's ocean (`Azeroth_33_39`, bytes under 32) reads `41/73/66`
     ///   against band 14 of the Wetlands light, `28/73/78`, over the sea
@@ -170,17 +161,19 @@ mod band {
     ///   `73/87/45` at 96..159 against the mix toward band 17, `51/82/85`,
     ///   predicted `72/89/46`.
     ///
-    /// So band 13 is not a water colour, and the four bands this client draws
-    /// water surfaces with are each one row low. The surfaces stay on the four
-    /// bands above, because moving them is a renderer change that needs a
-    /// screen to check against; these exist so the minimap can be drawn from
-    /// the measured rows. [`LightTables::liquid_by_depth_at`] reads them.
+    /// The 1.12.1 client's water pixel program, `Shaders\Pixel\ocean0_s.bls`,
+    /// samples its colour and opacity from a ramp texture built from these four
+    /// bands and the float bands' alphas; see `m2.wgsl`. Band 13 is not a water
+    /// colour. The surfaces were drawn from 13..16 until a side-by-side
+    /// screenshot against the 1.12.1 client showed water too pale and too
+    /// transparent.
     pub(crate) const OCEAN_SHALLOW: u32 = 14;
     pub(crate) const OCEAN_DEEP: u32 = 15;
     pub(crate) const RIVER_SHALLOW: u32 = 16;
     pub(crate) const RIVER_DEEP: u32 = 17;
-    /// Unidentified. Read only so that `vale light` can print it; the renderer
-    /// does not use this band.
+    /// Band 17 under the name `vale light` prints it by. It is
+    /// [`RIVER_DEEP`], the deep colour of rivers and lakes; the name records
+    /// the reading it was first given, which the rest of this note disproves.
     ///
     /// Measurements: it is dimmer than the fill in 7 of the 7 open-sky lights
     /// (`vale light` counts this beside the other four shape checks, and it
@@ -197,15 +190,8 @@ mod band {
     /// flat `shadow * 0.3 + 0.7` scalar over the whole modulated result. The
     /// client's terrain shading has no shadow colour for any band to supply.
     ///
-    /// What row 17 holds is not established. One candidate is river-far. The
-    /// canonical `LightIntBand` layout puts ocean at 14/15 and river at 16/17,
-    /// one row above the four water constants above. Either those four are one
-    /// row too low and every water colour this client draws is off by a band,
-    /// or the canonical layout is wrong here. Settling it needs the two
-    /// mappings compared against the retail client on the same server, since
-    /// both produce plausible water. Until then the four above are what
-    /// `vale water` measured, and this constant is named for its shape rather
-    /// than for a meaning that has not been established.
+    /// The canonical `LightIntBand` layout puts ocean at 14/15 and river at
+    /// 16/17, and the shipped minimaps fit that layout; see [`RIVER_DEEP`].
     pub const SHADOW: u32 = 17;
     /// The disc of the sun: 77/77/77 on map 0 at noon, 71/71/71 over the 19
     /// defaults. Read and carried, not yet drawn: it colours the sprite
@@ -274,11 +260,11 @@ pub const INT_BAND_NAMES: [&str; BANDS_PER_PARAMS as usize] = [
     "Cloud highlight",
     "Cloud shade",
     "Cloud base",
-    "Ocean close",
-    "Ocean far",
-    "River close",
-    "River far",
-    "Band 17",
+    "Band 13",
+    "Ocean shallow",
+    "Ocean deep",
+    "River shallow",
+    "River deep",
 ];
 
 /// The names of the six float bands, on the same terms as [`INT_BAND_NAMES`].
@@ -300,8 +286,7 @@ pub const FLOAT_BAND_NAMES: [&str; FLOAT_BANDS_PER_PARAMS as usize] = [
 ///
 /// The names and notes are kept here rather than in the caller so that there
 /// is one copy. A second copy in `vale light` went out of date: its note on
-/// band 17 kept the shadow-colour reading that [`band::SHADOW`] records as
-/// disproved by `terrain1.bls`.
+/// band 17 kept a shadow-colour reading after `terrain1.bls` had disproved it.
 pub const INT_BAND_NOTES: [&str; BANDS_PER_PARAMS as usize] = [
     "The single directional light the world is lit by.",
     "The ambient fill. Darker than the sun in all 19 default lights.",
@@ -316,14 +301,12 @@ pub const INT_BAND_NOTES: [&str; BANDS_PER_PARAMS as usize] = [
     "Added to the clouds where they face the sun, or the moon at night.",
     "Scaled by how thin a cloud is: fully for the thinnest, a third for the thickest.",
     "Added to every cloud texel.",
-    "",
-    "",
-    "",
-    "",
-    "Unidentified. Dimmer than the ambient band in all 7 open-sky lights and \
-     cool where the sun is warm. It is not a shadow colour: `terrain1.bls` \
-     applies MCSH as a flat scalar. It may be the far river colour; see \
-     `band::SHADOW`.",
+    "Not read: no water colour, and nothing else in the client is known to use it.",
+    "The ocean at depth byte 0.",
+    "The ocean at depth byte 255.",
+    "Rivers and lakes at the bank.",
+    "Rivers and lakes from about five yards deep. Dimmer than the ambient band \
+     in all 7 open-sky lights and cool where the sun is warm.",
 ];
 
 /// The same for the six float bands.
@@ -1095,9 +1078,9 @@ pub struct Atmosphere {
     pub ambient: [f32; 3],
     /// The dome, zenith first and horizon last; see [`band::SKY_TOP`].
     pub sky: [[f32; 3]; SKY_STOPS],
-    /// Band 17, unidentified; see [`band::SHADOW`]. Printed by `vale light`.
-    /// The renderer no longer reads it, since `MCSH` is a flat scalar with no
-    /// colour.
+    /// Band 17, the deep colour of rivers and lakes; see [`band::SHADOW`].
+    /// Printed by `vale light`. The water reads it through [`LiquidLight`],
+    /// not through this field.
     pub shadow: [f32; 3],
     /// The sun's disc, band 8; see [`band::SUN_DISC`]. Carried and not drawn:
     /// the sprite it colours needs a position over the day that this chain
@@ -1272,23 +1255,22 @@ impl Atmosphere {
     }
 }
 
-/// One liquid's colour, and the two ends of its depth-driven opacity.
+/// One liquid's two ends: the colour and opacity at the bank and in deep
+/// water.
 ///
-/// RGB is 0..1 and already lit: these come from the light chain, not from a
-/// texture, so nothing multiplies them by the sun.
+/// RGB is 0..1, as the file's bytes. A surface is drawn with the colour and
+/// the opacity mixed between the two ends by the same amount, the vertex's
+/// place on the depth ramp (`Liquid::depth_ramp`), and the sun and fill
+/// multiply the mixed colour; see `m2.wgsl`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LiquidLight {
-    /// The near colour, which a canal under the camera is drawn in.
-    pub close: [f32; 3],
-    /// The far colour. Carried and not yet used: mixing toward it needs the
-    /// distance from the camera, a per-fragment term the liquid material does
-    /// not have, and the surfaces this client draws are all within a few dozen
-    /// yards. It is read now so that it is available when the terrain's `MCLQ`
-    /// is drawn and oceans reach the horizon.
-    pub far: [f32; 3],
-    /// Opacity at `MLIQ` depth 0: the bank, where the bottom shows through.
+    /// The colour at the shallow end of the ramp.
+    pub shallow: [f32; 3],
+    /// The colour at the deep end of the ramp.
+    pub deep: [f32; 3],
+    /// Opacity at the shallow end: the bank, where the bottom shows through.
     pub shallow_alpha: f32,
-    /// Opacity at depth 255.
+    /// Opacity at the deep end.
     pub deep_alpha: f32,
 }
 
@@ -1299,8 +1281,8 @@ impl LiquidLight {
     /// texture's own near-black colour, looks like a shadow, so a missing
     /// table would go unnoticed. See [`LightTables`]' note on degradation.
     pub const UNLIT: LiquidLight = LiquidLight {
-        close: [1.0, 1.0, 1.0],
-        far: [1.0, 1.0, 1.0],
+        shallow: [1.0, 1.0, 1.0],
+        deep: [1.0, 1.0, 1.0],
         shallow_alpha: 1.0,
         deep_alpha: 1.0,
     };
@@ -1315,25 +1297,27 @@ impl LiquidLight {
             [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])]
         };
         LiquidLight {
-            close: lerp3(self.close, other.close),
-            far: lerp3(self.far, other.far),
+            shallow: lerp3(self.shallow, other.shallow),
+            deep: lerp3(self.deep, other.deep),
             shallow_alpha: lerp(self.shallow_alpha, other.shallow_alpha),
             deep_alpha: lerp(self.deep_alpha, other.deep_alpha),
         }
     }
 
-    /// The colour and opacity at a given `MLIQ` depth byte.
+    /// The colour and opacity `ramp` of the way from the shallow end to the
+    /// deep one, 0..1. Colour and opacity move together, because the client
+    /// reads both from one row of one ramp texture.
     ///
-    /// Used by `vale water` to report the ramp; the renderer does the same mix
-    /// in the fragment shader off the vertex alpha, so one draw covers a canal
-    /// that shallows at its banks.
-    pub fn at_depth(&self, depth: u8) -> [f32; 4] {
-        let t = depth as f32 / 255.0;
+    /// The renderer does the same mix in the fragment shader off the vertex
+    /// alpha, which carries the ramp position; see `Liquid::depth_ramp`.
+    pub fn at(&self, ramp: f32) -> [f32; 4] {
+        let t = ramp.clamp(0.0, 1.0);
+        let lerp = |a: f32, b: f32| a + (b - a) * t;
         [
-            self.close[0],
-            self.close[1],
-            self.close[2],
-            self.shallow_alpha + (self.deep_alpha - self.shallow_alpha) * t,
+            lerp(self.shallow[0], self.deep[0]),
+            lerp(self.shallow[1], self.deep[1]),
+            lerp(self.shallow[2], self.deep[2]),
+            lerp(self.shallow_alpha, self.deep_alpha),
         ]
     }
 }
@@ -1710,38 +1694,6 @@ impl LightTables {
         Some(light)
     }
 
-    /// The same liquid read as a shallow and a deep colour, from the four
-    /// bands one row up; the measurement is at [`band::OCEAN_SHALLOW`].
-    /// `close` is the colour at depth byte 0 and `far` the colour at 255; the
-    /// two alphas are the float bands', as in [`Self::liquid_at`].
-    ///
-    /// This is what the shipped minimaps were rendered with, not what the
-    /// client draws its surfaces with; the two read the same chain one row
-    /// apart.
-    pub(crate) fn liquid_by_depth_at(
-        &self,
-        map: u32,
-        at: [f32; 3],
-        kind: Liquid,
-        time: u32,
-    ) -> Option<LiquidLight> {
-        let bands = match kind {
-            Liquid::Water => (band::RIVER_SHALLOW, band::RIVER_DEEP),
-            Liquid::Ocean => (band::OCEAN_SHALLOW, band::OCEAN_DEEP),
-            Liquid::Magma | Liquid::Slime => return None,
-        };
-        let Some(&params_id) = self.defaults.get(&map) else {
-            return Some(LiquidLight::UNLIT);
-        };
-        let mut light = self.liquid_of(Weather::Clear.of(params_id), kind, time, bands)?;
-        for (params, weight) in self.lights_at(map, at) {
-            if let Some(refined) = self.liquid_over(&light, params, kind, time, bands) {
-                light = light.mix(&refined, weight);
-            }
-        }
-        Some(light)
-    }
-
     /// One `LightParams` row's liquid laid over `base`: every band the row
     /// states, and `base`'s where it states nothing. See [`Self::band`] for why
     /// that is the ordinary case rather than a fault.
@@ -1751,7 +1703,7 @@ impl LightTables {
         params_id: u32,
         kind: Liquid,
         time: u32,
-        (close_band, far_band): (u32, u32),
+        (shallow_band, deep_band): (u32, u32),
     ) -> Option<LiquidLight> {
         let (shallow, deep) = Self::alpha_fields(kind)?;
         let alphas = self.params.get(&params_id);
@@ -1761,19 +1713,19 @@ impl LightTables {
                 .unwrap_or(under)
         };
         Some(LiquidLight {
-            close: self.band(params_id, close_band, time).unwrap_or(base.close),
-            far: self.band(params_id, far_band, time).unwrap_or(base.far),
+            shallow: self.band(params_id, shallow_band, time).unwrap_or(base.shallow),
+            deep: self.band(params_id, deep_band, time).unwrap_or(base.deep),
             shallow_alpha: alpha(shallow, base.shallow_alpha),
             deep_alpha: alpha(deep, base.deep_alpha),
         })
     }
 
-    /// Which two bands a liquid's surface is drawn from, or `None` for the two
-    /// that are drawn from their own texture.
+    /// The shallow and the deep band a liquid's surface is drawn from, or
+    /// `None` for the two that are drawn from their own texture.
     fn liquid_bands(kind: Liquid) -> Option<(u32, u32)> {
         match kind {
-            Liquid::Water => Some((band::RIVER_CLOSE, band::RIVER_FAR)),
-            Liquid::Ocean => Some((band::OCEAN_CLOSE, band::OCEAN_FAR)),
+            Liquid::Water => Some((band::RIVER_SHALLOW, band::RIVER_DEEP)),
+            Liquid::Ocean => Some((band::OCEAN_SHALLOW, band::OCEAN_DEEP)),
             Liquid::Magma | Liquid::Slime => None,
         }
     }
@@ -1794,14 +1746,14 @@ impl LightTables {
         }
     }
 
-    /// One `LightParams` row's liquid, from the two bands given. `liquid` and
-    /// `liquid_by_depth_at` start from it.
+    /// One `LightParams` row's liquid, from the two bands given. `liquid`
+    /// starts from it.
     fn liquid_of(
         &self,
         params_id: u32,
         kind: Liquid,
         time: u32,
-        (close_band, far_band): (u32, u32),
+        (shallow_band, deep_band): (u32, u32),
     ) -> Option<LiquidLight> {
         let (shallow_alpha, deep_alpha) = Self::alpha_fields(kind)?;
         // The alpha fields are stored in the order this array was built in.
@@ -1814,8 +1766,8 @@ impl LightTables {
             .unwrap_or([1.0, 1.0, 1.0, 1.0]);
 
         Some(LiquidLight {
-            close: self.band_colour(params_id, close_band, time),
-            far: self.band_colour(params_id, far_band, time),
+            shallow: self.band_colour(params_id, shallow_band, time),
+            deep: self.band_colour(params_id, deep_band, time),
             shallow_alpha: alphas[alpha_index(shallow_alpha)],
             deep_alpha: alphas[alpha_index(deep_alpha)],
         })
